@@ -77,6 +77,9 @@ var (
 	// "AC2 — " or a misspelling such as "AC2 – ", "AC2 - ", or "AC2: ", but
 	// not a reference such as "FR-DATA-01 AC1, AC5".
 	inlineLabelRE = regexp.MustCompile(`(?:^|\s)(AC\d+\s*[-–—:]\s?)`)
+	// listItemRE finds a list item that is not a "-" bullet: "* …", "+ …",
+	// "1. …".
+	listItemRE = regexp.MustCompile(`^\s*(?:[*+]|\d+[.)])\s`)
 )
 
 func parsePRD(file, src string, r *reporter) *prd {
@@ -127,8 +130,16 @@ func (p *prd) parseRequirement(d *document, s section, id, title string, r *repo
 				continue
 			}
 			// A blank line, as in a loose list, or an indented line that
-			// continues a criterion's text does not end the list.
-			if strings.TrimSpace(l) == "" || strings.TrimLeft(l, " \t") != l {
+			// continues a criterion's text does not end the list. An indented
+			// line that reads as a criterion written another way is reported,
+			// so that a criterion is never silently left out.
+			if strings.TrimSpace(l) == "" {
+				continue
+			}
+			if strings.TrimLeft(l, " \t") != l {
+				if listItemRE.MatchString(l) || inlineLabelRE.MatchString(l) {
+					r.add(p.file, n, "%s: cannot read %q as an acceptance criterion (write it as a \"- ACn — …\" bullet)", id, strings.TrimSpace(l))
+				}
 				continue
 			}
 			inCriteria = false

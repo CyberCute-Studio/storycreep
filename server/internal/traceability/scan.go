@@ -32,12 +32,17 @@ type Tag struct {
 }
 
 // language describes the test files of one language: how a line comment
-// starts, how a block comment starts and ends, which files hold tests, and
-// how a test is declared.
+// starts, how a block comment starts and ends, how a string literal that may
+// span lines is quoted, which files hold tests, and how a test is declared.
 type language struct {
 	comment               string
 	blockOpen, blockClose string
-	isTest                func(name string) bool
+	// multiLine quotes a string literal that may span lines, a Go raw string
+	// or a JavaScript template literal, and escapes reports whether a
+	// backslash escapes the next character in one.
+	multiLine byte
+	escapes   bool
+	isTest    func(name string) bool
 	// decl returns the name of the test declared on line, if any, and
 	// whether it verifies nothing (see Test.Skipped). enclosing is the
 	// top-level function or the Go subtest the line is in, such as "TestX"
@@ -48,13 +53,26 @@ type language struct {
 var (
 	goFuncRE     = regexp.MustCompile(`^func\s+(\w+)\s*\(`)
 	goTestNameRE = regexp.MustCompile(`^(?:Test|Benchmark|Fuzz)(?:[A-Z0-9_]\w*)?$`)
-	goSubtestRE  = regexp.MustCompile(`^\s+\w+\.Run\(\s*("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)`)
+	// goDeclRE finds a top-level declaration, which ends the function above
+	// it.
+	goDeclRE = regexp.MustCompile(`^(?:func|var|const|type)\b`)
+	// goRunRE finds a subtest, and goSubtestRE one with a literal name.
+	goRunRE     = regexp.MustCompile(`^\s+\w+\.Run\(`)
+	goSubtestRE = regexp.MustCompile(`^\s+\w+\.Run\(\s*("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)`)
 
 	// A Vitest or Playwright declaration: test("…"), it.skip("…"),
 	// test.describe("…"), suite("…") (Vitest's describe), bench("…"). Its
 	// first argument must be a string literal, and its modifiers must be
 	// jsModifiers.
 	jsTestRE = regexp.MustCompile(`^\s*(test|it|describe|suite|bench)((?:\.[A-Za-z]+)*)\s*\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|` + "`((?:[^`\\\\]|\\\\.)*)`" + `)`)
+	// jsCallRE finds a call to a declaration, whatever its arguments, and its
+	// modifiers.
+	jsCallRE = regexp.MustCompile(`^\s*(?:test|it|describe|suite|bench)((?:\.[A-Za-z]+)*)\s*\(`)
+	// jsHeadRE finds a declaration that Biome splits across lines: a callee
+	// chain alone, before ".serial(…)" on the next line, as Biome writes
+	// test.describe.serial, or a call that opens at the end of the line,
+	// before the title on the next line.
+	jsHeadRE = regexp.MustCompile(`^\s*(?:test|it|describe|suite|bench)(?:\.[A-Za-z]+)*\s*\(?$`)
 	// Vitest runs tests from *.test.ts and *.spec.ts files, and benchmarks
 	// only from *.bench.ts and *.benchmark.ts files.
 	jsFileRE = regexp.MustCompile(`\.(?:test|spec|bench|benchmark)\.[cm]?[jt]sx?$`)
@@ -100,6 +118,7 @@ var (
 		comment:    "//",
 		blockOpen:  "/*",
 		blockClose: "*/",
+		multiLine:  '`',
 		isTest:     func(name string) bool { return strings.HasSuffix(name, "_test.go") },
 		decl: func(line, enclosing string) (string, bool, bool) {
 			if m := goFuncRE.FindStringSubmatch(line); m != nil {
@@ -121,6 +140,8 @@ var (
 		comment:    "//",
 		blockOpen:  "/*",
 		blockClose: "*/",
+		multiLine:  '`',
+		escapes:    true,
 		isTest:     jsFileRE.MatchString,
 		decl: func(line, _ string) (string, bool, bool) {
 			m := jsTestRE.FindStringSubmatch(line)
@@ -162,6 +183,32 @@ var (
 // or fuzz test.
 func isGoTest(name string) bool {
 	return goTestNameRE.MatchString(name) && name != "TestMain"
+}
+
+// jsDeclaration returns line i of lines, joined with the lines after it when
+// Biome splits a declaration after its callee chain or its opening
+// parenthesis, as in "test.describe" and ".serial(…)" on the next line.
+func jsDeclaration(lines []string, i int) string {
+	decl := lines[i]
+	for j := i + 1; j < len(lines) && j <= i+2 && jsHeadRE.MatchString(decl); j++ {
+		decl += strings.TrimSpace(lines[j])
+	}
+	return decl
+}
+
+// jsSkips reports whether a declaration carries a modifier that makes it
+// verify nothing, whatever its arguments, as in describe.skip.each([…])(…).
+func jsSkips(decl string) bool {
+	m := jsCallRE.FindStringSubmatch(decl)
+	if m == nil {
+		return false
+	}
+	for _, mod := range strings.Split(m[1], ".")[1:] {
+		if jsModifiers[mod] {
+			return true
+		}
+	}
+	return false
 }
 
 // languageOf returns the language of a source file, or nil for a file the
@@ -239,13 +286,15 @@ const utf8BOM = "\xef\xbb\xbf"
 
 // scanFile finds the tagged tests in one source file. A Verifies comment
 // belongs to the test declared on the line directly below its comment block.
+// A Vitest or Playwright declaration that Biome splits after its callee chain
+// or its opening parenthesis is read across the split.
 //
 // A test inside a group declared with skip, todo, fixme, or fail verifies
 // nothing either. The group's body is the lines below it that are indented
 // deeper than its declaration, as Biome formats them, and the text of the
 // multi-line template literals in it, which Biome leaves as written. A Go
 // subtest is named after the subtests it is in by the same indentation, as
-// gofmt formats them.
+// gofmt formats them; the lines of a Go raw string are text, not code.
 func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck.Problem) {
 	var tests []Test
 	var problems []doccheck.Problem
@@ -264,15 +313,18 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 		}
 	}
 	src = strings.TrimPrefix(strings.ReplaceAll(src, "\r\n", "\n"), utf8BOM)
+	srcLines := strings.Split(src, "\n")
 	enclosing := ""
-	var runs []subtest  // the Go subtests the line is in, outermost first
-	inBlock := false    // in a block comment that opened on an earlier line
-	skipIndent := -1    // the indentation of the skipped group the line is in
-	inTemplate := false // in a skipped group, in a template literal that opened on an earlier line
-	for i, line := range strings.Split(src, "\n") {
+	var runs []subtest // the Go subtests the line is in, outermost first
+	inBlock := false   // in a block comment that opened on an earlier line
+	skipIndent := -1   // the indentation of the skipped group the line is in
+	// inString is set in a string literal that opened on an earlier line: a
+	// Go raw string, or a template literal in a skipped JavaScript group.
+	inString := false
+	for i, line := range srcLines {
 		n := i + 1
 		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && !inBlock && !inTemplate {
+		if trimmed != "" && !inBlock && !inString {
 			if skipIndent >= 0 && indentation(line) <= skipIndent {
 				skipIndent = -1
 			}
@@ -280,8 +332,19 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 				runs = runs[:len(runs)-1]
 			}
 		}
-		if skipIndent >= 0 && lang == jsLang && !inBlock && (inTemplate || !strings.HasPrefix(trimmed, lang.comment)) && togglesTemplate(line) {
-			inTemplate = !inTemplate
+		// Go raw strings are followed through the whole file, and their lines
+		// are text. JavaScript template literals are followed only in a skipped
+		// group, so that their text cannot end the group.
+		wasString, comment := inString, -1
+		if !inBlock {
+			var open bool
+			comment, open = lang.codeLine(line, inString)
+			if lang == goLang || lang == jsLang && skipIndent >= 0 {
+				inString = open
+			}
+		}
+		if wasString && lang == goLang {
+			continue
 		}
 		isBlock := false
 		if inBlock || !strings.HasPrefix(trimmed, lang.comment) {
@@ -319,29 +382,42 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 		if starTagRE.MatchString(trimmed) {
 			blockTag(n)
 		}
+		if comment >= 0 && isTest {
+			if text, _ := lineComment(line[comment:], lang.comment); strings.HasPrefix(text, "Verifies:") || nearTagRE.MatchString(text) {
+				report(n, "a Verifies comment after code (write it on its own line directly above the test)")
+			}
+		}
 		parent := enclosing
 		if len(runs) > 0 {
 			parent = runs[len(runs)-1].name
 		}
-		if name, skipped, ok := lang.decl(line, parent); ok {
-			if isTest && lang.trailingTag(line) {
-				report(n, "a Verifies comment after the test declaration (write it on its own line directly above the test)")
-			}
+		decl := line
+		if lang == jsLang {
+			decl = jsDeclaration(srcLines, i)
+		}
+		name, skipped, ok := lang.decl(decl, parent)
+		if ok {
 			skipped = skipped || skipIndent >= 0
 			if pending != nil {
 				tests = append(tests, Test{File: file, Line: n, Name: name, Skipped: skipped, Tags: pending})
 				pending = nil
 			}
-			if skipped && skipIndent < 0 {
-				skipIndent = indentation(line)
-			}
-			if lang == goLang && !strings.HasPrefix(line, "func") {
-				runs = append(runs, subtest{indent: indentation(line), name: name})
-			}
 		}
 		unattached()
-		// A top-level function, or a method, which encloses no test.
-		if lang == goLang && strings.HasPrefix(line, "func") {
+		if lang == jsLang && skipIndent < 0 && jsSkips(decl) {
+			skipIndent = indentation(line)
+		}
+		// A Go subtest without a literal name is named "*" in the names of the
+		// subtests in it.
+		if lang == goLang && goRunRE.MatchString(line) {
+			if !ok {
+				name = parent + "/*"
+			}
+			runs = append(runs, subtest{indent: indentation(line), name: name})
+		}
+		// A top-level declaration ends the function above it. Only a test
+		// function encloses subtests.
+		if lang == goLang && goDeclRE.MatchString(line) {
 			enclosing = ""
 			if m := goFuncRE.FindStringSubmatch(line); m != nil {
 				enclosing = m[1]
@@ -381,26 +457,40 @@ type subtest struct {
 	name   string
 }
 
-// togglesTemplate reports whether a line opens or closes a JavaScript template
-// literal: whether it holds an odd number of unescaped backticks.
-func togglesTemplate(line string) bool {
-	return (strings.Count(line, "`")-strings.Count(line, "\\`"))%2 == 1
-}
-
-// trailingTag reports whether a line has a comment after its code that is,
-// or is meant as, a Verifies comment, as in
-// "func TestX(t *testing.T) { // Verifies: …".
-func (l *language) trailingTag(line string) bool {
-	for rest := line; ; rest = rest[len(l.comment):] {
-		i := strings.Index(rest, l.comment)
-		if i < 0 {
-			return false
-		}
-		rest = rest[i:]
-		if text, _ := lineComment(rest, l.comment); strings.HasPrefix(text, "Verifies:") || nearTagRE.MatchString(text) {
-			return true
+// codeLine reads a line of code, given whether a string literal that spans
+// lines (l.multiLine) is open at its start. It returns where a line comment
+// starts on the line, or -1, and whether such a string literal is open at its
+// end. A comment marker or a backtick in a string literal or in a block
+// comment on the line does not count.
+func (l *language) codeLine(line string, open bool) (comment int, openAfter bool) {
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case open:
+			if c == '\\' && l.escapes {
+				i++
+			} else if c == l.multiLine {
+				open = false
+			}
+		case strings.HasPrefix(line[i:], l.comment):
+			return i, false
+		case l.blockOpen == "/*" && strings.HasPrefix(line[i:], "/*"):
+			end := strings.Index(line[i+2:], "*/")
+			if end < 0 {
+				return -1, false
+			}
+			i += end + 3
+		case l.multiLine != 0 && c == l.multiLine:
+			open = true
+		case c == '"' || c == '\'':
+			for i++; i < len(line) && line[i] != c; i++ {
+				if line[i] == '\\' {
+					i++
+				}
+			}
 		}
 	}
+	return -1, open
 }
 
 // indentation returns the number of spaces and tabs a line starts with.

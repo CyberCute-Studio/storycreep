@@ -175,6 +175,30 @@ func TestCheckFails(t *testing.T) {
 			want: `FR-B-01: cannot read "AC2 —" as an acceptance criterion`,
 		},
 		{
+			name: "acceptance criterion in a star bullet",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC1 — It is hosted.\n  * AC2 — It is starred.\n"}},
+			file: "PRD.md",
+			want: `FR-B-02: cannot read "* AC2 — It is starred." as an acceptance criterion (write it as a "- ACn — …" bullet)`,
+		},
+		{
+			name: "acceptance criterion in a numbered item",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC1 — It is hosted.\n\n  1. It is numbered.\n"}},
+			file: "PRD.md",
+			want: `FR-B-02: cannot read "1. It is numbered." as an acceptance criterion`,
+		},
+		{
+			name: "acceptance criterion without a bullet",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC1 — It is hosted.\n  AC2 — It has no bullet.\n"}},
+			file: "PRD.md",
+			want: `FR-B-02: cannot read "AC2 — It has no bullet." as an acceptance criterion`,
+		},
+		{
+			name: "inline acceptance criterion on a wrapped line",
+			prd:  []edit{{"AC1 — It shines. AC2 — It still works.", "AC1 — It shines.\n  AC2 — It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "AC2 — It still works." as an acceptance criterion`,
+		},
+		{
 			name: "acceptance criterion numbered from zero",
 			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC0 — It is hosted.\n"}},
 			file: "PRD.md",
