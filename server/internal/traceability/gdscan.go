@@ -1,6 +1,10 @@
 package traceability
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/doccheck"
+)
 
 var gdLang = &language{
 	comment: "#",
@@ -13,12 +17,15 @@ var gdLang = &language{
 // readGD reads a GDScript file. Its test declarations are the GUT test
 // functions, func test_…(). GDScript has no block comments, but a
 // multi-line string that starts a line serves as one, so its lines are
-// returned as a block comment.
-func readGD(_, src string, isTest bool) source {
+// returned as a block comment. A multi-line string that never closes hides
+// the code after it, which is a problem in a test file with Verifies
+// comments.
+func readGD(file, src string, isTest bool) source {
 	var s source
 	line := 1
 	code := false // a token is on the line before i
 	prev := ""    // the last word or punctuation read, to find "func test_…"
+	unclosed := 0 // the line of a multi-line string that never closes
 	for i := 0; i < len(src); {
 		c := src[i]
 		switch {
@@ -43,6 +50,9 @@ func readGD(_, src string, isTest bool) source {
 					end++
 				}
 				end++
+			}
+			if end >= len(src) {
+				unclosed = line
 			}
 			end = min(end+3, len(src))
 			text := src[i:end]
@@ -86,6 +96,12 @@ func readGD(_, src string, isTest bool) source {
 			prev = string(c)
 			i++
 		}
+	}
+	// The source is searched, not the comments, because the comments after
+	// such a string are hidden too.
+	if isTest && unclosed > 0 && strings.Contains(src, "Verifies:") {
+		s.problems = append(s.problems, doccheck.Problem{File: file, Line: unclosed,
+			Msg: "cannot find the end of the multi-line string that starts here, so the scan cannot read the code after it"})
 	}
 	return s
 }

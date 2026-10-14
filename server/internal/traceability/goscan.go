@@ -5,10 +5,10 @@ import (
 	"go/parser"
 	"go/scanner"
 	"go/token"
-	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/doccheck"
 )
@@ -19,12 +19,20 @@ var goLang = &language{
 	read:    readGo,
 }
 
-var goTestNameRE = regexp.MustCompile(`^(?:Test|Benchmark|Fuzz)(?:[A-Z0-9_]\w*)?$`)
-
 // isGoTest reports whether a function name declares a Go test, benchmark,
-// or fuzz test.
+// or fuzz test, by go test's rule: the prefix, then nothing or a character
+// that is not a lower-case letter, as in TestX, Test_x, or TestÜber.
 func isGoTest(name string) bool {
-	return goTestNameRE.MatchString(name) && name != "TestMain"
+	if name == "TestMain" {
+		return false
+	}
+	for _, prefix := range []string{"Test", "Benchmark", "Fuzz"} {
+		if rest, ok := strings.CutPrefix(name, prefix); ok {
+			r, _ := utf8.DecodeRuneInString(rest)
+			return rest == "" || !unicode.IsLower(r)
+		}
+	}
+	return false
 }
 
 // readGo parses a Go file. Its test declarations are the top-level Test,

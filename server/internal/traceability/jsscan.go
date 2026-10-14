@@ -2,7 +2,10 @@ package traceability
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf16"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/doccheck"
 )
@@ -54,7 +57,9 @@ var jsModifiers = map[string]bool{
 // readJS reads a JavaScript or TypeScript file. Its test declarations are the
 // calls of jsTestHeads, or of jsBenchHeads in a benchmark file, with a string
 // literal title, named after the groups they are in as Vitest names them:
-// "group > title". A group without a literal title is "*". A test is skipped
+// "group > title". A group without a literal title is "*", and a group
+// without a title, as Playwright's test.describe(() => …), adds nothing to
+// the name. A test is skipped
 // when it, or a group it is in, is declared with a modifier that verifies
 // nothing, whatever the group's arguments, as in
 // describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …).
@@ -114,6 +119,9 @@ func readJS(file, src string, isTest bool) source {
 		name     string
 		named    bool // a declaration the scan can name
 		skipped  bool
+		// anonymous is set for a group without a title, as Playwright's
+		// test.describe(() => …), which adds nothing to its tests' names.
+		anonymous bool
 	}
 	var calls []call
 	for i, t := range toks {
@@ -150,6 +158,7 @@ func readJS(file, src string, isTest bool) source {
 			c.name = toks[j+1].text
 			c.named = known
 		}
+		c.anonymous = !table && isFunctionAt(toks, j+1, match)
 		calls = append(calls, c)
 	}
 
@@ -161,7 +170,9 @@ func readJS(file, src string, isTest bool) source {
 		skipped := c.skipped
 		for _, g := range calls {
 			if g.from < c.head && c.head <= g.to {
-				path = append(path, g.name)
+				if !g.anonymous {
+					path = append(path, g.name)
+				}
 				skipped = skipped || g.skipped
 			}
 		}
@@ -191,6 +202,23 @@ func (t jsToken) is(kind byte, text string) bool {
 	return t.kind == kind && t.text == text
 }
 
+// isFunctionAt reports whether a function expression starts at toks[k]:
+// "function", "async", or an arrow function's parameters, "(…) =>". match
+// maps each "(" to its ")".
+func isFunctionAt(toks []jsToken, k int, match map[int]int) bool {
+	if k >= len(toks) {
+		return false
+	}
+	if toks[k].is('i', "function") || toks[k].is('i', "async") {
+		return true
+	}
+	if !toks[k].is('(', "(") {
+		return false
+	}
+	end := match[k]
+	return end+2 < len(toks) && toks[end+1].is('(', "=") && toks[end+2].is('(', ">")
+}
+
 // afterTemplate returns the index of the token after the template literal
 // that starts at toks[i].
 func afterTemplate(toks []jsToken, i int) int {
@@ -217,8 +245,89 @@ var jsRegexAfter = map[string]bool{
 	"yield": true, "await": true,
 }
 
-// jsUnescaper reads the escapes a test title commonly holds.
-var jsUnescaper = strings.NewReplacer(`\\`, `\`, `\"`, `"`, `\'`, `'`, "\\`", "`", `\n`, "\n", `\t`, "\t")
+// jsUnescape returns the value of the text of a string or template literal:
+// its escapes, as in "caf\u00e9", replaced by the characters they stand for,
+// and its line continuations removed.
+func jsUnescape(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 == len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		i++
+		switch c := s[i]; c {
+		case 'n':
+			b.WriteByte('\n')
+		case 'r':
+			b.WriteByte('\r')
+		case 't':
+			b.WriteByte('\t')
+		case 'b':
+			b.WriteByte('\b')
+		case 'f':
+			b.WriteByte('\f')
+		case 'v':
+			b.WriteByte('\v')
+		case '0':
+			b.WriteByte(0)
+		case '\n':
+			// A line continuation.
+		case 'x', 'u':
+			r, n := jsCodePoint(s[i:])
+			if n == 0 {
+				b.WriteByte(c) // not an escape after all
+				continue
+			}
+			b.WriteRune(r)
+			i += n - 1
+		default:
+			// Any other character, such as a quote, a backslash, or a
+			// backtick, stands for itself.
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// jsCodePoint reads the character of an escape after its backslash: xHH,
+// uHHHH (with the low surrogate that follows a high one), or u{H…}. n is the
+// length of the escape, or 0 if it is not one.
+func jsCodePoint(s string) (r rune, n int) {
+	hex := func(h string) (rune, bool) {
+		v, err := strconv.ParseUint(h, 16, 32)
+		return rune(v), err == nil && v <= unicode.MaxRune
+	}
+	switch {
+	case s[0] == 'x' && len(s) >= 3:
+		if v, ok := hex(s[1:3]); ok {
+			return v, 3
+		}
+	case strings.HasPrefix(s, "u{"):
+		if end := strings.IndexByte(s, '}'); end > 2 {
+			if v, ok := hex(s[2:end]); ok {
+				return v, end + 1
+			}
+		}
+	case s[0] == 'u' && len(s) >= 5:
+		v, ok := hex(s[1:5])
+		if !ok {
+			break
+		}
+		if utf16.IsSurrogate(v) && len(s) >= 11 && s[5:7] == `\u` {
+			if lo, ok := hex(s[7:11]); ok {
+				if r := utf16.DecodeRune(v, lo); r != unicode.ReplacementChar {
+					return r, 11
+				}
+			}
+		}
+		return v, 5
+	}
+	return 0, 0
+}
 
 // lexJS splits JavaScript or TypeScript source into tokens and comments. It
 // reads string, template, and regular expression literals, so that comment
@@ -254,7 +363,7 @@ func lexJS(src string) (toks []jsToken, comments []comment, unclosed int) {
 				continue
 			case src[i] == '`':
 				if first {
-					emit('s', jsUnescaper.Replace(src[start:i]), startLine)
+					emit('s', jsUnescape(src[start:i]), startLine)
 				} else {
 					emit('e', "", line)
 				}
@@ -323,7 +432,7 @@ func lexJS(src string) (toks []jsToken, comments []comment, unclosed int) {
 				i++
 				continue
 			}
-			emit('s', jsUnescaper.Replace(src[i+1:j]), line)
+			emit('s', jsUnescape(src[i+1:j]), line)
 			line += strings.Count(src[i:j], "\n") // escaped line breaks
 			i = j + 1
 		case c == '`':
@@ -386,7 +495,9 @@ func lexJS(src string) (toks []jsToken, comments []comment, unclosed int) {
 }
 
 // jsRegexAllowed reports whether a "/" after toks starts a regular
-// expression literal: it does where an expression may start.
+// expression literal: it does where an expression may start. It does not
+// after "<", where "/" closes a JSX tag ("</b>"), nor after a postfix "++" or
+// "--", where it divides.
 func jsRegexAllowed(toks []jsToken) bool {
 	if len(toks) == 0 {
 		return true
@@ -396,7 +507,13 @@ func jsRegexAllowed(toks []jsToken) bool {
 	case 'i':
 		return jsRegexAfter[t.text]
 	case '(':
-		return t.text != ")" && t.text != "]" && t.text != "}"
+		switch t.text {
+		case ")", "]", "}", "<":
+			return false
+		case "+", "-":
+			return len(toks) < 2 || toks[len(toks)-2] != t
+		}
+		return true
 	case 't', 'm':
 		return true // the start of a substitution, "${"
 	}

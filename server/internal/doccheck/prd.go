@@ -86,6 +86,14 @@ var (
 	criterionLineRE = regexp.MustCompile(`^\s*(?:(?:[-*+]|\d+[.)])\s+)?AC\d+\b`)
 )
 
+// strayCriterion reports whether a line that is not read as a criterion
+// reads as one: it starts with a criterion's label, or its text holds one, as
+// a line at the margin that a criterion's text is wrapped onto can. The
+// Acceptance criteria field is read on its own.
+func strayCriterion(l string) bool {
+	return !criteriaFieldRE.MatchString(l) && (criterionLineRE.MatchString(l) || inlineLabelRE.MatchString(l))
+}
+
 func parsePRD(file, src string, r *reporter) *prd {
 	d := newDocument(src)
 	p := &prd{
@@ -150,13 +158,13 @@ func (p *prd) parseRequirement(d *document, s section, id, title string, r *repo
 			}
 			// A line at the margin ends the list, unless it reads as a
 			// criterion that is not indented.
-			if criterionLineRE.MatchString(l) {
+			if strayCriterion(l) {
 				r.add(p.file, n, "%s: cannot read %q as an acceptance criterion (indent it as a \"  - ACn — …\" bullet under the field)", id, l)
 				continue
 			}
 			inCriteria = false
 			listEnd = n
-		case listEnd != 0 && criterionLineRE.MatchString(l):
+		case listEnd != 0 && strayCriterion(l):
 			// A criterion after the end of the list, as after a line of text
 			// at the margin, is reported, so that it is never silently left
 			// out.
