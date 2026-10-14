@@ -22,6 +22,11 @@ var gdLang = &language{
 // comments.
 func readGD(file, src string, isTest bool) source {
 	var s source
+	// A file that is not a test file matters only for the Verifies comments
+	// in it.
+	if !isTest && !strings.Contains(src, "Verifies:") {
+		return s
+	}
 	line := 1
 	code := false // a token is on the line before i
 	prev := ""    // the last word or punctuation read, to find "func test_…"

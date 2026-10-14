@@ -21,7 +21,8 @@ type Test struct {
 	// Go subtest, "group > title" for a Vitest or Playwright test in a group.
 	Name string
 	// Skipped is set for a test that verifies nothing: it is declared with
-	// skip, todo, fixme, or fail, or inside a group declared so.
+	// skip, todo, fixme, or fail, or inside a group declared so, or it is a
+	// group whose tests all are.
 	Skipped bool
 	Tags    []Tag
 }
@@ -138,16 +139,62 @@ func Scan(root string) ([]Test, []doccheck.Problem, error) {
 // file.
 const utf8BOM = "\xef\xbb\xbf"
 
+// idPattern matches a requirement ID as a comment might name it: "FR-…",
+// "FR-…/ACn", or "NFR-…".
+const idPattern = `N?FR-[A-Z0-9]+-\d+(?:/AC\d+)?`
+
 var (
-	// nearTagRE finds a line comment that is meant as a Verifies comment but
-	// is not spelled "Verifies:", such as "verifies: FR-…", "Verifies
-	// NFR-…", "Verifies — FR-…", or "@verifies (FR-…)".
-	nearTagRE = regexp.MustCompile(`(?i)^@?verif(?:y|ies|ied)\b[^A-Za-z0-9]*N?FR-`)
+	// nearTagRE finds a line comment that starts with a word and then names a
+	// requirement, as "verifies: FR-…", "Verifies NFR-…", "Verifies — FR-…",
+	// "@verifies (FR-…)", or "Verifes: FR-…" do. nearTag decides whether the
+	// word is meant as "Verifies".
+	nearTagRE = regexp.MustCompile(`(?i)^@?([a-z]+)[^a-z0-9]*n?fr-`)
 
 	// continuedTagRE finds a comment line that continues the ID list of the
 	// Verifies comment on the line above it.
 	continuedTagRE = regexp.MustCompile(`^N?FR-[A-Z0-9]+-\d+`)
+
+	// idListRE finds a comment line that holds nothing but requirement IDs,
+	// optionally as a list item: "FR-A-01/AC2, NFR-PERF-01" or
+	// "- FR-A-01/AC2".
+	idListRE = regexp.MustCompile(`^(?:(?:[-*+]|\d+[.)])\s+)?` + idPattern + `(?:\s*,\s*` + idPattern + `)*\s*[,.]?$`)
 )
+
+// nearTag reports whether a line comment is meant as a Verifies comment but
+// is not spelled "Verifies:": its first word is a form of "verify", such as
+// "verifies" or "Verified", or a typo of "Verifies", such as "Verifes", and
+// a requirement ID follows it.
+func nearTag(text string) bool {
+	m := nearTagRE.FindStringSubmatch(text)
+	if m == nil {
+		return false
+	}
+	w := strings.ToLower(m[1])
+	return strings.HasPrefix(w, "verif") || editDistance(w, "verifies") <= 2
+}
+
+// editDistance returns the Levenshtein distance between two ASCII words: the
+// number of characters to insert, delete, or replace to turn one into the
+// other.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			replace := prev[j-1]
+			if a[i-1] != b[j-1] {
+				replace++
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, replace)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
+}
 
 // scanFile finds the tagged tests in one source file. A Verifies comment is
 // a line comment on its own line; together with the line comments on the
@@ -168,19 +215,31 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 	}
 
 	var tests []Test
-	var pending []Tag // the tags of the current run of line comments
-	last := 0         // the line of the last comment in the run
-	tagEnd := 0       // the line of the last Verifies line, or of a line that continues its list
+	var pending []Tag     // the tags of the current run of line comments
+	var idLines []comment // the lines of the run that hold nothing but IDs
+	runTagged := false    // the run has a Verifies line
+	last := 0             // the line of the last comment in the run
+	tagEnd := 0           // the line of the last Verifies line, or of a line that continues its list
 	flush := func() {
-		if pending == nil {
-			return
+		d, above := declAt[last+1]
+		// A line that holds nothing but IDs, in a run with a Verifies line or
+		// above a test, is meant as part of a Verifies comment: it continues
+		// the ID list as a list item, or below a blank comment line, where
+		// gofmt moves an indented continuation of a doc comment, or it is
+		// meant as one.
+		if runTagged || above {
+			for _, c := range idLines {
+				report(c.line, "cannot read %q as a Verifies comment (write \"Verifies:\" and the IDs)", c.text)
+			}
 		}
-		if d, ok := declAt[last+1]; ok {
+		switch {
+		case pending == nil:
+		case above:
 			tests = append(tests, Test{File: file, Line: d.line, Name: d.name, Skipped: d.skipped, Tags: pending})
-		} else {
+		default:
 			report(pending[0].Line, "a Verifies comment that is not directly above a test declaration")
 		}
-		pending = nil
+		pending, idLines, runTagged = nil, nil, false
 	}
 	for _, c := range s.comments {
 		rest, tagged := strings.CutPrefix(c.text, "Verifies:")
@@ -192,7 +251,7 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 		case tagged && !isTest:
 			report(c.line, "a Verifies comment outside a test file (tests are in *_test.go, *.test.ts, *.spec.ts, *.bench.ts, or test_*.gd files)")
 		case !c.ownLine:
-			if isTest && (tagged || nearTagRE.MatchString(c.text)) {
+			if isTest && (tagged || nearTag(c.text)) {
 				report(c.line, "a Verifies comment after code (write it on its own line directly above the test)")
 			}
 		default:
@@ -211,12 +270,15 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 				for _, id := range ids {
 					pending = append(pending, Tag{ID: id, Line: c.line})
 				}
+				runTagged = true
 				tagEnd = c.line
-			case nearTagRE.MatchString(c.text):
+			case nearTag(c.text):
 				report(c.line, "cannot read %q as a Verifies comment (write \"Verifies:\" and the IDs)", c.text)
 			case tagEnd > 0 && c.line == tagEnd+1 && continuedTagRE.MatchString(c.text):
 				report(c.line, "cannot read %q as a Verifies comment (write \"Verifies:\" and the IDs)", c.text)
 				tagEnd = c.line
+			case idListRE.MatchString(c.text):
+				idLines = append(idLines, c)
 			}
 		}
 	}

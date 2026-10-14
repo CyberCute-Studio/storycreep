@@ -54,16 +54,32 @@ var jsModifiers = map[string]bool{
 	"fails":      true, // Vitest: the same
 }
 
+// jsConditions are Vitest's modifiers that take a condition before the
+// declaration's own call, as in test.runIf(isLinux)("…", …). The test still
+// counts, because the scan cannot tell whether the condition holds.
+var jsConditions = map[string]bool{"skipIf": true, "runIf": true}
+
+// jsTables are the modifiers of a declaration that runs once for each row of
+// a table, as in test.each([…])("…", …). It declares tests, but the scan
+// cannot name them.
+var jsTables = map[string]bool{"each": true, "for": true}
+
 // readJS reads a JavaScript or TypeScript file. Its test declarations are the
 // calls of jsTestHeads, or of jsBenchHeads in a benchmark file, with a string
 // literal title, named after the groups they are in as Vitest names them:
 // "group > title". A group without a literal title is "*", and a group
 // without a title, as Playwright's test.describe(() => …), adds nothing to
-// the name. A test is skipped
-// when it, or a group it is in, is declared with a modifier that verifies
-// nothing, whatever the group's arguments, as in
-// describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …).
+// the name. A test is skipped when it, or a group it is in, is declared with
+// a modifier that verifies nothing, whatever the group's arguments, as in
+// describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …). A group
+// is skipped too when every test declared in it is skipped, because it runs
+// no test then.
 func readJS(file, src string, isTest bool) source {
+	// A file that is not a test file matters only for the Verifies comments
+	// in it.
+	if !isTest && !strings.Contains(src, "Verifies:") {
+		return source{}
+	}
 	toks, comments, unclosed := lexJS(src)
 	s := source{comments: comments}
 	if !isTest {
@@ -122,6 +138,10 @@ func readJS(file, src string, isTest bool) source {
 		// anonymous is set for a group without a title, as Playwright's
 		// test.describe(() => …), which adds nothing to its tests' names.
 		anonymous bool
+		group     bool // a describe or suite group
+		// test is set for the declaration of a test or tests, named or not,
+		// rather than of a group, a hook, or a step.
+		test bool
 	}
 	var calls []call
 	for i, t := range toks {
@@ -132,12 +152,23 @@ func readJS(file, src string, isTest bool) source {
 			continue
 		}
 		j := i + 1
-		known, skipped := true, false
+		known, declares, skipped := true, true, false
+		group := t.text == "describe" || t.text == "suite"
 		for j+1 < len(toks) && toks[j].is('(', ".") && toks[j+1].kind == 'i' {
-			skip, ok := jsModifiers[toks[j+1].text]
-			known = known && ok
-			skipped = skipped || skip
+			m := toks[j+1].text
 			j += 2
+			if jsConditions[m] {
+				// The condition's call comes before the declaration's.
+				if j < len(toks) && toks[j].is('(', "(") {
+					j = match[j] + 1
+				}
+				continue
+			}
+			skip, ok := jsModifiers[m]
+			known = known && ok
+			declares = declares && (ok || jsTables[m])
+			skipped = skipped || skip
+			group = group || m == "describe"
 		}
 		// A template literal after the modifiers is the table of a tagged
 		// template, as in describe.each`a | b`("…", …), and the call follows it.
@@ -148,7 +179,7 @@ func readJS(file, src string, isTest bool) source {
 		if j >= len(toks) || !toks[j].is('(', "(") {
 			continue
 		}
-		c := call{head: i, from: j, to: match[j], skipped: skipped, name: "*"}
+		c := call{head: i, from: j, to: match[j], skipped: skipped, name: "*", group: group, test: declares && !group}
 		for c.to+1 < len(toks) && toks[c.to+1].is('(', "(") {
 			c.to = match[c.to+1]
 		}
@@ -162,19 +193,40 @@ func readJS(file, src string, isTest bool) source {
 		calls = append(calls, c)
 	}
 
-	for _, c := range calls {
+	// inside reports whether c is declared inside the call of g.
+	inside := func(g, c call) bool { return g.from < c.head && c.head <= g.to }
+	// skippedAt[k] is set when calls[k], or a group it is in, is declared
+	// with a modifier that verifies nothing.
+	skippedAt := make([]bool, len(calls))
+	for k, c := range calls {
+		skippedAt[k] = c.skipped
+		for _, g := range calls {
+			skippedAt[k] = skippedAt[k] || inside(g, c) && g.skipped
+		}
+	}
+	for k, c := range calls {
 		if !c.named {
 			continue
 		}
 		var path []string
-		skipped := c.skipped
 		for _, g := range calls {
-			if g.from < c.head && c.head <= g.to {
-				if !g.anonymous {
-					path = append(path, g.name)
-				}
-				skipped = skipped || g.skipped
+			if inside(g, c) && !g.anonymous {
+				path = append(path, g.name)
 			}
+		}
+		skipped := skippedAt[k]
+		// A group runs only the tests declared in it, so one whose tests are
+		// all skipped verifies nothing. A group in which the scan sees no
+		// test, as when a helper function declares its tests, counts.
+		if c.group && !skipped {
+			tests, runs := 0, false
+			for m, d := range calls {
+				if d.test && inside(c, d) {
+					tests++
+					runs = runs || !skippedAt[m]
+				}
+			}
+			skipped = tests > 0 && !runs
 		}
 		s.decls = append(s.decls, decl{
 			line:    toks[c.head].line,
@@ -446,7 +498,11 @@ func lexJS(src string) (toks []jsToken, comments []comment, unclosed int) {
 			for j < len(src) && src[j] != '\n' && (inClass || src[j] != '/') {
 				switch src[j] {
 				case '\\':
-					j++
+					// An escape, but not of a line break, which ends the line
+					// and with it the literal.
+					if j+1 < len(src) && src[j+1] != '\n' {
+						j++
+					}
 				case '[':
 					inClass = true
 				case ']':
@@ -495,29 +551,39 @@ func lexJS(src string) (toks []jsToken, comments []comment, unclosed int) {
 }
 
 // jsRegexAllowed reports whether a "/" after toks starts a regular
-// expression literal: it does where an expression may start. It does not
-// after "<", where "/" closes a JSX tag ("</b>"), nor after a postfix "++" or
-// "--", where it divides.
+// expression literal: it does where an expression may start, as after "(",
+// an operator, "return", or the "${" of a substitution, and not after an
+// operand. Nor does it after "}", nor after "<", where "/" closes a JSX tag
+// ("</b>"), nor after a postfix "++" or "--", nor after TypeScript's
+// non-null assertion, as in "total! / 2", where it divides.
 func jsRegexAllowed(toks []jsToken) bool {
 	if len(toks) == 0 {
 		return true
 	}
 	t := toks[len(toks)-1]
+	switch {
+	case t.is('(', "}"), t.is('(', "<"):
+		return false
+	case t.is('(', "+"), t.is('(', "-"):
+		return len(toks) < 2 || toks[len(toks)-2] != t
+	case t.is('(', "!"):
+		return len(toks) < 2 || !endsOperand(toks[len(toks)-2])
+	}
+	return !endsOperand(t)
+}
+
+// endsOperand reports whether an operand can end with t: an identifier that
+// is not a keyword such as "return", a literal, or ")" or "]".
+func endsOperand(t jsToken) bool {
 	switch t.kind {
 	case 'i':
-		return jsRegexAfter[t.text]
-	case '(':
-		switch t.text {
-		case ")", "]", "}", "<":
-			return false
-		case "+", "-":
-			return len(toks) < 2 || toks[len(toks)-2] != t
-		}
+		return !jsRegexAfter[t.text]
+	case 'n', 's', 'e', 'r':
 		return true
-	case 't', 'm':
-		return true // the start of a substitution, "${"
+	case '(':
+		return t.text == ")" || t.text == "]"
 	}
-	return false
+	return false // 't' or 'm', the start of a substitution
 }
 
 // isIdentByte reports whether c can be part of an identifier. Bytes of
