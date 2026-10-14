@@ -1,0 +1,21 @@
+# Every text file is stored and checked out with LF line endings on every OS,
+# so formatters, checks, and published files behave the same on Windows,
+# macOS, and Linux.
+* text=auto eol=lf
+
+# Binary files are never normalised.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.wav binary
+*.ogg binary
+*.mp3 binary
+*.zip binary
+*.pdf binary

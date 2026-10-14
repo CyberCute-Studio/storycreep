@@ -1,0 +1,19 @@
+{
+  "name": "storycreep",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@11.28.2",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "check": "biome check .",
+    "fix": "biome check --write .",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "docs:check": "go -C server run ./cmd/doccheck"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15"
+  }
+}
