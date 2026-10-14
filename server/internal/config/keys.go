@@ -29,8 +29,10 @@ type key struct {
 	def func(m mode) string
 	// parse stores a value in c, or explains why it is invalid. The value is
 	// never empty. The explanation must not repeat the value: Load adds it
-	// for keys that are not secret, unless the error is a hiddenValueError,
-	// and for a secret key it withholds an explanation that repeats it.
+	// for keys that are not secret, unless the error is a hiddenValueError.
+	// For a secret key, Load shows the explanation only if parse returns a
+	// hiddenValueError, which it does when the reason helps the operator and
+	// cannot contain the value.
 	parse func(c *Config, v string) error
 	// effective returns the value in effect, for display, when parse
 	// normalizes it. Without it, the value is shown as it was set.
@@ -71,9 +73,10 @@ var keys = []key{
 	},
 	{
 		name: "STORYCREEP_PUBLIC_URL",
-		doc: "The URL users open Storycreep at: `http` or `https`, a host name, and an optional port, with no path. " +
-			"Behind a reverse proxy that terminates TLS, it is the proxy's `https` URL, not the address the server " +
-			"listens on. Write an internationalized domain name in its `xn--` (Punycode) form. Hosted mode requires `https`.",
+		doc: "The URL users open Storycreep at: `http` or `https`, a host name or IP address, and an optional port, " +
+			"with no path. Behind a reverse proxy that terminates TLS, it is the proxy's `https` URL, not the address " +
+			"the server listens on. Write an internationalized domain name in its `xn--` (Punycode) form, and an IPv4 " +
+			"address as four decimal numbers. Hosted mode requires `https`.",
 		valuesDoc: "An `http` or `https` URL",
 		example:   "https://storycreep.example.com",
 		required:  true,

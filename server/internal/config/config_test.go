@@ -193,6 +193,9 @@ func TestInvalidValues(t *testing.T) {
 		{"STORYCREEP_PUBLIC_SITE", "yes", "must be on or off"},
 		{"STORYCREEP_SIGNUP", "public", "must be closed, invite, or open"},
 		{"STORYCREEP_LOG_LEVEL", "verbose", "must be debug, info, warn, or error"},
+		// Only the file trims a value, so the space is pointed out.
+		{"STORYCREEP_SIGNUP", "invite ", "starts or ends with white space"},
+		{"STORYCREEP_PUBLIC_URL", " " + testURL, "starts or ends with white space"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.key+"="+tt.value, func(t *testing.T) {
@@ -405,17 +408,21 @@ func TestUnknownVariables(t *testing.T) {
 }
 
 // TestSecretKeys covers NFR-SEC-14 for configuration: a secret key's value is
-// redacted in the entries and never repeated in a problem.
+// redacted in the entries and never repeated in a problem, even escaped.
 func TestSecretKeys(t *testing.T) {
-	const value = "s3cr3t-value-that-must-not-leak"
+	// The quote and the backslash make %q escape the value, so that an echo
+	// of it does not contain it verbatim; the tail is in every form.
+	const value, tail = `s3cr3t"val\ue-that-must-not-leak`, "that-must-not-leak"
 	var got secret.Value
 	testKeys := []key{{
 		name:   "STORYCREEP_TEST_PASSWORD",
 		secret: true,
 		parse: func(c *Config, v string) error {
 			switch {
-			case strings.HasPrefix(v, "bad"):
-				return errors.New("too weak")
+			case strings.HasPrefix(v, "weak"):
+				return hiddenValueError{errors.New("too weak")}
+			case strings.HasPrefix(v, "short"):
+				return errors.New("too short")
 			case strings.HasPrefix(v, "echo"):
 				// A parse function that breaks the rule, as a wrapped
 				// error such as url.Parse's would.
@@ -437,10 +444,16 @@ func TestSecretKeys(t *testing.T) {
 		t.Errorf("entry value = %q, want %q", e.Value, secret.Redacted)
 	}
 
-	for _, v := range []string{"bad" + value, "echo" + value} {
-		_, err = load(testKeys, Options{Env: MapEnvironment(map[string]string{"STORYCREEP_TEST_PASSWORD": v})})
-		if err == nil || strings.Contains(err.Error(), value) || !strings.Contains(err.Error(), "STORYCREEP_TEST_PASSWORD") {
-			t.Errorf("error %v should name the key without the value", err)
+	// Only an explanation that parse vouches for is shown.
+	for _, tt := range []struct{ value, reason string }{
+		{"weak" + value, "too weak"},
+		{"short" + value, "the reason is not shown"},
+		{"echo" + value, "the reason is not shown"},
+	} {
+		_, err = load(testKeys, Options{Env: MapEnvironment(map[string]string{"STORYCREEP_TEST_PASSWORD": tt.value})})
+		if err == nil || strings.Contains(err.Error(), tail) || !strings.Contains(err.Error(), "STORYCREEP_TEST_PASSWORD") ||
+			!strings.Contains(err.Error(), tt.reason) {
+			t.Errorf("error %v should name the key and say %q without the value", err, tt.reason)
 		}
 	}
 }

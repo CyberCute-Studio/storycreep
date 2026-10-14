@@ -218,12 +218,20 @@ func load(keys []key, opts Options) (*Config, error) {
 			msg := err.Error()
 			var hidden hiddenValueError
 			switch {
-			case k.secret && strings.Contains(msg, v):
-				// parse must not repeat the value, but an error it wraps,
-				// such as url.Parse's, can.
-				msg = "invalid; the reason is not shown because it contains the secret value"
-			case !k.secret && !errors.As(err, &hidden):
+			case k.secret:
+				// Only an explanation parse wrote without the value is
+				// shown. Any other may repeat it, even escaped or in part,
+				// as the errors url.Parse returns do.
+				if _, ok := err.(hiddenValueError); !ok {
+					msg = "invalid; the reason is not shown because it may contain the secret value"
+				}
+			case !errors.As(err, &hidden):
 				msg = fmt.Sprintf("%q: %s", v, msg)
+			}
+			if strings.TrimSpace(v) != v {
+				// Only the file trims values, and a parser's explanation
+				// rarely names the space.
+				msg += "; the value starts or ends with white space, which is part of the value"
 			}
 			problems = append(problems, Problem{Key: k.name, Source: source, Msg: msg})
 			continue
@@ -244,9 +252,10 @@ func load(keys []key, opts Options) (*Config, error) {
 	return c, nil
 }
 
-// hiddenValueError is a parse error after which Load does not repeat the
-// value, because the value may hold a credential, such as a password in a
-// URL, although the key is not secret.
+// hiddenValueError is a parse error whose explanation does not contain the
+// value. Load does not repeat the value after one, because the value may hold
+// a credential, such as a password in a URL, although the key is not secret.
+// For a secret key, it is the only parse error whose explanation Load shows.
 type hiddenValueError struct{ error }
 
 // set validates v, which is not empty, and stores it in c.

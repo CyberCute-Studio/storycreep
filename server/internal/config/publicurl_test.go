@@ -75,6 +75,9 @@ func TestParsePublicURL(t *testing.T) {
 		{"http://999.1.1.1", "not a valid IPv4 address"},
 		{"http://[fe80::1%25en0]:8080", "must not have an IPv6 zone"},
 		{"http://[::ffff:192.168.1.20]", "must not be an IPv4-mapped IPv6 address"},
+		// The address a server listens on, which no browser elsewhere opens.
+		{"http://0.0.0.0:8080", "must not be 0.0.0.0 or ::"},
+		{"http://[::]:8080", "must not be 0.0.0.0 or ::"},
 		{"https://user@Bücher.example", "must not contain a user name or password"},
 	}
 	for _, tt := range invalid {

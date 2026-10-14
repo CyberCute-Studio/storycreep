@@ -114,6 +114,9 @@ func canonicalHost(host string) (string, string) {
 			return "", "must not have an IPv6 zone"
 		case addr.Is4In6():
 			return "", "must not be an IPv4-mapped IPv6 address; use the IPv4 address"
+		case addr.IsUnspecified():
+			return "", "must not be 0.0.0.0 or ::, which a server listens on but browsers cannot open; " +
+				"write the host name or IP address users open"
 		}
 		return addr.String(), ""
 	}
