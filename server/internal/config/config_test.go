@@ -82,6 +82,15 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+// TestEffectiveValue checks that the entries show the public URL as the
+// server uses it, not as it was written.
+func TestEffectiveValue(t *testing.T) {
+	c := mustLoad(t, map[string]string{"STORYCREEP_PUBLIC_URL": "HTTPS://Storycreep.Example.COM:443/"})
+	if e := entry(t, c, "STORYCREEP_PUBLIC_URL"); e.Value != testURL {
+		t.Errorf("entry value = %q, want %q", e.Value, testURL)
+	}
+}
+
 // TestCapabilities checks the table of PRD §10.3 and how the keys refine it.
 func TestCapabilities(t *testing.T) {
 	tests := []struct {
@@ -215,6 +224,45 @@ func TestEveryProblemIsReported(t *testing.T) {
 	}
 }
 
+// TestCredentialsInPublicURL covers NFR-SEC-14: a public URL that carries a
+// password is rejected without repeating the password.
+func TestCredentialsInPublicURL(t *testing.T) {
+	const password = "pw-s3cr3t"
+	for _, v := range []string{
+		"https://admin:" + password + "@storycreep.example.com",
+		"https://admin:" + password + " x@storycreep.example.com",
+		"https://admin:%zz" + password + "@storycreep.example.com",
+		"https://" + password + "@storycreep.example.com/path",
+		"ftp://admin:" + password + "@storycreep.example.com",
+		"admin:" + password + "@storycreep.example.com",
+	} {
+		problems := loadProblems(t, Options{Env: MapEnvironment(map[string]string{"STORYCREEP_PUBLIC_URL": v})})
+		if len(problems) != 1 || problems[0].Key != "STORYCREEP_PUBLIC_URL" {
+			t.Errorf("%q: problems = %v, want one for STORYCREEP_PUBLIC_URL", v, problems)
+			continue
+		}
+		if msg := problems[0].String(); strings.Contains(msg, password) || strings.Contains(msg, "zz") {
+			t.Errorf("%q: the problem repeats the password: %s", v, msg)
+		}
+	}
+}
+
+// TestWarningsOnError checks that an invalid configuration keeps its
+// warnings, because a misspelt variable is often why a key is missing.
+func TestWarningsOnError(t *testing.T) {
+	_, err := Load(Options{Env: MapEnvironment(map[string]string{"STORYCREEP_PUBLIC_ULR": testURL})})
+	var cerr *Error
+	if !errors.As(err, &cerr) {
+		t.Fatalf("Load returned %v, want an *Error", err)
+	}
+	if len(cerr.Warnings) != 1 || !strings.HasPrefix(cerr.Warnings[0], "STORYCREEP_PUBLIC_ULR ") {
+		t.Errorf("warnings = %q, want one about STORYCREEP_PUBLIC_ULR", cerr.Warnings)
+	}
+	if strings.Contains(cerr.Error(), "STORYCREEP_PUBLIC_ULR") {
+		t.Errorf("Error() should list only the problems: %s", cerr)
+	}
+}
+
 func TestHostedRules(t *testing.T) {
 	tests := []struct {
 		name, key string
@@ -289,6 +337,11 @@ func TestKeyDeclarations(t *testing.T) {
 			t.Errorf("%s is required and has a default", k.name)
 		case k.required && k.example == "":
 			t.Errorf("%s is required but has no example for the error message", k.name)
+		case k.capability == "" && k.capabilityLimit != "":
+			t.Errorf("%s has a capabilityLimit but no capability", k.name)
+		}
+		if _, ok := reflect.TypeFor[Capabilities]().FieldByName(k.capability); k.capability != "" && !ok {
+			t.Errorf("%s changes %s, which is not a capability", k.name, k.capability)
 		}
 		seen[k.name] = true
 		if i == 0 && k.name != "STORYCREEP_MODE" {

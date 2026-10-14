@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -42,6 +43,11 @@ func TestParsePublicURL(t *testing.T) {
 		{"https:storycreep.example.com", "must start with http:// or https://"},
 		{"ftp://storycreep.example.com", "the scheme must be http or https"},
 		{"https://user:pass@storycreep.example.com", "must not contain a user name or password"},
+		{"https://user@storycreep.example.com", "must not contain a user name or password"},
+		{"https://user:pa ss@storycreep.example.com", "not a valid URL"},
+		{"ftp://user:pass@storycreep.example.com", "the scheme must be http or https"},
+		{"user:pass@storycreep.example.com", "must start with http:// or https://"},
+		{"https://storycreep.example.com/@x", "must not have a path"},
 		{"https://", "has no host name"},
 		{"https://:8443", "has no host name"},
 		{"https://example.com/storycreep", "must not have a path"},
@@ -62,6 +68,11 @@ func TestParsePublicURL(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%q: error %q, want %q", tt.in, err, tt.want)
+		}
+		// Only a value that may hold a password is hidden.
+		var hidden hiddenValueError
+		if got, want := errors.As(err, &hidden), strings.Contains(tt.in, "@"); got != want {
+			t.Errorf("%q: hidden = %v, want %v", tt.in, got, want)
 		}
 	}
 }

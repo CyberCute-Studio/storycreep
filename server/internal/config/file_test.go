@@ -95,6 +95,7 @@ func TestFileProblems(t *testing.T) {
 		"STORYCREEP_CONFIG_FILE=/etc/other.env",     // 8
 		"STORYCREEP_MODE=staging",                   // 9
 		"export STORYCREEP_SIGNUP=open",             // 10
+		"storycreep_signup=invite",                  // 11
 	}, "\n"))
 	problems := loadProblems(t, Options{File: path, Env: MapEnvironment(nil)})
 
@@ -108,6 +109,8 @@ func TestFileProblems(t *testing.T) {
 		{Source: at(7), Msg: "expected KEY=value"},
 		{Key: fileKey, Source: at(8), Msg: "names the configuration file, so it cannot be set inside it"},
 		{Source: at(10), Msg: "expected KEY=value"},
+		{Key: "storycreep_signup", Source: at(11),
+			Msg: "not a configuration key; key names are case-sensitive, did you mean STORYCREEP_SIGNUP?"},
 		{Key: "STORYCREEP_MODE", Source: at(9), Msg: `"staging": must be self-hosted or hosted`},
 	}
 	if !slices.Equal(problems, want) {
@@ -133,5 +136,43 @@ func TestUnreadableFile(t *testing.T) {
 		if len(problems) != 1 || problems[0].Key != tt.key || !strings.Contains(problems[0].Msg, "cannot read the configuration file") {
 			t.Errorf("problems = %v, want one naming %s", problems, tt.key)
 		}
+	}
+
+	// A required key may be set in the file that could not be read, and the
+	// problem says so.
+	problems := loadProblems(t, Options{File: missing, Env: MapEnvironment(nil)})
+	if len(problems) != 2 || problems[1].Key != "STORYCREEP_PUBLIC_URL" ||
+		!strings.Contains(problems[1].Msg, "the configuration file, which may set it, could not be read") {
+		t.Errorf("problems = %v, want the missing key to point at the unread file", problems)
+	}
+}
+
+// TestFileEncoding checks that a file that is not UTF-8 is reported as such,
+// instead of as a KEY=value error on every line.
+func TestFileEncoding(t *testing.T) {
+	utf16 := func(s string, bom bool) string {
+		var b []byte
+		if bom {
+			b = append(b, 0xFF, 0xFE)
+		}
+		for _, r := range s {
+			b = append(b, byte(r), 0)
+		}
+		return string(b)
+	}
+	line := "STORYCREEP_SIGNUP=invite\r\n"
+	for _, tt := range []struct{ name, content, want string }{
+		{"UTF-16 with a byte order mark", utf16(line, true), "it looks like UTF-16"},
+		{"UTF-16 without a byte order mark", utf16(line, false), "it looks like UTF-16"},
+		{"Latin-1", "STORYCREEP_SIGNUP=invit\xe9\n", "is not UTF-8 text"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeFile(t, tt.content)
+			problems := loadProblems(t, Options{File: path, Env: MapEnvironment(map[string]string{"STORYCREEP_PUBLIC_URL": testURL})})
+			if len(problems) != 1 || problems[0].Key != "--config" || problems[0].Source != path ||
+				!strings.Contains(problems[0].Msg, tt.want) || !strings.Contains(problems[0].Msg, "Save it as UTF-8") {
+				t.Errorf("problems = %v, want one saying %q", problems, tt.want)
+			}
+		})
 	}
 }

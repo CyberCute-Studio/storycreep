@@ -3,8 +3,11 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
+	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -60,6 +63,14 @@ func TestCommandHelp(t *testing.T) {
 			}
 		}
 	}
+
+	// help is listed as a command too, so it has its own help.
+	for _, args := range [][]string{{"help", "--help"}, {"help", "-h"}, {"help", "help"}} {
+		code, stdout, stderr := run(t, nil, args...)
+		if code != ExitOK || stderr != "" || !strings.HasPrefix(stdout, "Usage: storycreep help [command]\n") {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q; want %d and the help of help", args, code, stdout, stderr, ExitOK)
+		}
+	}
 }
 
 // TestUsageErrors covers FR-ADMIN-06/AC1 for exit statuses: a wrong command
@@ -76,6 +87,7 @@ func TestUsageErrors(t *testing.T) {
 		{[]string{"validate-config", "extra"}, `storycreep validate-config: unexpected argument "extra"`},
 		{[]string{"help", "nope"}, `storycreep help: unknown command "nope"`},
 		{[]string{"help", "a", "b"}, "storycreep help: expected at most one command name"},
+		{[]string{"help", "--nope"}, "storycreep help: unknown flag --nope"},
 	}
 	for _, tt := range tests {
 		// The configuration is invalid too: a usage error is reported first.
@@ -140,6 +152,64 @@ func TestInvalidConfigStopsCommands(t *testing.T) {
 	ran := fakeCommand(t)
 	if code, _, stderr := run(t, validEnv(), "fake"); code != ExitOK || !*ran {
 		t.Errorf("with a valid configuration: exit %d, ran %v, stderr %q", code, *ran, stderr)
+	}
+
+	// A misspelt variable explains a missing key, so its warning is shown
+	// with the problems.
+	code, _, stderr := run(t, map[string]string{"STORYCREEP_PUBLIC_ULR": testURL}, "fake")
+	if code != ExitFailure || !strings.Contains(stderr, "warning: STORYCREEP_PUBLIC_ULR is set in the environment") {
+		t.Errorf("exit %d, stderr %q; want %d and a warning about STORYCREEP_PUBLIC_ULR", code, stderr, ExitFailure)
+	}
+}
+
+// TestFrame covers the parts of the frame that later commands use: their own
+// flags, positional arguments, and the exit status of a returned error.
+func TestFrame(t *testing.T) {
+	saved := commands
+	t.Cleanup(func() { commands = saved })
+	var got []string
+	commands = []*command{{
+		name:    "greet",
+		summary: "Greet someone",
+		args:    "<name>",
+		help:    "Greets someone.",
+		flags: func(fs *flag.FlagSet) {
+			fs.Bool("loud", false, "greet loudly")
+		},
+		run: func(ctx context.Context, inv *invocation) error {
+			got = inv.args
+			switch {
+			case len(inv.args) != 1:
+				return usageError{"expected one name"}
+			case inv.args[0] == "nobody":
+				return errors.New("there is nobody to greet")
+			}
+			return nil
+		},
+	}}
+
+	tests := []struct {
+		args   []string
+		code   int
+		stderr string
+	}{
+		{[]string{"greet", "--loud", "ada"}, ExitOK, ""},
+		{[]string{"greet"}, ExitUsage, "storycreep greet: expected one name\nRun 'storycreep greet --help' for usage.\n"},
+		{[]string{"greet", "nobody"}, ExitFailure, "storycreep greet: there is nobody to greet\n"},
+	}
+	for _, tt := range tests {
+		code, _, stderr := run(t, nil, tt.args...)
+		if code != tt.code || stderr != tt.stderr {
+			t.Errorf("%v: exit %d, stderr %q; want %d and %q", tt.args, code, stderr, tt.code, tt.stderr)
+		}
+	}
+	if !slices.Equal(got, []string{"nobody"}) {
+		t.Errorf("the command ran with %q, want the last arguments", got)
+	}
+
+	code, stdout, _ := run(t, nil, "greet", "--help")
+	if code != ExitOK || !strings.HasPrefix(stdout, "Usage: storycreep greet [flags] <name>\n") || !strings.Contains(stdout, "-loud") {
+		t.Errorf("help: exit %d, stdout %q; want the synopsis and the -loud flag", code, stdout)
 	}
 }
 

@@ -87,11 +87,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, env confi
 		printUsage(stderr)
 		return ExitUsage
 	}
-	switch name := args[0]; name {
-	case "-h", "-help", "--help":
+	switch name := args[0]; {
+	case isHelpFlag(name):
 		printUsage(stdout)
 		return ExitOK
-	case "help":
+	case name == "help":
 		return help(args[1:], stdout, stderr)
 	default:
 		c := lookup(name)
@@ -105,12 +105,30 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, env confi
 	}
 }
 
+// isHelpFlag reports whether arg asks for help.
+func isHelpFlag(arg string) bool {
+	return arg == "-h" || arg == "-help" || arg == "--help"
+}
+
+// helpHelp is the help of the help command.
+const helpHelp = `Usage: storycreep help [command]
+
+Shows the list of commands, or the help of one command.
+`
+
 func help(args []string, stdout, stderr io.Writer) int {
 	switch len(args) {
 	case 0:
 		printUsage(stdout)
 		return ExitOK
 	case 1:
+		if isHelpFlag(args[0]) || args[0] == "help" {
+			fmt.Fprint(stdout, helpHelp)
+			return ExitOK
+		}
+		if strings.HasPrefix(args[0], "-") {
+			return usageFailure(stderr, "help", fmt.Sprintf("unknown flag %s", args[0]))
+		}
 		c := lookup(args[0])
 		if c == nil {
 			return usageFailure(stderr, "help", fmt.Sprintf("unknown command %q", args[0]))
@@ -156,9 +174,7 @@ func (c *command) execute(ctx context.Context, args []string, stdout, stderr io.
 			printConfigError(stderr, c.name, err)
 			return ExitFailure
 		}
-		for _, w := range cfg.Warnings() {
-			fmt.Fprintf(stderr, "storycreep %s: warning: %s\n", c.name, w)
-		}
+		printWarnings(stderr, c.name, cfg.Warnings())
 		inv.cfg = cfg
 	}
 
@@ -173,12 +189,22 @@ func (c *command) execute(ctx context.Context, args []string, stdout, stderr io.
 	return ExitOK
 }
 
+func printWarnings(w io.Writer, name string, warnings []string) {
+	for _, msg := range warnings {
+		fmt.Fprintf(w, "storycreep %s: warning: %s\n", name, msg)
+	}
+}
+
+// printConfigError reports an invalid configuration. The warnings come
+// first, because they often explain a problem: a misspelt variable is what
+// leaves a required key unset.
 func printConfigError(w io.Writer, name string, err error) {
 	var cerr *config.Error
 	if !errors.As(err, &cerr) {
 		fmt.Fprintf(w, "storycreep %s: %v\n", name, err)
 		return
 	}
+	printWarnings(w, name, cerr.Warnings)
 	fmt.Fprintf(w, "storycreep %s: the configuration is invalid:\n", name)
 	for _, p := range cerr.Problems {
 		fmt.Fprintf(w, "  %s\n", p)

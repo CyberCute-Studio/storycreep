@@ -99,6 +99,9 @@ func (h *handler) Handle(ctx context.Context, r slog.Record) error {
 		return h.h.Handle(ctx, r)
 	}
 	if len(h.derivations) == 0 {
+		// r may share its attributes with a copy held by the caller, such as
+		// a handler that passes one record to several handlers.
+		r = r.Clone()
 		r.AddAttrs(as...)
 		return h.h.Handle(ctx, r)
 	}

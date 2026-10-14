@@ -32,9 +32,24 @@ func (u PublicURL) URL() *url.URL {
 	return &url.URL{Scheme: u.scheme, Host: u.host}
 }
 
+// parsePublicURL parses v. A value with an @ is never valid, and text in front
+// of the @ may be a password, so the error for such a value quotes none of it
+// and is a hiddenValueError, which Load does not quote v after either.
 func parsePublicURL(v string) (PublicURL, error) {
+	u, err := parseOrigin(v)
+	if err != nil && strings.Contains(v, "@") {
+		err = hiddenValueError{err}
+	}
+	return u, err
+}
+
+func parseOrigin(v string) (PublicURL, error) {
 	u, err := url.Parse(v)
 	if err != nil {
+		if strings.Contains(v, "@") {
+			// The parser's explanation can quote part of a password.
+			return PublicURL{}, errors.New("not a valid URL")
+		}
 		var uerr *url.Error
 		if errors.As(err, &uerr) {
 			err = uerr.Err

@@ -1,9 +1,6 @@
 package config
 
-import (
-	"errors"
-	"log/slog"
-)
+import "errors"
 
 // fileKey names the configuration file. It is read from the environment only,
 // before the file, so it is not one of the keys below.
@@ -32,8 +29,15 @@ type key struct {
 	def func(m mode) string
 	// parse stores a value in c, or explains why it is invalid. The value is
 	// never empty. The explanation must not repeat the value: Load adds it
-	// for keys that are not secret.
+	// for keys that are not secret, unless the error is a hiddenValueError.
 	parse func(c *Config, v string) error
+	// effective returns the value in effect, for display, when parse
+	// normalizes it. Without it, the value is shown as it was set.
+	effective func(c *Config) string
+	// capability names the field of Capabilities that the key changes, if
+	// it changes one, and capabilityLimit says when it can, such as
+	// "self-hosted only". The reference's capability table shows both.
+	capability, capabilityLimit string
 }
 
 func constant(v string) func(mode) string {
@@ -49,13 +53,6 @@ const (
 	modeSelfHosted mode = "self-hosted"
 	modeHosted     mode = "hosted"
 )
-
-var logLevels = map[string]slog.Level{
-	"debug": slog.LevelDebug,
-	"info":  slog.LevelInfo,
-	"warn":  slog.LevelWarn,
-	"error": slog.LevelError,
-}
 
 // keys are the configuration keys, in the order of the reference.
 var keys = []key{
@@ -90,6 +87,7 @@ var keys = []key{
 			c.PublicURL = u
 			return nil
 		},
+		effective: func(c *Config) string { return c.PublicURL.String() },
 	},
 	{
 		name:   "STORYCREEP_PUBLIC_SITE",
@@ -100,6 +98,7 @@ var keys = []key{
 			c.Capabilities.PublicSite = v == "on"
 			return nil
 		},
+		capability: "PublicSite",
 	},
 	{
 		name: "STORYCREEP_SIGNUP",
@@ -114,15 +113,17 @@ var keys = []key{
 			c.Capabilities.Signup = SignupPolicy(v)
 			return nil
 		},
+		capability:      "Signup",
+		capabilityLimit: "self-hosted only",
 	},
 	{
 		name:   "STORYCREEP_LOG_LEVEL",
 		doc:    "The lowest level that is logged.",
 		values: []string{"debug", "info", "warn", "error"},
 		def:    constant("info"),
+		// slog.Level reads the names in any case; values admits only these.
 		parse: func(c *Config, v string) error {
-			c.LogLevel = logLevels[v]
-			return nil
+			return c.LogLevel.UnmarshalText([]byte(v))
 		},
 	},
 }

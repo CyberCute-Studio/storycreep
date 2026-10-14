@@ -31,9 +31,8 @@ below is reported as a warning and otherwise ignored.
 ## The configuration file
 
 The file is optional. Name it with `--config <path>` or with the
-`STORYCREEP_CONFIG_FILE` environment variable; the flag wins. It holds
-`KEY=value` lines with the key names below, the format of Docker's
-`env_file` and systemd's `EnvironmentFile`:
+`STORYCREEP_CONFIG_FILE` environment variable; the flag wins. It is UTF-8
+text of `KEY=value` lines with the key names below:
 
 ```sh
 # /etc/storycreep/storycreep.env
@@ -44,9 +43,15 @@ STORYCREEP_SIGNUP=invite
 - Blank lines and lines starting with `#` are ignored.
 - Whitespace around the key and the value is ignored.
 - A value wrapped in a matching pair of `"` or `'` is unwrapped.
-  Nothing else is unescaped, and a `#` after a value is part of the value.
+- Nothing is unescaped or expanded, and a `#` after a value is part of
+  the value.
 - Every key must be one of the keys below and appear at most once.
   `STORYCREEP_CONFIG_FILE` cannot be set in the file.
+
+This format is simpler than the environment files of Docker Compose
+(`env_file`) and systemd (`EnvironmentFile`). A file written for either is
+read the same way here only if it has no comment after a value, no escape
+sequence, and no variable reference such as `${HOME}`.
 
 ## Keys
 

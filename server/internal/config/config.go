@@ -136,6 +136,10 @@ func (e Environment) get(name string) string {
 // Error reports every problem in a configuration.
 type Error struct {
 	Problems []Problem
+	// Warnings are the warnings a valid configuration would have had, as
+	// Config.Warnings. They often explain a problem: a misspelt variable
+	// is what leaves a required key unset.
+	Warnings []string
 }
 
 func (e *Error) Error() string {
@@ -187,11 +191,15 @@ func load(keys []key, opts Options) (*Config, error) {
 		path, pathKey = env.get(fileKey), fileKey
 	}
 	var file map[string]fileValue
+	// fileUnread is set when the file was named but could not be read, so
+	// that a key reported missing may in fact be set in it.
+	fileUnread := false
 	if path != "" {
 		c.file = path
 		var fileProblems []Problem
 		file, fileProblems = readFile(path, pathKey, keys)
 		problems = append(problems, fileProblems...)
+		fileUnread = file == nil
 	}
 
 	for _, k := range keys {
@@ -206,31 +214,40 @@ func load(keys []key, opts Options) (*Config, error) {
 		}
 		if v == "" {
 			if k.required {
-				problems = append(problems, Problem{Key: k.name, Msg: k.missingMessage()})
+				problems = append(problems, Problem{Key: k.name, Msg: k.missingMessage(fileUnread)})
 			}
 			c.entries = append(c.entries, Entry{Key: k.name, Source: SourceUnset})
 			continue
 		}
 		if err := k.set(c, v); err != nil {
 			msg := err.Error()
-			if !k.secret {
+			var hidden hiddenValueError
+			if !k.secret && !errors.As(err, &hidden) {
 				msg = fmt.Sprintf("%q: %s", v, msg)
 			}
 			problems = append(problems, Problem{Key: k.name, Source: source, Msg: msg})
 			continue
 		}
-		if k.secret {
+		switch {
+		case k.secret:
 			v = secret.Redacted
+		case k.effective != nil:
+			v = k.effective(c)
 		}
 		c.entries = append(c.entries, Entry{Key: k.name, Value: v, Source: source})
 	}
 	c.warnings = unknownVariables(env, keys)
 
 	if len(problems) > 0 {
-		return nil, &Error{Problems: problems}
+		return nil, &Error{Problems: problems, Warnings: c.warnings}
 	}
 	return c, nil
 }
+
+// hiddenValueError is a parse error after which Load does not repeat the
+// value, because the value may hold a credential, such as a password in a
+// URL, although the key is not secret.
+type hiddenValueError struct{ error }
 
 // set validates v, which is not empty, and stores it in c.
 func (k key) set(c *Config, v string) error {
@@ -240,11 +257,15 @@ func (k key) set(c *Config, v string) error {
 	return k.parse(c, v)
 }
 
-func (k key) missingMessage() string {
-	if k.example != "" {
-		return fmt.Sprintf("required, but not set; set it to a value such as %s", k.example)
+func (k key) missingMessage(fileUnread bool) string {
+	msg := "required, but not set"
+	if fileUnread {
+		msg += " (the configuration file, which may set it, could not be read)"
 	}
-	return "required, but not set"
+	if k.example != "" {
+		msg += "; set it to a value such as " + k.example
+	}
+	return msg
 }
 
 // unknownVariables warns about environment variables that look like
