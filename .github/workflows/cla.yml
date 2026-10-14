@@ -1,0 +1,52 @@
+name: CLA
+
+# CLA Assistant Lite (CONTRIBUTING.md). Contributors sign by commenting on
+# their pull request; signatures are committed to the unprotected
+# `cla-signatures` branch.
+#
+# pull_request_target runs this workflow from the base branch with a write
+# token, so it must never check out or run code from the pull request. The
+# action only reads pull request metadata and comments.
+
+on:
+  issue_comment:
+    types: [created]
+  # No "closed": that event only locks merged pull requests, which is turned
+  # off below.
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+# Signatures are appended to one file, so runs must not race each other.
+concurrency:
+  group: cla
+  cancel-in-progress: false
+
+jobs:
+  cla:
+    name: CLA signed
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request &&
+        (github.event.comment.body == 'recheck' ||
+          github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'))
+    runs-on: ubuntu-latest
+    steps:
+      # The upstream repository was archived in 2026, so the action is pinned
+      # to the commit of its last release.
+      - uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-document: https://github.com/CyberCute-Studio/storycreep/blob/main/CLA.md
+          path-to-signatures: signatures/version1/cla.json
+          branch: cla-signatures
+          allowlist: kareltilcer,dependabot[bot],github-actions[bot]
+          # The signature is recorded in the branch, so merged pull requests
+          # do not need locking to preserve the signing comment.
+          lock-pullrequest-aftermerge: false
