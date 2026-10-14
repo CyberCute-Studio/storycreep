@@ -54,7 +54,7 @@ var (
 	dependsFieldRE = regexp.MustCompile(`\*\*Depends on:\*\*\s*(.*?)\s*$`)
 	frIDRE         = regexp.MustCompile(`^FR-[A-Z0-9]+-\d+$`)
 	scopeLineRE    = regexp.MustCompile(`^\*\*([^*]+?)\.\*\*\s*(.*)$`)
-	perfRefRE      = regexp.MustCompile(`NFR-PERF-\d+(?:\s*(?:…|\.\.)\s*\d+)?`)
+	perfRefRE      = regexp.MustCompile(`NFR-PERF-\d+` + idListTail)
 )
 
 func parsePRD(file, src string, r *reporter) *prd {

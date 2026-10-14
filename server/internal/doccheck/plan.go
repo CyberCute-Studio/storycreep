@@ -56,10 +56,11 @@ var (
 	parenRE        = regexp.MustCompile(`\(([^)]*)\)`)
 
 	// The requirement references of a **PRD:** line, in the compact forms
-	// the plan uses: "FR-TEN-02/03/04" and "NFR-SEO-01..06" name three and six
-	// IDs. The leading group keeps "NFR-…" from matching as "FR-…".
-	frRefRE  = regexp.MustCompile(`(?:^|[^A-Za-z0-9-])(FR-[A-Z0-9]+-\d+(?:/\d+)*(?:\s*(?:…|\.\.)\s*\d+)?)`)
-	nfrRefRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9-])(NFR-[A-Z0-9]+-\d+(?:/\d+)*(?:\s*(?:…|\.\.)\s*\d+)?)`)
+	// the documents use: "FR-TEN-02/03/04", "NFR-PERF-07, 09, 10", and
+	// "NFR-SEO-01..06" name three, three, and six IDs. The leading group keeps
+	// "NFR-…" from matching as "FR-…".
+	frRefRE  = regexp.MustCompile(`(?:^|[^A-Za-z0-9-])(FR-[A-Z0-9]+-\d+` + idListTail + `)`)
+	nfrRefRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9-])(NFR-[A-Z0-9]+-\d+` + idListTail + `)`)
 	adrRefRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9-])(ADR-\d+)`)
 	v1RefRE  = regexp.MustCompile(`§12\.2\s+"([^"]+)"`)
 )
@@ -351,7 +352,7 @@ func (pl *plan) coverageKeys(p *prd, it *item, r *reporter) []string {
 func (pl *plan) expandRefs(re *regexp.Regexp, text string, it *item, r *reporter) []string {
 	var ids []string
 	for _, m := range re.FindAllStringSubmatch(text, -1) {
-		expanded, err := expandIDs(strings.ReplaceAll(m[1], "/", ", "))
+		expanded, err := expandIDs(m[1])
 		if err != nil {
 			r.add(pl.file, it.prdLine, "item %s: %v", it.num, err)
 			continue

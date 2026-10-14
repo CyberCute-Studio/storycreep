@@ -45,8 +45,9 @@ These are the checks CI runs. Run them before you push.
 | `pnpm check` | Biome lint and format for the web packages and root configuration. `pnpm fix` applies the fixes. |
 | `pnpm typecheck` | TypeScript in every web package that has a `typecheck` script. |
 | `pnpm test` | Tests in every web package that has a `test` script. |
-| `go vet ./...` and `go test ./...` in `server/` | The Go module. Format Go code with `gofmt`. |
+| `gofmt -l .`, `go vet ./...`, and `go test ./...` in `server/` | The Go module. `gofmt -l .` must print nothing; `gofmt -w .` formats the code. |
 | `pnpm docs:check` | The PRD dependency graph and the plan's ordering, coverage, and reference rules. |
+| `pnpm audit --audit-level high`, and `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...` in `server/` | Known vulnerabilities in the dependencies. CI runs these in a separate job, on every pull request and weekly. |
 
 `pnpm docs:check` runs `go run ./cmd/doccheck` in `server/`. It reports every problem as `file:line: message`.
 

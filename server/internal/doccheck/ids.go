@@ -7,19 +7,25 @@ import (
 	"strings"
 )
 
+// idListTail matches what may follow the first ID of a compact list in prose:
+// more numbers after "/" or ",", and ranges. Appended to a pattern for the
+// first ID, it matches the whole list, which expandIDs then reads.
+const idListTail = `(?:(?:/|\s*,\s*)\d+\b|\s*(?:…|\.\.|–)\s*\d+)*`
+
 var (
-	fullIDTokenRE = regexp.MustCompile(`^([A-Z]+-[A-Z0-9]+)-(\d+)(?:\s*(?:…|\.\.)\s*(\d+))?$`)
-	bareIDTokenRE = regexp.MustCompile(`^(\d+)(?:\s*(?:…|\.\.)\s*(\d+))?$`)
+	fullIDTokenRE = regexp.MustCompile(`^([A-Z]+-[A-Z0-9]+)-(\d+)(?:\s*(?:…|\.\.|–)\s*(\d+))?$`)
+	bareIDTokenRE = regexp.MustCompile(`^(\d+)(?:\s*(?:…|\.\.|–)\s*(\d+))?$`)
 )
 
 // expandIDs expands a compact list of requirement IDs as the documents write
 // them: "FR-TEN-01…05, 07" is FR-TEN-01 to FR-TEN-05 plus FR-TEN-07, and
-// "NFR-PERF-01, 02, 18" is three IDs. A bare number continues the prefix of
-// the entry before it, and a range is written with "…" or "..".
+// "NFR-PERF-01, 02, 18" and "FR-TEN-02/03/04" are three IDs each. A bare
+// number continues the prefix of the entry before it, and a range is written
+// with "…", "..", or "–".
 func expandIDs(s string) ([]string, error) {
 	var ids []string
 	prefix := ""
-	for _, tok := range strings.Split(s, ",") {
+	for _, tok := range strings.Split(strings.ReplaceAll(s, "/", ","), ",") {
 		tok = strings.TrimSpace(tok)
 		var from, to string
 		if m := fullIDTokenRE.FindStringSubmatch(tok); m != nil {

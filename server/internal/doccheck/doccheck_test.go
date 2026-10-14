@@ -107,6 +107,30 @@ func TestCheckFails(t *testing.T) {
 			file: "PRD.md",
 			want: "the §12.1 exit criteria name no NFR-PERF targets",
 		},
+		{
+			name: "exit criteria naming an unknown target in a comma list",
+			prd:  []edit{{"NFR-PERF-01…02 met", "NFR-PERF-01, 02, 04 met"}},
+			file: "PRD.md",
+			want: "the §12.1 exit criteria name NFR-PERF-04, which is not defined",
+		},
+		{
+			name: "Appendix B listing an unknown ID",
+			prd:  []edit{{"**Hosted SaaS.** FR-B-02", "**Hosted SaaS.** FR-B-02, 03"}},
+			file: "PRD.md",
+			want: "Appendix B lists FR-B-03, which is not a requirement of this PRD",
+		},
+		{
+			name: "Appendix B listing a requirement under two phases",
+			prd:  []edit{{"**v1.** FR-B-01", "**v1.** FR-B-01 · FR-A-03"}},
+			file: "PRD.md",
+			want: "Appendix B lists FR-A-03 under both MVP and v1",
+		},
+		{
+			name: "unknown Phase field",
+			prd:  []edit{{"**Phase:** SaaS · **Depends on:** FR-B-01", "**Phase:** Hosted · **Depends on:** FR-B-01"}},
+			file: "PRD.md",
+			want: `FR-B-02 has unknown phase "Hosted"`,
+		},
 
 		// Plan rule 1.
 		{
@@ -160,6 +184,18 @@ func TestCheckFails(t *testing.T) {
 			want: `coverage matrix row FR-A-01 lists "1", but the items' PRD lines give "1, 2"`,
 		},
 		{
+			name: "matrix row missing an item that names it in a comma list",
+			plan: []edit{{"**PRD:** FR-A-02\n", "**PRD:** FR-A-02, 03\n"}},
+			file: "PLAN.md",
+			want: `coverage matrix row FR-A-03 lists "4 (5)", but the items' PRD lines give "2a, 4 (5)"`,
+		},
+		{
+			name: "matrix row missing an item that names it in a range",
+			plan: []edit{{"**PRD:** FR-A-02\n", "**PRD:** FR-A-02–03\n"}},
+			file: "PLAN.md",
+			want: `coverage matrix row FR-A-03 lists "4 (5)", but the items' PRD lines give "2a, 4 (5)"`,
+		},
+		{
 			name: "later-phase item not in parentheses",
 			plan: []edit{{"| FR-A-03 | 4 (5) | 4 |", "| FR-A-03 | 4, 5 | 5 |"}},
 			file: "PLAN.md",
@@ -203,6 +239,12 @@ func TestCheckFails(t *testing.T) {
 			plan: []edit{{"NFR-A11Y-01/02", "NFR-A11Y-01/03"}},
 			file: "PLAN.md",
 			want: "item 1 names NFR-A11Y-03, which is not a requirement of the PRD",
+		},
+		{
+			name: "PRD line naming an unknown NFR in a comma list",
+			plan: []edit{{"NFR-PERF-01..02", "NFR-PERF-01, 04"}},
+			file: "PLAN.md",
+			want: "item 4 names NFR-PERF-04, which is not a requirement of the PRD",
 		},
 		{
 			name: "PRD line naming an unknown ADR",
@@ -293,6 +335,18 @@ func TestCheckFails(t *testing.T) {
 			want: `item 2a has unknown status "pending"`,
 		},
 		{
+			name: "item outside a phase",
+			plan: []edit{{"## Phase 0 — MVP\n", "## Foundation\n"}},
+			file: "PLAN.md",
+			want: `item 1 is not under a "## Phase N — …" heading`,
+		},
+		{
+			name: "unknown plan phase",
+			plan: []edit{{"## Phase 1 — v1\n", "## Phase 1 — Polish\n"}},
+			file: "PLAN.md",
+			want: `unknown phase "Polish"`,
+		},
+		{
 			name: "duplicate item number",
 			plan: []edit{{"### 2a. Inserted", "### 2. Inserted"}},
 			file: "PLAN.md",
@@ -366,6 +420,7 @@ func TestExpandIDs(t *testing.T) {
 		{"NFR-PERF-01, 02, 18", []string{"NFR-PERF-01", "NFR-PERF-02", "NFR-PERF-18"}},
 		{"NFR-SEO-01..03", []string{"NFR-SEO-01", "NFR-SEO-02", "NFR-SEO-03"}},
 		{"NFR-A11Y-03, FR-RT-01", []string{"NFR-A11Y-03", "FR-RT-01"}},
+		{"FR-TEN-02/03, 05–06", []string{"FR-TEN-02", "FR-TEN-03", "FR-TEN-05", "FR-TEN-06"}},
 	}
 	for _, tt := range tests {
 		got, err := expandIDs(tt.list)
