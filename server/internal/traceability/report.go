@@ -9,10 +9,10 @@
 //	func TestMoveNode(t *testing.T) {
 //
 // The same comment tags a Go subtest (t.Run with a literal name), a Vitest or
-// Playwright test (test, it, describe, or bench with a literal title), and a
-// GUT test (func test_…, with "#" comments). A criterion counts as verified
-// when a test names it that is not declared with skip, todo, fixme, or fail,
-// nor inside a group declared so.
+// Playwright test (test, it, describe, suite, or bench with a literal title),
+// and a GUT test (func test_…, with "#" comments). A criterion counts as
+// verified when a test names it that is not declared with skip, todo, fixme,
+// or fail, nor inside a group declared so.
 package traceability
 
 import (
@@ -129,11 +129,14 @@ func Build(prd doccheck.PRD, tests []Test, phase string) (*Report, []doccheck.Pr
 	slots := map[string]slot{}
 	reqs := map[string]bool{}
 	for i, req := range prd.Requirements {
+		// A requirement whose phase is unknown, which the PRD check reports,
+		// is in no phase's scope.
+		reqRank := slices.Index(phases, req.Phase)
 		entry := Requirement{
 			ID:       req.ID,
 			Title:    req.Title,
 			Phase:    req.Phase,
-			InScope:  rank >= 0 && slices.Index(phases, req.Phase) <= rank,
+			InScope:  reqRank >= 0 && reqRank <= rank,
 			Criteria: []Criterion{},
 		}
 		for j, c := range req.Criteria {

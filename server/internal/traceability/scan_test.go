@@ -89,6 +89,27 @@ func TestScanFile(t *testing.T) {
 			},
 		},
 		{
+			name: "nested Go subtests",
+			file: "x_test.go",
+			src: lines(
+				"func TestTable(t *testing.T) {",
+				`	t.Run("outer", func(t *testing.T) {`,
+				"\t\t// Verifies: FR-A-01/AC1",
+				`		t.Run("inner case", func(t *testing.T) {})`,
+				"\t})",
+				"\t// Verifies: FR-A-01/AC2",
+				`	t.Run("sibling", func(t *testing.T) {})`,
+				"}",
+				"// Verifies: NFR-PERF-01",
+				"func TestNext(t *testing.T) {}",
+			),
+			want: []Test{
+				{Line: 4, Name: "TestTable/outer/inner_case", Tags: tags(3, "FR-A-01/AC1")},
+				{Line: 7, Name: "TestTable/sibling", Tags: tags(6, "FR-A-01/AC2")},
+				{Line: 10, Name: "TestNext", Tags: tags(9, "NFR-PERF-01")},
+			},
+		},
+		{
 			name: "Go subtest outside a test function",
 			file: "x_test.go",
 			src: lines(
@@ -131,6 +152,35 @@ func TestScanFile(t *testing.T) {
 			problems: []string{
 				"x_test.go:1: a Verifies comment that is not directly above a test declaration",
 			},
+		},
+		{
+			name: "Verifies comment after the declaration",
+			file: "x_test.go",
+			src: lines(
+				"func TestX(t *testing.T) { // Verifies: FR-A-01/AC1",
+				"}",
+				"func TestY(t *testing.T) { // verifies FR-A-01/AC2",
+				"}",
+				"func TestZ(t *testing.T) { // A note, not a tag.",
+				"}",
+			),
+			problems: []string{
+				"x_test.go:1: a Verifies comment after the test declaration (write it on its own line directly above the test)",
+				"x_test.go:3: a Verifies comment after the test declaration (write it on its own line directly above the test)",
+			},
+		},
+		{
+			name: "Verifies list continued on the next line",
+			file: "x_test.go",
+			src: lines(
+				"// FR-A-02/AC2 is tested in y_test.go.",
+				"func TestW(t *testing.T) {}",
+				"// Verifies: FR-A-01/AC1, FR-A-01/AC2",
+				"// FR-A-02/AC1, NFR-PERF-01",
+				"func TestX(t *testing.T) {}",
+			),
+			want:     []Test{{Line: 5, Name: "TestX", Tags: tags(3, "FR-A-01/AC1", "FR-A-01/AC2")}},
+			problems: []string{`x_test.go:4: cannot read "FR-A-02/AC1, NFR-PERF-01" as a Verifies comment (write "Verifies:" and the IDs)`},
 		},
 		{
 			name: "requirement without an acceptance criterion",
@@ -253,6 +303,8 @@ func TestScanFile(t *testing.T) {
 				"// verifies: FR-A-01/AC1",
 				"// Verifies FR-A-01/AC2",
 				"// Verified: NFR-PERF-01",
+				"// Verifies — FR-A-01/AC1",
+				"// @verifies (NFR-PERF-01)",
 				"// Verifies that a moved node keeps its connections.",
 				"func TestX(t *testing.T) {}",
 			),
@@ -260,6 +312,8 @@ func TestScanFile(t *testing.T) {
 				`x_test.go:1: cannot read "verifies: FR-A-01/AC1" as a Verifies comment (write "Verifies:" and the IDs)`,
 				`x_test.go:2: cannot read "Verifies FR-A-01/AC2" as a Verifies comment (write "Verifies:" and the IDs)`,
 				`x_test.go:3: cannot read "Verified: NFR-PERF-01" as a Verifies comment (write "Verifies:" and the IDs)`,
+				`x_test.go:4: cannot read "Verifies — FR-A-01/AC1" as a Verifies comment (write "Verifies:" and the IDs)`,
+				`x_test.go:5: cannot read "@verifies (NFR-PERF-01)" as a Verifies comment (write "Verifies:" and the IDs)`,
 			},
 		},
 		{
@@ -357,6 +411,50 @@ func TestScanFile(t *testing.T) {
 			},
 		},
 		{
+			name: "template literal in a skipped group",
+			file: "x.test.ts",
+			src: lines(
+				`describe.skip("group", () => {`,
+				"  const src = `",
+				"text at the margin",
+				"`;",
+				"  // Verifies: FR-A-01/AC1",
+				`  it("inside", () => {});`,
+				"});",
+				"// Verifies: FR-A-01/AC2",
+				`it("after", () => {});`,
+			),
+			want: []Test{
+				{Line: 6, Name: "inside", Skipped: true, Tags: tags(5, "FR-A-01/AC1")},
+				{Line: 9, Name: "after", Tags: tags(8, "FR-A-01/AC2")},
+			},
+		},
+		{
+			name: "Vitest suite, which is describe",
+			file: "x.test.ts",
+			src: lines(
+				`suite.skip("group", () => {`,
+				"  // Verifies: FR-A-01/AC1",
+				`  it("inside", () => {});`,
+				"});",
+				"// Verifies: FR-A-01/AC2",
+				`suite("next", () => {});`,
+			),
+			want: []Test{
+				{Line: 3, Name: "inside", Skipped: true, Tags: tags(2, "FR-A-01/AC1")},
+				{Line: 6, Name: "next", Tags: tags(5, "FR-A-01/AC2")},
+			},
+		},
+		{
+			name: "Verifies comment after a Vitest declaration",
+			file: "x.test.ts",
+			src: lines(
+				`test("x // y", () => {}); // Verifies: FR-A-01/AC1`,
+				`it("loads https://example.com", () => {});`,
+			),
+			problems: []string{"x.test.ts:1: a Verifies comment after the test declaration (write it on its own line directly above the test)"},
+		},
+		{
 			name: "expected failures, hooks, and modifier chains",
 			file: "x.spec.ts",
 			src: lines(
@@ -449,6 +547,15 @@ func TestScanFile(t *testing.T) {
 			),
 			want:     []Test{{Line: 10, Name: "test_two", Tags: tags(9, "FR-A-01/AC2")}},
 			problems: []string{"test_x.gd:2: a Verifies comment in a block comment (write it as a # line comment directly above the test)"},
+		},
+		{
+			name: "Verifies comment after a GUT declaration",
+			file: "test_x.gd",
+			src: lines(
+				"func test_one(): # Verifies: FR-A-01/AC1",
+				"\tpass",
+			),
+			problems: []string{"test_x.gd:1: a Verifies comment after the test declaration (write it on its own line directly above the test)"},
 		},
 		{
 			name: "GUT helper that is not a test",

@@ -157,6 +157,24 @@ func TestCheckFails(t *testing.T) {
 			want: `FR-B-01: cannot read "It shines and still works." as an acceptance criterion`,
 		},
 		{
+			name: "inline acceptance criterion with an en dash",
+			prd:  []edit{{"AC2 — It still works.", "AC2 – It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "AC2 –" as an acceptance criterion (write "ACn — …")`,
+		},
+		{
+			name: "inline acceptance criterion with a colon",
+			prd:  []edit{{"AC2 — It still works.", "AC2: It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "AC2:" as an acceptance criterion`,
+		},
+		{
+			name: "inline acceptance criterion without a space after the dash",
+			prd:  []edit{{"AC2 — It still works.", "AC2 —It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "AC2 —" as an acceptance criterion`,
+		},
+		{
 			name: "acceptance criterion numbered from zero",
 			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC0 — It is hosted.\n"}},
 			file: "PRD.md",
@@ -592,6 +610,20 @@ func TestParsePRD(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ParsePRD =\n%+v\nwant\n%+v", got, want)
+	}
+
+	// A blank line, as in a loose list, or a criterion's text wrapped onto
+	// an indented line does not end the list.
+	loose := applyEdits(t, readFixture(t, "PRD.md"), []edit{{
+		"  - AC1 — It works too.\n",
+		"  - AC1 — It works\n    too.\n\n  - AC3 — It follows a blank line.\n",
+	}})
+	got, problems = ParsePRD("PRD.md", loose)
+	if len(problems) > 0 {
+		t.Fatalf("a loose list should pass, got:%s", formatProblems(problems))
+	}
+	if want := []string{"AC1", "AC2", "AC3"}; !slices.Equal(got.Requirements[1].Criteria, want) {
+		t.Errorf("FR-A-02 criteria in a loose list = %q, want %q", got.Requirements[1].Criteria, want)
 	}
 
 	_, problems = ParsePRD("PRD.md", applyEdits(t, readFixture(t, "PRD.md"), []edit{{"**Hosted SaaS.** FR-B-02", ""}}))

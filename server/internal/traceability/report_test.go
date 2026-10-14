@@ -168,6 +168,14 @@ func TestPhaseScope(t *testing.T) {
 			t.Errorf("phase %s: scope = %q, want %q", tt.phase, got, tt.scope)
 		}
 	}
+	// A requirement whose phase is unknown, which the PRD check reports, is
+	// in no phase's scope.
+	prd.Requirements = append(prd.Requirements, doccheck.Requirement{ID: "FR-D-01", Title: "Unplaced", Phase: "Beta", Criteria: []string{"AC1"}})
+	r, _ := Build(prd, nil, "Later")
+	if got := r.Requirements[len(r.Requirements)-1]; got.InScope || slices.Contains(r.Gaps, "FR-D-01/AC1") {
+		t.Errorf("a requirement with an unknown phase is in scope: %+v, gaps %q", got, r.Gaps)
+	}
+
 	if _, _, err := Generate(filepath.Join("testdata", "PRD.md"), filepath.Join("testdata", "repo"), "Beta"); err == nil || !strings.Contains(err.Error(), `unknown phase "Beta"`) {
 		t.Errorf("Generate with an unknown phase: err = %v", err)
 	}

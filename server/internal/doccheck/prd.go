@@ -73,6 +73,10 @@ var (
 	criterionBulletRE = regexp.MustCompile(`^\s+-\s+(.*)$`)
 	criterionRE       = regexp.MustCompile(`^AC([1-9]\d*) — `)
 	inlineCriterionRE = regexp.MustCompile(`(?:^|\s)AC([1-9]\d*) — `)
+	// inlineLabelRE finds what reads as a criterion's label in inline text,
+	// "AC2 — " or a misspelling such as "AC2 – ", "AC2 - ", or "AC2: ", but
+	// not a reference such as "FR-DATA-01 AC1, AC5".
+	inlineLabelRE = regexp.MustCompile(`(?:^|\s)(AC\d+\s*[-–—:]\s?)`)
 )
 
 func parsePRD(file, src string, r *reporter) *prd {
@@ -120,6 +124,11 @@ func (p *prd) parseRequirement(d *document, s section, id, title string, r *repo
 		if inCriteria {
 			if m := criterionBulletRE.FindStringSubmatch(l); m != nil {
 				req.addCriteria(p.file, n, m[1], false, r)
+				continue
+			}
+			// A blank line, as in a loose list, or an indented line that
+			// continues a criterion's text does not end the list.
+			if strings.TrimSpace(l) == "" || strings.TrimLeft(l, " \t") != l {
 				continue
 			}
 			inCriteria = false
@@ -174,7 +183,8 @@ func (p *prd) parseRequirement(d *document, s section, id, title string, r *repo
 
 // addCriteria reads the acceptance criteria in text: one indented bullet
 // ("AC1 — …"), or, when inline, the rest of the field's line ("AC1 — …
-// AC2 — …").
+// AC2 — …"). In inline text, a label that is not written "ACn — " is
+// reported, so that a criterion is never silently left out.
 func (req *requirement) addCriteria(file string, line int, text string, inline bool, r *reporter) {
 	if !criterionRE.MatchString(text) {
 		r.add(file, line, "%s: cannot read %q as an acceptance criterion (write \"ACn — …\")", req.id, text)
@@ -183,6 +193,11 @@ func (req *requirement) addCriteria(file string, line int, text string, inline b
 	re := criterionRE
 	if inline {
 		re = inlineCriterionRE
+		for _, m := range inlineLabelRE.FindAllStringSubmatch(text, -1) {
+			if !criterionRE.MatchString(m[1]) {
+				r.add(file, line, "%s: cannot read %q as an acceptance criterion (write \"ACn — …\")", req.id, strings.TrimSpace(m[1]))
+			}
+		}
 	}
 	for _, m := range re.FindAllStringSubmatch(text, -1) {
 		n, err := strconv.Atoi(m[1])
