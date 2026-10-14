@@ -3,7 +3,8 @@
 // (§4.0) and the plan's ordering, coverage, and reference rules.
 //
 // It prints each problem as "file:line: message" and exits with status 1 if
-// there is any. Run it from the server directory, or pass both paths.
+// there is any, or with status 2 if a document cannot be read. Run it from the
+// server directory, or pass both paths.
 package main
 
 import (

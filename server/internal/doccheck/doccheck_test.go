@@ -114,6 +114,12 @@ func TestCheckFails(t *testing.T) {
 			want: "the §12.1 exit criteria name NFR-PERF-04, which is not defined",
 		},
 		{
+			name: "exit criteria naming an unknown target in a list joined by and",
+			prd:  []edit{{"NFR-PERF-01…02 met", "NFR-PERF-01, 02, and 04 met"}},
+			file: "PRD.md",
+			want: "the §12.1 exit criteria name NFR-PERF-04, which is not defined",
+		},
+		{
 			name: "exit criteria with a range written with three dots",
 			prd:  []edit{{"NFR-PERF-01…02 met", "NFR-PERF-01...02 met"}},
 			file: "PRD.md",
@@ -143,6 +149,18 @@ func TestCheckFails(t *testing.T) {
 			file: "PRD.md",
 			want: `FR-B-02 has unknown phase "Hosted"`,
 		},
+		{
+			name: "Appendix B with an unknown phase",
+			prd:  []edit{{"**Hosted SaaS.** FR-B-02", "**Hosted.** FR-B-02"}},
+			file: "PRD.md",
+			want: `Appendix B: unknown phase "Hosted"`,
+		},
+		{
+			name: "Appendix B with an entry that is not a requirement ID",
+			prd:  []edit{{"**v1.** FR-B-01", "**v1.** FR-B-01 · keyboard remapping"}},
+			file: "PRD.md",
+			want: `Appendix B: "keyboard remapping" is not a requirement ID`,
+		},
 
 		// Plan rule 1.
 		{
@@ -162,6 +180,12 @@ func TestCheckFails(t *testing.T) {
 			plan: []edit{{"**Depends on:** 1–4", "**Depends on:** 1–5"}},
 			file: "PLAN.md",
 			want: "item 5 depends on 1–5, which is not an earlier item (rule 1)",
+		},
+		{
+			name: "unreadable item dependency",
+			plan: []edit{{"**Status:** in progress · **Depends on:** 1", "**Status:** in progress · **Depends on:** 1 (the scaffold)"}},
+			file: "PLAN.md",
+			want: `item 2: cannot read "1 (the scaffold)" as an item number or range in its Depends on field`,
 		},
 
 		// Plan rule 3.
@@ -208,6 +232,12 @@ func TestCheckFails(t *testing.T) {
 			want: `coverage matrix row FR-A-03 lists "4 (5)", but the items' PRD lines give "2a, 4 (5)"`,
 		},
 		{
+			name: "matrix row missing an item that names it in a list joined by and",
+			plan: []edit{{"**PRD:** FR-A-02\n", "**PRD:** FR-A-02 and 03\n"}},
+			file: "PLAN.md",
+			want: `coverage matrix row FR-A-03 lists "4 (5)", but the items' PRD lines give "2a, 4 (5)"`,
+		},
+		{
 			name: "PRD line with a range written with three dots",
 			plan: []edit{{"**PRD:** FR-A-02\n", "**PRD:** FR-A-02...03\n"}},
 			file: "PLAN.md",
@@ -230,6 +260,18 @@ func TestCheckFails(t *testing.T) {
 			plan: []edit{{"| FR-B-01 | 5 | 5 |\n", "| FR-B-01 | 5 | 5 |\n| FR-B-01 | 5 | 5 |\n"}},
 			file: "PLAN.md",
 			want: "the coverage matrix has a second row for FR-B-01",
+		},
+		{
+			name: "coverage matrix row with a missing cell",
+			plan: []edit{{"| FR-B-01 | 5 | 5 |\n", "| FR-B-01 | 5 |\n"}},
+			file: "PLAN.md",
+			want: "coverage matrix row has 2 cells, want 3",
+		},
+		{
+			name: "coverage matrix row with an unreadable Complete at",
+			plan: []edit{{"| FR-B-01 | 5 | 5 |\n", "| FR-B-01 | 5 | five |\n"}},
+			file: "PLAN.md",
+			want: `coverage matrix row FR-B-01: cannot read "five" as an item number`,
 		},
 		{
 			name: "PRD line checked without a coverage matrix",
@@ -354,6 +396,12 @@ func TestCheckFails(t *testing.T) {
 			want: "reference to item 3, which is dropped (rule 6)",
 		},
 		{
+			name: "text dependency on a dropped item",
+			plan: []edit{{"depends on 4 (the last MVP item)", "depends on 3 (the last MVP item)"}},
+			file: "PLAN.md",
+			want: "reference to item 3, which is dropped (rule 6)",
+		},
+		{
 			name: "text range written with to ending at a dropped item",
 			plan: []edit{{"the work of items 2–2a", "the work of items 1 to 3"}},
 			file: "PLAN.md",
@@ -388,6 +436,12 @@ func TestCheckFails(t *testing.T) {
 			plan: []edit{{"| Decided | 2, 4 |", "| Decided | 2, 7 |"}},
 			file: "PLAN.md",
 			want: "reference to item 7, which does not exist (rule 6)",
+		},
+		{
+			name: "unreadable alignment note",
+			plan: []edit{{"| Decided | 2, 4 |", "| Decided | 2, see N2 |"}},
+			file: "PLAN.md",
+			want: `alignment note: cannot read "see N2" as an item number or range in its Affects column`,
 		},
 		{
 			name: "text range running backwards",
@@ -432,6 +486,24 @@ func TestCheckFails(t *testing.T) {
 			plan: []edit{{"**PRD:** FR-A-02\n- Extends", "- Extends"}},
 			file: "PLAN.md",
 			want: `item 2a has no "**PRD:**" line`,
+		},
+		{
+			name: "item with a second PRD line",
+			plan: []edit{{"**PRD:** FR-A-02\n- Extends", "**PRD:** FR-A-02\n**PRD:** FR-A-03\n- Extends"}},
+			file: "PLAN.md",
+			want: `item 2a has a second "**PRD:**" line (first on line 40)`,
+		},
+		{
+			name: "item without a Status line",
+			plan: []edit{{"**Status:** todo · **Depends on:** 1–4\n", ""}},
+			file: "PLAN.md",
+			want: `item 5 has no "**Status:** … · **Depends on:** …" line`,
+		},
+		{
+			name: "item with a second Status line",
+			plan: []edit{{"**Status:** todo · **Depends on:** 1–4\n", "**Status:** todo · **Depends on:** 1–4\n**Status:** todo · **Depends on:** 1\n"}},
+			file: "PLAN.md",
+			want: `item 5 has a second "**Status:** … · **Depends on:** …" line`,
 		},
 	}
 	for _, tt := range tests {
@@ -487,6 +559,8 @@ func TestScanRefs(t *testing.T) {
 		{"Item 119, which makes a gap fail the build.", false, []string{"119"}},
 		{"The item-32 validator.", false, []string{"32"}},
 		{"Item 1's plan check.", false, []string{"1"}},
+		{"Each Phase 1 item depends on 119 (the MVP release).", false, []string{"119"}},
+		{"**Status:** todo · **Depends on:** 1, 2", false, nil},
 		{"The item 1st is not a reference.", false, nil},
 		{"A reference in code, `item 999`, is ignored.", false, nil},
 		{"Token management (26), import (84), and deletion (110).", true, []string{"26", "84", "110"}},
@@ -517,6 +591,8 @@ func TestExpandIDs(t *testing.T) {
 		{"NFR-SEO-01..03", []string{"NFR-SEO-01", "NFR-SEO-02", "NFR-SEO-03"}},
 		{"NFR-A11Y-03, FR-RT-01", []string{"NFR-A11Y-03", "FR-RT-01"}},
 		{"FR-TEN-02/03, 05–06", []string{"FR-TEN-02", "FR-TEN-03", "FR-TEN-05", "FR-TEN-06"}},
+		{"NFR-PERF-01, 02, and 18", []string{"NFR-PERF-01", "NFR-PERF-02", "NFR-PERF-18"}},
+		{"FR-TEN-01 and 03…04", []string{"FR-TEN-01", "FR-TEN-03", "FR-TEN-04"}},
 	}
 	for _, tt := range tests {
 		got, err := expandIDs(tt.list)
@@ -527,6 +603,7 @@ func TestExpandIDs(t *testing.T) {
 	for _, bad := range []string{
 		"07", "FR-TEN-05…01", "keyboard remapping", "FR-TEN-01, ",
 		"FR-TEN-01...05", "FR-TEN-01…FR-TEN-05", "FR-TEN-01 to 05", "FR-TEN-01-05",
+		"FR-TEN-01, and",
 	} {
 		if got, err := expandIDs(bad); err == nil {
 			t.Errorf("expandIDs(%q) = %q, want an error", bad, got)

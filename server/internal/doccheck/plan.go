@@ -128,11 +128,19 @@ func (pl *plan) parseItem(d *document, s section, phase string, r *reporter) {
 	pl.byNum[num] = it
 	for n := s.start; n < s.end; n++ {
 		l := d.line(n)
-		if m := prdFieldRE.FindStringSubmatch(l); m != nil && it.prdLine == 0 {
-			it.prd, it.prdLine = m[1], n
+		if m := prdFieldRE.FindStringSubmatch(l); m != nil {
+			if it.prdLine != 0 {
+				r.add(pl.file, n, "item %s has a second \"**PRD:**\" line (first on line %d)", num, it.prdLine)
+			} else {
+				it.prd, it.prdLine = m[1], n
+			}
 		}
 		m := statusFieldRE.FindStringSubmatch(l)
-		if m == nil || it.statusLine != 0 {
+		if m == nil {
+			continue
+		}
+		if it.statusLine != 0 {
+			r.add(pl.file, n, "item %s has a second \"**Status:** … · **Depends on:** …\" line (first on line %d)", num, it.statusLine)
 			continue
 		}
 		it.statusLine = n

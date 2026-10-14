@@ -8,12 +8,12 @@ import (
 )
 
 // idListTail matches what may follow the first ID of a compact list in prose:
-// more numbers after "/" or ",", and ranges. Appended to a pattern for the
-// first ID, it matches the whole list, which expandIDs then reads. It also
-// takes in range spellings that expandIDs rejects ("...", "-", "to", or a
-// second full ID), so such a list is reported instead of being read as its
-// first ID alone.
-const idListTail = `(?:(?:/|\s*,\s*)\d+\b|\s*(?:…|\.{2,}|–|-|\bto\b)\s*(?:[A-Z]+-[A-Z0-9]+-)?\d+)*`
+// more numbers after "/", ",", "and", or "or", and ranges. Appended to a
+// pattern for the first ID, it matches the whole list, which expandIDs then
+// reads. It also takes in range spellings that expandIDs rejects ("...", "-",
+// "to", or a second full ID), so such a list is reported instead of being read
+// as its first ID alone.
+const idListTail = `(?:(?:/|\s*,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+)\d+\b|\s*(?:…|\.{2,}|–|-|\bto\b)\s*(?:[A-Z]+-[A-Z0-9]+-)?\d+)*`
 
 var (
 	fullIDTokenRE = regexp.MustCompile(`^([A-Z]+-[A-Z0-9]+)-(\d+)(?:\s*(?:…|\.\.|–)\s*(\d+))?$`)
@@ -22,13 +22,14 @@ var (
 
 // expandIDs expands a compact list of requirement IDs as the documents write
 // them: "FR-TEN-01…05, 07" is FR-TEN-01 to FR-TEN-05 plus FR-TEN-07, and
-// "NFR-PERF-01, 02, 18" and "FR-TEN-02/03/04" are three IDs each. A bare
-// number continues the prefix of the entry before it, and a range is written
-// with "…", "..", or "–".
+// "NFR-PERF-01, 02, 18", "NFR-PERF-01, 02, and 18", and "FR-TEN-02/03/04" are
+// three IDs each. A bare number continues the prefix of the entry before it,
+// and a range is written with "…", "..", or "–".
 func expandIDs(s string) ([]string, error) {
 	var ids []string
 	prefix := ""
-	for _, tok := range strings.Split(strings.ReplaceAll(s, "/", ","), ",") {
+	s = strings.ReplaceAll(bareSepRE.ReplaceAllString(s, ","), "/", ",")
+	for _, tok := range strings.Split(s, ",") {
 		tok = strings.TrimSpace(tok)
 		var from, to string
 		if m := fullIDTokenRE.FindStringSubmatch(tok); m != nil {
@@ -127,16 +128,18 @@ func parseItems(s string, line int) ([]itemRef, error) {
 }
 
 var (
-	// itemWordRE finds the word that introduces item references in prose:
-	// "item 27", "Items 33–36", "items 16 to 26", "the item-32 validator".
-	itemWordRE = regexp.MustCompile(`\b[Ii]tems?[ -]`)
+	// itemWordRE finds the words that introduce item references in prose:
+	// "item 27", "Items 33–36", "items 16 to 26", "the item-32 validator",
+	// "depends on 119". A "Depends on:" field is not prose and does not match.
+	itemWordRE = regexp.MustCompile(`\b(?:[Ii]tems?[ -]|[Dd]epends?\s+on\s)`)
 	refHeadRE  = regexp.MustCompile(`^\s*(\d+[a-z]?)\b(?:(?:\s*[–-]\s*|\s+to\s+)(\d+[a-z]?)\b)?`)
 	remarkRE   = regexp.MustCompile(`^\s*\([^)]*\)`)
 	listSepRE  = regexp.MustCompile(`^(?:\s*,\s*(?:and\s+|or\s+)?|\s+and\s+|\s+or\s+)`)
 
 	// bareRefRE finds a parenthesised list of item numbers, which item text
 	// uses as a short reference: "token management (26)", "(80 and 83)".
-	// bareSepRE finds the separators that parseItems does not read.
+	// bareSepRE finds the "and" and "or" separators of a list, which
+	// parseItems and expandIDs read after replacing them with commas.
 	bareRefRE = regexp.MustCompile(`\((\s*\d+[a-z]?(?:\s*[–-]\s*\d+[a-z]?)?(?:(?:\s*,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+)\d+[a-z]?(?:\s*[–-]\s*\d+[a-z]?)?)*\s*)\)`)
 	bareSepRE = regexp.MustCompile(`\s*,?\s+(?:and|or)\s+`)
 )

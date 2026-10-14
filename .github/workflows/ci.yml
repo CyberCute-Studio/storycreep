@@ -14,8 +14,9 @@ permissions:
   contents: read
 
 # A new push to a pull request cancels its running checks. A run on main,
-# including the scheduled audit, is never cancelled once it starts; later runs
-# wait for it.
+# including the scheduled audit, is never cancelled once it starts. Later runs
+# queue behind it, and GitHub keeps only the newest queued run, which tests
+# everything the cancelled ones would have.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

@@ -51,6 +51,8 @@ A minimal plan in the shape of `docs/IMPLEMENTATION_PLAN.md`, consistent with `P
 
 ## Phase 1 — v1
 
+Each Phase 1 item depends on 4 (the last MVP item) as a phase gate.
+
 ### 5. Later
 **Status:** todo · **Depends on:** 1–4
 **PRD:** FR-B-01, FR-A-03 (extension), §12.2 "keyboard remapping"
