@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document version | 1.4 |
+| Document version | 1.5 |
 | Date | 2026-10-14 |
 | Status | Approved for implementation |
 | Product | Storycreep — branching narrative design tool for games |
@@ -60,9 +60,9 @@ Storycreep ships as an open-source, self-hostable application (one container ima
 | Narrative model with logic | FR-EDIT-*, FR-COMP-*, FR-VAR-*, FR-EXPR-* | ADR-014, ADR-020 |
 | Dependency visibility | FR-DEP-01…06 | ADR-004 |
 | Play mode / simulator | FR-PLAY-01…07 | ADR-014 |
-| Godot integration | FR-GODOT-01…10 | ADR-022 |
+| Godot integration | FR-GODOT-01…11 | ADR-022 |
 | Safe, versioned sync | FR-SNAP-*, FR-SYNC-* | ADR-015, ADR-016, ADR-025 |
-| Open data | FR-DATA-01…05, FR-API-01…06 | ADR-016, ADR-017 |
+| Open data | FR-DATA-01…05, FR-API-01…05 | ADR-016, ADR-017 |
 
 ---
 
@@ -139,9 +139,9 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 
 ### J4 — Publishing a snapshot
 
-1. Tomáš opens **Releases**, clicks **Publish**, and sees the validation report: 0 errors, 2 warnings (one variable written but never read). (FR-SNAP-02, FR-DEP-04)
-2. He writes a changelog note "Harbour intro + keeper gate", confirms the version number `1.4.0` proposed by the system, and publishes. (FR-SNAP-01)
-3. The snapshot is built asynchronously, becomes immutable, and appears in the list with author, timestamp, note, entity counts, and a download link. (FR-SNAP-01, FR-SNAP-03, FR-SNAP-05)
+1. Tomáš opens **Releases**, clicks **Publish**, and sees the validation report: 0 errors, 2 warnings (one variable written but never read). (FR-SNAP-01, FR-DEP-04)
+2. He writes a changelog note "Harbour intro + keeper gate", changes the proposed patch version `1.3.1` to `1.4.0` because the release adds a conversation, and publishes. (FR-SNAP-01)
+3. The snapshot is built asynchronously, becomes immutable, and appears in the list with author, timestamp, note, entity counts, and a download link. (FR-SNAP-01, FR-SNAP-02, FR-SNAP-03)
 4. He compares `1.4.0` with `1.3.0` in the web diff: 12 nodes added, 3 modified, 1 variable added. (FR-SNAP-04)
 
 ### J5 — Pulling into Godot and reviewing the diff
@@ -200,12 +200,13 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 
 #### FR-PUB-01 — Static marketing site
 - **Priority:** Must · **Phase:** MVP · **Depends on:** —
-- **Requirement:** A statically generated site serves `/` (what Storycreep is, the cross-conversation problem, feature overview with annotated screenshots), `/features`, `/self-hosting`, `/changelog`, and legal pages. It is built from the same design tokens as the tool but shares no runtime code with it.
+- **Requirement:** A statically generated site serves `/` (what Storycreep is, the cross-conversation problem, feature overview with annotated screenshots), `/features`, `/self-hosting`, `/changelog` (generated at build time from the release-note files in the repository), and legal pages. It is built from the same design tokens as the tool but shares no runtime code with it.
 - **Acceptance criteria:**
   - AC1 — Every marketing route returns complete, readable HTML with JavaScript disabled.
   - AC2 — The tool's JavaScript bundle is not referenced by any marketing page (asserted in a build test over the emitted HTML).
   - AC3 — Marketing pages are served by the Go binary from embedded assets; no Node process exists at runtime.
   - AC4 — All outbound links to GitHub, docs, and the hosted service are configurable at build time, not hardcoded in templates.
+  - AC5 — `/changelog` is generated at build time from the release-note files: a build test asserts that every release-note file in the repository appears on the page, and adding a file needs no template change.
 
 #### FR-PUB-02 — SEO fundamentals
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-PUB-01
@@ -267,7 +268,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 
 #### FR-PUB-09 — Changelog and release feed
 - **Priority:** Could · **Phase:** v1 · **Depends on:** FR-PUB-01
-- **Requirement:** `/changelog` built from release notes in the repository, plus an RSS/Atom feed.
+- **Requirement:** An RSS/Atom feed of the release notes that `/changelog` is built from (FR-PUB-01), with each tagged release published automatically on the next site build.
 - **Acceptance criteria:** AC1 — Feed validates against the Atom schema. AC2 — A new tagged release appears in the feed after a site rebuild with no manual editing.
 
 ---
@@ -276,7 +277,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 
 #### FR-AUTH-01 — Account creation
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-ADMIN-01
-- **Requirement:** Local accounts with email and password. In hosted mode, open self-service signup. In self-hosted mode, signup is controlled by `STORYCREEP_SIGNUP` (`closed` default, `invite`, `open`); the first owner account is created by the first-run flow. Passwords are hashed with argon2id (documented parameters), minimum 12 characters, checked against a bundled list of the 10k most common passwords.
+- **Requirement:** Local accounts with email and password. In hosted mode, open self-service signup. In self-hosted mode, signup is controlled by `STORYCREEP_SIGNUP` (`closed` default, `invite`, `open`); the first owner account is created by the first-run flow, and registration is refused until that flow completes (FR-ADMIN-02). Passwords are hashed with argon2id (documented parameters), minimum 12 characters, checked against a bundled list of the 10k most common passwords.
 - **Acceptance criteria:**
   - AC1 — Creating an account with an existing email returns the same generic response as a successful signup in hosted mode (no account enumeration) while sending no second account.
   - AC2 — Passwords shorter than 12 characters or present in the common list are rejected with a field-level error.
@@ -374,16 +375,17 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 - **Requirement:** Admins invite by email with a role; invites expire in 14 days, can be revoked and resent, and work via emailed or copyable link. Accepting creates or links an account and adds a membership. Members can be removed; the last owner cannot be removed or demoted.
 - **Acceptance criteria:**
   - AC1 — Accepting an expired or revoked invite returns 410.
-  - AC2 — Removing the last owner returns 409 with `last_owner`.
+  - AC2 — Removing or demoting the last owner returns 409 with `last_owner`.
   - AC3 — An invite accepted by a different email than addressed is rejected unless the invite was created as a link invite.
 
 #### FR-TEN-03 — Workspace roles
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-TEN-02
 - **Requirement:** Roles `owner`, `admin`, `editor`, `commenter`, `viewer`, `guest` exist in the data model and are enforced by the API from the MVP. The permission matrix is §5.6. The MVP UI exposes owner, admin, editor, commenter, viewer at workspace level; `guest` is assigned implicitly by project-level grants.
 - **Acceptance criteria:**
-  - AC1 — A table-driven test covers every (role × operation) pair in §5.6 with an explicit allow/deny expectation.
+  - AC1 — A table-driven test covers every (role × operation) pair in §5.6 with an explicit allow/deny expectation. An operation whose requirement belongs to a later phase (for example restoring a draft from a snapshot, FR-SNAP-05) joins the test in that phase.
   - AC2 — Permission checks happen in the service layer, not in handlers; a lint test asserts no handler writes to a repository directly.
   - AC3 — A `viewer` receives 403 on every mutating endpoint and 200 on reads.
+  - AC4 — An `admin` who grants the `owner` role (by role change or by invite), demotes an owner, or removes an owner receives 403 `owner_required`. An `owner` can do all three, subject to the last-owner rule (FR-TEN-02 AC2).
 
 #### FR-TEN-04 — Project-level role overrides
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-TEN-03, FR-PROJ-01
@@ -392,7 +394,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
   - AC1 — An `editor` downgraded to `viewer` on project X can still edit project Y.
   - AC2 — A `guest` listing projects sees only granted ones; a direct URL to another project returns 404.
   - AC3 — Effective-role resolution is a single pure function with unit tests over all combinations.
-  - AC4 — A `guest` (or `viewer`) with an `admin` grant on project X receives 403 on every workspace-scoped operation: inviting or removing members, changing roles, managing grants, workspace settings, the audit log, creating or importing projects, and managing other members' tokens.
+  - AC4 — A `guest` (or `viewer`) with an `admin` grant on project X receives 403 on every workspace-scoped operation: inviting or removing members, changing roles, managing grants, workspace settings, creating or importing projects, managing other members' tokens, and, from v1, the audit log (FR-TEN-08).
   - AC5 — Creating a grant with role `owner` returns 400.
   - AC6 — A signed-in user with no membership in the workspace receives 404 on every project and workspace route of that workspace, never 500. Unit tests cover the no-membership case in both resolution functions.
 
@@ -564,7 +566,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 #### FR-EDIT-12 — Group frames and sticky notes
 - **Priority:** Should · **Phase:** v1 · **Depends on:** FR-EDIT-02
 - **Requirement:** Non-narrative annotation objects: labelled frames that move their contents, and free-floating notes. They are excluded from published snapshots.
-- **Acceptance criteria:** AC1 — Frames and notes never appear in exported game JSON. AC2 — Moving a frame moves contained nodes as one command.
+- **Acceptance criteria:** AC1 — Frames and notes never appear in exported game JSON. AC2 — Moving a frame moves contained nodes as one command. AC3 — Frames and notes are written to the `annotations` section of the authoring export and restored by import (FR-DATA-01 AC1, AC5).
 
 #### FR-EDIT-13 — Auto-layout
 - **Priority:** Could · **Phase:** v1 · **Depends on:** FR-EDIT-02
@@ -1088,7 +1090,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 - **Acceptance criteria:**
   - AC1 — Every endpoint is reachable with a session cookie. Every endpoint except the session-only account and credential endpoints (FR-AUTH-04) is also reachable with an API token holding the scope that the route declares.
   - AC2 — Unknown fields in request bodies are rejected (strict decoding) with the field name.
-  - AC3 — A breaking change requires a new version prefix; a CI check compares the OpenAPI document against the previous release and fails on incompatible changes to `v1`.
+  - AC3 — A breaking change requires a new version prefix; a CI check compares the OpenAPI document against the previous release and fails on incompatible changes to `v1`. Until the first release exists, the check compares against the document on the main branch, so every incompatible change is still caught; because no client depends on `v1` yet, a pull request may override it with a reason recorded in the pull request.
 
 #### FR-API-02 — OpenAPI document and generated clients
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-API-01
@@ -1246,7 +1248,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 
 #### FR-DATA-01 — Project export and import
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-PROJ-01, FR-JOBS-01
-- **Requirement:** Export a project (draft or any snapshot) as a zip containing the full authoring data — including comments, canvas annotations, play states, the release history (every `ready` snapshot with its files and metadata), and optionally assets — in a documented format with a schema version. Import creates a new project in a target workspace, so it is authorised exactly like project creation (owner or admin, §5.6) and counts against the workspace's `projects` limit through the same entitlement check. It reports anything it could not import, and never imports partially (all or nothing). Import follows the ID policy in §5.2. With `preserve`, the default when no ID in the archive is in use on the instance, all entity, snapshot, and project IDs are kept, and imported snapshots keep their versions, content hashes, and bytes. With `remap`, which is automatic when any archive ID is already in use and can also be requested, fresh IDs are assigned. The import report says only which policy was applied, and beyond the one bit accepted in §5.2 it reveals nothing about other workspaces.
+- **Requirement:** Export a project (draft or any snapshot) as a zip containing the full authoring data — including comments, canvas annotations, play states, the release history (every `ready` snapshot with its files and metadata), and optionally assets — in a documented format with a schema version. Import creates a new project in a target workspace, so it is authorised exactly like project creation (owner or admin, §5.6) and counts against the workspace's `projects` limit through the same entitlement check. It reports anything it could not import, and never imports partially (all or nothing). Import follows the ID policy in §5.2. With `preserve`, the default when no ID in the archive is in use on the instance, all entity, snapshot, and project IDs are kept, and imported snapshots keep their versions, content hashes, and bytes. With `remap`, which is automatic when any archive ID is already in use and can also be requested, fresh IDs are assigned. The import report says only which policy was applied, and beyond the one bit accepted in §5.2 it reveals nothing about other workspaces. The format has an `annotations` section from its first version, and that version already defines the shape of an annotation item (the §5.3 `annotation` fields). The section stays empty until canvas annotations exist (FR-EDIT-12, v1), so adding them needs no format change, and an archive that contains annotations passes schema validation (NFR-SEC-13) on an older server and reaches the section check below. An importer that cannot import a section's content refuses the whole archive and names the section; it never drops content silently. In particular, a server without FR-EDIT-12 refuses an archive whose `annotations` section is not empty.
 
   **Imported content is untrusted.** The draft's expressions are recompiled from their source on import, and the stored ASTs from the archive are discarded. Every imported `ready` snapshot is verified before it is accepted. Each file's SHA-256 must match the snapshot's manifest, and the content hash is recomputed. Every file must validate against the JSON Schema of the snapshot's schema version. Every cross-file reference must resolve. Every expression AST must type-check against the declarations in that same snapshot, and must not exceed the sandbox limits (§5.8.6) or the server's supported `astVersion`. If any check fails, the whole import is refused, naming the snapshot version and the failed check. Snapshots in the archive whose status is not `ready` are not imported. An export option excludes the release history, for archives whose old releases cannot be verified.
 
@@ -1263,6 +1265,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
   - AC9 — An `editor` submitting an import receives 403, the same as for project creation. An import into a workspace at its `projects` limit returns 409 `limit_exceeded` and creates nothing.
   - AC10 — Fixture: an archive with an unused project ID whose node and snapshot IDs are copied from a project in another workspace. The import applies `remap` and completes, no primary-key error occurs, the two projects share no ID, and the report is identical to that of any other remapped import.
   - AC11 — Fixtures: an imported `ready` snapshot with a tampered file, an AST that references an undeclared variable, or an `astVersion` above the server's supported version. Each import is refused with the snapshot version and the failed check named, and no row is written.
+  - AC12 — Fixture: an archive with a non-empty section that the importing server cannot import. Until FR-EDIT-12 exists, this is an `annotations` section holding one frame. From then on, it is a test-only section that only test builds declare and no importer handles, in the same way as the synthetic schema version (FR-DATA-03). The import is refused with a message naming the section, and no row is written.
 
 #### FR-DATA-02 — Workspace export
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-DATA-01
@@ -1271,7 +1274,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 
 #### FR-DATA-03 — Schema versioning and migrations
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-DATA-04
-- **Requirement:** The published JSON format carries an integer `schemaVersion`. The server implements forward migrations (old → new) for stored content and renderers for at least the two most recent schema versions on export (down-rendering). Each migration is a pure function with fixtures for both directions where down-rendering is supported. The policy for breaking changes, deprecation, and support windows is documented (§6.4).
+- **Requirement:** The published JSON format carries an integer `schemaVersion`. The server implements forward migrations (old → new) for stored content and renderers for at least the two most recent schema versions on export (down-rendering). Each migration is a pure function with fixtures for both directions where down-rendering is supported. The policy for breaking changes, deprecation, and support windows is documented (§6.4). Until a second published schema version exists, criteria that need two versions (here; FR-DATA-01 AC2 and AC3; FR-SYNC-01 AC2; FR-SYNC-07 AC1, AC2, and AC4) are verified against a test-only synthetic version. It is numbered one above the newest real version and is renumbered before a real version takes that number, so the two never share one. It is defined only in test code and in fixtures kept outside the published `/schema` tree, it is served only by test servers, and it is never part of a release build or of the packaged addon.
 - **Acceptance criteria:**
   - AC1 — Every schema version has a fixture project; CI migrates each fixture to the current version and validates it.
   - AC2 — A migration never loses data silently: anything that cannot be represented is reported in a migration log stored with the project.
@@ -1308,11 +1311,12 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 
 #### FR-ADMIN-02 — First-run setup
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-ADMIN-01, FR-AUTH-01
-- **Requirement:** On an empty database, the instance presents a one-time setup flow: create the first owner account, name the first workspace, choose signup policy, and optionally configure SMTP and storage. Alternatively, all of this can be provided via environment variables for unattended deployment. The setup route is disabled permanently once a user exists.
+- **Requirement:** On an empty database, the instance presents a one-time setup flow: create the first owner account, name the first workspace, choose signup policy, and optionally configure SMTP and storage. Alternatively, all of this can be provided via environment variables for unattended deployment. The setup route is disabled permanently once setup completes. Until then, account registration is refused whatever the signup policy, so the first account is always the setup owner.
 - **Acceptance criteria:**
   - AC1 — After setup, the setup route returns 404 for everyone.
   - AC2 — Unattended setup via env vars produces the same state as the interactive flow.
   - AC3 — The setup flow cannot be reached concurrently to create two owners (guarded by a transaction).
+  - AC4 — With `STORYCREEP_SIGNUP=open` on an empty database, `POST /api/v1/auth/register` returns 403 `setup_required`, creates no account, and the setup route stays available.
 
 #### FR-ADMIN-03 — Instance admin screens
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-ADMIN-02
@@ -1324,7 +1328,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 - **Requirement:** Database migrations are embedded in the binary, run automatically at startup by default (lock-guarded so concurrent instances are safe), and can be run explicitly via CLI with `--no-auto-migrate`. Migrations are forward-only and tested for both fresh installs and upgrades from the previous release.
 - **Acceptance criteria:**
   - AC1 — Two instances starting simultaneously against an un-migrated database result in exactly one migration run and both instances healthy.
-  - AC2 — CI upgrades a database seeded by the previous release and runs the full test suite against it.
+  - AC2 — CI upgrades a database seeded by the previous release and runs the full test suite against it. Until the first release exists, the seed comes from the migrations on the main branch, so every new migration is still tested as an upgrade. A migration merged to the main branch is immutable: CI fails a pull request that changes or deletes one, because neither the upgrade test nor an upgraded database would ever run the edited version.
   - AC3 — A failed migration leaves the database in a defined state and the instance refuses to serve traffic.
 
 #### FR-ADMIN-05 — Health, readiness, and metrics
@@ -1351,9 +1355,9 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 
 #### FR-ENT-01 — Entitlement layer
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-TEN-01
-- **Requirement:** A plan definition maps a workspace to limits (projects, nodes per project, members, storage bytes, snapshots retained, API requests per minute) and feature flags (SSO, real-time collaboration, audit export, …). A single `entitlements.Check(ctx, workspaceID, key)` / `Limit(...)` API is used by all enforcement sites. Self-hosted mode resolves every workspace to the `unlimited` plan by default, with optional instance-level caps.
+- **Requirement:** A plan definition maps a workspace to limits (projects, members, storage bytes, snapshots retained) and feature flags (SSO, real-time collaboration, audit export, …). A single `entitlements.Check(ctx, workspaceID, key)` / `Limit(...)` API is used by all enforcement sites. Self-hosted mode resolves every workspace to the `unlimited` plan by default, with optional instance-level caps. Boards, nodes, and API requests are metered (FR-ENT-02) but are not plan limits (ADR-010); request rates are bounded by the operational rate limits of FR-API-04 and NFR-SEC-06.
 - **Acceptance criteria:**
-  - AC1 — Every limit has exactly one enforcement site, covered by a test asserting the limit is reached and the error names the limit and current usage.
+  - AC1 — Every limit has exactly one enforcement site, covered by a test asserting the limit is reached and the error names the limit and current usage. A limit whose enforcing requirement belongs to a later phase (`snapshot_retention`, FR-SNAP-06) is marked inert in the plan file until that phase, and the test asserts that no enforcement site passes it to `Check` or `Limit`. Reading the plan file as data (the loader, the pricing page, the AC4 shape test) is not enforcement.
   - AC2 — With `STORYCREEP_MODE=self-hosted`, all limits are unlimited and all features enabled unless explicitly configured otherwise.
   - AC3 — Plan definitions live in one declarative file used by the server, the pricing page, and the tests.
   - AC4 — The plan file expresses the settled shape (ADR-010): plans `unlimited` (self-hosted), `free`, `team`, `studio`; `members` is the billable metric; `projects`, `storage_bytes`, and `snapshot_retention` are limits; `collaboration`, `sso`, and `audit_export` are feature flags. Numeric values are placeholders until Phase 3 and are not referenced anywhere outside the plan file.
@@ -1362,7 +1366,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-ENT-01, FR-JOBS-01
 - **Requirement:** Counters per workspace for projects, boards, nodes, members, storage bytes, snapshots, and API requests. Commands record changes as append-only `usage_delta` rows, never by updating a counter in place (§5.7). A periodic rollup job folds deltas into `usage_counter` by deleting them and adding their sum in one transaction (§5.7), and a reconciliation job corrects drift. A usage endpoint and a workspace settings screen show current usage against limits. Enforcement has two modes:
   - **Exact:** the low-rate keys (`projects`, `members`, `snapshots`) are counted exactly while holding a per-workspace advisory lock. Creating these is rare, so serialising it costs nothing.
-  - **Approximate:** the high-rate keys (`boards`, `nodes`, `storage_bytes`) are checked against counter plus pending deltas without locking. A burst of concurrent commands may exceed such a limit by at most the number of commands in flight. This is accepted and documented, because these limits are commercial, not safety limits.
+  - **Approximate:** the high-rate keys (`boards`, `nodes`, `storage_bytes`) are counted through deltas without locking. Of these, only `storage_bytes` is a limit (FR-ENT-01), checked against counter plus pending deltas. A burst of concurrent uploads may exceed it by at most the number of uploads in flight. This is accepted and documented, because plan limits are commercial, not safety limits.
 - **Acceptance criteria:** AC1 — Reconciliation corrects deliberately corrupted counters. AC2 — Usage is readable through the API by workspace admins. AC3 — Counter updates do not serialise writes on a hot row: in a lock-monitoring test, 16 concurrent sessions creating nodes in one workspace (across two projects) record no lock waits attributable to usage tracking. AC4 — After rollup, `usage_counter` equals a full recount, and usage reads before rollup (counter plus pending deltas) are also exact. AC5 — Race test: a command inserts a delta, the rollup job runs and commits while that command is still open, then the command commits. The delta is reported as pending, the next rollup folds it, and at no point is it missing from or double-counted in usage.
 
 #### FR-ENT-03 — Limit enforcement UX
@@ -1409,11 +1413,12 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 
 #### FR-GDPR-02 — Account deletion
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-TEN-05
-- **Requirement:** A user can delete their account. If they are the sole owner of a workspace with other members, they must transfer ownership or delete the workspace first. Deletion is soft for 30 days, then hard. Content authored by the user remains (it belongs to the workspace) but is attributed to a tombstone identity; audit entries retain a pseudonymous actor ID for the audit retention period, documented in the privacy policy.
+- **Requirement:** A user can delete their account. If they are the sole owner of a workspace with other members, they must first hand ownership over, by promoting another member to `owner` (§5.6) or, from v1, by ownership transfer (FR-TEN-06), or delete the workspace. An owner whose own account deletion is pending does not count as an owner, for this check and for the last-owner rule (FR-TEN-02), so two owners can never both leave a workspace without one. Deletion is soft for 30 days, then hard. Content authored by the user remains (it belongs to the workspace) but is attributed to a tombstone identity; audit entries retain a pseudonymous actor ID for the audit retention period, documented in the privacy policy.
 - **Acceptance criteria:**
   - AC1 — After hard deletion, no table and no published snapshot file contains the user's email, display name, or password hash. A test seeds the user with unique marker values and scans every column and every `snapshot_file`. Narrative text that authors typed is workspace content and is not personal data within this scan, which is why the markers are values that never appear in content. Audit entries survive with the user's ID only, because audit metadata never stores names or emails (§9.6). Snapshots the user published remain byte-identical and show the tombstone as publisher.
   - AC2 — Project content authored by the user is intact and shows a tombstone author.
   - AC3 — The grace period is cancellable by the user via a link that does not require login to a deleted account (signed token).
+  - AC4 — A deletion request from the sole owner of a workspace with other members returns 409 `sole_owner` naming the workspace. After another member is promoted to `owner`, the same request succeeds. Fixture: owners A and B, and a third member. A requests deletion; B's deletion request then returns 409 `sole_owner`, and demoting B returns 409 `last_owner`. After A cancels, B's request succeeds.
 
 #### FR-GDPR-03 — Workspace deletion and retention settings
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-TEN-05
@@ -1589,7 +1594,8 @@ The **Resolved by** column says which function from §5.5 supplies the role. **P
 | Import a project (creates a project, so it requires the create-project permission) | W | ✓ | ✓ | ✗ | ✗ | ✗ |
 | Create/delete projects | W | ✓ | ✓ | ✗ | ✗ | ✗ |
 | Manage project grants | W | ✓ | ✓ | ✗ | ✗ | ✗ |
-| Invite/remove members, change roles | W | ✓ | ✓ | ✗ | ✗ | ✗ |
+| Invite/remove members, change roles, for roles up to `admin` | W | ✓ | ✓ | ✗ | ✗ | ✗ |
+| Grant the `owner` role (by role change or invite), demote or remove an owner | W | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Manage own workspace-wide API tokens | W | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Manage API tokens (others') | W | ✓ | ✓ | ✗ | ✗ | ✗ |
 | Workspace settings, retention, 2FA policy | W | ✓ | ✓ | ✗ | ✗ | ✗ |
@@ -1837,7 +1843,7 @@ Rationale: the board slug keeps file names meaningful and stable (slugs do not c
 - The server stores content at the current internal version and can **render** exports at the current and the previous schema version (down-rendering). If a construct cannot be expressed in the older version, the export fails with a precise message; it is never silently dropped.
 - The addon declares `supported_schema = {min, max}`. Pull negotiates `min(server_max, addon_max)`; if that is below `addon_min` or `server_min`, the pull is refused with a message naming which side to upgrade (FR-SYNC-07).
 - **Expression semantics are versioned separately** by `ast_version` (FR-EXPR-04), because new built-ins and Unicode table updates are additive at the JSON level, so `schemaVersion` does not change, but they still change what a runtime must be able to evaluate. The manifest carries `astVersion`, the highest `ast_version` among the constructs the snapshot uses. The addon declares `supported_ast_max`, and the runtime has the same value because it ships in the same addon. A snapshot with `astVersion` above it is refused at pull ("update the addon") and, if it is already on disk, at load with `runtime_error(ast_unsupported)`. As a second line of defence, the runtime loader checks every `call` name against its built-in table (and the project's declared host functions) and reports an unknown one as `unknown_construct` at load.
-- Stored-content migrations (internal) are forward-only, pure functions with fixtures per version, run on upgrade; every schema version keeps a fixture project in `/schema/fixtures/vN/` that CI migrates and validates.
+- Stored-content migrations (internal) are forward-only, pure functions with fixtures per version, run on upgrade; every published schema version keeps a fixture project in `/schema/fixtures/vN/` that CI migrates and validates. The synthetic test version of FR-DATA-03 keeps its fixtures outside `/schema`.
 - Support window: a published schema version is readable by the server for at least 12 months and at least two minor releases after it is superseded; the deprecation appears in the changelog and in `/docs`.
 - The save-state format (§8.5) is versioned independently, because it changes for different reasons.
 
@@ -2445,8 +2451,8 @@ Performance targets are enforced by a benchmark suite run in CI on fixed hardwar
 | NFR-SEC-13 | **Import safety:** imported archives are validated against the schema before any row is written; zip extraction guards against path traversal and zip bombs (entry count, total size, compression ratio limits). |
 | NFR-SEC-14 | **Secrets:** never logged, never returned by the API, redacted in the admin config view and in support bundles; a test greps logs produced by the test suite for known secret values. |
 | NFR-SEC-15 | **Transport:** hosted mode requires HTTPS and sets HSTS. Self-hosted mode supports plain HTTP so that `docker compose up` works without certificates (G5), but it warns loudly on non-loopback addresses. The warning says that credentials travel unencrypted and that the PWA, offline pinning, and offline editing need HTTPS. The docs cover reverse-proxy TLS termination, including the Caddy compose variant with a public domain or a local CA. |
-| NFR-SEC-16 | **Dependencies:** `govulncheck`, `npm audit`/`osv-scanner`, and container scanning in CI; a documented policy for patching high-severity issues within 7 days. |
-| NFR-SEC-17 | **Disclosure:** `SECURITY.md` with a contact address and a 90-day disclosure policy; security releases are announced in the changelog and the release feed. |
+| NFR-SEC-16 | **Dependencies:** `govulncheck`, `pnpm audit`, `osv-scanner`, and container scanning in CI; a documented policy for patching high-severity issues within 7 days. |
+| NFR-SEC-17 | **Disclosure:** `SECURITY.md` with a contact address and a 90-day disclosure policy; security releases are announced in the changelog (`/changelog`, FR-PUB-01) and, from v1, in the release feed (FR-PUB-09). |
 | NFR-SEC-18 | **Addon:** the Godot addon validates TLS certificates, refuses plain HTTP to non-private addresses without an explicit opt-in flag, and never writes tokens into the project. Downloaded archives are untrusted: every path is checked against the strict allowlist in §7.5 before anything is kept, so no pull can write outside `res://storycreep/` or into a path Godot executes. File writes are confined to `res://storycreep/` and `user://storycreep/`. |
 
 ### 9.6 Privacy and data inventory
@@ -2497,7 +2503,7 @@ Retention defaults: sessions until expiry (max 90 days), audit log 365 days, ope
 
 - **Browsers:** last two major versions of Chrome, Edge, Firefox, and Safari (desktop), Chrome and Samsung Internet on Android 11+, Safari on iPadOS 16+ (best effort; the Android tablet is the committed target).
 - **Server:** Linux amd64/arm64 container; PostgreSQL 15, 16, and 17, tested against all three.
-- **Development:** Windows on ARM64 and macOS (Apple Silicon and Intel) are first-class. The toolchain is Go, Node, Docker, and Godot — all available natively on both. No tool in the required workflow may be x86-only or require WSL; CI runs the test suite on `windows-11-arm`, `macos-latest`, and `ubuntu-latest` runners to keep this honest.
+- **Development:** Windows on ARM64 and macOS (Apple Silicon and Intel) are first-class. The toolchain is Go, Node with pnpm, Docker, and Godot — all available natively on both. No tool in the required workflow may be x86-only or require WSL; CI runs the test suite on `windows-11-arm`, `macos-latest`, and `ubuntu-latest` runners to keep this honest.
 - **Godot:** every 4.x minor from 4.3 to the newest stable release (FR-GODOT-10), on Windows (x64/ARM64), macOS, and Linux.
 
 ### 9.10 Quality bar
@@ -2661,6 +2667,7 @@ Everything that must agree between languages lives in `/schema` and is generated
 | Styling | Tailwind CSS v4 + Radix UI primitives | Token-driven theming shared between site and app; Radix gives accessible, touch-friendly primitives without adopting a visual kit. |
 | i18n | i18next + ICU | Mature, works in both bundles, ICU plurals cover Czech. |
 | Offline | Workbox (`vite-plugin-pwa`) + `idb` | Standard service-worker tooling plus a thin IndexedDB wrapper for the entity store and command queue. |
+| JS workspaces | pnpm | Strict dependency isolation catches undeclared imports; native on Windows ARM64 and macOS. |
 | Lint/format | Biome | One fast tool for both bundles; fewer moving parts for agent-driven development. |
 | Tests | Vitest, Testing Library, Playwright, Go `testing` + `testcontainers-go`, GUT | Covers unit, integration (real PostgreSQL), end-to-end (incl. touch/offline), and GDScript. |
 | CI | GitHub Actions | Matrix across OS and Godot versions; publishes images, addon zips, and the traceability report. |
@@ -3215,3 +3222,4 @@ No metric below depends on telemetry from running instances (ADR-026); every one
 | 1.2 | 2026-10-13 | Removed the third-party importer feature and every reference to a specific commercial tool. The product is now specified entirely from its own problem statement; migration from other tools is served by the documented import format (FR-DATA-01) that any third party can target. Backup and restore renumbered FR-DATA-06 → FR-DATA-05; the related risk row was dropped and risks R8–R13 renumbered; v1 scope and exit criteria updated. |
 | 1.3 | 2026-10-13 | Fixed 15 contradictions and unbuildable requirements found in review. **Evaluation:** on-exit runs when the flow ends at a node (§5.8.5); a new §5.8.9 defines numeric and string behaviour (safe-integer `int`, rounding half away from zero, code-point strings, pinned Unicode tables, numbers typed by declaration). **Publishing:** the snapshot build re-validates and serialises from one `REPEATABLE READ` view and records `source_seq` (§7.3, FR-DEP-04). **Godot pull:** it downloads to the cache, diffs locally in GDScript against a shared diff corpus (so rollback works offline and after draft pulls), applies through a crash-recoverable journal with strict path allowlisting and limited deletion, and uses file-name-safe slugs (§7.5, FR-GODOT-03, FR-PROJ-02 AC4). The manifest gains a `boards` index (§6.5). Tokens are keyed by instance and project in `EditorSettings` (FR-GODOT-01). **Offline and API:** offline replay sends each local batch as its own atomic unit via a multi-batch command request; keep-mine issues a new `command_id`; applied commands stay idempotent forever through the operation log; idempotency is checked before entitlements (FR-API-03, FR-OFF-04, §10.2). **Privacy:** the personal-data export excludes credentials (§9.6, FR-GDPR-01); published files carry no personal data, and `audit_entry` outlives workspace deletion (§6.2, FR-GDPR-02, FR-TEN-05). Import preserves IDs and release history when moving between instances (§5.2, FR-DATA-01). **Platform and data model:** plain-HTTP self-hosting is supported with a non-`Secure` cookie and online-only mode (FR-AUTH-02, FR-OFF-01); usage tracking uses append-only deltas (§5.7, FR-ENT-02); `expression_ref` identifies attributes by the (component, attribute definition) pair. Five dependency cycles were removed, and the graph is now required to stay acyclic (§4.0). |
 | 1.4 | 2026-10-14 | Fixed 15 defects found in a second review. **Godot apply:** the apply writes an immutable plan with before/after hashes and a commit marker inside the checkout's own `.apply/` (not `user://`, which clones share). Recovery reconciles against the filesystem instead of trusting per-step marks, and the spec now states that GDScript cannot fsync, so the guarantee covers process failures and `Validate` plus *Repair* handle power loss (§7.5, §6.3, FR-GODOT-03). **Security and tenancy:** session validity is never cached (FR-AUTH-02); token scopes have a defined table, with `snapshot:read` as the releases-only scope (FR-AUTH-04, FR-SYNC-01); workspace-scoped operations resolve through a new `workspace_role`, and project grants cannot be `owner` (§5.5, §5.6, FR-TEN-04); a `storycreep_maintenance` role with `BYPASSRLS` serves a closed list of cross-workspace jobs (§5.4, ADR-002). **Import:** the ID-collision check covers every archive ID, imported releases are re-verified, archives upload in chunks up to `STORYCREEP_IMPORT_MAX_BYTES`, and the one-bit disclosure is recorded (§5.2, FR-DATA-01, NFR-SEC-07). **Data and runtime:** failed snapshots release their version (FR-SNAP-01, §7.3); `null` is removed from the examples and the draft manifest (§6.2, §7.8); runtime variable lookups and `variable_changed` are scope-aware and ID-first (§8.4, FR-GODOT-06); `to_float` and `to_int` have exact string grammars (§5.8.9). **Other:** Godot support is a rolling range from 4.3 to the newest stable minor, and newer editors keep working (FR-GODOT-10); the personal-data export omits other actors' IP and user agent (§9.6, FR-GDPR-01); the CSV text export guards against formula injection (FR-TEXT-05). |
+| 1.5 | 2026-10-14 | Decisions taken while writing the implementation plan (`IMPLEMENTATION_PLAN.md`, notes N1–N15), and fixes from a review of those decisions. **Tenancy:** only an `owner` may grant the workspace `owner` role or demote or remove an owner, tested by a new FR-TEN-03 AC4 (§5.6). Before v1 adds ownership transfer, a sole owner hands over by promoting another member, and a new FR-GDPR-02 AC4 covers the refusal. **Data:** criteria that need two schema versions, now listed in full, are verified against a test-only synthetic version numbered one above the newest real version, with fixtures outside the published `/schema` tree (FR-DATA-03, §6.4). The authoring export reserves an `annotations` section from its first version. A server that cannot import a section's content refuses the archive instead of dropping it (FR-DATA-01 AC12), and FR-EDIT-12 AC3 adds annotation export and import. **Presentation:** `/changelog` is generated from repository release notes from the MVP onward, with a new FR-PUB-01 AC5, and FR-PUB-09 now adds only the feed. Security releases are announced in the changelog, and in the feed from v1 (NFR-SEC-17). **Operations:** before the first release, the upgrade test seeds from the main branch's migrations (FR-ADMIN-04 AC2). A limit whose enforcing requirement is in a later phase is inert until then (FR-ENT-01 AC1). **Stack:** pnpm for JS workspaces (§10.9, §9.9), and `pnpm audit` replaces `npm audit` (NFR-SEC-16). **Errata:** J4 cites FR-SNAP-01 for the publish dialog and FR-SNAP-02 instead of FR-SNAP-05 for the list, and its version step now follows the patch-bump proposal of §7.3; §1.4 lists FR-API-01…05 and FR-GODOT-01…11. **Second review of the plan:** an owner whose account deletion is pending no longer counts as an owner, so two owners cannot both delete their accounts and orphan a workspace (FR-GDPR-02 AC4), and FR-TEN-02 AC2 covers demotion as well as removal. Registration is refused until first-run setup completes (FR-ADMIN-02 AC4, FR-AUTH-01). The permission-matrix test covers the operations of the current phase (FR-TEN-03 AC1), and the audit-log case of FR-TEN-04 AC4 starts in v1. The OpenAPI compatibility check compares against the main branch until the first release (FR-API-01 AC3), and merged migrations are immutable (FR-ADMIN-04 AC2). Plan limits are aligned with ADR-010: boards, nodes, and API requests are metered but not limited, and an inert limit is one that no enforcement site checks (FR-ENT-01, FR-ENT-02). The first authoring-format version defines the annotation item shape, and the FR-DATA-01 AC12 fixture switches to a test-only section once annotations import (FR-DATA-01). The synthetic schema version is also kept out of the packaged addon (FR-DATA-03). |
