@@ -67,9 +67,12 @@ func TestSampleTestAndGaps(t *testing.T) {
 	if want := (Summary{Criteria: 5, Verified: 1, Gaps: 4, Tests: 1}); r.Summary != want {
 		t.Errorf("summary = %+v, want %+v", r.Summary, want)
 	}
+	if line := r.SummaryLine(); line != "Traceability (MVP): 1 of 5 acceptance criteria verified (20.0%), 4 without a test. 1 tagged test." {
+		t.Errorf("summary line = %q", line)
+	}
 	md := string(r.Markdown())
 	for _, s := range []string{
-		"1 of 5 acceptance criteria of the MVP have a test (20.0%), and 4 have none.",
+		"1 of 5 acceptance criteria of the MVP has a test (20.0%), and 4 have none. 1 test is tagged.\n",
 		"- FR-A-01/AC1: `server/sample_test.go:8` `TestSample`\n",
 		"- FR-A-01 First: AC2\n",
 		"- FR-A-02 Second, with `code`: AC1, AC2\n",
@@ -197,6 +200,17 @@ func TestBuildProblems(t *testing.T) {
 	_, problems, err := Generate(filepath.Join("testdata", "PRD.md"), t.TempDir(), "MVP")
 	if err != nil || len(problems) > 0 {
 		t.Errorf("an empty repository: problems =%s, err = %v", formatProblems(problems), err)
+	}
+}
+
+// TestSingular checks the report's wording when a count is one.
+func TestSingular(t *testing.T) {
+	r := &Report{Phase: "MVP", Summary: Summary{Criteria: 1, Verified: 0, Gaps: 1, Tests: 0}}
+	if line := r.SummaryLine(); line != "Traceability (MVP): 0 of 1 acceptance criterion verified (0.0%), 1 without a test. 0 tagged tests." {
+		t.Errorf("summary line = %q", line)
+	}
+	if md, want := string(r.Markdown()), "0 of 1 acceptance criterion of the MVP have a test (0.0%), and 1 has none. 0 tests are tagged.\n"; !strings.Contains(md, want) {
+		t.Errorf("the Markdown report does not contain %q:\n%s", want, md)
 	}
 }
 

@@ -65,12 +65,14 @@ Go tests, benchmarks, and fuzz tests, and `t.Run` subtests with a literal name, 
 func TestMoveNode(t *testing.T) {
 ```
 
-Vitest and Playwright `test`, `it`, `describe`, and `bench` declarations with a literal title, in `*.test.ts` and `*.spec.ts` files (or `.tsx`, `.js`, and the other script extensions):
+Vitest and Playwright `test`, `it`, and `describe` declarations with a literal title, in `*.test.ts` and `*.spec.ts` files, and Vitest `bench` declarations in `*.bench.ts` files (or `.tsx`, `.js`, and the other script extensions):
 
 ```ts
 // Verifies: FR-EDIT-02/AC3
 test("a moved node keeps its connections", () => {
 ```
+
+A declaration may carry the modifiers `only`, `skip`, `todo`, `fixme`, `fail`, `fails`, `concurrent`, `sequential`, `shuffle`, `serial`, and `parallel`, as in `test.describe.serial`. A hook such as `test.beforeEach` is not a test.
 
 GUT tests in `test_*.gd` files:
 
@@ -79,7 +81,7 @@ GUT tests in `test_*.gd` files:
 func test_variable_lookup_is_scope_aware():
 ```
 
-A test declared with `skip`, `todo`, or `fixme` does not count. A test that skips itself while it runs (`t.Skip`, or GUT's `pending`) still counts, so do not tag a test that CI skips. The report fails on a `Verifies:` comment that names an unknown requirement or criterion, names a requirement without a criterion, is written in a block comment, is outside a test file, or is not directly above a test. Directories named `testdata`, `node_modules`, `vendor`, `dist`, or `coverage`, and hidden directories, are not scanned.
+A test declared with `skip`, `todo`, `fixme`, or `fail` (`fails` in Vitest), or inside a group declared so, does not count: it never runs, or it passes only while the behaviour is wrong. The report finds a group's tests by their indentation, as Biome formats them. A test that skips itself while it runs (`t.Skip`, or GUT's `pending`) still counts, so do not tag a test that CI skips. The report fails on a `Verifies:` comment that names an unknown requirement or criterion, names a requirement without a criterion, is written in a block comment (or a GDScript multi-line string), is outside a test file, or is not directly above a test. In a test file, it also fails on a line comment that is meant as one but is not spelled `Verifies:`, such as `// verifies: FR-EDIT-02/AC3` or `// Verifies FR-EDIT-02/AC3`. Directories named `testdata`, `node_modules`, `vendor`, `dist`, or `coverage`, and hidden directories, are not scanned.
 
 ## Conventions
 

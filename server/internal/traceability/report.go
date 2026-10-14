@@ -11,7 +11,8 @@
 // The same comment tags a Go subtest (t.Run with a literal name), a Vitest or
 // Playwright test (test, it, describe, or bench with a literal title), and a
 // GUT test (func test_…, with "#" comments). A criterion counts as verified
-// when a test that is not declared with skip, todo, or fixme names it.
+// when a test names it that is not declared with skip, todo, fixme, or fail,
+// nor inside a group declared so.
 package traceability
 
 import (
@@ -62,6 +63,11 @@ type Criterion struct {
 	Tests []TestRef `json:"tests"`
 }
 
+// verified reports whether a test that is not skipped names the criterion.
+func (c Criterion) verified() bool {
+	return len(ran(c.Tests)) > 0
+}
+
 // NFR is a non-functional requirement and the tests that name it.
 type NFR struct {
 	ID    string    `json:"id"`
@@ -73,7 +79,7 @@ type TestRef struct {
 	File    string `json:"file"`
 	Line    int    `json:"line"`
 	Name    string `json:"name"`
-	Skipped bool   `json:"skipped,omitempty"`
+	Skipped bool   `json:"skipped,omitempty"` // it verifies nothing (see Test.Skipped)
 }
 
 // TestEntry is a tagged test and the IDs it names.
@@ -107,7 +113,8 @@ func Generate(prdPath, root, phase string) (*Report, []doccheck.Problem, error) 
 // PRD does not define, or that a test names twice.
 func Build(prd doccheck.PRD, tests []Test, phase string) (*Report, []doccheck.Problem) {
 	var problems []doccheck.Problem
-	rank := slices.Index(doccheck.Phases(), phase)
+	phases := doccheck.Phases()
+	rank := slices.Index(phases, phase)
 	r := &Report{
 		Phase:        phase,
 		Requirements: []Requirement{},
@@ -126,7 +133,7 @@ func Build(prd doccheck.PRD, tests []Test, phase string) (*Report, []doccheck.Pr
 			ID:       req.ID,
 			Title:    req.Title,
 			Phase:    req.Phase,
-			InScope:  rank >= 0 && slices.Index(doccheck.Phases(), req.Phase) <= rank,
+			InScope:  rank >= 0 && slices.Index(phases, req.Phase) <= rank,
 			Criteria: []Criterion{},
 		}
 		for j, c := range req.Criteria {
@@ -170,7 +177,7 @@ func Build(prd doccheck.PRD, tests []Test, phase string) (*Report, []doccheck.Pr
 		}
 		for _, c := range req.Criteria {
 			r.Summary.Criteria++
-			if slices.ContainsFunc(c.Tests, func(t TestRef) bool { return !t.Skipped }) {
+			if c.verified() {
 				r.Summary.Verified++
 			} else {
 				r.Gaps = append(r.Gaps, req.ID+"/"+c.ID)
@@ -212,8 +219,25 @@ func (r *Report) scope() string {
 
 // SummaryLine is a one-line summary of the report.
 func (r *Report) SummaryLine() string {
-	return fmt.Sprintf("Traceability (%s): %d of %d acceptance criteria verified (%s), %d without a test. %d tagged tests.",
-		r.scope(), r.Summary.Verified, r.Summary.Criteria, percent(r.Summary.Verified, r.Summary.Criteria), r.Summary.Gaps, r.Summary.Tests)
+	return fmt.Sprintf("Traceability (%s): %d of %s verified (%s), %d without a test. %s.",
+		r.scope(), r.Summary.Verified, count(r.Summary.Criteria, "acceptance criterion", "acceptance criteria"),
+		percent(r.Summary.Verified, r.Summary.Criteria), r.Summary.Gaps, count(r.Summary.Tests, "tagged test", "tagged tests"))
+}
+
+// count writes n with the singular or plural noun: "1 test", "2 tests".
+func count(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+// verb returns the singular verb for a count of one, and the plural otherwise.
+func verb(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func percent(n, of int) string {
@@ -236,9 +260,11 @@ func (r *Report) JSON() ([]byte, error) {
 func (r *Report) Markdown() []byte {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# Requirement traceability\n\n")
-	fmt.Fprintf(&b, "%d of %d acceptance criteria of the %s have a test (%s), and %d have none. %d tests are tagged.\n",
-		r.Summary.Verified, r.Summary.Criteria, r.scope(),
-		percent(r.Summary.Verified, r.Summary.Criteria), r.Summary.Gaps, r.Summary.Tests)
+	fmt.Fprintf(&b, "%d of %s of the %s %s a test (%s), and %d %s none. %s %s tagged.\n",
+		r.Summary.Verified, count(r.Summary.Criteria, "acceptance criterion", "acceptance criteria"), r.scope(),
+		verb(r.Summary.Verified, "has", "have"), percent(r.Summary.Verified, r.Summary.Criteria),
+		r.Summary.Gaps, verb(r.Summary.Gaps, "has", "have"),
+		count(r.Summary.Tests, "test", "tests"), verb(r.Summary.Tests, "is", "are"))
 
 	fmt.Fprintf(&b, "\n## Acceptance criteria without a test\n\n")
 	if r.Summary.Gaps == 0 {
@@ -247,7 +273,7 @@ func (r *Report) Markdown() []byte {
 	for _, req := range r.Requirements {
 		var gaps []string
 		for _, c := range req.Criteria {
-			if req.InScope && len(ran(c.Tests)) == 0 {
+			if req.InScope && !c.verified() {
 				gaps = append(gaps, c.ID)
 			}
 		}
@@ -295,7 +321,7 @@ func (r *Report) Markdown() []byte {
 		}
 	}
 	if len(skipped) > 0 {
-		fmt.Fprintf(&b, "\n## Skipped tests\n\nThese tests are declared with skip, todo, or fixme, so they verify nothing.\n\n")
+		fmt.Fprintf(&b, "\n## Skipped tests\n\nThese tests verify nothing: each is declared with skip, todo, fixme, or fail, or inside a group declared so.\n\n")
 		for _, t := range skipped {
 			fmt.Fprintf(&b, "- %s: %s\n", ref(t.TestRef), strings.Join(t.Verifies, ", "))
 		}

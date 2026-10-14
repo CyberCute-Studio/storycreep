@@ -21,6 +21,6 @@
 
 ## Skipped tests
 
-These tests are declared with skip, todo, or fixme, so they verify nothing.
+These tests verify nothing: each is declared with skip, todo, fixme, or fail, or inside a group declared so.
 
 - `web/app/src/sample.test.ts:9` `a skipped test`: FR-A-02/AC2
