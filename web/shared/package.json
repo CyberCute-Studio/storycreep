@@ -3,5 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "license": "AGPL-3.0-only",
-  "type": "module"
+  "type": "module",
+  "exports": {
+    "./ids": "./src/ids.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vitest": "5.0.4"
+  }
 }
