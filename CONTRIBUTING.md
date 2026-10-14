@@ -56,7 +56,7 @@ These are the checks CI runs. Run them before you push.
 
 Every test that proves an acceptance criterion names it, so that the traceability report can map the PRD to the tests. Write a line comment that starts with `Verifies:` directly above the test declaration, with no blank line between them. List acceptance criteria as `FR-…/ACn` and non-functional requirements as `NFR-…`, separated by commas. Spell every ID in full, so that searching for `FR-EDIT-02/AC3` finds every test of that criterion.
 
-Go tests, benchmarks, and fuzz tests, and `t.Run` subtests with a literal name, in `*_test.go` files:
+Go tests, benchmarks, and fuzz tests, and `t.Run` subtests, in `*_test.go` files. The report names a subtest as `go test` does, such as `TestMoveNode/keeps_connections`, with `*` for a name that is not a literal:
 
 ```go
 // TestMoveNode checks that a moved node keeps its connections.
@@ -72,7 +72,7 @@ Vitest and Playwright `test`, `it`, and `describe` declarations (or Vitest's `su
 test("a moved node keeps its connections", () => {
 ```
 
-A declaration may carry the modifiers `only`, `skip`, `todo`, `fixme`, `fail`, `fails`, `concurrent`, `sequential`, `shuffle`, `serial`, and `parallel`, as in `test.describe.serial`. A hook such as `test.beforeEach` is not a test. The report reads a declaration that Biome splits across lines, after its callee (as Biome writes `test.describe.serial`) or after its opening parenthesis (as it writes a long title).
+A declaration may carry the modifiers `only`, `skip`, `todo`, `fixme`, `fail`, `fails`, `concurrent`, `sequential`, `shuffle`, `serial`, and `parallel`, as in `test.describe.serial`, however Biome splits it across lines. A hook such as `test.beforeEach`, and a declaration with `each`, is not a test the report can name. The report names a test after the groups it is in, as Vitest does: `group > title`, with `*` for a group whose title is not a literal.
 
 GUT tests in `test_*.gd` files:
 
@@ -81,7 +81,7 @@ GUT tests in `test_*.gd` files:
 func test_variable_lookup_is_scope_aware():
 ```
 
-A test declared with `skip`, `todo`, `fixme`, or `fail` (`fails` in Vitest), or inside a group declared so whatever its title (as in `describe.skip.each`), does not count: it never runs, or it passes only while the behaviour is wrong. The report finds a group's tests by their indentation, as Biome formats them. A test skipped by a condition or while it runs still counts, because the report cannot see that: `t.Skip`, GUT's `pending`, Vitest's `describe.skipIf`, and Playwright's `test.skip()`, `test.fixme()`, or `test.fail()` called inside a test or group. So do not tag a test that CI skips. The report fails on a `Verifies:` comment that names an unknown requirement or criterion, names a requirement without a criterion, names an ID twice for one test, is written in a block comment (or a GDScript multi-line string), is outside a test file, or is not directly above a test. In a test file, it also fails on a `Verifies:` comment written after code on any line, on a line comment that is meant as one but is not spelled `Verifies:`, such as `// verifies: FR-EDIT-02/AC3`, `// Verifies FR-EDIT-02/AC3`, or `// Verifies — FR-EDIT-02/AC3`, and on a comment line that continues the ID list of the `Verifies:` line above it; start that line with `Verifies:` too. Directories named `testdata`, `node_modules`, `vendor`, `dist`, or `coverage`, and hidden directories, are not scanned.
+A test declared with `skip`, `todo`, `fixme`, or `fail` (`fails` in Vitest), or inside a group declared so whatever its title (as in `describe.skip.each`), does not count: it never runs, or it passes only while the behaviour is wrong. The report parses Go files and reads TypeScript, JavaScript, and GDScript files token by token, so a comment marker in a string is never taken for a comment, and a group's tests are the declarations inside its call. It cannot read JSX text that holds a quote or `//`; when that leaves a parenthesis it cannot pair in a file with `Verifies:` comments, it fails and says so. A test skipped by a condition or while it runs still counts, because the report cannot see that: `t.Skip`, GUT's `pending`, Vitest's `describe.skipIf`, and Playwright's `test.skip()`, `test.fixme()`, or `test.fail()` called inside a test or group. So do not tag a test that CI skips. The report fails on a `Verifies:` comment that names an unknown requirement or criterion, names a requirement without a criterion, names an ID twice for one test, is written in a block comment (or a GDScript multi-line string), is outside a test file, or is not directly above a test. It also fails on a Go file it cannot parse. In a test file, it also fails on a `Verifies:` comment written after code on any line, on a line comment that is meant as one but is not spelled `Verifies:`, such as `// verifies: FR-EDIT-02/AC3`, `// Verifies FR-EDIT-02/AC3`, or `// Verifies — FR-EDIT-02/AC3`, and on a comment line that continues the ID list of the `Verifies:` line above it; start that line with `Verifies:` too. Directories named `testdata`, `node_modules`, `vendor`, `dist`, or `coverage`, and hidden directories, are not scanned.
 
 ## Conventions
 

@@ -8,11 +8,14 @@
 //	// Verifies: FR-EDIT-02/AC3, NFR-PERF-01
 //	func TestMoveNode(t *testing.T) {
 //
-// The same comment tags a Go subtest (t.Run with a literal name), a Vitest or
-// Playwright test (test, it, describe, suite, or bench with a literal title),
-// and a GUT test (func test_…, with "#" comments). A criterion counts as
-// verified when a test names it that is not declared with skip, todo, fixme,
-// or fail, nor inside a group declared so.
+// The same comment tags a Go subtest (t.Run), a Vitest or Playwright test
+// (test, it, describe, suite, or bench with a literal title), and a GUT test
+// (func test_…, with "#" comments). The scan parses Go files and tokenizes
+// TypeScript, JavaScript, and GDScript files, so a comment marker in a string
+// is never taken for a comment, and a declaration's groups are the calls it
+// is written in. A criterion counts as verified when a test names it that is
+// not declared with skip, todo, fixme, or fail, nor inside a group declared
+// so.
 package traceability
 
 import (

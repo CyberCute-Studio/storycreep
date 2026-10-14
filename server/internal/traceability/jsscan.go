@@ -1,0 +1,352 @@
+package traceability
+
+import (
+	"regexp"
+	"slices"
+	"strings"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/doccheck"
+)
+
+var (
+	// Vitest runs tests from *.test.ts and *.spec.ts files, and benchmarks
+	// only from *.bench.ts and *.benchmark.ts files. Playwright runs
+	// *.spec.ts and *.test.ts files.
+	jsFileRE = regexp.MustCompile(`\.(?:test|spec|bench|benchmark)\.[cm]?[jt]sx?$`)
+	jsSrcRE  = regexp.MustCompile(`\.[cm]?[jt]sx?$`)
+)
+
+var jsLang = &language{
+	comment: "//",
+	isTest:  jsFileRE.MatchString,
+	read:    readJS,
+}
+
+// jsHeads are the functions that declare a Vitest or Playwright test or
+// group: test("…"), it("…"), describe("…"), suite("…") (Vitest's describe),
+// and bench("…"), with modifiers as in test.describe.serial("…").
+var jsHeads = map[string]bool{"test": true, "it": true, "describe": true, "suite": true, "bench": true}
+
+// jsModifiers are the modifiers a declaration may carry, and whether the test
+// or group then verifies nothing: it never runs, or it passes only while it
+// fails. A declaration with any other member, such as test.beforeEach,
+// test.step, or test.each, is not a test the scan can name.
+var jsModifiers = map[string]bool{
+	"describe":   false,
+	"only":       false,
+	"concurrent": false,
+	"sequential": false,
+	"shuffle":    false,
+	"serial":     false,
+	"parallel":   false,
+	"skip":       true,
+	"todo":       true,
+	"fixme":      true,
+	"fail":       true, // Playwright: the test passes only while it fails
+	"fails":      true, // Vitest: the same
+}
+
+// readJS reads a JavaScript or TypeScript file. Its test declarations are the
+// calls of jsHeads with a string literal title, named after the groups they
+// are in as Vitest names them: "group > title". A group without a literal
+// title is "*". A test is skipped when it, or a group it is in, is declared
+// with a modifier that verifies nothing, whatever the group's arguments, as
+// in describe.skip.each([…])("…", …).
+func readJS(file, src string, isTest bool) source {
+	toks, comments := lexJS(src)
+	s := source{comments: comments}
+	if !isTest {
+		return s
+	}
+
+	// match maps each "(" to its ")"; an unclosed one runs to the end.
+	match := map[int]int{}
+	var open []int
+	unpaired := 0 // the line of the first parenthesis without a partner
+	for i, t := range toks {
+		switch {
+		case t.is('(', "("):
+			open = append(open, i)
+		case t.is('(', ")") && len(open) > 0:
+			match[open[len(open)-1]] = i
+			open = open[:len(open)-1]
+		case t.is('(', ")") && unpaired == 0:
+			unpaired = t.line
+		}
+	}
+	for _, i := range open {
+		match[i] = len(toks) - 1
+	}
+	if len(open) > 0 && (unpaired == 0 || toks[open[0]].line < unpaired) {
+		unpaired = toks[open[0]].line
+	}
+	// Without paired parentheses, the groups the tests are in are unknown,
+	// and so are their names and whether a skipped group holds them. That
+	// matters only in a file with Verifies comments.
+	if unpaired > 0 && slices.ContainsFunc(comments, func(c comment) bool { return strings.HasPrefix(c.text, "Verifies:") }) {
+		s.problems = append(s.problems, doccheck.Problem{File: file, Line: unpaired,
+			Msg: "cannot pair this parenthesis, so the scan cannot tell which groups the tests below it are in (a quote or \"//\" in JSX text can cause this)"})
+	}
+
+	// A call of a declaration: the tokens of its arguments, from its first
+	// "(" to the ")" of its last call (as in describe.each(…)(…)).
+	type call struct {
+		head     int // the head's token
+		from, to int
+		name     string
+		named    bool // a declaration the scan can name
+		skipped  bool
+	}
+	var calls []call
+	for i, t := range toks {
+		if t.kind != 'i' || !jsHeads[t.text] {
+			continue
+		}
+		if i > 0 && (toks[i-1].is('(', ".") || toks[i-1].is('i', "function")) {
+			continue
+		}
+		j := i + 1
+		known, skipped := true, false
+		for j+1 < len(toks) && toks[j].is('(', ".") && toks[j+1].kind == 'i' {
+			skip, ok := jsModifiers[toks[j+1].text]
+			known = known && ok
+			skipped = skipped || skip
+			j += 2
+		}
+		if j >= len(toks) || !toks[j].is('(', "(") {
+			continue
+		}
+		c := call{head: i, from: j, to: match[j], skipped: skipped}
+		for c.to+1 < len(toks) && toks[c.to+1].is('(', "(") {
+			c.to = match[c.to+1]
+		}
+		if j+1 < len(toks) && toks[j+1].kind == 's' {
+			c.name = toks[j+1].text
+			c.named = known
+		} else {
+			c.name = "*"
+		}
+		calls = append(calls, c)
+	}
+
+	for _, c := range calls {
+		if !c.named {
+			continue
+		}
+		var path []string
+		skipped := c.skipped
+		for _, g := range calls {
+			if g.from < c.head && c.head <= g.to {
+				path = append(path, g.name)
+				skipped = skipped || g.skipped
+			}
+		}
+		s.decls = append(s.decls, decl{
+			line:    toks[c.head].line,
+			name:    strings.Join(append(path, c.name), " > "),
+			skipped: skipped,
+		})
+	}
+	return s
+}
+
+// jsToken is a token of JavaScript or TypeScript source.
+type jsToken struct {
+	// kind is 'i' for an identifier or keyword, 's' for a string literal or
+	// a template literal without substitutions, 't' for a template literal
+	// with them, 'n' for a number, 'r' for a regular expression literal, and
+	// '(' for punctuation.
+	kind byte
+	text string // the identifier, the punctuation, or the string's value
+	line int
+}
+
+func (t jsToken) is(kind byte, text string) bool {
+	return t.kind == kind && t.text == text
+}
+
+// jsRegexAfter are the keywords after which "/" starts a regular expression
+// literal rather than a division.
+var jsRegexAfter = map[string]bool{
+	"return": true, "typeof": true, "instanceof": true, "in": true, "of": true, "new": true,
+	"delete": true, "void": true, "throw": true, "case": true, "do": true, "else": true,
+	"yield": true, "await": true,
+}
+
+// jsUnescaper reads the escapes a test title commonly holds.
+var jsUnescaper = strings.NewReplacer(`\\`, `\`, `\"`, `"`, `\'`, `'`, "\\`", "`", `\n`, "\n", `\t`, "\t")
+
+// lexJS splits JavaScript or TypeScript source into tokens and comments. It
+// reads string, template, and regular expression literals, so that comment
+// markers and quotes inside them are not taken for code. A quoted string
+// ends at the end of its line at the latest, so that a quote it cannot pair,
+// such as an apostrophe in JSX text, confuses at most that line.
+func lexJS(src string) ([]jsToken, []comment) {
+	var toks []jsToken
+	var comments []comment
+	line := 1
+	code := false // a token or a block comment is on the line before i
+	depth := 0    // the depth of "{" nesting
+	var subst []int
+	emit := func(kind byte, text string, at int) {
+		toks = append(toks, jsToken{kind: kind, text: text, line: at})
+		code = true
+	}
+	// template reads a template literal from i, after its "`" or after the
+	// "}" of a substitution, up to its closing "`" or its next "${". It
+	// returns the index after what it read.
+	template := func(i int, first bool) int {
+		start, startLine := i, line
+		for i < len(src) {
+			switch {
+			case src[i] == '\\':
+				if i+1 < len(src) && src[i+1] == '\n' {
+					line++
+				}
+				i += 2
+				continue
+			case src[i] == '`':
+				if first {
+					emit('s', jsUnescaper.Replace(src[start:i]), startLine)
+				}
+				return i + 1
+			case strings.HasPrefix(src[i:], "${"):
+				if first {
+					emit('t', "", startLine)
+				}
+				subst = append(subst, depth)
+				return i + 2
+			case src[i] == '\n':
+				line++
+			}
+			i++
+		}
+		if first {
+			emit('t', "", startLine)
+		}
+		return i
+	}
+
+	for i := 0; i < len(src); {
+		c := src[i]
+		switch {
+		case c == '\n':
+			line++
+			code = false
+			i++
+		case c == ' ' || c == '\t' || c == '\r' || c == '\f' || c == '\v':
+			i++
+		case strings.HasPrefix(src[i:], "//"):
+			end := strings.IndexByte(src[i:], '\n')
+			if end < 0 {
+				end = len(src) - i
+			}
+			comments = append(comments, comment{line: line, text: lineCommentText(src[i:i+end], "//"), ownLine: !code})
+			i += end
+		case strings.HasPrefix(src[i:], "/*"):
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				end = len(src)
+			} else {
+				end += i + 4
+			}
+			text := src[i:end]
+			comments = append(comments, blockComment(text, line, "/*", "*/")...)
+			line += strings.Count(text, "\n")
+			code = true
+			i = end
+		case c == '"' || c == '\'':
+			j := i + 1
+			for j < len(src) && src[j] != c && src[j] != '\n' {
+				if src[j] == '\\' {
+					j++
+				}
+				j++
+			}
+			if j >= len(src) || src[j] != c {
+				// Not a string: a quote that nothing on its line closes, such as
+				// the apostrophe in the JSX text "Don't".
+				emit('(', string(c), line)
+				i++
+				continue
+			}
+			emit('s', jsUnescaper.Replace(src[i+1:j]), line)
+			line += strings.Count(src[i:j], "\n") // escaped line breaks
+			i = j + 1
+		case c == '`':
+			i = template(i+1, true)
+		case c == '}' && len(subst) > 0 && depth == subst[len(subst)-1]:
+			subst = subst[:len(subst)-1]
+			i = template(i+1, false)
+		case c == '/' && jsRegexAllowed(toks):
+			j, inClass := i+1, false
+			for j < len(src) && src[j] != '\n' && (inClass || src[j] != '/') {
+				switch src[j] {
+				case '\\':
+					j++
+				case '[':
+					inClass = true
+				case ']':
+					inClass = false
+				}
+				j++
+			}
+			if j >= len(src) || src[j] != '/' {
+				emit('(', "/", line) // not a regular expression after all
+				i++
+				continue
+			}
+			for j++; j < len(src) && isIdentByte(src[j]); j++ {
+			}
+			emit('r', src[i:j], line)
+			i = j
+		case isIdentByte(c) && !(c >= '0' && c <= '9'):
+			j := i
+			for j < len(src) && isIdentByte(src[j]) {
+				j++
+			}
+			emit('i', src[i:j], line)
+			i = j
+		case c >= '0' && c <= '9':
+			j := i
+			for j < len(src) && (isIdentByte(src[j]) || src[j] == '.') {
+				j++
+			}
+			emit('n', src[i:j], line)
+			i = j
+		default:
+			switch c {
+			case '{':
+				depth++
+			case '}':
+				depth--
+			}
+			emit('(', string(c), line)
+			i++
+		}
+	}
+	return toks, comments
+}
+
+// jsRegexAllowed reports whether a "/" after toks starts a regular
+// expression literal: it does where an expression may start.
+func jsRegexAllowed(toks []jsToken) bool {
+	if len(toks) == 0 {
+		return true
+	}
+	t := toks[len(toks)-1]
+	switch t.kind {
+	case 'i':
+		return jsRegexAfter[t.text]
+	case '(':
+		return t.text != ")" && t.text != "]" && t.text != "}"
+	}
+	return false
+}
+
+// isIdentByte reports whether c can be part of an identifier. Bytes of
+// non-ASCII characters count, so that such identifiers stay whole.
+func isIdentByte(c byte) bool {
+	return c == '_' || c == '$' || c >= 0x80 ||
+		c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
+}
