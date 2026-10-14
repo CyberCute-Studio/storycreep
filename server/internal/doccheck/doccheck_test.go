@@ -205,6 +205,18 @@ func TestCheckFails(t *testing.T) {
 			want: `FR-A-02: cannot read "AC3 — A lazy continuation line." as an acceptance criterion`,
 		},
 		{
+			name: "acceptance criterion after a line of text at the margin",
+			prd:  []edit{{"  - AC2 — It is listed out of order.\n", "  - AC2 — It is listed out of order,\nwrapped at the margin.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "- AC1 — It works too." as an acceptance criterion, because the list of acceptance criteria ends on line 26`,
+		},
+		{
+			name: "two acceptance criteria in one bullet",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too. AC3 — It works thrice.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "AC3 —" as an acceptance criterion (write each criterion as its own "- ACn — …" bullet)`,
+		},
+		{
 			name: "inline acceptance criterion on a wrapped line",
 			prd:  []edit{{"AC1 — It shines. AC2 — It still works.", "AC1 — It shines.\n  AC2 — It still works."}},
 			file: "PRD.md",

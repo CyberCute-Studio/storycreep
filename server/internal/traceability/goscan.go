@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/doccheck"
 )
@@ -37,15 +38,19 @@ func readGo(file, src string, isTest bool) source {
 	if err != nil {
 		line, msg := 1, err.Error()
 		if list, ok := err.(scanner.ErrorList); ok && len(list) > 0 {
-			line, msg = list[0].Pos.Line, list[0].Msg
+			// The error's line follows //line directives; its offset does not.
+			line, msg = 1+strings.Count(src[:min(list[0].Pos.Offset, len(src))], "\n"), list[0].Msg
 		}
 		s.problems = append(s.problems, doccheck.Problem{File: file, Line: line, Msg: "cannot parse the file as Go: " + msg})
 		return s
 	}
+	// position locates p in this file. A //line directive, as in generated
+	// code, would move it to another file, line, or column.
+	position := func(p token.Pos) token.Position { return fset.PositionFor(p, false) }
 
 	for _, g := range f.Comments {
 		for _, c := range g.List {
-			pos := fset.Position(c.Pos())
+			pos := position(c.Pos())
 			if strings.HasPrefix(c.Text, "/*") {
 				s.comments = append(s.comments, blockComment(c.Text, pos.Line, "/*", "*/")...)
 				continue
@@ -67,7 +72,7 @@ func readGo(file, src string, isTest bool) source {
 		if !ok || fn.Recv != nil || !isGoTest(fn.Name.Name) {
 			continue
 		}
-		s.decls = append(s.decls, decl{line: fset.Position(fn.Pos()).Line, name: fn.Name.Name})
+		s.decls = append(s.decls, decl{line: position(fn.Pos()).Line, name: fn.Name.Name})
 		if fn.Body == nil {
 			continue
 		}
@@ -104,7 +109,7 @@ func readGo(file, src string, isTest bool) source {
 			if run {
 				names = append(names, subtestName(call.Args[0]))
 				s.decls = append(s.decls, decl{
-					line: fset.Position(call.Pos()).Line,
+					line: position(call.Pos()).Line,
 					name: fn.Name.Name + "/" + strings.Join(names, "/"),
 				})
 			}
@@ -136,8 +141,10 @@ func addTestingParams(ft *ast.FuncType, names map[string]bool) {
 	}
 }
 
-// subtestName returns a subtest's name as go test prints it, which writes
-// spaces as underscores, or "*" when the name is not a literal.
+// subtestName returns a subtest's name as go test prints it, or "*" when the
+// name is not a literal. Like go test, it writes each space character, such
+// as a tab or a line break, as "_", and each character that is not printable
+// as its Go escape.
 func subtestName(arg ast.Expr) string {
 	lit, ok := arg.(*ast.BasicLit)
 	if !ok || lit.Kind != token.STRING {
@@ -147,5 +154,17 @@ func subtestName(arg ast.Expr) string {
 	if err != nil {
 		return "*"
 	}
-	return strings.ReplaceAll(name, " ", "_")
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case unicode.IsSpace(r):
+			b.WriteByte('_')
+		case !strconv.IsPrint(r):
+			q := strconv.QuoteRune(r)
+			b.WriteString(q[1 : len(q)-1])
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

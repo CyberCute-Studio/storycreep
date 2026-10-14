@@ -88,11 +88,14 @@ jobs:
       # or names an unknown requirement fails the build. A criterion without
       # a test does not, until plan item 119 makes the report a gate.
       - name: Traceability report
+        id: traceability
         shell: bash
         run: pnpm traceability | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # The report is written before a tag problem fails the step, so it is
+      # published then too.
       - name: Upload the traceability report
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && (success() || steps.traceability.outcome == 'failure')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: traceability-report

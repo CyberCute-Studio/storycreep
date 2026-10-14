@@ -80,9 +80,10 @@ var (
 	// listItemRE finds a list item that is not a "-" bullet: "* …", "+ …",
 	// "1. …".
 	listItemRE = regexp.MustCompile(`^\s*(?:[*+]|\d+[.)])\s`)
-	// marginCriterionRE finds a line at the margin that starts with a
-	// criterion's label, as a list item or as text: "- AC3 — …", "AC3 — …".
-	marginCriterionRE = regexp.MustCompile(`^(?:(?:[-*+]|\d+[.)])\s+)?AC\d+\b`)
+	// criterionLineRE finds a line that starts with a criterion's label, as a
+	// list item or as text, at the margin or indented: "- AC3 — …",
+	// "AC3 — …", "  - AC3 — …".
+	criterionLineRE = regexp.MustCompile(`^\s*(?:(?:[-*+]|\d+[.)])\s+)?AC\d+\b`)
 )
 
 func parsePRD(file, src string, r *reporter) *prd {
@@ -125,9 +126,11 @@ func (p *prd) parseRequirement(d *document, s section, id, title string, r *repo
 	p.reqs[id] = req
 	p.ids = append(p.ids, id)
 	inCriteria := false
+	listEnd := 0 // the line that ended the list of criteria, once it has ended
 	for n := s.start; n < s.end; n++ {
 		l := d.line(n)
-		if inCriteria {
+		switch {
+		case inCriteria:
 			if m := criterionBulletRE.FindStringSubmatch(l); m != nil {
 				req.addCriteria(p.file, n, m[1], false, r)
 				continue
@@ -147,11 +150,18 @@ func (p *prd) parseRequirement(d *document, s section, id, title string, r *repo
 			}
 			// A line at the margin ends the list, unless it reads as a
 			// criterion that is not indented.
-			if marginCriterionRE.MatchString(l) {
+			if criterionLineRE.MatchString(l) {
 				r.add(p.file, n, "%s: cannot read %q as an acceptance criterion (indent it as a \"  - ACn — …\" bullet under the field)", id, l)
 				continue
 			}
 			inCriteria = false
+			listEnd = n
+		case listEnd != 0 && criterionLineRE.MatchString(l):
+			// A criterion after the end of the list, as after a line of text
+			// at the margin, is reported, so that it is never silently left
+			// out.
+			r.add(p.file, n, "%s: cannot read %q as an acceptance criterion, because the list of acceptance criteria ends on line %d (keep the criteria together under the field)", id, strings.TrimSpace(l), listEnd)
+			continue
 		}
 		if m := criteriaFieldRE.FindStringSubmatch(l); m != nil {
 			if req.criteriaLine != 0 {
@@ -204,19 +214,26 @@ func (p *prd) parseRequirement(d *document, s section, id, title string, r *repo
 // addCriteria reads the acceptance criteria in text: one indented bullet
 // ("AC1 — …"), or, when inline, the rest of the field's line ("AC1 — …
 // AC2 — …"). In inline text, a label that is not written "ACn — " is
-// reported, so that a criterion is never silently left out.
+// reported, and so is a second label in a bullet, so that a criterion is
+// never silently left out.
 func (req *requirement) addCriteria(file string, line int, text string, inline bool, r *reporter) {
 	if !criterionRE.MatchString(text) {
 		r.add(file, line, "%s: cannot read %q as an acceptance criterion (write \"ACn — …\")", req.id, text)
 		return
 	}
 	re := criterionRE
+	labels := inlineLabelRE.FindAllStringSubmatch(text, -1)
 	if inline {
 		re = inlineCriterionRE
-		for _, m := range inlineLabelRE.FindAllStringSubmatch(text, -1) {
+		for _, m := range labels {
 			if !criterionRE.MatchString(m[1]) {
 				r.add(file, line, "%s: cannot read %q as an acceptance criterion (write \"ACn — …\")", req.id, strings.TrimSpace(m[1]))
 			}
+		}
+	} else {
+		// The first label is the bullet's own.
+		for _, m := range labels[1:] {
+			r.add(file, line, "%s: cannot read %q as an acceptance criterion (write each criterion as its own \"- ACn — …\" bullet)", req.id, strings.TrimSpace(m[1]))
 		}
 	}
 	for _, m := range re.FindAllStringSubmatch(text, -1) {

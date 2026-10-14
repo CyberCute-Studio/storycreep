@@ -11,8 +11,9 @@ var (
 	// Vitest runs tests from *.test.ts and *.spec.ts files, and benchmarks
 	// only from *.bench.ts and *.benchmark.ts files. Playwright runs
 	// *.spec.ts and *.test.ts files.
-	jsFileRE = regexp.MustCompile(`\.(?:test|spec|bench|benchmark)\.[cm]?[jt]sx?$`)
-	jsSrcRE  = regexp.MustCompile(`\.[cm]?[jt]sx?$`)
+	jsFileRE      = regexp.MustCompile(`\.(?:test|spec|bench|benchmark)\.[cm]?[jt]sx?$`)
+	jsBenchFileRE = regexp.MustCompile(`\.(?:bench|benchmark)\.[cm]?[jt]sx?$`)
+	jsSrcRE       = regexp.MustCompile(`\.[cm]?[jt]sx?$`)
 )
 
 var jsLang = &language{
@@ -21,10 +22,15 @@ var jsLang = &language{
 	read:    readJS,
 }
 
-// jsHeads are the functions that declare a Vitest or Playwright test or
-// group: test("…"), it("…"), describe("…"), suite("…") (Vitest's describe),
-// and bench("…"), with modifiers as in test.describe.serial("…").
-var jsHeads = map[string]bool{"test": true, "it": true, "describe": true, "suite": true, "bench": true}
+// jsTestHeads and jsBenchHeads are the functions that declare a test or a
+// group in a test file and in a benchmark file: test("…"), it("…"),
+// describe("…"), and suite("…") (Vitest's describe), and bench("…"), with
+// modifiers as in test.describe.serial("…"). Vitest's test run reads only
+// test files, and bench("…") runs only in its benchmark run.
+var (
+	jsTestHeads  = map[string]bool{"test": true, "it": true, "describe": true, "suite": true}
+	jsBenchHeads = map[string]bool{"bench": true, "describe": true, "suite": true}
+)
 
 // jsModifiers are the modifiers a declaration may carry, and whether the test
 // or group then verifies nothing: it never runs, or it passes only while it
@@ -46,16 +52,21 @@ var jsModifiers = map[string]bool{
 }
 
 // readJS reads a JavaScript or TypeScript file. Its test declarations are the
-// calls of jsHeads with a string literal title, named after the groups they
-// are in as Vitest names them: "group > title". A group without a literal
-// title is "*". A test is skipped when it, or a group it is in, is declared
-// with a modifier that verifies nothing, whatever the group's arguments, as
-// in describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …).
+// calls of jsTestHeads, or of jsBenchHeads in a benchmark file, with a string
+// literal title, named after the groups they are in as Vitest names them:
+// "group > title". A group without a literal title is "*". A test is skipped
+// when it, or a group it is in, is declared with a modifier that verifies
+// nothing, whatever the group's arguments, as in
+// describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …).
 func readJS(file, src string, isTest bool) source {
 	toks, comments, unclosed := lexJS(src)
 	s := source{comments: comments}
 	if !isTest {
 		return s
+	}
+	heads := jsTestHeads
+	if jsBenchFileRE.MatchString(file) {
+		heads = jsBenchHeads
 	}
 
 	// match maps each "(" to its ")"; an unclosed one runs to the end.
@@ -91,7 +102,7 @@ func readJS(file, src string, isTest bool) source {
 				Msg: "cannot find the end of the template literal or block comment that starts here, so the scan cannot read the code after it (a backtick or \"/*\" in JSX text can cause this)"})
 		case unpaired > 0:
 			s.problems = append(s.problems, doccheck.Problem{File: file, Line: unpaired,
-				Msg: "cannot pair this parenthesis, so the scan cannot tell which groups the tests below it are in (a quote or \"//\" in JSX text can cause this)"})
+				Msg: "cannot pair this parenthesis, so the scan cannot tell which groups the tests below it are in (a parenthesis without its partner, a quote, or \"//\" in JSX text can cause this)"})
 		}
 	}
 
@@ -106,7 +117,7 @@ func readJS(file, src string, isTest bool) source {
 	}
 	var calls []call
 	for i, t := range toks {
-		if t.kind != 'i' || !jsHeads[t.text] {
+		if t.kind != 'i' || !heads[t.text] {
 			continue
 		}
 		if i > 0 && (toks[i-1].is('(', ".") || toks[i-1].is('i', "function")) {
@@ -167,9 +178,10 @@ func readJS(file, src string, isTest bool) source {
 type jsToken struct {
 	// kind is 'i' for an identifier or keyword, 's' for a string literal or
 	// a template literal without substitutions, 't' for the start of a
-	// template literal with them and 'e' for its end (the tokens of the
-	// substitutions are between), 'n' for a number, 'r' for a regular
-	// expression literal, and '(' for punctuation.
+	// template literal with them, 'm' for its text between two substitutions,
+	// and 'e' for its end (the tokens of the substitutions are between), 'n'
+	// for a number, 'r' for a regular expression literal, and '(' for
+	// punctuation.
 	kind byte
 	text string // the identifier, the punctuation, or the string's value
 	line int
@@ -250,6 +262,8 @@ func lexJS(src string) (toks []jsToken, comments []comment, unclosed int) {
 			case strings.HasPrefix(src[i:], "${"):
 				if first {
 					emit('t', "", startLine)
+				} else {
+					emit('m', "", line)
 				}
 				subst = append(subst, substitution{depth: depth, line: startLine})
 				return i + 2
@@ -383,6 +397,8 @@ func jsRegexAllowed(toks []jsToken) bool {
 		return jsRegexAfter[t.text]
 	case '(':
 		return t.text != ")" && t.text != "]" && t.text != "}"
+	case 't', 'm':
+		return true // the start of a substitution, "${"
 	}
 	return false
 }
