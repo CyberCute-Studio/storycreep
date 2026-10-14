@@ -84,6 +84,8 @@ func TestUsageErrors(t *testing.T) {
 		{[]string{"--config", "x"}, "storycreep: unknown flag --config; flags go after the command"},
 		{[]string{"validate-config", "--nope"}, "storycreep validate-config: flag provided but not defined: -nope"},
 		{[]string{"validate-config", "--config"}, "storycreep validate-config: flag needs an argument: -config"},
+		{[]string{"validate-config", "--config", ""}, "storycreep validate-config: the -config path is empty"},
+		{[]string{"validate-config", "--config="}, "storycreep validate-config: the -config path is empty"},
 		{[]string{"validate-config", "extra"}, `storycreep validate-config: unexpected argument "extra"`},
 		{[]string{"help", "nope"}, `storycreep help: unknown command "nope"`},
 		{[]string{"help", "a", "b"}, "storycreep help: expected at most one command name"},

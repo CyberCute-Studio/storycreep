@@ -19,6 +19,8 @@ func Reference() string {
 	for _, k := range keys {
 		fmt.Fprintf(&b, "| `%s` | %s | %s | %s |\n", k.name, k.valuesCell(), k.defaultCell(), k.descriptionCell())
 	}
+	fmt.Fprintf(&b, "| `%s` | A file path | Not set | The [configuration file](#the-configuration-file) to read. "+
+		"It is read from the environment only, and `--config` overrides it. |\n", fileKey)
 
 	b.WriteString(capabilitiesIntro)
 	changedBy := map[string]string{}
@@ -132,8 +134,10 @@ STORYCREEP_SIGNUP=invite
 
 This format is simpler than the environment files of Docker Compose
 (` + "`env_file`" + `) and systemd (` + "`EnvironmentFile`" + `). A file written for either is
-read the same way here only if it has no comment after a value, no escape
-sequence, and no variable reference such as ` + "`${HOME}`" + `.
+read the same way here only if it has no ` + "`export`" + ` in front of a key, no comment
+after a value, no escape sequence, and no variable reference such as
+` + "`${HOME}`" + `. systemd also ignores lines that start with ` + "`;`" + ` and lines without
+an ` + "`=`" + `, which are errors here.
 `
 
 const capabilitiesIntro = `

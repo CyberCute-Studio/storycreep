@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"runtime"
 	"slices"
@@ -100,13 +101,7 @@ func MapEnvironment(vars map[string]string) Environment {
 			v, ok := vars[name]
 			return v, ok
 		},
-		names: func() []string {
-			var names []string
-			for name := range vars {
-				names = append(names, name)
-			}
-			return names
-		},
+		names: func() []string { return slices.Collect(maps.Keys(vars)) },
 	}
 }
 
@@ -222,7 +217,12 @@ func load(keys []key, opts Options) (*Config, error) {
 		if err := k.set(c, v); err != nil {
 			msg := err.Error()
 			var hidden hiddenValueError
-			if !k.secret && !errors.As(err, &hidden) {
+			switch {
+			case k.secret && strings.Contains(msg, v):
+				// parse must not repeat the value, but an error it wraps,
+				// such as url.Parse's, can.
+				msg = "invalid; the reason is not shown because it contains the secret value"
+			case !k.secret && !errors.As(err, &hidden):
 				msg = fmt.Sprintf("%q: %s", v, msg)
 			}
 			problems = append(problems, Problem{Key: k.name, Source: source, Msg: msg})

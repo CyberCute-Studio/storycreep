@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"slices"
@@ -351,14 +352,15 @@ func TestKeyDeclarations(t *testing.T) {
 }
 
 func TestUnknownVariables(t *testing.T) {
-	env := MapEnvironment(map[string]string{
+	vars := map[string]string{
 		"STORYCREEP_PUBLIC_URL":  testURL,
 		"STORYCREEP_SINGUP":      "open",
 		"STORYCREEP_TOKEN":       "scp_x",
 		"storycreep_log_level":   "debug",
 		"STORYCREEP_CONFIG_FILE": "",
 		"PATH":                   "/usr/bin",
-	})
+	}
+	env := MapEnvironment(vars)
 	c, err := Load(Options{Env: env})
 	if err != nil {
 		t.Fatal(err)
@@ -379,15 +381,26 @@ func TestUnknownVariables(t *testing.T) {
 		t.Errorf("a lowercase key was read in a case-sensitive environment")
 	}
 
-	// Where names are case-insensitive, the lowercase key is read, so it is
-	// not reported.
+	// Where names are case-insensitive, as in the process environment on
+	// Windows, the lowercase key is read, so it is not reported.
 	env.foldCase = true
+	env.lookup = func(name string) (string, bool) {
+		for k, v := range vars {
+			if strings.EqualFold(k, name) {
+				return v, true
+			}
+		}
+		return "", false
+	}
 	c, err = Load(Options{Env: env})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := c.Warnings(); len(got) != 2 {
 		t.Errorf("warnings = %q, want two", got)
+	}
+	if c.LogLevel != slog.LevelDebug {
+		t.Errorf("LogLevel = %v; the lowercase key was not read in a case-insensitive environment", c.LogLevel)
 	}
 }
 
@@ -400,8 +413,13 @@ func TestSecretKeys(t *testing.T) {
 		name:   "STORYCREEP_TEST_PASSWORD",
 		secret: true,
 		parse: func(c *Config, v string) error {
-			if strings.HasPrefix(v, "bad") {
+			switch {
+			case strings.HasPrefix(v, "bad"):
 				return errors.New("too weak")
+			case strings.HasPrefix(v, "echo"):
+				// A parse function that breaks the rule, as a wrapped
+				// error such as url.Parse's would.
+				return fmt.Errorf("cannot parse %q", v)
 			}
 			got = secret.New(v)
 			return nil
@@ -419,8 +437,10 @@ func TestSecretKeys(t *testing.T) {
 		t.Errorf("entry value = %q, want %q", e.Value, secret.Redacted)
 	}
 
-	_, err = load(testKeys, Options{Env: MapEnvironment(map[string]string{"STORYCREEP_TEST_PASSWORD": "bad" + value})})
-	if err == nil || strings.Contains(err.Error(), value) || !strings.Contains(err.Error(), "STORYCREEP_TEST_PASSWORD") {
-		t.Errorf("error %v should name the key without the value", err)
+	for _, v := range []string{"bad" + value, "echo" + value} {
+		_, err = load(testKeys, Options{Env: MapEnvironment(map[string]string{"STORYCREEP_TEST_PASSWORD": v})})
+		if err == nil || strings.Contains(err.Error(), value) || !strings.Contains(err.Error(), "STORYCREEP_TEST_PASSWORD") {
+			t.Errorf("error %v should name the key without the value", err)
+		}
 	}
 }

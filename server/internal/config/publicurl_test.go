@@ -21,7 +21,11 @@ func TestParsePublicURL(t *testing.T) {
 		{"http://192.168.1.20:0080", "http://192.168.1.20", false},
 		{"http://[::1]:8080", "http://[::1]:8080", false},
 		{"https://[2001:DB8::1]:443/", "https://[2001:db8::1]", true},
+		{"http://[2001:db8:0:0::1]:8080", "http://[2001:db8::1]:8080", false},
 		{"http://host:", "http://host", false},
+		{"https://xn--bcher-kva.example", "https://xn--bcher-kva.example", true},
+		{"http://my_nas.local:8080", "http://my_nas.local:8080", false},
+		{"https://storycreep.example.com.", "https://storycreep.example.com.", true},
 	}
 	for _, tt := range valid {
 		u, err := parsePublicURL(tt.in)
@@ -59,6 +63,19 @@ func TestParsePublicURL(t *testing.T) {
 		{"https://example.com:http", "not a valid URL"},
 		{"https://exa mple.com", "not a valid URL"},
 		{"https://example.com\n", "not a valid URL"},
+		// Hosts a browser writes differently in the Origin header, or rejects.
+		{"https://Bücher.example", "write an internationalized domain name in its xn-- (Punycode) form"},
+		{"https://ex<ample.com", "may contain only letters, digits, hyphens, underscores, and dots"},
+		{"https://*.example.com", "may contain only letters, digits, hyphens, underscores, and dots"},
+		{"https://example..com", "has an empty label"},
+		{"https://.example.com", "has an empty label"},
+		{"http://0x7f.1", "not a valid IPv4 address"},
+		{"http://127.1", "not a valid IPv4 address"},
+		{"http://192.168.001.020", "not a valid IPv4 address"},
+		{"http://999.1.1.1", "not a valid IPv4 address"},
+		{"http://[fe80::1%25en0]:8080", "must not have an IPv6 zone"},
+		{"http://[::ffff:192.168.1.20]", "must not be an IPv4-mapped IPv6 address"},
+		{"https://user@Bücher.example", "must not contain a user name or password"},
 	}
 	for _, tt := range invalid {
 		u, err := parsePublicURL(tt.in)

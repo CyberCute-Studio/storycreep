@@ -20,12 +20,13 @@ import (
 const configDir = "internal/config"
 
 // envReaders are the functions that read the process environment, by the
-// import path of their package.
+// import path of their package. Methods named Environ, such as exec.Cmd's,
+// are caught separately.
 var envReaders = map[string][]string{
 	"os":                       {"Getenv", "LookupEnv", "Environ", "ExpandEnv"},
-	"syscall":                  {"Getenv", "Environ"},
+	"syscall":                  {"Getenv", "Environ", "GetEnvironmentVariable", "GetEnvironmentStrings"},
 	"golang.org/x/sys/unix":    {"Getenv", "Environ"},
-	"golang.org/x/sys/windows": {"Getenv", "Environ"},
+	"golang.org/x/sys/windows": {"Getenv", "Environ", "GetEnvironmentVariable", "GetEnvironmentStrings"},
 }
 
 type lintResult struct {
@@ -124,12 +125,19 @@ func lintModeIsolation(root string) (lintResult, error) {
 					report(n.Pos(), "uses the mode value %q; branch on config.Capabilities instead", s)
 				}
 			case *ast.SelectorExpr:
-				x, ok := n.X.(*ast.Ident)
-				if !ok {
-					break
+				if x, ok := n.X.(*ast.Ident); ok {
+					if ip, ok := imported[x.Name]; ok {
+						if slices.Contains(envReaders[ip], n.Sel.Name) {
+							report(n.Pos(), "reads the environment with %s.%s; only %s may", x.Name, n.Sel.Name, configDir)
+						}
+						break
+					}
 				}
-				if ip, ok := imported[x.Name]; ok && slices.Contains(envReaders[ip], n.Sel.Name) {
-					report(n.Pos(), "reads the environment with %s.%s; only %s may", x.Name, n.Sel.Name, configDir)
+				// Without types, a method cannot be told apart by its
+				// receiver, so every Environ counts, such as exec.Cmd's,
+				// which returns the process environment.
+				if n.Sel.Name == "Environ" {
+					report(n.Pos(), "reads the environment with an Environ method; only %s may", configDir)
 				}
 			}
 			return true
@@ -211,6 +219,15 @@ func TestModeLintFindsViolations(t *testing.T) {
 			`import . "os"`,
 			"var h = Getpid()",
 		},
+		"internal/other/windows.go": {
+			"package other",
+			"import (",
+			`	"os/exec"`,
+			`	"syscall"`,
+			")",
+			`var i = exec.Command("x").Environ()`,
+			"var j = syscall.GetEnvironmentVariable",
+		},
 		"internal/other/other_test.go": {
 			"package other",
 			`import "os"`,
@@ -244,6 +261,8 @@ func TestModeLintFindsViolations(t *testing.T) {
 		"internal/other/other.go:8: names STORYCREEP_MODE, which only internal/config reads",
 		"internal/other/other.go:9: names STORYCREEP_MODE, which only internal/config reads",
 		`internal/other/other.go:10: uses the mode value "self-hosted"; branch on config.Capabilities instead`,
+		"internal/other/windows.go:6: reads the environment with an Environ method; only internal/config may",
+		"internal/other/windows.go:7: reads the environment with syscall.GetEnvironmentVariable; only internal/config may",
 	}
 	slices.Sort(r.violations)
 	slices.Sort(want)

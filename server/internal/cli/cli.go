@@ -166,10 +166,19 @@ func (c *command) execute(ctx context.Context, args []string, stdout, stderr io.
 	if c.args == "" && fs.NArg() > 0 {
 		return usageFailure(stderr, c.name, fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 	}
+	var configFile string
+	if c.loadsConfig {
+		configFile = fs.Lookup("config").Value.String()
+		// Load reads an empty path as no flag, so an empty --config
+		// "$CONFIG" would silently check another file or none.
+		if configFile == "" && isSet(fs, "config") {
+			return usageFailure(stderr, c.name, "the -config path is empty")
+		}
+	}
 	inv := &invocation{args: fs.Args(), stdout: stdout, stderr: stderr}
 
 	if c.loadsConfig {
-		cfg, err := config.Load(config.Options{File: fs.Lookup("config").Value.String(), Env: env})
+		cfg, err := config.Load(config.Options{File: configFile, Env: env})
 		if err != nil {
 			printConfigError(stderr, c.name, err)
 			return ExitFailure
@@ -187,6 +196,13 @@ func (c *command) execute(ctx context.Context, args []string, stdout, stderr io.
 		return ExitFailure
 	}
 	return ExitOK
+}
+
+// isSet reports whether the command line set the named flag.
+func isSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
 }
 
 func printWarnings(w io.Writer, name string, warnings []string) {
@@ -209,7 +225,7 @@ func printConfigError(w io.Writer, name string, err error) {
 	for _, p := range cerr.Problems {
 		fmt.Fprintf(w, "  %s\n", p)
 	}
-	fmt.Fprintln(w, "docs/configuration.md describes every key.")
+	fmt.Fprintln(w, "The configuration reference, docs/configuration.md in the Storycreep repository, describes every key.")
 }
 
 // usageFailure reports a usage error of the named command, or of storycreep
@@ -248,7 +264,8 @@ Commands:
 Run 'storycreep <command> --help' for the flags of a command.
 
 Configuration comes from STORYCREEP_* environment variables and an optional
-file; docs/configuration.md describes every key.
+file. The configuration reference, docs/configuration.md in the Storycreep
+repository, describes every key.
 
 Exit status: 0 on success, 1 if the command fails or the configuration is
 invalid, 2 if the command line is wrong.

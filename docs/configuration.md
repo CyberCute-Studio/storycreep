@@ -50,18 +50,21 @@ STORYCREEP_SIGNUP=invite
 
 This format is simpler than the environment files of Docker Compose
 (`env_file`) and systemd (`EnvironmentFile`). A file written for either is
-read the same way here only if it has no comment after a value, no escape
-sequence, and no variable reference such as `${HOME}`.
+read the same way here only if it has no `export` in front of a key, no comment
+after a value, no escape sequence, and no variable reference such as
+`${HOME}`. systemd also ignores lines that start with `;` and lines without
+an `=`, which are errors here.
 
 ## Keys
 
 | Key | Values | Default | Description |
 | --- | --- | --- | --- |
 | `STORYCREEP_MODE` | `self-hosted`, `hosted` | `self-hosted` | The deployment mode: `self-hosted` for an instance run by its own operator, `hosted` for the operated multi-tenant service. It decides the [capabilities](#capabilities), and no other code reads it. |
-| `STORYCREEP_PUBLIC_URL` | An `http` or `https` URL | Required | The URL users open Storycreep at: `http` or `https`, a host name, and an optional port, with no path. Behind a reverse proxy that terminates TLS, it is the proxy's `https` URL, not the address the server listens on. Hosted mode requires `https`. Example: `https://storycreep.example.com`. |
+| `STORYCREEP_PUBLIC_URL` | An `http` or `https` URL | Required | The URL users open Storycreep at: `http` or `https`, a host name, and an optional port, with no path. Behind a reverse proxy that terminates TLS, it is the proxy's `https` URL, not the address the server listens on. Write an internationalized domain name in its `xn--` (Punycode) form. Hosted mode requires `https`. Example: `https://storycreep.example.com`. |
 | `STORYCREEP_PUBLIC_SITE` | `on`, `off` | `off` (self-hosted), `on` (hosted) | Whether the instance serves the public site: the marketing pages and the documentation. |
 | `STORYCREEP_SIGNUP` | `closed`, `invite`, `open` | `closed` (self-hosted), `open` (hosted) | Who can register an account: `closed` (no one), `invite` (people holding an invitation), or `open` (anyone). Hosted mode always uses `open`, and another value is an error there. |
 | `STORYCREEP_LOG_LEVEL` | `debug`, `info`, `warn`, `error` | `info` | The lowest level that is logged. |
+| `STORYCREEP_CONFIG_FILE` | A file path | Not set | The [configuration file](#the-configuration-file) to read. It is read from the environment only, and `--config` overrides it. |
 
 ## Capabilities
 

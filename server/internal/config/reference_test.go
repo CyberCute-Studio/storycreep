@@ -45,6 +45,7 @@ func TestReferenceContents(t *testing.T) {
 		"| `STORYCREEP_PUBLIC_URL` | An `http` or `https` URL | Required |",
 		"| `STORYCREEP_PUBLIC_SITE` | `on`, `off` | `off` (self-hosted), `on` (hosted) |",
 		"| `STORYCREEP_SIGNUP` | `closed`, `invite`, `open` | `closed` (self-hosted), `open` (hosted) |",
+		"| `STORYCREEP_CONFIG_FILE` | A file path | Not set |",
 		"| `PublicSite` | `off` | `on` | `STORYCREEP_PUBLIC_SITE` |",
 		"| `BlobDriver` | `local` | `s3` | — |",
 	} {
