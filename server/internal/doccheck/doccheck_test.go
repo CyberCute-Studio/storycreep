@@ -193,6 +193,18 @@ func TestCheckFails(t *testing.T) {
 			want: `FR-B-02: cannot read "AC2 — It has no bullet." as an acceptance criterion`,
 		},
 		{
+			name: "acceptance criterion bullet at the margin",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too.\n- AC3 — At the margin.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "- AC3 — At the margin." as an acceptance criterion (indent it as a "  - ACn — …" bullet under the field)`,
+		},
+		{
+			name: "acceptance criterion text at the margin",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too.\nAC3 — A lazy continuation line.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "AC3 — A lazy continuation line." as an acceptance criterion`,
+		},
+		{
 			name: "inline acceptance criterion on a wrapped line",
 			prd:  []edit{{"AC1 — It shines. AC2 — It still works.", "AC1 — It shines.\n  AC2 — It still works."}},
 			file: "PRD.md",
@@ -648,6 +660,19 @@ func TestParsePRD(t *testing.T) {
 	}
 	if want := []string{"AC1", "AC2", "AC3"}; !slices.Equal(got.Requirements[1].Criteria, want) {
 		t.Errorf("FR-A-02 criteria in a loose list = %q, want %q", got.Requirements[1].Criteria, want)
+	}
+
+	// A criterion at the margin is reported, and the list goes on after it.
+	margin := applyEdits(t, readFixture(t, "PRD.md"), []edit{{
+		"  - AC1 — It works too.\n",
+		"  - AC1 — It works too.\n- AC3 — At the margin.\n  - AC4 — Indented again.\n",
+	}})
+	got, problems = ParsePRD("PRD.md", margin)
+	if want := []string{"AC1", "AC2", "AC4"}; !slices.Equal(got.Requirements[1].Criteria, want) {
+		t.Errorf("FR-A-02 criteria around one at the margin = %q, want %q", got.Requirements[1].Criteria, want)
+	}
+	if len(problems) != 2 || problems[0].Msg != "FR-A-02 has no AC3, although its criteria run to AC4" || !strings.Contains(problems[1].Msg, `"- AC3 — At the margin."`) {
+		t.Errorf("a criterion at the margin: problems =%s", formatProblems(problems))
 	}
 
 	_, problems = ParsePRD("PRD.md", applyEdits(t, readFixture(t, "PRD.md"), []edit{{"**Hosted SaaS.** FR-B-02", ""}}))

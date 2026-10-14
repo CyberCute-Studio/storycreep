@@ -64,6 +64,8 @@ func readGD(_, src string, isTest bool) source {
 			if j < len(src) && src[j] == c {
 				j++
 			}
+			j = min(j, len(src))
+			line += strings.Count(src[i:j], "\n") // escaped line breaks
 			code = true
 			prev = ""
 			i = j

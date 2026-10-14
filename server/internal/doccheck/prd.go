@@ -80,6 +80,9 @@ var (
 	// listItemRE finds a list item that is not a "-" bullet: "* …", "+ …",
 	// "1. …".
 	listItemRE = regexp.MustCompile(`^\s*(?:[*+]|\d+[.)])\s`)
+	// marginCriterionRE finds a line at the margin that starts with a
+	// criterion's label, as a list item or as text: "- AC3 — …", "AC3 — …".
+	marginCriterionRE = regexp.MustCompile(`^(?:(?:[-*+]|\d+[.)])\s+)?AC\d+\b`)
 )
 
 func parsePRD(file, src string, r *reporter) *prd {
@@ -140,6 +143,12 @@ func (p *prd) parseRequirement(d *document, s section, id, title string, r *repo
 				if listItemRE.MatchString(l) || inlineLabelRE.MatchString(l) {
 					r.add(p.file, n, "%s: cannot read %q as an acceptance criterion (write it as a \"- ACn — …\" bullet)", id, strings.TrimSpace(l))
 				}
+				continue
+			}
+			// A line at the margin ends the list, unless it reads as a
+			// criterion that is not indented.
+			if marginCriterionRE.MatchString(l) {
+				r.add(p.file, n, "%s: cannot read %q as an acceptance criterion (indent it as a \"  - ACn — …\" bullet under the field)", id, l)
 				continue
 			}
 			inCriteria = false

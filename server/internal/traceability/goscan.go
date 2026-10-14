@@ -27,8 +27,9 @@ func isGoTest(name string) bool {
 }
 
 // readGo parses a Go file. Its test declarations are the top-level Test,
-// Benchmark, and Fuzz functions and the t.Run subtests in them, named as go
-// test names them: a subtest without a literal name is "*".
+// Benchmark, and Fuzz functions and the subtests in them (t.Run or b.Run on a
+// *testing.T or *testing.B parameter), named as go test names them: a
+// subtest without a literal name is "*".
 func readGo(file, src string, isTest bool) source {
 	var s source
 	fset := token.NewFileSet()
@@ -70,19 +71,37 @@ func readGo(file, src string, isTest bool) source {
 		if fn.Body == nil {
 			continue
 		}
-		// The t.Run calls the node being visited is in, innermost last.
-		var stack []ast.Node
+		// The names of the *testing.T and *testing.B parameters of the test
+		// and of the functions in it, whose Run calls start subtests.
+		params := map[string]bool{}
+		addTestingParams(fn.Type, params)
+		isRun := func(call *ast.CallExpr) bool {
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Run" || len(call.Args) != 2 {
+				return false
+			}
+			recv, ok := sel.X.(*ast.Ident)
+			return ok && params[recv.Name]
+		}
+		// For each node being visited, innermost last, whether it is a t.Run
+		// call, and the names of those calls.
+		var runs []bool
 		var names []string
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			if n == nil {
-				if call, ok := stack[len(stack)-1].(*ast.CallExpr); ok && isRun(call) {
+				if runs[len(runs)-1] {
 					names = names[:len(names)-1]
 				}
-				stack = stack[:len(stack)-1]
+				runs = runs[:len(runs)-1]
 				return true
 			}
-			stack = append(stack, n)
-			if call, ok := n.(*ast.CallExpr); ok && isRun(call) {
+			if lit, ok := n.(*ast.FuncLit); ok {
+				addTestingParams(lit.Type, params)
+			}
+			call, ok := n.(*ast.CallExpr)
+			run := ok && isRun(call)
+			runs = append(runs, run)
+			if run {
 				names = append(names, subtestName(call.Args[0]))
 				s.decls = append(s.decls, decl{
 					line: fset.Position(call.Pos()).Line,
@@ -95,10 +114,26 @@ func readGo(file, src string, isTest bool) source {
 	return s
 }
 
-// isRun reports whether a call starts a subtest: x.Run(name, f).
-func isRun(call *ast.CallExpr) bool {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	return ok && sel.Sel.Name == "Run" && len(call.Args) == 2
+// addTestingParams adds to names the parameters of a function that are a
+// *testing.T or a *testing.B, whose Run method starts a subtest. A Run call
+// on anything else, such as app.Run(ctx, args), is not a test.
+func addTestingParams(ft *ast.FuncType, names map[string]bool) {
+	for _, f := range ft.Params.List {
+		star, ok := f.Type.(*ast.StarExpr)
+		if !ok {
+			continue
+		}
+		sel, ok := star.X.(*ast.SelectorExpr)
+		if !ok || (sel.Sel.Name != "T" && sel.Sel.Name != "B") {
+			continue
+		}
+		if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "testing" {
+			continue
+		}
+		for _, n := range f.Names {
+			names[n.Name] = true
+		}
+	}
 }
 
 // subtestName returns a subtest's name as go test prints it, which writes

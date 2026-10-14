@@ -2,7 +2,6 @@ package traceability
 
 import (
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/doccheck"
@@ -51,9 +50,9 @@ var jsModifiers = map[string]bool{
 // are in as Vitest names them: "group > title". A group without a literal
 // title is "*". A test is skipped when it, or a group it is in, is declared
 // with a modifier that verifies nothing, whatever the group's arguments, as
-// in describe.skip.each([…])("…", …).
+// in describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …).
 func readJS(file, src string, isTest bool) source {
-	toks, comments := lexJS(src)
+	toks, comments, unclosed := lexJS(src)
 	s := source{comments: comments}
 	if !isTest {
 		return s
@@ -80,12 +79,20 @@ func readJS(file, src string, isTest bool) source {
 	if len(open) > 0 && (unpaired == 0 || toks[open[0]].line < unpaired) {
 		unpaired = toks[open[0]].line
 	}
-	// Without paired parentheses, the groups the tests are in are unknown,
-	// and so are their names and whether a skipped group holds them. That
-	// matters only in a file with Verifies comments.
-	if unpaired > 0 && slices.ContainsFunc(comments, func(c comment) bool { return strings.HasPrefix(c.text, "Verifies:") }) {
-		s.problems = append(s.problems, doccheck.Problem{File: file, Line: unpaired,
-			Msg: "cannot pair this parenthesis, so the scan cannot tell which groups the tests below it are in (a quote or \"//\" in JSX text can cause this)"})
+	// A literal or comment that never closes hides the code after it, and
+	// without paired parentheses the groups the tests are in are unknown, and
+	// so are their names and whether a skipped group holds them. That matters
+	// only in a file with Verifies comments. The source is searched, not the
+	// comments, because the comments after such a literal are hidden too.
+	if strings.Contains(src, "Verifies:") {
+		switch {
+		case unclosed > 0:
+			s.problems = append(s.problems, doccheck.Problem{File: file, Line: unclosed,
+				Msg: "cannot find the end of the template literal or block comment that starts here, so the scan cannot read the code after it (a backtick or \"/*\" in JSX text can cause this)"})
+		case unpaired > 0:
+			s.problems = append(s.problems, doccheck.Problem{File: file, Line: unpaired,
+				Msg: "cannot pair this parenthesis, so the scan cannot tell which groups the tests below it are in (a quote or \"//\" in JSX text can cause this)"})
+		}
 	}
 
 	// A call of a declaration: the tokens of its arguments, from its first
@@ -113,18 +120,24 @@ func readJS(file, src string, isTest bool) source {
 			skipped = skipped || skip
 			j += 2
 		}
+		// A template literal after the modifiers is the table of a tagged
+		// template, as in describe.each`a | b`("…", …), and the call follows it.
+		table := j < len(toks) && (toks[j].kind == 's' || toks[j].kind == 't')
+		if table {
+			j = afterTemplate(toks, j)
+		}
 		if j >= len(toks) || !toks[j].is('(', "(") {
 			continue
 		}
-		c := call{head: i, from: j, to: match[j], skipped: skipped}
+		c := call{head: i, from: j, to: match[j], skipped: skipped, name: "*"}
 		for c.to+1 < len(toks) && toks[c.to+1].is('(', "(") {
 			c.to = match[c.to+1]
 		}
-		if j+1 < len(toks) && toks[j+1].kind == 's' {
+		// The title is a literal only when nothing is added to it, as in
+		// "handles " + name.
+		if !table && j+2 < len(toks) && toks[j+1].kind == 's' && (toks[j+2].is('(', ",") || toks[j+2].is('(', ")")) {
 			c.name = toks[j+1].text
 			c.named = known
-		} else {
-			c.name = "*"
 		}
 		calls = append(calls, c)
 	}
@@ -153,9 +166,10 @@ func readJS(file, src string, isTest bool) source {
 // jsToken is a token of JavaScript or TypeScript source.
 type jsToken struct {
 	// kind is 'i' for an identifier or keyword, 's' for a string literal or
-	// a template literal without substitutions, 't' for a template literal
-	// with them, 'n' for a number, 'r' for a regular expression literal, and
-	// '(' for punctuation.
+	// a template literal without substitutions, 't' for the start of a
+	// template literal with them and 'e' for its end (the tokens of the
+	// substitutions are between), 'n' for a number, 'r' for a regular
+	// expression literal, and '(' for punctuation.
 	kind byte
 	text string // the identifier, the punctuation, or the string's value
 	line int
@@ -163,6 +177,24 @@ type jsToken struct {
 
 func (t jsToken) is(kind byte, text string) bool {
 	return t.kind == kind && t.text == text
+}
+
+// afterTemplate returns the index of the token after the template literal
+// that starts at toks[i].
+func afterTemplate(toks []jsToken, i int) int {
+	depth := 0
+	for ; i < len(toks); i++ {
+		switch toks[i].kind {
+		case 't':
+			depth++
+		case 'e':
+			depth--
+		}
+		if depth == 0 {
+			return i + 1
+		}
+	}
+	return i
 }
 
 // jsRegexAfter are the keywords after which "/" starts a regular expression
@@ -180,23 +212,26 @@ var jsUnescaper = strings.NewReplacer(`\\`, `\`, `\"`, `"`, `\'`, `'`, "\\`", "`
 // reads string, template, and regular expression literals, so that comment
 // markers and quotes inside them are not taken for code. A quoted string
 // ends at the end of its line at the latest, so that a quote it cannot pair,
-// such as an apostrophe in JSX text, confuses at most that line.
-func lexJS(src string) ([]jsToken, []comment) {
-	var toks []jsToken
-	var comments []comment
+// such as an apostrophe in JSX text, confuses at most that line. unclosed is
+// the line of a template literal or block comment that the source ends in,
+// as one opened by a backtick in JSX text does, or 0.
+func lexJS(src string) (toks []jsToken, comments []comment, unclosed int) {
 	line := 1
 	code := false // a token or a block comment is on the line before i
 	depth := 0    // the depth of "{" nesting
-	var subst []int
+	// The substitutions the tokenizer is in, innermost last: the depth of
+	// "{" nesting at their "${", and the line of their template literal.
+	type substitution struct{ depth, line int }
+	var subst []substitution
 	emit := func(kind byte, text string, at int) {
 		toks = append(toks, jsToken{kind: kind, text: text, line: at})
 		code = true
 	}
-	// template reads a template literal from i, after its "`" or after the
-	// "}" of a substitution, up to its closing "`" or its next "${". It
-	// returns the index after what it read.
-	template := func(i int, first bool) int {
-		start, startLine := i, line
+	// template reads a template literal from i, after its "`" (first) or
+	// after the "}" of a substitution, up to its closing "`" or its next
+	// "${". It returns the index after what it read.
+	template := func(i int, first bool, startLine int) int {
+		start := i
 		for i < len(src) {
 			switch {
 			case src[i] == '\\':
@@ -208,13 +243,15 @@ func lexJS(src string) ([]jsToken, []comment) {
 			case src[i] == '`':
 				if first {
 					emit('s', jsUnescaper.Replace(src[start:i]), startLine)
+				} else {
+					emit('e', "", line)
 				}
 				return i + 1
 			case strings.HasPrefix(src[i:], "${"):
 				if first {
 					emit('t', "", startLine)
 				}
-				subst = append(subst, depth)
+				subst = append(subst, substitution{depth: depth, line: startLine})
 				return i + 2
 			case src[i] == '\n':
 				line++
@@ -224,6 +261,7 @@ func lexJS(src string) ([]jsToken, []comment) {
 		if first {
 			emit('t', "", startLine)
 		}
+		unclosed = startLine
 		return i
 	}
 
@@ -247,6 +285,7 @@ func lexJS(src string) ([]jsToken, []comment) {
 			end := strings.Index(src[i+2:], "*/")
 			if end < 0 {
 				end = len(src)
+				unclosed = line
 			} else {
 				end += i + 4
 			}
@@ -274,10 +313,11 @@ func lexJS(src string) ([]jsToken, []comment) {
 			line += strings.Count(src[i:j], "\n") // escaped line breaks
 			i = j + 1
 		case c == '`':
-			i = template(i+1, true)
-		case c == '}' && len(subst) > 0 && depth == subst[len(subst)-1]:
+			i = template(i+1, true, line)
+		case c == '}' && len(subst) > 0 && depth == subst[len(subst)-1].depth:
+			startLine := subst[len(subst)-1].line
 			subst = subst[:len(subst)-1]
-			i = template(i+1, false)
+			i = template(i+1, false, startLine)
 		case c == '/' && jsRegexAllowed(toks):
 			j, inClass := i+1, false
 			for j < len(src) && src[j] != '\n' && (inClass || src[j] != '/') {
@@ -325,7 +365,10 @@ func lexJS(src string) ([]jsToken, []comment) {
 			i++
 		}
 	}
-	return toks, comments
+	if unclosed == 0 && len(subst) > 0 {
+		unclosed = subst[0].line
+	}
+	return toks, comments, unclosed
 }
 
 // jsRegexAllowed reports whether a "/" after toks starts a regular

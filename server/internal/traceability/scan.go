@@ -145,7 +145,7 @@ var (
 	nearTagRE = regexp.MustCompile(`(?i)^@?verif(?:y|ies|ied)\b[^A-Za-z0-9]*N?FR-`)
 
 	// continuedTagRE finds a comment line that continues the ID list of the
-	// Verifies comment above it.
+	// Verifies comment on the line above it.
 	continuedTagRE = regexp.MustCompile(`^N?FR-[A-Z0-9]+-\d+`)
 )
 
@@ -170,6 +170,7 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 	var tests []Test
 	var pending []Tag // the tags of the current run of line comments
 	last := 0         // the line of the last comment in the run
+	tagEnd := 0       // the line of the last Verifies line, or of a line that continues its list
 	flush := func() {
 		if pending == nil {
 			return
@@ -188,6 +189,8 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 			if tagged {
 				report(c.line, "a Verifies comment in a block comment (write it as a %s line comment directly above the test)", lang.comment)
 			}
+		case tagged && !isTest:
+			report(c.line, "a Verifies comment outside a test file (tests are in *_test.go, *.test.ts, *.spec.ts, *.bench.ts, or test_*.gd files)")
 		case !c.ownLine:
 			if isTest && (tagged || nearTagRE.MatchString(c.text)) {
 				report(c.line, "a Verifies comment after code (write it on its own line directly above the test)")
@@ -198,8 +201,8 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 			}
 			last = c.line
 			switch {
-			case tagged && !isTest:
-				report(c.line, "a Verifies comment outside a test file (tests are in *_test.go, *.test.ts, *.spec.ts, *.bench.ts, or test_*.gd files)")
+			case !isTest:
+				// Prose in a file that holds no tests is not read for tags.
 			case tagged:
 				ids, errs := parseTags(rest)
 				for _, err := range errs {
@@ -208,8 +211,12 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 				for _, id := range ids {
 					pending = append(pending, Tag{ID: id, Line: c.line})
 				}
-			case isTest && (nearTagRE.MatchString(c.text) || pending != nil && continuedTagRE.MatchString(c.text)):
+				tagEnd = c.line
+			case nearTagRE.MatchString(c.text):
 				report(c.line, "cannot read %q as a Verifies comment (write \"Verifies:\" and the IDs)", c.text)
+			case tagEnd > 0 && c.line == tagEnd+1 && continuedTagRE.MatchString(c.text):
+				report(c.line, "cannot read %q as a Verifies comment (write \"Verifies:\" and the IDs)", c.text)
+				tagEnd = c.line
 			}
 		}
 	}
