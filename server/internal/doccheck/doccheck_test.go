@@ -114,6 +114,18 @@ func TestCheckFails(t *testing.T) {
 			want: "the §12.1 exit criteria name NFR-PERF-04, which is not defined",
 		},
 		{
+			name: "exit criteria with a range written with three dots",
+			prd:  []edit{{"NFR-PERF-01…02 met", "NFR-PERF-01...02 met"}},
+			file: "PRD.md",
+			want: `§12.1 exit criteria: cannot read "NFR-PERF-01...02" as a requirement ID`,
+		},
+		{
+			name: "requirement with a second Depends on field",
+			prd:  []edit{{"**Depends on:** FR-A-01\n", "**Depends on:** FR-A-01\n- **Depends on:** —\n"}},
+			file: "PRD.md",
+			want: "FR-A-02 has a second Depends on field",
+		},
+		{
 			name: "Appendix B listing an unknown ID",
 			prd:  []edit{{"**Hosted SaaS.** FR-B-02", "**Hosted SaaS.** FR-B-02, 03"}},
 			file: "PRD.md",
@@ -196,6 +208,39 @@ func TestCheckFails(t *testing.T) {
 			want: `coverage matrix row FR-A-03 lists "4 (5)", but the items' PRD lines give "2a, 4 (5)"`,
 		},
 		{
+			name: "PRD line with a range written with three dots",
+			plan: []edit{{"**PRD:** FR-A-02\n", "**PRD:** FR-A-02...03\n"}},
+			file: "PLAN.md",
+			want: `item 2a: cannot read "FR-A-02...03" as a requirement ID`,
+		},
+		{
+			name: "PRD line with a range that repeats the prefix",
+			plan: []edit{{"**PRD:** FR-A-02\n", "**PRD:** FR-A-02…FR-A-03\n"}},
+			file: "PLAN.md",
+			want: `item 2a: cannot read "FR-A-02…FR-A-03" as a requirement ID`,
+		},
+		{
+			name: "PRD line with a range written with to",
+			plan: []edit{{"**PRD:** FR-A-02\n", "**PRD:** FR-A-02 to 03\n"}},
+			file: "PLAN.md",
+			want: `item 2a: cannot read "FR-A-02 to 03" as a requirement ID`,
+		},
+		{
+			name: "duplicate coverage matrix row",
+			plan: []edit{{"| FR-B-01 | 5 | 5 |\n", "| FR-B-01 | 5 | 5 |\n| FR-B-01 | 5 | 5 |\n"}},
+			file: "PLAN.md",
+			want: "the coverage matrix has a second row for FR-B-01",
+		},
+		{
+			name: "PRD line checked without a coverage matrix",
+			plan: []edit{
+				{"## Coverage matrix\n", "## Coverage\n"},
+				{"**PRD:** FR-A-02\n", "**PRD:** FR-A-02, FR-C-01\n"},
+			},
+			file: "PLAN.md",
+			want: "item 2a names FR-C-01, which is not a requirement of the PRD",
+		},
+		{
 			name: "later-phase item not in parentheses",
 			plan: []edit{{"| FR-A-03 | 4 (5) | 4 |", "| FR-A-03 | 4, 5 | 5 |"}},
 			file: "PLAN.md",
@@ -265,6 +310,18 @@ func TestCheckFails(t *testing.T) {
 			want: "NFR-PERF-02, a target of the §12.1 exit criteria, has no measuring item in the performance table (rule 3)",
 		},
 		{
+			name: "performance table naming an unknown target",
+			plan: []edit{{"| NFR-PERF-03 (not an exit criterion) |", "| NFR-PERF-03, 04 (not an exit criterion) |"}},
+			file: "PLAN.md",
+			want: "the performance table names NFR-PERF-04, which is not a requirement of the PRD",
+		},
+		{
+			name: "performance target with two rows",
+			plan: []edit{{"| NFR-PERF-03 (not an exit criterion) | 5 |\n", "| NFR-PERF-03 (not an exit criterion) | 5 |\n| NFR-PERF-02 (again) | 5 |\n"}},
+			file: "PLAN.md",
+			want: "NFR-PERF-02 has a second row in the performance table",
+		},
+		{
 			name: "performance row without an item",
 			plan: []edit{{"| 4, with more benchmarks later |", "| with more benchmarks later |"}},
 			file: "PLAN.md",
@@ -287,6 +344,18 @@ func TestCheckFails(t *testing.T) {
 		{
 			name: "parenthesised reference to a dropped item",
 			plan: []edit{{"(see the parser (2a))", "(see the parser (3))"}},
+			file: "PLAN.md",
+			want: "reference to item 3, which is dropped (rule 6)",
+		},
+		{
+			name: "parenthesised list joined by and naming a dropped item",
+			plan: []edit{{"(see the parser (2a))", "(see the parsers (2 and 3))"}},
+			file: "PLAN.md",
+			want: "reference to item 3, which is dropped (rule 6)",
+		},
+		{
+			name: "text range written with to ending at a dropped item",
+			plan: []edit{{"the work of items 2–2a", "the work of items 1 to 3"}},
 			file: "PLAN.md",
 			want: "reference to item 3, which is dropped (rule 6)",
 		},
@@ -379,6 +448,30 @@ func TestCheckFails(t *testing.T) {
 	}
 }
 
+// TestProblemsAreStable checks that a problem is reported once and that
+// problems on one line keep the order of the document.
+func TestProblemsAreStable(t *testing.T) {
+	prdSrc := applyEdits(t, readFixture(t, "PRD.md"), []edit{{"**Hosted SaaS.** FR-B-02", "**Hosted SaaS.** FR-B-02, 05, 03, 04"}})
+	planSrc := applyEdits(t, readFixture(t, "PLAN.md"), []edit{{"| FR-A-03 | 4 (5) | 4 |", "| FR-A-03 | 3, 4 (5) | 3 |"}})
+	var listed []string
+	dropped := 0
+	for _, p := range Check("PRD.md", prdSrc, "PLAN.md", planSrc) {
+		if rest, ok := strings.CutPrefix(p.Msg, "Appendix B lists "); ok {
+			id, _, _ := strings.Cut(rest, ",")
+			listed = append(listed, id)
+		}
+		if p.Msg == "reference to item 3, which is dropped (rule 6)" {
+			dropped++
+		}
+	}
+	if want := []string{"FR-B-05", "FR-B-03", "FR-B-04"}; !slices.Equal(listed, want) {
+		t.Errorf("Appendix B problems name %q, want %q", listed, want)
+	}
+	if dropped != 1 {
+		t.Errorf("the dropped item in the coverage matrix row is reported %d times, want 1", dropped)
+	}
+}
+
 func TestScanRefs(t *testing.T) {
 	tests := []struct {
 		text string
@@ -387,6 +480,8 @@ func TestScanRefs(t *testing.T) {
 	}{
 		{"Builds on item 1, and on items 2a (later) and 4.", false, []string{"1", "2a", "4"}},
 		{"Items 33–36 register their entities.", false, []string{"33–36"}},
+		{"Routes land in items 16 to 26.", false, []string{"16–26"}},
+		{"Item 27 attaches them to every route.", false, []string{"27"}},
 		{"Items 80 (diff) and 83 (authoring export) add the rest.", false, []string{"80", "83"}},
 		{"See item 5 or 6.", false, []string{"5", "6"}},
 		{"Item 119, which makes a gap fail the build.", false, []string{"119"}},
@@ -397,6 +492,7 @@ func TestScanRefs(t *testing.T) {
 		{"Token management (26), import (84), and deletion (110).", true, []string{"26", "84", "110"}},
 		{"Token management (26).", false, nil},
 		{"Routes land with their features (16–26).", true, []string{"16–26"}},
+		{"The exporters (80 and 83), or (26, and 84).", true, []string{"80", "83", "26", "84"}},
 		{"Position as `numeric(12,2)` and (2 today).", true, nil},
 	}
 	for _, tt := range tests {
@@ -428,7 +524,10 @@ func TestExpandIDs(t *testing.T) {
 			t.Errorf("expandIDs(%q) = %q, %v; want %q", tt.list, got, err, tt.want)
 		}
 	}
-	for _, bad := range []string{"07", "FR-TEN-05…01", "keyboard remapping", "FR-TEN-01, "} {
+	for _, bad := range []string{
+		"07", "FR-TEN-05…01", "keyboard remapping", "FR-TEN-01, ",
+		"FR-TEN-01...05", "FR-TEN-01…FR-TEN-05", "FR-TEN-01 to 05", "FR-TEN-01-05",
+	} {
 		if got, err := expandIDs(bad); err == nil {
 			t.Errorf("expandIDs(%q) = %q, want an error", bad, got)
 		}

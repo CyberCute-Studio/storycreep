@@ -1,8 +1,6 @@
 package doccheck
 
 import (
-	"cmp"
-	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -41,6 +39,7 @@ type prd struct {
 	adrs        map[string]bool
 	scope       map[string]string // FR ID → phase code, from Appendix B
 	scopeLine   map[string]int
+	scopeIDs    []string        // the Appendix B IDs in listing order
 	v1Extras    map[string]bool // the items of the §12.2 scope that are not FRs
 	perfTargets []string        // the NFR-PERF IDs named by the §12.1 exit criteria
 	perfLine    int
@@ -183,6 +182,7 @@ func (p *prd) parseAppendixB(d *document, r *reporter) {
 			}
 			p.scope[id] = phase
 			p.scopeLine[id] = n
+			p.scopeIDs = append(p.scopeIDs, id)
 		}
 	}
 	if len(p.scope) == 0 {
@@ -264,10 +264,7 @@ func checkPRD(p *prd, r *reporter) {
 			r.add(p.file, req.line, "%s has Phase %s, but Appendix B lists it under %s", id, req.phase, phase)
 		}
 	}
-	listed := slices.SortedFunc(maps.Keys(p.scopeLine), func(a, b string) int {
-		return cmp.Compare(p.scopeLine[a], p.scopeLine[b])
-	})
-	for _, id := range listed {
+	for _, id := range p.scopeIDs {
 		if p.reqs[id] == nil {
 			r.add(p.file, p.scopeLine[id], "Appendix B lists %s, which is not a requirement of this PRD", id)
 		}

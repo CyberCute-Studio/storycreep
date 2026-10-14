@@ -181,8 +181,13 @@ func (pl *plan) parseMatrix(d *document, s section, r *reporter) {
 			continue
 		}
 		pl.matrix = append(pl.matrix, matrixRow{line: row.line, key: key, regular: regular, later: later, completeAt: complete})
+		// Complete at repeats one of the PRs, so each number is referenced once.
+		seen := map[itemNum]bool{}
 		for _, n := range slices.Concat(regular, later, []itemNum{complete}) {
-			pl.refs = append(pl.refs, itemRef{lo: n, hi: n, line: row.line})
+			if !seen[n] {
+				seen[n] = true
+				pl.refs = append(pl.refs, itemRef{lo: n, hi: n, line: row.line})
+			}
 		}
 	}
 }
@@ -383,10 +388,8 @@ func (p *prd) keyPhase(key string) string {
 // item of a later phase than the requirement is a parenthesised extension,
 // and the last other item completes it.
 func (pl *plan) checkMatrix(p *prd, r *reporter) {
-	if pl.matrixLine == 0 {
-		r.add(pl.file, 1, "no \"## Coverage matrix\" section")
-		return
-	}
+	// Deriving the matrix also checks the names on the PRD lines, so it runs
+	// even when there is no matrix to compare with.
 	derived := map[string][]*item{}
 	for _, it := range pl.items {
 		if it.status == "dropped" {
@@ -395,6 +398,10 @@ func (pl *plan) checkMatrix(p *prd, r *reporter) {
 		for _, key := range pl.coverageKeys(p, it, r) {
 			derived[key] = append(derived[key], it)
 		}
+	}
+	if pl.matrixLine == 0 {
+		r.add(pl.file, 1, "no \"## Coverage matrix\" section")
+		return
 	}
 
 	rows := map[string]matrixRow{}

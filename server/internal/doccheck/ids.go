@@ -9,8 +9,11 @@ import (
 
 // idListTail matches what may follow the first ID of a compact list in prose:
 // more numbers after "/" or ",", and ranges. Appended to a pattern for the
-// first ID, it matches the whole list, which expandIDs then reads.
-const idListTail = `(?:(?:/|\s*,\s*)\d+\b|\s*(?:…|\.\.|–)\s*\d+)*`
+// first ID, it matches the whole list, which expandIDs then reads. It also
+// takes in range spellings that expandIDs rejects ("...", "-", "to", or a
+// second full ID), so such a list is reported instead of being read as its
+// first ID alone.
+const idListTail = `(?:(?:/|\s*,\s*)\d+\b|\s*(?:…|\.{2,}|–|-|\bto\b)\s*(?:[A-Z]+-[A-Z0-9]+-)?\d+)*`
 
 var (
 	fullIDTokenRE = regexp.MustCompile(`^([A-Z]+-[A-Z0-9]+)-(\d+)(?:\s*(?:…|\.\.|–)\s*(\d+))?$`)
@@ -33,7 +36,7 @@ func expandIDs(s string) ([]string, error) {
 		} else if m := bareIDTokenRE.FindStringSubmatch(tok); m != nil && prefix != "" {
 			from, to = m[1], m[2]
 		} else {
-			return nil, fmt.Errorf("cannot read %q as a requirement ID", tok)
+			return nil, fmt.Errorf("cannot read %q as a requirement ID (write a range as \"FR-TEN-01…05\")", tok)
 		}
 		lo, err := strconv.Atoi(from)
 		if err != nil {
@@ -125,15 +128,17 @@ func parseItems(s string, line int) ([]itemRef, error) {
 
 var (
 	// itemWordRE finds the word that introduces item references in prose:
-	// "item 27", "Items 33–36", "the item-32 validator".
+	// "item 27", "Items 33–36", "items 16 to 26", "the item-32 validator".
 	itemWordRE = regexp.MustCompile(`\b[Ii]tems?[ -]`)
-	refHeadRE  = regexp.MustCompile(`^\s*(\d+[a-z]?)\b(?:\s*[–-]\s*(\d+[a-z]?)\b)?`)
+	refHeadRE  = regexp.MustCompile(`^\s*(\d+[a-z]?)\b(?:(?:\s*[–-]\s*|\s+to\s+)(\d+[a-z]?)\b)?`)
 	remarkRE   = regexp.MustCompile(`^\s*\([^)]*\)`)
 	listSepRE  = regexp.MustCompile(`^(?:\s*,\s*(?:and\s+|or\s+)?|\s+and\s+|\s+or\s+)`)
 
 	// bareRefRE finds a parenthesised list of item numbers, which item text
-	// uses as a short reference: "token management (26)".
-	bareRefRE = regexp.MustCompile(`\((\s*\d+[a-z]?(?:\s*[–-]\s*\d+[a-z]?)?(?:\s*,\s*(?:and\s+)?\d+[a-z]?(?:\s*[–-]\s*\d+[a-z]?)?)*\s*)\)`)
+	// uses as a short reference: "token management (26)", "(80 and 83)".
+	// bareSepRE finds the separators that parseItems does not read.
+	bareRefRE = regexp.MustCompile(`\((\s*\d+[a-z]?(?:\s*[–-]\s*\d+[a-z]?)?(?:(?:\s*,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+)\d+[a-z]?(?:\s*[–-]\s*\d+[a-z]?)?)*\s*)\)`)
+	bareSepRE = regexp.MustCompile(`\s*,?\s+(?:and|or)\s+`)
 )
 
 // scanRefs returns the item references in one line of prose. With bare, a
@@ -147,7 +152,7 @@ func scanRefs(text string, line int, bare bool) []itemRef {
 	}
 	if bare {
 		for _, m := range bareRefRE.FindAllStringSubmatch(text, -1) {
-			if rs, err := parseItems(strings.ReplaceAll(m[1], "and ", ""), line); err == nil {
+			if rs, err := parseItems(bareSepRE.ReplaceAllString(m[1], ", "), line); err == nil {
 				refs = append(refs, rs...)
 			}
 		}
