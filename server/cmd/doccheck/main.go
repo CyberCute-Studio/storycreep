@@ -1,6 +1,7 @@
 // Command doccheck checks the PRD and the implementation plan against the
 // rules they state about themselves: the PRD's requirement dependency graph
-// (§4.0) and the plan's ordering, coverage, and reference rules.
+// and acceptance criteria (§4.0), and the plan's ordering, coverage, and
+// reference rules.
 //
 // It prints each problem as "file:line: message" and exits with status 1 if
 // there is any, or with status 2 if a document cannot be read. Run it from the

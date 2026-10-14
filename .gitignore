@@ -5,6 +5,7 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+traceability-report/
 
 # Godot editor cache
 .godot/

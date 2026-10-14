@@ -21,17 +21,25 @@ A fenced example is never read as a requirement:
 
 #### FR-A-02 — Second
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-A-01
+- **Acceptance criteria:**
+  - AC2 — It is listed out of order.
+  - AC1 — It works too.
 
 #### FR-A-03 — Third
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-A-01, FR-A-02
+- **Acceptance criteria:**
+  - AC1 — It works with both.
 
 ### 4.2 Area B (FR-B)
 
 #### FR-B-01 — Polish
 - **Priority:** Should · **Phase:** v1 · **Depends on:** FR-A-03
+- **Acceptance criteria:** AC1 — It shines. AC2 — It still works.
 
 #### FR-B-02 — Hosted only
 - **Priority:** Won't (MVP) · **Phase:** SaaS · **Depends on:** FR-B-01
+- **Acceptance criteria:**
+  - AC1 — It is hosted.
 
 ## 9. Non-functional requirements
 

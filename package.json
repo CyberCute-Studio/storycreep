@@ -11,7 +11,8 @@
     "fix": "biome check --write .",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
-    "docs:check": "go -C server run ./cmd/doccheck"
+    "docs:check": "go -C server run ./cmd/doccheck",
+    "traceability": "go -C server run ./cmd/traceability -out ../traceability-report"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15"

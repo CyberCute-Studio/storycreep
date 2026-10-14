@@ -46,10 +46,40 @@ These are the checks CI runs. Run them before you push.
 | `pnpm typecheck` | TypeScript in every web package that has a `typecheck` script. |
 | `pnpm test` | Tests in every web package that has a `test` script. |
 | `gofmt -l .`, `go vet ./...`, and `go test ./...` in `server/` | The Go module. `gofmt -l .` must print nothing; `gofmt -w .` formats the code. |
-| `pnpm docs:check` | The PRD dependency graph and the plan's ordering, coverage, and reference rules. |
+| `pnpm docs:check` | The PRD dependency graph and acceptance criteria, and the plan's ordering, coverage, and reference rules. |
+| `pnpm traceability` | The requirement traceability report (PRD NFR-Q-02): which tests verify each requirement, and which MVP acceptance criteria no test verifies yet. It writes `traceability-report/traceability.md` and `traceability.json`, and fails on a tag it cannot use (see below). A criterion without a test does not fail the build until the MVP release gate (plan item 119). CI publishes the report as the `traceability-report` artifact. |
 | `pnpm audit --audit-level high`, and `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...` in `server/` | Known vulnerabilities in the dependencies. CI runs these in a separate job, on every pull request and weekly. |
 
-`pnpm docs:check` runs `go run ./cmd/doccheck` in `server/`. It reports every problem as `file:line: message`.
+`pnpm docs:check` runs `go run ./cmd/doccheck` in `server/`, and `pnpm traceability` runs `go run ./cmd/traceability`. Both report every problem as `file:line: message`. Run `go run ./cmd/traceability` in `server/` to print the report to the terminal instead.
+
+## Tagging tests with requirements
+
+Every test that proves an acceptance criterion names it, so that the traceability report can map the PRD to the tests. Write a line comment that starts with `Verifies:` directly above the test declaration, with no blank line between them. List acceptance criteria as `FR-…/ACn` and non-functional requirements as `NFR-…`, separated by commas. Spell every ID in full, so that searching for `FR-EDIT-02/AC3` finds every test of that criterion.
+
+Go tests, benchmarks, and fuzz tests, and `t.Run` subtests with a literal name, in `*_test.go` files:
+
+```go
+// TestMoveNode checks that a moved node keeps its connections.
+//
+// Verifies: FR-EDIT-02/AC3, NFR-PERF-01
+func TestMoveNode(t *testing.T) {
+```
+
+Vitest and Playwright `test`, `it`, `describe`, and `bench` declarations with a literal title, in `*.test.ts` and `*.spec.ts` files (or `.tsx`, `.js`, and the other script extensions):
+
+```ts
+// Verifies: FR-EDIT-02/AC3
+test("a moved node keeps its connections", () => {
+```
+
+GUT tests in `test_*.gd` files:
+
+```gdscript
+# Verifies: FR-GODOT-06/AC1
+func test_variable_lookup_is_scope_aware():
+```
+
+A test declared with `skip`, `todo`, or `fixme` does not count. A test that skips itself while it runs (`t.Skip`, or GUT's `pending`) still counts, so do not tag a test that CI skips. The report fails on a `Verifies:` comment that names an unknown requirement or criterion, names a requirement without a criterion, is written in a block comment, is outside a test file, or is not directly above a test. Directories named `testdata`, `node_modules`, `vendor`, `dist`, or `coverage`, and hidden directories, are not scanned.
 
 ## Conventions
 

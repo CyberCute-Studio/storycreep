@@ -3,6 +3,7 @@ package doccheck
 import (
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -24,11 +25,20 @@ var appendixPhases = map[string]string{
 }
 
 type requirement struct {
-	id          string
-	line        int
-	phase       string
-	depends     []string
-	dependsLine int
+	id           string
+	title        string
+	line         int
+	phase        string
+	depends      []string
+	dependsLine  int
+	criteria     []criterion // in document order
+	criteriaLine int         // the Acceptance criteria field; 0 if there is none
+}
+
+// criterion is one acceptance criterion, ACn.
+type criterion struct {
+	num  int
+	line int
 }
 
 type prd struct {
@@ -36,6 +46,7 @@ type prd struct {
 	reqs        map[string]*requirement
 	ids         []string // requirement IDs in document order
 	nfrs        map[string]bool
+	nfrIDs      []string // NFR IDs in document order
 	adrs        map[string]bool
 	scope       map[string]string // FR ID → phase code, from Appendix B
 	scopeLine   map[string]int
@@ -46,7 +57,7 @@ type prd struct {
 }
 
 var (
-	reqHeadingRE   = regexp.MustCompile(`^(FR-[A-Z0-9]+-\d+)\b`)
+	reqHeadingRE   = regexp.MustCompile(`^(FR-[A-Z0-9]+-\d+)\b(?:\s*—\s*(.*))?`)
 	adrHeadingRE   = regexp.MustCompile(`^(ADR-\d+)\b`)
 	nfrRowRE       = regexp.MustCompile(`^\|\s*(NFR-[A-Z0-9]+-\d+)\s*\|`)
 	phaseFieldRE   = regexp.MustCompile(`\*\*Phase:\*\*\s*([^·*]+?)\s*(?:·|$)`)
@@ -54,6 +65,14 @@ var (
 	frIDRE         = regexp.MustCompile(`^FR-[A-Z0-9]+-\d+$`)
 	scopeLineRE    = regexp.MustCompile(`^\*\*([^*]+?)\.\*\*\s*(.*)$`)
 	perfRefRE      = regexp.MustCompile(`NFR-PERF-\d+` + idListTail)
+
+	// The acceptance criteria of a requirement follow its "Acceptance
+	// criteria" field, either as indented bullets ("  - AC1 — …") or inline
+	// on the field's line ("AC1 — … AC2 — …").
+	criteriaFieldRE   = regexp.MustCompile(`^-\s+\*\*Acceptance criteria:\*\*\s*(.*?)\s*$`)
+	criterionBulletRE = regexp.MustCompile(`^\s+-\s+(.*)$`)
+	criterionRE       = regexp.MustCompile(`^AC([1-9]\d*) — `)
+	inlineCriterionRE = regexp.MustCompile(`(?:^|\s)AC([1-9]\d*) — `)
 )
 
 func parsePRD(file, src string, r *reporter) *prd {
@@ -69,15 +88,16 @@ func parsePRD(file, src string, r *reporter) *prd {
 	}
 	for _, s := range d.sections() {
 		if m := reqHeadingRE.FindStringSubmatch(s.text); m != nil && s.level == 4 {
-			p.parseRequirement(d, s, m[1], r)
+			p.parseRequirement(d, s, m[1], m[2], r)
 		}
 		if m := adrHeadingRE.FindStringSubmatch(s.text); m != nil && s.level == 3 {
 			p.adrs[m[1]] = true
 		}
 	}
 	for _, l := range d.lines {
-		if m := nfrRowRE.FindStringSubmatch(l); m != nil {
+		if m := nfrRowRE.FindStringSubmatch(l); m != nil && !p.nfrs[m[1]] {
 			p.nfrs[m[1]] = true
+			p.nfrIDs = append(p.nfrIDs, m[1])
 		}
 	}
 	p.parseAppendixB(d, r)
@@ -86,16 +106,36 @@ func parsePRD(file, src string, r *reporter) *prd {
 	return p
 }
 
-func (p *prd) parseRequirement(d *document, s section, id string, r *reporter) {
+func (p *prd) parseRequirement(d *document, s section, id, title string, r *reporter) {
 	if prev, dup := p.reqs[id]; dup {
 		r.add(p.file, s.line, "%s is defined twice (also on line %d)", id, prev.line)
 		return
 	}
-	req := &requirement{id: id, line: s.line}
+	req := &requirement{id: id, title: title, line: s.line}
 	p.reqs[id] = req
 	p.ids = append(p.ids, id)
+	inCriteria := false
 	for n := s.start; n < s.end; n++ {
 		l := d.line(n)
+		if inCriteria {
+			if m := criterionBulletRE.FindStringSubmatch(l); m != nil {
+				req.addCriteria(p.file, n, m[1], false, r)
+				continue
+			}
+			inCriteria = false
+		}
+		if m := criteriaFieldRE.FindStringSubmatch(l); m != nil {
+			if req.criteriaLine != 0 {
+				r.add(p.file, n, "%s has a second Acceptance criteria field (first on line %d)", id, req.criteriaLine)
+				continue
+			}
+			req.criteriaLine = n
+			if m[1] != "" {
+				req.addCriteria(p.file, n, m[1], true, r)
+			}
+			inCriteria = true
+			continue
+		}
 		if m := phaseFieldRE.FindStringSubmatch(l); m != nil && req.phase == "" {
 			req.phase = m[1]
 		}
@@ -129,6 +169,74 @@ func (p *prd) parseRequirement(d *document, s section, id string, r *reporter) {
 	if req.dependsLine == 0 {
 		r.add(p.file, s.line, "%s has no Depends on field", id)
 	}
+	req.checkCriteria(p.file, s.line, r)
+}
+
+// addCriteria reads the acceptance criteria in text: one indented bullet
+// ("AC1 — …"), or, when inline, the rest of the field's line ("AC1 — …
+// AC2 — …").
+func (req *requirement) addCriteria(file string, line int, text string, inline bool, r *reporter) {
+	if !criterionRE.MatchString(text) {
+		r.add(file, line, "%s: cannot read %q as an acceptance criterion (write \"ACn — …\")", req.id, text)
+		return
+	}
+	re := criterionRE
+	if inline {
+		re = inlineCriterionRE
+	}
+	for _, m := range re.FindAllStringSubmatch(text, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			r.add(file, line, "%s: cannot read AC%s as an acceptance criterion", req.id, m[1])
+			continue
+		}
+		req.criteria = append(req.criteria, criterion{num: n, line: line})
+	}
+}
+
+// checkCriteria checks that the acceptance criteria are numbered AC1 to ACn
+// (§4.0), each once. They may be listed in any order.
+func (req *requirement) checkCriteria(file string, headingLine int, r *reporter) {
+	if req.criteriaLine == 0 {
+		r.add(file, headingLine, "%s has no Acceptance criteria field", req.id)
+		return
+	}
+	if len(req.criteria) == 0 {
+		r.add(file, req.criteriaLine, "%s lists no acceptance criteria", req.id)
+		return
+	}
+	seen := map[int]int{}
+	last := 0
+	for _, c := range req.criteria {
+		if prev, dup := seen[c.num]; dup {
+			r.add(file, c.line, "%s lists AC%d twice (also on line %d)", req.id, c.num, prev)
+			continue
+		}
+		seen[c.num] = c.line
+		last = max(last, c.num)
+	}
+	for n := 1; n < last; n++ {
+		if seen[n] == 0 {
+			r.add(file, req.criteriaLine, "%s has no AC%d, although its criteria run to AC%d", req.id, n, last)
+		}
+	}
+}
+
+// criterionIDs returns the IDs of the acceptance criteria, "AC1" to "ACn",
+// in number order.
+func (req *requirement) criterionIDs() []string {
+	var nums []int
+	for _, c := range req.criteria {
+		if !slices.Contains(nums, c.num) {
+			nums = append(nums, c.num)
+		}
+	}
+	slices.Sort(nums)
+	ids := make([]string, len(nums))
+	for i, n := range nums {
+		ids[i] = "AC" + strconv.Itoa(n)
+	}
+	return ids
 }
 
 // splitScope splits a scope list such as Appendix B's "FR-PUB-01, 02 ·

@@ -3,6 +3,7 @@ package doccheck
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -124,6 +125,60 @@ func TestCheckFails(t *testing.T) {
 			prd:  []edit{{"NFR-PERF-01…02 met", "NFR-PERF-01...02 met"}},
 			file: "PRD.md",
 			want: `§12.1 exit criteria: cannot read "NFR-PERF-01...02" as a requirement ID`,
+		},
+		{
+			name: "requirement without acceptance criteria",
+			prd:  []edit{{"- **Acceptance criteria:**\n  - AC1 — It is hosted.\n", ""}},
+			file: "PRD.md",
+			want: "FR-B-02 has no Acceptance criteria field",
+		},
+		{
+			name: "Acceptance criteria field listing nothing",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", ""}},
+			file: "PRD.md",
+			want: "FR-B-02 lists no acceptance criteria",
+		},
+		{
+			name: "requirement with a second Acceptance criteria field",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC1 — It is hosted.\n- **Acceptance criteria:** AC2 — Again.\n"}},
+			file: "PRD.md",
+			want: "FR-B-02 has a second Acceptance criteria field (first on line 41)",
+		},
+		{
+			name: "unreadable acceptance criterion",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC1 — It is hosted.\n  - AC 2 — It is hosted well.\n"}},
+			file: "PRD.md",
+			want: `FR-B-02: cannot read "AC 2 — It is hosted well." as an acceptance criterion`,
+		},
+		{
+			name: "unreadable inline acceptance criteria",
+			prd:  []edit{{"AC1 — It shines. AC2 — It still works.", "It shines and still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "It shines and still works." as an acceptance criterion`,
+		},
+		{
+			name: "acceptance criterion numbered from zero",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC0 — It is hosted.\n"}},
+			file: "PRD.md",
+			want: `FR-B-02: cannot read "AC0 — It is hosted." as an acceptance criterion`,
+		},
+		{
+			name: "acceptance criterion listed twice",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too.\n  - AC2 — Twice.\n"}},
+			file: "PRD.md",
+			want: "FR-A-02 lists AC2 twice (also on line 25)",
+		},
+		{
+			name: "inline acceptance criterion listed twice",
+			prd:  []edit{{"AC2 — It still works.", "AC1 — It still works."}},
+			file: "PRD.md",
+			want: "FR-B-01 lists AC1 twice (also on line 37)",
+		},
+		{
+			name: "gap in the acceptance criteria",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC4 — It works too.\n"}},
+			file: "PRD.md",
+			want: "FR-A-02 has no AC1, although its criteria run to AC4",
 		},
 		{
 			name: "requirement with a second Depends on field",
@@ -517,6 +572,31 @@ func TestCheckFails(t *testing.T) {
 				t.Errorf("want a problem in %s containing %q, got:%s", tt.file, tt.want, formatProblems(problems))
 			}
 		})
+	}
+}
+
+func TestParsePRD(t *testing.T) {
+	got, problems := ParsePRD("PRD.md", readFixture(t, "PRD.md"))
+	if len(problems) > 0 {
+		t.Fatalf("the fixture should pass, got:%s", formatProblems(problems))
+	}
+	want := PRD{
+		Requirements: []Requirement{
+			{ID: "FR-A-01", Title: "First", Phase: "MVP", Criteria: []string{"AC1"}},
+			{ID: "FR-A-02", Title: "Second", Phase: "MVP", Criteria: []string{"AC1", "AC2"}},
+			{ID: "FR-A-03", Title: "Third", Phase: "MVP", Criteria: []string{"AC1"}},
+			{ID: "FR-B-01", Title: "Polish", Phase: "v1", Criteria: []string{"AC1", "AC2"}},
+			{ID: "FR-B-02", Title: "Hosted only", Phase: "SaaS", Criteria: []string{"AC1"}},
+		},
+		NFRs: []string{"NFR-PERF-01", "NFR-PERF-02", "NFR-PERF-03", "NFR-A11Y-01", "NFR-A11Y-02"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParsePRD =\n%+v\nwant\n%+v", got, want)
+	}
+
+	_, problems = ParsePRD("PRD.md", applyEdits(t, readFixture(t, "PRD.md"), []edit{{"**Hosted SaaS.** FR-B-02", ""}}))
+	if !slices.ContainsFunc(problems, func(p Problem) bool { return p.Msg == "FR-B-02 is not listed in Appendix B" }) {
+		t.Errorf("ParsePRD should check the PRD, got:%s", formatProblems(problems))
 	}
 }
 
