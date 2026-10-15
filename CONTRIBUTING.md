@@ -92,7 +92,7 @@ A test skipped in any other way still counts, because the report does not run th
 - A `Verifies:` comment written after code on any line.
 - A line comment that is meant as one but is not spelled `Verifies:`, such as `// verifies: FR-EDIT-02/AC3`, `// Verifies FR-EDIT-02/AC3`, `// Verifies — FR-EDIT-02/AC3`, a list item such as `// - Verifies: FR-EDIT-02/AC3`, or a typo such as `// Verifes: FR-EDIT-02/AC3`.
 - A `Verifies:` comment above a commented-out test, as when a test is commented out but its tag is not: a comment line below the tag that starts with a test or group declaration, such as `// func TestOld(t *testing.T) {` or `// it("old", () => {`. The tag would otherwise belong to the test below the commented-out one. Comment out the tag with the test, or move it. A comment that mentions a declaration after other words, as in `// Each case runs in t.Run(…)`, is prose.
-- A comment line that continues the ID list of the `Verifies:` line above it, such as `// and NFR-PERF-01`; start that line with `Verifies:` too. That includes a line that holds nothing but IDs and the commas or `and` between them, written as a list item or not, among the comment lines directly above a test or around a `Verifies:` line, as where gofmt moves an indented continuation of a doc comment below a blank comment line.
+- A comment line that continues the ID list of the `Verifies:` line above it, such as `// and NFR-PERF-01`; start that line with `Verifies:` too. That includes a line that holds nothing but IDs and the commas or `and` between them, written as a list item or not, among the comment lines directly above a test or a group or around a `Verifies:` line, as where gofmt moves an indented continuation of a doc comment below a blank comment line.
 
 ## Conventions
 

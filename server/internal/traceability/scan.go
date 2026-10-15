@@ -280,10 +280,10 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 		// mentions a declaration after other words is not such a test.
 		commentedOut := pending != nil && above && len(below) > 0 && lang.declares(file, strings.Join(below, "\n"))
 		// A line that holds nothing but IDs, in a run with a Verifies line or
-		// above a test, is meant as part of a Verifies comment: it continues
-		// the ID list as a list item, after "and", or below a blank comment
-		// line, where gofmt moves an indented continuation of a doc comment,
-		// or it is meant as one.
+		// above a test or a group, is meant as part of a Verifies comment: it
+		// continues the ID list as a list item, after "and", or below a blank
+		// comment line, where gofmt moves an indented continuation of a doc
+		// comment, or it is meant as one.
 		if runTagged || above {
 			for _, c := range idLines {
 				report(c.line, "cannot read %q as a Verifies comment (write \"Verifies:\" and the IDs)", c.text)

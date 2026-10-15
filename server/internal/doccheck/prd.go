@@ -73,18 +73,23 @@ var (
 	criterionBulletRE = regexp.MustCompile(`^\s+-\s+(.*)$`)
 	criterionRE       = regexp.MustCompile(`^AC([1-9]\d*) — `)
 	// inlineLabelRE finds what reads as a criterion's label in text, "AC2 — "
-	// or a misspelling such as "AC2 – ", "AC2 - ", "AC2: ", "**AC2** — ", or
-	// one with a no-break space, wherever it is, as after "works." or "(", but
-	// not a reference such as "FR-DATA-01 AC1, AC5" or "FR-DATA-01/AC1".
-	inlineLabelRE = regexp.MustCompile(`(?:^|[^\p{L}\p{N}/])(AC\d+[*_\s\p{Zs}]*[-–—:])`)
+	// or a misspelling such as "AC2 – ", "AC2 - ", "AC2: ", "**AC2** — ",
+	// "AC 2 — ", "ac2 — ", or one with a no-break space, wherever it is, as
+	// after "works." or "(", but not a reference such as "FR-DATA-01 AC1, AC5"
+	// or "FR-DATA-01/AC1".
+	inlineLabelRE = regexp.MustCompile(`(?:^|[^\p{L}\p{N}/])(` + labelPattern + `[*_\s\p{Zs}]*[-–—:])`)
 	// listItemRE finds a list item that is not a "-" bullet: "* …", "+ …",
 	// "1. …".
 	listItemRE = regexp.MustCompile(`^\s*(?:[*+]|\d+[.)])\s`)
 	// criterionLineRE finds a line that starts with a criterion's label, as a
 	// list item or as text, at the margin or indented: "- AC3 — …",
-	// "AC3 — …", "  - AC3 — …".
-	criterionLineRE = regexp.MustCompile(`^\s*(?:(?:[-*+]|\d+[.)])\s+)?AC\d+\b`)
+	// "AC3 — …", "  - AC3 — …", or a misspelling such as "- AC 3 — …".
+	criterionLineRE = regexp.MustCompile(`^\s*(?:(?:[-*+]|\d+[.)])\s+)?` + labelPattern + `\b`)
 )
+
+// labelPattern matches a criterion's number as text might write it: "AC3",
+// or misspelled, as "AC 3" or "ac3".
+const labelPattern = `(?i:AC)[\s\p{Zs}]*\d+`
 
 // strayCriterion reports whether a line that is not read as a criterion
 // reads as one: it starts with a criterion's label, or its text holds one, as

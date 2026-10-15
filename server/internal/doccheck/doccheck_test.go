@@ -175,6 +175,18 @@ func TestCheckFails(t *testing.T) {
 			want: "FR-B-01: cannot read \"AC2\\u00a0—\" as an acceptance criterion",
 		},
 		{
+			name: "inline acceptance criterion with a space in its label",
+			prd:  []edit{{"AC2 — It still works.", "AC 2 — It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "AC 2 —" as an acceptance criterion (write "ACn — …")`,
+		},
+		{
+			name: "inline acceptance criterion in lower case",
+			prd:  []edit{{"AC2 — It still works.", "ac2 — It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "ac2 —" as an acceptance criterion (write "ACn — …")`,
+		},
+		{
 			name: "inline acceptance criterion in bold",
 			prd:  []edit{{"AC2 — It still works.", "**AC2** — It still works."}},
 			file: "PRD.md",
@@ -215,6 +227,12 @@ func TestCheckFails(t *testing.T) {
 			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too.\n- AC3 — At the margin.\n"}},
 			file: "PRD.md",
 			want: `FR-A-02: cannot read "- AC3 — At the margin." as an acceptance criterion (indent it as a "  - ACn — …" bullet under the field)`,
+		},
+		{
+			name: "acceptance criterion bullet at the margin with a space in its label",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too.\n- AC 3 — At the margin.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "- AC 3 — At the margin." as an acceptance criterion (indent it as a "  - ACn — …" bullet under the field)`,
 		},
 		{
 			name: "acceptance criterion text at the margin",

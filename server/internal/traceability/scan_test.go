@@ -666,6 +666,17 @@ func TestScanFile(t *testing.T) {
 			problems: []string{`x_test.go:2: cannot read "FR-A-01/AC1, FR-A-01/AC2" as a Verifies comment (write "Verifies:" and the IDs)`},
 		},
 		{
+			name: "IDs without Verifies above a group",
+			file: "x.test.ts",
+			src: lines(
+				"// FR-A-01/AC1",
+				`describe("group", () => {`,
+				`  test("x", () => {});`,
+				"});",
+			),
+			problems: []string{`x.test.ts:1: cannot read "FR-A-01/AC1" as a Verifies comment (write "Verifies:" and the IDs)`},
+		},
+		{
 			name: "prose that starts with an ID, not on the line after a Verifies comment",
 			file: "x_test.go",
 			src: lines(
