@@ -153,7 +153,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-JOBS-01 AC1–AC4 pass.
 
 ### 9. Container image and docker-compose
-**Status:** todo · **Depends on:** 6, 8
+**Status:** done ([#10](https://github.com/CyberCute-Studio/storycreep/pull/10)) · **Depends on:** 6, 8
 **PRD:** FR-ADMIN-01 (AC4), FR-ADMIN-06 (`healthcheck`), FR-ADMIN-07 (AC1, AC2), FR-PUB-01 (AC3, placeholders), FR-PUB-04 (`/`, placeholders), §10.8
 - Multi-stage, non-root image with no build toolchain, built for `linux/amd64` and `linux/arm64`, and its health check (N18). Static assets are embedded (placeholders until items 53 and 108), and `/` serves the site's placeholder or the tool's, as `STORYCREEP_PUBLIC_SITE` says.
 - `deploy/docker-compose.yml` with exactly two services, named volumes for the database and assets, healthchecks, and documented environment variables, including both database URLs (N16). A development compose file.
