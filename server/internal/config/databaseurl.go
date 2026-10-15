@@ -35,9 +35,21 @@ type DatabaseURL struct {
 // login the server provisions and checks is the one it connects as.
 var reservedDatabaseParams = []string{"user", "password", "dbname", "database"}
 
-// secretDatabaseParams are the query parameters whose values are redacted
-// when the URL is shown.
-var secretDatabaseParams = []string{"sslpassword"}
+// shownDatabaseParams are the query parameters whose values are shown when
+// the URL is shown: the libpq and pgx settings that hold no secret, and the
+// common PostgreSQL settings. Every other parameter's value is redacted, such
+// as sslpassword's, and also a name that is misspelt or that libpq reads
+// differently, so that a value is shown only when it is known not to be a
+// secret.
+var shownDatabaseParams = []string{
+	"host", "port", "passfile", "connect_timeout", "sslmode", "sslkey", "sslcert", "sslrootcert", "sslnegotiation",
+	"sslsni", "krbspn", "krbsrvname", "target_session_attrs", "service", "servicefile", "min_protocol_version",
+	"max_protocol_version", "channel_binding", "require_auth",
+	"pool_max_conns", "pool_min_conns", "pool_min_idle_conns", "pool_max_conn_lifetime", "pool_max_conn_idle_time",
+	"pool_health_check_period", "pool_max_conn_lifetime_jitter", "pool_ping_timeout",
+	"statement_cache_capacity", "description_cache_capacity", "default_query_exec_mode",
+	"application_name", "search_path", "timezone", "client_encoding",
+}
 
 // ParseDatabaseURL parses a PostgreSQL connection URL with a user and a
 // database, and checks that pgx, which the server connects with, can use it.
@@ -166,14 +178,18 @@ func pgxReason(err error) string {
 	return strings.TrimPrefix(c.Error(), "cannot parse ``: ")
 }
 
-// redactQuery returns the query q, in its original order, with the values of
-// secretDatabaseParams redacted. The names are decoded as libpq decodes them.
+// redactQuery returns the query q, in its original order, with the value of
+// every parameter that is not one of shownDatabaseParams redacted. The names
+// are decoded as libpq decodes them.
 func redactQuery(q string) string {
 	pairs := strings.Split(q, "&")
 	for i, pair := range pairs {
-		name, _, _ := strings.Cut(pair, "=")
-		if name, err := url.PathUnescape(name); err == nil && slices.Contains(secretDatabaseParams, name) {
-			pairs[i] = url.QueryEscape(name) + "=" + secret.Redacted
+		if pair == "" {
+			continue // libpq skips an empty parameter, as after a trailing &
+		}
+		raw, _, _ := strings.Cut(pair, "=")
+		if name, err := url.PathUnescape(raw); err != nil || !slices.Contains(shownDatabaseParams, name) {
+			pairs[i] = raw + "=" + secret.Redacted
 		}
 	}
 	return strings.Join(pairs, "&")
@@ -217,8 +233,8 @@ func (d DatabaseURL) PoolConfig() *pgxpool.Config {
 	return d.pool.Copy()
 }
 
-// String returns the URL with its password, and the values of query
-// parameters that hold secrets, replaced by secret.Redacted.
+// String returns the URL with its password, and the value of every query
+// parameter that is not known to hold no secret, replaced by secret.Redacted.
 func (d DatabaseURL) String() string {
 	return d.display
 }

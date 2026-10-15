@@ -140,7 +140,9 @@ var keys = []key{
 			"percent-encoded as `%3D`, and the libpq environment variables, such as `PGSSLMODE`, fill in settings " +
 			"the URL leaves out. A space anywhere in the URL is written as `%20`. The URL is checked as the " +
 			"server's connections read it, so a setting they could not use, such as an unknown `sslmode` or a " +
-			"certificate file that cannot be read, is an error. The password is shown as `" + secret.Redacted + "`.",
+			"certificate file that cannot be read, is an error. Where the URL is shown, its password is `" + secret.Redacted +
+			"`, and so is the value of every query parameter except the libpq and pgx settings that hold no secret, " +
+			"such as `sslmode`, and `application_name`, `search_path`, `timezone`, and `client_encoding`.",
 		valuesDoc: "A `postgres://` URL",
 		example:   "postgres://storycreep:password@db:5432/storycreep",
 		required:  true,
@@ -159,8 +161,8 @@ var keys = []key{
 		doc: "A PostgreSQL superuser login for the same database, written like `STORYCREEP_DATABASE_URL`. Only " +
 			"applying migrations uses it, as `storycreep migrate` does. Migrations need a superuser because they " +
 			"create the server's database roles, and one of them bypasses row-level security. It must name a " +
-			"different login from `STORYCREEP_DATABASE_URL`, and the same database. The password is shown as `" +
-			secret.Redacted + "`.",
+			"different login from `STORYCREEP_DATABASE_URL`, and the same database. It is shown redacted in the same " +
+			"way.",
 		valuesDoc: "A `postgres://` URL",
 		parse: func(c *Config, v string) error {
 			d, err := ParseDatabaseURL(v)

@@ -32,7 +32,11 @@ func TestParseDatabaseURL(t *testing.T) {
 		// An @ after the path, and an = in a value written as %3D, are as
 		// libpq reads them. So is a trailing &.
 		{"postgres://app@db/sc?application_name=a@b&options=-c%20search_path%3Dx&",
-			"postgres://app@db/sc?application_name=a@b&options=-c%20search_path%3Dx&", "app", "sc", ""},
+			"postgres://app@db/sc?application_name=a@b&options=" + secret.Redacted + "&", "app", "sc", ""},
+		// Only the values of parameters known to hold no secret are shown,
+		// under any spelling libpq reads as the same name.
+		{"postgres://app@db/sc?sslm%6Fde=disable&mystery=s3cr3t&pool_max_conns=4",
+			"postgres://app@db/sc?sslm%6Fde=disable&mystery=" + secret.Redacted + "&pool_max_conns=4", "app", "sc", ""},
 	}
 	for _, tt := range tests {
 		d, err := ParseDatabaseURL(tt.in)
