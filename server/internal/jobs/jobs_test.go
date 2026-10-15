@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
@@ -410,6 +411,12 @@ func TestRegistryPanics(t *testing.T) {
 			Register(reg, func(context.Context, *Job[recordArgs]) error { return nil })
 			Periodic(reg, time.Millisecond, recordArgs{})
 		},
+		"two periodic jobs of a kind": func() {
+			reg := NewRegistry()
+			Register(reg, func(context.Context, *Job[recordArgs]) error { return nil })
+			Periodic(reg, time.Minute, recordArgs{N: 1})
+			Periodic(reg, time.Hour, recordArgs{N: 2})
+		},
 		"two workers of a kind": func() {
 			reg := NewRegistry()
 			Register(reg, func(context.Context, *Job[recordArgs]) error { return nil })
@@ -424,6 +431,149 @@ func TestRegistryPanics(t *testing.T) {
 			}()
 			f()
 		}()
+	}
+}
+
+// TestJobDB checks that a job's work gets the workers' pool, and can run a
+// transaction on it.
+func TestJobDB(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	type result struct {
+		db  *database.DB
+		err error
+	}
+	ran := make(chan result, 1)
+	reg := NewRegistry()
+	Register(reg, func(ctx context.Context, job *Job[recordArgs]) error {
+		var err error
+		if job.DB == nil {
+			err = errors.New("the job has no DB")
+		} else {
+			err = job.DB.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+				var one int
+				return tx.QueryRow(ctx, "SELECT 1").Scan(&one)
+			})
+		}
+		ran <- result{job.DB, err}
+		return err
+	})
+	q, db := open(t, d, reg, true)
+	enqueue(t, q, db, recordArgs{}, nil)
+	if r := receive(t, ran); r.err != nil || r.db != q.workers {
+		t.Errorf("the job's DB is %p, and its transaction returned %v; want the workers' pool %p, and nil", r.db, r.err,
+			q.workers)
+	}
+}
+
+// TestStopCancelsJobs checks that Stop cancels the jobs that do not finish
+// before its context ends, that a job that returns the context's error then
+// is made available again without the attempt counting, and that Start does
+// nothing after Stop.
+func TestStopCancelsJobs(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	started := make(chan int64, 1)
+	reg := NewRegistry()
+	Register(reg, func(ctx context.Context, job *Job[recordArgs]) error {
+		started <- job.ID
+		<-ctx.Done()
+		return fmt.Errorf("stopped: %w", ctx.Err())
+	})
+	q, db := open(t, d, reg, true)
+	metrics := prometheus.NewRegistry()
+	metrics.MustRegister(q.Collector())
+	e := enqueue(t, q, db, recordArgs{}, nil)
+	receive(t, started)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := q.Stop(ctx); err != nil {
+		t.Fatalf("Stop returned %v, want nil once the cancelled job returned", err)
+	}
+	job, err := q.client.JobGet(context.Background(), e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.State != rivertype.JobStateAvailable || job.Attempt != 0 || len(job.Errors) != 0 {
+		t.Errorf("the cancelled job is %s, at attempt %d, with %d errors; want available, at 0, with none", job.State,
+			job.Attempt, len(job.Errors))
+	}
+	// Stop waits for the metrics to read the last event.
+	if n := gather(t, metrics)[`storycreep_job_attempts_total{kind="test_record",outcome="interrupted"}`]; n != 1 {
+		t.Errorf("%v interrupted attempts are counted, want 1", n)
+	}
+
+	if err := q.Start(context.Background()); err != nil || q.started {
+		t.Errorf("Start after Stop returned %v, and started the workers: %v; want nil, and not", err, q.started)
+	}
+}
+
+// TestStopStuckJobs checks that Stop returns an error once a job that does
+// not return when it is cancelled has had its time, and that Close does not
+// wait for the job then.
+func TestStopStuckJobs(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	started := make(chan int64, 1)
+	release := make(chan struct{})
+	reg := NewRegistry()
+	Register(reg, func(_ context.Context, job *Job[recordArgs]) error {
+		started <- job.ID
+		<-release
+		return nil
+	})
+	db := d.Open(t)
+	q, err := Open(context.Background(), db, d.AppURL, Options{
+		Registry:     reg,
+		Work:         true,
+		pollInterval: 50 * time.Millisecond,
+		hardStop:     100 * time.Millisecond,
+		testOnly:     true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	enqueue(t, q, db, recordArgs{}, nil)
+	receive(t, started)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := q.Stop(ctx); err == nil {
+		t.Error("Stop returned nil while the job had not returned")
+	}
+	closed := make(chan struct{})
+	go func() {
+		q.Close()
+		close(closed)
+	}()
+	receive(t, closed)
+	// The job returns, and River stops, before the test's database goes.
+	close(release)
+	receive(t, q.client.Stopped())
+}
+
+// TestStartCancelled checks that Start does not start the workers, and
+// returns an error, when ctx ends before the database answers, as when the
+// server stops while they start.
+func TestStartCancelled(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	reg := NewRegistry()
+	Register(reg, func(context.Context, *Job[recordArgs]) error { return nil })
+	q, err := Open(context.Background(), d.Open(t), d.AppURL, Options{Registry: reg, Work: true, testOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := q.Start(ctx); !errors.Is(err, context.Canceled) || q.started {
+		t.Errorf("Start with an ended context returned %v, and started the workers: %v; want context.Canceled, "+
+			"and not", err, q.started)
 	}
 }
 

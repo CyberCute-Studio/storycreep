@@ -165,8 +165,9 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	log.InfoContext(ctx, "listening", attrs...)
 
 	// stop stops the servers and the job workers together, so that each has
-	// the whole time to finish its requests or jobs in progress.
-	var workers workers
+	// the whole time to finish its requests or jobs in progress. Once the
+	// queue is stopped, its workers do not start (jobs.Queue.Start).
+	var queue *jobs.Queue
 	stop := func() {
 		s.ready.setPhase(phaseStopping)
 		log.InfoContext(ctx, "stopping")
@@ -182,11 +183,13 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 				}
 			})
 		}
-		wg.Go(func() {
-			if err := workers.stop(shutdownCtx); err != nil {
-				log.ErrorContext(ctx, "the job workers did not stop", "error", err)
-			}
-		})
+		if queue != nil {
+			wg.Go(func() {
+				if err := queue.Stop(shutdownCtx); err != nil {
+					log.ErrorContext(ctx, "the job workers did not stop", "error", err)
+				}
+			})
+		}
 		wg.Wait()
 	}
 
@@ -209,16 +212,20 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 
 	// The queue enqueues jobs from the start, and its workers start once the
 	// server is ready, when River's tables exist.
-	queue, err := jobs.Open(ctx, db, cfg.DatabaseURL, jobs.Options{
+	queue, err = jobs.Open(ctx, db, cfg.DatabaseURL, jobs.Options{
 		Registry: opts.Jobs,
 		Work:     opts.InlineWorkers,
 		Log:      log,
 	})
+	// From here on, a ctx that ends while the server starts stops it as it
+	// does at any other time, and the log says so.
 	if err != nil {
 		stop()
 		if ctx.Err() != nil {
+			log.InfoContext(ctx, "stopped")
 			return nil
 		}
+		log.ErrorContext(ctx, "the job queue could not open, so the server does not serve", "error", err)
 		return err
 	}
 	defer queue.Close()
@@ -239,14 +246,20 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	case err != nil:
 		stop()
 		if ctx.Err() != nil {
+			log.InfoContext(ctx, "stopped")
 			return nil
 		}
+		log.ErrorContext(ctx, "the pending migrations could not be read, so the server does not serve", "error", err)
 		return err
 	case len(pending) == 0:
 		s.ready.setPhase(phaseReady)
 		log.InfoContext(ctx, "ready")
-		if err := workers.start(ctx, queue); err != nil {
+		if err := queue.Start(ctx); err != nil {
 			stop()
+			if ctx.Err() != nil {
+				log.InfoContext(ctx, "stopped")
+				return nil
+			}
 			log.ErrorContext(ctx, "the job workers could not start, so the server stops", "error", err)
 			return err
 		}
@@ -258,7 +271,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 		}
 		wg.Go(func() {
 			if s.ready.waitForMigrations(pollCtx, db, interval) {
-				if err := workers.start(ctx, queue); err != nil {
+				if err := queue.Start(ctx); err != nil && ctx.Err() == nil {
 					workerErr <- err
 				}
 			}
@@ -278,36 +291,6 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 		log.ErrorContext(ctx, "the job workers could not start, so the server stops", "error", err)
 		return err
 	}
-}
-
-// workers starts the job queue's workers once the server is ready, unless it
-// has stopped by then, and stops them when it stops.
-type workers struct {
-	mu      sync.Mutex
-	queue   *jobs.Queue
-	stopped bool
-}
-
-// start starts the queue's workers, unless stop has been called.
-func (w *workers) start(ctx context.Context, q *jobs.Queue) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.stopped {
-		return nil
-	}
-	w.queue = q
-	return q.Start(ctx)
-}
-
-// stop stops the workers, if start started them, as jobs.Queue.Stop does.
-func (w *workers) stop(ctx context.Context) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.stopped = true
-	if w.queue == nil {
-		return nil
-	}
-	return w.queue.Stop(ctx)
 }
 
 func closeListeners(ls ...net.Listener) {

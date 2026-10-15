@@ -36,15 +36,16 @@ const (
 	outcomeInterrupted = "interrupted"
 )
 
-// countedStates are the states that the jobs gauge counts: those of the jobs
-// that wait or run, and discarded, the dead-letter state.
-var countedStates = []rivertype.JobState{
-	rivertype.JobStatePending,
-	rivertype.JobStateScheduled,
-	rivertype.JobStateAvailable,
-	rivertype.JobStateRunning,
-	rivertype.JobStateRetryable,
-	rivertype.JobStateDiscarded,
+// countedStates are the states that the jobs gauge counts, by River's names
+// for them: those of the jobs that wait or run, and discarded, the
+// dead-letter state.
+var countedStates = []string{
+	string(rivertype.JobStatePending),
+	string(rivertype.JobStateScheduled),
+	string(rivertype.JobStateAvailable),
+	string(rivertype.JobStateRunning),
+	string(rivertype.JobStateRetryable),
+	string(rivertype.JobStateDiscarded),
 }
 
 // metrics are the job queue's Prometheus metrics: the attempts that this
@@ -114,20 +115,16 @@ type queueState struct{ queue, state string }
 func (m *metrics) count() (map[queueState]int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), countTimeout)
 	defer cancel()
-	states := make([]string, len(countedStates))
-	for i, s := range countedStates {
-		states[i] = string(s)
-	}
 	// The states are compared as River's enum, so that River's index on
 	// (state, queue, …) finds the rows.
 	rows, err := m.pool.Query(ctx, "SELECT queue, state::text, count(*) FROM "+
 		pgx.Identifier{schema, "river_job"}.Sanitize()+" WHERE state = ANY ($1::text[]::"+
-		pgx.Identifier{schema, "river_job_state"}.Sanitize()+"[]) GROUP BY 1, 2", states)
+		pgx.Identifier{schema, "river_job_state"}.Sanitize()+"[]) GROUP BY 1, 2", countedStates)
 	if err != nil {
 		return nil, err
 	}
 	counts := map[queueState]int64{}
-	for _, s := range states {
+	for _, s := range countedStates {
 		counts[queueState{river.QueueDefault, s}] = 0
 	}
 	var key queueState
