@@ -18,7 +18,7 @@ The server is configured with `STORYCREEP_*` environment variables and an option
 
 4. Open <http://localhost:7777>.
 
-On its first start, the server applies the database migrations, and creates its own database login, `storycreep`, with the same password. `docker compose ps` shows both services as `healthy` once the server is ready to serve.
+On its first start, the server applies the database migrations, and creates its own database logins with the same password: `storycreep`, which it serves requests as, and `storycreep_maintainer`, which its maintenance jobs, such as hard deletion, connect as. `docker compose ps` shows both services as `healthy` once the server is ready to serve.
 
 The data lives in two named volumes: `db`, the database, and `assets`, mounted at `/var/lib/storycreep/assets`, for the files that users upload. `docker compose down` keeps them; `docker compose down -v` deletes them, and with them everything stored in Storycreep.
 
@@ -36,7 +36,7 @@ The compose file names its Compose project `storycreep`, and the containers and 
 | `STORYCREEP_MODE`, `STORYCREEP_PUBLIC_SITE`, `STORYCREEP_SIGNUP`, `STORYCREEP_DEFAULT_LOCALE`, `STORYCREEP_LOG_LEVEL`, `STORYCREEP_ADMIN_ADDR`, `STORYCREEP_METRICS_TOKEN` | The server's | The server keys of the same names, which [`docs/configuration.md`](../docs/configuration.md) describes. |
 | `COMPOSE_PROJECT_NAME` | `storycreep` | The Compose project's name, which the containers' and volumes' names start with. Another name is another instance, with volumes of its own, so set it before the first start. |
 
-The compose file sets the database URLs itself. The two logins in them take their password from `POSTGRES_PASSWORD`, through `PGPASSWORD`, so that a password with characters such as `@` or `/` needs no escaping.
+The compose file sets the database URLs itself. The three logins in them take their password from `POSTGRES_PASSWORD`, through `PGPASSWORD`, so that a password with characters such as `@` or `/` needs no escaping.
 
 ### Behind a reverse proxy
 
@@ -52,7 +52,7 @@ The server serves `/metrics` on an admin port, which listens inside the containe
 
 ### Changing the database password
 
-The database takes `POSTGRES_PASSWORD` when it is created, and ignores it afterwards. To change the password later, set the new one in the database, then in `.env`, and restart the server, which updates its own login's password at startup:
+The database takes `POSTGRES_PASSWORD` when it is created, and ignores it afterwards. To change the password later, set the new one in the database, then in `.env`, and restart the server, which updates its own logins' passwords at startup:
 
 ```sh
 docker compose exec db psql -U postgres -c '\password postgres'
@@ -120,6 +120,7 @@ To run the server natively, start only the database with `docker compose -f depl
 ```sh
 export STORYCREEP_DATABASE_URL=postgres://storycreep:storycreep-dev@localhost:5432/storycreep
 export STORYCREEP_DATABASE_ADMIN_URL=postgres://postgres:storycreep-dev@localhost:5432/storycreep
+export STORYCREEP_DATABASE_MAINTENANCE_URL=postgres://storycreep_maintainer:storycreep-dev@localhost:5432/storycreep
 export STORYCREEP_PUBLIC_URL=http://localhost:8080
 go run ./cmd/storycreep serve
 ```

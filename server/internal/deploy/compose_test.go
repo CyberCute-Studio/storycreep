@@ -143,11 +143,12 @@ func TestComposeFile(t *testing.T) {
 
 	env := app.Environment
 	for name, want := range map[string]string{
-		"STORYCREEP_HTTP_ADDR":          ":8080",
-		"STORYCREEP_DATABASE_URL":       "postgres://storycreep@db:5432/storycreep",
-		"STORYCREEP_DATABASE_ADMIN_URL": "postgres://postgres@db:5432/storycreep",
-		"PGPASSWORD":                    "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env next to docker-compose.yml}",
-		"STORYCREEP_PUBLIC_URL":         "${STORYCREEP_PUBLIC_URL:-http://localhost:7777}",
+		"STORYCREEP_HTTP_ADDR":                ":8080",
+		"STORYCREEP_DATABASE_URL":             "postgres://storycreep@db:5432/storycreep",
+		"STORYCREEP_DATABASE_ADMIN_URL":       "postgres://postgres@db:5432/storycreep",
+		"STORYCREEP_DATABASE_MAINTENANCE_URL": "postgres://storycreep_maintainer@db:5432/storycreep",
+		"PGPASSWORD":                          "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env next to docker-compose.yml}",
+		"STORYCREEP_PUBLIC_URL":               "${STORYCREEP_PUBLIC_URL:-http://localhost:7777}",
 	} {
 		if env[name] != want {
 			t.Errorf("app sets %s to %q, want %q", name, env[name], want)
