@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -12,7 +14,38 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
+// TestMain clears the libpq environment variables and points PGPASSFILE at an
+// empty file before the tests run. pgx reads the database URLs with them, and
+// with the user's password file, so a developer's PGSERVICE, for one, would
+// make every configuration here invalid, and a password from either would
+// become the password of a URL that has none. It cannot use dbtest.Run, which
+// does the same, because dbtest imports this package.
+func TestMain(m *testing.M) {
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "PG") {
+			os.Unsetenv(name)
+		}
+	}
+	os.Setenv("PGPASSFILE", os.DevNull)
+	os.Exit(m.Run())
+}
+
 const testURL = "https://storycreep.example.com"
+
+// testDatabaseURL is a valid STORYCREEP_DATABASE_URL, and testDatabaseShown
+// is how the configuration shows it.
+const (
+	testDatabaseURL   = "postgres://storycreep:pw-s3cr3t@db:5432/storycreep"
+	testDatabaseShown = "postgres://storycreep:" + secret.Redacted + "@db:5432/storycreep"
+)
+
+// withRequired returns env with valid values for the required keys it does
+// not set.
+func withRequired(env map[string]string) map[string]string {
+	out := map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_DATABASE_URL": testDatabaseURL}
+	maps.Copy(out, env)
+	return out
+}
 
 func mustLoad(t *testing.T, env map[string]string) *Config {
 	t.Helper()
@@ -58,7 +91,7 @@ func entry(t *testing.T, c *Config, key string) Entry {
 }
 
 func TestDefaults(t *testing.T) {
-	c := mustLoad(t, map[string]string{"STORYCREEP_PUBLIC_URL": testURL})
+	c := mustLoad(t, withRequired(nil))
 	if c.PublicURL.String() != testURL || !c.PublicURL.HTTPS() {
 		t.Errorf("PublicURL = %v", c.PublicURL)
 	}
@@ -76,6 +109,8 @@ func TestDefaults(t *testing.T) {
 		{"STORYCREEP_PUBLIC_URL", testURL, SourceEnvironment},
 		{"STORYCREEP_PUBLIC_SITE", "off", SourceDefault},
 		{"STORYCREEP_SIGNUP", "closed", SourceDefault},
+		{"STORYCREEP_DATABASE_URL", testDatabaseShown, SourceEnvironment},
+		{"STORYCREEP_DATABASE_ADMIN_URL", "", SourceUnset},
 		{"STORYCREEP_LOG_LEVEL", "info", SourceDefault},
 	}
 	if got := c.Entries(); !slices.Equal(got, want) {
@@ -86,7 +121,7 @@ func TestDefaults(t *testing.T) {
 // TestEffectiveValue checks that the entries show the public URL as the
 // server uses it, not as it was written.
 func TestEffectiveValue(t *testing.T) {
-	c := mustLoad(t, map[string]string{"STORYCREEP_PUBLIC_URL": "HTTPS://Storycreep.Example.COM:443/"})
+	c := mustLoad(t, withRequired(map[string]string{"STORYCREEP_PUBLIC_URL": "HTTPS://Storycreep.Example.COM:443/"}))
 	if e := entry(t, c, "STORYCREEP_PUBLIC_URL"); e.Value != testURL {
 		t.Errorf("entry value = %q, want %q", e.Value, testURL)
 	}
@@ -147,8 +182,7 @@ func TestCapabilities(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.env["STORYCREEP_PUBLIC_URL"] = testURL
-			if got := mustLoad(t, tt.env).Capabilities; got != tt.want {
+			if got := mustLoad(t, withRequired(tt.env)).Capabilities; got != tt.want {
 				t.Errorf("Capabilities =\n%+v\nwant\n%+v", got, tt.want)
 			}
 		})
@@ -173,13 +207,20 @@ func TestDescribeListsEveryCapability(t *testing.T) {
 //
 // Verifies: FR-ADMIN-01/AC1
 func TestMissingRequiredKey(t *testing.T) {
-	for _, env := range []map[string]string{{}, {"STORYCREEP_PUBLIC_URL": ""}} {
-		problems := loadProblems(t, Options{Env: MapEnvironment(env)})
-		if len(problems) != 1 || problems[0].Key != "STORYCREEP_PUBLIC_URL" {
-			t.Fatalf("problems = %v, want one for STORYCREEP_PUBLIC_URL", problems)
-		}
-		if msg := problems[0].String(); !strings.Contains(msg, "required") || !strings.Contains(msg, testURL) {
-			t.Errorf("message %q should say the key is required and show an example", msg)
+	for _, tt := range []struct{ key, example string }{
+		{"STORYCREEP_PUBLIC_URL", testURL},
+		{"STORYCREEP_DATABASE_URL", "postgres://storycreep:password@db:5432/storycreep"},
+	} {
+		unset := withRequired(nil)
+		delete(unset, tt.key)
+		for _, env := range []map[string]string{unset, withRequired(map[string]string{tt.key: ""})} {
+			problems := loadProblems(t, Options{Env: MapEnvironment(env)})
+			if len(problems) != 1 || problems[0].Key != tt.key {
+				t.Fatalf("problems = %v, want one for %s", problems, tt.key)
+			}
+			if msg := problems[0].String(); !strings.Contains(msg, "required") || !strings.Contains(msg, tt.example) {
+				t.Errorf("message %q should say the key is required and show an example", msg)
+			}
 		}
 	}
 }
@@ -204,7 +245,7 @@ func TestInvalidValues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.key+"="+tt.value, func(t *testing.T) {
-			env := map[string]string{"STORYCREEP_PUBLIC_URL": testURL, tt.key: tt.value}
+			env := withRequired(map[string]string{tt.key: tt.value})
 			problems := loadProblems(t, Options{Env: MapEnvironment(env)})
 			if len(problems) != 1 {
 				t.Fatalf("problems = %v, want one", problems)
@@ -227,7 +268,8 @@ func TestEveryProblemIsReported(t *testing.T) {
 		"STORYCREEP_LOG_LEVEL": "verbose",
 	}
 	got := problemKeys(loadProblems(t, Options{Env: MapEnvironment(env)}))
-	want := []string{"STORYCREEP_MODE", "STORYCREEP_PUBLIC_URL", "STORYCREEP_SIGNUP", "STORYCREEP_LOG_LEVEL"}
+	want := []string{"STORYCREEP_MODE", "STORYCREEP_PUBLIC_URL", "STORYCREEP_SIGNUP", "STORYCREEP_DATABASE_URL",
+		"STORYCREEP_LOG_LEVEL"}
 	if !slices.Equal(got, want) {
 		t.Errorf("problems name %v, want %v", got, want)
 	}
@@ -247,7 +289,7 @@ func TestCredentialsInPublicURL(t *testing.T) {
 		"ftp://admin:" + password + "@storycreep.example.com",
 		"admin:" + password + "@storycreep.example.com",
 	} {
-		problems := loadProblems(t, Options{Env: MapEnvironment(map[string]string{"STORYCREEP_PUBLIC_URL": v})})
+		problems := loadProblems(t, Options{Env: MapEnvironment(withRequired(map[string]string{"STORYCREEP_PUBLIC_URL": v}))})
 		if len(problems) != 1 || problems[0].Key != "STORYCREEP_PUBLIC_URL" {
 			t.Errorf("%q: problems = %v, want one for STORYCREEP_PUBLIC_URL", v, problems)
 			continue
@@ -261,7 +303,10 @@ func TestCredentialsInPublicURL(t *testing.T) {
 // TestWarningsOnError checks that an invalid configuration keeps its
 // warnings, because a misspelt variable is often why a key is missing.
 func TestWarningsOnError(t *testing.T) {
-	_, err := Load(Options{Env: MapEnvironment(map[string]string{"STORYCREEP_PUBLIC_ULR": testURL})})
+	_, err := Load(Options{Env: MapEnvironment(map[string]string{
+		"STORYCREEP_PUBLIC_ULR":   testURL,
+		"STORYCREEP_DATABASE_URL": testDatabaseURL,
+	})})
 	var cerr *Error
 	if !errors.As(err, &cerr) {
 		t.Fatalf("Load returned %v, want an *Error", err)
@@ -286,7 +331,7 @@ func TestHostedRules(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.env["STORYCREEP_MODE"] = "hosted"
-			problems := loadProblems(t, Options{Env: MapEnvironment(tt.env)})
+			problems := loadProblems(t, Options{Env: MapEnvironment(withRequired(tt.env))})
 			if len(problems) != 1 || problems[0].Key != tt.key || !strings.Contains(problems[0].Msg, "hosted mode") {
 				t.Errorf("problems = %v, want one for %s explaining the hosted-mode rule", problems, tt.key)
 			}
@@ -294,7 +339,7 @@ func TestHostedRules(t *testing.T) {
 	}
 
 	// The same values are valid in self-hosted mode.
-	c := mustLoad(t, map[string]string{"STORYCREEP_PUBLIC_URL": "http://192.168.1.20:8080", "STORYCREEP_SIGNUP": "closed"})
+	c := mustLoad(t, withRequired(map[string]string{"STORYCREEP_PUBLIC_URL": "http://192.168.1.20:8080", "STORYCREEP_SIGNUP": "closed"}))
 	if c.PublicURL.HTTPS() {
 		t.Errorf("an http URL is reported as https")
 	}
@@ -304,7 +349,7 @@ func TestLogLevels(t *testing.T) {
 	for v, want := range map[string]slog.Level{
 		"debug": slog.LevelDebug, "info": slog.LevelInfo, "warn": slog.LevelWarn, "error": slog.LevelError,
 	} {
-		c := mustLoad(t, map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_LOG_LEVEL": v})
+		c := mustLoad(t, withRequired(map[string]string{"STORYCREEP_LOG_LEVEL": v}))
 		if c.LogLevel != want {
 			t.Errorf("STORYCREEP_LOG_LEVEL=%s gives %v, want %v", v, c.LogLevel, want)
 		}
@@ -363,12 +408,13 @@ func TestKeyDeclarations(t *testing.T) {
 
 func TestUnknownVariables(t *testing.T) {
 	vars := map[string]string{
-		"STORYCREEP_PUBLIC_URL":  testURL,
-		"STORYCREEP_SINGUP":      "open",
-		"STORYCREEP_TOKEN":       "scp_x",
-		"storycreep_log_level":   "debug",
-		"STORYCREEP_CONFIG_FILE": "",
-		"PATH":                   "/usr/bin",
+		"STORYCREEP_PUBLIC_URL":   testURL,
+		"STORYCREEP_DATABASE_URL": testDatabaseURL,
+		"STORYCREEP_SINGUP":       "open",
+		"STORYCREEP_TOKEN":        "scp_x",
+		"storycreep_log_level":    "debug",
+		"STORYCREEP_CONFIG_FILE":  "",
+		"PATH":                    "/usr/bin",
 	}
 	env := MapEnvironment(vars)
 	c, err := Load(Options{Env: env})

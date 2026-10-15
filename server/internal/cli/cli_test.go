@@ -7,14 +7,27 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 )
 
-const testURL = "https://storycreep.example.com"
+const (
+	testURL         = "https://storycreep.example.com"
+	testDatabaseURL = "postgres://storycreep:pw-s3cr3t@db:5432/storycreep"
+)
+
+// TestMain runs the tests with dbtest.Run, which keeps the libpq environment
+// variables and the user's password file, which the configuration reads the
+// database URLs with, out of the tests, so that a developer's PGSERVICE, for
+// one, does not make the configurations here invalid.
+func TestMain(m *testing.M) {
+	os.Exit(dbtest.Run(m))
+}
 
 func run(t *testing.T, env map[string]string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
@@ -24,7 +37,7 @@ func run(t *testing.T, env map[string]string, args ...string) (code int, stdout,
 }
 
 func validEnv() map[string]string {
-	return map[string]string{"STORYCREEP_PUBLIC_URL": testURL}
+	return map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_DATABASE_URL": testDatabaseURL}
 }
 
 func TestTopLevelHelp(t *testing.T) {
@@ -138,9 +151,11 @@ func TestInvalidConfigStopsCommands(t *testing.T) {
 		env  map[string]string
 		keys []string
 	}{
-		{"missing required key", map[string]string{}, []string{"STORYCREEP_PUBLIC_URL"}},
-		{"invalid key", map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_MODE": "staging"}, []string{"STORYCREEP_MODE"}},
-		{"several", map[string]string{"STORYCREEP_SIGNUP": "public"}, []string{"STORYCREEP_PUBLIC_URL", "STORYCREEP_SIGNUP"}},
+		{"missing required key", map[string]string{"STORYCREEP_DATABASE_URL": testDatabaseURL}, []string{"STORYCREEP_PUBLIC_URL"}},
+		{"invalid key", map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_DATABASE_URL": testDatabaseURL,
+			"STORYCREEP_MODE": "staging"}, []string{"STORYCREEP_MODE"}},
+		{"several", map[string]string{"STORYCREEP_SIGNUP": "public"},
+			[]string{"STORYCREEP_PUBLIC_URL", "STORYCREEP_SIGNUP", "STORYCREEP_DATABASE_URL"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -164,7 +179,7 @@ func TestInvalidConfigStopsCommands(t *testing.T) {
 
 	// A misspelt variable explains a missing key, so its warning is shown
 	// with the problems.
-	code, _, stderr := run(t, map[string]string{"STORYCREEP_PUBLIC_ULR": testURL}, "fake")
+	code, _, stderr := run(t, map[string]string{"STORYCREEP_PUBLIC_ULR": testURL, "STORYCREEP_DATABASE_URL": testDatabaseURL}, "fake")
 	if code != ExitFailure || !strings.Contains(stderr, "warning: STORYCREEP_PUBLIC_ULR is set in the environment") {
 		t.Errorf("exit %d, stderr %q; want %d and a warning about STORYCREEP_PUBLIC_ULR", code, stderr, ExitFailure)
 	}
@@ -233,19 +248,24 @@ func TestValidateConfig(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	for _, want := range []string{
-		"The configuration is valid.\nConfiguration file: " + file + "\n",
-		"\nKEY ",
-		"\nSTORYCREEP_MODE         self-hosted ",
-		"\nSTORYCREEP_PUBLIC_URL   " + testURL + "  environment\n",
-		"\nSTORYCREEP_SIGNUP       invite ",
-		file + ":1\n",
-		"\nCAPABILITY ",
-		"\nSignup               invite\n",
-		"\nEnforceEntitlements  off\n",
+		`^The configuration is valid\.\nConfiguration file: ` + regexp.QuoteMeta(file) + `\n`,
+		`\nKEY  `,
+		`\nSTORYCREEP_MODE +self-hosted +default\n`,
+		`\nSTORYCREEP_PUBLIC_URL +` + regexp.QuoteMeta(testURL) + ` +environment\n`,
+		`\nSTORYCREEP_SIGNUP +invite +` + regexp.QuoteMeta(file) + `:1\n`,
+		// The password is redacted.
+		`\nSTORYCREEP_DATABASE_URL +postgres://storycreep:\[REDACTED\]@db:5432/storycreep +environment\n`,
+		`\nSTORYCREEP_DATABASE_ADMIN_URL +not set\n`,
+		`\nCAPABILITY  `,
+		`\nSignup +invite\n`,
+		`\nEnforceEntitlements +off\n`,
 	} {
-		if !strings.Contains(stdout, want) {
-			t.Errorf("stdout does not contain %q:\n%s", want, stdout)
+		if !regexp.MustCompile(want).MatchString(stdout) {
+			t.Errorf("stdout does not match %q:\n%s", want, stdout)
 		}
+	}
+	if strings.Contains(stdout, "pw-s3cr3t") {
+		t.Errorf("stdout shows the database password:\n%s", stdout)
 	}
 	if !strings.Contains(stderr, "warning: STORYCREEP_SINGUP is set in the environment but is not a configuration key") {
 		t.Errorf("stderr should warn about the unknown variable: %q", stderr)

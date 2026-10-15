@@ -41,10 +41,20 @@ type lintResult struct {
 // code outside configDir that names STORYCREEP_MODE, compares against a mode
 // value, or reads the environment, which could read the mode under another
 // spelling. Test files are exempt: they set the mode up but are not part of
-// the binary.
+// the binary. So are test-support packages, such as internal/database/dbtest:
+// a package whose name ends in "test" and that only test files and other
+// test-support packages import, which is therefore not part of the binary
+// either.
 func lintModeIsolation(root string) (lintResult, error) {
 	var r lintResult
+	// The findings are kept per package directory until the walk has seen
+	// every import, because a test-support package's are dropped.
+	violations := map[string][]string{}
 	readers := map[string]bool{}
+	pkgNames := map[string]string{}
+	// importers holds, for each import path, the package directories of the
+	// non-test files that import it.
+	importers := map[string][]string{}
 	fset := token.NewFileSet()
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -78,19 +88,21 @@ func lintModeIsolation(root string) (lintResult, error) {
 			return err
 		}
 		r.files++
+		pkgNames[dir] = f.Name.Name
 		report := func(pos token.Pos, format string, args ...any) {
 			if dir != configDir {
-				r.violations = append(r.violations,
+				violations[dir] = append(violations[dir],
 					fmt.Sprintf("%s:%d: %s", rel, fset.Position(pos).Line, fmt.Sprintf(format, args...)))
 			}
 		}
 
-		imported := map[string]string{} // local name → import path
+		envImports := map[string]string{} // local name → import path
 		for _, imp := range f.Imports {
 			ip, err := strconv.Unquote(imp.Path.Value)
 			if err != nil {
 				return err
 			}
+			importers[ip] = append(importers[ip], dir)
 			if _, ok := envReaders[ip]; !ok {
 				continue
 			}
@@ -103,7 +115,7 @@ func lintModeIsolation(root string) (lintResult, error) {
 				report(imp.Pos(), "dot-imports %s, which would hide reads of the environment", ip)
 			case "_":
 			default:
-				imported[local] = ip
+				envImports[local] = ip
 			}
 		}
 
@@ -126,7 +138,7 @@ func lintModeIsolation(root string) (lintResult, error) {
 				}
 			case *ast.SelectorExpr:
 				if x, ok := n.X.(*ast.Ident); ok {
-					if ip, ok := imported[x.Name]; ok {
+					if ip, ok := envImports[x.Name]; ok {
 						if slices.Contains(envReaders[ip], n.Sel.Name) {
 							report(n.Pos(), "reads the environment with %s.%s; only %s may", x.Name, n.Sel.Name, configDir)
 						}
@@ -144,11 +156,64 @@ func lintModeIsolation(root string) (lintResult, error) {
 		})
 		return nil
 	})
+	if err != nil {
+		return r, err
+	}
+	module, err := modulePath(root)
+	if err != nil {
+		return r, err
+	}
+	// A package named so is test support until a package that is not imports
+	// it. Along a chain of them, finding that can take several rounds.
+	testSupport := map[string]bool{}
+	for dir, name := range pkgNames {
+		if strings.HasSuffix(name, "test") {
+			testSupport[dir] = true
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for dir := range testSupport {
+			importPath := module
+			if dir != "." {
+				importPath += "/" + dir
+			}
+			for _, from := range importers[importPath] {
+				if !testSupport[from] {
+					delete(testSupport, dir)
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	for dir, vs := range violations {
+		if !testSupport[dir] {
+			r.violations = append(r.violations, vs...)
+		}
+	}
+	slices.Sort(r.violations)
 	for dir := range readers {
-		r.modeReaders = append(r.modeReaders, dir)
+		if !testSupport[dir] {
+			r.modeReaders = append(r.modeReaders, dir)
+		}
 	}
 	slices.Sort(r.modeReaders)
-	return r, err
+	return r, nil
+}
+
+// modulePath returns the module path that root's go.mod declares.
+func modulePath(root string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return "", err
+	}
+	for line := range strings.Lines(string(b)) {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+			return strings.Trim(strings.TrimSpace(rest), `"`), nil
+		}
+	}
+	return "", fmt.Errorf("%s/go.mod declares no module", root)
 }
 
 func moduleRoot(t *testing.T) string {
@@ -234,8 +299,53 @@ func TestModeLintFindsViolations(t *testing.T) {
 		},
 		"internal/other/other_test.go": {
 			"package other",
-			`import "os"`,
+			"import (",
+			`	"os"`,
+			`	_ "example.com/m/internal/harnesstest"`,
+			")",
 			`var _ = os.Getenv("STORYCREEP_MODE") == "hosted"`,
+		},
+		// A test-support package that only tests import is exempt, like a
+		// test file, and so is one that only such a package imports.
+		"internal/harnesstest/harness.go": {
+			"package harnesstest",
+			"import (",
+			`	"os"`,
+			`	_ "example.com/m/internal/fixturetest"`,
+			")",
+			`var Port = os.Getenv("STORYCREEP_TEST_PORT")`,
+		},
+		"internal/fixturetest/fixture.go": {
+			"package fixturetest",
+			`import "os"`,
+			`var Image = os.Getenv("STORYCREEP_TEST_IMAGE") + "STORYCREEP_MODE"`,
+		},
+		// One that the server imports is not, nor is one that such a
+		// package imports.
+		"internal/usedtest/used.go": {
+			"package usedtest",
+			`import "os"`,
+			`var X = os.Getenv("X")`,
+		},
+		"internal/usedtest/chain.go": {
+			"package usedtest",
+			`import _ "example.com/m/internal/chaintest"`,
+		},
+		"internal/chaintest/chain.go": {
+			"package chaintest",
+			`import "os"`,
+			`var Z = os.Getenv("Z")`,
+		},
+		"internal/other/uses.go": {
+			"package other",
+			`import _ "example.com/m/internal/usedtest"`,
+		},
+		// Nor is a package that no one imports, if its name does not end in
+		// "test".
+		"internal/unused/unused.go": {
+			"package unused",
+			`import "os"`,
+			`var Y = os.Getenv("Y")`,
 		},
 		"testdata/x.go":                 {"package x", `var _ = "hosted"`},
 		"internal/other/_skipped.go":    {"package other", `var _ = "hosted"`},
@@ -267,6 +377,9 @@ func TestModeLintFindsViolations(t *testing.T) {
 		`internal/other/other.go:10: uses the mode value "self-hosted"; branch on config.Capabilities instead`,
 		"internal/other/windows.go:6: reads the environment with an Environ method; only internal/config may",
 		"internal/other/windows.go:7: reads the environment with syscall.GetEnvironmentVariable; only internal/config may",
+		"internal/usedtest/used.go:3: reads the environment with os.Getenv; only internal/config may",
+		"internal/chaintest/chain.go:3: reads the environment with os.Getenv; only internal/config may",
+		"internal/unused/unused.go:3: reads the environment with os.Getenv; only internal/config may",
 	}
 	slices.Sort(r.violations)
 	slices.Sort(want)

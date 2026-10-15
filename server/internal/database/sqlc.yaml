@@ -1,0 +1,14 @@
+# sqlc generates the Go code for the queries in queries/ from the schema the
+# migrations build. Run "go generate ./internal/database" in server/ after
+# changing a query or a migration; CI fails when the generated code is out of
+# date.
+version: "2"
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: queries
+    gen:
+      go:
+        package: queries
+        out: queries
+        sql_package: pgx/v5

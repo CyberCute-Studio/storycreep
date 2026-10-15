@@ -1,6 +1,10 @@
 package config
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
+)
 
 // fileKey names the configuration file. It is read from the environment only,
 // before the file, so it is not one of the keys below.
@@ -119,6 +123,86 @@ var keys = []key{
 		},
 		capability:      "Signup",
 		capabilityLimit: "self-hosted only",
+	},
+	{
+		name: "STORYCREEP_DATABASE_URL",
+		doc: "The PostgreSQL database, and the login the server connects to it as: " +
+			"`postgres://user:password@host:port/database`, with the scheme (`postgres` or `postgresql`) in " +
+			"lowercase and characters such as `@`, `:`, `/`, `?`, and `#` in the password percent-encoded. The " +
+			"database server must run PostgreSQL 15 or newer. The login must be an ordinary role with a name of " +
+			"its own: migrations refuse one named `storycreep_app`, `storycreep_definer`, or " +
+			"`storycreep_maintenance`, the roles they create, or starting with `pg_`, which PostgreSQL reserves. " +
+			"The server refuses to use one that is a superuser, has `BYPASSRLS`, `CREATEROLE`, or `REPLICATION`, " +
+			"or owns the database or objects in it, or that is a member of a role that does, of one of the " +
+			"server's privileged roles, or of `pg_execute_server_program`, `pg_read_server_files`, or " +
+			"`pg_write_server_files`, which give access to the database server's files and programs, because " +
+			"row-level security would not hold it. Migrations create the login if it does not exist, set its " +
+			"password to the one the server logs in with (this URL's, or else the one `PGPASSWORD`, a service " +
+			"file, or a password file supplies), and grant it the `storycreep_app` role. When the server logs in " +
+			"with a password, they refuse a login whose `VALID UNTIL` has passed, which PostgreSQL would refuse as " +
+			"if the password were wrong. They also revoke `CONNECT` on the database from `PUBLIC` and from " +
+			"`storycreep_app`, and grant it to the login, and to the admin login if that took its `CONNECT`, so " +
+			"that no other role can connect unless it is a superuser, or it is, or inherits the privileges of, the " +
+			"login, the database's owner, or a role granted `CONNECT`, as a monitoring role may need to be. They " +
+			"fail if `PUBLIC` or `storycreep_app` can still connect afterwards, as through a grant that a role other " +
+			"than the database's owner made, and a server that does not apply migrations itself refuses a migrated " +
+			"database that they can connect to again, as after a dump is restored into a new database, until " +
+			"migrations run again. A login belongs to the whole PostgreSQL server, not to one database, and " +
+			"so does the `storycreep_app` role, which every Storycreep database on the server grants its " +
+			"privileges to. So give each Storycreep database on a server a login of its own, which can connect " +
+			"only to its own database: a shared login would reach all of them, and migrating one would change the " +
+			"password the others log in with. Query parameters, such as `sslmode`, are read as libpq reads them, " +
+			"with an `=` in a value percent-encoded as `%3D`, and the libpq environment variables, such as " +
+			"`PGSSLMODE`, fill in settings the URL leaves out. A space anywhere in the URL is written as `%20`. " +
+			"The URL is checked as the server's connections read it, so a setting they could not use, such as an " +
+			"unknown `sslmode`, a certificate file that cannot be read, or a libpq parameter that they do not " +
+			"support, such as `gssencmode` or `keepalives`, is an error. Where the URL is shown, its " +
+			"password is `" + secret.Redacted + "`, and so is the value of every query parameter except the libpq " +
+			"and pgx settings that hold no secret, such as `sslmode`, and `application_name`, `search_path`, " +
+			"`timezone`, and `client_encoding`.",
+		valuesDoc: "A `postgres://` URL",
+		example:   "postgres://storycreep:password@db:5432/storycreep",
+		required:  true,
+		parse: func(c *Config, v string) error {
+			d, err := ParseDatabaseURL(v)
+			if err != nil {
+				return err
+			}
+			c.DatabaseURL = d
+			return nil
+		},
+		effective: func(c *Config) string { return c.DatabaseURL.String() },
+	},
+	{
+		name: "STORYCREEP_DATABASE_ADMIN_URL",
+		doc: "A PostgreSQL superuser login for the same database, written like `STORYCREEP_DATABASE_URL`. Only " +
+			"applying migrations uses it, as `storycreep migrate` does. Migrations need a superuser because they " +
+			"create the server's database roles, and one of them bypasses row-level security. It must name a " +
+			"different login from `STORYCREEP_DATABASE_URL`, and the same database. Migrations refuse a login " +
+			"that is, or acts as, `storycreep_app`, `storycreep_definer`, or `storycreep_maintenance`, because " +
+			"they make those roles unable to log in and take `SUPERUSER` away from them. Migrations create the " +
+			"server's tables in the `public` schema, whatever `search_path` this URL, the login, or the database " +
+			"sets. It is shown redacted in the same way.",
+		valuesDoc: "A `postgres://` URL",
+		parse: func(c *Config, v string) error {
+			d, err := ParseDatabaseURL(v)
+			if err != nil {
+				return err
+			}
+			if c.DatabaseURL.IsSet() && d.User() == c.DatabaseURL.User() {
+				return hiddenValueError{errors.New("names the same login as STORYCREEP_DATABASE_URL; migrations " +
+					"need a superuser and the server an ordinary login, so they must be different logins")}
+			}
+			// A superuser URL often names the postgres database, which would
+			// migrate that database and leave the server's unmigrated.
+			if c.DatabaseURL.IsSet() && d.Database() != c.DatabaseURL.Database() {
+				return hiddenValueError{errors.New("names a different database from STORYCREEP_DATABASE_URL; " +
+					"migrations must be applied to the database the server uses, so name the same one")}
+			}
+			c.DatabaseAdminURL = d
+			return nil
+		},
+		effective: func(c *Config) string { return c.DatabaseAdminURL.String() },
 	},
 	{
 		name:   "STORYCREEP_LOG_LEVEL",

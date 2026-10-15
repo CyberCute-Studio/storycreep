@@ -2,9 +2,9 @@
 
 | Field | Value |
 | --- | --- |
-| Plan version | 1.4 |
+| Plan version | 1.5 |
 | Date | 2026-10-15 |
-| Source | [`PRD.md`](PRD.md) version 1.5 (2026-10-14) |
+| Source | [`PRD.md`](PRD.md) version 1.6 (2026-10-15) |
 | Scope | Phase 0 — MVP (§12.1), then Phase 1 — v1 (§12.2) |
 | Status | Living document |
 
@@ -111,10 +111,10 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** both implementations pass the shared vectors. A wrong prefix is a typed decode error (the API maps it to 400 in item 6).
 
 ### 5. PostgreSQL foundation
-**Status:** todo · **Depends on:** 3
-**PRD:** FR-ADMIN-04 (AC2, pre-release form), ADR-001, ADR-002, NFR-Q-01, §9.9
-- `pgx/v5` pool and `sqlc` setup. `goose` migrations embedded in the binary and run at startup under an advisory lock. `migrate` subcommand and `--no-auto-migrate`.
-- Database roles: migration owner, application role (not a table owner), owner of the `SECURITY DEFINER` functions, and `storycreep_maintenance` (`BYPASSRLS`).
+**Status:** done ([#6](https://github.com/CyberCute-Studio/storycreep/pull/6)) · **Depends on:** 3
+**PRD:** FR-ADMIN-04 (AC2, pre-release form), FR-ADMIN-06 (`migrate`), ADR-001, ADR-002, NFR-Q-01, §9.9
+- `pgx/v5` pool and `sqlc` setup. `goose` migrations embedded in the binary and applied under an advisory lock, by the `migrate` subcommand and by the startup step that `serve` runs. Item 6 adds `serve` and its `--no-auto-migrate`.
+- Database roles: migration owner, application role (not a table owner), owner of the `SECURITY DEFINER` functions, and `storycreep_maintenance` (`BYPASSRLS`). Migrations run as the superuser in `STORYCREEP_DATABASE_ADMIN_URL` and provision the application login of `STORYCREEP_DATABASE_URL`, and the server refuses an application login that row-level security would not hold (N16).
 - Request transaction helper that sets `SET LOCAL app.workspace_id` and `app.user_id`.
 - `testcontainers-go` harness running on PostgreSQL 15, 16, and 17.
 - An upgrade-test job that seeds a database from the main branch's migrations, applies the pull request's migrations, and runs the test suite (FR-ADMIN-04 AC2 before the first release). Item 119 switches the seed to the previous release.
@@ -124,8 +124,8 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 
 ### 6. HTTP server skeleton and operational endpoints
 **Status:** todo · **Depends on:** 4, 5
-**PRD:** FR-ADMIN-05, FR-ADMIN-04 (AC1, AC3), FR-API-01 (AC2), FR-API-04 (envelope, pagination), NFR-SEC-02, NFR-SEC-07, NFR-SEC-09, FR-PUB-02 (AC4), §10.5
-- `chi` and `huma` v2 with the `serve` subcommand. Request IDs.
+**PRD:** FR-ADMIN-05, FR-ADMIN-04 (AC1, AC3), FR-ADMIN-06 (`serve`), FR-API-01 (AC2), FR-API-04 (envelope, pagination), NFR-SEC-02, NFR-SEC-07, NFR-SEC-09, FR-PUB-02 (AC4), §10.5
+- `chi` and `huma` v2 with the `serve` subcommand. Request IDs. `serve` runs item 5's database startup step, which applies pending migrations unless `--no-auto-migrate` is given.
 - Error envelope and a registry of error codes. Display messages are wired to i18n in item 10.
 - Strict JSON decoding, body-size and depth limits, keyset-cursor pagination helper, and an `ETag` helper.
 - Security headers: CSP, `nosniff`, Referrer-Policy, `frame-ancestors 'none'`, and HSTS in hosted mode.
@@ -156,7 +156,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Status:** todo · **Depends on:** 6, 8
 **PRD:** FR-ADMIN-01 (AC4), FR-ADMIN-07 (AC1, AC2), §10.8
 - Multi-stage, non-root image with no build toolchain, built for `linux/amd64` and `linux/arm64`. Static assets are embedded (placeholders until items 53 and 108).
-- `deploy/docker-compose.yml` with exactly two services, named volumes for the database and assets, healthchecks, and documented environment variables. A development compose file.
+- `deploy/docker-compose.yml` with exactly two services, named volumes for the database and assets, healthchecks, and documented environment variables, including both database URLs (N16). A development compose file.
 
 **Done when:** FR-ADMIN-01 AC4 and FR-ADMIN-07 AC1–AC2 pass. The compose smoke test (AC3) comes in item 118.
 
@@ -178,7 +178,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 - Tables: `user`, `workspace`, `membership`, `project_grant`, `invite`, `session`, `api_token`, `audit_entry`, plus a `project` shell needed by `route_project_workspace`.
 - `FORCE ROW LEVEL SECURITY` policies on every tenant table.
 - The four `SECURITY DEFINER` functions in one migration, plus a test that the database's definer set equals that list.
-- The `internal/maintenance` package with its own pool. A lint test that no other package imports it. A test that only `storycreep_maintenance` has `BYPASSRLS`.
+- The `internal/maintenance` package with its own pool, and how that pool logs in, including the `CONNECT` on the database that migrating revokes from `PUBLIC` (N16). A lint test that no other package imports it. A test that only `storycreep_maintenance` has `BYPASSRLS`.
 - A reusable cross-tenant isolation harness that runs with a deliberately broken repository filter.
 
 **Done when:** FR-TEN-01 AC1 and the isolation harness pass, and both §5.4 tests pass.
@@ -1455,7 +1455,7 @@ The PRs that implement each requirement are listed in order. The last one comple
 | FR-ADMIN-03 | 114 | 114 |
 | FR-ADMIN-04 | 5, 6, 119 | 119 |
 | FR-ADMIN-05 | 6, 115 | 115 |
-| FR-ADMIN-06 | 3, 17, 18, 26, 84, 113 | 113 |
+| FR-ADMIN-06 | 3, 5, 6, 17, 18, 26, 84, 113 | 113 |
 | FR-ADMIN-07 | 9, 118 | 118 |
 | FR-ENT-01 | 21, 23, 117 | 117 |
 | FR-ENT-02 | 23, 35 | 35 |
@@ -1513,6 +1513,7 @@ These record where the PRD left a choice open, or where this plan reads the PRD 
 | N13 | With `STORYCREEP_SIGNUP=open`, a self-registered first user disabled first-run setup. | Decided: registration is refused with `setup_required` until setup completes, and the setup route closes when setup completes, not when a user exists. Recorded in PRD 1.5 FR-ADMIN-02 AC4 and FR-AUTH-01. | 13, 17 |
 | N14 | FR-ENT-01 listed `nodes per project` and `API requests per minute` as limits, which ADR-010 does not, and the plan enforced an unlisted `boards` limit. | Decided: the plan file holds exactly the ADR-010 keys. Boards, nodes, and API requests are metered only; request rates are bounded by the operational rate limits. An inert limit is one no enforcement site checks; reading the plan file as data is allowed. Recorded in PRD 1.5 FR-ENT-01 and FR-ENT-02. | 21, 23, 30, 117 |
 | N15 | FR-DATA-01 AC12 was defined against "a server without FR-EDIT-12", which no longer exists after item 127, and the MVP schema did not define annotation items. | Decided: the first archive schema defines the annotation item, and after item 127 the AC12 fixture uses a test-only section that no importer handles. Recorded in PRD 1.5 FR-DATA-01. | 83, 84, 127 |
+| N16 | Migrations need a superuser, because they create the `BYPASSRLS` maintenance role, but the application must connect as a non-superuser (§5.4). The PRD did not say where each login's credentials come from. | Decided: two URLs. `STORYCREEP_DATABASE_URL` is the application's login and `STORYCREEP_DATABASE_ADMIN_URL` the superuser that applies migrations. Migrating creates or updates the application login from its URL, with the password the server logs in with, sending a SCRAM verifier rather than the password, and grants it `storycreep_app`. Because roles belong to the cluster, every Storycreep database on a server grants its privileges to the same `storycreep_app`, so migrating also revokes `CONNECT` on the database from `PUBLIC` and from `storycreep_app`, grants it to the application login, and to the admin login if the revocation took its `CONNECT`, and fails if `PUBLIC` or `storycreep_app` can still connect, which keeps the login of one Storycreep database out of another. A server that does not apply migrations itself refuses a migrated database that `PUBLIC` or `storycreep_app` can connect to again, as after a dump is restored into a new database. It then connects as that login and fails unless the database it reaches has the migrations. The admin URL must name the same database, and its login must not be, or act as, one of the server's roles, which the first migration makes unable to log in. The server refuses an application login that is a superuser, has `BYPASSRLS`, `CREATEROLE`, or `REPLICATION`, or owns the database or objects in it, directly or through a role, or that is a member of `storycreep_definer`, `storycreep_maintenance`, or one of the predefined roles that give access to the database server's files and programs (`pg_execute_server_program`, `pg_read_server_files`, `pg_write_server_files`). Migrating also refuses an application login named after one of the server's roles or with PostgreSQL's reserved `pg_` prefix, and, when the server logs in with a password, one whose `VALID UNTIL` has passed. How the maintenance pool logs in, including its grant of `CONNECT`, is left to item 11. Recorded in PRD 1.6 §5.4 and §10.8. | 5, 6, 9, 11 |
 
 ---
 
@@ -1525,3 +1526,4 @@ These record where the PRD left a choice open, or where this plan reads the PRD 
 | 1.2 | 2026-10-14 | Fixes from a review of plan 1.1 and PRD 1.5, with the PRD 1.5 amendments extended to match. No items added, removed, or renumbered. **Dependencies:** item 119 depends on every MVP item (1–118). Item 118 gains 9, 72, 75, 81, 92, 101, and 116. Item 76 gains 47 and 71; item 90 gains 71; item 110 now depends on 75 and 87; item 113 on 84; item 114 gains 83; item 131 drops 122. **Criteria moved to the item where their prerequisites exist:** FR-ADMIN-04 AC1/AC3 to 6; FR-ENT-02 AC3 to 35; FR-AUTH-04 AC7 to 83; FR-EDIT-03 AC1 to 71 and 76; FR-EDIT-04 AC2 and FR-EXPR-03 AC2 to 76; the no-edge half of FR-DEP-01 AC4 to 49; FR-SNAP-02 AC1 to 99; the docs half of FR-PUB-02 AC3 to 109. **Criteria that had no item:** FR-EDIT-04 AC1 (71, 103), FR-EDIT-05 AC1 (62, 78) and AC3 (71), FR-EDIT-06 AC3 (83), FR-COMP-03 AC3 (105), FR-ADMIN-06 AC1 (113), FR-ENT-01 AC1 (117), and the new PRD criteria FR-TEN-03 AC4 (20), FR-GDPR-02 AC4 (111), FR-PUB-01 AC5 (108), FR-DATA-01 AC12 (84), and FR-EDIT-12 AC3 (127). **Other:** the TypeScript draft projection for play mode (71, N10); the synthetic schema version's numbering and location (77, N2); the `members` limit (23); `pnpm audit` (1, 117). Notes N2–N4, N7, and N8 updated, and N9–N10 added. The coverage matrix is now derived from the items' PRD lines, and item 1 checks that they agree. |
 | 1.3 | 2026-10-14 | Fixes from a second review of plan 1.2 and PRD 1.5, with the PRD 1.5 amendments extended to match. No items added, removed, or renumbered. **Rules:** item numbers are now stable (suffixed inserts, `dropped` instead of removal), and item 1 checks references (rule 6). A performance table assigns each NFR-PERF target to the item that measures it, and item 1 checks it (rule 3). **Dependencies:** item 76 drops 71, so the serializer no longer waits for the canvas; the projection cross-check moves to item 89, which gains 71 and 76. **Criteria moved to the item where their prerequisites exist:** FR-TEXT-01 AC1 at the API boundary to 36; FR-DEP-01 AC3 to 67, with usage jump-to links in 61; FR-TEN-03 AC1/AC3 and FR-TEN-04 AC4 are completed by 117 over the full MVP operation set, with the audit-log case in 125. **Criteria halves that had no item:** FR-EDIT-03 AC4 publish gate (78), FR-PROJ-02 AC2 and FR-TEXT-02 AC2 validation halves (48), FR-COMP-02 AC2 and the FR-TEXT-02 AC2 blocking half (47), FR-TEXT-03 AC2 (76), the editor half of FR-VAR-02 AC1 (67). **Scope ownership:** resource routes land with their features (16–26); item 27 only gates and attaches the rate-limit buckets built in 15 and keyed by token in 26. **Entitlements:** one `members` enforcement site, including `grant-role` (23); the plan file holds exactly the ADR-010 keys and the `boards` limit is dropped (21, 30, N14). **New PRD criteria and decisions:** FR-API-01 AC3 pre-release form (7, 119, N11); pending-deletion owners (111, N12); registration refused before setup (17, N13); migration immutability (5); the annotation item shape and the durable AC12 fixture (83, 84, 127, N15); the synthetic schema version is injected by tests and checked out of the addon zip (77, 107); authoring tables register with export and import together (standing checklist, 84). |
 | 1.4 | 2026-10-15 | **Status upkeep:** the PR that implements an item now sets the item's status to `done` with a link to itself, in a commit pushed once the PR is open, and that status update needs no change log row (item format, rule 7, standing checklist). Items 1–4 are marked done with links to their PRs, which merged with the status still `todo`. No items added, removed, or renumbered. |
+| 1.5 | 2026-10-15 | Decisions from implementing item 5, with PRD 1.6. **Database logins:** alignment note N16 records the two database URLs and the provisioned application login; items 5 and 9 name them, and item 11 the maintenance pool's login that N16 leaves to it. **Startup migration:** `--no-auto-migrate` moves from item 5 to item 6, because it is a flag of `serve`, which item 6 adds; item 5 provides the startup step that `serve` runs. **Coverage:** items 5 and 6 name the FR-ADMIN-06 subcommands they add, `migrate` and `serve`, in their PRD lines and the coverage matrix. No items added, removed, or renumbered, and no dependency changed. |

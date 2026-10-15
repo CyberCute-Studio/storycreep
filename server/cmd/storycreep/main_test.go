@@ -13,6 +13,9 @@ import (
 // tests below can start the real program as a subprocess.
 const runMainEnv = "GO_WANT_STORYCREEP_MAIN"
 
+// testDatabaseURL is a valid STORYCREEP_DATABASE_URL. Nothing connects to it.
+const testDatabaseURL = "postgres://storycreep:pw@db:5432/storycreep"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(runMainEnv) == "1" {
 		main()
@@ -22,13 +25,14 @@ func TestMain(m *testing.M) {
 }
 
 // start runs the program with args and an environment holding only vars plus
-// the process environment without its STORYCREEP_ variables, and returns the
-// exit status and output.
+// the process environment without its STORYCREEP_ variables and the libpq
+// variables, such as PGSERVICE, that the configuration reads the database URL
+// with, and returns the exit status and output.
 func start(t *testing.T, vars map[string]string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], args...)
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(strings.ToUpper(kv), "STORYCREEP_") {
+		if !strings.HasPrefix(strings.ToUpper(kv), "STORYCREEP_") && !strings.HasPrefix(kv, "PG") {
 			cmd.Env = append(cmd.Env, kv)
 		}
 	}
@@ -61,8 +65,9 @@ func TestStartWithInvalidConfig(t *testing.T) {
 		vars map[string]string
 		key  string
 	}{
-		{"missing", map[string]string{}, "STORYCREEP_PUBLIC_URL"},
-		{"invalid", map[string]string{"STORYCREEP_PUBLIC_URL": "https://example.com", "STORYCREEP_MODE": "staging"}, "STORYCREEP_MODE"},
+		{"missing", map[string]string{"STORYCREEP_DATABASE_URL": testDatabaseURL}, "STORYCREEP_PUBLIC_URL"},
+		{"invalid", map[string]string{"STORYCREEP_PUBLIC_URL": "https://example.com", "STORYCREEP_DATABASE_URL": testDatabaseURL,
+			"STORYCREEP_MODE": "staging"}, "STORYCREEP_MODE"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -89,7 +94,10 @@ func TestExitStatus(t *testing.T) {
 		{[]string{"nope"}, 2},
 	}
 	for _, tt := range tests {
-		code, _, stderr := start(t, map[string]string{"STORYCREEP_PUBLIC_URL": "https://example.com"}, tt.args...)
+		code, _, stderr := start(t, map[string]string{
+			"STORYCREEP_PUBLIC_URL":   "https://example.com",
+			"STORYCREEP_DATABASE_URL": testDatabaseURL,
+		}, tt.args...)
 		if code != tt.code {
 			t.Errorf("%v: exit %d, want %d; stderr %q", tt.args, code, tt.code, stderr)
 		}
