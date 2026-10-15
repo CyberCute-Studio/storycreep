@@ -111,7 +111,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** both implementations pass the shared vectors. A wrong prefix is a typed decode error (the API maps it to 400 in item 6).
 
 ### 5. PostgreSQL foundation
-**Status:** todo · **Depends on:** 3
+**Status:** done ([#6](https://github.com/CyberCute-Studio/storycreep/pull/6)) · **Depends on:** 3
 **PRD:** FR-ADMIN-04 (AC2, pre-release form), FR-ADMIN-06 (`migrate`), ADR-001, ADR-002, NFR-Q-01, §9.9
 - `pgx/v5` pool and `sqlc` setup. `goose` migrations embedded in the binary and applied under an advisory lock, by the `migrate` subcommand and by the startup step that `serve` runs. Item 6 adds `serve` and its `--no-auto-migrate`.
 - Database roles: migration owner, application role (not a table owner), owner of the `SECURITY DEFINER` functions, and `storycreep_maintenance` (`BYPASSRLS`). Migrations run as the superuser in `STORYCREEP_DATABASE_ADMIN_URL` and provision the application login of `STORYCREEP_DATABASE_URL`, and the server refuses an application login that row-level security would not hold (N16).
