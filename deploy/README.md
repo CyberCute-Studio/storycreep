@@ -6,7 +6,7 @@ The server is configured with `STORYCREEP_*` environment variables and an option
 
 ## Running Storycreep with Docker Compose
 
-[`docker-compose.yml`](docker-compose.yml) runs two services: `app`, the Storycreep server, and `db`, PostgreSQL 17. It needs Docker Engine 25 or newer with Docker Compose v2, and nothing else on the machine.
+[`docker-compose.yml`](docker-compose.yml) runs two services: `app`, the Storycreep server, and `db`, PostgreSQL 17. It needs Docker Engine 25 or newer and Docker Compose 2.20.2 or newer (the `docker compose` command), and nothing else on the machine.
 
 1. Put `docker-compose.yml` and [`.env.example`](.env.example) in a directory of their own.
 2. Copy `.env.example` to `.env` in the same directory, and set `POSTGRES_PASSWORD` in it. `openssl rand -hex 32` makes a good one.
@@ -31,7 +31,7 @@ The compose file names its Compose project `storycreep`, and the containers and 
 | Variable | Default | What it sets |
 | --- | --- | --- |
 | `STORYCREEP_IMAGE` | `ghcr.io/cybercute-studio/storycreep:main` | The image to run. |
-| `STORYCREEP_PUBLISH` | `127.0.0.1:7777` | Where Docker publishes the server's HTTP port, as `[address:]port`. The default reaches it from this machine only. |
+| `STORYCREEP_PUBLISH` | `127.0.0.1:7777` | Where Docker publishes the server's HTTP port, as `[address:]port`. The default reaches it from this machine only. A port without an address, such as `8000`, publishes it on every network interface, as `0.0.0.0:8000` does, so to change only the port, keep the address, as in `127.0.0.1:8000`. |
 | `STORYCREEP_PUBLIC_URL` | `http://localhost:7777` | The URL users open Storycreep at. |
 | `STORYCREEP_MODE`, `STORYCREEP_PUBLIC_SITE`, `STORYCREEP_SIGNUP`, `STORYCREEP_LOG_LEVEL`, `STORYCREEP_ADMIN_ADDR`, `STORYCREEP_METRICS_TOKEN` | The server's | The server keys of the same names, which [`docs/configuration.md`](../docs/configuration.md) describes. |
 | `COMPOSE_PROJECT_NAME` | `storycreep` | The Compose project's name, which the containers' and volumes' names start with. Another name is another instance, with volumes of its own, so set it before the first start. |
@@ -64,9 +64,13 @@ The server applies the migrations a new version brings when it starts, under a l
 1. Back up the database and the assets:
 
    ```sh
-   docker compose exec -T db pg_dump -U postgres -Fc storycreep > storycreep.dump
+   docker compose exec db pg_dump -U postgres -Fc -f /tmp/storycreep.dump storycreep
+   docker compose cp db:/tmp/storycreep.dump storycreep.dump
+   docker compose exec db rm /tmp/storycreep.dump
    docker run --rm -v storycreep_assets:/assets:ro -v "$PWD":/backup alpine tar -czf /backup/assets.tar.gz -C /assets .
    ```
+
+   `pg_dump` writes the backup inside the database's container, and `docker compose cp` copies it out as it is. Redirecting `pg_dump`'s output into a file with `>` would not work in every shell: Windows PowerShell 5.1 rewrites the bytes it redirects, which leaves a backup that cannot be restored.
 
 2. Pull the new image and restart the server:
 

@@ -203,6 +203,10 @@ func TestComposeFile(t *testing.T) {
 // overrides the compose file's name.
 const projectNameVar = "COMPOSE_PROJECT_NAME"
 
+// devProjectName is the development compose file's project name, which its
+// volumes' names start with.
+const devProjectName = "storycreep-dev"
+
 var variableName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 // envExampleVars returns the variables that .env.example sets or shows in a
@@ -228,9 +232,33 @@ func envExampleVars(t *testing.T) []string {
 // TestDevComposeFile checks the development compose file (PRD §10.8): the
 // database's port is published, on the loopback interface only, and the
 // server is built from the mounted source tree, and rebuilt and restarted
-// when it changes.
+// when it changes. The file shares its directory, and so its .env, with
+// docker-compose.yml, whose instance that .env configures, and must stay
+// apart from that instance.
 func TestDevComposeFile(t *testing.T) {
-	f, _ := readCompose(t, "docker-compose.dev.yml")
+	f, text := readCompose(t, "docker-compose.dev.yml")
+
+	// A COMPOSE_PROJECT_NAME in the .env renames this file's project too, so
+	// the volumes are named here, or this file's database could be given the
+	// instance's volume, which "down -v" would delete.
+	if f.Name != devProjectName {
+		t.Errorf("the development compose project is named %q, want %s", f.Name, devProjectName)
+	}
+	for name, v := range f.Volumes {
+		settings, _ := v.(map[string]any)
+		if got, want := settings["name"], devProjectName+"_"+name; got != want {
+			t.Errorf("the volume %s is named %v, want %s, whatever the project's name", name, got, want)
+		}
+	}
+	documented := envExampleVars(t)
+	required, optional := interpolatedVars(text)
+	for _, name := range append(required, optional...) {
+		if slices.Contains(documented, name) {
+			t.Errorf("the development compose file reads %s, which .env.example sets for docker-compose.yml's "+
+				"instance, and Docker Compose reads from the same .env for both", name)
+		}
+	}
+
 	if got := slices.Sorted(maps.Keys(f.Services)); !slices.Equal(got, []string{"app", "db"}) {
 		t.Fatalf("the services are %q, want app and db", got)
 	}

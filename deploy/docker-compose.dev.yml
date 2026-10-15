@@ -10,8 +10,16 @@
 # give the server the URLs in README.md, next to this file.
 #
 # The database's password defaults to storycreep-dev, because its port is
-# published on this machine's loopback interface only. Never use this file
-# for a deployment; docker-compose.yml is the one for that.
+# published on this machine's loopback interface only, and
+# STORYCREEP_DEV_DB_PASSWORD sets another. Never use this file for a
+# deployment; docker-compose.yml is the one for that.
+#
+# Docker Compose reads the .env next to this file, which is the .env of
+# docker-compose.yml too. So this file reads none of that file's settings,
+# such as POSTGRES_PASSWORD, and names its volumes itself: a
+# COMPOSE_PROJECT_NAME there renames this file's project too, and would give
+# its database the volume of the instance that the name is for, which
+# "down -v" would delete.
 
 name: storycreep-dev
 
@@ -20,7 +28,7 @@ services:
     image: postgres:17
     environment:
       POSTGRES_DB: storycreep
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-storycreep-dev}
+      POSTGRES_PASSWORD: ${STORYCREEP_DEV_DB_PASSWORD:-storycreep-dev}
     ports:
       - "127.0.0.1:${STORYCREEP_DEV_DB_PORT:-5432}:5432"
     volumes:
@@ -52,11 +60,12 @@ services:
       STORYCREEP_ADMIN_ADDR: ":9090"
       STORYCREEP_DATABASE_URL: postgres://storycreep@db:5432/storycreep
       STORYCREEP_DATABASE_ADMIN_URL: postgres://postgres@db:5432/storycreep
-      PGPASSWORD: ${POSTGRES_PASSWORD:-storycreep-dev}
+      PGPASSWORD: ${STORYCREEP_DEV_DB_PASSWORD:-storycreep-dev}
       STORYCREEP_PUBLIC_URL: http://localhost:${STORYCREEP_DEV_PORT:-8080}
       STORYCREEP_LOG_LEVEL: debug
       # The image has no git, which the go tool would ask for the revision
-      # of the checkout, and runs the go.mod's own Go version only.
+      # of the checkout, and builds with its own Go: a go.mod that needs a
+      # newer one fails the build, rather than downloading another toolchain.
       GOFLAGS: -buildvcs=false
       GOTOOLCHAIN: local
     volumes:
@@ -76,5 +85,8 @@ services:
 
 volumes:
   db:
+    name: storycreep-dev_db
   go-modules:
+    name: storycreep-dev_go-modules
   go-build:
+    name: storycreep-dev_go-build
