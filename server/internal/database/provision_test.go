@@ -260,8 +260,10 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 			`it is a member of "postgres", which is a superuser`},
 		{"member of maintenance", func(r, _ string) string { return "GRANT storycreep_maintenance TO " + r },
 			`it is a member of "storycreep_maintenance", which has BYPASSRLS`},
+		// storycreep_definer owns the functions of the context bootstrap,
+		// which read every workspace's tokens, invites, and memberships.
 		{"member of definer", func(r, _ string) string { return "GRANT storycreep_definer TO " + r },
-			`it is a member of "storycreep_definer", which is reserved`},
+			`it is a member of "storycreep_definer", which owns objects in the database`},
 		// Each of these reaches the superuser through the server's files or
 		// programs, such as by running psql there.
 		{"member of pg_execute_server_program", func(r, _ string) string { return "GRANT pg_execute_server_program TO " + r },

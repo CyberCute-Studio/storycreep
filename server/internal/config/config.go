@@ -37,6 +37,10 @@ type Config struct {
 	// DatabaseAdminURL is the superuser login that applies migrations. It is
 	// unset if the configuration has none.
 	DatabaseAdminURL DatabaseURL
+	// DatabaseMaintenanceURL is the login of the maintenance jobs, which
+	// bypass row-level security (PRD §5.4). It is unset if the configuration
+	// has none.
+	DatabaseMaintenanceURL DatabaseURL
 	// HTTPAddr is the address the server listens on for HTTP.
 	HTTPAddr string
 	// AdminAddr is the address of the admin port, which serves /metrics, or

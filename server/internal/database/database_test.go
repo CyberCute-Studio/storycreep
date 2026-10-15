@@ -30,8 +30,10 @@ func TestMain(m *testing.M) {
 
 // TestRolesAfterMigrating checks the roles and privileges the migrations
 // leave: the server's roles have only the attributes they need, none of them
-// or the application login owns anything, and the application login has only
-// storycreep_app among them.
+// or the server's logins owns anything, except that storycreep_definer owns
+// the functions of the context bootstrap, which TestContextBootstrapFunctions
+// checks, and the application login has only storycreep_app among them, and
+// the maintenance login only storycreep_maintenance.
 func TestRolesAfterMigrating(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -42,10 +44,11 @@ func TestRolesAfterMigrating(t *testing.T) {
 	var owners []string
 	rows, err := admin.Query(ctx, `
 		SELECT DISTINCT r.rolname FROM pg_roles r
-		WHERE (r.rolname LIKE 'storycreep\_%' OR r.rolname = $1)
+		WHERE (r.rolname LIKE 'storycreep\_%' OR r.rolname = ANY ($1::name[]))
 			AND (EXISTS (SELECT FROM pg_class WHERE relowner = r.oid)
-				OR EXISTS (SELECT FROM pg_proc WHERE proowner = r.oid)
-				OR EXISTS (SELECT FROM pg_namespace WHERE nspowner = r.oid))`, dbtest.AppLogin)
+				OR EXISTS (SELECT FROM pg_proc WHERE proowner = r.oid AND r.rolname <> 'storycreep_definer')
+				OR EXISTS (SELECT FROM pg_namespace WHERE nspowner = r.oid))`,
+		[]string{dbtest.AppLogin, dbtest.MaintenanceLogin})
 	if err == nil {
 		owners, err = pgx.CollectRows(rows, pgx.RowTo[string])
 	}
@@ -55,11 +58,13 @@ func TestRolesAfterMigrating(t *testing.T) {
 	if len(owners) > 0 {
 		t.Errorf("these roles own objects: %v", owners)
 	}
-	for role, want := range map[string]bool{
-		"storycreep_app": true, "storycreep_definer": false, "storycreep_maintenance": false,
+	for _, login := range []struct{ name, role string }{
+		{dbtest.AppLogin, "storycreep_app"}, {dbtest.MaintenanceLogin, "storycreep_maintenance"},
 	} {
-		if got := isMember(t, admin, dbtest.AppLogin, role); got != want {
-			t.Errorf("the application login is a member of %s: %v, want %v", role, got, want)
+		for _, role := range []string{"storycreep_app", "storycreep_definer", "storycreep_maintenance"} {
+			if got, want := isMember(t, admin, login.name, role), role == login.role; got != want {
+				t.Errorf("the login %s is a member of %s: %v, want %v", login.name, role, got, want)
+			}
 		}
 	}
 

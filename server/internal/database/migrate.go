@@ -70,6 +70,10 @@ type MigrateOptions struct {
 	// lock, before Migrate waits for it. The wait has no timeout, so it is
 	// for saying why nothing happens meanwhile.
 	Waiting func()
+	// Maintenance, if set, is the maintenance login's URL,
+	// STORYCREEP_DATABASE_MAINTENANCE_URL. Migrate provisions that login too,
+	// and checks it, as it does the application login.
+	Maintenance config.DatabaseURL
 }
 
 // MigrateResult says what Migrate did.
@@ -125,27 +129,30 @@ func (e *MigrationError) Error() string {
 func (e *MigrationError) Unwrap() error { return e.Err }
 
 // Migrate applies the pending migrations as the admin login, provisions the
-// application login (provision), and then connects as the application login,
-// as the server does, to check that the login works and that the database it
-// reaches has the migrations (checkAppDatabase). All of it runs while Migrate
-// holds the migration lock, so instances that migrate at the same time wait
-// for each other, and the database ends up with each migration applied
-// exactly once (PRD FR-ADMIN-04). The session that goose applies the
-// migrations on holds a lock of its own while it does, so that they stay
-// applied one instance at a time even if Migrate's session, and with it the
-// migration lock, ends while goose is still at work. The admin login must be
-// a superuser, because the migrations create roles.
+// application login, and the maintenance login if MigrateOptions.Maintenance
+// is set (provision), and then connects as each of them, as the server does,
+// to check that the login works and that the database it reaches has the
+// migrations (checkAppDatabase, checkMaintenanceDatabase). All of it runs
+// while Migrate holds the migration lock, so instances that migrate at the
+// same time wait for each other, and the database ends up with each
+// migration applied exactly once (PRD FR-ADMIN-04). The session that goose
+// applies the migrations on holds a lock of its own while it does, so that
+// they stay applied one instance at a time even if Migrate's session, and
+// with it the migration lock, ends while goose is still at work. The admin
+// login must be a superuser, because the migrations create roles.
 //
 // A failed migration is a *MigrationError: the migrations before it stay
-// applied, and the application login is left as it was. A database that a
+// applied, and the server's logins are left as they were. A database that a
 // newer version of Storycreep migrated is an *UnknownMigrationsError, and
 // Migrate changes nothing then, nor when the database server runs a version
-// of PostgreSQL older than 15 (checkServerVersion), when the application login
-// has the name of one of the server's roles or PostgreSQL's reserved pg_ prefix
-// (checkLoginName), when the admin login is, or acts as, one of the server's
-// roles, or does not act as a superuser, or when the database has applied
-// migrations but its server lacks the server's roles, as after a dump of it is
-// restored into another server (checkServerRoles).
+// of PostgreSQL older than 15 (checkServerVersion), when the application
+// login or the maintenance login has the name of one of the server's roles or
+// PostgreSQL's reserved pg_ prefix (checkLoginName), when the two are one
+// login, or either is the admin login or the role it acts as, when the admin
+// login is, or acts as, one of the server's roles, or does not act as a
+// superuser, or when the database has applied migrations but its server lacks
+// the server's roles, as after a dump of it is restored into another server
+// (checkServerRoles).
 func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOptions) (MigrateResult, error) {
 	res, db, err := migrate(ctx, admin, app, opts)
 	if db != nil {
@@ -169,8 +176,22 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	// that had the name of one of them. It also takes SUPERUSER away from
 	// them, so an admin login with such a name would lose it partway through,
 	// and the migrations' grants after that would only warn.
-	if err := checkLoginName(app.User()); err != nil {
+	if err := checkLoginName(appURLKey, app.User()); err != nil {
 		return MigrateResult{}, nil, err
+	}
+	maint := opts.Maintenance
+	if maint.IsSet() {
+		if err := checkLoginName(maintenanceURLKey, maint.User()); err != nil {
+			return MigrateResult{}, nil, err
+		}
+		// The application login must not have storycreep_maintenance, and
+		// the admin login would keep it.
+		for _, other := range []struct{ key, login string }{{appURLKey, app.User()}, {"STORYCREEP_DATABASE_ADMIN_URL", admin.User()}} {
+			if maint.User() == other.login {
+				return MigrateResult{}, nil, fmt.Errorf("%s connects as %q, as %s does; the maintenance jobs need a "+
+					"login of their own", maintenanceURLKey, maint.User(), other.key)
+			}
+		}
 	}
 	if slices.Contains(reservedRoles, admin.User()) {
 		return MigrateResult{}, nil, fmt.Errorf("STORYCREEP_DATABASE_ADMIN_URL connects as %q, a role that is reserved "+
@@ -231,6 +252,10 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	case !super:
 		return MigrateResult{}, nil, fmt.Errorf("the login %q in STORYCREEP_DATABASE_ADMIN_URL is not a superuser; "+
 			"applying migrations needs one, because they create the server's database roles", admin.User())
+	case maint.IsSet() && maint.User() == role:
+		return MigrateResult{}, nil, fmt.Errorf("%s connects as %q, the role that the login in "+
+			"STORYCREEP_DATABASE_ADMIN_URL acts as; the maintenance jobs need a login of their own",
+			maintenanceURLKey, maint.User())
 	}
 	// This session waits for the lock for as long as another instance
 	// migrates, and then sits idle while goose migrates on connections of its
@@ -308,12 +333,22 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	case verr != nil:
 		return res, nil, verr
 	}
-	if err := provision(ctx, conn, app.User(), appPassword); err != nil {
+	logins := []serverLogin{appLogin(app.User(), appPassword)}
+	if maint.IsSet() {
+		logins = append(logins, maintenanceLogin(maint.User(), maint.Password()))
+	}
+	if err := provision(ctx, conn, logins...); err != nil {
 		return res, nil, err
 	}
 	db, err := checkAppDatabase(ctx, app, ms)
 	if err != nil {
 		return res, nil, err
+	}
+	if maint.IsSet() {
+		if err := checkMaintenanceDatabase(ctx, maint, ms); err != nil {
+			db.Close()
+			return res, nil, err
+		}
 	}
 	return res, db, nil
 }
@@ -340,6 +375,43 @@ func checkAppDatabase(ctx context.Context, app config.DatabaseURL, ms migrationS
 			"(%s) after migrating; STORYCREEP_DATABASE_ADMIN_URL must connect to the same database", joinVersions(p))
 	}
 	return db, nil
+}
+
+// checkMaintenanceDatabase connects as the maintenance login, as the
+// maintenance jobs do (package maintenance), and returns an error unless the
+// login is safe (CheckMaintenanceLogin), can act as storycreep_maintenance
+// (SetMaintenanceRole), and reaches a database that has applied every
+// migration in ms. It keeps no connection: only package maintenance keeps a
+// pool of the login (PRD §5.4).
+func checkMaintenanceDatabase(ctx context.Context, maint config.DatabaseURL, ms migrationSet) error {
+	connConfig := maint.PoolConfig().ConnConfig
+	setApplicationName(connConfig)
+	conn, err := pgx.ConnectConfig(ctx, connConfig)
+	if err != nil {
+		return fmt.Errorf("connect to %s: %w", maint, err)
+	}
+	defer conn.Close(context.WithoutCancel(ctx))
+	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		if err := CheckMaintenanceLogin(ctx, tx); err != nil {
+			return err
+		}
+		if err := SetMaintenanceRole(ctx, tx); err != nil {
+			return err
+		}
+		applied, err := appliedVersions(ctx, tx)
+		if err != nil {
+			return err
+		}
+		p, err := pending(ms, applied)
+		switch {
+		case err != nil:
+			return err
+		case len(p) > 0:
+			return fmt.Errorf("the database that %s connects to still has pending migrations (%s) after migrating; "+
+				"it must connect to the same database as STORYCREEP_DATABASE_URL", maintenanceURLKey, joinVersions(p))
+		}
+		return nil
+	})
 }
 
 // migrationSet is a set of migrations.

@@ -710,7 +710,8 @@ func checkRoles(t *testing.T, conn *pgx.Conn) {
 	t.Helper()
 	rows, err := conn.Query(context.Background(), `
 		SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
-		FROM pg_roles WHERE rolname LIKE 'storycreep\_%' AND rolname <> $1 ORDER BY rolname`, dbtest.AppLogin)
+		FROM pg_roles WHERE rolname LIKE 'storycreep\_%' AND rolname <> ALL ($1::name[]) ORDER BY rolname`,
+		[]string{dbtest.AppLogin, dbtest.MaintenanceLogin})
 	if err != nil {
 		t.Fatal(err)
 	}

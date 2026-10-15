@@ -238,6 +238,47 @@ var keys = []key{
 		effective: func(c *Config) string { return c.DatabaseAdminURL.String() },
 	},
 	{
+		name: "STORYCREEP_DATABASE_MAINTENANCE_URL",
+		doc: "The login of the maintenance jobs, for the same database, written like `STORYCREEP_DATABASE_URL`. " +
+			"The jobs that must see the rows of every workspace, or of workspaces that no longer exist, such as " +
+			"hard deletion and the audit log's retention, work as the `storycreep_maintenance` role, which " +
+			"bypasses row-level security. This login acts as that role, in transactions of its own, which no " +
+			"request uses. It must name a login different from `STORYCREEP_DATABASE_URL` and " +
+			"`STORYCREEP_DATABASE_ADMIN_URL`, and the same database. When it is set, migrations create the login " +
+			"if it does not exist, set its password as they set the application login's, grant it the " +
+			"`storycreep_maintenance` role, and grant it `CONNECT` on the database, and they refuse a login " +
+			"named like the server's roles, or that has more privileges than `storycreep_maintenance` gives it: " +
+			"one that is a superuser, has `BYPASSRLS` itself, `CREATEROLE`, or `REPLICATION`, owns the database " +
+			"or objects in it, or is a member of a role that does, of `storycreep_app` or " +
+			"`storycreep_definer`, or of one of the roles that give access to the database server's files and " +
+			"programs. Give each Storycreep database on a server a maintenance login of its own, as for " +
+			"`STORYCREEP_DATABASE_URL`. Without it, migrations leave the maintenance login alone. It is shown " +
+			"redacted in the same way.",
+		valuesDoc: "A `postgres://` URL",
+		parse: func(c *Config, v string) error {
+			d, err := ParseDatabaseURL(v)
+			if err != nil {
+				return err
+			}
+			for _, other := range []struct {
+				key string
+				url DatabaseURL
+			}{{"STORYCREEP_DATABASE_URL", c.DatabaseURL}, {"STORYCREEP_DATABASE_ADMIN_URL", c.DatabaseAdminURL}} {
+				if other.url.IsSet() && d.User() == other.url.User() {
+					return hiddenValueError{fmt.Errorf("names the same login as %s; the maintenance jobs need a "+
+						"login of their own, because they bypass row-level security", other.key)}
+				}
+			}
+			if c.DatabaseURL.IsSet() && d.Database() != c.DatabaseURL.Database() {
+				return hiddenValueError{errors.New("names a different database from STORYCREEP_DATABASE_URL; " +
+					"the maintenance jobs work on the database the server uses, so name the same one")}
+			}
+			c.DatabaseMaintenanceURL = d
+			return nil
+		},
+		effective: func(c *Config) string { return c.DatabaseMaintenanceURL.String() },
+	},
+	{
 		name: "STORYCREEP_HTTP_ADDR",
 		doc: "The address the server listens on for HTTP: `host:port`, or `:port` for every network interface. " +
 			"The host is an IP address or a host name, and the port a number. It serves the API, the health " +
