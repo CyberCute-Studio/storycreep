@@ -135,8 +135,8 @@ func TestApplicationName(t *testing.T) {
 // TestObjectsThatAreNotOwnership checks that the temporary objects a session
 // of the application login holds do not make the login unsafe, so that one
 // instance's session cannot keep another from starting, and that neither do
-// the large objects it creates or its default privileges, which give it no
-// power over other objects.
+// the large objects it creates, its default privileges, or a user mapping
+// for it, which give it no power over other objects.
 func TestObjectsThatAreNotOwnership(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -149,8 +149,10 @@ func TestObjectsThatAreNotOwnership(t *testing.T) {
 		"SELECT lo_create(0)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Admin(t).Exec(ctx, "ALTER DEFAULT PRIVILEGES FOR ROLE "+pgx.Identifier{dbtest.AppLogin}.Sanitize()+
-		" GRANT SELECT ON TABLES TO storycreep_app"); err != nil {
+	login := pgx.Identifier{dbtest.AppLogin}.Sanitize()
+	if _, err := d.Admin(t).Exec(ctx, "ALTER DEFAULT PRIVILEGES FOR ROLE "+login+" GRANT SELECT ON TABLES TO storycreep_app; "+
+		"CREATE FOREIGN DATA WRAPPER scratch_wrapper; CREATE SERVER scratch_server FOREIGN DATA WRAPPER scratch_wrapper; "+
+		"CREATE USER MAPPING FOR "+login+" SERVER scratch_server"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{}); err != nil {

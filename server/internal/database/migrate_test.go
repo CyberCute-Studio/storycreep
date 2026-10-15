@@ -466,12 +466,70 @@ func TestMigrateNeedsTheAdminLogin(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "is not a superuser") || !strings.Contains(err.Error(), plain.User()) {
 		t.Errorf("with an ordinary admin login: %v, want a refusal naming it", err)
 	}
+	// A role parameter makes the superuser's session act as an ordinary
+	// role, which the migrations would run as.
+	asPlain, err := config.ParseDatabaseURL(d.AdminURL.Reveal() + "&role=" + plain.User())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = database.Migrate(ctx, asPlain, d.AppURL, database.MigrateOptions{})
+	if err == nil || !strings.Contains(err.Error(), `acts as the role "`+plain.User()+`", which is not a superuser`) {
+		t.Errorf("with the superuser acting as an ordinary role: %v, want a refusal naming the role", err)
+	}
 	var exists bool
 	if err := d.Admin(t).QueryRow(ctx, "SELECT to_regclass('goose_db_version') IS NOT NULL").Scan(&exists); err != nil {
 		t.Fatal(err)
 	}
 	if exists {
 		t.Errorf("the refused run created the version table")
+	}
+}
+
+// TestMigrateUsesThePublicSchema checks that the migrations create goose's
+// version table, and with it the server's objects, in the public schema
+// whatever search_path the admin session would have, and that the
+// application login finds the applied migrations there whatever its own
+// session's search_path.
+func TestMigrateUsesThePublicSchema(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	admin := d.Admin(t)
+	// The default search_path, "$user", public, finds a schema named after
+	// the admin login first.
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+pgx.Identifier{d.AdminURL.User()}.Sanitize()+
+		"; CREATE SCHEMA elsewhere"); err != nil {
+		t.Fatal(err)
+	}
+	withSearchPath := func(u config.DatabaseURL) config.DatabaseURL {
+		t.Helper()
+		v, err := config.ParseDatabaseURL(u.Reveal() + "&search_path=elsewhere")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	for _, u := range []config.DatabaseURL{d.AdminURL, withSearchPath(d.AdminURL)} {
+		if _, err := database.Migrate(ctx, u, d.AppURL, database.MigrateOptions{}); err != nil {
+			t.Fatalf("Migrate as %s: %v", u, err)
+		}
+	}
+	var schemas string
+	if err := admin.QueryRow(ctx, `SELECT coalesce(string_agg(relnamespace::regnamespace::text, ', '), '')
+		FROM pg_class WHERE relname = 'goose_db_version'`).Scan(&schemas); err != nil {
+		t.Fatal(err)
+	}
+	if schemas != "public" {
+		t.Errorf("goose_db_version is in the schemas %s, want only public", schemas)
+	}
+
+	db, err := database.Open(ctx, withSearchPath(d.AppURL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if p, err := db.Pending(ctx); err != nil || len(p) != 0 {
+		t.Errorf("with another search_path, Pending() = %v, %v; want none", p, err)
 	}
 }
 

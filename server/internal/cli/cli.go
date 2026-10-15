@@ -81,8 +81,8 @@ func lookup(name string) *command {
 }
 
 // Run runs the command line args, without the program name, and returns the
-// exit status. env is the environment the configuration is read from; the
-// zero value is the process environment.
+// exit status. env is the environment the configuration is read from, as
+// config.Options.Env describes; the zero value is the process environment.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer, env config.Environment) int {
 	if len(args) == 0 {
 		printUsage(stderr)

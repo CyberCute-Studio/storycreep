@@ -29,6 +29,8 @@ func TestParseDatabaseURL(t *testing.T) {
 		// libpq reads a ; and a + in a value as they are.
 		{"postgres://app@db/sc?application_name=a;b+c", "postgres://app@db/sc?application_name=a;b+c", "app", "sc", ""},
 		{"postgres://sc%20app:pw@db/my%20db", "postgres://sc%20app:" + secret.Redacted + "@db/my%20db", "sc app", "my db", "pw"},
+		// libpq reads a %2F in the path as part of the database name.
+		{"postgres://app@db/team%2Fsc", "postgres://app@db/team%2Fsc", "app", "team/sc", ""},
 		// An @ after the path, and an = in a value written as %3D, are as
 		// libpq reads them. So is a trailing &.
 		{"postgres://app@db/sc?application_name=a@b&options=-c%20search_path%3Dx&",

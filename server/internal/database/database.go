@@ -235,7 +235,9 @@ var serverAccessRoles = []string{"pg_execute_server_program", "pg_read_server_fi
 // Temporary objects do not count: they belong to the session that made them,
 // and any session of the login may hold some while another instance starts.
 // Neither do large objects, which any role may create and which give no
-// power over other objects, or default privileges, which own nothing.
+// power over other objects, default privileges, which own nothing, or user
+// mappings, which PostgreSQL records as owned by the role they map but which
+// only hold how it logs in to a foreign server.
 const unsafeRolesQuery = `
 SELECT r.rolname, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolreplication, r.owns,
 	r.rolname = ANY ($3::name[]) AS server_access
@@ -245,7 +247,7 @@ FROM (
 			SELECT FROM pg_shdepend d, pg_identify_object(d.classid, d.objid, d.objsubid) o
 			WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = pg_roles.oid AND d.deptype = 'o'
 				AND d.dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
-				AND d.classid NOT IN ('pg_largeobject'::regclass, 'pg_default_acl'::regclass)
+				AND d.classid NOT IN ('pg_largeobject'::regclass, 'pg_default_acl'::regclass, 'pg_user_mapping'::regclass)
 				-- An object that a session dropped since has no identity.
 				AND o.identity IS NOT NULL
 				AND (o.schema IS NULL OR (o.schema NOT LIKE 'pg\_temp%' AND o.schema NOT LIKE 'pg\_toast\_temp%'))

@@ -86,7 +86,11 @@ type Options struct {
 	// File is the path of the configuration file, as given with --config. If
 	// it is empty, the path in STORYCREEP_CONFIG_FILE is used, if any.
 	File string
-	// Env is the environment. The zero value is the process environment.
+	// Env is the environment that the STORYCREEP_* keys are read from. The
+	// zero value is the process environment. The libpq variables, such as
+	// PGPASSWORD and PGSSLMODE, that fill in what a database URL leaves out
+	// are read from the process environment whatever Env is: pgx reads them,
+	// and it takes no other environment.
 	Env Environment
 }
 

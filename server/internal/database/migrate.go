@@ -38,6 +38,8 @@ func Migrations() fs.FS {
 }
 
 // versionTable is the table in which goose records the applied migrations.
+// goose creates it in the public schema, which is the only schema that the
+// migrations' sessions search (migrate).
 const versionTable = goose.DefaultTablename
 
 // The keys of the session-level advisory locks that migrations run under, in
@@ -169,6 +171,15 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	// to PostgreSQL as settings.
 	connConfig := admin.PoolConfig().ConnConfig
 	setApplicationName(connConfig)
+	// The server's objects live in the public schema, which the first
+	// migration lets the server's roles use, so the migrations' sessions
+	// search only it. A search_path from the URL, the login, or the database,
+	// or a schema named after the admin login, which the default "$user"
+	// finds first, would otherwise receive goose's version table and the
+	// objects of the migrations, where the application login cannot reach
+	// them. A setting sent at connection overrides those of the login and the
+	// database.
+	connConfig.RuntimeParams["search_path"] = "public"
 	// The application login's password is the one its connections send: the
 	// URL's, or else the one PGPASSWORD, a service file, or a password file
 	// supplies.
@@ -181,11 +192,20 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 		return MigrateResult{}, nil, fmt.Errorf("connect to %s: %w", admin, err)
 	}
 	defer conn.Close(context.WithoutCancel(ctx))
+	// The migrations run as the current user, which a role parameter in the
+	// URL or a default of the login can make a role other than the login.
+	var role string
 	var super bool
-	if err := conn.QueryRow(ctx, "SELECT rolsuper FROM pg_roles WHERE rolname = current_user").Scan(&super); err != nil {
+	if err := conn.QueryRow(ctx, "SELECT current_user, rolsuper FROM pg_roles WHERE rolname = current_user").
+		Scan(&role, &super); err != nil {
 		return MigrateResult{}, nil, fmt.Errorf("check the admin login: %w", err)
 	}
-	if !super {
+	switch {
+	case !super && role != admin.User():
+		return MigrateResult{}, nil, fmt.Errorf("the login %q in STORYCREEP_DATABASE_ADMIN_URL acts as the role %q, "+
+			"which is not a superuser; applying migrations needs one, because they create the server's database roles",
+			admin.User(), role)
+	case !super:
 		return MigrateResult{}, nil, fmt.Errorf("the login %q in STORYCREEP_DATABASE_ADMIN_URL is not a superuser; "+
 			"applying migrations needs one, because they create the server's database roles", admin.User())
 	}
@@ -390,10 +410,13 @@ func (gooseLocker) SessionUnlock(ctx context.Context, conn *sql.Conn) error {
 }
 
 // appliedVersions returns the versions of the migrations the database has
-// applied, in ascending order, or none if migrations never ran.
+// applied, in ascending order, or none if migrations never ran. It reads the
+// version table in the public schema, whatever search_path the session has,
+// so that the application login finds it there too.
 func appliedVersions(ctx context.Context, q querier) ([]int64, error) {
+	table := pgx.Identifier{"public", versionTable}.Sanitize()
 	var exists bool
-	if err := q.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", versionTable).Scan(&exists); err != nil {
+	if err := q.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", table).Scan(&exists); err != nil {
 		return nil, fmt.Errorf("read the applied migrations: %w", err)
 	}
 	if !exists {
@@ -406,7 +429,7 @@ func appliedVersions(ctx context.Context, q querier) ([]int64, error) {
 			SELECT DISTINCT ON (version_id) version_id, is_applied FROM %s ORDER BY version_id, id DESC
 		) latest
 		WHERE is_applied AND version_id > 0
-		ORDER BY version_id`, pgx.Identifier{versionTable}.Sanitize()))
+		ORDER BY version_id`, table))
 	if err != nil {
 		return nil, fmt.Errorf("read the applied migrations: %w", err)
 	}

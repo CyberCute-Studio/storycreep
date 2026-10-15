@@ -110,8 +110,9 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 	// directory written as %2Fvar%2Frun%2Fpostgresql, so it reads the URL
 	// with a stand-in host, and pgx reads the real one below. The parser's
 	// explanation can quote part of a password. It refuses the characters
-	// that a URL's user, password, or path cannot hold unencoded, such as a
-	// [ or a letter that is not ASCII, which libpq would read.
+	// that a URL's user and password cannot hold unencoded, such as a [ or a
+	// letter that is not ASCII, which libpq would read, and a % in the path
+	// that starts no valid escape.
 	u, err := url.Parse(scheme + "://" + userinfo + "@host" + tail)
 	if err != nil {
 		return fail("not a valid URL; in the user, password, and database name, percent-encode every character " +
@@ -122,7 +123,9 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 		return fail("names no user; write it in front of the host, as in postgres://storycreep:password@db/storycreep")
 	case u.Path == "" || u.Path == "/":
 		return fail("names no database; write it as the path, as in postgres://storycreep:password@db/storycreep")
-	case strings.Contains(strings.TrimPrefix(u.Path, "/"), "/"):
+	// The path as written, because libpq reads a %2F in it as part of the
+	// database name.
+	case strings.Contains(strings.TrimPrefix(u.EscapedPath(), "/"), "/"):
 		return fail("the path must be only the database name")
 	// url.Parse reports an empty fragment as none, but libpq reads any # as
 	// part of the database name or of a value.

@@ -168,8 +168,9 @@ var keys = []key{
 		doc: "A PostgreSQL superuser login for the same database, written like `STORYCREEP_DATABASE_URL`. Only " +
 			"applying migrations uses it, as `storycreep migrate` does. Migrations need a superuser because they " +
 			"create the server's database roles, and one of them bypasses row-level security. It must name a " +
-			"different login from `STORYCREEP_DATABASE_URL`, and the same database. It is shown redacted in the same " +
-			"way.",
+			"different login from `STORYCREEP_DATABASE_URL`, and the same database. Migrations create the server's " +
+			"tables in the `public` schema, whatever `search_path` this URL, the login, or the database sets. It is " +
+			"shown redacted in the same way.",
 		valuesDoc: "A `postgres://` URL",
 		parse: func(c *Config, v string) error {
 			d, err := ParseDatabaseURL(v)

@@ -353,10 +353,22 @@ func TestProvisionRestrictsConnect(t *testing.T) {
 		t.Errorf("PUBLIC can still connect to the database")
 	}
 
-	// Migrating again, with CONNECT already restricted, keeps the login
-	// connecting.
+	// Another role connects once the operator grants it CONNECT, as a
+	// monitoring role may need to, and migrating again keeps both that grant
+	// and the login connecting.
+	monitor := a.NewLogin(t, "")
+	if canConnect(t, monitor) {
+		t.Errorf("a role without CONNECT can connect")
+	}
+	if _, err := a.Admin(t).Exec(ctx, "GRANT CONNECT ON DATABASE "+pgx.Identifier{a.Name}.Sanitize()+" TO "+
+		pgx.Identifier{monitor.User()}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := database.Migrate(ctx, a.AdminURL, appA, database.MigrateOptions{}); err != nil || !canConnect(t, appA) {
 		t.Errorf("migrating again: %v; want the login still connecting", err)
+	}
+	if !canConnect(t, monitor) {
+		t.Errorf("after migrating again, the role granted CONNECT cannot connect")
 	}
 }
 
