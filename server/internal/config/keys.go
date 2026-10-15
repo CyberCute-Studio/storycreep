@@ -2,7 +2,12 @@ package config
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
+	"golang.org/x/text/language"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -123,6 +128,31 @@ var keys = []key{
 		},
 		capability:      "Signup",
 		capabilityLimit: "self-hosted only",
+	},
+	{
+		name: "STORYCREEP_DEFAULT_LOCALE",
+		doc: "The instance's default locale, as a BCP 47 language tag (PRD FR-I18N-02). The server writes its " +
+			"messages, such as those of the API's errors, in the locale that the request's `Accept-Language` header " +
+			"prefers among those that the server has a catalog for, or else in this one. A tag with a region, such " +
+			"as `en-GB`, selects the catalog of that region if the server has one, and else the catalog of its " +
+			"language in the same script, so `zh-TW`, which is written in Traditional Chinese, would not select " +
+			"a `zh` catalog of Simplified Chinese. Only a locale that the server has a catalog for is accepted, so that a mistake is found when " +
+			"the server starts.",
+		valuesDoc: "A locale that the server has a catalog for: " + localeNames("`"),
+		def:       constant(i18n.Source.String()),
+		parse: func(c *Config, v string) error {
+			tag, err := language.Parse(v)
+			if err != nil {
+				return errors.New("not a BCP 47 language tag, such as en")
+			}
+			locale, ok := i18n.Default().Match(tag)
+			if !ok {
+				return fmt.Errorf("the server has no catalog for that locale, only for %s", localeNames(""))
+			}
+			c.DefaultLocale = locale
+			return nil
+		},
+		effective: func(c *Config) string { return c.DefaultLocale.String() },
 	},
 	{
 		name: "STORYCREEP_DATABASE_URL",
@@ -287,4 +317,14 @@ var keys = []key{
 			return c.LogLevel.UnmarshalText([]byte(v))
 		},
 	},
+}
+
+// localeNames lists the locales that the server has a catalog for, each
+// between quote, separated by commas.
+func localeNames(quote string) string {
+	var names []string
+	for _, tag := range i18n.Default().Locales() {
+		names = append(names, quote+tag.String()+quote)
+	}
+	return strings.Join(names, ", ")
 }

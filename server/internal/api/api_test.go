@@ -23,6 +23,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/logging"
 )
@@ -347,17 +348,37 @@ func TestHandlerErrors(t *testing.T) {
 	Register(m, Public, huma.Operation{OperationID: "fail", Method: http.MethodGet, Path: "/fail"},
 		func(context.Context, *struct{}) (*itemOutput, error) { return nil, fail })
 
-	fail = &Error{Code: CodeNotFound, Message: "No such item.", Details: map[string]any{"item": "x"}}
+	fail = &Error{Code: CodeNotReady, Message: i18n.Message{Key: i18n.K("error.not_ready.stopping")},
+		Details: map[string]any{"reason": "stopping"}}
 	res := serve(m, http.MethodGet, "/fail", "", nil)
-	if b := res.envelope(t); b.Code != CodeNotFound || b.Message != "No such item." || b.Details["item"] != "x" {
+	if b := res.envelope(t); b.Code != CodeNotReady || b.Message != "The server is stopping." ||
+		b.Details["reason"] != "stopping" {
 		t.Errorf("an *Error: %s", res.body)
+	}
+	if got := fail.Error(); got != "not_ready: The server is stopping." {
+		t.Errorf("Error() = %q", got)
 	}
 
 	_, fail = ids.Decode(ids.Node, ids.Encode(ids.Board, ids.New()))
 	res = serve(m, http.MethodGet, "/fail", "", nil)
 	if b := res.envelope(t); b.Code != CodeInvalidID || b.Details["reason"] != string(ids.WrongPrefix) ||
-		!strings.Contains(b.Message, "type board") {
+		b.Message != "The identifier's prefix bd_ is for type board, not node." {
 		t.Errorf("an *ids.DecodeError: %s", res.body)
+	}
+	// Every reason has a message of its own, with its arguments filled in.
+	seen := map[string]bool{}
+	for _, id := range []string{"x", "zz_1", "nd_I", "nd_1", "nd_ZZZZZZZZZZZZZZZZZZZZZZZZZZ"} {
+		_, fail = ids.Decode(ids.Node, id)
+		res = serve(m, http.MethodGet, "/fail", "", nil)
+		b := res.envelope(t)
+		if b.Code != CodeInvalidID || b.Message == "An identifier is invalid." || seen[b.Message] ||
+			strings.HasPrefix(b.Message, "error.") || strings.ContainsAny(b.Message, "{}") {
+			t.Errorf("the identifier %s: %s", id, res.body)
+		}
+		seen[b.Message] = true
+	}
+	if !seen["The part of the identifier after its prefix is not 26 characters long."] {
+		t.Errorf("no message names the length of an identifier's body: %v", seen)
 	}
 
 	fail = errors.New("connect to db:5432: password authentication failed")
@@ -520,8 +541,8 @@ func TestCodes(t *testing.T) {
 			t.Errorf("%s is registered twice", s.code)
 		case s.status < 400 || s.status > 599:
 			t.Errorf("%s has the status %d, which is not an error", s.code, s.status)
-		case s.message == "" || s.doc == "" || !strings.HasSuffix(s.message, "."):
-			t.Errorf("%s needs a message, ending with a full stop, and a doc", s.code)
+		case s.doc == "" || !strings.HasSuffix(english(s.code, i18n.Message{}), "."):
+			t.Errorf("%s needs a message in the catalog, ending with a full stop, and a doc", s.code)
 		}
 		seen[s.code] = true
 	}

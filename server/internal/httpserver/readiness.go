@@ -12,6 +12,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
 )
 
 // phase is where the server is in its life.
@@ -59,14 +60,15 @@ func (r *readiness) setPhase(p phase) {
 // serve, or nil if it can. It checks that the database answers only if
 // pingDB is set, as for /readyz; the API's requests find out for themselves.
 func (r *readiness) notReady(ctx context.Context, pingDB bool) error {
-	var reason, msg string
+	var reason string
+	var msg i18n.Key
 	switch r.current() {
 	case phaseStarting:
-		reason, msg = "starting", "The server is starting."
+		reason, msg = "starting", i18n.K("error.not_ready.starting")
 	case phaseMigrationsPending:
-		reason, msg = "migrations_pending", "The database has pending migrations, which storycreep migrate applies."
+		reason, msg = "migrations_pending", i18n.K("error.not_ready.migrations_pending")
 	case phaseStopping:
-		reason, msg = "stopping", "The server is stopping."
+		reason, msg = "stopping", i18n.K("error.not_ready.stopping")
 	case phaseReady:
 		if !pingDB {
 			return nil
@@ -78,7 +80,7 @@ func (r *readiness) notReady(ctx context.Context, pingDB bool) error {
 				r.log.WarnContext(ctx, "the database does not answer, so the server reports that it is not ready",
 					"error", err)
 			}
-			reason, msg = "database_unreachable", "The server cannot reach its database."
+			reason, msg = "database_unreachable", i18n.K("error.not_ready.database_unreachable")
 			break
 		}
 		if r.unreachable.Swap(false) {
@@ -87,7 +89,7 @@ func (r *readiness) notReady(ctx context.Context, pingDB bool) error {
 		return nil
 	}
 	return huma.ErrorWithHeaders(
-		&api.Error{Code: api.CodeNotReady, Message: msg, Details: map[string]any{"reason": reason}},
+		&api.Error{Code: api.CodeNotReady, Message: i18n.Message{Key: msg}, Details: map[string]any{"reason": reason}},
 		http.Header{"Retry-After": {retryAfter}})
 }
 

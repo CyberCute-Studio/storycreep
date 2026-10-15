@@ -26,5 +26,17 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "web/app/src/**",
+        "web/site/src/**",
+        "web/shared/src/**",
+        "!**/*.test.*",
+        "!**/*.spec.*"
+      ],
+      "plugins": ["./web/shared/lint/hardcoded-text.grit"]
+    }
+  ]
 }

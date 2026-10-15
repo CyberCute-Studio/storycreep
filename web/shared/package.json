@@ -6,14 +6,22 @@
   "type": "module",
   "exports": {
     "./api": "./src/api/index.ts",
+    "./i18n": "./src/i18n/index.ts",
     "./ids": "./src/ids.ts"
   },
   "scripts": {
-    "typecheck": "tsc",
+    "typecheck": "tsc && tsc -p tsconfig.browser.json",
     "test": "vitest run"
   },
   "devDependencies": {
+    "@formatjs/icu-messageformat-parser": "3.5.18",
+    "@types/node": "24.19.0",
     "typescript": "7.0.2",
     "vitest": "5.0.4"
+  },
+  "dependencies": {
+    "i18next": "26.4.2",
+    "i18next-icu": "2.4.4",
+    "intl-messageformat": "11.2.15"
   }
 }

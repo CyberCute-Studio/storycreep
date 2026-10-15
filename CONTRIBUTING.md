@@ -125,6 +125,26 @@ A test skipped in any other way still counts, because the report does not run th
 
 [`docs/error-codes.md`](docs/error-codes.md) is generated the same way, from the registry of error codes in `server/internal/api/errors.go`. After you add or change an error code, regenerate it by running `go test ./internal/api -run TestReference -update` in `server/`.
 
+## Strings and translations
+
+Every user-facing string is a message in a catalog, with a stable key, in ICU MessageFormat (PRD FR-I18N-01). English is the source language: its catalog has every message, and a translation that lacks one shows it in English.
+
+| Catalog | Formatted by | Messages |
+| --- | --- | --- |
+| [`web/shared/i18n/`](web/shared/i18n/) | i18next with i18next-icu (`@storycreep/shared/i18n`) | The web app's and the public site's. |
+| [`server/internal/i18n/catalog/`](server/internal/i18n/catalog/) | The server's own formatter (`server/internal/i18n`) | The server's: the messages of the API's errors, and later its emails. |
+
+Each catalog is a directory with one JSON file per locale, named after its BCP 47 tag, as `en.json`, which holds the messages by key. Name a key after where the message is used, in names of letters, digits, `_`, and `-`, separated by dots, as `error.not_found`.
+
+- **Web.** Show a message with i18next's `t`, called with the key as a string literal, as in `t("board.empty")` or `t("files.count", { count })`, or with react-i18next's `<Trans i18nKey="…">`. Do not name an argument after one of the options that i18next reads itself, such as `lng` or `ns`. `createI18n` makes an i18next instance in a locale, and `resolveLocale` picks the locale: the user's preference, then the browser's languages, then the instance's default, then English (FR-I18N-02). `formatNumber`, `formatDate`, `formatDateTime`, and `formatRelativeTime` format the rest for a locale.
+- **Server.** Name a message with `i18n.K("error.not_found")`, with a string literal, in an `i18n.Message` with its arguments, and format it with the request's localizer, `i18n.FromContext`. The API negotiates each request's locale from its `Accept-Language` and `STORYCREEP_DEFAULT_LOCALE`, writes the error envelope's `message` in it, and names it in the `Content-Language` header. The server formats a subset of ICU MessageFormat, which `server/internal/i18n/messageformat.go` lists: arguments, numbers, plurals, selectordinals, and selects, but no dates or times yet. A catalog with anything else does not load, and the server's tests fail.
+
+The vectors in [`schema/i18n/`](schema/i18n/) hold the two formatters to the same output for the same message, so that a translator writes one dialect of ICU for both.
+
+**Extraction.** `pnpm i18n:extract` reads the keys that the code uses, in Go, TypeScript, JavaScript, and the site's Astro components, and rewrites the catalogs to hold exactly those keys, sorted (FR-I18N-01 AC3). The source catalog gains an empty message for a key it lacks, which it reports until you write the message, and every catalog loses the keys that the code no longer uses. It reads a key only from a call with a string literal, and reports any other call of `t` or `i18n.K`, such as one with a variable. While it cannot read every key, as then or when a file does not parse, it rewrites none of that code's catalogs, so that no message of a key it missed is deleted. `go test ./...` fails when a catalog is not as extraction writes it, and `pnpm test` when a web catalog's message does not parse, or a translation uses an argument that its English message does not.
+
+**The lint rule.** A Biome plugin, [`web/shared/lint/hardcoded-text.grit`](web/shared/lint/hardcoded-text.grit), reports text written in the web's source instead of the catalog, and `pnpm check` runs it (FR-I18N-01 AC1): JSX text with a letter in it, a string shown as a JSX child, as in `{"Save"}` or `{done ? "Saved" : t("x")}`, and the value of an attribute that people read, such as `title`, `alt`, `aria-label`, or `placeholder`. Biome reads only the frontmatter of an Astro component, so the rule does not see the text of its template, which a review of the site's pages has to catch. Mark text that is rightly not translated, such as the product's name, with a comment that says why: `{/* biome-ignore lint/plugin: the product's name */}`.
+
 ## The API contract
 
 The server's OpenAPI 3.1 document is generated from its huma operations (PRD FR-API-02), served at `/api/v1/openapi.json`, and committed as [`schema/api/v1/openapi.json`](schema/api/v1/openapi.json). The TypeScript types in `web/shared/src/api/v1.gen.ts` are generated from it, and the client in `web/shared/src/api` is typed by them, so nothing describes a request or a response by hand. `go test ./...` fails when either file is out of date, or when a route of the API is not in the document (FR-API-02 AC1). After you add or change an operation, regenerate both by running `go test ./internal/httpserver -run TestOpenAPIDocument -update` in `server/`.
@@ -161,7 +181,7 @@ Database tests get their own database from `dbtest.New(t)`, in `server/internal/
 ## Conventions
 
 - Text files use LF line endings everywhere. `.gitattributes` enforces this, and `.editorconfig` sets the indentation: two spaces, except tabs for Go and GDScript.
-- Every user-facing string goes through the i18n layer, and every new endpoint is in the OpenAPI document. The plan's standing checklist lists the rest.
+- Every user-facing string is a message in a catalog (see [Strings and translations](#strings-and-translations)), and every new endpoint is in the OpenAPI document. The plan's standing checklist lists the rest.
 - Register every route with `api.Register`, or `Mux.Handle` for a handler that is not a huma operation, or `Mux.HandlePage` for a page of the web interface, which the OpenAPI document leaves out, in `server/internal/api`, which records the capability the route requires. A test walks the routers and fails on a route that declares none (PRD NFR-SEC-02).
 - A handler reports an error by returning an `*api.Error` with a code from the registry, which the client receives in the error envelope. Any other error is answered with `internal_error`, and logged with the request ID, so its text never reaches the client.
 - Outside tests, only `server/internal/config` reads the environment or knows the deployment mode (`STORYCREEP_MODE`). Code that behaves differently in the two modes reads `config.Capabilities`. A test fails on non-test code in any other package that reads an environment variable, names `STORYCREEP_MODE`, or uses a mode value (PRD FR-ADMIN-01 AC3). Test files are exempt, because they set the mode up, and so are test-support packages: a package whose name ends in `test`, such as `dbtest`, and that only test files and other test-support packages import, so that it is not part of the binary.

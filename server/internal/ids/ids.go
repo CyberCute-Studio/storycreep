@@ -133,9 +133,10 @@ func equalFoldASCII(s, lower string) bool {
 // bodies sort in the same order as the UUIDs.
 const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-// bodyLen is the length of an encoded UUID: 128 bits in 5-bit characters,
-// padded with two zero bits in front.
-const bodyLen = 26
+// BodyLength is the length of an identifier's body, the part after its
+// prefix: an encoded UUID, 128 bits in 5-bit characters, padded with two zero
+// bits in front.
+const BodyLength = 26
 
 // decodeTable maps an ASCII byte to its value in the alphabet, accepting
 // lowercase letters, or to invalid.
@@ -159,7 +160,7 @@ const invalid = 0xFF
 // if k is not an entity type.
 func Encode(k Kind, u UUID) string {
 	prefix := k.Prefix()
-	b := make([]byte, len(prefix)+1+bodyLen)
+	b := make([]byte, len(prefix)+1+BodyLength)
 	copy(b, prefix)
 	b[len(prefix)] = '_'
 	encodeBody(b[len(prefix)+1:], u)
@@ -171,7 +172,7 @@ func Encode(k Kind, u UUID) string {
 func encodeBody(dst []byte, u UUID) {
 	hi := binary.BigEndian.Uint64(u[:8])
 	lo := binary.BigEndian.Uint64(u[8:])
-	for i := bodyLen - 1; i >= 0; i-- {
+	for i := BodyLength - 1; i >= 0; i-- {
 		dst[i] = alphabet[lo&0x1F]
 		lo = lo>>5 | hi<<59
 		hi >>= 5
@@ -223,14 +224,14 @@ func decode(expected Kind, s string) (Kind, UUID, error) {
 			return fail(k, BadCharacter)
 		}
 	}
-	if len(body) != bodyLen {
+	if len(body) != BodyLength {
 		return fail(k, BadLength)
 	}
 	if decodeTable[body[0]] > 7 {
 		return fail(k, Overflow)
 	}
 	var hi, lo uint64
-	for i := range bodyLen {
+	for i := range BodyLength {
 		hi = hi<<5 | lo>>59
 		lo = lo<<5 | uint64(decodeTable[body[i]])
 	}
@@ -285,7 +286,7 @@ func (e *DecodeError) Error() string {
 	case BadCharacter:
 		why = "it contains a character outside Crockford base32"
 	case BadLength:
-		why = fmt.Sprintf("the part after the prefix is not %d characters long", bodyLen)
+		why = fmt.Sprintf("the part after the prefix is not %d characters long", BodyLength)
 	case Overflow:
 		why = "the part after the prefix does not fit in 128 bits"
 	default:

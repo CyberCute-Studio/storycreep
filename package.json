@@ -14,6 +14,7 @@
     "docs:check": "go -C server run ./cmd/doccheck",
     "migrations:check": "go -C server run ./cmd/migrationcheck",
     "api:check": "go -C server run ./cmd/apicompat",
+    "i18n:extract": "go -C server run ./cmd/i18nextract",
     "traceability": "go -C server run ./cmd/traceability -out ../traceability-report"
   },
   "devDependencies": {

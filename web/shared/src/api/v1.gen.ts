@@ -7,7 +7,7 @@ export interface ErrorBody {
   code: string;
   /** More about the error, for programs; the code decides the keys */
   details?: Record<string, unknown>;
-  /** What went wrong, for people */
+  /** What went wrong, for people, in the language that the Content-Language header names */
   message: string;
   /** The request's ID, which the server's log records it under */
   request_id: string;

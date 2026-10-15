@@ -26,11 +26,16 @@ func (m *Mux) Document() ([]byte, error) {
 }
 
 // errorResponse is the response that documents the error envelope, which
-// answers every error of every operation (PRD FR-API-04).
+// answers every error of every operation (PRD FR-API-04), and the header
+// that names the language of its message (PRD FR-I18N-02).
 func (m *Mux) errorResponse() *huma.Response {
 	schema := m.api.OpenAPI().Components.Schemas.Schema(reflect.TypeFor[ErrorEnvelope](), true, "ErrorEnvelope")
 	return &huma.Response{
 		Description: "An error, in the error envelope; docs/error-codes.md lists the codes",
-		Content:     map[string]*huma.MediaType{"application/json": {Schema: schema}},
+		Headers: map[string]*huma.Header{
+			"Content-Language": {Schema: &huma.Schema{Type: huma.TypeString,
+				Description: "The language of the envelope's message, as a BCP 47 tag, such as en"}},
+		},
+		Content: map[string]*huma.MediaType{"application/json": {Schema: schema}},
 	}
 }

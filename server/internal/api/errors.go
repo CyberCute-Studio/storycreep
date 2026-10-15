@@ -8,10 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"golang.org/x/text/language"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/logging"
 )
@@ -42,49 +43,49 @@ const (
 type codeSpec struct {
 	code   Code
 	status int
-	// message is the envelope's message for the code. Display messages
-	// move to the i18n catalog in plan item 10.
-	message string
+	// message is the envelope's message for the code, in the catalog
+	// (package i18n).
+	message i18n.Key
 	// doc says when the code is returned, in Markdown, for the reference.
 	doc string
 }
 
 // codes is the registry of error codes, in the order of the reference.
 var codes = []codeSpec{
-	{CodeInvalidRequest, http.StatusBadRequest, "The request is malformed.",
+	{CodeInvalidRequest, http.StatusBadRequest, i18n.K("error.invalid_request"),
 		"The request body is not valid JSON, or not one JSON value; it has a key twice in one object, " +
 			"text that is not UTF-8, or values nested more than " + fmt.Sprint(maxJSONDepth) + " deep; or a " +
 			"required body is missing. `details.errors` lists each problem with its `location`, such as `body`."},
-	{CodeInvalidID, http.StatusBadRequest, "An identifier is invalid.",
+	{CodeInvalidID, http.StatusBadRequest, i18n.K("error.invalid_id"),
 		"An identifier does not decode, or is the identifier of another type of entity, such as a board's " +
 			"identifier where a node's is expected. `details.reason` says why: `missing_prefix`, `unknown_prefix`, " +
 			"`wrong_prefix`, `character`, `length`, or `overflow`, as in `schema/ids/README.md`."},
-	{CodeInvalidCursor, http.StatusBadRequest, "The pagination cursor is invalid.",
+	{CodeInvalidCursor, http.StatusBadRequest, i18n.K("error.invalid_cursor"),
 		"The `cursor` query parameter is not a cursor that the same list returned as `next_cursor`."},
-	{CodeUnauthenticated, http.StatusUnauthorized, "Authentication is required.",
+	{CodeUnauthenticated, http.StatusUnauthorized, i18n.K("error.unauthenticated"),
 		"The request has no credentials, or credentials that are wrong, such as a bearer token for " +
 			"`/metrics` that is not `STORYCREEP_METRICS_TOKEN`. The `WWW-Authenticate` header says which " +
 			"scheme the route takes."},
-	{CodeNotFound, http.StatusNotFound, "The resource does not exist.",
+	{CodeNotFound, http.StatusNotFound, i18n.K("error.not_found"),
 		"No route matches the path, or the resource it names does not exist."},
-	{CodeMethodNotAllowed, http.StatusMethodNotAllowed, "The method is not allowed for this resource.",
+	{CodeMethodNotAllowed, http.StatusMethodNotAllowed, i18n.K("error.method_not_allowed"),
 		"A route matches the path, but not the method. The `Allow` header lists the methods it takes."},
-	{CodeRequestTimeout, http.StatusRequestTimeout, "The request body did not arrive in time.",
+	{CodeRequestTimeout, http.StatusRequestTimeout, i18n.K("error.request_timeout"),
 		"The client did not send the whole request body within the route's time limit."},
-	{CodeRequestTooLarge, http.StatusRequestEntityTooLarge, "The request body is too large.",
+	{CodeRequestTooLarge, http.StatusRequestEntityTooLarge, i18n.K("error.request_too_large"),
 		"The request body is larger than the route accepts, 5 MB unless the route says otherwise " +
 			"(PRD NFR-SEC-07). `details.max_bytes` is the limit."},
-	{CodeUnsupportedMediaType, http.StatusUnsupportedMediaType, "The request body is not in a supported format.",
+	{CodeUnsupportedMediaType, http.StatusUnsupportedMediaType, i18n.K("error.unsupported_media_type"),
 		"The `Content-Type` of the request body is neither `application/json` nor a type ending in `+json`, " +
 			"such as `application/merge-patch+json`. A body sent without a `Content-Type` is read as JSON."},
-	{CodeValidationFailed, http.StatusUnprocessableEntity, "The request is invalid.",
+	{CodeValidationFailed, http.StatusUnprocessableEntity, i18n.K("error.validation_failed"),
 		"A parameter or the body does not match the route's schema: a field that the schema does not have, " +
 			"which is never ignored (PRD FR-API-01 AC2), a missing field, a value of the wrong type, or one out of " +
 			"range. `details.errors` lists each problem with its `location`, such as `body.name` or `query.limit`, " +
 			"and a `message`."},
-	{CodeInternal, http.StatusInternalServerError, "An internal error occurred.",
+	{CodeInternal, http.StatusInternalServerError, i18n.K("error.internal_error"),
 		"The server failed. Its log has the cause, under the envelope's `request_id`."},
-	{CodeNotReady, http.StatusServiceUnavailable, "The server is not ready.",
+	{CodeNotReady, http.StatusServiceUnavailable, i18n.K("error.not_ready"),
 		"The server is starting, its database has pending migrations, or it is stopping. `/readyz` answers " +
 			"with it then too, and also while the server cannot reach its database, which the API's routes " +
 			"report as `internal_error` instead. `details.reason` says which: `starting`, `migrations_pending`, " +
@@ -119,8 +120,10 @@ func (c Code) Known() bool {
 // answered with invalid_id.
 type Error struct {
 	Code Code
-	// Message replaces the code's message, if it is set.
-	Message string
+	// Message replaces the code's message, if it is set: a message of the
+	// catalog, which the envelope shows in the request's locale (PRD
+	// FR-I18N-01).
+	Message i18n.Message
 	// Details are the envelope's details, which must encode as a JSON
 	// object. They are for programs, so their keys are stable.
 	Details map[string]any
@@ -132,11 +135,16 @@ func NewError(c Code) *Error {
 }
 
 func (e *Error) Error() string {
-	msg := e.Message
-	if msg == "" {
-		msg = spec(e.Code).message
+	return string(e.Code) + ": " + english(e.Code, e.Message)
+}
+
+// english returns the message m, or c's message if m is not set, in the
+// source locale, as the log shows it.
+func english(c Code, m i18n.Message) string {
+	if m.IsZero() {
+		m = i18n.Message{Key: spec(c).message}
 	}
-	return string(e.Code) + ": " + msg
+	return i18n.Default().Localizer(i18n.Source).Format(m)
 }
 
 // ErrorEnvelope is the body of every 4xx and 5xx response:
@@ -146,19 +154,26 @@ type ErrorEnvelope struct {
 	Body ErrorBody `json:"error"`
 
 	status int
+	// message is the catalog's message that Body.Message shows. It is
+	// formatted when the envelope is written, in the request's locale,
+	// because huma builds some envelopes without the request.
+	message i18n.Message
 }
 
 // ErrorBody is the envelope's object.
 type ErrorBody struct {
 	Code    Code           `json:"code" doc:"A stable error code; docs/error-codes.md lists them"`
-	Message string         `json:"message" doc:"What went wrong, for people"`
+	Message string         `json:"message" doc:"What went wrong, for people, in the language that the Content-Language header names"`
 	Details map[string]any `json:"details,omitempty" doc:"More about the error, for programs; the code decides the keys"`
 	// RequestID is filled in when the envelope is written.
 	RequestID string `json:"request_id" doc:"The request's ID, which the server's log records it under"`
 }
 
 func (e *ErrorEnvelope) Error() string {
-	return string(e.Body.Code) + ": " + e.Body.Message
+	if e.message.IsZero() {
+		return string(e.Body.Code) + ": " + e.Body.Message
+	}
+	return string(e.Body.Code) + ": " + english(e.Body.Code, e.message)
 }
 
 // GetStatus returns the HTTP status, for huma.
@@ -172,21 +187,29 @@ func (e *ErrorEnvelope) ContentType(string) string {
 	return "application/json"
 }
 
-// withRequestID returns a copy of e with the request ID id. The envelope a
-// handler returns is never changed, because it may be one that the handler
-// returns for every request, such as a package-level error.
-func (e *ErrorEnvelope) withRequestID(id string) *ErrorEnvelope {
+// forRequest returns a copy of e as it answers the request whose context is
+// ctx: with the request's ID, and its message in the request's locale, or in
+// English if the locale's catalog lacks it, and the locale that the message
+// is in. The envelope a handler returns is never changed, because it may be
+// one that the handler returns for every request, such as a package-level
+// error.
+func (e *ErrorEnvelope) forRequest(ctx context.Context) (*ErrorEnvelope, language.Tag) {
 	c := *e
-	c.Body.RequestID = id
-	return &c
+	c.Body.RequestID = logging.RequestID(ctx)
+	if e.message.IsZero() {
+		return &c, i18n.Source
+	}
+	var locale language.Tag
+	c.Body.Message, locale = i18n.FromContext(ctx).Localize(e.message)
+	return &c, locale
 }
 
-func envelopeFor(c Code, message string, details map[string]any) *ErrorEnvelope {
+func envelopeFor(c Code, message i18n.Message, details map[string]any) *ErrorEnvelope {
 	s := spec(c)
-	if message == "" {
-		message = s.message
+	if message.IsZero() {
+		message = i18n.Message{Key: s.message}
 	}
-	return &ErrorEnvelope{Body: ErrorBody{Code: c, Message: message, Details: details}, status: s.status}
+	return &ErrorEnvelope{Body: ErrorBody{Code: c, Details: details}, status: s.status, message: message}
 }
 
 // toEnvelope returns the envelope that answers err, which a handler
@@ -203,8 +226,7 @@ func toEnvelope(ctx context.Context, err error) *ErrorEnvelope {
 	case errors.As(err, &apiErr):
 		return envelopeFor(apiErr.Code, apiErr.Message, apiErr.Details)
 	case errors.As(err, &idErr):
-		return envelopeFor(CodeInvalidID, strings.TrimPrefix(idErr.Error(), "ids: "),
-			map[string]any{"reason": idErr.Reason})
+		return envelopeFor(CodeInvalidID, idMessage(idErr), map[string]any{"reason": idErr.Reason})
 	}
 	if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 		// The client went away, and the handler stopped. Nothing failed, and
@@ -213,7 +235,30 @@ func toEnvelope(ctx context.Context, err error) *ErrorEnvelope {
 	} else {
 		loggerFrom(ctx).ErrorContext(ctx, "the request failed", "error", err)
 	}
-	return envelopeFor(CodeInternal, "", nil)
+	return envelopeFor(CodeInternal, i18n.Message{}, nil)
+}
+
+// idMessage returns the message that says why an identifier could not be
+// decoded, or none, for the code's message.
+func idMessage(e *ids.DecodeError) i18n.Message {
+	switch e.Reason {
+	case ids.MissingPrefix:
+		return i18n.Message{Key: i18n.K("error.invalid_id.missing_prefix")}
+	case ids.UnknownPrefix:
+		return i18n.Message{Key: i18n.K("error.invalid_id.unknown_prefix")}
+	case ids.WrongPrefix:
+		if slices.Contains(ids.Kinds(), e.Got) && slices.Contains(ids.Kinds(), e.Expected) {
+			return i18n.Message{Key: i18n.K("error.invalid_id.wrong_prefix"),
+				Args: i18n.Args{"prefix": e.Got.Prefix(), "got": e.Got.String(), "expected": e.Expected.String()}}
+		}
+	case ids.BadCharacter:
+		return i18n.Message{Key: i18n.K("error.invalid_id.character")}
+	case ids.BadLength:
+		return i18n.Message{Key: i18n.K("error.invalid_id.length"), Args: i18n.Args{"length": ids.BodyLength}}
+	case ids.Overflow:
+		return i18n.Message{Key: i18n.K("error.invalid_id.overflow")}
+	}
+	return i18n.Message{}
 }
 
 // statusCodes maps the statuses that huma answers with itself to codes.
@@ -270,7 +315,7 @@ func fromHuma(ctx context.Context, op *huma.Operation, status int, msg string, e
 			loggerFrom(ctx).ErrorContext(ctx, "the request failed", "error", err)
 		}
 	}
-	return envelopeFor(c, "", details)
+	return envelopeFor(c, i18n.Message{}, details)
 }
 
 // Problem is one entry of details.errors.
@@ -318,8 +363,8 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	writeEnvelope(w, r, toEnvelope(r.Context(), err))
 }
 
-// writeEnvelope writes env with the request's ID. It fills in a copy, as
-// fillRequestID does, because a handler may return one envelope for many
+// writeEnvelope writes env as forRequest fills it in. It fills in a copy, as
+// fillEnvelope does, because a handler may return one envelope for many
 // requests.
 func writeEnvelope(w http.ResponseWriter, r *http.Request, env *ErrorEnvelope) {
 	if env.status == http.StatusNotModified {
@@ -327,18 +372,27 @@ func writeEnvelope(w http.ResponseWriter, r *http.Request, env *ErrorEnvelope) {
 		w.WriteHeader(env.status)
 		return
 	}
-	env = env.withRequestID(logging.RequestID(r.Context()))
+	env, locale := env.forRequest(r.Context())
 	b, err := json.Marshal(env)
 	if err != nil {
 		// Details that do not encode are a bug in the code that set them.
 		loggerFrom(r.Context()).ErrorContext(r.Context(),
 			"an error envelope does not encode, so the request is answered with internal_error", "error", err)
-		env = envelopeFor(CodeInternal, "", nil).withRequestID(logging.RequestID(r.Context()))
+		env, locale = envelopeFor(CodeInternal, i18n.Message{}, nil).forRequest(r.Context())
 		b, _ = json.Marshal(env)
 	}
 	w.Header().Set("Content-Type", "application/json")
+	setLanguage(w.Header(), locale)
 	w.WriteHeader(env.status)
 	_, _ = w.Write(append(b, '\n'))
+}
+
+// setLanguage sets the headers of an envelope whose message is in locale:
+// Content-Language names the locale, and Vary says that the message depends
+// on the request's Accept-Language (RFC 9110 §8.5, §12.5.5).
+func setLanguage(h http.Header, locale language.Tag) {
+	h.Set("Content-Language", locale.String())
+	h.Add("Vary", "Accept-Language")
 }
 
 type loggerKey struct{}

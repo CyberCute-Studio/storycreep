@@ -1,0 +1,99 @@
+// A Biome lint rule against user-facing text written in the source instead
+// of the message catalog (PRD FR-I18N-01, ADR-024). biome.json applies it to
+// the source of the web app and the public site, and CI runs it with the
+// rest of Biome's checks. Biome reads only the frontmatter of an Astro
+// component, so the rule does not see the text of its template.
+//
+// It reports text with a letter in it, in any script:
+//
+//   - JSX text, as in <p>Saved</p>;
+//   - a string or template literal that a JSX child shows, as in {"Saved"},
+//     including as a branch of a conditional, as in {done ? "Saved" : t("x")},
+//     after && or ||, as in {dirty && "Unsaved"}, or joined with +, as in
+//     {"Hello, " + name + "!"}, at any depth and in parentheses, as in
+//     {a ? (b ? "Draft" : "Saved") : t("x")};
+//   - the same as the value of an attribute that people read: alt,
+//     aria-label, aria-description, aria-placeholder, aria-roledescription,
+//     aria-valuetext, label, placeholder, or title.
+//
+// Text without a letter, such as " " or "·", or whose letters all belong to
+// HTML entities, such as &nbsp; or &middot;, or to a string's escape
+// sequences, such as a line break's, and literals that are not shown,
+// such as t("board.title"), a className, or the "draft" of
+// status === "draft", are not reported. Text that is rightly not translated,
+// such as a product name, is marked with a comment that says why, as in
+// {/* biome-ignore lint/plugin: the product's name */}.
+
+language js
+
+// The source of a string or a template's text with a letter outside its
+// escape sequences, which stand for characters that are not letters, such as
+// a line break or a no-break space.
+pattern lettered_js() {
+  $js where {
+    $js <: r"(?s).*\p{L}.*",
+    not $js <: r"(?s)(?:[^\p{L}\\]|\\(?:x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|u\{[0-9A-Fa-f]+\}|.))*"
+  }
+}
+
+pattern shown_literal() {
+  or {
+    JsStringLiteralExpression() as $string where { $string <: lettered_js() },
+    JsTemplateExpression() as $template where {
+      $template <: contains JsTemplateChunkElement() as $chunk where {
+        $chunk <: lettered_js()
+      }
+    }
+  }
+}
+
+pattern shown_text() {
+  or {
+    shown_literal(),
+    JsParenthesizedExpression(expression=shown_text()),
+    JsConditionalExpression(consequent=shown_text()),
+    JsConditionalExpression(alternate=shown_text()),
+    JsLogicalExpression(right=shown_text()),
+    `$left + $right` where {
+      or { $left <: shown_text(), $right <: shown_text() }
+    }
+  }
+}
+
+// JSX text and attribute strings with a letter outside HTML entities: JSX
+// reads &nbsp; as one character, which is not a letter.
+pattern lettered_jsx() {
+  $jsx where {
+    $jsx <: r"(?s).*\p{L}.*",
+    not $jsx <: r"(?s)(?:[^\p{L}]|&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);)*"
+  }
+}
+
+or {
+  JsxText() as $text where {
+    $text <: lettered_jsx(),
+    register_diagnostic(span=$text, message="User-facing text must come from the message catalog: write it in web/shared/i18n/en.json, and show it with t(). See Strings and translations in CONTRIBUTING.md.")
+  },
+  JsxExpressionChild(expression=$shown) where {
+    $shown <: shown_text(),
+    register_diagnostic(span=$shown, message="User-facing text must come from the message catalog: write it in web/shared/i18n/en.json, and show it with t(). See Strings and translations in CONTRIBUTING.md.")
+  },
+  JsxAttribute(name=$name, initializer=JsxAttributeInitializerClause(value=$value)) where {
+    $name <: or {
+      `alt`,
+      `aria-label`,
+      `aria-description`,
+      `aria-placeholder`,
+      `aria-roledescription`,
+      `aria-valuetext`,
+      `label`,
+      `placeholder`,
+      `title`
+    },
+    $value <: or {
+      JsxString() as $string where { $string <: lettered_jsx() },
+      JsxExpressionAttributeValue(expression=shown_text())
+    },
+    register_diagnostic(span=$value, message="User-facing text must come from the message catalog: write it in web/shared/i18n/en.json, and show it with t(). See Strings and translations in CONTRIBUTING.md.")
+  }
+}
