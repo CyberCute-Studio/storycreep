@@ -124,22 +124,18 @@ func (g *tsGen) declare(name string, s *Schema) error {
 	if !identifier.MatchString(name) || slices.Contains(reservedNames, name) {
 		return errors.New("the name is not one that a TypeScript type may have")
 	}
-	g.b.WriteString("\n")
-	comment(&g.b, 0, s.Description, s.Deprecated)
-	if slices.Equal(s.Type, Types{"object"}) && len(s.Properties) > 0 && !s.composed() && s.Enum == nil &&
-		s.Const == nil {
-		body, err := g.typeOf(s, 0)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(&g.b, "export interface %s %s\n", name, body)
-		return nil
-	}
 	t, err := g.typeOf(s, 0)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(&g.b, "export type %s = %s;\n", name, t)
+	g.b.WriteString("\n")
+	comment(&g.b, 0, s.Description, s.Deprecated)
+	if slices.Equal(s.Type, Types{"object"}) && len(s.Properties) > 0 && !s.composed() && s.Enum == nil &&
+		s.Const == nil {
+		fmt.Fprintf(&g.b, "export interface %s %s\n", name, t)
+	} else {
+		fmt.Fprintf(&g.b, "export type %s = %s;\n", name, t)
+	}
 	return nil
 }
 

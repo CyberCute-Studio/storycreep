@@ -136,6 +136,13 @@ func TestBreaking(t *testing.T) {
 			h["Etag"] = h["ETag"]
 			delete(h, "ETag")
 		}, nil},
+		{"a response gains a header", func(d *Document) {
+			get(d).Responses["200"].Headers["X-Thing"] = &Header{Required: true, Schema: &Schema{Type: Types{"string"}}}
+		}, nil},
+		{"a response header is serialised differently", func(d *Document) {
+			get(d).Responses["200"].Headers["ETag"].Explode = ptr(true)
+		}, []string{"GET /things/{id}: the response 200's header ETag is now serialised as simple true, and was as " +
+			"simple false"}},
 		{"a response may have a new status", func(d *Document) {
 			d.Paths["/things/{id}"].Delete.Responses["200"] = &Response{Description: "OK"}
 		}, []string{"DELETE /things/{id}: the response may now have the status 200"}},
@@ -289,6 +296,53 @@ func TestBreaking(t *testing.T) {
 				t.Errorf("Breaking = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestBreakingFromChangedBase checks the rules that need a base other than
+// the fixture: a header that the response always had, and the properties
+// that huma does not require, which are readOnly in a request, and writeOnly
+// in a response.
+func TestBreakingFromChangedBase(t *testing.T) {
+	etag := func(d *Document) *Header { return d.Paths["/things/{id}"].Get.Responses["200"].Headers["ETag"] }
+	prop := func(d *Document, schema, name string) *Schema { return d.Components.Schemas[schema].Properties[name] }
+	none := func(*Document) {}
+	tests := []struct {
+		name       string
+		base, head func(d *Document)
+		want       []string
+	}{
+		{"a response header is no longer always present", func(d *Document) {
+			etag(d).Required = true
+		}, none, []string{"GET /things/{id}: the response 200 no longer always has the header ETag"}},
+		{"a response header becomes always present", none, func(d *Document) {
+			etag(d).Required = true
+		}, nil},
+		{"a required request property is no longer readOnly", func(d *Document) {
+			prop(d, "ThingInput", "name").ReadOnly = true
+		}, none, []string{"POST /things: the request body.name is now required"}},
+		{"a required request property becomes readOnly", none, func(d *Document) {
+			prop(d, "ThingInput", "name").ReadOnly = true
+		}, nil},
+		{"a required response property becomes writeOnly", none, func(d *Document) {
+			prop(d, "Thing", "kind").WriteOnly = true
+		}, []string{"GET /things: the response 200 body.items[].kind is no longer always present"}},
+		{"a required response property is no longer writeOnly", func(d *Document) {
+			prop(d, "Thing", "kind").WriteOnly = true
+		}, none, nil},
+		{"a request property is new, required, and readOnly", none, func(d *Document) {
+			input := d.Components.Schemas["ThingInput"]
+			input.Properties["colour"] = &Schema{Type: Types{"string"}, ReadOnly: true}
+			input.Required = append(input.Required, "colour")
+		}, nil},
+	}
+	for _, tt := range tests {
+		base, head := load(t, "base.json"), load(t, "base.json")
+		tt.base(base)
+		tt.head(head)
+		if got := messages(Breaking(base, head)); !slices.Equal(got, tt.want) {
+			t.Errorf("%s: Breaking = %q, want %q", tt.name, got, tt.want)
+		}
 	}
 }
 

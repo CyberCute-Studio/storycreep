@@ -42,6 +42,10 @@ func TestLoadRefuses(t *testing.T) {
 			`"$ref": "#/components/schemas/Nothing"`, "does not name a schema"},
 		{"a reference outside the schemas", `"$ref": "#/components/schemas/ThingPage"`,
 			`"$ref": "other.json#/Thing"`, "does not name a schema"},
+		{"a default beside a reference", `"$ref": "#/components/schemas/ThingPage"`,
+			`"$ref": "#/components/schemas/ThingPage", "default": {}`, "has keywords beside it"},
+		{"a bound beside a reference", `"$ref": "#/components/schemas/ThingPage"`,
+			`"$ref": "#/components/schemas/ThingPage", "minProperties": 1`, "has keywords beside it"},
 		{"an operationId twice", `"operationId": "getThing"`, `"operationId": "listThings"`,
 			"the same operationId listThings"},
 		{"no operationId", `"operationId": "getThing",`, ``, "has no operationId"},
@@ -62,5 +66,10 @@ func TestLoadRefuses(t *testing.T) {
 	}
 	if _, err := Load(append(base, "{}"...)); err == nil || !strings.Contains(err.Error(), "more after") {
 		t.Errorf("more after the document: Load = %v, want an error", err)
+	}
+	annotated := strings.Replace(string(base), `"$ref": "#/components/schemas/ThingPage"`,
+		`"$ref": "#/components/schemas/ThingPage", "description": "A page", "readOnly": true, "deprecated": true`, 1)
+	if _, err := Load([]byte(annotated)); err != nil {
+		t.Errorf("annotations beside a reference: Load = %v, want no error", err)
 	}
 }

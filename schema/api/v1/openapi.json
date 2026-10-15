@@ -134,7 +134,21 @@
             }
           },
           "304": {
-            "description": "Not Modified: the copy whose ETag the client sent in If-None-Match is current"
+            "description": "Not Modified: the copy whose ETag the client sent in If-None-Match is current",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "description": "private, no-cache: the client keeps its copy, and revalidates it",
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "description": "The entity tag of the client's copy",
+                  "type": "string"
+                }
+              }
+            }
           },
           "default": {
             "content": {

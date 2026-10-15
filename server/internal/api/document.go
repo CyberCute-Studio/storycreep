@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
 	"reflect"
 
@@ -19,16 +18,11 @@ func (m *Mux) OpenAPI() *huma.OpenAPI {
 // indented by two spaces, with a newline at the end. It is the same for the
 // same operations, because huma writes the keys of every object in order.
 func (m *Mux) Document() ([]byte, error) {
-	b, err := json.Marshal(m.api.OpenAPI())
+	b, err := json.MarshalIndent(m.api.OpenAPI(), "", "  ")
 	if err != nil {
 		return nil, err
 	}
-	var out bytes.Buffer
-	if err := json.Indent(&out, b, "", "  "); err != nil {
-		return nil, err
-	}
-	out.WriteByte('\n')
-	return out.Bytes(), nil
+	return append(b, '\n'), nil
 }
 
 // errorResponse is the response that documents the error envelope, which

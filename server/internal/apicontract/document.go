@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -228,8 +229,9 @@ const refPrefix = "#/components/schemas/"
 
 // Load reads a document, and checks that it is one this package understands:
 // OpenAPI 3.1, with only the objects and keywords that the types above have,
-// references only to named schemas that exist, a unique operationId on every
-// operation, and path parameters that match their path.
+// references only to named schemas that exist, with nothing but annotations
+// beside them, a unique operationId on every operation, and path parameters
+// that match their path.
 func Load(b []byte) (*Document, error) {
 	var d Document
 	if err := decodeStrict(b, &d); err != nil {
@@ -379,7 +381,8 @@ func (d *Document) checkMediaType(m *MediaType) error {
 var typeNames = []string{"string", "integer", "number", "boolean", "array", "object", "null"}
 
 // checkSchema checks that every type in s is one of JSON Schema's, and every
-// reference names a schema that exists.
+// reference names a schema that exists and has beside it only the keywords
+// that annotate it.
 func (d *Document) checkSchema(s *Schema) error {
 	if s == nil {
 		return nil
@@ -393,6 +396,17 @@ func (d *Document) checkSchema(s *Schema) error {
 		name, ok := strings.CutPrefix(s.Ref, refPrefix)
 		if !ok || d.Components == nil || d.Components.Schemas[name] == nil {
 			return fmt.Errorf("the reference %s does not name a schema of the document", s.Ref)
+		}
+		// huma writes the tags of a field whose type is a struct beside the
+		// reference to the struct's schema, such as a default or a bound.
+		// The comparison and the generator read the named schema in place
+		// of the reference, so they would skip such a keyword.
+		rest := *s
+		rest.Ref, rest.Title, rest.Description, rest.Examples = "", "", "", nil
+		rest.Deprecated, rest.ReadOnly, rest.WriteOnly = false, false, false
+		if !reflect.DeepEqual(rest, Schema{}) {
+			return fmt.Errorf("the reference %s has keywords beside it other than title, description, examples, "+
+				"deprecated, readOnly, and writeOnly", s.Ref)
 		}
 	}
 	for _, sub := range s.subschemas() {

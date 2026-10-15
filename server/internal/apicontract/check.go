@@ -1,15 +1,15 @@
 package apicontract
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/gitexec"
 )
 
 // OverrideTrailer is the trailer with which a commit of a pull request says
@@ -64,15 +64,14 @@ func Check(ctx context.Context, path, base string) (Result, error) {
 	if dir == "" {
 		dir = "."
 	}
-	fork, err := git(ctx, dir, "merge-base", "HEAD", base)
+	fork, err := gitexec.ForkPoint(ctx, dir, base)
 	if err != nil {
-		return Result{}, fmt.Errorf("find where HEAD forked from %s: %w; a shallow clone needs its full history "+
-			"(git fetch --unshallow)", base, err)
+		return Result{}, err
 	}
-	res := Result{Base: strings.TrimSpace(fork)}
+	res := Result{Base: fork}
 	// A path in a revision is relative to the repository's root, unless it
 	// starts with ./, which makes it relative to dir.
-	listed, err := git(ctx, dir, "ls-tree", "--name-only", res.Base, "--", file)
+	listed, err := gitexec.Run(ctx, dir, "", "ls-tree", "--name-only", res.Base, "--", file)
 	if err != nil {
 		return Result{}, err
 	}
@@ -80,7 +79,7 @@ func Check(ctx context.Context, path, base string) (Result, error) {
 		res.Missing = true
 		return res, nil
 	}
-	was, err := git(ctx, dir, "cat-file", "blob", res.Base+":./"+file)
+	was, err := gitexec.Run(ctx, dir, "", "cat-file", "blob", res.Base+":./"+file)
 	if err != nil {
 		return Result{}, err
 	}
@@ -99,7 +98,7 @@ func Check(ctx context.Context, path, base string) (Result, error) {
 // overrides returns the API-Break trailers of the commits since base, which
 // git finds whatever their case.
 func overrides(ctx context.Context, dir, base string) ([]Override, error) {
-	out, err := git(ctx, dir, "log", "-z",
+	out, err := gitexec.Run(ctx, dir, "", "log", "-z",
 		"--format=%H%x1f%(trailers:key="+OverrideTrailer+",valueonly,separator=%x1e,unfold)", base+"..HEAD")
 	if err != nil {
 		return nil, err
@@ -117,19 +116,4 @@ func overrides(ctx context.Context, dir, base string) ([]Override, error) {
 		}
 	}
 	return found, nil
-}
-
-// git runs git in dir and returns its output.
-func git(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
-		}
-		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
-	}
-	return string(out), nil
 }

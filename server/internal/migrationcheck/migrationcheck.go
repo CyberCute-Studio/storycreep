@@ -14,11 +14,12 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path"
 	"strconv"
 	"strings"
 	"testing/fstest"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/gitexec"
 )
 
 // Problem is a migration on the base that the change edits or removes.
@@ -82,12 +83,10 @@ func Check(ctx context.Context, dir, base string) (Result, error) {
 		return Result{}, fmt.Errorf("the migrations directory %s does not exist; if the change deleted every "+
 			"migration, restore the ones on %s, because a merged migration is never deleted", dir, base)
 	}
-	fork, err := git(ctx, dir, "", "merge-base", "HEAD", base)
+	fork, err := gitexec.ForkPoint(ctx, dir, base)
 	if err != nil {
-		return Result{}, fmt.Errorf("find where HEAD forked from %s: %w; a shallow clone needs its full history "+
-			"(git fetch --unshallow)", base, err)
+		return Result{}, err
 	}
-	fork = strings.TrimSpace(fork)
 	baseFS, err := Tree(ctx, dir, fork)
 	if err != nil {
 		return Result{}, err
@@ -112,7 +111,7 @@ func Tree(ctx context.Context, dir, rev string) (fs.FS, error) {
 		return os.DirFS(dir), nil
 	}
 	files := fstest.MapFS{}
-	out, err := git(ctx, dir, "", "ls-tree", "-z", rev, "--", ".")
+	out, err := gitexec.Run(ctx, dir, "", "ls-tree", "-z", rev, "--", ".")
 	if err != nil {
 		return nil, fmt.Errorf("list the migrations at %s: %w", rev, err)
 	}
@@ -150,7 +149,7 @@ func readBlobs(ctx context.Context, dir string, objects []string) ([][]byte, err
 	if len(objects) == 0 {
 		return nil, nil
 	}
-	out, err := git(ctx, dir, strings.Join(objects, "\n")+"\n", "cat-file", "--batch")
+	out, err := gitexec.Run(ctx, dir, strings.Join(objects, "\n")+"\n", "cat-file", "--batch")
 	if err != nil {
 		return nil, err
 	}
@@ -169,20 +168,4 @@ func readBlobs(ctx context.Context, dir string, objects []string) ([][]byte, err
 		out = rest[size+1:]
 	}
 	return contents, nil
-}
-
-// git runs git in dir, with stdin as its input, and returns its output.
-func git(ctx context.Context, dir, stdin string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	cmd.Stdin = strings.NewReader(stdin)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
-		}
-		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
-	}
-	return string(out), nil
 }

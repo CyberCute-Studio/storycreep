@@ -26,10 +26,10 @@ func (c Change) String() string {
 // base's API (PRD FR-API-01 AC3, §10.5). Such a client goes on sending what
 // base accepted, and expects only the answers that base described. So head
 // must accept every request that base accepted, and answer only as base said
-// it would, with one exception that the PRD makes: a response may gain
-// properties, because clients ignore the properties they do not know. A
-// client fails on a value it does not know (§6.4), so an enum value that a
-// response gains breaks it.
+// it would, with the exception that the PRD makes: a response may gain
+// properties, because clients ignore the properties they do not know, and
+// for the same reason it may gain headers. A client fails on a value it does
+// not know (§6.4), so an enum value that a response gains breaks it.
 //
 // These changes break a client:
 //
@@ -39,9 +39,11 @@ func (c Change) String() string {
 //     serialised in another style.
 //   - A request body is removed, becomes required, is new and required, or
 //     is no longer taken in a format that it was.
-//   - A response has a status other than an error's, a format, or a header
-//     that base's did not have, or it lacks a format or a header that base's
-//     had. Errors may gain statuses, because every error has the envelope.
+//   - A response has a status other than an error's, or a format, that
+//     base's did not have, or it lacks a format or a header that base's had.
+//     A header that base's always had is no longer always there, or is
+//     serialised in another style. Errors may gain statuses, because every
+//     error has the envelope.
 //   - A request's schema accepts less, or a response's allows more: a type,
 //     null, or an enum value; a bound, a length, or a count made tighter in
 //     a request, or looser in a response; a format, pattern, multipleOf, or
@@ -50,12 +52,14 @@ func (c Change) String() string {
 //   - A request's object no longer accepts a property, because it no longer
 //     names it and accepts no others, or newly requires one. A response's
 //     object lacks a property that it had, or no longer always has one that
-//     it always had.
+//     it always had. A required property is required as huma reads it: not
+//     in a request if it is readOnly, and not in a response if it is
+//     writeOnly.
 //
 // Schemas combined with oneOf, anyOf, or allOf are compared member by
 // member, and a change in the number of members breaks a client. Titles,
-// descriptions, examples, readOnly, writeOnly, deprecation, and operation IDs
-// are not on the wire, and changing them breaks nothing.
+// descriptions, examples, deprecation, and operation IDs are not on the wire,
+// and changing them breaks nothing.
 func Breaking(base, head *Document) []Change {
 	c := &comparer{base: base, head: head, seen: map[seenKey]bool{}}
 	heads := map[string]located{}
@@ -151,21 +155,20 @@ func params(l located) map[string]*Parameter {
 	return out
 }
 
-// serialization returns how a parameter is written, with OpenAPI's defaults
-// filled in.
-func serialization(p *Parameter) string {
-	style := p.Style
+// serialization returns how a parameter or a header in the place in is
+// written, with OpenAPI's defaults filled in.
+func serialization(in, style string, explode *bool) string {
 	if style == "" {
 		style = "simple"
-		if p.In == "query" || p.In == "cookie" {
+		if in == "query" || in == "cookie" {
 			style = "form"
 		}
 	}
-	explode := style == "form"
-	if p.Explode != nil {
-		explode = *p.Explode
+	exploded := style == "form"
+	if explode != nil {
+		exploded = *explode
 	}
-	return style + " " + strconv.FormatBool(explode)
+	return style + " " + strconv.FormatBool(exploded)
 }
 
 func (c *comparer) parameters(b, h located) {
@@ -181,8 +184,8 @@ func (c *comparer) parameters(b, h located) {
 		if !was.Required && is.Required {
 			c.report("%s is now required", name)
 		}
-		if serialization(was) != serialization(is) {
-			c.report("%s is now serialised as %s, and was as %s", name, serialization(is), serialization(was))
+		if w, i := serialization(was.In, was.Style, was.Explode), serialization(is.In, is.Style, is.Explode); w != i {
+			c.report("%s is now serialised as %s, and was as %s", name, i, w)
 		}
 		c.schema(name, was.Schema, is.Schema, request)
 	}
@@ -289,13 +292,22 @@ func (c *comparer) response(status string, b, h *Response) {
 	for n, hd := range h.Headers {
 		headers[strings.ToLower(n)] = hd
 	}
+	// A header that base's did not have breaks nothing, because clients
+	// ignore the headers they do not know.
 	for _, n := range sortedKeys(b.Headers) {
+		was := b.Headers[n]
 		is, ok := headers[strings.ToLower(n)]
 		if !ok {
 			c.report("%s no longer has the header %s", name, n)
 			continue
 		}
-		c.schema(name+"'s header "+n, b.Headers[n].Schema, is.Schema, response)
+		if was.Required && !is.Required {
+			c.report("%s no longer always has the header %s", name, n)
+		}
+		if w, i := serialization("header", was.Style, was.Explode), serialization("header", is.Style, is.Explode); w != i {
+			c.report("%s's header %s is now serialised as %s, and was as %s", name, n, i, w)
+		}
+		c.schema(name+"'s header "+n, was.Schema, is.Schema, response)
 	}
 }
 
@@ -573,14 +585,23 @@ func additionalSchema(s *Schema) *Schema {
 	return s.AdditionalProperties.Schema
 }
 
+// needed returns the properties that a value of s must have when it goes in
+// direction dir: those that s requires, except that huma requires no readOnly
+// property in a request, and no writeOnly one in a response. huma writes
+// readOnly and writeOnly on the property, beside its reference if it has one.
+func needed(s *Schema, dir direction) map[string]bool {
+	out := map[string]bool{}
+	for _, name := range s.Required {
+		if p := s.Properties[name]; p != nil && (dir == request && p.ReadOnly || dir == response && p.WriteOnly) {
+			continue
+		}
+		out[name] = true
+	}
+	return out
+}
+
 func (c *comparer) object(loc string, b, h *Schema, dir direction) {
-	bReq, hReq := map[string]bool{}, map[string]bool{}
-	for _, name := range b.Required {
-		bReq[name] = true
-	}
-	for _, name := range h.Required {
-		hReq[name] = true
-	}
+	bReq, hReq := needed(b, dir), needed(h, dir)
 	for _, name := range sortedKeys(b.Properties) {
 		at := loc + "." + name
 		is, ok := h.Properties[name]

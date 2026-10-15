@@ -186,7 +186,7 @@ func registerDocument(m *api.Mux) {
 					Schema: &huma.Schema{Type: huma.TypeObject, Description: "An OpenAPI 3.1 document"},
 				}},
 			},
-			"304": {Description: "Not Modified: the copy whose ETag the client sent in If-None-Match is current"},
+			"304": api.NotModifiedResponse(),
 		},
 	}, func(_ context.Context, in *documentInput) (*documentOutput, error) {
 		once.Do(func() {

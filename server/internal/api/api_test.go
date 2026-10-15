@@ -598,6 +598,30 @@ func TestETag(t *testing.T) {
 	}
 }
 
+// TestNotModifiedResponse checks that the documented 304 has the headers
+// that NotModified sends, and no others.
+func TestNotModifiedResponse(t *testing.T) {
+	var he huma.HeadersError
+	if !errors.As(NotModified(`"a"`), &he) {
+		t.Fatal("NotModified has no headers")
+	}
+	var sent, documented []string
+	for name := range he.GetHeaders() {
+		sent = append(sent, name)
+	}
+	for name, h := range NotModifiedResponse().Headers {
+		documented = append(documented, name)
+		if h.Schema == nil || h.Schema.Type != huma.TypeString {
+			t.Errorf("the header %s is not documented as a string", name)
+		}
+	}
+	slices.Sort(sent)
+	slices.Sort(documented)
+	if !slices.Equal(sent, documented) {
+		t.Errorf("NotModified sends %q, and NotModifiedResponse documents %q", sent, documented)
+	}
+}
+
 func TestCursor(t *testing.T) {
 	type key struct {
 		Name string `json:"n"`
