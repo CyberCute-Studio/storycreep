@@ -2,8 +2,8 @@
 
 | Field | Value |
 | --- | --- |
-| Plan version | 1.3 |
-| Date | 2026-10-14 |
+| Plan version | 1.4 |
+| Date | 2026-10-15 |
 | Source | [`PRD.md`](PRD.md) version 1.5 (2026-10-14) |
 | Scope | Phase 0 — MVP (§12.1), then Phase 1 — v1 (§12.2) |
 | Status | Living document |
@@ -28,6 +28,8 @@ The PRD is the contract. This plan only decides how the PRD is cut into PRs and 
 
 `Depends on` lists only direct prerequisites. Transitive ones are implied.
 
+The PR that implements an item updates the item's `Status` itself. Once the PR is open and has a number, push a commit to it that sets the status to `done` with a link to the PR, such as `done ([#12](https://github.com/CyberCute-Studio/storycreep/pull/12))`. The status then changes on the main branch exactly when the PR merges, and a PR that is closed without merging leaves it unchanged. Do not leave the status for a follow-up after the merge, because nothing reminds anyone to make it.
+
 ### Slices
 
 Many FRs span the server, the web app, and the Godot addon. The PRD's own package plan (§12.6) splits them the same way: the server narrative model (P4) lands before the canvas (P8), even though FR-EDIT-02 depends on FR-EDIT-01. This plan names a slice after the FR, for example "FR-EDIT-02 (server)".
@@ -44,7 +46,7 @@ Any change to this document (adding, removing, splitting, merging, or reordering
 4. **Phase scope.** MVP scope is fixed by PRD §12.1. Moving an MVP requirement to a later phase needs a PRD amendment first. Pulling a v1 item into the MVP is allowed and is recorded in the change log.
 5. **PRD first.** If implementation shows that a requirement is wrong or unbuildable, amend the PRD (with a document-history row) before changing this plan. Do not quietly diverge here.
 6. **Numbering.** Item numbers are stable. A new item takes the number of the item it follows plus a letter suffix (45a, then 45b), so no existing number or reference changes. A removed item stays in place with status `dropped` and a one-line reason, and nothing may depend on it. A full renumbering is allowed only as an edit of its own that changes nothing else. Item 1's plan check fails on any reference (in `Depends on`, in the text, or in the matrices) to a number that does not exist or to a dropped item.
-7. **Change log.** Every edit adds a row to the change log at the end.
+7. **Change log.** Every edit adds a row to the change log at the end, except an item's status update made by the PR that implements it (item format). Leaving those out keeps PRs that land in parallel from conflicting over the change log.
 
 Rules 1, 3, and 6 are checked mechanically in CI (item 1). The coverage matrix is derived from the **PRD:** lines: an item touches an FR exactly when its PRD line names it, so a change to a PRD line and the matching matrix row land together.
 
@@ -53,6 +55,7 @@ Rules 1, 3, and 6 are checked mechanically in CI (item 1). The coverage matrix i
 These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the plan-level obligations that later items depend on:
 
 - **SC1–SC5:** mutations go through the command pipeline and are authorised. Tenant data is workspace-scoped and RLS-protected. Strings are externalised. New endpoints are in OpenAPI and have a real-PostgreSQL integration test. There are no outbound network calls.
+- **Plan status:** the PR sets its item's status to `done` with a link to itself, in a commit pushed once the PR is open (item format).
 - **Traceability:** every test that proves an acceptance criterion is tagged with its ID, such as `FR-EDIT-02/AC3` (item 2).
 - **Commands:** a new command type is registered with capability, limit keys, touched entity kinds, and an inverse, or it is marked non-undoable. It joins the undo property test (item 37).
 - **Permissions:** a new operation from PRD §5.6 adds its rows to the permission-matrix test (item 20). A workspace-scoped operation also joins the guest test of FR-TEN-04 AC4 (item 25), and a mutating route joins the viewer test of FR-TEN-03 AC3. Item 117 checks that both tests cover every MVP operation.
@@ -68,7 +71,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### Milestone A — Foundation
 
 ### 1. Monorepo scaffold, CI matrix, and project policies
-**Status:** todo · **Depends on:** —
+**Status:** done ([#1](https://github.com/CyberCute-Studio/storycreep/pull/1)) · **Depends on:** —
 **PRD:** §10.7, §9.9, NFR-Q-07, ADR-011, NFR-SEC-16 (partial), NFR-SEC-17, §4.0 documentation check
 - Repository layout from §10.7: `/server` (Go module), `/web/app`, `/web/site`, `/web/shared` (pnpm workspaces, §10.9), `/godot`, `/schema`, `/deploy`, `/docs`.
 - Biome for both bundles, `.editorconfig`, `.gitattributes` forcing LF.
@@ -80,7 +83,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** CI is green on all three OSes. The docs and plan checks fail on a fixture with a cycle, an unknown ID, a forward dependency, a missing FR, a missing performance target, a matrix row that disagrees with the item lines, or a reference to a missing or dropped item.
 
 ### 2. Requirement traceability report
-**Status:** todo · **Depends on:** 1
+**Status:** done ([#4](https://github.com/CyberCute-Studio/storycreep/pull/4)) · **Depends on:** 1
 **PRD:** NFR-Q-02, M-Q-01
 - A tagging convention for Go tests, Vitest, Playwright, and GUT that names `FR-…/ACn` and `NFR-…` IDs.
 - A generator that maps requirement → tests and lists the acceptance criteria of the current phase that no test covers. It is published as a CI artifact.
@@ -89,7 +92,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** the report lists a tagged sample test and shows every other MVP AC as a gap.
 
 ### 3. Configuration, capabilities, logging, and CLI frame
-**Status:** todo · **Depends on:** 1
+**Status:** done ([#3](https://github.com/CyberCute-Studio/storycreep/pull/3)) · **Depends on:** 1
 **PRD:** FR-ADMIN-01 (AC1, AC3), §10.3, FR-ADMIN-06 (frame), NFR-OBS-01, NFR-SEC-14 (redaction)
 - Configuration from environment variables plus an optional file. Every key is documented with its default and validated at startup.
 - `STORYCREEP_MODE` is resolved once into the capabilities struct (§10.3). A lint test asserts it is read in exactly one package.
@@ -100,7 +103,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-ADMIN-01 AC1 and AC3 pass, and `validate-config` reports the offending key.
 
 ### 4. Identifier encoding (Go and TypeScript)
-**Status:** todo · **Depends on:** 1
+**Status:** done ([#2](https://github.com/CyberCute-Studio/storycreep/pull/2)) · **Depends on:** 1
 **PRD:** §5.2, ADR-021
 - UUIDv7 generation. Prefixed Crockford base32 encode and decode, with prefix validation per entity type.
 - The same utility in Go and in `/web/shared`, tested against shared vectors in `/schema/ids/`.
@@ -1521,3 +1524,4 @@ These record where the PRD left a choice open, or where this plan reads the PRD 
 | 1.1 | 2026-10-14 | Resolved N1–N7 with the maintainer and moved to PRD 1.5. Items 1, 20, 77, 108, 111, and 122 updated to match. Item 122 is now the Atom feed only, because `/changelog` generation moved to item 108. No change to ordering or dependencies. |
 | 1.2 | 2026-10-14 | Fixes from a review of plan 1.1 and PRD 1.5, with the PRD 1.5 amendments extended to match. No items added, removed, or renumbered. **Dependencies:** item 119 depends on every MVP item (1–118). Item 118 gains 9, 72, 75, 81, 92, 101, and 116. Item 76 gains 47 and 71; item 90 gains 71; item 110 now depends on 75 and 87; item 113 on 84; item 114 gains 83; item 131 drops 122. **Criteria moved to the item where their prerequisites exist:** FR-ADMIN-04 AC1/AC3 to 6; FR-ENT-02 AC3 to 35; FR-AUTH-04 AC7 to 83; FR-EDIT-03 AC1 to 71 and 76; FR-EDIT-04 AC2 and FR-EXPR-03 AC2 to 76; the no-edge half of FR-DEP-01 AC4 to 49; FR-SNAP-02 AC1 to 99; the docs half of FR-PUB-02 AC3 to 109. **Criteria that had no item:** FR-EDIT-04 AC1 (71, 103), FR-EDIT-05 AC1 (62, 78) and AC3 (71), FR-EDIT-06 AC3 (83), FR-COMP-03 AC3 (105), FR-ADMIN-06 AC1 (113), FR-ENT-01 AC1 (117), and the new PRD criteria FR-TEN-03 AC4 (20), FR-GDPR-02 AC4 (111), FR-PUB-01 AC5 (108), FR-DATA-01 AC12 (84), and FR-EDIT-12 AC3 (127). **Other:** the TypeScript draft projection for play mode (71, N10); the synthetic schema version's numbering and location (77, N2); the `members` limit (23); `pnpm audit` (1, 117). Notes N2–N4, N7, and N8 updated, and N9–N10 added. The coverage matrix is now derived from the items' PRD lines, and item 1 checks that they agree. |
 | 1.3 | 2026-10-14 | Fixes from a second review of plan 1.2 and PRD 1.5, with the PRD 1.5 amendments extended to match. No items added, removed, or renumbered. **Rules:** item numbers are now stable (suffixed inserts, `dropped` instead of removal), and item 1 checks references (rule 6). A performance table assigns each NFR-PERF target to the item that measures it, and item 1 checks it (rule 3). **Dependencies:** item 76 drops 71, so the serializer no longer waits for the canvas; the projection cross-check moves to item 89, which gains 71 and 76. **Criteria moved to the item where their prerequisites exist:** FR-TEXT-01 AC1 at the API boundary to 36; FR-DEP-01 AC3 to 67, with usage jump-to links in 61; FR-TEN-03 AC1/AC3 and FR-TEN-04 AC4 are completed by 117 over the full MVP operation set, with the audit-log case in 125. **Criteria halves that had no item:** FR-EDIT-03 AC4 publish gate (78), FR-PROJ-02 AC2 and FR-TEXT-02 AC2 validation halves (48), FR-COMP-02 AC2 and the FR-TEXT-02 AC2 blocking half (47), FR-TEXT-03 AC2 (76), the editor half of FR-VAR-02 AC1 (67). **Scope ownership:** resource routes land with their features (16–26); item 27 only gates and attaches the rate-limit buckets built in 15 and keyed by token in 26. **Entitlements:** one `members` enforcement site, including `grant-role` (23); the plan file holds exactly the ADR-010 keys and the `boards` limit is dropped (21, 30, N14). **New PRD criteria and decisions:** FR-API-01 AC3 pre-release form (7, 119, N11); pending-deletion owners (111, N12); registration refused before setup (17, N13); migration immutability (5); the annotation item shape and the durable AC12 fixture (83, 84, 127, N15); the synthetic schema version is injected by tests and checked out of the addon zip (77, 107); authoring tables register with export and import together (standing checklist, 84). |
+| 1.4 | 2026-10-15 | **Status upkeep:** the PR that implements an item now sets the item's status to `done` with a link to itself, in a commit pushed once the PR is open, and that status update needs no change log row (item format, rule 7, standing checklist). Items 1–4 are marked done with links to their PRs, which merged with the status still `todo`. No items added, removed, or renumbered. |
