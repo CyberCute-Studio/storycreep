@@ -15,8 +15,8 @@ permissions:
 
 # A new push to a pull request cancels its running checks. A run on main,
 # including the scheduled audit, is never cancelled once it starts. Later runs
-# queue behind it, and GitHub keeps only the newest queued run, which tests
-# everything the cancelled ones would have.
+# queue behind it, and GitHub keeps only the newest queued run, which tests,
+# and publishes, everything the cancelled ones would have.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -277,14 +277,17 @@ jobs:
       - name: pnpm audit
         run: pnpm audit --audit-level high
 
-  # PRD FR-ADMIN-07 AC2: every commit on the main branch publishes the image
-  # for both platforms, once the checks have passed, as
-  # ghcr.io/cybercute-studio/storycreep:main and :sha-<commit>. Release tags
-  # come with the release workflow (plan item 119). GitHub creates the package
-  # as private, and a maintainer makes it public once (CONTRIBUTING.md).
+  # PRD FR-ADMIN-07 AC2: every run on the main branch publishes the image of
+  # its commit for both platforms, once the checks have passed, as
+  # ghcr.io/cybercute-studio/storycreep:main and :sha-<commit>. That is every
+  # run, not only a push's: a scheduled or manual run that takes the place of
+  # a queued push's run publishes its commit, and the weekly run rebuilds the
+  # image on its base images' updates. Release tags come with the release
+  # workflow (plan item 119). GitHub creates the package as private, and a
+  # maintainer makes it public once (CONTRIBUTING.md).
   publish:
     name: Publish the image
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     needs: [test, database, migrations, image]
     runs-on: ubuntu-latest
     permissions:

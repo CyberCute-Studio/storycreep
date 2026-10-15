@@ -229,18 +229,35 @@ func envExampleVars(t *testing.T) []string {
 	return names
 }
 
+// devComposeFile is the development compose file, relative to the deploy
+// directory.
+var devComposeFile = filepath.Join("dev", "docker-compose.yml")
+
 // TestDevComposeFile checks the development compose file (PRD §10.8): the
 // database's port is published, on the loopback interface only, and the
 // server is built from the mounted source tree, and rebuilt and restarted
-// when it changes. The file shares its directory, and so its .env, with
-// docker-compose.yml, whose instance that .env configures, and must stay
-// apart from that instance.
+// when it changes. It must stay apart from an instance of
+// docker-compose.yml, even one run from the deploy directory.
 func TestDevComposeFile(t *testing.T) {
-	f, text := readCompose(t, "docker-compose.dev.yml")
+	f, _ := readCompose(t, devComposeFile)
 
-	// A COMPOSE_PROJECT_NAME in the .env renames this file's project too, so
-	// the volumes are named here, or this file's database could be given the
-	// instance's volume, which "down -v" would delete.
+	// Docker Compose reads the .env of a compose file's directory, where a
+	// COMPOSE_PROJECT_NAME renames the project, so a compose file next to
+	// docker-compose.yml would join the project of the instance that the
+	// .env configures, and replace its containers.
+	others, err := filepath.Glob(filepath.Join(deployDir, "*.y*ml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range others {
+		if filepath.Base(p) != "docker-compose.yml" {
+			t.Errorf("%s shares the deploy directory, and so its .env, with docker-compose.yml; give it a directory "+
+				"of its own", p)
+		}
+	}
+	// A COMPOSE_PROJECT_NAME in the shell renames this file's project too,
+	// so the volumes are named here, or this file's database could be given
+	// an instance's volume, which "down -v" would delete.
 	if f.Name != devProjectName {
 		t.Errorf("the development compose project is named %q, want %s", f.Name, devProjectName)
 	}
@@ -248,14 +265,6 @@ func TestDevComposeFile(t *testing.T) {
 		settings, _ := v.(map[string]any)
 		if got, want := settings["name"], devProjectName+"_"+name; got != want {
 			t.Errorf("the volume %s is named %v, want %s, whatever the project's name", name, got, want)
-		}
-	}
-	documented := envExampleVars(t)
-	required, optional := interpolatedVars(text)
-	for _, name := range append(required, optional...) {
-		if slices.Contains(documented, name) {
-			t.Errorf("the development compose file reads %s, which .env.example sets for docker-compose.yml's "+
-				"instance, and Docker Compose reads from the same .env for both", name)
 		}
 	}
 
@@ -271,12 +280,12 @@ func TestDevComposeFile(t *testing.T) {
 			t.Errorf("app publishes %q on every interface, want the loopback interface only", p)
 		}
 	}
-	if !slices.Contains(app.Volumes, "..:/src:ro") {
+	if !slices.Contains(app.Volumes, "../..:/src:ro") {
 		t.Errorf("app mounts %q, want the repository at /src", app.Volumes)
 	}
-	if app.Develop == nil || len(app.Develop.Watch) != 1 || app.Develop.Watch[0].Path != "../server" ||
+	if app.Develop == nil || len(app.Develop.Watch) != 1 || app.Develop.Watch[0].Path != "../../server" ||
 		app.Develop.Watch[0].Action != "restart" {
-		t.Errorf("app does not restart when ../server changes: %+v", app.Develop)
+		t.Errorf("app does not restart when ../../server changes: %+v", app.Develop)
 	}
 	// The server must be the container's first process, which receives the
 	// SIGTERM that stops it: go run would keep the signal, and exit, and the

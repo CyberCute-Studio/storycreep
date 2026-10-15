@@ -2,8 +2,10 @@ package deploy
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -64,26 +66,43 @@ func TestComposeUp(t *testing.T) {
 	}
 
 	project := "storycreep-test-" + strings.ToLower(rand.Text()[:8])
-	// compose runs docker compose, and returns its standard output, which the
-	// test parses, without the warnings it writes to standard error.
-	compose := func(args ...string) (string, error) {
+	// run runs docker compose until ctx ends, and returns its standard
+	// output, which the test parses, without the warnings it writes to
+	// standard error.
+	run := func(ctx context.Context, args ...string) (string, error) {
 		args = append([]string{"compose", "--project-name", project, "--project-directory", dir}, args...)
-		cmd := exec.Command("docker", args...)
+		cmd := exec.CommandContext(ctx, "docker", args...)
 		cmd.Env = env
+		// docker runs compose as a child process, which may hold the output
+		// open after docker is killed.
+		cmd.WaitDelay = 10 * time.Second
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		err := cmd.Run()
 		if err != nil {
-			err = fmt.Errorf("docker %s: %w\n%s%s", strings.Join(args, " "), err, stdout.Bytes(), stderr.Bytes())
+			err = fmt.Errorf("docker %s: %w\n%s%s", strings.Join(args, " "), errors.Join(err, ctx.Err()),
+				stdout.Bytes(), stderr.Bytes())
 		}
 		return stdout.String(), err
 	}
+	// The test's commands end 2 minutes before go test's timeout, whose panic
+	// would skip the cleanup and leave the project's containers and volumes
+	// behind, so that the cleanup has those 2 minutes to remove them.
+	ctx := context.Background()
+	if deadline, ok := t.Deadline(); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline.Add(-2*time.Minute))
+		defer cancel()
+	}
+	compose := func(args ...string) (string, error) {
+		return run(ctx, args...)
+	}
 	t.Cleanup(func() {
 		if t.Failed() {
-			logs, _ := compose("logs", "--no-color")
+			logs, _ := run(context.Background(), "logs", "--no-color")
 			t.Logf("the services' logs:\n%s", logs)
 		}
-		if _, err := compose("down", "--volumes", "--remove-orphans"); err != nil {
+		if _, err := run(context.Background(), "down", "--volumes", "--remove-orphans"); err != nil {
 			t.Error(err)
 		}
 	})

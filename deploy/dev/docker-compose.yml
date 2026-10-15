@@ -1,25 +1,29 @@
 # A development environment (PRD §10.8): PostgreSQL, with its port published
 # on this machine, and the server, built from the source tree, and rebuilt
-# and restarted whenever its sources change. From the repository's root:
+# and restarted whenever its sources change. It needs Docker Compose 2.32.0
+# or newer, for the watch rule's restart action. From the repository's root:
 #
-#   docker compose -f deploy/docker-compose.dev.yml up --watch
+#   docker compose -f deploy/dev/docker-compose.yml up --watch
 #
 # The server is at http://localhost:8080, its /metrics at
 # http://localhost:9090/metrics, and the database at localhost:5432. To run
 # the server natively instead, start only the database, with "up -d db", and
-# give the server the URLs in README.md, next to this file.
+# give the server the URLs in deploy/README.md.
 #
 # The database's password defaults to storycreep-dev, because its port is
 # published on this machine's loopback interface only, and
-# STORYCREEP_DEV_DB_PASSWORD sets another. Never use this file for a
-# deployment; docker-compose.yml is the one for that.
+# STORYCREEP_DEV_DB_PASSWORD sets another. STORYCREEP_DEV_PORT,
+# STORYCREEP_DEV_ADMIN_PORT, and STORYCREEP_DEV_DB_PORT move the ports. Never
+# use this file for a deployment; deploy/docker-compose.yml is the one for
+# that.
 #
-# Docker Compose reads the .env next to this file, which is the .env of
-# docker-compose.yml too. So this file reads none of that file's settings,
-# such as POSTGRES_PASSWORD, and names its volumes itself: a
-# COMPOSE_PROJECT_NAME there renames this file's project too, and would give
-# its database the volume of the instance that the name is for, which
-# "down -v" would delete.
+# This file has a directory of its own, so that Docker Compose reads the .env
+# next to it, and not deploy/.env, which configures an instance of
+# deploy/docker-compose.yml: a COMPOSE_PROJECT_NAME there would make this
+# file's project that instance's, whose containers this file's would then
+# replace. A COMPOSE_PROJECT_NAME in the shell still renames this project,
+# so the volumes are named here, rather than after the project, which keeps
+# them from being an instance's volumes, which "down -v" would delete.
 
 name: storycreep-dev
 
@@ -69,7 +73,7 @@ services:
       GOFLAGS: -buildvcs=false
       GOTOOLCHAIN: local
     volumes:
-      - ..:/src:ro
+      - ../..:/src:ro
       - go-modules:/go/pkg/mod
       - go-build:/root/.cache/go-build
     stop_grace_period: 30s
@@ -77,7 +81,7 @@ services:
       watch:
         # The sources are mounted, so a change needs only a restart, which
         # builds them again.
-        - path: ../server
+        - path: ../../server
           action: restart
           ignore:
             - "**/*_test.go"
