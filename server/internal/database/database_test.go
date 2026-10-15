@@ -333,6 +333,22 @@ func TestStart(t *testing.T) {
 		}
 	})
 
+	// Without auto-migrate, Start refuses a database that a newer version
+	// of Storycreep migrated, as Migrate does, rather than serving it.
+	t.Run("without auto-migrate on a newer database", func(t *testing.T) {
+		t.Parallel()
+		d := dbtest.Empty(t)
+		newer := withMigrations(t, map[string]string{"90001_newer.sql": "CREATE TABLE newer (x int);"})
+		if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: newer}); err != nil {
+			t.Fatal(err)
+		}
+		_, err := database.Start(ctx, &config.Config{DatabaseURL: d.AppURL}, database.StartOptions{})
+		var uerr *database.UnknownMigrationsError
+		if !errors.As(err, &uerr) || !slices.Equal(uerr.Versions, []int64{90001}) {
+			t.Errorf("Start returned %v, want an *UnknownMigrationsError for 90001", err)
+		}
+	})
+
 	t.Run("auto-migrate of another database", func(t *testing.T) {
 		t.Parallel()
 		app, other := dbtest.Empty(t), dbtest.Empty(t)

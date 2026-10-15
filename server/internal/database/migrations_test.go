@@ -24,7 +24,9 @@ func fstestFS(names ...string) fs.FS {
 // TestMigrationFiles checks the rules for the embedded migrations: each is
 // named NNNNN_description.sql, the versions count up from 1 without a gap,
 // each is forward-only, with an Up section and no Down section (PRD
-// FR-ADMIN-04), and the directory holds no file that is not embedded.
+// FR-ADMIN-04), each runs in a transaction, so that a failed one leaves the
+// database at the one before (FR-ADMIN-04 AC3), and the directory holds no
+// file that is not embedded.
 // Numbered versions make two pull requests that add the same version collide
 // in CI, where goose refuses two migrations with one version, instead of
 // applying in different orders on different databases.
@@ -63,6 +65,9 @@ func TestMigrationFiles(t *testing.T) {
 				up = true
 			case strings.HasPrefix(line, "-- +goose Down"):
 				t.Errorf("%s: has a Down section; migrations are forward-only", name)
+			case strings.HasPrefix(line, "-- +goose NO TRANSACTION"):
+				t.Errorf("%s: runs outside a transaction; each migration runs in its own, so that a failed one "+
+					"leaves no trace", name)
 			}
 		}
 		f.Close()

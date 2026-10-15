@@ -7,6 +7,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -35,7 +38,8 @@ var reservedDatabaseParams = []string{"user", "password", "dbname", "database"}
 var secretDatabaseParams = []string{"sslpassword"}
 
 // ParseDatabaseURL parses a PostgreSQL connection URL with a user and a
-// database. Its errors never quote the URL, which may hold a password.
+// database, and checks that pgx, which the server connects with, can use it.
+// Its errors never quote the URL, which may hold a password.
 func ParseDatabaseURL(v string) (DatabaseURL, error) {
 	fail := func(msg string) (DatabaseURL, error) {
 		return DatabaseURL{}, hiddenValueError{errors.New(msg)}
@@ -47,10 +51,16 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 		return fail("must start with postgres:// or postgresql://, in lowercase")
 	}
 	// pgx reads a URL as libpq does, which ends the user and password at the
-	// first @, where url.Parse ends them at the last one. With a second @,
-	// the server would log in with the start of the password, at a host
-	// made of the rest, and the connection error would show that rest.
+	// first @ or /, so a ? or # before that @ is part of them, where
+	// url.Parse would end them there and fail to read the rest.
 	_, rest, _ := strings.Cut(v, "://")
+	if i := strings.IndexAny(rest, "@/"); i >= 0 && rest[i] == '@' && strings.ContainsAny(rest[:i], "?#") {
+		return fail("has a ? or # in its user or password that is not percent-encoded; write them as %3F and %23")
+	}
+	// Where url.Parse ends the user and password at the last @, libpq ends
+	// them at the first. With a second @, the server would log in with the
+	// start of the password, at a host made of the rest, and the connection
+	// error would show that rest.
 	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
 		rest = rest[:i]
 	}
@@ -91,11 +101,20 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 				"as in postgres://storycreep:password@db/storycreep")
 		}
 	}
+	// The server connects with what pgx reads from the URL, so a value that
+	// pgx refuses, such as sslmode=required or a certificate file that
+	// cannot be read, is invalid here too, rather than when the server
+	// connects. pgx also reads the libpq environment variables and the files
+	// the URL names, as it does then.
+	cfg, err := pgxpool.ParseConfig(v)
+	if err != nil {
+		return fail(pgxReason(err))
+	}
 
 	d := DatabaseURL{
 		url:      secret.New(v),
-		user:     u.User.Username(),
-		database: strings.TrimPrefix(u.Path, "/"),
+		user:     cfg.ConnConfig.User,
+		database: cfg.ConnConfig.Database,
 	}
 	userinfo := url.User(d.user).String()
 	if pw, ok := u.User.Password(); ok && pw != "" {
@@ -107,6 +126,18 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 		d.display += "?" + redactQuery(u.RawQuery)
 	}
 	return d, nil
+}
+
+// pgxReason returns why pgx refused a URL, without the URL, which pgx's
+// errors quote with only the passwords it recognizes masked.
+func pgxReason(err error) string {
+	var perr *pgconn.ParseConfigError
+	if !errors.As(err, &perr) {
+		return "the server's PostgreSQL client cannot read it"
+	}
+	c := *perr
+	c.ConnString = ""
+	return strings.TrimPrefix(c.Error(), "cannot parse ``: ")
 }
 
 // redactQuery returns the query q, in its original order, with the values of

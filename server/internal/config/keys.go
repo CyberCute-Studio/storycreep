@@ -128,17 +128,19 @@ var keys = []key{
 		name: "STORYCREEP_DATABASE_URL",
 		doc: "The PostgreSQL database, and the login the server connects to it as: " +
 			"`postgres://user:password@host:port/database`, with the scheme (`postgres` or `postgresql`) in " +
-			"lowercase and characters such as `@`, `:`, and `/` in the password percent-encoded. The login must be " +
-			"an ordinary role. The server refuses to use one that is a superuser, has `BYPASSRLS`, `CREATEROLE`, or " +
-			"`REPLICATION`, or owns objects in the database, or that is a member of a role that does, of one of " +
-			"the server's privileged roles, or of `pg_execute_server_program`, `pg_read_server_files`, or " +
-			"`pg_write_server_files`, which give access to the database server's files and programs, because " +
-			"row-level security would not hold it. Migrations create the login if it does not exist, set its " +
-			"password to the one the server logs in with (this URL's, or else the one `PGPASSWORD`, a service " +
-			"file, or a password file supplies), and grant it the `storycreep_app` role. Query parameters, such as " +
-			"`sslmode`, are read as libpq reads them, with an `=` in a value percent-encoded as `%3D`, and the " +
-			"libpq environment variables, such as `PGSSLMODE`, fill in settings the URL leaves out. The password " +
-			"is shown as `" + secret.Redacted + "`.",
+			"lowercase and characters such as `@`, `:`, `/`, `?`, and `#` in the password percent-encoded. The " +
+			"login must be an ordinary role. The server refuses to use one that is a superuser, has `BYPASSRLS`, " +
+			"`CREATEROLE`, or `REPLICATION`, or owns objects in the database, or that is a member of a role that " +
+			"does, of one of the server's privileged roles, or of `pg_execute_server_program`, " +
+			"`pg_read_server_files`, or `pg_write_server_files`, which give access to the database server's files " +
+			"and programs, because row-level security would not hold it. Migrations create the login if it does " +
+			"not exist, set its password to the one the server logs in with (this URL's, or else the one " +
+			"`PGPASSWORD`, a service file, or a password file supplies), and grant it the `storycreep_app` role. " +
+			"Query parameters, such as `sslmode`, are read as libpq reads them, with an `=` in a value " +
+			"percent-encoded as `%3D`, and the libpq environment variables, such as `PGSSLMODE`, fill in settings " +
+			"the URL leaves out. The URL is checked as the server's connections read it, so a setting they could " +
+			"not use, such as an unknown `sslmode` or a certificate file that cannot be read, is an error. The " +
+			"password is shown as `" + secret.Redacted + "`.",
 		valuesDoc: "A `postgres://` URL",
 		example:   "postgres://storycreep:password@db:5432/storycreep",
 		required:  true,

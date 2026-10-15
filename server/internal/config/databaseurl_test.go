@@ -73,6 +73,10 @@ func TestInvalidDatabaseURL(t *testing.T) {
 		// with "pw" at the host "<password>@db".
 		{"postgres://app:pw@" + password + "@db/sc", "not percent-encoded; write it as %40"},
 		{"postgres://app@" + password + "@db/sc?sslmode=require", "not percent-encoded"},
+		// libpq reads a ? or # before the @ as part of the password, where
+		// url.Parse would read a query or a fragment.
+		{"postgres://app:pw#" + password + "@db/sc", "has a ? or # in its user or password that is not percent-encoded"},
+		{"postgres://app:12?" + password + "@db/sc", "has a ? or # in its user or password"},
 		// libpq, and pgx with it, refuses these, which url.ParseQuery accepts.
 		{"postgres://app:" + password + "@db/sc?options=-c%20search_path=x", "percent-encoded as %3D"},
 		{"postgres://app:" + password + "@db/sc?sslmode", "must be name=value"},
@@ -81,6 +85,13 @@ func TestInvalidDatabaseURL(t *testing.T) {
 		{"postgres://app:" + password + "@db/sc?user=other", "must not set user"},
 		{"postgres://app:" + password + "@db/sc?dbname=other", "must not set dbname"},
 		{"postgres://app:" + password + "@db/sc?database=other", "must not set database"},
+		// pgx, which the server connects with, refuses these, which the
+		// checks above accept.
+		{"postgres://app:" + password + "@db/sc?sslmode=required", "sslmode is invalid"},
+		{"postgres://app:" + password + "@db/sc?pool_max_conns=many", "cannot parse pool_max_conns"},
+		{"postgres://app:" + password + "@db/my db", "unexpected spaces"},
+		{"postgres://app:" + password + "@db:0/sc", "invalid port"},
+		{"postgres://app:" + password + "@db/sc?sslmode=verify-full&sslrootcert=no-such-root.crt", "unable to read CA file"},
 	}
 	for _, tt := range tests {
 		for _, key := range []string{"STORYCREEP_DATABASE_URL", "STORYCREEP_DATABASE_ADMIN_URL"} {
@@ -93,7 +104,8 @@ func TestInvalidDatabaseURL(t *testing.T) {
 			if !strings.Contains(msg, tt.want) {
 				t.Errorf("%s=%s: message %q should say %q", key, tt.in, msg, tt.want)
 			}
-			if strings.Contains(msg, password) || strings.Contains(msg, "zz") {
+			// pgx's own errors quote the URL between backticks.
+			if strings.Contains(msg, password) || strings.Contains(msg, "zz") || strings.Contains(msg, "`") {
 				t.Errorf("%s=%s: the message repeats the URL: %s", key, tt.in, msg)
 			}
 		}

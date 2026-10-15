@@ -115,9 +115,10 @@ func (e *MigrationError) Unwrap() error { return e.Err }
 // exactly once (PRD FR-ADMIN-04). The admin login must be a superuser,
 // because the migrations create roles.
 //
-// A failed migration is a *MigrationError, and a database that a newer
-// version of Storycreep migrated is an *UnknownMigrationsError; Migrate
-// changes nothing then.
+// A failed migration is a *MigrationError: the migrations before it stay
+// applied, and the application login is left as it was. A database that a
+// newer version of Storycreep migrated is an *UnknownMigrationsError, and
+// Migrate changes nothing then.
 func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOptions) (MigrateResult, error) {
 	res, db, err := migrate(ctx, admin, app, opts)
 	if db != nil {
