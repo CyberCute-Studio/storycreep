@@ -117,7 +117,8 @@ func (e *MigrationError) Unwrap() error { return e.Err }
 // A failed migration is a *MigrationError: the migrations before it stay
 // applied, and the application login is left as it was. A database that a
 // newer version of Storycreep migrated is an *UnknownMigrationsError, and
-// Migrate changes nothing then.
+// Migrate changes nothing then, nor when the application login has the name
+// of one of the server's roles.
 func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOptions) (MigrateResult, error) {
 	res, db, err := migrate(ctx, admin, app, opts)
 	if db != nil {
@@ -135,6 +136,12 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	}
 	if !app.IsSet() {
 		return MigrateResult{}, nil, errors.New("STORYCREEP_DATABASE_URL is not set")
+	}
+	// The name is checked before anything changes: the first migration makes
+	// the server's roles unable to log in, so it would lock out a login that
+	// had the name of one of them.
+	if err := checkLoginName(app.User()); err != nil {
+		return MigrateResult{}, nil, err
 	}
 	ms, err := loadMigrations(opts.Migrations)
 	if err != nil {
@@ -169,8 +176,12 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	// migrates, and then sits idle while goose migrates on connections of its
 	// own. Timeouts that the server, the database, or the admin login set for
 	// sessions would end the wait early, or end the idle session and with it
-	// the lock, so that another instance could migrate at the same time.
-	if _, err := conn.Exec(ctx, "SET lock_timeout = 0; SET statement_timeout = 0; SET idle_session_timeout = 0"); err != nil {
+	// the lock, so that another instance could migrate at the same time. The
+	// wait runs in a transaction of its own, so PostgreSQL 17's
+	// transaction_timeout ends it too. Each of them that the server has is
+	// switched off.
+	if _, err := conn.Exec(ctx, `SELECT set_config(name, '0', false) FROM pg_settings
+		WHERE name IN ('lock_timeout', 'statement_timeout', 'idle_session_timeout', 'transaction_timeout')`); err != nil {
 		return MigrateResult{}, nil, fmt.Errorf("prepare the session for the migration lock: %w", err)
 	}
 	// pg_advisory_lock waits for as long as another instance migrates. If ctx
@@ -193,11 +204,20 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	defer gooseDB.Close()
 	var res MigrateResult
 	res.Applied, err = runGoose(ctx, gooseDB, ms)
-	// The version is read on this connection, which a failed migration
-	// leaves usable.
-	applied, verr := appliedVersions(context.WithoutCancel(ctx), conn)
+	// The version is read again on this connection, which a failed migration
+	// leaves usable. If the connection failed too, as when the database
+	// server restarted, the database has the migrations it had before and the
+	// ones goose applied, because no other instance migrated while this one
+	// held the lock.
+	after, verr := appliedVersions(context.WithoutCancel(ctx), conn)
+	if verr == nil {
+		applied = after
+	}
 	if len(applied) > 0 {
 		res.Version = applied[len(applied)-1]
+	}
+	for _, m := range res.Applied {
+		res.Version = max(res.Version, m.Version)
 	}
 	var merr *MigrationError
 	if errors.As(err, &merr) {

@@ -117,17 +117,12 @@ func (d *Database) Open(t testing.TB) *database.DB {
 // the test ends.
 func (d *Database) Admin(t testing.TB) *pgx.Conn {
 	t.Helper()
-	return connect(t, d.AdminURL)
+	return Connect(t, d.AdminURL)
 }
 
 // Connect returns a connection to the database at url, closed when the test
 // ends.
 func Connect(t testing.TB, url config.DatabaseURL) *pgx.Conn {
-	t.Helper()
-	return connect(t, url)
-}
-
-func connect(t testing.TB, url config.DatabaseURL) *pgx.Conn {
 	t.Helper()
 	conn, err := pgx.Connect(context.Background(), url.Reveal())
 	if err != nil {

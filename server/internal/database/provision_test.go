@@ -284,14 +284,26 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 	}
 }
 
+// TestProvisionRefusesReservedRoles checks that migrating refuses an
+// application login named after one of the server's roles, or with
+// PostgreSQL's reserved prefix, before it applies any migration: the first
+// migration would make a login with the name of one of the server's roles
+// unable to log in.
 func TestProvisionRefusesReservedRoles(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := dbtest.New(t)
+	d := dbtest.Empty(t)
 	for _, login := range []string{"storycreep_app", "storycreep_maintenance", "storycreep_definer", "pg_monitor"} {
 		_, err := database.Migrate(ctx, d.AdminURL, d.URL(t, login, "pw"), database.MigrateOptions{})
 		if err == nil || !strings.Contains(err.Error(), "reserved") {
 			t.Errorf("%s: Migrate returned %v, want a refusal", login, err)
 		}
+	}
+	var exists bool
+	if err := d.Admin(t).QueryRow(ctx, "SELECT to_regclass('goose_db_version') IS NOT NULL").Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Errorf("a refused run applied migrations")
 	}
 }

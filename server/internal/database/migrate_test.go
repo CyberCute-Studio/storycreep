@@ -3,6 +3,7 @@ package database_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"slices"
@@ -220,29 +221,48 @@ func TestMigrateWaitsForTheLock(t *testing.T) {
 // database's sessions neither end Migrate's wait for the migration lock nor
 // end the idle session that holds the lock while goose migrates on
 // connections of its own, which would release the lock to another instance.
+// Each timeout is shorter than the wait.
 func TestMigrateLockIgnoresSessionTimeouts(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := dbtest.Empty(t)
 	ident := pgx.Identifier{d.Name}.Sanitize()
 	admin := d.Admin(t)
-	for _, stmt := range []string{
-		"ALTER DATABASE " + ident + " SET lock_timeout = '100ms'",
-		"ALTER DATABASE " + ident + " SET idle_session_timeout = '300ms'",
-	} {
-		if _, err := admin.Exec(ctx, stmt); err != nil {
+	timeouts := map[string]string{
+		"lock_timeout":         "100ms",
+		"statement_timeout":    "200ms",
+		"idle_session_timeout": "300ms",
+		// PostgreSQL 17 and later only.
+		"transaction_timeout": "400ms",
+	}
+	for name, value := range timeouts {
+		var exists bool
+		if err := admin.QueryRow(ctx, "SELECT EXISTS (SELECT FROM pg_settings WHERE name = $1)", name).
+			Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			continue
+		}
+		if _, err := admin.Exec(ctx, "ALTER DATABASE "+ident+" SET "+name+" = '"+value+"'"); err != nil {
 			t.Fatal(err)
 		}
 	}
+	// noTimeouts switches the timeouts off for the session, or with local
+	// for the transaction, as the holder and the slow migration need.
+	noTimeouts := func(local bool) string {
+		return fmt.Sprintf(`SELECT set_config(name, '0', %t) FROM pg_settings
+			WHERE name IN ('lock_timeout', 'statement_timeout', 'idle_session_timeout', 'transaction_timeout');`, local)
+	}
 	// The holder connects after the settings, and keeps its own session.
 	holder := d.Admin(t)
-	if _, err := holder.Exec(ctx, "SET idle_session_timeout = 0"); err != nil {
+	if _, err := holder.Exec(ctx, noTimeouts(false)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := holder.Exec(ctx, "SELECT pg_advisory_lock($1)", database.MigrationLock); err != nil {
 		t.Fatal(err)
 	}
-	slow := withMigrations(t, map[string]string{"90001_slow.sql": "SELECT pg_sleep(1);"})
+	slow := withMigrations(t, map[string]string{"90001_slow.sql": noTimeouts(true) + "\nSELECT pg_sleep(1);"})
 	done := make(chan error, 1)
 	go func() {
 		_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: slow})
@@ -306,6 +326,31 @@ func TestFailedMigration(t *testing.T) {
 	res, err = database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: withMigrations(t, fixed)})
 	if err != nil || !slices.Equal(versionsOf(res.Applied), []int64{90002}) {
 		t.Errorf("the fixed migration: applied %v, %v; want 90002", res.Applied, err)
+	}
+}
+
+// TestFailedMigrationWithoutTheLockSession checks that a failed migration
+// reports the version the database stays at also when the session that holds
+// the migration lock ends with it, as when the database server restarts.
+func TestFailedMigrationWithoutTheLockSession(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	fsys := withMigrations(t, map[string]string{
+		"90001_good.sql": "CREATE TABLE good (x int);",
+		// Migrate's session is the only one that holds an advisory lock in
+		// the database. The call waits until the session has ended.
+		"90002_bad.sql": "SELECT pg_terminate_backend(pid, 10000) FROM pg_locks\n" +
+			"WHERE locktype = 'advisory' AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database());\n" +
+			"SELECT 1/0;",
+	})
+
+	res, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: fsys})
+	var merr *database.MigrationError
+	if !errors.As(err, &merr) || merr.Version != 90002 || merr.DatabaseVersion != 90001 || res.Version != 90001 ||
+		!strings.Contains(err.Error(), "stays at version 90001") {
+		t.Errorf("Migrate returned %v, version %d; want a *MigrationError for 90002 that leaves the database at 90001",
+			err, res.Version)
 	}
 }
 

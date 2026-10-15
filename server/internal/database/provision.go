@@ -30,12 +30,9 @@ var reservedRoles = append([]string{appRole}, privilegedRoles...)
 // It refuses, and changes nothing, if the role exists and row-level security
 // would not hold it (checkLogin). It never makes an existing role less
 // privileged: an operator who pointed STORYCREEP_DATABASE_URL at a superuser
-// should find out rather than lose the superuser.
+// should find out rather than lose the superuser. The login's name has passed
+// checkLoginName.
 func provision(ctx context.Context, conn *pgx.Conn, login string, password secret.Value) error {
-	if isReservedRole(login) {
-		return fmt.Errorf("STORYCREEP_DATABASE_URL connects as %q, a role that is reserved for the server's own "+
-			"use; give the server a login of its own, such as storycreep", login)
-	}
 	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 		ident := pgx.Identifier{login}.Sanitize()
 		var canLogin, inherit bool
@@ -102,9 +99,15 @@ func provision(ctx context.Context, conn *pgx.Conn, login string, password secre
 	})
 }
 
-func isReservedRole(name string) bool {
-	// PostgreSQL reserves the pg_ prefix for its predefined roles.
-	return slices.Contains(reservedRoles, name) || strings.HasPrefix(name, "pg_")
+// checkLoginName returns an error if login is the name of one of the server's
+// roles, or has the pg_ prefix, which PostgreSQL reserves for its predefined
+// roles. None of them can be the application login.
+func checkLoginName(login string) error {
+	if slices.Contains(reservedRoles, login) || strings.HasPrefix(login, "pg_") {
+		return fmt.Errorf("STORYCREEP_DATABASE_URL connects as %q, a role that is reserved for the server's own "+
+			"use; give the server a login of its own, such as storycreep", login)
+	}
+	return nil
 }
 
 // quoteLiteral returns s as an SQL string literal. CREATE ROLE and ALTER ROLE

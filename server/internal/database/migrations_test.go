@@ -27,6 +27,7 @@ func fstestFS(names ...string) fs.FS {
 // FR-ADMIN-04), each runs in a transaction, so that a failed one leaves the
 // database at the one before (FR-ADMIN-04 AC3), and the directory holds no
 // file that is not embedded.
+//
 // Numbered versions make two pull requests that add the same version collide
 // in CI, where goose refuses two migrations with one version, instead of
 // applying in different orders on different databases.

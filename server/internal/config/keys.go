@@ -136,7 +136,9 @@ var keys = []key{
 			"and programs, because row-level security would not hold it. Migrations create the login if it does " +
 			"not exist, set its password to the one the server logs in with (this URL's, or else the one " +
 			"`PGPASSWORD`, a service file, or a password file supplies), and grant it the `storycreep_app` role. " +
-			"Query parameters, such as `sslmode`, are read as libpq reads them, with an `=` in a value " +
+			"A login belongs to the whole PostgreSQL server, not to one database, so give each Storycreep database " +
+			"on a server a login of its own: migrating one would otherwise change the password the others log in " +
+			"with. Query parameters, such as `sslmode`, are read as libpq reads them, with an `=` in a value " +
 			"percent-encoded as `%3D`, and the libpq environment variables, such as `PGSSLMODE`, fill in settings " +
 			"the URL leaves out. A space anywhere in the URL is written as `%20`. The URL is checked as the " +
 			"server's connections read it, so a setting they could not use, such as an unknown `sslmode` or a " +
