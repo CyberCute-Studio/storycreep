@@ -1,6 +1,10 @@
 package config
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
+)
 
 // fileKey names the configuration file. It is read from the environment only,
 // before the file, so it is not one of the keys below.
@@ -119,6 +123,50 @@ var keys = []key{
 		},
 		capability:      "Signup",
 		capabilityLimit: "self-hosted only",
+	},
+	{
+		name: "STORYCREEP_DATABASE_URL",
+		doc: "The PostgreSQL database, and the login the server connects to it as: " +
+			"`postgres://user:password@host:port/database`, with characters such as `@`, `:`, and `/` in the " +
+			"password percent-encoded. The login must be an ordinary role. The server refuses to use one that is a " +
+			"superuser, has `BYPASSRLS`, or owns objects in the database, because row-level security would not " +
+			"apply to it. Migrations create the login if it does not exist, set its password to the one in this " +
+			"URL, and grant it the `storycreep_app` role. Query parameters such as `sslmode` are passed to " +
+			"PostgreSQL, and the libpq environment variables, such as `PGSSLMODE`, fill in settings the URL " +
+			"leaves out. The password is shown as `" + secret.Redacted + "`.",
+		valuesDoc: "A `postgres://` URL",
+		example:   "postgres://storycreep:password@db:5432/storycreep",
+		required:  true,
+		parse: func(c *Config, v string) error {
+			d, err := ParseDatabaseURL(v)
+			if err != nil {
+				return err
+			}
+			c.DatabaseURL = d
+			return nil
+		},
+		effective: func(c *Config) string { return c.DatabaseURL.String() },
+	},
+	{
+		name: "STORYCREEP_DATABASE_ADMIN_URL",
+		doc: "A PostgreSQL superuser login for the same database, written like `STORYCREEP_DATABASE_URL`. Only " +
+			"applying migrations uses it, as `storycreep migrate` does. Migrations need a superuser because they " +
+			"create the server's database roles, and one of them bypasses row-level security. It must name a " +
+			"different login from `STORYCREEP_DATABASE_URL`. The password is shown as `" + secret.Redacted + "`.",
+		valuesDoc: "A `postgres://` URL",
+		parse: func(c *Config, v string) error {
+			d, err := ParseDatabaseURL(v)
+			if err != nil {
+				return err
+			}
+			if c.DatabaseURL.IsSet() && d.User() == c.DatabaseURL.User() {
+				return hiddenValueError{errors.New("names the same login as STORYCREEP_DATABASE_URL; migrations " +
+					"need a superuser and the server an ordinary login, so they must be different logins")}
+			}
+			c.DatabaseAdminURL = d
+			return nil
+		},
+		effective: func(c *Config) string { return c.DatabaseAdminURL.String() },
 	},
 	{
 		name:   "STORYCREEP_LOG_LEVEL",

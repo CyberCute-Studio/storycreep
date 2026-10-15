@@ -27,7 +27,7 @@ func TestFile(t *testing.T) {
 		"   # indented comment\n"+
 		"STORYCREEP_LOG_LEVEL=\n"+
 		"STORYCREEP_MODE=self-hosted")
-	c, err := Load(Options{File: path, Env: MapEnvironment(nil)})
+	c, err := Load(Options{File: path, Env: MapEnvironment(map[string]string{"STORYCREEP_DATABASE_URL": testDatabaseURL})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,6 +39,8 @@ func TestFile(t *testing.T) {
 		{"STORYCREEP_PUBLIC_URL", testURL, path + ":3"},
 		{"STORYCREEP_PUBLIC_SITE", "on", path + ":5"},
 		{"STORYCREEP_SIGNUP", "invite", path + ":4"},
+		{"STORYCREEP_DATABASE_URL", testDatabaseShown, SourceEnvironment},
+		{"STORYCREEP_DATABASE_ADMIN_URL", "", SourceUnset},
 		// An empty value counts as unset, so the default applies.
 		{"STORYCREEP_LOG_LEVEL", "info", SourceDefault},
 	}
@@ -52,8 +54,9 @@ func TestFilePrecedence(t *testing.T) {
 
 	// The environment wins over the file, and an empty variable is unset.
 	c, err := Load(Options{File: path, Env: MapEnvironment(map[string]string{
-		"STORYCREEP_PUBLIC_URL": "https://from-env.example.com",
-		"STORYCREEP_SIGNUP":     "",
+		"STORYCREEP_PUBLIC_URL":   "https://from-env.example.com",
+		"STORYCREEP_SIGNUP":       "",
+		"STORYCREEP_DATABASE_URL": testDatabaseURL,
 	})})
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +72,10 @@ func TestFilePrecedence(t *testing.T) {
 		{"", path, "https://from-file.example.com"},
 		{other, path, "https://other.example.com"},
 	} {
-		c, err := Load(Options{File: tt.option, Env: MapEnvironment(map[string]string{fileKey: tt.env})})
+		c, err := Load(Options{File: tt.option, Env: MapEnvironment(map[string]string{
+			fileKey:                   tt.env,
+			"STORYCREEP_DATABASE_URL": testDatabaseURL,
+		})})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,7 +105,7 @@ func TestFileProblems(t *testing.T) {
 		"export STORYCREEP_SIGNUP=open",             // 10
 		"storycreep_signup=invite",                  // 11
 	}, "\n"))
-	problems := loadProblems(t, Options{File: path, Env: MapEnvironment(nil)})
+	problems := loadProblems(t, Options{File: path, Env: MapEnvironment(map[string]string{"STORYCREEP_DATABASE_URL": testDatabaseURL})})
 
 	at := func(line int) string { return fmt.Sprintf("%s:%d", path, line) }
 	want := []Problem{
@@ -131,8 +137,8 @@ func TestUnreadableFile(t *testing.T) {
 		opts Options
 		key  string
 	}{
-		{Options{File: missing, Env: MapEnvironment(map[string]string{"STORYCREEP_PUBLIC_URL": testURL})}, "--config"},
-		{Options{Env: MapEnvironment(map[string]string{"STORYCREEP_PUBLIC_URL": testURL, fileKey: missing})}, fileKey},
+		{Options{File: missing, Env: MapEnvironment(withRequired(nil))}, "--config"},
+		{Options{Env: MapEnvironment(withRequired(map[string]string{fileKey: missing}))}, fileKey},
 	} {
 		problems := loadProblems(t, tt.opts)
 		if len(problems) != 1 || problems[0].Key != tt.key || !strings.Contains(problems[0].Msg, "cannot read the configuration file") {
@@ -143,9 +149,13 @@ func TestUnreadableFile(t *testing.T) {
 	// A required key may be set in the file that could not be read, and the
 	// problem says so.
 	problems := loadProblems(t, Options{File: missing, Env: MapEnvironment(nil)})
-	if len(problems) != 2 || problems[1].Key != "STORYCREEP_PUBLIC_URL" ||
-		!strings.Contains(problems[1].Msg, "the configuration file, which may set it, could not be read") {
-		t.Errorf("problems = %v, want the missing key to point at the unread file", problems)
+	if len(problems) != 3 || problems[1].Key != "STORYCREEP_PUBLIC_URL" || problems[2].Key != "STORYCREEP_DATABASE_URL" {
+		t.Fatalf("problems = %v, want the unread file and the two missing keys", problems)
+	}
+	for _, p := range problems[1:] {
+		if !strings.Contains(p.Msg, "the configuration file, which may set it, could not be read") {
+			t.Errorf("problem %v should point at the unread file", p)
+		}
 	}
 }
 
@@ -170,7 +180,7 @@ func TestFileEncoding(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			path := writeFile(t, tt.content)
-			problems := loadProblems(t, Options{File: path, Env: MapEnvironment(map[string]string{"STORYCREEP_PUBLIC_URL": testURL})})
+			problems := loadProblems(t, Options{File: path, Env: MapEnvironment(withRequired(nil))})
 			if len(problems) != 1 || problems[0].Key != "--config" || problems[0].Source != path ||
 				!strings.Contains(problems[0].Msg, tt.want) || !strings.Contains(problems[0].Msg, "Save it as UTF-8") {
 				t.Errorf("problems = %v, want one saying %q", problems, tt.want)

@@ -30,6 +30,11 @@ import (
 type Config struct {
 	// PublicURL is the URL users open the instance at.
 	PublicURL PublicURL
+	// DatabaseURL is the database and the application's login.
+	DatabaseURL DatabaseURL
+	// DatabaseAdminURL is the superuser login that applies migrations. It is
+	// unset if the configuration has none.
+	DatabaseAdminURL DatabaseURL
 	// LogLevel is the lowest level that is logged.
 	LogLevel slog.Level
 	// Capabilities are the mode-dependent behaviours.
