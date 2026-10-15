@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -45,6 +46,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		},
 	})
 	s.registerOperational(s.main)
+	registerDocument(s.main)
 
 	switch {
 	case cfg.AdminAddr == "":
@@ -83,14 +85,16 @@ type statusOutput struct {
 	Body statusBody
 }
 
-// versionOutput is the body of /version.
+// versionBody is the body of /version.
+type versionBody struct {
+	Version    string `json:"version" doc:"The release version, or (devel) for a build from a checkout"`
+	Commit     string `json:"commit,omitempty" doc:"The revision of the source the binary was built from"`
+	CommitTime string `json:"commit_time,omitempty" doc:"The time of that revision, in RFC 3339"`
+	GoVersion  string `json:"go_version" doc:"The version of Go the binary was built with"`
+}
+
 type versionOutput struct {
-	Body struct {
-		Version    string `json:"version" doc:"The release version, or (devel) for a build from a checkout"`
-		Commit     string `json:"commit,omitempty" doc:"The revision of the source the binary was built from"`
-		CommitTime string `json:"commit_time,omitempty" doc:"The time of that revision, in RFC 3339"`
-		GoVersion  string `json:"go_version" doc:"The version of Go the binary was built with"`
-	}
+	Body versionBody
 }
 
 // registerOperational registers /healthz, /readyz, and /version (PRD
@@ -130,10 +134,72 @@ func (s *server) registerOperational(m *api.Mux) {
 		Tags:        []string{"Operations"},
 	}, func(context.Context, *struct{}) (*versionOutput, error) {
 		info := version.Get()
-		out := &versionOutput{}
-		out.Body.Version, out.Body.Commit, out.Body.CommitTime, out.Body.GoVersion =
-			info.Version, info.Commit, info.CommitTime, info.GoVersion
-		return out, nil
+		return &versionOutput{Body: versionBody{
+			Version:    info.Version,
+			Commit:     info.Commit,
+			CommitTime: info.CommitTime,
+			GoVersion:  info.GoVersion,
+		}}, nil
+	})
+}
+
+// openAPIPath is where the server serves its OpenAPI document (PRD
+// FR-API-02).
+const openAPIPath = "/api/v1/openapi.json"
+
+type documentInput struct {
+	IfNoneMatch string `header:"If-None-Match" doc:"The ETag of the copy of the document that the client has"`
+}
+
+type documentOutput struct {
+	ETag         string `header:"ETag" doc:"The document's entity tag, which If-None-Match takes"`
+	CacheControl string `header:"Cache-Control" doc:"private, no-cache: a client may keep a copy, and revalidates it"`
+	// ContentType is the type of Body, which huma writes as it is.
+	ContentType string `header:"Content-Type" hidden:"true"`
+	Body        []byte
+}
+
+// registerDocument registers GET /api/v1/openapi.json, which serves the
+// OpenAPI document of m's operations, this one included, as Document renders
+// it (PRD FR-API-02). The document is rendered at the first request, so m's
+// operations are all registered by then, and an ETag lets a client keep a
+// copy until the server changes.
+func registerDocument(m *api.Mux) {
+	type rendered struct {
+		doc  []byte
+		etag string
+	}
+	render := sync.OnceValues(func() (rendered, error) {
+		doc, err := m.Document()
+		return rendered{doc: doc, etag: api.ETag(doc)}, err
+	})
+	api.Register(m, api.Public, huma.Operation{
+		OperationID: "getOpenAPIDocument",
+		Method:      http.MethodGet,
+		Path:        openAPIPath,
+		Summary:     "Get the API's OpenAPI document",
+		Description: "The OpenAPI 3.1 document of the server's operations, this one included. It is the same " +
+			"for every server of a release, and is committed to the repository as schema/api/v1/openapi.json.",
+		Tags: []string{"Operations"},
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "OK",
+				Content: map[string]*huma.MediaType{"application/json": {
+					Schema: &huma.Schema{Type: huma.TypeObject, Description: "An OpenAPI 3.1 document"},
+				}},
+			},
+			"304": api.NotModifiedResponse(),
+		},
+	}, func(_ context.Context, in *documentInput) (*documentOutput, error) {
+		r, err := render()
+		if err != nil {
+			return nil, err
+		}
+		if api.IfNoneMatch(in.IfNoneMatch, r.etag) {
+			return nil, api.NotModified(r.etag)
+		}
+		return &documentOutput{ETag: r.etag, CacheControl: api.CacheRevalidate, ContentType: "application/json",
+			Body: r.doc}, nil
 	})
 }
 

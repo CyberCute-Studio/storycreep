@@ -50,3 +50,17 @@ func NotModified(etag string) error {
 	return huma.ErrorWithHeaders(huma.Status304NotModified(),
 		http.Header{"ETag": {etag}, "Cache-Control": {CacheRevalidate}})
 }
+
+// NotModifiedResponse documents the 304 that NotModified answers with, with
+// its headers, for the Responses of an operation that returns it.
+func NotModifiedResponse() *huma.Response {
+	return &huma.Response{
+		Description: "Not Modified: the copy whose ETag the client sent in If-None-Match is current",
+		Headers: map[string]*huma.Header{
+			"ETag": {Schema: &huma.Schema{Type: huma.TypeString,
+				Description: "The entity tag of the client's copy"}},
+			"Cache-Control": {Schema: &huma.Schema{Type: huma.TypeString,
+				Description: "private, no-cache: the client keeps its copy, and revalidates it"}},
+		},
+	}
+}

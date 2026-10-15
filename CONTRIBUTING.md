@@ -48,6 +48,7 @@ These are the checks CI runs. Run them before you push.
 | `pnpm test` | Tests in every web package that has a `test` script. |
 | `gofmt -l .`, `go vet ./...`, and `go test ./...` in `server/` | The Go module. `gofmt -l .` must print nothing; `gofmt -w .` formats the code. The database tests need Docker, and `go test -short ./...` skips them. CI runs them on Linux against PostgreSQL 15, 16, and 17, and with `-short` on Windows and macOS, whose runners cannot run Linux containers. |
 | `pnpm migrations:check` | No migration that is on the main branch was changed, deleted, or renamed (see [Database migrations](#database-migrations)). It needs the history of `origin/main`. |
+| `pnpm api:check` | The API's OpenAPI document breaks no client of the one on the main branch (see [The API contract](#the-api-contract)). It needs the history of `origin/main`. |
 | `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff` in `server/internal/database/` | The code generated from the SQL queries is up to date. |
 | `pnpm docs:check` | The PRD dependency graph and acceptance criteria, and the plan's ordering, coverage, and reference rules. |
 | `pnpm traceability` | The requirement traceability report (PRD NFR-Q-02): which tests verify each requirement, and which MVP acceptance criteria no test verifies yet. It writes `traceability-report/traceability.md` and `traceability.json`, and fails on a tag it cannot use (see below) or on a problem in the PRD. A criterion without a test does not fail the build until the MVP release gate (plan item 119). CI publishes the report as the `traceability-report` artifact. |
@@ -100,6 +101,25 @@ A test skipped in any other way still counts, because the report does not run th
 [`docs/configuration.md`](docs/configuration.md) is generated from the key declarations in `server/internal/config/keys.go`, and `go test ./...` fails when it is out of date. After you add or change a configuration key, regenerate it by running `go test ./internal/config -run TestReference -update` in `server/`.
 
 [`docs/error-codes.md`](docs/error-codes.md) is generated the same way, from the registry of error codes in `server/internal/api/errors.go`. After you add or change an error code, regenerate it by running `go test ./internal/api -run TestReference -update` in `server/`.
+
+## The API contract
+
+The server's OpenAPI 3.1 document is generated from its huma operations (PRD FR-API-02), served at `/api/v1/openapi.json`, and committed as [`schema/api/v1/openapi.json`](schema/api/v1/openapi.json). The TypeScript types in `web/shared/src/api/v1.gen.ts` are generated from it, and the client in `web/shared/src/api` is typed by them, so nothing describes a request or a response by hand. `go test ./...` fails when either file is out of date, or when a route of the API is not in the document (FR-API-02 AC1). After you add or change an operation, regenerate both by running `go test ./internal/httpserver -run TestOpenAPIDocument -update` in `server/`.
+
+- Register every operation with `api.Register`, which documents the error envelope as its default response. A test provokes errors from every route, and checks that each answer is the envelope that the document describes (FR-API-04 AC1). A route that none of its requests makes fail fails the test, which then needs a request of its own for it.
+- `server/internal/apicontract` reads the document. It refuses a keyword or an object of OpenAPI that it does not know, and a keyword beside a `$ref` other than one that only annotates it, which is where huma writes the tags of a field whose type is a struct, such as `default` or `minProperties`. That way nothing in the document escapes the compatibility check. The TypeScript generator refuses what the client cannot express yet, such as a parameter that is not a string, number, or boolean, or a body that is not JSON. When a change needs one of them, teach the package the new case.
+
+`pnpm api:check` compares the document with the one on the main branch, as CI does for every pull request, and fails on a change that breaks a client of `v1` (FR-API-01 AC3). Every request that `v1` accepted must still be accepted, and a response may hold only what `v1` said it would, except that it may gain properties and headers, which clients ignore, and errors may gain statuses, because every error has the envelope. An operation that took neither `If-None-Match` nor `If-Modified-Since` may also gain a 304, which only a request with one of them gets, as when it starts sending an `ETag`. Clients fail on enum values that they do not know, so a value added to a response's enum breaks them. `Breaking` in `server/internal/apicontract/compat.go` lists the rules.
+
+Until the first release, no client depends on `v1`, so a pull request may break it if it says why. Add an `API-Break` trailer to the message of one of its commits, in the last paragraph, with any other trailers:
+
+```text
+Remove the commit field from /version
+
+API-Break: nothing reads it, and no client depends on v1 before the first release
+```
+
+The check then lists the changes with the reason, and passes. From the first release, plan item 119 compares the document with the release's, and a breaking change needs a new version prefix, `/api/v2`.
 
 ## Database migrations
 

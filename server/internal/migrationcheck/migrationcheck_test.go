@@ -3,12 +3,13 @@ package migrationcheck
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/gitexec/gitexectest"
 )
 
 func files(kv ...string) fstest.MapFS {
@@ -68,35 +69,6 @@ func TestCompare(t *testing.T) {
 	}
 }
 
-// gitRepo returns a new git repository in a temporary directory, and a
-// function that runs git in it. git reads no configuration of the user's or
-// the system's, so that the test does not depend on it.
-func gitRepo(t *testing.T) (string, func(args ...string) string) {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git is not installed")
-	}
-	dir := t.TempDir()
-	global := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(global, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	run := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=Test", "-c", "user.email=test@example.com"},
-			args...)...)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-		return string(out)
-	}
-	run("init", "-q", "-b", "main")
-	return dir, run
-}
-
 func write(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -113,7 +85,7 @@ func write(t *testing.T, path, content string) {
 //
 // Verifies: FR-ADMIN-04/AC2
 func TestCheckEditedMigration(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitexectest.Repo(t)
 	dir := filepath.Join(repo, "server", "migrations")
 	write(t, filepath.Join(dir, "00001_roles.sql"), "-- +goose Up\nCREATE ROLE a;\n")
 	git("add", ".")
@@ -172,7 +144,7 @@ func TestCheckEditedMigration(t *testing.T) {
 }
 
 func TestCheckBeforeTheFirstMigration(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitexectest.Repo(t)
 	write(t, filepath.Join(repo, "README.md"), "x")
 	git("add", ".")
 	git("commit", "-q", "-m", "no migrations yet")

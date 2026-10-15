@@ -135,7 +135,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-ADMIN-05 AC1 and AC3, FR-ADMIN-04 AC1 and AC3 (on all three PostgreSQL versions), FR-API-01 AC2, FR-API-04 AC2, and FR-PUB-02 AC4 pass.
 
 ### 7. API contract tooling
-**Status:** todo · **Depends on:** 6
+**Status:** done ([#9](https://github.com/CyberCute-Studio/storycreep/pull/9)) · **Depends on:** 6
 **PRD:** FR-API-02 (tooling), FR-API-01 (AC3, pre-release form), FR-API-04 (AC1)
 - OpenAPI 3.1 generated from the handlers, served at `/api/v1/openapi.json`, and committed. Drift fails CI.
 - A compatibility gate that compares the document against the one on the main branch, with a per-PR override that requires a recorded reason (FR-API-01 AC3 before the first release). Item 119 switches the baseline to the last release's document and removes the override.

@@ -108,6 +108,11 @@ func (c Code) Status() int {
 	return spec(c).status
 }
 
+// Known reports whether c is a registered code.
+func (c Code) Known() bool {
+	return slices.ContainsFunc(codes, func(s codeSpec) bool { return s.code == c })
+}
+
 // Error is an error that the API reports in its error envelope. A handler
 // returns one to answer with a 4xx or 5xx status. Any other error a handler
 // returns is answered with internal_error, and logged; an *ids.DecodeError is
