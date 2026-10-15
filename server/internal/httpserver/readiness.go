@@ -113,7 +113,8 @@ func (r *readiness) waitForMigrations(ctx context.Context, db *database.DB, inte
 			// One record per kind of failure, not one per check.
 			if msg := err.Error(); msg != lastErr {
 				lastErr = msg
-				r.log.WarnContext(ctx, "check the pending migrations", "error", err)
+				r.log.WarnContext(ctx, "the server could not check whether the pending migrations have been "+
+					"applied, and tries again", "error", err)
 			}
 		case len(pending) == 0:
 			if r.phase.CompareAndSwap(int32(phaseMigrationsPending), int32(phaseReady)) {

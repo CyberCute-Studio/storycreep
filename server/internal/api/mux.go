@@ -97,6 +97,7 @@ func NewMux(opts MuxOptions) *Mux {
 			next.ServeHTTP(w, r.WithContext(withLogger(r.Context(), log)))
 		})
 	})
+	m.router.Use(limitBodyRead(defaultBodyReadTimeout))
 	m.router.Use(opts.Middleware...)
 	// A HEAD request is answered as a GET without the body, as health
 	// checkers expect.
@@ -117,6 +118,27 @@ func NewMux(opts MuxOptions) *Mux {
 	m.api = humachi.New(m.router, config)
 	m.api.UseMiddleware(replaceCacheControl)
 	return m
+}
+
+// limitBodyRead gives a request that has a body d to send it, from when its
+// handler starts. A route that does not read the body, such as /healthz or a
+// path that no route matches, still waits for it, because net/http drains it
+// before it answers, so without a deadline a client that sends a body slowly
+// would hold the connection forever: the server's own timeouts end only at
+// the headers. An operation that reads its body sets its own deadline in
+// place of this one (Register), and net/http clears it once the body has
+// been read. A request without a body gets none, as it needs none.
+func limitBodyRead(d time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil && r.Body != http.NoBody {
+				// A ResponseWriter without a connection, as in a test, takes
+				// no deadline, and needs none.
+				_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(d))
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // replaceCacheControl is huma middleware that makes a Cache-Control that an
@@ -174,8 +196,9 @@ func (m *Mux) declare(method, pattern string, c Capability) {
 
 // Handle registers a handler that is not a huma operation, such as one that
 // writes Prometheus's text format, for the route, which requires c. It
-// writes its own errors, with WriteError. It must limit what it reads of the
-// request body itself.
+// writes its own errors, with WriteError. It must limit how much it reads of
+// the request body itself; the body must arrive within a minute, as for
+// Register, unless the handler sets another read deadline.
 func (m *Mux) Handle(c Capability, method, pattern string, h http.Handler) {
 	m.declare(method, pattern, c)
 	m.router.Method(method, pattern, h)

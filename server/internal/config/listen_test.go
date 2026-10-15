@@ -10,7 +10,8 @@ import (
 
 func TestListenAddresses(t *testing.T) {
 	for _, v := range []string{":8080", "0.0.0.0:80", "127.0.0.1:9090", "[::1]:8080", "[::]:443", "localhost:8080",
-		"app.internal:65535", "[fe80::1%eth0]:8080"} {
+		"app.internal:65535", "[fe80::1%eth0]:8080", "app.internal.:8080", "1password.example:8080",
+		"xn--bcher-kva.example:8080"} {
 		c := mustLoad(t, withRequired(map[string]string{"STORYCREEP_HTTP_ADDR": v, "STORYCREEP_ADMIN_ADDR": "off"}))
 		if c.HTTPAddr != v || c.AdminAddr != "" {
 			t.Errorf("STORYCREEP_HTTP_ADDR=%s gives %q, and STORYCREEP_ADMIN_ADDR=off gives %q", v, c.HTTPAddr, c.AdminAddr)

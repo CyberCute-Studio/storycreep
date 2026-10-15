@@ -85,9 +85,10 @@ var codes = []codeSpec{
 	{CodeInternal, http.StatusInternalServerError, "An internal error occurred.",
 		"The server failed. Its log has the cause, under the envelope's `request_id`."},
 	{CodeNotReady, http.StatusServiceUnavailable, "The server is not ready.",
-		"The server is starting, its database has pending migrations, it is stopping, or it cannot reach its " +
-			"database. `/readyz` answers with it too, and `details.reason` says which: `starting`, " +
-			"`migrations_pending`, `stopping`, or `database_unreachable`. A `Retry-After` header suggests when " +
+		"The server is starting, its database has pending migrations, or it is stopping. `/readyz` answers " +
+			"with it then too, and also while the server cannot reach its database, which the API's routes " +
+			"report as `internal_error` instead. `details.reason` says which: `starting`, `migrations_pending`, " +
+			"`stopping`, or, from `/readyz` only, `database_unreachable`. A `Retry-After` header suggests when " +
 			"to try again."},
 }
 
@@ -325,7 +326,8 @@ func writeEnvelope(w http.ResponseWriter, r *http.Request, env *ErrorEnvelope) {
 	b, err := json.Marshal(env)
 	if err != nil {
 		// Details that do not encode are a bug in the code that set them.
-		loggerFrom(r.Context()).ErrorContext(r.Context(), "encode an error envelope", "error", err)
+		loggerFrom(r.Context()).ErrorContext(r.Context(),
+			"an error envelope does not encode, so the request is answered with internal_error", "error", err)
 		env = envelopeFor(CodeInternal, "", nil).withRequestID(logging.RequestID(r.Context()))
 		b, _ = json.Marshal(env)
 	}

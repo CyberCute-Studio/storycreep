@@ -1,13 +1,16 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -282,6 +285,58 @@ func TestBodyLimit(t *testing.T) {
 		if b.Code != CodeRequestTooLarge || b.Details["max_bytes"] != float64(tt.limit) {
 			t.Errorf("limit %d: a body over the limit: code %s, details %v", tt.limit, b.Code, b.Details)
 		}
+	}
+}
+
+// TestUnreadBodyDeadline checks that a request body that the route does not
+// read must still arrive in time, because net/http waits for it before it
+// answers, and that a body that is read in time leaves the request as it was.
+func TestUnreadBodyDeadline(t *testing.T) {
+	const deadline = 100 * time.Millisecond
+	srv := httptest.NewServer(limitBodyRead(deadline)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/read" {
+			// Reading the body ends the deadline, so the handler may take
+			// longer than it, with its context intact.
+			if b, err := io.ReadAll(r.Body); err != nil || string(b) != "0123456789" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			time.Sleep(3 * deadline)
+			if r.Context().Err() != nil {
+				w.WriteHeader(http.StatusConflict)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	defer srv.Close()
+
+	send := func(path, length, body string) *http.Response {
+		t.Helper()
+		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { conn.Close() })
+		fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: test\r\nContent-Length: %s\r\n\r\n%s", path, length, body)
+		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		res, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			t.Fatalf("POST %s: no answer: %v", path, err)
+		}
+		res.Body.Close()
+		return res
+	}
+	// Ten of the hundred bytes that the request says its body has. The rest
+	// cannot be told from the next request, so the connection is closed.
+	start := time.Now()
+	if res := send("/ignore", "100", "0123456789"); res.StatusCode != http.StatusNoContent || !res.Close ||
+		time.Since(start) > 10*time.Second {
+		t.Errorf("an unread body that does not arrive: %d, close %v, after %v", res.StatusCode, res.Close,
+			time.Since(start))
+	}
+	if res := send("/read", "10", "0123456789"); res.StatusCode != http.StatusNoContent || res.Close {
+		t.Errorf("a body read in time: %d, close %v", res.StatusCode, res.Close)
 	}
 }
 

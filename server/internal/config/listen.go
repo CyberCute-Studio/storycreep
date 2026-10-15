@@ -33,10 +33,43 @@ func checkListenAddr(v string) error {
 	if _, err := netip.ParseAddr(host); err == nil {
 		return nil
 	}
-	if strings.Trim(strings.ToLower(host), "abcdefghijklmnopqrstuvwxyz0123456789-.") != "" {
-		return errors.New("the host must be an IP address or a host name of letters, digits, hyphens, and dots")
+	if !isHostName(host) {
+		return errors.New("the host must be an IP address, such as 127.0.0.1, or a host name: labels of letters, " +
+			"digits, and hyphens, separated by dots, none of them empty or starting or ending with a hyphen, and " +
+			"the last not a number")
 	}
 	return nil
+}
+
+// isHostName reports whether host is a host name (RFC 1123): labels of 1 to
+// 63 letters, digits, and hyphens, which neither start nor end with a
+// hyphen, separated by dots, with an optional dot at the end. Its last label
+// must not be a number, decimal or 0x hexadecimal, as in the WHATWG URL
+// standard, because resolvers read such a name, as "0" or "127.1", as an
+// IPv4 address written short, which listenersOverlap could not compare with
+// the other listener's address.
+func isHostName(host string) bool {
+	host = strings.TrimSuffix(host, ".")
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	for _, l := range labels {
+		if l == "" || len(l) > 63 || l[0] == '-' || l[len(l)-1] == '-' {
+			return false
+		}
+		if strings.Trim(strings.ToLower(l), "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
+			return false
+		}
+	}
+	last := strings.ToLower(labels[len(labels)-1])
+	if strings.Trim(last, "0123456789") == "" {
+		return false
+	}
+	if hex, ok := strings.CutPrefix(last, "0x"); ok && strings.Trim(hex, "0123456789abcdef") == "" {
+		return false
+	}
+	return true
 }
 
 // listenersOverlap reports whether listening on a and on b, which
