@@ -5,11 +5,11 @@
 //
 // With -check, it rewrites nothing, and reports the catalogs that it would
 // rewrite. Nor does it rewrite the catalogs of code that it cannot read whole,
-// as when a file does not parse, until that is fixed. It prints each problem as "file:line: message", such as a key that
-// the source catalog has no message for, and exits with status 1 if there is
-// any or, with -check, if a catalog is out of date. It exits with status 2 if
-// a file cannot be read or written. Run it from the server directory, or pass
-// the root.
+// as when a file does not parse, until that is fixed. It prints each problem
+// as "file:line: message", such as a key that the source catalog has no
+// message for, and exits with status 1 if there is any or, with -check, if a
+// catalog is out of date. It exits with status 2 if a file cannot be read or
+// written. Run it from the server directory, or pass the root.
 package main
 
 import (
