@@ -223,6 +223,18 @@ func TestCheckFails(t *testing.T) {
 			want: `FR-A-02: cannot read "AC3 — A lazy continuation line." as an acceptance criterion`,
 		},
 		{
+			name: "acceptance criterion before the Acceptance criteria field",
+			prd:  []edit{{"- **Acceptance criteria:**\n  - AC2 — It is listed out of order.\n", "  - AC3 — Before the field.\n- **Acceptance criteria:**\n  - AC2 — It is listed out of order.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "- AC3 — Before the field." as an acceptance criterion, because it comes before the Acceptance criteria field`,
+		},
+		{
+			name: "acceptance criterion in text before the Acceptance criteria field",
+			prd:  []edit{{"- **Acceptance criteria:**\n  - AC2 — It is listed out of order.\n", "It works. AC3 — It works before the field.\n- **Acceptance criteria:**\n  - AC2 — It is listed out of order.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "It works. AC3 — It works before the field." as an acceptance criterion, because it comes before the Acceptance criteria field`,
+		},
+		{
 			name: "acceptance criterion after a line of text at the margin",
 			prd:  []edit{{"  - AC2 — It is listed out of order.\n", "  - AC2 — It is listed out of order,\nwrapped at the margin.\n"}},
 			file: "PRD.md",

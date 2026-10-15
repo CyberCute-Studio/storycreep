@@ -15,7 +15,9 @@ var gdLang = &language{
 }
 
 // readGD reads a GDScript file. Its test declarations are the GUT test
-// functions, func test_…(). GDScript has no block comments, but a
+// functions, func test_…(). None is marked skipped: GUT has no skip
+// modifier, and the scan does not evaluate pending() or a script's
+// should_skip_script() or skip_script. GDScript has no block comments, but a
 // multi-line string that starts a line serves as one, so its lines are
 // returned as a block comment. A multi-line string that never closes hides
 // the code after it, which is a problem in a test file with Verifies

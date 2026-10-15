@@ -14,8 +14,9 @@
 // TypeScript, JavaScript, and GDScript files, so a comment marker in a string
 // is never taken for a comment, and a declaration's groups are the calls it
 // is written in. A criterion counts as verified when a test names it that is
-// not declared with skip, todo, fixme, or fail, nor inside a group declared
-// so, nor a group whose tests all are.
+// not declared with skip, todo, fixme, or fail (or with Vitest's option skip,
+// todo, or fails set to true), nor inside a group declared so, nor a group in
+// which everything declared is skipped.
 package traceability
 
 import (
@@ -327,7 +328,7 @@ func (r *Report) Markdown() []byte {
 		}
 	}
 	if len(skipped) > 0 {
-		fmt.Fprintf(&b, "\n## Skipped tests\n\nThese tests verify nothing: each is declared with skip, todo, fixme, or fail, or inside a group declared so, or is a group whose tests all are.\n\n")
+		fmt.Fprintf(&b, "\n## Skipped tests\n\nThese tests verify nothing: each is declared with skip, todo, fixme, or fail (or with Vitest's option skip, todo, or fails set to true), or is inside a group declared so, or is a group in which everything declared is skipped.\n\n")
 		for _, t := range skipped {
 			fmt.Fprintf(&b, "- %s: %s\n", ref(t.TestRef), strings.Join(t.Verifies, ", "))
 		}

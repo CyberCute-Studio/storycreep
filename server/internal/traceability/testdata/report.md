@@ -1,6 +1,6 @@
 # Requirement traceability
 
-3 of 5 acceptance criteria of the MVP have a test (60.0%), and 2 have none. 7 tests are tagged.
+3 of 5 acceptance criteria of the MVP have a test (60.0%), and 2 have none. 8 tests are tagged.
 
 ## Acceptance criteria without a test
 
@@ -21,6 +21,7 @@
 
 ## Skipped tests
 
-These tests verify nothing: each is declared with skip, todo, fixme, or fail, or inside a group declared so, or is a group whose tests all are.
+These tests verify nothing: each is declared with skip, todo, fixme, or fail (or with Vitest's option skip, todo, or fails set to true), or is inside a group declared so, or is a group in which everything declared is skipped.
 
 - `web/app/src/sample.test.ts:9` `a skipped test`: FR-A-02/AC2
+- `web/app/src/sample.test.ts:14` `a test skipped by an option`: FR-A-02/AC2

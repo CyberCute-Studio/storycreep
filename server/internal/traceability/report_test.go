@@ -97,7 +97,7 @@ func TestGenerate(t *testing.T) {
 		t.Fatalf("unexpected problems:%s", formatProblems(problems))
 	}
 	if want := []string{"FR-A-01/AC2", "FR-A-02/AC2"}; !slices.Equal(r.Gaps, want) {
-		t.Errorf("gaps = %q, want %q (FR-A-02/AC2 has only a skipped test)", r.Gaps, want)
+		t.Errorf("gaps = %q, want %q (FR-A-02/AC2 has only skipped tests)", r.Gaps, want)
 	}
 
 	golden := filepath.Join("testdata", "report.md")
@@ -110,7 +110,7 @@ func TestGenerate(t *testing.T) {
 	if want := readFile(t, golden); string(got) != want {
 		t.Errorf("the Markdown report differs from %s (run go test -update to rewrite it):\n%s", golden, got)
 	}
-	if line := r.SummaryLine(); line != "Traceability (MVP): 3 of 5 acceptance criteria verified (60.0%), 2 without a test. 7 tagged tests." {
+	if line := r.SummaryLine(); line != "Traceability (MVP): 3 of 5 acceptance criteria verified (60.0%), 2 without a test. 8 tagged tests." {
 		t.Errorf("summary line = %q", line)
 	}
 }

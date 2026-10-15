@@ -170,6 +170,11 @@ func (p *prd) parseRequirement(d *document, s section, id, title string, r *repo
 			// out.
 			r.add(p.file, n, "%s: cannot read %q as an acceptance criterion, because the list of acceptance criteria ends on line %d (keep the criteria together under the field)", id, strings.TrimSpace(l), listEnd)
 			continue
+		case req.criteriaLine == 0 && strayCriterion(l):
+			// So is a criterion before the field, as one written under the
+			// Requirement field. The line is still read for the other
+			// fields.
+			r.add(p.file, n, "%s: cannot read %q as an acceptance criterion, because it comes before the Acceptance criteria field (keep the criteria together under the field)", id, strings.TrimSpace(l))
 		}
 		if m := criteriaFieldRE.FindStringSubmatch(l); m != nil {
 			if req.criteriaLine != 0 {

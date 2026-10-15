@@ -9,3 +9,8 @@ test("a vitest test", () => {
 it.skip("a skipped test", () => {
   expect(1).toBe(2);
 });
+
+// Verifies: FR-A-02/AC2
+test("a test skipped by an option", { skip: true }, () => {
+  expect(1).toBe(2);
+});

@@ -78,8 +78,9 @@ var jsSkipOptions = map[string]bool{"skip": true, "todo": true, "fails": true}
 // a modifier that verifies nothing, whatever the group's arguments, as in
 // describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …), or with
 // an option that does, as in test("…", { skip: true }, …). A group
-// is skipped too when every test declared in it is skipped, because it runs
-// no test then.
+// is skipped too when everything declared in it, its tests and the groups in
+// it that hold no test, is skipped, as in describe("…", () => {
+// describe.todo("…") }), because it runs no test then.
 func readJS(file, src string, isTest bool) source {
 	// A file that is not a test file matters only for the Verifies comments
 	// in it.
@@ -144,9 +145,12 @@ func readJS(file, src string, isTest bool) source {
 		// anonymous is set for a group without a title, as Playwright's
 		// test.describe(() => …), which adds nothing to its tests' names.
 		anonymous bool
-		group     bool // a describe or suite group
-		// test is set for the declaration of a test or tests, named or not,
-		// rather than of a group, a hook, or a step.
+		group     bool // a describe or suite group, or a call on one, as test.describe.configure(…)
+		// decl is set for the declaration of a test, tests, or a group,
+		// named or not, rather than of a hook, a step, or a setting.
+		decl bool
+		// test is set for the declaration of a test or tests, rather than of
+		// a group.
 		test bool
 	}
 	var calls []call
@@ -185,7 +189,7 @@ func readJS(file, src string, isTest bool) source {
 		if j >= len(toks) || !toks[j].is('(', "(") {
 			continue
 		}
-		c := call{head: i, from: j, to: match[j], skipped: skipped, name: "*", group: group, test: declares && !group}
+		c := call{head: i, from: j, to: match[j], skipped: skipped, name: "*", group: group, decl: declares, test: declares && !group}
 		for c.to+1 < len(toks) && toks[c.to+1].is('(', "(") {
 			c.to = match[c.to+1]
 		}
@@ -205,10 +209,13 @@ func readJS(file, src string, isTest bool) source {
 	// skippedAt[k] is set when calls[k], or a group it is in, is declared
 	// with a modifier that verifies nothing.
 	skippedAt := make([]bool, len(calls))
+	// holdsTests[k] is set when a test is declared inside calls[k].
+	holdsTests := make([]bool, len(calls))
 	for k, c := range calls {
 		skippedAt[k] = c.skipped
 		for _, g := range calls {
 			skippedAt[k] = skippedAt[k] || inside(g, c) && g.skipped
+			holdsTests[k] = holdsTests[k] || g.test && inside(c, g)
 		}
 	}
 	for k, c := range calls {
@@ -222,18 +229,20 @@ func readJS(file, src string, isTest bool) source {
 			}
 		}
 		skipped := skippedAt[k]
-		// A group runs only the tests declared in it, so one whose tests are
-		// all skipped verifies nothing. A group in which the scan sees no
-		// test, as when a helper function declares its tests, counts.
+		// A group runs only what is declared in it: its tests, and the groups
+		// in it that hold no test the scan sees, as describe.todo("…") or a
+		// group whose tests a helper function declares. One in which all of
+		// that is skipped verifies nothing. A group in which the scan sees
+		// none of it counts.
 		if c.group && !skipped {
-			tests, runs := 0, false
+			content, runs := 0, false
 			for m, d := range calls {
-				if d.test && inside(c, d) {
-					tests++
+				if d.decl && (d.test || !holdsTests[m]) && inside(c, d) {
+					content++
 					runs = runs || !skippedAt[m]
 				}
 			}
-			skipped = tests > 0 && !runs
+			skipped = content > 0 && !runs
 		}
 		s.decls = append(s.decls, decl{
 			line:    toks[c.head].line,

@@ -21,8 +21,9 @@ type Test struct {
 	// Go subtest, "group > title" for a Vitest or Playwright test in a group.
 	Name string
 	// Skipped is set for a test that verifies nothing: it is declared with
-	// skip, todo, fixme, or fail, or inside a group declared so, or it is a
-	// group whose tests all are.
+	// skip, todo, fixme, or fail (or with Vitest's option skip, todo, or fails
+	// set to true), or inside a group declared so, or it is a group in which
+	// everything declared is skipped.
 	Skipped bool
 	Tags    []Tag
 }
@@ -143,6 +144,15 @@ const utf8BOM = "\xef\xbb\xbf"
 // "FR-…/ACn", or "NFR-…".
 const idPattern = `N?FR-[A-Z0-9]+-\d+(?:/AC\d+)?`
 
+const (
+	// listAnd matches a word that joins IDs in a list: "and" or "&".
+	listAnd = `(?:(?i:and)|&)`
+	// listLead matches what may come before the first ID on a line that
+	// continues a list: a list marker, as "- " or "1. ", and then "and", as
+	// in "and NFR-PERF-01".
+	listLead = `^(?:(?:[-*+]|\d+[.)])\s+)?(?:` + listAnd + `\s+)?`
+)
+
 var (
 	// nearTagRE finds a line comment that starts with a word and then names a
 	// requirement, as "verifies: FR-…", "Verifies NFR-…", "Verifies — FR-…",
@@ -151,13 +161,16 @@ var (
 	nearTagRE = regexp.MustCompile(`(?i)^@?([a-z]+)[^a-z0-9]*n?fr-`)
 
 	// continuedTagRE finds a comment line that continues the ID list of the
-	// Verifies comment on the line above it.
-	continuedTagRE = regexp.MustCompile(`^N?FR-[A-Z0-9]+-\d+`)
+	// Verifies comment on the line above it: "FR-A-01/AC2 …", "- FR-…", or
+	// "and FR-…".
+	continuedTagRE = regexp.MustCompile(listLead + `N?FR-[A-Z0-9]+-\d+`)
 
-	// idListRE finds a comment line that holds nothing but requirement IDs,
-	// optionally as a list item: "FR-A-01/AC2, NFR-PERF-01" or
-	// "- FR-A-01/AC2".
-	idListRE = regexp.MustCompile(`^(?:(?:[-*+]|\d+[.)])\s+)?` + idPattern + `(?:\s*,\s*` + idPattern + `)*\s*[,.]?$`)
+	// idListRE finds a comment line that holds nothing but requirement IDs
+	// and the commas or "and" between them, optionally as a list item:
+	// "FR-A-01/AC2, NFR-PERF-01", "- FR-A-01/AC2", "and NFR-PERF-01.", or
+	// "FR-A-01/AC2 and FR-A-01/AC3".
+	idListRE = regexp.MustCompile(listLead + idPattern +
+		`(?:(?:\s*,\s*(?:` + listAnd + `\s+)?|\s+` + listAnd + `\s+)` + idPattern + `)*\s*[,.]?$`)
 )
 
 // nearTag reports whether a line comment is meant as a Verifies comment but
@@ -224,9 +237,9 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 		d, above := declAt[last+1]
 		// A line that holds nothing but IDs, in a run with a Verifies line or
 		// above a test, is meant as part of a Verifies comment: it continues
-		// the ID list as a list item, or below a blank comment line, where
-		// gofmt moves an indented continuation of a doc comment, or it is
-		// meant as one.
+		// the ID list as a list item, after "and", or below a blank comment
+		// line, where gofmt moves an indented continuation of a doc comment,
+		// or it is meant as one.
 		if runTagged || above {
 			for _, c := range idLines {
 				report(c.line, "cannot read %q as a Verifies comment (write \"Verifies:\" and the IDs)", c.text)
