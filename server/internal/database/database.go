@@ -29,8 +29,13 @@ import (
 )
 
 // applicationName is what the server's connections report in
-// pg_stat_activity, unless the URL sets application_name.
+// pg_stat_activity, unless the URL sets application_name, or PGAPPNAME or a
+// service file does.
 const applicationName = "storycreep"
+
+// errNoURL is returned by Open and Migrate when STORYCREEP_DATABASE_URL is not
+// set.
+var errNoURL = errors.New("STORYCREEP_DATABASE_URL is not set")
 
 // DB is the application login's connection pool.
 type DB struct {
@@ -39,14 +44,14 @@ type DB struct {
 
 // Open connects to the database as the application login and checks that
 // row-level security holds it: the login must not be a superuser, have
-// BYPASSRLS, CREATEROLE, or REPLICATION, own objects in the database, or be
-// a member of a role that does, of one of the server's privileged roles, or
-// of one of PostgreSQL's roles that give access to the database server's
-// files and programs, directly or through other roles. If it is, the error
-// is an *UnsafeLoginError.
+// BYPASSRLS, CREATEROLE, or REPLICATION, own the database or objects in it,
+// or be a member of a role that does, of one of the server's privileged
+// roles, or of one of PostgreSQL's roles that give access to the database
+// server's files and programs, directly or through other roles. If it is,
+// the error is an *UnsafeLoginError.
 func Open(ctx context.Context, app config.DatabaseURL) (*DB, error) {
 	if !app.IsSet() {
-		return nil, errors.New("STORYCREEP_DATABASE_URL is not set")
+		return nil, errNoURL
 	}
 	cfg := app.PoolConfig()
 	setApplicationName(cfg.ConnConfig)
@@ -75,7 +80,8 @@ func (db *DB) Close() {
 	db.pool.Close()
 }
 
-// setApplicationName names the connections, unless the URL already does.
+// setApplicationName names the connections, unless the URL, PGAPPNAME, or a
+// service file already does.
 func setApplicationName(c *pgx.ConnConfig) {
 	if _, ok := c.RuntimeParams["application_name"]; !ok {
 		c.RuntimeParams["application_name"] = applicationName
@@ -222,16 +228,22 @@ var serverAccessRoles = []string{"pg_execute_server_program", "pg_read_server_fi
 // BYPASSRLS, a role with CREATEROLE (which on PostgreSQL 15 can grant itself
 // any role that is not a superuser, such as storycreep_maintenance), a role
 // with REPLICATION (which can stream a copy of the whole cluster), a role
-// that owns objects in the current database, the privileged roles $2, and
-// the server access roles $3. An owner can switch row-level security off,
-// the owner of a schema can drop what is in it, and the owner of a type, a
-// collation, an operator class, or an extension can drop with CASCADE the
-// columns and indexes that use it, in tables it does not own.
+// that owns the current database or objects in it, the privileged roles $2,
+// and the server access roles $3. An owner can switch row-level security
+// off, the owner of the database can drop it, the owner of a schema can drop
+// what is in it, and the owner of a type, a collation, an operator class, or
+// an extension can drop with CASCADE the columns and indexes that use it, in
+// tables it does not own.
 //
 // PostgreSQL records each object's owner in pg_shdepend, except where the
-// owner is one of its built-in roles, so pg_database_owner's ownership of the
-// public schema is read from pg_namespace. The database's owner is read from
-// pg_database, because pg_shdepend records it with the cluster's objects.
+// owner is one of its built-in roles, so the owners of schemas are also read
+// from pg_namespace. The database's owner is read from pg_database, because
+// pg_shdepend records it with the cluster's objects. PostgreSQL makes the
+// database's owner, and with it the roles that are members of the owner, a
+// member of pg_database_owner, which owns the public schema. That role's row
+// is left out, because the row of the role that owns the database says the
+// same more plainly.
+//
 // Temporary objects do not count: they belong to the session that made them,
 // and any session of the login may hold some while another instance starts.
 // Neither do large objects, which any role may create and which give no
@@ -239,10 +251,12 @@ var serverAccessRoles = []string{"pg_execute_server_program", "pg_read_server_fi
 // mappings, which PostgreSQL records as owned by the role they map but which
 // only hold how it logs in to a foreign server.
 const unsafeRolesQuery = `
-SELECT r.rolname, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolreplication, r.owns,
+SELECT r.rolname, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolreplication, r.owns_database, r.owns,
 	r.rolname = ANY ($3::name[]) AS server_access
 FROM (
 	SELECT rolname, oid, rolsuper, rolbypassrls, rolcreaterole, rolreplication,
+		EXISTS (SELECT FROM pg_database WHERE datname = current_database() AND datdba = pg_roles.oid)
+			AS owns_database,
 		EXISTS (
 			SELECT FROM pg_shdepend d, pg_identify_object(d.classid, d.objid, d.objsubid) o
 			WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = pg_roles.oid AND d.deptype = 'o'
@@ -253,12 +267,12 @@ FROM (
 				AND (o.schema IS NULL OR (o.schema NOT LIKE 'pg\_temp%' AND o.schema NOT LIKE 'pg\_toast\_temp%'))
 		)
 			OR EXISTS (SELECT FROM pg_namespace WHERE nspowner = pg_roles.oid)
-			OR EXISTS (SELECT FROM pg_database WHERE datname = current_database() AND datdba = pg_roles.oid)
 			AS owns
 	FROM pg_roles
 ) r
 WHERE pg_has_role($1::name, r.oid, 'MEMBER')
-	AND (r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR r.rolreplication OR r.owns
+	AND r.rolname <> 'pg_database_owner'
+	AND (r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR r.rolreplication OR r.owns_database OR r.owns
 		OR r.rolname = ANY ($2::name[]) OR r.rolname = ANY ($3::name[]))
 ORDER BY r.rolname <> $1::name, r.rolname`
 
@@ -273,8 +287,9 @@ func checkLogin(ctx context.Context, q querier, login string) error {
 	var reasons []string
 	for rows.Next() {
 		var role string
-		var super, bypass, createRole, replication, owns, serverAccess bool
-		if err := rows.Scan(&role, &super, &bypass, &createRole, &replication, &owns, &serverAccess); err != nil {
+		var super, bypass, createRole, replication, ownsDatabase, owns, serverAccess bool
+		if err := rows.Scan(&role, &super, &bypass, &createRole, &replication, &ownsDatabase, &owns,
+			&serverAccess); err != nil {
 			return fmt.Errorf("check the login %q: %w", login, err)
 		}
 		var what []string
@@ -291,6 +306,9 @@ func checkLogin(ctx context.Context, q querier, login string) error {
 			}
 			if replication {
 				what = append(what, "has REPLICATION")
+			}
+			if ownsDatabase {
+				what = append(what, "owns the database")
 			}
 			if owns {
 				what = append(what, "owns objects in the database")

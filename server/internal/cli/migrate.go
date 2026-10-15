@@ -27,11 +27,14 @@ creates it if it does not exist, sets its password to the one the server
 logs in with (the URL's, or else the one PGPASSWORD, a service file, or a
 password file supplies), and grants it the storycreep_app role. It also
 revokes CONNECT on the database from PUBLIC and grants it to the login, so
-that another role that is not a superuser connects only if it is granted
-CONNECT itself. A login belongs to the whole PostgreSQL server, as does the
-storycreep_app role, so each Storycreep database on a server needs a login
-of its own. The command refuses a login that row-level security would not
-apply to, such as a superuser, and one whose password has expired.
+that another role that is neither a superuser nor the database's owner
+connects only if it is granted CONNECT itself. A login belongs to the whole
+PostgreSQL server, as does the storycreep_app role, so each Storycreep
+database on a server needs a login of its own. The command refuses a login
+that row-level security would not apply to, such as a superuser or the
+database's owner, one named after a role the migrations create
+(storycreep_app, storycreep_definer, or storycreep_maintenance) or starting
+with pg_, which PostgreSQL reserves, and one whose password has expired.
 
 Last, it connects as the application login, as the server does, and fails
 unless the database it reaches has every migration applied.`,

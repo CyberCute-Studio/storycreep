@@ -27,9 +27,9 @@ var reservedRoles = append([]string{appRole}, privilegedRoles...)
 // so, because roles belong to the cluster, and an ALTER ROLE that another
 // database runs at the same time would conflict.
 //
-// It also makes the login the only role, besides the superusers and the roles
-// the operator granted CONNECT, that can connect to the database
-// (restrictConnect).
+// It also makes the login the only role, besides the superusers, the
+// database's owner, and the roles the operator granted CONNECT, that can
+// connect to the database (restrictConnect).
 //
 // It refuses, and changes nothing, if the role exists and row-level security
 // would not hold it (checkLogin), or if the server would log in with a
@@ -114,7 +114,8 @@ func provision(ctx context.Context, conn *pgx.Conn, login string, password secre
 	})
 }
 
-// restrictConnect makes the login the only role, besides the superusers and
+// restrictConnect makes the login the only role, besides the superusers, the
+// database's owner, which keeps the CONNECT that owners have by default, and
 // any role the operator granted CONNECT, that can connect to the database: it
 // revokes CONNECT from PUBLIC, which PostgreSQL grants it to by default, and
 // grants it to the login. Roles belong to the cluster, so the application

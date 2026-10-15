@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -17,6 +18,19 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
+
+// TestMain clears the libpq environment variables before the tests run. pgx
+// fills in from them what a URL leaves out, so a developer's PGPASSWORD would
+// take the place of the password file that TestProvisionPasswordFromFile
+// names, and PGAPPNAME the name that TestApplicationName expects.
+func TestMain(m *testing.M) {
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "PG") {
+			os.Unsetenv(name)
+		}
+	}
+	os.Exit(m.Run())
+}
 
 // TestRolesAfterMigrating checks the roles and privileges the migrations
 // leave: the server's roles have only the attributes they need, none of them

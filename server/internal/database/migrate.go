@@ -137,7 +137,8 @@ func (e *MigrationError) Unwrap() error { return e.Err }
 // applied, and the application login is left as it was. A database that a
 // newer version of Storycreep migrated is an *UnknownMigrationsError, and
 // Migrate changes nothing then, nor when the application login has the name
-// of one of the server's roles.
+// of one of the server's roles or PostgreSQL's reserved pg_ prefix
+// (checkLoginName).
 func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOptions) (MigrateResult, error) {
 	res, db, err := migrate(ctx, admin, app, opts)
 	if db != nil {
@@ -154,7 +155,7 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 		return MigrateResult{}, nil, ErrNoAdminURL
 	}
 	if !app.IsSet() {
-		return MigrateResult{}, nil, errors.New("STORYCREEP_DATABASE_URL is not set")
+		return MigrateResult{}, nil, errNoURL
 	}
 	// The name is checked before anything changes: the first migration makes
 	// the server's roles unable to log in, so it would lock out a login that

@@ -247,8 +247,15 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 		{"collation owner", func(r, n string) string {
 			return `CREATE COLLATION owned_` + n + ` FROM "C"; ALTER COLLATION owned_` + n + " OWNER TO " + r
 		}, "it owns objects in the database"},
+		// The database's owner is the likeliest owner of all, as after
+		// CREATE DATABASE storycreep OWNER storycreep, so the reason says
+		// that it owns the database.
 		{"database owner", func(r, _ string) string { return "ALTER DATABASE " + d.Name + " OWNER TO " + r },
-			`it is a member of "pg_database_owner", which owns objects in the database`},
+			"it owns the database"},
+		{"member of the database owner", func(r, n string) string {
+			return "CREATE ROLE owner_" + n + "; GRANT owner_" + n + " TO " + r + "; ALTER DATABASE " + d.Name +
+				" OWNER TO owner_" + n
+		}, `", which owns the database`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			app := d.NewLogin(t, "")
@@ -257,7 +264,8 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 			}
 			t.Cleanup(func() {
 				// A role that owns the database cannot be dropped.
-				if _, err := admin.Exec(ctx, "ALTER DATABASE "+d.Name+" OWNER TO postgres"); err != nil {
+				if _, err := admin.Exec(ctx, "ALTER DATABASE "+d.Name+" OWNER TO postgres; "+
+					"DROP ROLE IF EXISTS owner_"+app.User()); err != nil {
 					t.Error(err)
 				}
 			})
@@ -267,6 +275,11 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 			var uerr *database.UnsafeLoginError
 			if !errors.As(err, &uerr) || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Migrate returned %v, want an *UnsafeLoginError saying %q", err, tt.want)
+			}
+			// PostgreSQL makes the database's owner a member of
+			// pg_database_owner, which the reasons leave out.
+			if strings.Contains(err.Error(), "pg_database_owner") {
+				t.Errorf("Migrate returned %v, which names pg_database_owner", err)
 			}
 			if isMember(t, admin, app.User(), "storycreep_app") {
 				t.Errorf("the refused login was granted storycreep_app")
