@@ -169,6 +169,24 @@ func TestCheckFails(t *testing.T) {
 			want: `FR-B-01: cannot read "AC2:" as an acceptance criterion`,
 		},
 		{
+			name: "inline acceptance criterion with a no-break space",
+			prd:  []edit{{"AC2 — It still works.", "AC2\u00a0— It still works."}},
+			file: "PRD.md",
+			want: "FR-B-01: cannot read \"AC2\\u00a0—\" as an acceptance criterion",
+		},
+		{
+			name: "inline acceptance criterion in bold",
+			prd:  []edit{{"AC2 — It still works.", "**AC2** — It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "AC2** —" as an acceptance criterion`,
+		},
+		{
+			name: "acceptance criterion in parentheses in a bullet",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too (AC3 — and thrice).\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "AC3 —" as an acceptance criterion (write each criterion as its own "- ACn — …" bullet)`,
+		},
+		{
 			name: "inline acceptance criterion without a space after the dash",
 			prd:  []edit{{"AC2 — It still works.", "AC2 —It still works."}},
 			file: "PRD.md",
@@ -684,6 +702,22 @@ func TestParsePRD(t *testing.T) {
 	}
 	if want := []string{"AC1", "AC2", "AC3"}; !slices.Equal(got.Requirements[1].Criteria, want) {
 		t.Errorf("FR-A-02 criteria in a loose list = %q, want %q", got.Requirements[1].Criteria, want)
+	}
+
+	// An inline label is read wherever it is, not only after a space.
+	for _, inline := range []string{
+		"AC1 — It shines.AC2 — It still works.",
+		"AC1 — It shines (AC2 — It still works).",
+		"AC1 — It shines.\u00a0AC2 — It still works.",
+		"AC1 — AC2 — It still works.",
+	} {
+		got, problems = ParsePRD("PRD.md", applyEdits(t, readFixture(t, "PRD.md"), []edit{{"AC1 — It shines. AC2 — It still works.", inline}}))
+		if len(problems) > 0 {
+			t.Errorf("%q: unexpected problems:%s", inline, formatProblems(problems))
+		}
+		if want := []string{"AC1", "AC2"}; !slices.Equal(got.Requirements[3].Criteria, want) {
+			t.Errorf("%q: FR-B-01 criteria = %q, want %q", inline, got.Requirements[3].Criteria, want)
+		}
 	}
 
 	// A criterion at the margin is reported, and the list goes on after it.

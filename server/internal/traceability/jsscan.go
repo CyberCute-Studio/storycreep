@@ -64,6 +64,11 @@ var jsConditions = map[string]bool{"skipIf": true, "runIf": true}
 // cannot name them.
 var jsTables = map[string]bool{"each": true, "for": true}
 
+// jsSkipOptions are Vitest's options that, set to true, make a declaration
+// verify nothing, as the modifiers of the same names do: test("…", { skip:
+// true }, …).
+var jsSkipOptions = map[string]bool{"skip": true, "todo": true, "fails": true}
+
 // readJS reads a JavaScript or TypeScript file. Its test declarations are the
 // calls of jsTestHeads, or of jsBenchHeads in a benchmark file, with a string
 // literal title, named after the groups they are in as Vitest names them:
@@ -71,7 +76,8 @@ var jsTables = map[string]bool{"each": true, "for": true}
 // without a title, as Playwright's test.describe(() => …), adds nothing to
 // the name. A test is skipped when it, or a group it is in, is declared with
 // a modifier that verifies nothing, whatever the group's arguments, as in
-// describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …). A group
+// describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …), or with
+// an option that does, as in test("…", { skip: true }, …). A group
 // is skipped too when every test declared in it is skipped, because it runs
 // no test then.
 func readJS(file, src string, isTest bool) source {
@@ -183,6 +189,7 @@ func readJS(file, src string, isTest bool) source {
 		for c.to+1 < len(toks) && toks[c.to+1].is('(', "(") {
 			c.to = match[c.to+1]
 		}
+		c.skipped = c.skipped || skippedByOption(toks, c.from, c.to)
 		// The title is a literal only when nothing is added to it, as in
 		// "handles " + name.
 		if !table && j+2 < len(toks) && toks[j+1].kind == 's' && (toks[j+2].is('(', ",") || toks[j+2].is('(', ")")) {
@@ -269,6 +276,44 @@ func isFunctionAt(toks []jsToken, k int, match map[int]int) bool {
 	}
 	end := match[k]
 	return end+2 < len(toks) && toks[end+1].is('(', "=") && toks[end+2].is('(', ">")
+}
+
+// skippedByOption reports whether the arguments of a declaration, the tokens
+// from its first "(" to the ")" of its last call, include an options object
+// that sets one of jsSkipOptions to true, as Vitest's test("…", { skip: true
+// }, …) or describe("…", { todo: true }, …). An option set to anything else,
+// as { skip: isCI }, is a condition the scan cannot evaluate, like skipIf. An
+// object that is not itself an argument, as one in the test's body, is not
+// an options object.
+func skippedByOption(toks []jsToken, from, to int) bool {
+	depth := 0 // the nesting of brackets of any kind, the call's own included
+	options := false
+	for k := from; k <= to; k++ {
+		t := toks[k]
+		if t.kind != '(' {
+			continue
+		}
+		switch t.text {
+		case "(", "[", "{":
+			if t.text == "{" && depth == 1 && (toks[k-1].is('(', "(") || toks[k-1].is('(', ",")) {
+				options = true
+			}
+			depth++
+		case ")", "]", "}":
+			depth--
+			if depth <= 1 {
+				options = false
+			}
+		case ":":
+			key := toks[k-1]
+			if options && depth == 2 && (key.kind == 'i' || key.kind == 's') && jsSkipOptions[key.text] &&
+				(toks[k-2].is('(', "{") || toks[k-2].is('(', ",")) &&
+				k+2 <= to && toks[k+1].is('i', "true") && (toks[k+2].is('(', ",") || toks[k+2].is('(', "}")) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // afterTemplate returns the index of the token after the template literal

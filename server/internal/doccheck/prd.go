@@ -72,11 +72,11 @@ var (
 	criteriaFieldRE   = regexp.MustCompile(`^-\s+\*\*Acceptance criteria:\*\*\s*(.*?)\s*$`)
 	criterionBulletRE = regexp.MustCompile(`^\s+-\s+(.*)$`)
 	criterionRE       = regexp.MustCompile(`^AC([1-9]\d*) — `)
-	inlineCriterionRE = regexp.MustCompile(`(?:^|\s)AC([1-9]\d*) — `)
-	// inlineLabelRE finds what reads as a criterion's label in inline text,
-	// "AC2 — " or a misspelling such as "AC2 – ", "AC2 - ", or "AC2: ", but
-	// not a reference such as "FR-DATA-01 AC1, AC5".
-	inlineLabelRE = regexp.MustCompile(`(?:^|\s)(AC\d+\s*[-–—:]\s?)`)
+	// inlineLabelRE finds what reads as a criterion's label in text, "AC2 — "
+	// or a misspelling such as "AC2 – ", "AC2 - ", "AC2: ", "**AC2** — ", or
+	// one with a no-break space, wherever it is, as after "works." or "(", but
+	// not a reference such as "FR-DATA-01 AC1, AC5" or "FR-DATA-01/AC1".
+	inlineLabelRE = regexp.MustCompile(`(?:^|[^\p{L}\p{N}/])(AC\d+[*_\s\p{Zs}]*[-–—:])`)
 	// listItemRE finds a list item that is not a "-" bullet: "* …", "+ …",
 	// "1. …".
 	listItemRE = regexp.MustCompile(`^\s*(?:[*+]|\d+[.)])\s`)
@@ -221,36 +221,31 @@ func (p *prd) parseRequirement(d *document, s section, id, title string, r *repo
 
 // addCriteria reads the acceptance criteria in text: one indented bullet
 // ("AC1 — …"), or, when inline, the rest of the field's line ("AC1 — …
-// AC2 — …"). In inline text, a label that is not written "ACn — " is
-// reported, and so is a second label in a bullet, so that a criterion is
-// never silently left out.
+// AC2 — …"). Each label that inlineLabelRE finds is a criterion: in inline
+// text, one that is not written "ACn — " is reported, and so is a second
+// label in a bullet, so that a criterion is never silently left out.
 func (req *requirement) addCriteria(file string, line int, text string, inline bool, r *reporter) {
 	if !criterionRE.MatchString(text) {
 		r.add(file, line, "%s: cannot read %q as an acceptance criterion (write \"ACn — …\")", req.id, text)
 		return
 	}
-	re := criterionRE
-	labels := inlineLabelRE.FindAllStringSubmatch(text, -1)
-	if inline {
-		re = inlineCriterionRE
-		for _, m := range labels {
-			if !criterionRE.MatchString(m[1]) {
-				r.add(file, line, "%s: cannot read %q as an acceptance criterion (write \"ACn — …\")", req.id, strings.TrimSpace(m[1]))
+	// The text starts with a label, so the first one is the bullet's own.
+	for i, m := range inlineLabelRE.FindAllStringSubmatchIndex(text, -1) {
+		found := text[m[2]:m[3]]
+		label := criterionRE.FindStringSubmatch(text[m[2]:])
+		switch {
+		case !inline && i > 0:
+			r.add(file, line, "%s: cannot read %q as an acceptance criterion (write each criterion as its own \"- ACn — …\" bullet)", req.id, found)
+		case label == nil:
+			r.add(file, line, "%s: cannot read %q as an acceptance criterion (write \"ACn — …\")", req.id, found)
+		default:
+			n, err := strconv.Atoi(label[1])
+			if err != nil {
+				r.add(file, line, "%s: cannot read AC%s as an acceptance criterion", req.id, label[1])
+				continue
 			}
+			req.criteria = append(req.criteria, criterion{num: n, line: line})
 		}
-	} else {
-		// The first label is the bullet's own.
-		for _, m := range labels[1:] {
-			r.add(file, line, "%s: cannot read %q as an acceptance criterion (write each criterion as its own \"- ACn — …\" bullet)", req.id, strings.TrimSpace(m[1]))
-		}
-	}
-	for _, m := range re.FindAllStringSubmatch(text, -1) {
-		n, err := strconv.Atoi(m[1])
-		if err != nil {
-			r.add(file, line, "%s: cannot read AC%s as an acceptance criterion", req.id, m[1])
-			continue
-		}
-		req.criteria = append(req.criteria, criterion{num: n, line: line})
 	}
 }
 
