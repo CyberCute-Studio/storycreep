@@ -596,3 +596,135 @@ func TestProvisionRefusesReservedRoles(t *testing.T) {
 		t.Errorf("a refused run applied migrations")
 	}
 }
+
+// TestProvisionMaintenanceLogin checks that migrating with a maintenance URL
+// creates the maintenance login with its password, grants it
+// storycreep_maintenance and nothing else of the server's roles, and CONNECT
+// on its database, and updates the password when the URL's changes.
+func TestProvisionMaintenanceLogin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	login := d.FreshLogin(t)
+	maint := d.URL(t, login, "first-password")
+
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Maintenance: maint}); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{"storycreep_app", "storycreep_definer", "storycreep_maintenance"} {
+		if got, want := isMember(t, admin, login, role), role == "storycreep_maintenance"; got != want {
+			t.Errorf("the maintenance login is a member of %s: %v, want %v", role, got, want)
+		}
+	}
+	if stored := storedPassword(t, admin, login); !strings.HasPrefix(stored, "SCRAM-SHA-256$") {
+		t.Errorf("the stored password is %q, want a SCRAM verifier", stored)
+	}
+	var connects, publicConnects bool
+	if err := admin.QueryRow(ctx, "SELECT has_database_privilege($1::name, current_database(), 'CONNECT'), "+
+		"has_database_privilege('public', current_database(), 'CONNECT')", login).Scan(&connects, &publicConnects); err != nil {
+		t.Fatal(err)
+	}
+	if !connects || publicConnects {
+		t.Errorf("the maintenance login can connect: %v, and PUBLIC: %v; want only the login", connects, publicConnects)
+	}
+
+	second := d.URL(t, login, "second-password")
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Maintenance: second}); err != nil {
+		t.Fatal(err)
+	}
+	if !canConnect(t, second) || canConnect(t, maint) {
+		t.Errorf("after migrating with a new password, the login does not log in with it, or still with the old one")
+	}
+}
+
+// TestProvisionRefusesMaintenanceLogins checks that migrating refuses a
+// maintenance login that is the application login or the admin login, has
+// the name of one of the server's roles, or has more privileges than
+// storycreep_maintenance gives it, and leaves it as it was.
+func TestProvisionRefusesMaintenanceLogins(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	superuser := d.NewLogin(t, "SUPERUSER")
+	member := d.NewLogin(t, "")
+	if _, err := admin.Exec(ctx, "GRANT storycreep_app TO "+pgx.Identifier{member.User()}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name   string
+		maint  config.DatabaseURL
+		unsafe bool
+		want   string
+	}{
+		{"the application login", d.AppURL, false, "as STORYCREEP_DATABASE_URL does"},
+		{"the admin login", d.AdminURL, false, "as STORYCREEP_DATABASE_ADMIN_URL does"},
+		{"a reserved name", d.URL(t, "storycreep_maintenance", "pw"), false, "reserved for the server's own use"},
+		{"a superuser", superuser, true, "it is a superuser"},
+		{"a member of storycreep_app", member, true,
+			`it is a member of "storycreep_app", which is reserved for the server's other work`},
+	} {
+		_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Maintenance: tt.maint})
+		var uerr *database.UnsafeLoginError
+		if err == nil || errors.As(err, &uerr) != tt.unsafe || !strings.Contains(err.Error(), tt.want) ||
+			!strings.Contains(err.Error(), "STORYCREEP_DATABASE_MAINTENANCE_URL") {
+			t.Errorf("%s: Migrate returned %v, want a refusal of STORYCREEP_DATABASE_MAINTENANCE_URL saying %q",
+				tt.name, err, tt.want)
+		}
+		if tt.unsafe && isMember(t, admin, tt.maint.User(), "storycreep_maintenance") {
+			t.Errorf("%s: the refused login was granted storycreep_maintenance", tt.name)
+		}
+	}
+}
+
+// TestProvisionMaintenanceOfAnotherDatabase checks that migrating fails when
+// the maintenance URL reaches a database other than the one migrated, which
+// has not applied the migrations.
+func TestProvisionMaintenanceOfAnotherDatabase(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, other := dbtest.New(t), dbtest.Empty(t)
+	_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Maintenance: other.MaintenanceURL})
+	if err == nil || !strings.Contains(err.Error(), "STORYCREEP_DATABASE_MAINTENANCE_URL connects to still has pending") {
+		t.Errorf("Migrate returned %v, want a refusal of the unmigrated database", err)
+	}
+}
+
+// TestProvisionRestrictsMaintenanceConnect checks that the maintenance login
+// of one Storycreep database cannot connect to another on the same server,
+// also when CONNECT was granted to storycreep_maintenance, a role of the
+// whole server that both maintenance logins are members of, which migrating
+// revokes again.
+func TestProvisionRestrictsMaintenanceConnect(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	a, b := dbtest.New(t), dbtest.New(t)
+	loginA, loginB := a.FreshLogin(t), b.FreshLogin(t)
+	maintA, maintB := a.URL(t, loginA, "a-password"), b.URL(t, loginB, "b-password")
+	for _, tt := range []struct {
+		d     *dbtest.Database
+		maint config.DatabaseURL
+	}{{a, maintA}, {b, maintB}} {
+		if _, err := database.Migrate(ctx, tt.d.AdminURL, tt.d.AppURL, database.MigrateOptions{Maintenance: tt.maint}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	intruder := a.URL(t, loginB, "b-password")
+	if !canConnect(t, maintA) || canConnect(t, intruder) {
+		t.Fatalf("the maintenance login cannot connect to its database, or the other database's can")
+	}
+	if _, err := a.Admin(t).Exec(ctx, "GRANT CONNECT ON DATABASE "+pgx.Identifier{a.Name}.Sanitize()+
+		" TO storycreep_maintenance"); err != nil {
+		t.Fatal(err)
+	}
+	if !canConnect(t, intruder) {
+		t.Fatalf("with CONNECT granted to storycreep_maintenance, the other database's maintenance login cannot connect")
+	}
+	if _, err := database.Migrate(ctx, a.AdminURL, a.AppURL, database.MigrateOptions{Maintenance: maintA}); err != nil {
+		t.Fatal(err)
+	}
+	if !canConnect(t, maintA) || canConnect(t, intruder) {
+		t.Errorf("after migrating, the maintenance login cannot connect, or the other database's still can")
+	}
+}

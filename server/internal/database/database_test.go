@@ -501,6 +501,18 @@ func TestStart(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "storycreep_app can connect to the database") {
 			t.Errorf("Start returned %v, want a refusal of the database that storycreep_app can connect to", err)
 		}
+
+		// Every Storycreep database's maintenance login is a member of
+		// storycreep_maintenance, which bypasses row-level security.
+		if _, err := d.Admin(t).Exec(ctx, "REVOKE CONNECT ON DATABASE "+pgx.Identifier{d.Name}.Sanitize()+
+			" FROM storycreep_app; GRANT CONNECT ON DATABASE "+pgx.Identifier{d.Name}.Sanitize()+
+			" TO storycreep_maintenance"); err != nil {
+			t.Fatal(err)
+		}
+		_, err = database.Start(ctx, cfg, database.StartOptions{})
+		if err == nil || !strings.Contains(err.Error(), "storycreep_maintenance can connect to the database") {
+			t.Errorf("Start returned %v, want a refusal of the database that storycreep_maintenance can connect to", err)
+		}
 	})
 
 	t.Run("auto-migrate waits for the lock", func(t *testing.T) {

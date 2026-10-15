@@ -160,7 +160,8 @@ func TestInvalidDatabaseURL(t *testing.T) {
 		{"postgres://app@db/sc?oauth_client_secret=" + password, "sets oauth_client_secret, a libpq parameter"},
 	}
 	for _, tt := range tests {
-		for _, key := range []string{"STORYCREEP_DATABASE_URL", "STORYCREEP_DATABASE_ADMIN_URL"} {
+		for _, key := range []string{"STORYCREEP_DATABASE_URL", "STORYCREEP_DATABASE_ADMIN_URL",
+			"STORYCREEP_DATABASE_MAINTENANCE_URL"} {
 			problems := loadProblems(t, Options{Env: MapEnvironment(withRequired(map[string]string{key: tt.in}))})
 			if len(problems) != 1 || problems[0].Key != key {
 				t.Errorf("%s=%s: problems = %v, want one for %s", key, tt.in, problems, key)
@@ -201,9 +202,11 @@ func TestUnsupportedParamInServiceFile(t *testing.T) {
 // Verifies: NFR-SEC-14
 func TestDatabaseURLIsRedacted(t *testing.T) {
 	c := mustLoad(t, withRequired(map[string]string{
-		"STORYCREEP_DATABASE_ADMIN_URL": "postgres://postgres:admin-s3cr3t@db/storycreep",
+		"STORYCREEP_DATABASE_ADMIN_URL":       "postgres://postgres:admin-s3cr3t@db/storycreep",
+		"STORYCREEP_DATABASE_MAINTENANCE_URL": "postgres://maintainer:maint-s3cr3t@db/storycreep",
 	}))
-	for _, key := range []string{"STORYCREEP_DATABASE_URL", "STORYCREEP_DATABASE_ADMIN_URL"} {
+	for _, key := range []string{"STORYCREEP_DATABASE_URL", "STORYCREEP_DATABASE_ADMIN_URL",
+		"STORYCREEP_DATABASE_MAINTENANCE_URL"} {
 		if e := entry(t, c, key); !strings.Contains(e.Value, secret.Redacted) || strings.Contains(e.Value, "s3cr3t") {
 			t.Errorf("entry %s = %q, want the password redacted", key, e.Value)
 		}
@@ -218,7 +221,7 @@ func TestDatabaseURLIsRedacted(t *testing.T) {
 	for _, s := range []string{
 		fmt.Sprint(c.DatabaseAdminURL), fmt.Sprintf("%v %+v %#v %s %q", c.DatabaseAdminURL, c.DatabaseAdminURL,
 			c.DatabaseAdminURL, c.DatabaseAdminURL, c.DatabaseAdminURL),
-		fmt.Sprintf("%+v %#v", *c, *c), logged.String(), string(encoded),
+		fmt.Sprintf("%+v %#v", *c, *c), logged.String(), string(encoded), fmt.Sprint(c.DatabaseMaintenanceURL),
 	} {
 		if strings.Contains(s, "s3cr3t") {
 			t.Errorf("the password leaks: %s", s)
@@ -254,4 +257,33 @@ func TestAdminDatabaseMatches(t *testing.T) {
 	mustLoad(t, withRequired(map[string]string{
 		"STORYCREEP_DATABASE_ADMIN_URL": "postgres://postgres:other@db-direct:5432/storycreep",
 	}))
+}
+
+// TestMaintenanceLoginDiffers checks that the maintenance URL cannot name the
+// application's login or the admin login, because the maintenance jobs bypass
+// row-level security, which must hold the application, and must name the
+// server's database.
+func TestMaintenanceLoginDiffers(t *testing.T) {
+	for _, tt := range []struct {
+		url, want string
+	}{
+		{"postgres://storycreep:other@db/storycreep", "same login as STORYCREEP_DATABASE_URL"},
+		{"postgres://postgres:other@db/storycreep", "same login as STORYCREEP_DATABASE_ADMIN_URL"},
+		{"postgres://maintainer:other@db/postgres", "different database"},
+	} {
+		problems := loadProblems(t, Options{Env: MapEnvironment(withRequired(map[string]string{
+			"STORYCREEP_DATABASE_ADMIN_URL":       "postgres://postgres:admin@db/storycreep",
+			"STORYCREEP_DATABASE_MAINTENANCE_URL": tt.url,
+		}))})
+		if len(problems) != 1 || problems[0].Key != "STORYCREEP_DATABASE_MAINTENANCE_URL" ||
+			!strings.Contains(problems[0].Msg, tt.want) || strings.Contains(problems[0].Msg, "other") {
+			t.Errorf("%s: problems = %v, want one saying %q, without the URL", tt.url, problems, tt.want)
+		}
+	}
+	c := mustLoad(t, withRequired(map[string]string{
+		"STORYCREEP_DATABASE_MAINTENANCE_URL": "postgres://maintainer:pw@db-direct:5432/storycreep",
+	}))
+	if c.DatabaseMaintenanceURL.User() != "maintainer" {
+		t.Errorf("DatabaseMaintenanceURL names %q, want maintainer", c.DatabaseMaintenanceURL.User())
+	}
 }

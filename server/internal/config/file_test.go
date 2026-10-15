@@ -42,6 +42,7 @@ func TestFile(t *testing.T) {
 		{"STORYCREEP_DEFAULT_LOCALE", "en", SourceDefault},
 		{"STORYCREEP_DATABASE_URL", testDatabaseShown, SourceEnvironment},
 		{"STORYCREEP_DATABASE_ADMIN_URL", "", SourceUnset},
+		{"STORYCREEP_DATABASE_MAINTENANCE_URL", "", SourceUnset},
 		{"STORYCREEP_HTTP_ADDR", ":8080", SourceDefault},
 		{"STORYCREEP_ADMIN_ADDR", "127.0.0.1:9090", SourceDefault},
 		{"STORYCREEP_METRICS_TOKEN", "", SourceUnset},

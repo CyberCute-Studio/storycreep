@@ -34,6 +34,14 @@ func TestMigrate(t *testing.T) {
 	if code != ExitOK || !strings.HasPrefix(stdout, "No migrations to apply. The database is at version ") {
 		t.Errorf("the second run: exit %d, stdout %q", code, stdout)
 	}
+
+	env := migrateEnv(d, true)
+	env["STORYCREEP_DATABASE_MAINTENANCE_URL"] = d.MaintenanceURL.Reveal()
+	code, stdout, _ = run(t, env, "migrate")
+	if code != ExitOK || !strings.HasSuffix(stdout, `, and the application login "`+dbtest.AppLogin+
+		`" and the maintenance login "`+dbtest.MaintenanceLogin+`" are ready.`+"\n") {
+		t.Errorf("with the maintenance URL: exit %d, stdout %q", code, stdout)
+	}
 }
 
 // TestMigrateFailures checks that migrate exits with status 1, saying why,
