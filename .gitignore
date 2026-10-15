@@ -5,6 +5,8 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+/server/storycreep
+/server/storycreep.exe
 traceability-report/
 
 # Godot editor cache

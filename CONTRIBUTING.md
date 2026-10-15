@@ -94,10 +94,14 @@ A test skipped in any other way still counts, because the report does not run th
 - A `Verifies:` comment above a commented-out test, as when a test is commented out but its tag is not: a comment line below the tag that starts with a test or group declaration, such as `// func TestOld(t *testing.T) {` or `// it("old", () => {`. The tag would otherwise belong to the test below the commented-out one. Comment out the tag with the test, or move it. A comment that mentions a declaration after other words, as in `// Each case runs in t.Run(…)`, is prose.
 - A comment line that continues the ID list of the `Verifies:` line above it, such as `// and NFR-PERF-01`; start that line with `Verifies:` too. That includes a line that holds nothing but IDs and the commas or `and` between them, written as a list item or not, among the comment lines directly above a test or a group or around a `Verifies:` line, as where gofmt moves an indented continuation of a doc comment below a blank comment line.
 
+[`docs/configuration.md`](docs/configuration.md) is generated from the key declarations in `server/internal/config/keys.go`, and `go test ./...` fails when it is out of date. After you add or change a configuration key, regenerate it by running `go test ./internal/config -run TestReference -update` in `server/`.
+
 ## Conventions
 
 - Text files use LF line endings everywhere. `.gitattributes` enforces this, and `.editorconfig` sets the indentation: two spaces, except tabs for Go and GDScript.
 - Every user-facing string goes through the i18n layer, and every new endpoint is in the OpenAPI document. The plan's standing checklist lists the rest.
+- Outside tests, only `server/internal/config` reads the environment or knows the deployment mode (`STORYCREEP_MODE`). Code that behaves differently in the two modes reads `config.Capabilities`. A test fails on non-test code in any other package that reads an environment variable, names `STORYCREEP_MODE`, or uses a mode value (PRD FR-ADMIN-01 AC3). Test files are exempt, because they set the mode up.
+- Secrets are held as `secret.Value` (`server/internal/secret`), which prints, logs, and encodes as `[REDACTED]`. Call `Reveal` only where the secret is used.
 
 ## Security issues
 
