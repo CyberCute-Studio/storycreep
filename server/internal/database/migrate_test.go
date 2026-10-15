@@ -1,0 +1,354 @@
+package database_test
+
+import (
+	"context"
+	"errors"
+	"io/fs"
+	"maps"
+	"strings"
+	"sync"
+	"testing"
+	"testing/fstest"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+)
+
+// withMigrations returns the embedded migrations plus extra, which maps file
+// names to their SQL after the -- +goose Up line.
+func withMigrations(t *testing.T, extra map[string]string) fs.FS {
+	t.Helper()
+	m := fstest.MapFS{}
+	err := fs.WalkDir(database.Migrations(), ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(database.Migrations(), p)
+		m[p] = &fstest.MapFile{Data: data}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, sql := range extra {
+		m[name] = &fstest.MapFile{Data: []byte("-- +goose Up\n" + sql + "\n")}
+	}
+	return m
+}
+
+func embeddedVersions(t *testing.T) []int64 {
+	t.Helper()
+	names, err := fs.Glob(database.Migrations(), "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs := make([]int64, len(names))
+	for i := range names {
+		vs[i] = int64(i + 1)
+	}
+	return vs
+}
+
+func versionsOf(applied []database.AppliedMigration) []int64 {
+	var vs []int64
+	for _, m := range applied {
+		vs = append(vs, m.Version)
+	}
+	return vs
+}
+
+func equalVersions(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestMigrateFreshDatabase(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	want := embeddedVersions(t)
+
+	res, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := versionsOf(res.Applied); !equalVersions(got, want) || res.Version != want[len(want)-1] {
+		t.Errorf("applied %v up to version %d, want %v", got, res.Version, want)
+	}
+	if res.Applied[0].Name != "00001_roles.sql" {
+		t.Errorf("the first migration is named %q", res.Applied[0].Name)
+	}
+
+	// Applying again does nothing.
+	res, err = database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{})
+	if err != nil || len(res.Applied) != 0 || res.Version != want[len(want)-1] {
+		t.Errorf("the second run applied %v up to version %d, %v; want nothing", res.Applied, res.Version, err)
+	}
+	if p, err := d.Open(t).Pending(ctx); err != nil || len(p) != 0 {
+		t.Errorf("Pending() = %v, %v; want none", p, err)
+	}
+}
+
+// TestConcurrentMigrate starts several migrations of one database at once,
+// as instances starting together do, and checks that each migration ran
+// exactly once (PRD FR-ADMIN-04). A slow migration keeps the first run busy
+// while the others start.
+func TestConcurrentMigrate(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	fsys := withMigrations(t, map[string]string{
+		"90001_count.sql": "CREATE TABLE migration_runs (n int);\nINSERT INTO migration_runs VALUES (1);\nSELECT pg_sleep(1);",
+	})
+
+	const instances = 4
+	results := make([]database.MigrateResult, instances)
+	errs := make([]error, instances)
+	var wg sync.WaitGroup
+	for i := range instances {
+		wg.Go(func() {
+			results[i], errs[i] = database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: fsys})
+		})
+	}
+	wg.Wait()
+
+	ran := 0
+	for i := range instances {
+		if errs[i] != nil {
+			t.Errorf("instance %d: %v", i, errs[i])
+			continue
+		}
+		if len(results[i].Applied) > 0 {
+			ran++
+		}
+		if results[i].Version != 90001 {
+			t.Errorf("instance %d: version %d, want 90001", i, results[i].Version)
+		}
+	}
+	if ran != 1 {
+		t.Errorf("%d instances applied migrations, want exactly 1", ran)
+	}
+	admin := d.Admin(t)
+	var runs, duplicates int
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM migration_runs").Scan(&runs); err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM (
+		SELECT version_id FROM goose_db_version GROUP BY version_id HAVING count(*) > 1) d`).Scan(&duplicates); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 || duplicates != 0 {
+		t.Errorf("the counting migration ran %d times, and %d versions were recorded twice; want 1 and 0", runs, duplicates)
+	}
+}
+
+// TestMigrateWaitsForTheLock holds the migration lock and checks that
+// Migrate waits for it, and that a cancelled wait gives up.
+func TestMigrateWaitsForTheLock(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	holder := d.Admin(t)
+	if _, err := holder.Exec(ctx, "SELECT pg_advisory_lock($1)", database.MigrationLock); err != nil {
+		t.Fatal(err)
+	}
+
+	short, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	if _, err := database.Migrate(short, d.AdminURL, d.AppURL, database.MigrateOptions{}); err == nil ||
+		!strings.Contains(err.Error(), "migration lock") {
+		t.Errorf("with the lock held and a short deadline, Migrate returned %v; want a failure to take the lock", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("Migrate finished while another session held the lock: %v", err)
+	case <-time.After(time.Second):
+	}
+	if _, err := holder.Exec(ctx, "SELECT pg_advisory_unlock($1)", database.MigrationLock); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Migrate failed after the lock was released: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Migrate did not finish after the lock was released")
+	}
+}
+
+// TestFailedMigration checks that a failed migration leaves the database at
+// the last migration that succeeded, with no trace of the failed one, and
+// that a fixed migration then applies.
+func TestFailedMigration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	good := map[string]string{"90001_good.sql": "CREATE TABLE good (x int);"}
+	bad := maps.Clone(good)
+	bad["90002_bad.sql"] = "CREATE TABLE half (x int);\nSELECT 1/0;"
+
+	res, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: withMigrations(t, bad)})
+	var merr *database.MigrationError
+	if !errors.As(err, &merr) {
+		t.Fatalf("Migrate returned %v, want a *MigrationError", err)
+	}
+	if merr.Version != 90002 || merr.Name != "90002_bad.sql" || merr.DatabaseVersion != 90001 || res.Version != 90001 ||
+		!strings.Contains(err.Error(), "division by zero") || !strings.Contains(err.Error(), "stays at version 90001") {
+		t.Errorf("error %v (version %d, name %q, database version %d), result version %d", err, merr.Version,
+			merr.Name, merr.DatabaseVersion, res.Version)
+	}
+	if got := versionsOf(res.Applied); got[len(got)-1] != 90001 {
+		t.Errorf("applied %v, want the migrations up to 90001", got)
+	}
+	admin := d.Admin(t)
+	var good1, half bool
+	if err := admin.QueryRow(ctx, "SELECT to_regclass('good') IS NOT NULL, to_regclass('half') IS NOT NULL").
+		Scan(&good1, &half); err != nil {
+		t.Fatal(err)
+	}
+	if !good1 || half {
+		t.Errorf("table good exists: %v, table half exists: %v; want the failed migration rolled back", good1, half)
+	}
+
+	fixed := maps.Clone(good)
+	fixed["90002_bad.sql"] = "CREATE TABLE half (x int);"
+	res, err = database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: withMigrations(t, fixed)})
+	if err != nil || !equalVersions(versionsOf(res.Applied), []int64{90002}) {
+		t.Errorf("the fixed migration: applied %v, %v; want 90002", res.Applied, err)
+	}
+}
+
+// TestNewerDatabase checks that a database migrated by a newer version of
+// Storycreep is refused, by Migrate and by Pending, instead of being run
+// against.
+func TestNewerDatabase(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	newer := withMigrations(t, map[string]string{"90001_newer.sql": "CREATE TABLE newer (x int);"})
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: newer}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{})
+	var uerr *database.UnknownMigrationsError
+	if !errors.As(err, &uerr) || !equalVersions(uerr.Versions, []int64{90001}) || !strings.Contains(err.Error(), "newer") {
+		t.Errorf("Migrate returned %v, want an *UnknownMigrationsError for 90001", err)
+	}
+	if _, err := d.Open(t).Pending(ctx); !errors.As(err, &uerr) {
+		t.Errorf("Pending returned %v, want an *UnknownMigrationsError", err)
+	}
+}
+
+func TestMigrateNeedsTheAdminLogin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+
+	if _, err := database.Migrate(ctx, config.DatabaseURL{}, d.AppURL, database.MigrateOptions{}); !errors.Is(err, database.ErrNoAdminURL) {
+		t.Errorf("without an admin URL: %v, want ErrNoAdminURL", err)
+	}
+
+	// An ordinary login could not create the roles, and could not even
+	// grant most of what the migrations grant: PostgreSQL only warns then.
+	plain := d.NewLogin(t, "")
+	_, err := database.Migrate(ctx, plain, d.AppURL, database.MigrateOptions{})
+	if err == nil || !strings.Contains(err.Error(), "is not a superuser") || !strings.Contains(err.Error(), plain.User()) {
+		t.Errorf("with an ordinary admin login: %v, want a refusal naming it", err)
+	}
+	var exists bool
+	if err := d.Admin(t).QueryRow(ctx, "SELECT to_regclass('goose_db_version') IS NOT NULL").Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Errorf("the refused run created the version table")
+	}
+}
+
+// TestRoleMigrationCorrectsRoles checks that the first migration corrects the
+// attributes of server roles that exist already with the wrong ones, as roles
+// another database in the cluster created could. It changes roles that every
+// database of the test server shares, so it does not run in parallel.
+func TestRoleMigrationCorrectsRoles(t *testing.T) {
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	admin := d.Admin(t)
+	restore := func() {
+		for _, stmt := range []string{
+			"ALTER ROLE storycreep_app NOLOGIN NOBYPASSRLS NOCREATEDB",
+			"ALTER ROLE storycreep_maintenance NOLOGIN BYPASSRLS",
+		} {
+			if _, err := admin.Exec(ctx, stmt); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	t.Cleanup(restore)
+	for _, stmt := range []string{
+		"ALTER ROLE storycreep_app LOGIN BYPASSRLS CREATEDB",
+		"ALTER ROLE storycreep_maintenance NOBYPASSRLS",
+	} {
+		if _, err := admin.Exec(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	checkRoles(t, admin)
+}
+
+// checkRoles checks the attributes of the server's roles.
+func checkRoles(t *testing.T, conn *pgx.Conn) {
+	t.Helper()
+	rows, err := conn.Query(context.Background(), `
+		SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
+		FROM pg_roles WHERE rolname LIKE 'storycreep\_%' AND rolname <> $1 ORDER BY rolname`, dbtest.AppLogin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type role struct {
+		name                                             string
+		login, super, createDB, createRole, repl, bypass bool
+	}
+	roles, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (role, error) {
+		var x role
+		err := r.Scan(&x.name, &x.login, &x.super, &x.createDB, &x.createRole, &x.repl, &x.bypass)
+		return x, err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []role{
+		{name: "storycreep_app"},
+		{name: "storycreep_definer"},
+		{name: "storycreep_maintenance", bypass: true},
+	}
+	if len(roles) != len(want) {
+		t.Fatalf("roles = %+v, want %+v", roles, want)
+	}
+	for i := range want {
+		if roles[i] != want[i] {
+			t.Errorf("role %+v, want %+v", roles[i], want[i])
+		}
+	}
+}

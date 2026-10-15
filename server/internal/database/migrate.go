@@ -1,0 +1,318 @@
+package database
+
+import (
+	"context"
+	"database/sql"
+	"embed"
+	"errors"
+	"fmt"
+	"io/fs"
+	"path"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+)
+
+// embedded holds the migrations, in migrations/. They are forward-only:
+// each file has an Up section and no Down section, and a migration that has
+// reached the main branch is never changed or deleted (PRD FR-ADMIN-04), which
+// cmd/migrationcheck enforces in CI.
+//
+//go:embed migrations/*.sql
+var embedded embed.FS
+
+// Migrations returns the embedded migrations, one .sql file each.
+func Migrations() fs.FS {
+	sub, err := fs.Sub(embedded, "migrations")
+	if err != nil {
+		panic(err) // the directory is embedded, so this cannot fail
+	}
+	return sub
+}
+
+// versionTable is the table in which goose records the applied migrations.
+const versionTable = goose.DefaultTablename
+
+// migrationLock is the key of the session-level advisory lock that migrations
+// run under, in the single-bigint key space of pg_advisory_lock. It spells
+// "storycrp" in ASCII. Every advisory lock the server takes has its key
+// declared in this package, so that no two share one.
+const migrationLock int64 = 0x73746f7279637270
+
+// MigrateOptions configure Migrate.
+type MigrateOptions struct {
+	// Migrations are the migrations to apply, one .sql file each. Nil means
+	// the embedded ones; tests apply other sets.
+	Migrations fs.FS
+}
+
+// MigrateResult says what Migrate did.
+type MigrateResult struct {
+	// Applied are the migrations that this call applied, in order. It is
+	// empty if the database was up to date, which includes the case where
+	// another instance applied them while this one waited for the lock.
+	Applied []AppliedMigration
+	// Version is the newest migration the database has applied afterwards.
+	Version int64
+}
+
+// AppliedMigration is one migration that Migrate applied.
+type AppliedMigration struct {
+	Version  int64
+	Name     string
+	Duration time.Duration
+}
+
+// ErrNoAdminURL is returned by Migrate when STORYCREEP_DATABASE_ADMIN_URL is
+// not set.
+var ErrNoAdminURL = errors.New("STORYCREEP_DATABASE_ADMIN_URL is not set; applying migrations needs a superuser login")
+
+// UnknownMigrationsError reports migrations that the database has applied but
+// the server does not have, because a newer version of Storycreep migrated
+// the database. The server refuses to run against it.
+type UnknownMigrationsError struct {
+	Versions []int64
+}
+
+func (e *UnknownMigrationsError) Error() string {
+	return fmt.Sprintf("the database has applied migrations that this version of Storycreep does not have (%s); "+
+		"a newer version migrated it, and migrations cannot be undone, so run that version or a newer one",
+		joinVersions(e.Versions))
+}
+
+// MigrationError reports a migration that failed. Each migration runs in its
+// own transaction, so the failed one left no trace, and the database stays at
+// the version of the last one that succeeded.
+type MigrationError struct {
+	Version int64
+	Name    string
+	// Applied are the migrations applied before the failure.
+	Applied []AppliedMigration
+	// DatabaseVersion is the version the database stays at.
+	DatabaseVersion int64
+	Err             error
+}
+
+func (e *MigrationError) Error() string {
+	return fmt.Sprintf("migration %d (%s) failed, and the database stays at version %d: %v",
+		e.Version, e.Name, e.DatabaseVersion, e.Err)
+}
+
+func (e *MigrationError) Unwrap() error { return e.Err }
+
+// Migrate applies the pending migrations as the admin login and then
+// provisions the application login (provision). Both run while Migrate holds
+// the migration lock, so instances that migrate at the same time wait for
+// each other, and the database ends up with each migration applied exactly
+// once (PRD FR-ADMIN-04). The admin login must be a superuser, because the
+// migrations create roles.
+//
+// A failed migration is a *MigrationError, and a database that a newer
+// version of Storycreep migrated is an *UnknownMigrationsError; Migrate
+// changes nothing then.
+func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOptions) (MigrateResult, error) {
+	if !admin.IsSet() {
+		return MigrateResult{}, ErrNoAdminURL
+	}
+	if !app.IsSet() {
+		return MigrateResult{}, errors.New("STORYCREEP_DATABASE_URL is not set")
+	}
+	ms, err := loadMigrations(opts.Migrations)
+	if err != nil {
+		return MigrateResult{}, err
+	}
+	connConfig, err := pgx.ParseConfig(admin.Reveal())
+	if err != nil {
+		return MigrateResult{}, fmt.Errorf("STORYCREEP_DATABASE_ADMIN_URL: %w", err)
+	}
+	setApplicationName(connConfig)
+
+	// The lock is held by this connection's session, so it is released when
+	// the connection closes, however Migrate ends.
+	conn, err := pgx.ConnectConfig(ctx, connConfig)
+	if err != nil {
+		return MigrateResult{}, fmt.Errorf("connect to %s: %w", admin, err)
+	}
+	defer conn.Close(context.WithoutCancel(ctx))
+	var super bool
+	if err := conn.QueryRow(ctx, "SELECT rolsuper FROM pg_roles WHERE rolname = current_user").Scan(&super); err != nil {
+		return MigrateResult{}, fmt.Errorf("check the admin login: %w", err)
+	}
+	if !super {
+		return MigrateResult{}, fmt.Errorf("the login %q in STORYCREEP_DATABASE_ADMIN_URL is not a superuser; "+
+			"applying migrations needs one, because they create the server's database roles", admin.User())
+	}
+	// pg_advisory_lock waits for as long as another instance migrates. If ctx
+	// ends first, pgx cancels the wait.
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLock); err != nil {
+		return MigrateResult{}, fmt.Errorf("take the migration lock: %w", err)
+	}
+
+	applied, err := appliedVersions(ctx, conn)
+	if err != nil {
+		return MigrateResult{}, err
+	}
+	if _, err := pending(ms, applied); err != nil {
+		return MigrateResult{}, err
+	}
+
+	// goose works on database/sql. Its connections are opened only while
+	// this one holds the lock.
+	db := stdlib.OpenDB(*connConfig)
+	defer db.Close()
+	var res MigrateResult
+	res.Applied, err = runGoose(ctx, db, ms)
+	// The version is read on this connection, which a failed migration
+	// leaves usable.
+	applied, verr := appliedVersions(context.WithoutCancel(ctx), conn)
+	if len(applied) > 0 {
+		res.Version = applied[len(applied)-1]
+	}
+	var merr *MigrationError
+	if errors.As(err, &merr) {
+		merr.DatabaseVersion = res.Version
+	}
+	switch {
+	case err != nil:
+		return res, err
+	case verr != nil:
+		return res, verr
+	}
+	if err := provision(ctx, conn, app.User(), app.Password()); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+// migrationSet is a set of migrations.
+type migrationSet struct {
+	fsys fs.FS
+	// versions are the migrations' versions, in ascending order.
+	versions []int64
+}
+
+// loadMigrations lists the migrations in fsys, or the embedded ones if fsys
+// is nil: the .sql files at its root, each named by its version, an
+// underscore, and a description, as goose reads them.
+func loadMigrations(fsys fs.FS) (migrationSet, error) {
+	if fsys == nil {
+		fsys = Migrations()
+	}
+	names, err := fs.Glob(fsys, "*.sql")
+	if err != nil {
+		return migrationSet{}, fmt.Errorf("read the migrations: %w", err)
+	}
+	ms := migrationSet{fsys: fsys}
+	for _, name := range names {
+		v, err := goose.NumericComponent(name)
+		if err != nil {
+			return migrationSet{}, fmt.Errorf("read the migrations: %s: %w", name, err)
+		}
+		if slices.Contains(ms.versions, v) {
+			return migrationSet{}, fmt.Errorf("read the migrations: two migrations have version %d", v)
+		}
+		ms.versions = append(ms.versions, v)
+	}
+	slices.Sort(ms.versions)
+	return ms, nil
+}
+
+// runGoose applies the pending migrations of ms with goose, on db. It
+// returns the migrations it applied, also when one fails.
+func runGoose(ctx context.Context, db *sql.DB, ms migrationSet) ([]AppliedMigration, error) {
+	p, err := goose.NewProvider(goose.DialectPostgres, db, ms.fsys,
+		goose.WithDisableGlobalRegistry(true),
+		goose.WithTableName(versionTable),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read the migrations: %w", err)
+	}
+	results, err := p.Up(ctx)
+	var partial *goose.PartialError
+	if errors.As(err, &partial) {
+		results = partial.Applied
+	}
+	var applied []AppliedMigration
+	for _, r := range results {
+		applied = append(applied, AppliedMigration{
+			Version:  r.Source.Version,
+			Name:     path.Base(r.Source.Path),
+			Duration: r.Duration,
+		})
+	}
+	switch {
+	case partial != nil && partial.Failed != nil:
+		return applied, &MigrationError{
+			Version: partial.Failed.Source.Version,
+			Name:    path.Base(partial.Failed.Source.Path),
+			Applied: applied,
+			Err:     partial.Err,
+		}
+	case err != nil:
+		return applied, fmt.Errorf("apply the migrations: %w", err)
+	}
+	return applied, nil
+}
+
+// appliedVersions returns the versions of the migrations the database has
+// applied, in ascending order, or none if migrations never ran.
+func appliedVersions(ctx context.Context, q querier) ([]int64, error) {
+	var exists bool
+	if err := q.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", versionTable).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("read the applied migrations: %w", err)
+	}
+	if !exists {
+		return nil, nil
+	}
+	// goose adds a row each time it applies a migration, and its version 0
+	// marks the table's creation.
+	rows, err := q.Query(ctx, fmt.Sprintf(`
+		SELECT version_id FROM (
+			SELECT DISTINCT ON (version_id) version_id, is_applied FROM %s ORDER BY version_id, id DESC
+		) latest
+		WHERE is_applied AND version_id > 0
+		ORDER BY version_id`, pgx.Identifier{versionTable}.Sanitize()))
+	if err != nil {
+		return nil, fmt.Errorf("read the applied migrations: %w", err)
+	}
+	versions, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return nil, fmt.Errorf("read the applied migrations: %w", err)
+	}
+	return versions, nil
+}
+
+// pending returns the versions in ms that are not in applied, or an
+// *UnknownMigrationsError if applied has versions that ms does not.
+func pending(ms migrationSet, applied []int64) ([]int64, error) {
+	var unknown []int64
+	for _, v := range applied {
+		if !slices.Contains(ms.versions, v) {
+			unknown = append(unknown, v)
+		}
+	}
+	if len(unknown) > 0 {
+		return nil, &UnknownMigrationsError{Versions: unknown}
+	}
+	var p []int64
+	for _, v := range ms.versions {
+		if !slices.Contains(applied, v) {
+			p = append(p, v)
+		}
+	}
+	return p, nil
+}
+
+func joinVersions(vs []int64) string {
+	s := make([]string, len(vs))
+	for i, v := range vs {
+		s[i] = fmt.Sprint(v)
+	}
+	return strings.Join(s, ", ")
+}

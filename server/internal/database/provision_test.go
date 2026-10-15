@@ -1,0 +1,231 @@
+package database_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+)
+
+// canConnect reports whether url can log in.
+func canConnect(t *testing.T, url config.DatabaseURL) bool {
+	t.Helper()
+	conn, err := pgx.Connect(context.Background(), url.Reveal())
+	if err != nil {
+		return false
+	}
+	conn.Close(context.Background())
+	return true
+}
+
+func storedPassword(t *testing.T, admin *pgx.Conn, login string) string {
+	t.Helper()
+	var stored *string
+	if err := admin.QueryRow(context.Background(), "SELECT rolpassword FROM pg_authid WHERE rolname = $1", login).
+		Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored == nil {
+		return ""
+	}
+	return *stored
+}
+
+// isMember reports whether login is a direct member of role. pg_has_role
+// would count a superuser as a member of every role.
+func isMember(t *testing.T, admin *pgx.Conn, login, role string) bool {
+	t.Helper()
+	var member bool
+	if err := admin.QueryRow(context.Background(), `SELECT EXISTS (
+		SELECT FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member
+		WHERE u.rolname = $1 AND r.rolname = $2)`, login, role).Scan(&member); err != nil {
+		t.Fatal(err)
+	}
+	return member
+}
+
+// TestProvisionCreatesTheLogin checks that migrating creates the application
+// login from STORYCREEP_DATABASE_URL, with its password, and updates the
+// password when the URL's changes, without sending the password itself.
+func TestProvisionCreatesTheLogin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	login := d.FreshLogin(t)
+	app := d.URL(t, login, "first-password")
+
+	if _, err := database.Migrate(ctx, d.AdminURL, app, database.MigrateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !canConnect(t, app) || !isMember(t, admin, login, "storycreep_app") {
+		t.Fatalf("the login cannot connect, or is not a member of storycreep_app")
+	}
+	stored := storedPassword(t, admin, login)
+	if !strings.HasPrefix(stored, "SCRAM-SHA-256$") {
+		t.Errorf("the stored password is %q, want a SCRAM verifier", stored)
+	}
+	if _, err := database.Open(ctx, app); err != nil {
+		t.Errorf("Open: %v", err)
+	}
+
+	// Unchanged, the login is left alone: the verifier keeps its salt.
+	if _, err := database.Migrate(ctx, d.AdminURL, app, database.MigrateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if again := storedPassword(t, admin, login); again != stored {
+		t.Errorf("an unchanged password was written again")
+	}
+
+	// A new password replaces the old one.
+	rotated := d.URL(t, login, "second-password")
+	if _, err := database.Migrate(ctx, d.AdminURL, rotated, database.MigrateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !canConnect(t, rotated) || canConnect(t, app) {
+		t.Errorf("after the rotation, the new password should work and the old one not")
+	}
+}
+
+// TestProvisionPasswords checks that the verifiers the server writes match
+// what PostgreSQL computes from the same passwords, and that clients log in
+// with them, including passwords that SASLprep changes or rejects.
+func TestProvisionPasswords(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	for _, password := range []string{
+		"plain",
+		"päss wörd",
+		// SASLprep maps a no-break space to a space, and rejects a control
+		// character, which is then used as it is.
+		"no break",
+		"bell\x07",
+		"quote ' and \\ backslash",
+	} {
+		login := d.FreshLogin(t)
+		app := d.URL(t, login, password)
+		if _, err := database.Migrate(ctx, d.AdminURL, app, database.MigrateOptions{}); err != nil {
+			t.Fatalf("%q: %v", password, err)
+		}
+		if !canConnect(t, app) {
+			t.Errorf("%q: the login cannot connect with its password", password)
+		}
+
+		// PostgreSQL's own verifier of the password matches it too.
+		if _, err := admin.Exec(ctx, "ALTER ROLE "+pgx.Identifier{login}.Sanitize()+" PASSWORD "+
+			quote(password)); err != nil {
+			t.Fatal(err)
+		}
+		if stored := storedPassword(t, admin, login); !database.ScramMatches(stored, password) {
+			t.Errorf("%q: PostgreSQL's verifier %q does not match the password", password, stored)
+		}
+	}
+}
+
+func quote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// TestProvisionFixesTheLogin checks that an existing login that cannot log in
+// or does not inherit privileges is corrected.
+func TestProvisionFixesTheLogin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	app := d.NewLogin(t, "")
+	admin := d.Admin(t)
+	if _, err := admin.Exec(ctx, "ALTER ROLE "+pgx.Identifier{app.User()}.Sanitize()+" NOLOGIN NOINHERIT"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Migrate(ctx, d.AdminURL, app, database.MigrateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var canLogin, inherit bool
+	if err := admin.QueryRow(ctx, "SELECT rolcanlogin, rolinherit FROM pg_roles WHERE rolname = $1", app.User()).
+		Scan(&canLogin, &inherit); err != nil {
+		t.Fatal(err)
+	}
+	if !canLogin || !inherit || !canConnect(t, app) {
+		t.Errorf("login %v, inherit %v; want both, and a working connection", canLogin, inherit)
+	}
+}
+
+// TestProvisionRefusesUnsafeLogins checks that migrating refuses to make the
+// application login of a role that row-level security would not hold, and
+// leaves the role as it was.
+func TestProvisionRefusesUnsafeLogins(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	for _, tt := range []struct {
+		name string
+		// setup makes the role ident, named name, unsafe.
+		setup func(ident, name string) string
+		want  string
+	}{
+		{"superuser", func(r, _ string) string { return "ALTER ROLE " + r + " SUPERUSER" }, "it is a superuser"},
+		{"BYPASSRLS", func(r, _ string) string { return "ALTER ROLE " + r + " BYPASSRLS" }, "it has BYPASSRLS"},
+		{"member of a superuser", func(r, _ string) string { return "GRANT postgres TO " + r },
+			`it is a member of "postgres", which is a superuser`},
+		{"member of maintenance", func(r, _ string) string { return "GRANT storycreep_maintenance TO " + r },
+			`it is a member of "storycreep_maintenance", which has BYPASSRLS`},
+		{"member of definer", func(r, _ string) string { return "GRANT storycreep_definer TO " + r },
+			`it is a member of "storycreep_definer", which is reserved`},
+		{"table owner", func(r, n string) string {
+			return "CREATE TABLE owned_" + n + " (x int); ALTER TABLE owned_" + n + " OWNER TO " + r
+		}, "it owns objects in the database"},
+		{"database owner", func(r, _ string) string { return "ALTER DATABASE " + d.Name + " OWNER TO " + r },
+			`it is a member of "pg_database_owner", which owns objects in the database`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			app := d.NewLogin(t, "")
+			if _, err := admin.Exec(ctx, tt.setup(pgx.Identifier{app.User()}.Sanitize(), app.User())); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				// A role that owns the database cannot be dropped.
+				if _, err := admin.Exec(ctx, "ALTER DATABASE "+d.Name+" OWNER TO postgres"); err != nil {
+					t.Error(err)
+				}
+			})
+			before := storedPassword(t, admin, app.User())
+
+			_, err := database.Migrate(ctx, d.AdminURL, d.URL(t, app.User(), "another-password"), database.MigrateOptions{})
+			var uerr *database.UnsafeLoginError
+			if !errors.As(err, &uerr) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Migrate returned %v, want an *UnsafeLoginError saying %q", err, tt.want)
+			}
+			if isMember(t, admin, app.User(), "storycreep_app") {
+				t.Errorf("the refused login was granted storycreep_app")
+			}
+			if after := storedPassword(t, admin, app.User()); after != before {
+				t.Errorf("the refused login's password was changed")
+			}
+			// Open refuses it too.
+			if _, err := database.Open(ctx, app); !errors.As(err, &uerr) || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Open returned %v, want an *UnsafeLoginError saying %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestProvisionRefusesReservedRoles(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	for _, login := range []string{"storycreep_app", "storycreep_maintenance", "storycreep_definer", "pg_monitor"} {
+		_, err := database.Migrate(ctx, d.AdminURL, d.URL(t, login, "pw"), database.MigrateOptions{})
+		if err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Errorf("%s: Migrate returned %v, want a refusal", login, err)
+		}
+	}
+}

@@ -67,6 +67,7 @@ func (e usageError) Error() string { return e.msg }
 
 // commands are the subcommands, in the order of the command list.
 var commands = []*command{
+	migrate,
 	validateConfig,
 }
 

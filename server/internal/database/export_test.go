@@ -1,0 +1,9 @@
+package database
+
+// MigrationLock is the advisory lock key, for the tests in database_test,
+// which hold the lock to see Migrate wait for it.
+const MigrationLock = migrationLock
+
+// ScramMatches is scramMatches, for the tests in database_test that check it
+// against the verifiers PostgreSQL computes.
+var ScramMatches = scramMatches
