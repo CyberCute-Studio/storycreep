@@ -17,12 +17,15 @@
 //     react-i18next's Trans, with a string literal, as in i18nKey="key".
 //
 // Extraction reports any other call of i18n.K or t, such as one with a
-// variable, so that no key the code uses can escape it.
+// variable, so that no key the code uses can escape it. Until the code can
+// be read whole, it rewrites none of that code's catalogs, which would lose
+// the messages of the keys it could not read.
 package extract
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -86,6 +89,11 @@ type Result struct {
 	// Changed are the catalog files that Run rewrote or, when it did not
 	// write, would rewrite, relative to the root, with slashes.
 	Changed []string
+	// Held are those of Changed that Run was to write but did not, because
+	// it could not read every key that the code of their catalog uses, as in
+	// a file that does not parse: a rewrite would delete the messages of the
+	// keys it missed.
+	Held []string
 	// Problems are keys that extraction cannot read, and catalogs whose
 	// messages are invalid or missing.
 	Problems []doccheck.Problem
@@ -115,22 +123,33 @@ type use struct {
 
 func (c Catalog) run(root string, write bool, res *Result) error {
 	uses := map[string][]use{}
+	before := len(res.Problems)
 	for _, dir := range c.Sources {
 		if err := c.scan(root, dir, uses, &res.Problems); err != nil {
 			return err
 		}
 	}
-	files, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(c.Dir), "*.json"))
-	if err != nil {
+	// A key that the scan could not read may still be in use, so the
+	// catalogs are only checked until the code can be read whole.
+	hold := write && len(res.Problems) > before
+	// The directory is listed rather than globbed, because a glob would read
+	// a root such as "C:\code [old]" as a pattern, find no catalogs, and
+	// write an empty source catalog over the one there.
+	dir := filepath.Join(root, filepath.FromSlash(c.Dir))
+	entries, err := os.ReadDir(dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	old := map[string][]byte{}
-	for _, f := range files {
-		b, err := os.ReadFile(f)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
 			return err
 		}
-		old[filepath.Base(f)] = b
+		old[e.Name()] = b
 	}
 	if _, ok := old[sourceFile]; !ok {
 		old[sourceFile] = nil // written for the first time
@@ -167,7 +186,9 @@ func (c Catalog) run(root string, write bool, res *Result) error {
 			continue
 		}
 		res.Changed = append(res.Changed, path)
-		if write {
+		if hold {
+			res.Held = append(res.Held, path)
+		} else if write {
 			if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), b, 0o644); err != nil {
 				return err
 			}

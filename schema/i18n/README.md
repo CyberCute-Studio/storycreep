@@ -17,10 +17,14 @@ Arguments are JSON values: strings, and numbers, which both sides read as 64-bit
 
 - **Plain arguments.** `{name}` shows a string as it is, and a number as JavaScript's `String` writes it, without grouping: `1234.5`, and `1e+21` from 10²¹.
 - **Numbers.** `{n, number}` shows at most three fraction digits, and `{n, number, integer}` none. Both round the number's shortest decimal form, `1.0005` rather than the binary float's `1.000499…`, and round a half away from zero, so `2.5` is `3`.
-- **Plurals.** An exact match such as `=0` is tried first, on the value itself. The category is that of the value less the offset, rounded to three fraction digits, so `1.0004` is `one` in English. `#` shows that number as `{n, number}` would, but only directly in a plural's or selectordinal's options: in a select nested in one, it is text.
+- **Plurals.** An exact match such as `=0` is tried first, on the value itself. The category is that of the value less the offset, rounded to three fraction digits, so `1.0004` is `one` in English, and its last digits count however large it is, so `1000003` is the English ordinal `few`, as in 1,000,003rd. `#` shows that number as `{n, number}` would, but only directly in a plural's or selectordinal's options: in a select nested in one, it is text.
 - **Quoting.** `''` is an apostrophe. An apostrophe before `{`, `}`, `<`, `>`, or, in a plural, `#`, starts quoted text, which ends at the next lone apostrophe or at the end of the message. Any other apostrophe is itself, so `It's` needs no quoting.
 - **Tags.** `<b>` and other tags are text.
 
 One rule is outside the vectors, which hold one locale each: a message that a translation lacks is shown in English, and formatted with English plural rules and numbers, the locale that its options are written for, so a Czech reader sees `1,200 boards`. The web app passes i18next-icu the locale of the catalog that has the message, which i18next does not do by itself. Tests on both sides check it: `TestPlurals` in `server/internal/i18n`, and `i18n.test.ts` in `web/shared/src/i18n`.
 
 NaN and the infinities are outside the vectors too, because JSON cannot hold them. Both sides write them as `Intl.NumberFormat` does, as `NaN`, `∞`, and `-∞` in English, in `{n, number}` and in `#`, and a plural or selectordinal picks its `other` option for them. `TestArgumentTypes` in `server/internal/i18n` and `i18n.test.ts` check it.
+
+## Other locales
+
+Both sides take their plural rules and number formats from CLDR, but the server's, from `golang.org/x/text`, are from an older CLDR release than the browser's. They agree for English and Czech, which the vectors check. For some other locales they do not: in French, Spanish, Italian, and Portuguese, newer CLDR makes an exact number of millions `many`, and French groups digits with a narrow no-break space (U+202F) rather than a no-break space. So a server catalog for a locale other than English and Czech needs vectors of that locale first, and any rule they find different needs fixing on the server.

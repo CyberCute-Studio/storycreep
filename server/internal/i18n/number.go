@@ -136,11 +136,30 @@ func newDecimal(v any, f float64, maxFraction int) (decimal, error) {
 
 // pluralForm returns the plural form of d in the locale tag by rules, from
 // the digits that are shown, as Intl.PluralRules does: 1 is one in English,
-// and 1.5 is many in Czech.
+// 1.5 is many in Czech, and 1000003 is few in English ordinals, as in
+// 1,000,003rd.
+//
+// The rules read CLDR's operands: i, the integer part; f, the fraction
+// digits shown, as an integer; and v, how many there are. x/text's
+// MatchDigits would read an integer part of more than six digits as 1000000,
+// losing the last digits that rules such as English ordinals' and Russian
+// plurals' read, and three fraction digits as 100, so the operands are given
+// to MatchPlural instead. Its rules read i modulo 10, 100, and 1000000, and
+// compare it with numbers below 1000, so a larger i is given as 1000000 plus
+// its last six digits, which keeps all of those.
 func (d decimal) pluralForm(rules *plural.Rules, tag language.Tag) plural.Form {
-	digits := []byte(d.integer + d.fraction)
-	for i := range digits {
-		digits[i] -= '0'
+	integer := d.integer
+	if len(integer) > 6 {
+		integer = "1" + integer[len(integer)-6:]
 	}
-	return rules.MatchDigits(tag, digits, len(d.integer), len(d.fraction))
+	i, _ := strconv.Atoi(integer)
+	f := 0
+	if d.fraction != "" {
+		// At most three digits, which newDecimal rounds to.
+		f, _ = strconv.Atoi(d.fraction)
+	}
+	v := len(d.fraction)
+	// d.fraction has no trailing zeros, so w, the number of fraction digits
+	// without them, is v, and t, those digits, is f.
+	return rules.MatchPlural(tag, i, v, v, f, f)
 }

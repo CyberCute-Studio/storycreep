@@ -102,6 +102,15 @@ it("has every catalog file of web/shared/i18n", () => {
   expect(Object.keys(catalogs)).toContain(SOURCE_LOCALE);
 });
 
+it("names every catalog after a locale's canonical BCP 47 tag", () => {
+  // matchLocale reads each name as a tag, and would throw on one that is not
+  // a tag, such as en_US. The server's catalogs are held to the same.
+  for (const name of Object.keys(catalogs)) {
+    expect(() => Intl.getCanonicalLocales(name), name).not.toThrow();
+    expect(Intl.getCanonicalLocales(name), name).toEqual([name]);
+  }
+});
+
 it("has valid messages in every catalog", () => {
   expect(check(catalogs)).toEqual([]);
 });

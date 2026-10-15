@@ -135,7 +135,8 @@ var keys = []key{
 			"messages, such as those of the API's errors, in the locale that the request's `Accept-Language` header " +
 			"prefers among those that the server has a catalog for, or else in this one. A tag with a region, such " +
 			"as `en-GB`, selects the catalog of that region if the server has one, and else the catalog of its " +
-			"language. Only a locale that the server has a catalog for is accepted, so that a mistake is found when " +
+			"language in the same script, so `zh-TW`, which is written in Traditional Chinese, would not select " +
+			"a `zh` catalog of Simplified Chinese. Only a locale that the server has a catalog for is accepted, so that a mistake is found when " +
 			"the server starts.",
 		valuesDoc: "A locale that the server has a catalog for: " + localeNames("`"),
 		def:       constant(i18n.Source.String()),

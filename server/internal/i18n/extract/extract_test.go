@@ -267,6 +267,64 @@ func TestKeyForm(t *testing.T) {
 	}
 }
 
+// TestUnreadableCode checks that extraction rewrites no catalog of code that
+// it cannot read whole, which would delete the messages of the keys it
+// missed, and rewrites the catalogs of other code.
+func TestUnreadableCode(t *testing.T) {
+	root := t.TempDir()
+	server := "{\n  \"a.key\": \"A\",\n  \"unused\": \"Unused.\"\n}\n"
+	writeTree(t, root, map[string]string{
+		// A file that does not parse, mid-edit, whose key is in the catalog.
+		"server/internal/x/x.go": `package x
+
+import "github.com/CyberCute-Studio/storycreep/server/internal/i18n"
+
+var a = i18n.K("a.key")
+
+func (
+`,
+		"server/internal/i18n/catalog/en.json": server,
+		"web/app/src/x.ts":                     `t("b.key");`,
+		"web/shared/i18n/en.json":              `{"b.key": "B", "unused": "Unused."}`,
+	})
+	res, err := Run(root, Catalogs, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"server/internal/i18n/catalog/en.json", "web/shared/i18n/en.json"}
+	if !slices.Equal(res.Changed, want) || !slices.Equal(res.Held, want[:1]) {
+		t.Errorf("Changed = %v, Held = %v, want %v and the server's catalog held", res.Changed, res.Held, want)
+	}
+	if got := readFile(t, root, "server/internal/i18n/catalog/en.json"); got != server {
+		t.Errorf("the server's catalog was rewritten: %q", got)
+	}
+	if got := readFile(t, root, "web/shared/i18n/en.json"); got != "{\n  \"b.key\": \"B\"\n}\n" {
+		t.Errorf("the web's catalog = %q, want it rewritten", got)
+	}
+}
+
+// TestRootWithPatternCharacters checks that a repository in a directory whose
+// name a glob would read as a pattern, such as "repo [old]", has its catalogs
+// read, and not replaced by an empty one.
+func TestRootWithPatternCharacters(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repo [old]")
+	catalog := "{\n  \"a.key\": \"A\"\n}\n"
+	writeTree(t, root, map[string]string{
+		"web/app/src/x.ts":        `t("a.key");`,
+		"web/shared/i18n/en.json": catalog,
+	})
+	res, err := Run(root, Catalogs[1:], true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Changed) != 0 || len(res.Problems) != 0 {
+		t.Errorf("Run = %+v, want nothing to change", res)
+	}
+	if got := readFile(t, root, "web/shared/i18n/en.json"); got != catalog {
+		t.Errorf("the catalog was rewritten: %q", got)
+	}
+}
+
 func TestInvalidCatalog(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{

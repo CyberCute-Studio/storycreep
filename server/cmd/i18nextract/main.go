@@ -4,7 +4,8 @@
 // See package extract.
 //
 // With -check, it rewrites nothing, and reports the catalogs that it would
-// rewrite. It prints each problem as "file:line: message", such as a key that
+// rewrite. Nor does it rewrite the catalogs of code that it cannot read whole,
+// as when a file does not parse, until that is fixed. It prints each problem as "file:line: message", such as a key that
 // the source catalog has no message for, and exits with status 1 if there is
 // any or, with -check, if a catalog is out of date. It exits with status 2 if
 // a file cannot be read or written. Run it from the server directory, or pass
@@ -15,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n/extract"
 )
@@ -30,9 +32,13 @@ func main() {
 		os.Exit(2)
 	}
 	for _, path := range res.Changed {
-		if *check {
+		switch {
+		case *check:
 			fmt.Fprintf(os.Stderr, "%s is out of date; run pnpm i18n:extract\n", path)
-		} else {
+		case slices.Contains(res.Held, path):
+			fmt.Fprintf(os.Stderr, "%s is out of date, but is not rewritten until the problems below "+
+				"that keep extraction from reading every key are fixed\n", path)
+		default:
 			fmt.Printf("wrote %s\n", path)
 		}
 	}

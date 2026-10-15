@@ -160,7 +160,10 @@ function icuModule(): IcuInstance {
  * formatted, in English. A key that no catalog has is returned as it is, and
  * so is a message that cannot be formatted with the arguments given, as when
  * one is missing. i18next's changeLanguage switches the locale without a
- * reload.
+ * reload. Pass it a locale that resolveLocale returned: i18next matches a
+ * tag by its language alone, so it would show a zh-TW reader a zh catalog of
+ * Simplified Chinese, which matchLocale and the server do not pick for that
+ * reader.
  */
 export function createI18n(locale: string, options: I18nOptions = {}): I18n {
   const all = options.catalogs ?? catalogs;

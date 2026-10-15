@@ -371,6 +371,24 @@
       "output": "112th"
     },
     {
+      "note": "English ordinal by the last digits of a number of millions",
+      "locale": "en",
+      "message": "{n, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
+      "args": {
+        "n": 1000003
+      },
+      "output": "1,000,003rd"
+    },
+    {
+      "note": "English ordinal one by the last digits of a number of millions",
+      "locale": "en",
+      "message": "{n, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
+      "args": {
+        "n": 2000021
+      },
+      "output": "2,000,021st"
+    },
+    {
       "note": "Czech ordinals are all other",
       "locale": "cs",
       "message": "{n, selectordinal, one {#.a} other {#.}}",
