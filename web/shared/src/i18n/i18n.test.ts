@@ -84,8 +84,13 @@ it("formats a catalog's plurals and arguments with English and Czech plural rule
   expect(cs.t("files.count", { count: 1.5 })).toBe("1,5 souboru");
   expect(cs.t("files.count", { count: 1200 })).toBe(`1${NBSP}200 souborů`);
   expect(cs.t("greeting", { name: "Ada" })).toBe("Ahoj, Ada!");
-  // A message that the Czech catalog lacks is in English.
+  // A message that the Czech catalog lacks is in English, formatted with
+  // English plural rules and numbers, as the server formats it.
   expect(cs.t("board.count", { count: 3 })).toBe("3 boards");
+  expect(cs.t("board.count", { count: 1200 })).toBe("1,200 boards");
+  expect(cs.t("board.count", { count: 1.5 })).toBe("1.5 boards");
+  // And a message that it has is still in Czech after one that it lacks.
+  expect(cs.t("files.count", { count: 1200 })).toBe(`1${NBSP}200 souborů`);
 });
 
 // Verifies: FR-I18N-02/AC2
@@ -161,6 +166,16 @@ describe("matchLocale", () => {
     expect(matchLocale("sk", ["en", "cs"])).toBeUndefined();
     expect(matchLocale("en_US", ["en"])).toBeUndefined();
   });
+  // As the server's Bundle.Match does (TestMatchRegion).
+  it("matches the catalog of the same region first", () => {
+    const regional = ["en", "en-GB", "pt-BR", "pt-PT"];
+    expect(matchLocale("en-GB", regional)).toBe("en-GB");
+    expect(matchLocale("en-US", regional)).toBe("en");
+    expect(matchLocale("en", regional)).toBe("en");
+    expect(matchLocale("pt-PT", regional)).toBe("pt-PT");
+    expect(matchLocale("pt-BR", regional)).toBe("pt-BR");
+    expect(matchLocale("pt", regional)).toBe("pt-BR");
+  });
 });
 
 describe("formatting", () => {
@@ -190,5 +205,14 @@ describe("formatting", () => {
       "in 3 days",
     );
     expect(formatRelativeTime("en", date, date)).toBe("now");
+    // A count that rounds up to the next unit is in that unit.
+    expect(formatRelativeTime("en", date + 3_576_000, date)).toBe("in 1 hour");
+    expect(formatRelativeTime("en", date - 59_600, date)).toBe("1 minute ago");
+    expect(formatRelativeTime("en", date + 6.6 * 86_400_000, date)).toBe(
+      "next week",
+    );
+    expect(formatRelativeTime("en", date - 364 * 86_400_000, date)).toBe(
+      "last year",
+    );
   });
 });

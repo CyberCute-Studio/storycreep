@@ -1,4 +1,4 @@
-// A component that shows text that is not from the message catalog in nine
+// A component that shows text that is not from the message catalog in twelve
 // places, each of which the lint rule in ../hardcoded-text.grit reports
 // (lint.test.ts in web/shared/src/i18n).
 
@@ -16,6 +16,10 @@ export function Hardcoded(props: {
       {props.open && "Unsaved changes"}
       {/* biome-ignore lint/style/useTemplate: the rule is tested with + */}
       {"Hello, " + props.name}
+      {/* biome-ignore lint/style/useTemplate: the rule is tested with + */}
+      {"Hello, " + props.name + "!"}
+      {props.open ? (props.count > 1 ? "Boards" : "Board") : null}
+      {props.open && (props.count > 1 ? "Boards" : null)}
       <img alt="The board" src="board.png" />
       <input aria-label={`Search ${props.name}`} />
     </section>

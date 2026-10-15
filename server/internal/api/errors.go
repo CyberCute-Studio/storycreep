@@ -254,7 +254,7 @@ func idMessage(e *ids.DecodeError) i18n.Message {
 	case ids.BadCharacter:
 		return i18n.Message{Key: i18n.K("error.invalid_id.character")}
 	case ids.BadLength:
-		return i18n.Message{Key: i18n.K("error.invalid_id.length")}
+		return i18n.Message{Key: i18n.K("error.invalid_id.length"), Args: i18n.Args{"length": ids.BodyLength}}
 	case ids.Overflow:
 		return i18n.Message{Key: i18n.K("error.invalid_id.overflow")}
 	}
@@ -364,7 +364,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 // writeEnvelope writes env as forRequest fills it in. It fills in a copy, as
-// fillRequestID does, because a handler may return one envelope for many
+// fillEnvelope does, because a handler may return one envelope for many
 // requests.
 func writeEnvelope(w http.ResponseWriter, r *http.Request, env *ErrorEnvelope) {
 	if env.status == http.StatusNotModified {

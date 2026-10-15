@@ -128,7 +128,7 @@ func NewMux(opts MuxOptions) *Mux {
 	config.CreateHooks = nil
 	config.Formats = map[string]huma.Format{"application/json": jsonFormat, "json": jsonFormat}
 	config.DefaultFormat = "application/json"
-	config.Transformers = []huma.Transformer{fillRequestID}
+	config.Transformers = []huma.Transformer{fillEnvelope}
 	m.api = humachi.New(m.router, config)
 	m.api.UseMiddleware(replaceCacheControl)
 	return m
@@ -345,10 +345,11 @@ func (m *Mux) methodNotAllowed(w http.ResponseWriter, r *http.Request) {
 	WriteError(w, r, NewError(CodeMethodNotAllowed))
 }
 
-// fillRequestID is a huma transformer that fills in a copy of an envelope that
-// huma writes, as forRequest does, and sets its headers. huma calls it before
-// it writes the headers.
-func fillRequestID(ctx huma.Context, _ string, v any) (any, error) {
+// fillEnvelope is a huma transformer that fills in a copy of an envelope that
+// huma writes, as forRequest does, with the request's ID and the message in
+// the request's locale, and sets Content-Language and Vary. huma calls it
+// before it writes the headers.
+func fillEnvelope(ctx huma.Context, _ string, v any) (any, error) {
 	env, ok := v.(*ErrorEnvelope)
 	if !ok || env.status == http.StatusNotModified {
 		return v, nil

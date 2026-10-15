@@ -179,8 +179,8 @@ func (p *parser) message(nesting int, parent argKind) ([]node, error) {
 	return out, nil
 }
 
-// quote reads an apostrophe at p.pos and what it quotes: ” is an
-// apostrophe, and an apostrophe before a character that would otherwise be
+// quote reads an apostrophe at p.pos and what it quotes: two apostrophes in a
+// row are one, and an apostrophe before a character that would otherwise be
 // syntax quotes the text up to the next lone apostrophe, or to the end. Any
 // other apostrophe is itself.
 func (p *parser) quote(parent argKind) string {

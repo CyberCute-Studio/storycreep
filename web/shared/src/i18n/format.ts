@@ -49,7 +49,8 @@ const UNITS: readonly [Intl.RelativeTimeFormatUnit, number][] = [
 /**
  * Returns how long before or after `now` `date` is, in the locale's words,
  * in the largest unit in which it is at least one, rounded: "2 minutes
- * ago", "in 3 days", "yesterday".
+ * ago", "in 3 days", "yesterday". A count that rounds up to the next unit is
+ * in that unit, so 59.6 minutes is "in 1 hour", not "in 60 minutes".
  */
 export function formatRelativeTime(
   locale: string,
@@ -57,14 +58,23 @@ export function formatRelativeTime(
   now: Date | number = Date.now(),
 ): string {
   const seconds = (Number(date) - Number(now)) / 1000;
-  const [unit, length] = UNITS.find(
-    ([, length]) => Math.abs(seconds) >= length,
-  ) ?? ["second", 1];
   // A half is rounded away from zero, so that 90 seconds is two minutes
   // before now as after it; Math.round would round -1.5 to -1.
-  const count = Math.sign(seconds) * Math.round(Math.abs(seconds) / length);
+  const rounded = (length: number) =>
+    Math.sign(seconds) * Math.round(Math.abs(seconds) / length);
+  let i = UNITS.findIndex(([, length]) => Math.abs(seconds) >= length);
+  if (i < 0) {
+    i = UNITS.length - 1;
+  }
+  if (
+    i > 0 &&
+    Math.abs(rounded(UNITS[i][1])) * UNITS[i][1] >= UNITS[i - 1][1]
+  ) {
+    i--;
+  }
+  const [unit, length] = UNITS[i];
   return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(
-    count,
+    rounded(length),
     unit,
   );
 }

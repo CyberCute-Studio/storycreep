@@ -11,7 +11,7 @@
 // and schema/i18n/vectors.json holds both to it.
 
 import i18next, { type i18n as I18n, type Resource } from "i18next";
-import ICU from "i18next-icu";
+import ICU, { type IcuInstance } from "i18next-icu";
 import en from "../../i18n/en.json" with { type: "json" };
 
 export {
@@ -44,10 +44,10 @@ export interface LocaleSources {
 }
 
 /**
- * Returns the locale of `supported` that `tag` asks for: the same language
- * in the same script, such as en for en-GB, but not zh-Hans for zh-Hant. It
- * returns undefined for a tag that no locale matches, or that is not a
- * valid BCP 47 tag.
+ * Returns the locale of `supported` that `tag` asks for: the same locale,
+ * such as en-GB for en-GB, or else the same language in the same script,
+ * such as en for en-GB, but not zh-Hans for zh-Hant. It returns undefined for
+ * a tag that no locale matches, or that is not a valid BCP 47 tag.
  */
 export function matchLocale(
   tag: string,
@@ -59,18 +59,19 @@ export function matchLocale(
   } catch {
     return undefined;
   }
-  const exact = supported.find(
-    (locale) => locale.toLowerCase() === wanted.baseName.toLowerCase(),
-  );
-  if (exact !== undefined) {
-    return exact;
+  // Both sides are maximized, so that en-GB matches the catalog en-GB, and
+  // en-US the catalog en, whose likely region is US.
+  const offered = supported.map((locale) => ({
+    locale,
+    max: new Intl.Locale(locale).maximize(),
+  }));
+  const same = offered.find((o) => o.max.baseName === wanted.baseName);
+  if (same !== undefined) {
+    return same.locale;
   }
-  return supported.find((locale) => {
-    const offered = new Intl.Locale(locale).maximize();
-    return (
-      offered.language === wanted.language && offered.script === wanted.script
-    );
-  });
+  return offered.find(
+    (o) => o.max.language === wanted.language && o.max.script === wanted.script,
+  )?.locale;
 }
 
 /**
@@ -104,13 +105,43 @@ export interface I18nOptions {
   catalogs?: Readonly<Record<string, Catalog>>;
 }
 
+// i18next-icu's parse, which its type declarations leave out. info is what
+// i18next found: resolved.usedLng is the locale of the catalog that has the
+// message.
+type IcuParse = (
+  res: string,
+  options: object,
+  lng: string,
+  ns: string,
+  key: string,
+  info?: { resolved?: { usedLng?: string } },
+) => string;
+
+/**
+ * Returns i18next-icu's module, made to format a message in the locale of the
+ * catalog that has it. i18next hands the module the locale that was asked for
+ * even for a message that it found in English, whose plural options and
+ * numbers would then follow that locale's rules, as "1 200 boards" in Czech.
+ * The server formats such a message in English, the locale that its options
+ * are written for, and so does this module.
+ */
+function icuModule(): IcuInstance {
+  const icu = new ICU() as IcuInstance & { parse: IcuParse };
+  const parse = icu.parse.bind(icu);
+  icu.parse = (res, options, lng, ns, key, info) =>
+    parse(res, options, info?.resolved?.usedLng ?? lng, ns, key, info);
+  return icu;
+}
+
 /**
  * Returns an i18next instance that formats the catalogs' messages in the
  * locale that `locale` matches, or else in English, with ICU MessageFormat.
  * Its t takes a key and the message's arguments, as t("files.count", {
- * count: 2 }). A key that no catalog has is returned as it is, and so is a
- * message that cannot be formatted with the arguments given, as when one is
- * missing. i18next's changeLanguage switches the locale without a reload.
+ * count: 2 }). A message that the locale's catalog lacks is shown, and
+ * formatted, in English. A key that no catalog has is returned as it is, and
+ * so is a message that cannot be formatted with the arguments given, as when
+ * one is missing. i18next's changeLanguage switches the locale without a
+ * reload.
  */
 export function createI18n(locale: string, options: I18nOptions = {}): I18n {
   const all = options.catalogs ?? catalogs;
@@ -120,7 +151,7 @@ export function createI18n(locale: string, options: I18nOptions = {}): I18n {
     resources[tag] = { translation: catalog };
   }
   const instance = i18next.createInstance();
-  instance.use(ICU);
+  instance.use(icuModule());
   void instance.init({
     lng: matchLocale(locale, supported) ?? SOURCE_LOCALE,
     fallbackLng: SOURCE_LOCALE,

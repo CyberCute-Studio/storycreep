@@ -9,12 +9,14 @@
 //   - a string or template literal that a JSX child shows, as in {"Saved"},
 //     including as a branch of a conditional, as in {done ? "Saved" : t("x")},
 //     after && or ||, as in {dirty && "Unsaved"}, or joined with +, as in
-//     {"Hello, " + name};
+//     {"Hello, " + name + "!"}, at any depth and in parentheses, as in
+//     {a ? (b ? "Draft" : "Saved") : t("x")};
 //   - the same as the value of an attribute that people read: alt,
 //     aria-label, aria-description, aria-placeholder, aria-roledescription,
 //     aria-valuetext, label, placeholder, or title.
 //
-// Text without a letter, such as " " or "·", and literals that are not shown,
+// Text without a letter, such as " " or "·", or whose letters all belong to
+// HTML entities, such as &nbsp; or &middot;, and literals that are not shown,
 // such as t("board.title"), a className, or the "draft" of
 // status === "draft", are not reported. Text that is rightly not translated,
 // such as a product name, is marked with a comment that says why, as in
@@ -38,18 +40,28 @@ pattern shown_literal() {
 pattern shown_text() {
   or {
     shown_literal(),
-    JsConditionalExpression(consequent=shown_literal()),
-    JsConditionalExpression(alternate=shown_literal()),
-    JsLogicalExpression(right=shown_literal()),
+    JsParenthesizedExpression(expression=shown_text()),
+    JsConditionalExpression(consequent=shown_text()),
+    JsConditionalExpression(alternate=shown_text()),
+    JsLogicalExpression(right=shown_text()),
     `$left + $right` where {
-      or { $left <: shown_literal(), $right <: shown_literal() }
+      or { $left <: shown_text(), $right <: shown_text() }
     }
+  }
+}
+
+// JSX text and attribute strings with a letter outside HTML entities: JSX
+// reads &nbsp; as one character, which is not a letter.
+pattern lettered_jsx() {
+  $jsx where {
+    $jsx <: r"(?s).*\p{L}.*",
+    not $jsx <: r"(?s)(?:[^\p{L}]|&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);)*"
   }
 }
 
 or {
   JsxText() as $text where {
-    $text <: r"(?s).*\p{L}.*",
+    $text <: lettered_jsx(),
     register_diagnostic(span=$text, message="User-facing text must come from the message catalog: write it in web/shared/i18n/en.json, and show it with t(). See Strings and translations in CONTRIBUTING.md.")
   },
   JsxExpressionChild(expression=$shown) where {
@@ -69,7 +81,7 @@ or {
       `title`
     },
     $value <: or {
-      JsxString() as $string where { $string <: r"(?s).*\p{L}.*" },
+      JsxString() as $string where { $string <: lettered_jsx() },
       JsxExpressionAttributeValue(expression=shown_text())
     },
     register_diagnostic(span=$value, message="User-facing text must come from the message catalog: write it in web/shared/i18n/en.json, and show it with t(). See Strings and translations in CONTRIBUTING.md.")

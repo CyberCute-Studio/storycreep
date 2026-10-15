@@ -67,8 +67,10 @@ func TestPlurals(t *testing.T) {
 		{cs, files(1200), "1" + nbsp + "200 souborů"},
 		{cs, Message{Key: K("greeting"), Args: Args{"name": "Ada"}}, "Ahoj, Ada!"},
 		// A message that the Czech catalog lacks is in English, with English
-		// plural rules.
+		// plural rules and numbers, as the web app formats it.
 		{cs, Message{Key: K("board.count"), Args: Args{"count": 3}}, "3 boards"},
+		{cs, Message{Key: K("board.count"), Args: Args{"count": 1200}}, "1,200 boards"},
+		{cs, Message{Key: K("board.count"), Args: Args{"count": 1.5}}, "1.5 boards"},
 	} {
 		if got := tt.l.Format(tt.m); got != tt.want {
 			t.Errorf("%s in %s = %q, want %q", tt.m.Key, tt.l.Locale(), got, tt.want)
@@ -114,6 +116,33 @@ func TestNegotiate(t *testing.T) {
 				t.Errorf("Negotiate(%q, %q, %s) = %s, want %s", tt.preference, tt.accept, tt.instanceDefault, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestMatchRegion checks that a tag matches the catalog of its own region,
+// if there is one, and else the catalog of its language, as matchLocale in
+// web/shared does, so that the API and the web app pick the same locale.
+func TestMatchRegion(t *testing.T) {
+	b, err := Load(fstest.MapFS{
+		"en.json":    {Data: []byte(`{}`)},
+		"en-GB.json": {Data: []byte(`{}`)},
+		"pt-BR.json": {Data: []byte(`{}`)},
+		"pt-PT.json": {Data: []byte(`{}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct{ tag, want string }{
+		{"en-GB", "en-GB"},
+		{"en-US", "en"},
+		{"en", "en"},
+		{"pt-PT", "pt-PT"},
+		{"pt-BR", "pt-BR"},
+		{"pt", "pt-BR"},
+	} {
+		if got, ok := b.Match(language.Make(tt.tag)); !ok || got.String() != tt.want {
+			t.Errorf("Match(%s) = %s, %v, want %s", tt.tag, got, ok, tt.want)
+		}
 	}
 }
 

@@ -365,14 +365,20 @@ func TestHandlerErrors(t *testing.T) {
 		b.Message != "The identifier's prefix bd_ is for type board, not node." {
 		t.Errorf("an *ids.DecodeError: %s", res.body)
 	}
-	// Every reason has a message of its own.
+	// Every reason has a message of its own, with its arguments filled in.
+	seen := map[string]bool{}
 	for _, id := range []string{"x", "zz_1", "nd_I", "nd_1", "nd_ZZZZZZZZZZZZZZZZZZZZZZZZZZ"} {
 		_, fail = ids.Decode(ids.Node, id)
 		res = serve(m, http.MethodGet, "/fail", "", nil)
-		if b := res.envelope(t); b.Code != CodeInvalidID || b.Message == "An identifier is invalid." ||
-			strings.HasPrefix(b.Message, "error.") {
+		b := res.envelope(t)
+		if b.Code != CodeInvalidID || b.Message == "An identifier is invalid." || seen[b.Message] ||
+			strings.HasPrefix(b.Message, "error.") || strings.ContainsAny(b.Message, "{}") {
 			t.Errorf("the identifier %s: %s", id, res.body)
 		}
+		seen[b.Message] = true
+	}
+	if !seen["The part of the identifier after its prefix is not 26 characters long."] {
+		t.Errorf("no message names the length of an identifier's body: %v", seen)
 	}
 
 	fail = errors.New("connect to db:5432: password authentication failed")

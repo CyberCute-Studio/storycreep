@@ -275,7 +275,7 @@ func isIdentByte(c byte) bool {
 }
 
 // unescape returns the value of the text of a string or template literal:
-// its escapes, as in "café", replaced by the characters they stand for,
+// its escapes, as in "caf\u00e9", replaced by the characters they stand for,
 // and its line continuations removed.
 func unescape(s string) string {
 	if !strings.Contains(s, `\`) {

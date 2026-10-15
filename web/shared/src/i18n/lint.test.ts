@@ -85,7 +85,7 @@ function reported(path: string): number[] {
 it("reports text that is not from the message catalog in the app's and the site's source", () => {
   // JSX text starts after the tag before it, so the text "Board settings"
   // is reported on the line of <section>, as its title is.
-  const lines = [11, 11, 13, 14, 15, 16, 18, 19, 20];
+  const lines = [11, 11, 13, 14, 15, 16, 18, 20, 21, 22, 23, 24];
   expect(reported("web/app/src/board/hardcoded.tsx")).toEqual(lines);
   expect(reported("web/site/src/pages/hardcoded.tsx")).toEqual(lines);
   const first = diagnostics.find((d) => d.category === "plugin");

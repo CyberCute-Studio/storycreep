@@ -1,7 +1,7 @@
 // A component whose text all comes from the message catalog, which the lint
 // rule in ../hardcoded-text.grit does not report (lint.test.ts in
 // web/shared/src/i18n): literals that are keys, attributes that people do not
-// read, comparisons, and text without a letter.
+// read, comparisons, and text without a letter, including HTML entities.
 
 export function Translated(props: {
   t: (key: string, args?: Record<string, unknown>) => string;
@@ -20,6 +20,7 @@ export function Translated(props: {
       {t("board.count", { count: props.count })}
       {props.status === "draft" ? t("board.draft") : t("board.published")}
       {props.status === "draft" && t("board.unsaved")} <span>·</span>
+      <span>&nbsp;&middot;&#160;&#xA0;</span>
       <span>{props.count}</span>
       <span>{`${props.count}`}</span>
       <img alt="" src="board.png" />
