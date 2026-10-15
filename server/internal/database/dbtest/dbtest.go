@@ -76,7 +76,10 @@ type Database struct {
 
 // New returns a new database with the embedded migrations applied, or, with
 // STORYCREEP_TEST_UPGRADE_FROM set, upgraded to them from the migrations in
-// that directory. It is dropped when the test ends.
+// that directory. It is dropped when the test ends. CREATE DATABASE does not
+// copy the template's privileges on the database itself, so any login can
+// connect to it until it is migrated again, which restricts CONNECT to the
+// application login.
 func New(t testing.TB) *Database {
 	t.Helper()
 	s := start(t)

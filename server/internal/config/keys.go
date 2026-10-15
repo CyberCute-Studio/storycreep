@@ -135,10 +135,15 @@ var keys = []key{
 			"`pg_read_server_files`, or `pg_write_server_files`, which give access to the database server's files " +
 			"and programs, because row-level security would not hold it. Migrations create the login if it does " +
 			"not exist, set its password to the one the server logs in with (this URL's, or else the one " +
-			"`PGPASSWORD`, a service file, or a password file supplies), and grant it the `storycreep_app` role. " +
-			"A login belongs to the whole PostgreSQL server, not to one database, so give each Storycreep database " +
-			"on a server a login of its own: migrating one would otherwise change the password the others log in " +
-			"with. Query parameters, such as `sslmode`, are read as libpq reads them, with an `=` in a value " +
+			"`PGPASSWORD`, a service file, or a password file supplies), and grant it the `storycreep_app` role, " +
+			"unless its password has expired (its `VALID UNTIL` has passed). They also revoke `CONNECT` on the " +
+			"database from `PUBLIC` and grant it to the login, so that another role that is not a superuser can " +
+			"connect only if it is granted `CONNECT` itself, as a monitoring role may need to be. A login belongs " +
+			"to the whole PostgreSQL server, not to one database, and so does the `storycreep_app` role, which " +
+			"every Storycreep database on the server grants its privileges to. So give each Storycreep database on " +
+			"a server a login of its own, which can connect only to its own database: a shared login would reach " +
+			"all of them, and migrating one would change the password the others log in with. Query parameters, " +
+			"such as `sslmode`, are read as libpq reads them, with an `=` in a value " +
 			"percent-encoded as `%3D`, and the libpq environment variables, such as `PGSSLMODE`, fill in settings " +
 			"the URL leaves out. A space anywhere in the URL is written as `%20`. The URL is checked as the " +
 			"server's connections read it, so a setting they could not use, such as an unknown `sslmode` or a " +

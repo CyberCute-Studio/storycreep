@@ -102,6 +102,36 @@ func TestOpenRefusesTheAdmin(t *testing.T) {
 	}
 }
 
+// TestApplicationName checks that the server's connections report themselves
+// as storycreep, as pg_stat_activity shows them, unless the URL names them
+// otherwise.
+func TestApplicationName(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	named, err := config.ParseDatabaseURL(d.AppURL.Reveal() + "&application_name=custom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		url  config.DatabaseURL
+		want string
+	}{{d.AppURL, "storycreep"}, {named, "custom"}} {
+		db, err := database.Open(ctx, tt.url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got string
+		err = db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, "SELECT current_setting('application_name')").Scan(&got)
+		})
+		db.Close()
+		if err != nil || got != tt.want {
+			t.Errorf("%s: application_name %q, %v; want %q", tt.url, got, err, tt.want)
+		}
+	}
+}
+
 // TestObjectsThatAreNotOwnership checks that the temporary objects a session
 // of the application login holds do not make the login unsafe, so that one
 // instance's session cannot keep another from starting, and that neither do

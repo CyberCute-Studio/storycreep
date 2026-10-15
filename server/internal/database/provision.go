@@ -27,18 +27,23 @@ var reservedRoles = append([]string{appRole}, privilegedRoles...)
 // so, because roles belong to the cluster, and an ALTER ROLE that another
 // database runs at the same time would conflict.
 //
+// It also makes the login the only role, besides the superusers and the roles
+// the operator granted CONNECT, that can connect to the database
+// (restrictConnect).
+//
 // It refuses, and changes nothing, if the role exists and row-level security
-// would not hold it (checkLogin). It never makes an existing role less
-// privileged: an operator who pointed STORYCREEP_DATABASE_URL at a superuser
-// should find out rather than lose the superuser. The login's name has passed
-// checkLoginName.
+// would not hold it (checkLogin), or if the server would log in with a
+// password and the role's VALID UNTIL has passed. It never makes an existing
+// role less privileged: an operator who pointed STORYCREEP_DATABASE_URL at a
+// superuser should find out rather than lose the superuser. The login's name
+// has passed checkLoginName.
 func provision(ctx context.Context, conn *pgx.Conn, login string, password secret.Value) error {
 	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 		ident := pgx.Identifier{login}.Sanitize()
-		var canLogin, inherit bool
+		var canLogin, inherit, expired bool
 		var stored *string
-		err := tx.QueryRow(ctx, "SELECT rolcanlogin, rolinherit, rolpassword FROM pg_authid WHERE rolname = $1", login).
-			Scan(&canLogin, &inherit, &stored)
+		err := tx.QueryRow(ctx, "SELECT rolcanlogin, rolinherit, rolpassword, coalesce(rolvaliduntil <= now(), false) "+
+			"FROM pg_authid WHERE rolname = $1", login).Scan(&canLogin, &inherit, &stored, &expired)
 		exists := !errors.Is(err, pgx.ErrNoRows)
 		if err != nil && exists {
 			return fmt.Errorf("provision the login %q: %w", login, err)
@@ -47,6 +52,16 @@ func provision(ctx context.Context, conn *pgx.Conn, login string, password secre
 			// Before any change, so that a superuser is left as it is.
 			if err := checkLogin(ctx, tx, login); err != nil {
 				return err
+			}
+			// PostgreSQL refuses an expired password as a wrong one, which
+			// would leave the operator looking for a typo. The expiry is the
+			// operator's policy, so it is reported rather than lifted. It
+			// does not matter to a login that authenticates without a
+			// password.
+			if expired && password.IsSet() {
+				return fmt.Errorf("the password of the login %q in STORYCREEP_DATABASE_URL has expired, because the "+
+					"role's VALID UNTIL has passed, so the server could not log in with it; set a later time with "+
+					"ALTER ROLE %s VALID UNTIL, or 'infinity' for none", login, ident)
 			}
 		}
 
@@ -95,8 +110,46 @@ func provision(ctx context.Context, conn *pgx.Conn, login string, password secre
 				return fmt.Errorf("grant %s to the login %q: %w", appRole, login, err)
 			}
 		}
-		return nil
+		return restrictConnect(ctx, tx, login)
 	})
+}
+
+// restrictConnect makes the login the only role, besides the superusers and
+// any role the operator granted CONNECT, that can connect to the database: it
+// revokes CONNECT from PUBLIC, which PostgreSQL grants it to by default, and
+// grants it to the login. Roles belong to the cluster, so the application
+// login of every other Storycreep database on the server is a member of
+// storycreep_app too, and could otherwise connect to this database with the
+// privileges that its migrations grant storycreep_app, and read and change
+// its data. A migration could not grant the login CONNECT, because it does
+// not know the login, and this runs every time Migrate does rather than once,
+// because a database that a dump was restored into, or that CREATE DATABASE
+// copied, has PostgreSQL's default privileges again.
+func restrictConnect(ctx context.Context, tx pgx.Tx, login string) error {
+	var database string
+	var publicConnects, loginConnects bool
+	if err := tx.QueryRow(ctx, "SELECT current_database(), has_database_privilege('public', current_database(), 'CONNECT')").
+		Scan(&database, &publicConnects); err != nil {
+		return fmt.Errorf("restrict who connects to the database: %w", err)
+	}
+	ident := pgx.Identifier{database}.Sanitize()
+	if publicConnects {
+		if _, err := tx.Exec(ctx, "REVOKE CONNECT ON DATABASE "+ident+" FROM PUBLIC"); err != nil {
+			return fmt.Errorf("restrict who connects to the database: %w", err)
+		}
+	}
+	// Read after the revocation, which may have taken the login's CONNECT
+	// with it.
+	if err := tx.QueryRow(ctx, "SELECT has_database_privilege($1::name, current_database(), 'CONNECT')", login).
+		Scan(&loginConnects); err != nil {
+		return fmt.Errorf("restrict who connects to the database: %w", err)
+	}
+	if !loginConnects {
+		if _, err := tx.Exec(ctx, "GRANT CONNECT ON DATABASE "+ident+" TO "+pgx.Identifier{login}.Sanitize()); err != nil {
+			return fmt.Errorf("grant CONNECT to the login %q: %w", login, err)
+		}
+	}
+	return nil
 }
 
 // checkLoginName returns an error if login is the name of one of the server's

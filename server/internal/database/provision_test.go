@@ -124,17 +124,13 @@ func TestProvisionPasswords(t *testing.T) {
 
 		// PostgreSQL's own verifier of the password matches it too.
 		if _, err := admin.Exec(ctx, "ALTER ROLE "+pgx.Identifier{login}.Sanitize()+" PASSWORD "+
-			quote(password)); err != nil {
+			database.QuoteLiteral(password)); err != nil {
 			t.Fatal(err)
 		}
 		if stored := storedPassword(t, admin, login); !database.ScramMatches(stored, password) {
 			t.Errorf("%q: PostgreSQL's verifier %q does not match the password", password, stored)
 		}
 	}
-}
-
-func quote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 // TestProvisionPasswordFromFile checks that a login whose URL has no password
@@ -283,6 +279,84 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 				t.Errorf("Open returned %v, want an *UnsafeLoginError saying %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// TestProvisionRefusesAnExpiredPassword checks that migrating refuses a login
+// whose VALID UNTIL has passed, saying why, and leaves it as it was, where
+// PostgreSQL would refuse the server's connections as if the password were
+// wrong. A VALID UNTIL that has not passed is the operator's to keep.
+func TestProvisionRefusesAnExpiredPassword(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	app := d.NewLogin(t, "VALID UNTIL '2000-01-01'")
+	before := storedPassword(t, admin, app.User())
+
+	_, err := database.Migrate(ctx, d.AdminURL, d.URL(t, app.User(), "another-password"), database.MigrateOptions{})
+	if err == nil || !strings.Contains(err.Error(), "VALID UNTIL has passed") || !strings.Contains(err.Error(), app.User()) {
+		t.Fatalf("Migrate returned %v, want a refusal of the expired password", err)
+	}
+	if isMember(t, admin, app.User(), "storycreep_app") || storedPassword(t, admin, app.User()) != before {
+		t.Errorf("the refused login was changed")
+	}
+
+	if _, err := admin.Exec(ctx, "ALTER ROLE "+pgx.Identifier{app.User()}.Sanitize()+" VALID UNTIL '2999-01-01'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Migrate(ctx, d.AdminURL, app, database.MigrateOptions{}); err != nil || !canConnect(t, app) {
+		t.Errorf("with a VALID UNTIL in the future: %v; want the login provisioned and connecting", err)
+	}
+	var validUntil string
+	if err := admin.QueryRow(ctx, "SELECT rolvaliduntil::date::text FROM pg_authid WHERE rolname = $1", app.User()).
+		Scan(&validUntil); err != nil {
+		t.Fatal(err)
+	}
+	if validUntil != "2999-01-01" {
+		t.Errorf("the login's VALID UNTIL is %s, want it kept", validUntil)
+	}
+}
+
+// TestProvisionRestrictsConnect checks that the application login of one
+// Storycreep database cannot connect to another on the same server. Both
+// logins are granted storycreep_app, a role of the whole server, so the
+// login of either would otherwise reach the other's data with that role's
+// privileges there.
+func TestProvisionRestrictsConnect(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	a, b := dbtest.New(t), dbtest.New(t)
+	loginA, loginB := a.FreshLogin(t), b.FreshLogin(t)
+	appA, appB := a.URL(t, loginA, "a-password"), b.URL(t, loginB, "b-password")
+	for _, tt := range []struct {
+		d   *dbtest.Database
+		app config.DatabaseURL
+	}{{a, appA}, {b, appB}} {
+		if _, err := database.Migrate(ctx, tt.d.AdminURL, tt.app, database.MigrateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if !canConnect(t, appA) || !canConnect(t, appB) {
+		t.Fatalf("a login cannot connect to its own database")
+	}
+	if canConnect(t, a.URL(t, loginB, "b-password")) || canConnect(t, b.URL(t, loginA, "a-password")) {
+		t.Errorf("the login of one database can connect to the other")
+	}
+	var publicConnects bool
+	if err := a.Admin(t).QueryRow(ctx, "SELECT has_database_privilege('public', current_database(), 'CONNECT')").
+		Scan(&publicConnects); err != nil {
+		t.Fatal(err)
+	}
+	if publicConnects {
+		t.Errorf("PUBLIC can still connect to the database")
+	}
+
+	// Migrating again, with CONNECT already restricted, keeps the login
+	// connecting.
+	if _, err := database.Migrate(ctx, a.AdminURL, appA, database.MigrateOptions{}); err != nil || !canConnect(t, appA) {
+		t.Errorf("migrating again: %v; want the login still connecting", err)
 	}
 }
 
