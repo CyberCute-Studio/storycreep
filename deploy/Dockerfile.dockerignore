@@ -1,0 +1,10 @@
+# The build context of deploy/Dockerfile is the repository's root. Only the
+# server's sources go into it, without the tests and their data, which the
+# binary does not need, so that a change elsewhere does not rebuild it.
+*
+!server/go.mod
+!server/go.sum
+!server/cmd/storycreep/
+!server/internal/
+server/**/*_test.go
+server/**/testdata/

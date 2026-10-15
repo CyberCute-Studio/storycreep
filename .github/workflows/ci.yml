@@ -194,6 +194,61 @@ jobs:
           STORYCREEP_TEST_UPGRADE_FROM: ${{ steps.seed.outputs.dir }}
         run: go test ./...
 
+  # PRD FR-ADMIN-01 AC4 and FR-ADMIN-07 AC1–AC2: the container image, built
+  # for both published platforms, and docker-compose.yml started with it, on
+  # a runner of each platform.
+  image:
+    name: Container image (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache-dependency-path: server/go.sum
+
+      # The default builder cannot build two platforms into one image. The
+      # Dockerfile cross-compiles the binary, so neither needs emulation.
+      - name: Set up the image builder
+        run: docker buildx create --use --driver docker-container --name storycreep
+
+      - name: Build the image for both platforms
+        run: >-
+          docker buildx build --file deploy/Dockerfile --platform linux/amd64,linux/arm64
+          --build-arg STORYCREEP_COMMIT="$COMMIT"
+          --build-arg STORYCREEP_COMMIT_TIME="$(git log -1 --format=%cI)"
+          --output type=oci,dest="$RUNNER_TEMP/image.tar" .
+
+      # From the builder's cache: the same image as the archive's.
+      - name: Load the image of this runner's platform
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: >-
+          docker buildx build --file deploy/Dockerfile --platform "$PLATFORM"
+          --build-arg STORYCREEP_COMMIT="$COMMIT"
+          --build-arg STORYCREEP_COMMIT_TIME="$(git log -1 --format=%cI)"
+          --load --tag storycreep:test .
+
+      - name: Image and compose tests
+        working-directory: server
+        env:
+          STORYCREEP_TEST_IMAGE: storycreep:test
+          STORYCREEP_TEST_IMAGE_ARCHIVE: ${{ runner.temp }}/image.tar
+        run: go test -v ./internal/deploy
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
@@ -221,3 +276,50 @@ jobs:
       # so they fail the build. Lower severities do not.
       - name: pnpm audit
         run: pnpm audit --audit-level high
+
+  # PRD FR-ADMIN-07 AC2: every commit on the main branch publishes the image
+  # for both platforms, once the checks have passed, as
+  # ghcr.io/cybercute-studio/storycreep:main and :sha-<commit>. Release tags
+  # come with the release workflow (plan item 119).
+  publish:
+    name: Publish the image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, database, migrations, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up the image builder
+        run: docker buildx create --use --driver docker-container --name storycreep
+
+      - name: Log in to the GitHub container registry
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build and push the image
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker buildx build --file deploy/Dockerfile --platform linux/amd64,linux/arm64 \
+            --build-arg STORYCREEP_COMMIT="$COMMIT" \
+            --build-arg STORYCREEP_COMMIT_TIME="$(git log -1 --format=%cI)" \
+            --tag "$image:main" --tag "$image:sha-$COMMIT" --push .
+
+      - name: Check the published platforms
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          published="$(docker buildx imagetools inspect --raw "$image:sha-$COMMIT" |
+            jq -r '.manifests[] | select(.platform.os != "unknown") | "\(.platform.os)/\(.platform.architecture)"' |
+            sort | paste -sd ' ')"
+          echo "Published $image:sha-$COMMIT for $published."
+          if [ "$published" != "linux/amd64 linux/arm64" ]; then
+            echo "The image should be published for linux/amd64 and linux/arm64."
+            exit 1
+          fi

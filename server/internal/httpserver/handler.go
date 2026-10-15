@@ -47,6 +47,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	})
 	s.registerOperational(s.main)
 	registerDocument(s.main)
+	registerPages(s.main, cfg.Capabilities.PublicSite)
 
 	switch {
 	case cfg.AdminAddr == "":
