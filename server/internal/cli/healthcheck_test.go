@@ -50,6 +50,9 @@ func TestHealthcheck(t *testing.T) {
 		{"ready", "127.0.0.1:" + ready, ExitOK, "The server is ready."},
 		{"every interface", ":" + ready, ExitOK, "The server is ready."},
 		{"every IPv4 interface", "0.0.0.0:" + ready, ExitOK, "The server is ready."},
+		// This server listens on 127.0.0.1 alone; a server on [::] takes
+		// IPv4 connections too.
+		{"every IPv6 interface", "[::]:" + ready, ExitOK, "The server is ready."},
 		{"host name", "localhost:" + ready, ExitOK, "The server is ready."},
 		{"not ready", "127.0.0.1:" + starting, ExitFailure,
 			"storycreep healthcheck: http://127.0.0.1:" + starting + "/readyz answered 503 Service Unavailable: " +
@@ -81,7 +84,7 @@ func TestReachableAddr(t *testing.T) {
 	for addr, want := range map[string]string{
 		":8080":               "127.0.0.1:8080",
 		"0.0.0.0:8080":        "127.0.0.1:8080",
-		"[::]:8080":           "[::1]:8080",
+		"[::]:8080":           "127.0.0.1:8080",
 		"127.0.0.1:8080":      "127.0.0.1:8080",
 		"10.1.2.3:8080":       "10.1.2.3:8080",
 		"[fd00::1]:8080":      "[fd00::1]:8080",

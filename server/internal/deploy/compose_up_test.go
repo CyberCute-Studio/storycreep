@@ -64,15 +64,19 @@ func TestComposeUp(t *testing.T) {
 	}
 
 	project := "storycreep-test-" + strings.ToLower(rand.Text()[:8])
+	// compose runs docker compose, and returns its standard output, which the
+	// test parses, without the warnings it writes to standard error.
 	compose := func(args ...string) (string, error) {
 		args = append([]string{"compose", "--project-name", project, "--project-directory", dir}, args...)
 		cmd := exec.Command("docker", args...)
 		cmd.Env = env
-		out, err := cmd.CombinedOutput()
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
 		if err != nil {
-			err = fmt.Errorf("docker %s: %w\n%s", strings.Join(args, " "), err, out)
+			err = fmt.Errorf("docker %s: %w\n%s%s", strings.Join(args, " "), err, stdout.Bytes(), stderr.Bytes())
 		}
-		return string(out), err
+		return stdout.String(), err
 	}
 	t.Cleanup(func() {
 		if t.Failed() {

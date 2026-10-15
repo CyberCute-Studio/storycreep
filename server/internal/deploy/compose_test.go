@@ -29,6 +29,7 @@ type composeFile struct {
 
 type composeService struct {
 	Image       string            `yaml:"image"`
+	Command     []string          `yaml:"command"`
 	Restart     string            `yaml:"restart"`
 	Ports       []string          `yaml:"ports"`
 	Environment map[string]string `yaml:"environment"`
@@ -68,8 +69,8 @@ func readCompose(t *testing.T, name string) (composeFile, string) {
 // operator.
 var interpolation = regexp.MustCompile(`\$\{([A-Z0-9_]+)(:?[-?])?`)
 
-// requiredVars returns the variables that text requires, with ${NAME:?…} or
-// ${NAME?…}, and the others it interpolates.
+// interpolatedVars returns the variables that text requires, with
+// ${NAME:?…} or ${NAME?…}, and the others it interpolates.
 func interpolatedVars(text string) (required, optional []string) {
 	for _, m := range interpolation.FindAllStringSubmatch(text, -1) {
 		name, op := m[1], m[2]
@@ -181,11 +182,26 @@ func TestComposeFile(t *testing.T) {
 		}
 	}
 	for _, name := range documented {
-		if !slices.Contains(required, name) && !slices.Contains(optional, name) {
+		if !slices.Contains(required, name) && !slices.Contains(optional, name) && name != projectNameVar {
 			t.Errorf(".env.example describes %s, which the compose file does not read", name)
 		}
 	}
+
+	// The project's name is fixed, so that the documented volume names do
+	// not depend on the directory, and a second instance on a machine needs
+	// COMPOSE_PROJECT_NAME, which .env.example and README.md describe.
+	if f.Name != "storycreep" {
+		t.Errorf("the compose project is named %q, want storycreep, which README.md documents", f.Name)
+	}
+	if !slices.Contains(documented, projectNameVar) {
+		t.Errorf(".env.example does not describe %s, which a second instance on a machine needs", projectNameVar)
+	}
 }
+
+// projectNameVar is the variable that names a Docker Compose project, which
+// Docker Compose reads itself, from the environment or .env, and which
+// overrides the compose file's name.
+const projectNameVar = "COMPOSE_PROJECT_NAME"
 
 var variableName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
@@ -211,7 +227,8 @@ func envExampleVars(t *testing.T) []string {
 
 // TestDevComposeFile checks the development compose file (PRD §10.8): the
 // database's port is published, on the loopback interface only, and the
-// server runs from the mounted source tree, restarted when it changes.
+// server is built from the mounted source tree, and rebuilt and restarted
+// when it changes.
 func TestDevComposeFile(t *testing.T) {
 	f, _ := readCompose(t, "docker-compose.dev.yml")
 	if got := slices.Sorted(maps.Keys(f.Services)); !slices.Equal(got, []string{"app", "db"}) {
@@ -232,6 +249,12 @@ func TestDevComposeFile(t *testing.T) {
 	if app.Develop == nil || len(app.Develop.Watch) != 1 || app.Develop.Watch[0].Path != "../server" ||
 		app.Develop.Watch[0].Action != "restart" {
 		t.Errorf("app does not restart when ../server changes: %+v", app.Develop)
+	}
+	// The server must be the container's first process, which receives the
+	// SIGTERM that stops it: go run would keep the signal, and exit, and the
+	// server would be killed without shutting down.
+	if n := len(app.Command); n == 0 || app.Command[0] != "sh" || !strings.Contains(app.Command[n-1], "&& exec ") {
+		t.Errorf("app runs %q; want a shell that builds the server and then execs it", app.Command)
 	}
 	// The server runs on the Go that builds the image, which builds the
 	// go.mod's Go.

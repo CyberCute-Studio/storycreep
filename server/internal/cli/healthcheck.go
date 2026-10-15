@@ -24,8 +24,8 @@ Checks that the server is ready to serve: requests /readyz from the address
 in STORYCREEP_HTTP_ADDR, and exits with status 0 if the server answers 200,
 or with status 1 if it answers anything else, or nothing within 5 seconds,
 and says why. A server that listens on every network interface (an address
-written :port, 0.0.0.0:port, or [::]:port) is reached at the loopback
-address.
+written :port, 0.0.0.0:port, or [::]:port) is reached at 127.0.0.1, which
+it serves in each case.
 
 It is the health check of the container image, which has no shell or HTTP
 client to run another one with. It reads the configuration as serve does, so
@@ -71,19 +71,19 @@ same --config, or with STORYCREEP_CONFIG_FILE, which both read.`,
 }
 
 // reachableAddr returns the address at which a client on this host reaches a
-// server listening on addr, which the configuration has checked: the loopback
-// address for one that listens on every network interface, and addr itself
-// otherwise.
+// server listening on addr, which the configuration has checked: the IPv4
+// loopback address for one that listens on every network interface, and addr
+// itself otherwise. On [::], the server's net.Listen("tcp", …) opens a
+// dual-stack socket, which takes IPv4 connections too, so 127.0.0.1 reaches
+// it even where ::1 does not exist, as in a container whose loopback
+// interface has IPv6 disabled.
 func reachableAddr(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return addr
 	}
-	switch ip, err := netip.ParseAddr(host); {
-	case host == "", err == nil && ip.Is4() && ip.IsUnspecified():
+	if ip, err := netip.ParseAddr(host); host == "" || err == nil && ip.IsUnspecified() {
 		host = "127.0.0.1"
-	case err == nil && ip.IsUnspecified():
-		host = "::1"
 	}
 	return net.JoinHostPort(host, port)
 }

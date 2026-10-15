@@ -13,7 +13,11 @@ import (
 	"io/fs"
 )
 
-//go:embed app site
+// files are the two directories, with every file in them: without all:,
+// go:embed would leave out the files and directories whose names start with
+// _ or ., such as the _astro directory of the site's build output.
+//
+//go:embed all:app all:site
 var files embed.FS
 
 // App returns the tool's files, with its entry page, index.html, at the root.

@@ -1,6 +1,6 @@
 # A development environment (PRD §10.8): PostgreSQL, with its port published
-# on this machine, and the server, run from the source tree with go run and
-# restarted whenever its sources change. From the repository's root:
+# on this machine, and the server, built from the source tree, and rebuilt
+# and restarted whenever its sources change. From the repository's root:
 #
 #   docker compose -f deploy/docker-compose.dev.yml up --watch
 #
@@ -39,7 +39,11 @@ services:
       db:
         condition: service_healthy
     working_dir: /src/server
-    command: [go, run, ./cmd/storycreep, serve]
+    # The shell builds the server and then becomes it, so that the server is
+    # the container's first process, which receives the SIGTERM that stops
+    # the container, and shuts down as it does in the image. Under go run, it
+    # would be killed instead: go keeps the signal to itself, and exits.
+    command: [sh, -c, "go build -o /tmp/storycreep ./cmd/storycreep && exec /tmp/storycreep serve"]
     ports:
       - "127.0.0.1:${STORYCREEP_DEV_PORT:-8080}:8080"
       - "127.0.0.1:${STORYCREEP_DEV_ADMIN_PORT:-9090}:9090"
@@ -63,7 +67,7 @@ services:
     develop:
       watch:
         # The sources are mounted, so a change needs only a restart, which
-        # makes go run build them again.
+        # builds them again.
         - path: ../server
           action: restart
           ignore:

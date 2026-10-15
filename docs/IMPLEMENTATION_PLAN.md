@@ -154,8 +154,8 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 
 ### 9. Container image and docker-compose
 **Status:** todo · **Depends on:** 6, 8
-**PRD:** FR-ADMIN-01 (AC4), FR-ADMIN-06 (`healthcheck`), FR-ADMIN-07 (AC1, AC2), §10.8
-- Multi-stage, non-root image with no build toolchain, built for `linux/amd64` and `linux/arm64`, and its health check (N18). Static assets are embedded (placeholders until items 53 and 108).
+**PRD:** FR-ADMIN-01 (AC4), FR-ADMIN-06 (`healthcheck`), FR-ADMIN-07 (AC1, AC2), FR-PUB-01 (AC3, placeholders), FR-PUB-04 (`/`, placeholders), §10.8
+- Multi-stage, non-root image with no build toolchain, built for `linux/amd64` and `linux/arm64`, and its health check (N18). Static assets are embedded (placeholders until items 53 and 108), and `/` serves the site's placeholder or the tool's, as `STORYCREEP_PUBLIC_SITE` says.
 - `deploy/docker-compose.yml` with exactly two services, named volumes for the database and assets, healthchecks, and documented environment variables, including both database URLs (N16). A development compose file.
 
 **Done when:** FR-ADMIN-01 AC4 and FR-ADMIN-07 AC1–AC2 pass. The compose smoke test (AC3) comes in item 118.
@@ -1329,10 +1329,10 @@ The PRs that implement each requirement are listed in order. The last one comple
 
 | Requirement | PRs | Complete at |
 | --- | --- | --- |
-| FR-PUB-01 | 108 | 108 |
+| FR-PUB-01 | 9, 108 | 108 |
 | FR-PUB-02 | 6, 108, 109 | 109 |
 | FR-PUB-03 | 137 | 137 |
-| FR-PUB-04 | 108 | 108 |
+| FR-PUB-04 | 9, 108 | 108 |
 | FR-PUB-05 | 60 | 60 |
 | FR-PUB-06 | 109, 116 | 116 |
 | FR-PUB-08 | 121 | 121 |
@@ -1530,4 +1530,4 @@ These record where the PRD left a choice open, or where this plan reads the PRD 
 | 1.4 | 2026-10-15 | **Status upkeep:** the PR that implements an item now sets the item's status to `done` with a link to itself, in a commit pushed once the PR is open, and that status update needs no change log row (item format, rule 7, standing checklist). Items 1–4 are marked done with links to their PRs, which merged with the status still `todo`. No items added, removed, or renumbered. |
 | 1.5 | 2026-10-15 | Decisions from implementing item 5, with PRD 1.6. **Database logins:** alignment note N16 records the two database URLs and the provisioned application login; items 5 and 9 name them, and item 11 the maintenance pool's login that N16 leaves to it. **Startup migration:** `--no-auto-migrate` moves from item 5 to item 6, because it is a flag of `serve`, which item 6 adds; item 5 provides the startup step that `serve` runs. **Coverage:** items 5 and 6 name the FR-ADMIN-06 subcommands they add, `migrate` and `serve`, in their PRD lines and the coverage matrix. No items added, removed, or renumbered, and no dependency changed. |
 | 1.6 | 2026-10-15 | Decisions from implementing item 6: alignment note N17 records the admin port and the token that protects `/metrics`, HSTS whenever the public URL is https, and how an instance whose startup migration failed refuses traffic. No items added, removed, or renumbered, and no dependency changed. |
-| 1.7 | 2026-10-15 | Decisions from implementing item 9: alignment note N18 records the image's base and health check, the compose file's one required setting and its published port, and the image's tags before the first release. Item 9 names the FR-ADMIN-06 subcommand it adds, `healthcheck`, in its PRD line and the coverage matrix. No items added, removed, or renumbered, and no dependency changed. |
+| 1.7 | 2026-10-15 | Decisions from implementing item 9: alignment note N18 records the image's base and health check, the compose file's one required setting and its published port, and the image's tags before the first release. Item 9 names the FR-ADMIN-06 subcommand it adds, `healthcheck`, in its PRD line and the coverage matrix, and FR-PUB-01 and FR-PUB-04, for the embedded placeholder pages and the `/` that `STORYCREEP_PUBLIC_SITE` chooses between them. No items added, removed, or renumbered, and no dependency changed. |

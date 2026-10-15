@@ -45,10 +45,8 @@ type Info struct {
 
 // Get returns the build of the running binary.
 var Get = sync.OnceValue(func() Info {
-	bi, ok := debug.ReadBuildInfo()
-	if !ok {
-		bi = nil
-	}
+	// ReadBuildInfo returns nil when the binary has no build information.
+	bi, _ := debug.ReadBuildInfo()
 	return describe(stamp{release: release, commit: commit, commitTime: commitTime}, bi)
 })
 

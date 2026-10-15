@@ -77,7 +77,7 @@ Docker Desktop builds both platforms as it is. Docker Engine may need a builder 
 STORYCREEP_TEST_IMAGE_ARCHIVE=/tmp/storycreep.tar STORYCREEP_TEST_IMAGE=storycreep:test go test ./internal/deploy
 ```
 
-The compose test publishes the server on `127.0.0.1:7777`, the documented port, or on another port if something already listens there, and removes its containers and volumes when it is done. Every commit on the main branch publishes the image to `ghcr.io/cybercute-studio/storycreep`, once CI passes.
+The compose test publishes the server on `127.0.0.1:7777`, the documented port, or on another port if something already listens there, and removes its containers and volumes when it is done. Every commit on the main branch publishes the image to `ghcr.io/cybercute-studio/storycreep`, once CI passes. GitHub creates a new package as private, so after the first publish a maintainer makes the package public, once, in its settings on GitHub: until then, `docker-compose.yml` cannot pull the image without signing in.
 
 ## Tagging tests with requirements
 

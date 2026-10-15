@@ -280,7 +280,8 @@ jobs:
   # PRD FR-ADMIN-07 AC2: every commit on the main branch publishes the image
   # for both platforms, once the checks have passed, as
   # ghcr.io/cybercute-studio/storycreep:main and :sha-<commit>. Release tags
-  # come with the release workflow (plan item 119).
+  # come with the release workflow (plan item 119). GitHub creates the package
+  # as private, and a maintainer makes it public once (CONTRIBUTING.md).
   publish:
     name: Publish the image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

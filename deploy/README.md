@@ -22,6 +22,8 @@ On its first start, the server applies the database migrations, and creates its 
 
 The data lives in two named volumes: `db`, the database, and `assets`, mounted at `/var/lib/storycreep/assets`, for the files that users upload. `docker compose down` keeps them; `docker compose down -v` deletes them, and with them everything stored in Storycreep.
 
+The compose file names its Compose project `storycreep`, and the containers and volumes are named after the project, whatever directory the file is in. So a second copy of the directory on the same machine runs the same instance: its `docker compose up -d` recreates the first copy's containers on the same volumes, and its `docker compose down -v` deletes them. To run a second instance, such as one to try a new version on, set `COMPOSE_PROJECT_NAME` to a name of its own in its `.env` before its first start.
+
 ### Settings
 
 `.env.example` describes every setting the compose file takes. Besides `POSTGRES_PASSWORD`, they all have defaults:
@@ -32,6 +34,7 @@ The data lives in two named volumes: `db`, the database, and `assets`, mounted a
 | `STORYCREEP_PUBLISH` | `127.0.0.1:7777` | Where Docker publishes the server's HTTP port, as `[address:]port`. The default reaches it from this machine only. |
 | `STORYCREEP_PUBLIC_URL` | `http://localhost:7777` | The URL users open Storycreep at. |
 | `STORYCREEP_MODE`, `STORYCREEP_PUBLIC_SITE`, `STORYCREEP_SIGNUP`, `STORYCREEP_LOG_LEVEL`, `STORYCREEP_ADMIN_ADDR`, `STORYCREEP_METRICS_TOKEN` | The server's | The server keys of the same names, which [`docs/configuration.md`](../docs/configuration.md) describes. |
+| `COMPOSE_PROJECT_NAME` | `storycreep` | The Compose project's name, which the containers' and volumes' names start with. Another name is another instance, with volumes of its own, so set it before the first start. |
 
 The compose file sets the database URLs itself. The two logins in them take their password from `POSTGRES_PASSWORD`, through `PGPASSWORD`, so that a password with characters such as `@` or `/` needs no escaping.
 
@@ -74,13 +77,13 @@ The server applies the migrations a new version brings when it starts, under a l
 
 3. Check that both services are `healthy` with `docker compose ps`. `docker compose logs app` lists the migrations that were applied.
 
-The volume names start with the compose project's name, `storycreep`. A `storycreep backup` command, and a tested restore procedure, are planned (PRD FR-DATA-05).
+The volume names start with the compose project's name, `storycreep`, or the one that `COMPOSE_PROJECT_NAME` sets. A `storycreep backup` command, and a tested restore procedure, are planned (PRD FR-DATA-05).
 
 ## The image
 
 The image is published as `ghcr.io/cybercute-studio/storycreep`, for `linux/amd64` and `linux/arm64`, from every commit on the main branch, tagged `main` and `sha-<commit>`. Release tags start with the first release.
 
-It holds the `storycreep` binary, with the web interface embedded in it, on a [distroless](https://github.com/GoogleContainerTools/distroless) base: there is no shell, package manager, or build toolchain in it, and it runs as the non-root user 65532 (PRD FR-ADMIN-01 AC4). It runs `storycreep serve` unless given another command, as in `docker run --rm ghcr.io/cybercute-studio/storycreep:main --help`. Its health check runs `storycreep healthcheck`, which requests `/readyz`.
+It holds the `storycreep` binary, with the web interface embedded in it, on a [distroless](https://github.com/GoogleContainerTools/distroless) base: there is no shell, package manager, or build toolchain in it, and it runs as the non-root user 65532 (PRD FR-ADMIN-01 AC4). It runs `storycreep serve` unless given another command, as in `docker run --rm ghcr.io/cybercute-studio/storycreep:main --help`. Its health check runs `storycreep healthcheck`, which requests `/readyz`. The health check runs without arguments, so name a configuration file with `STORYCREEP_CONFIG_FILE`, which it reads as `serve` does, rather than with `serve --config`, which it does not see.
 
 To build it, from the repository's root:
 
@@ -98,7 +101,7 @@ The build arguments `STORYCREEP_VERSION`, `STORYCREEP_COMMIT`, and `STORYCREEP_C
 
 ## Development
 
-[`docker-compose.dev.yml`](docker-compose.dev.yml) runs PostgreSQL with its port published on this machine, and the server from the source tree, restarting it whenever its sources change. From the repository's root:
+[`docker-compose.dev.yml`](docker-compose.dev.yml) runs PostgreSQL with its port published on this machine, and the server, built from the source tree, rebuilding and restarting it whenever its sources change. From the repository's root:
 
 ```sh
 docker compose -f deploy/docker-compose.dev.yml up --watch
