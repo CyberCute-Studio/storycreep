@@ -32,10 +32,11 @@ const auditTable = "audit_entry"
 // crossWorkspaceTables, a tenant table whose workspace_id is missing, may be
 // null, is not a uuid, lacks the foreign key to workspace (or, for
 // audit_entry, has one), or leads no index, a tenant table without forced
-// row-level security or without a policy for storycreep_app, a table that
-// spans workspaces but has a workspace_id, and a tenant table that is not in
-// registered, the isolation harness's tables, or a name in registered that is
-// not a tenant table.
+// row-level security or without a policy for storycreep_app, or that
+// storycreep_maintenance may not read, as the maintenance jobs must (PRD
+// §5.4), a table that spans workspaces but has a workspace_id, and a tenant
+// table that is not in registered, the isolation harness's tables, or a name
+// in registered that is not a tenant table.
 func tenantTableProblems(t *testing.T, conn *pgx.Conn, registered []string) []string {
 	t.Helper()
 	rows, err := conn.Query(context.Background(), `
@@ -49,7 +50,8 @@ func tenantTableProblems(t *testing.T, conn *pgx.Conn, registered []string) []st
 			EXISTS (SELECT FROM pg_index i WHERE i.indrelid = c.oid AND i.indkey[0] = a.attnum),
 			c.relrowsecurity, c.relforcerowsecurity,
 			EXISTS (SELECT FROM pg_policy p
-				WHERE p.polrelid = c.oid AND p.polcmd = '*' AND 'storycreep_app'::regrole = ANY (p.polroles))
+				WHERE p.polrelid = c.oid AND p.polcmd = '*' AND 'storycreep_app'::regrole = ANY (p.polroles)),
+			has_table_privilege('storycreep_maintenance', c.oid, 'SELECT')
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'workspace_id' AND NOT a.attisdropped
@@ -62,11 +64,12 @@ func tenantTableProblems(t *testing.T, conn *pgx.Conn, registered []string) []st
 		name                                 string
 		hasColumn, notNull, uuid, fk, index  bool
 		rowSecurity, forced, workspacePolicy bool
+		maintenanceReads                     bool
 	}
 	tables, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (table, error) {
 		var x table
 		err := r.Scan(&x.name, &x.hasColumn, &x.notNull, &x.uuid, &x.fk, &x.index, &x.rowSecurity, &x.forced,
-			&x.workspacePolicy)
+			&x.workspacePolicy, &x.maintenanceReads)
 		return x, err
 	})
 	if err != nil {
@@ -110,6 +113,9 @@ func tenantTableProblems(t *testing.T, conn *pgx.Conn, registered []string) []st
 		if !tb.workspacePolicy {
 			add("has no policy for storycreep_app")
 		}
+		if !tb.maintenanceReads {
+			add("storycreep_maintenance may not read it")
+		}
 		if !slices.Contains(registered, tb.name) {
 			add("is not one of the isolation harness's tables")
 		}
@@ -133,9 +139,10 @@ func tableNames(tables []isolationtest.Table) []string {
 // TestTenantTables enumerates the tables that the migrations create, and
 // checks that each one whose rows belong to a workspace has a non-null
 // workspace_id with a foreign key to workspace (audit_entry's has none),
-// forced row-level security with a policy for the application, and a place
-// among the isolation harness's tables, and that every other table is one of
-// those that span workspaces.
+// forced row-level security with a policy for the application, a grant that
+// lets storycreep_maintenance read it, and a place among the isolation
+// harness's tables, and that every other table is one of those that span
+// workspaces.
 //
 // Verifies: FR-TEN-01/AC1, NFR-SEC-01
 func TestTenantTables(t *testing.T) {
@@ -176,11 +183,13 @@ func TestTenantTablesCheckFindsOmissions(t *testing.T) {
 		"loose: no index starts with workspace_id",
 		"loose: row-level security is not enabled and forced",
 		"loose: has no policy for storycreep_app",
+		"loose: storycreep_maintenance may not read it",
 		"loose: is not one of the isolation harness's tables",
 		"river_extra: spans workspaces, but has a workspace_id",
 		"stray: has no workspace_id; a table whose rows span workspaces is one of the cross-workspace tables",
 		"unforced: row-level security is not enabled and forced",
 		"unforced: has no policy for storycreep_app",
+		"unforced: storycreep_maintenance may not read it",
 		"ghost: is one of the isolation harness's tables, but not a tenant table",
 	}
 	if !slices.Equal(got, want) {

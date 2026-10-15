@@ -506,6 +506,22 @@ func TestMigrateNeedsTheAdminLogin(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `acts as the role "storycreep_definer", which is reserved`) {
 		t.Errorf("with the superuser acting as a server role: %v, want a refusal naming the role", err)
 	}
+	// The application login must not be the admin login, nor the superuser
+	// that it acts as, which provision would refuse only once the migrations
+	// were applied.
+	_, err = database.Migrate(ctx, d.AdminURL, d.AdminURL, database.MigrateOptions{})
+	if err == nil || !strings.Contains(err.Error(), "as STORYCREEP_DATABASE_ADMIN_URL does") {
+		t.Errorf("with the admin login as the application login: %v, want a refusal", err)
+	}
+	other := d.NewLogin(t, "SUPERUSER")
+	asOther, err := config.ParseDatabaseURL(d.AdminURL.Reveal() + "&role=" + other.User())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = database.Migrate(ctx, asOther, other, database.MigrateOptions{})
+	if err == nil || !strings.Contains(err.Error(), "the role that the login in STORYCREEP_DATABASE_ADMIN_URL acts as") {
+		t.Errorf("with the role that the admin login acts as as the application login: %v, want a refusal", err)
+	}
 	var exists bool
 	if err := d.Admin(t).QueryRow(ctx, "SELECT to_regclass('goose_db_version') IS NOT NULL").Scan(&exists); err != nil {
 		t.Fatal(err)

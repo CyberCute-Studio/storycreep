@@ -35,10 +35,6 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 )
 
-// applicationName is what the pool's connections report in pg_stat_activity,
-// unless the URL sets application_name, or PGAPPNAME or a service file does.
-const applicationName = "storycreep-maintenance"
-
 // ErrNoURL is returned by Open when STORYCREEP_DATABASE_MAINTENANCE_URL is not
 // set.
 var ErrNoURL = errors.New("STORYCREEP_DATABASE_MAINTENANCE_URL is not set")
@@ -58,8 +54,11 @@ func Open(ctx context.Context, url config.DatabaseURL) (*DB, error) {
 		return nil, ErrNoURL
 	}
 	cfg := url.PoolConfig()
+	// The connections report themselves in pg_stat_activity as the
+	// maintenance login's, unless the URL, PGAPPNAME, or a service file
+	// names them otherwise.
 	if _, ok := cfg.ConnConfig.RuntimeParams["application_name"]; !ok {
-		cfg.ConnConfig.RuntimeParams["application_name"] = applicationName
+		cfg.ConnConfig.RuntimeParams["application_name"] = database.MaintenanceApplicationName
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err == nil {

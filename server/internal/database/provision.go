@@ -345,20 +345,23 @@ func checkServerRoles(ctx context.Context, q querier) error {
 			"migration creates (%s), as when a dump of the database is restored into another server: roles belong "+
 			"to the server, so the dump has none, and the restore could not grant them the privileges that the "+
 			"migrations gave them, which migrating again does not grant; create the roles on this server, with "+
-			"pg_dumpall --roles-only on the old one, or by running storycreep migrate with both database URLs naming "+
-			"an empty database here, and then restore the dump again", strings.Join(missing, ", "))
+			"pg_dumpall --roles-only on the old one, or by running storycreep migrate with STORYCREEP_DATABASE_URL "+
+			"and STORYCREEP_DATABASE_ADMIN_URL naming an empty database here, and then restore the dump again",
+			strings.Join(missing, ", "))
 	}
 	return nil
 }
 
-// checkLoginName returns an error if login, which the URL key names, is the
-// name of one of the server's roles, or has the pg_ prefix, which PostgreSQL
-// reserves for its predefined roles. None of them can be the application
-// login or the maintenance login.
-func checkLoginName(key, login string) error {
+// checkLoginName returns an error if login, which the URL of rules.key names,
+// is the name of one of the server's roles, or has the pg_ prefix, which
+// PostgreSQL reserves for its predefined roles. None of them can be the
+// application login or the maintenance login. The error suggests the name
+// that the deployment files give the login, because the two logins must
+// differ, so one name would not do for both.
+func checkLoginName(rules *loginRules, login string) error {
 	if slices.Contains(reservedRoles, login) || strings.HasPrefix(login, "pg_") {
-		return fmt.Errorf("%s connects as %q, a role that is reserved for the server's own use; give the server a "+
-			"login of its own, such as storycreep", key, login)
+		return fmt.Errorf("%s connects as %q, a role that is reserved for the server's own use; name a login of "+
+			"its own in it, such as %s", rules.key, login, rules.example)
 	}
 	return nil
 }

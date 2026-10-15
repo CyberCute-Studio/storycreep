@@ -176,12 +176,18 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	// that had the name of one of them. It also takes SUPERUSER away from
 	// them, so an admin login with such a name would lose it partway through,
 	// and the migrations' grants after that would only warn.
-	if err := checkLoginName(appURLKey, app.User()); err != nil {
+	if err := checkLoginName(appLoginRules, app.User()); err != nil {
 		return MigrateResult{}, nil, err
+	}
+	// The configuration refuses this too, but provision would only refuse
+	// the superuser once the migrations were applied.
+	if app.User() == admin.User() {
+		return MigrateResult{}, nil, fmt.Errorf("%s connects as %q, as %s does; migrations need a superuser and the "+
+			"server an ordinary login, so they must be different logins", appURLKey, app.User(), adminURLKey)
 	}
 	maint := opts.Maintenance
 	if maint.IsSet() {
-		if err := checkLoginName(maintenanceURLKey, maint.User()); err != nil {
+		if err := checkLoginName(maintenanceLoginRules, maint.User()); err != nil {
 			return MigrateResult{}, nil, err
 		}
 		// The application login must not have storycreep_maintenance, and
@@ -206,7 +212,7 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	// admin URL may carry the same pool parameters, which pgx alone would send
 	// to PostgreSQL as settings.
 	connConfig := admin.PoolConfig().ConnConfig
-	setApplicationName(connConfig)
+	setApplicationName(connConfig, applicationName)
 	// The server's objects live in the public schema, which the first
 	// migration lets the server's roles use, so the migrations' sessions
 	// search only it. A search_path from the URL, the login, or the database,
@@ -252,6 +258,9 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	case !super:
 		return MigrateResult{}, nil, fmt.Errorf("the login %q in STORYCREEP_DATABASE_ADMIN_URL is not a superuser; "+
 			"applying migrations needs one, because they create the server's database roles", admin.User())
+	case app.User() == role:
+		return MigrateResult{}, nil, fmt.Errorf("%s connects as %q, the role that the login in %s acts as; the "+
+			"server needs an ordinary login of its own", appURLKey, app.User(), adminURLKey)
 	case maint.IsSet() && maint.User() == role:
 		return MigrateResult{}, nil, fmt.Errorf("%s connects as %q, the role that the login in %s acts as; the "+
 			"maintenance jobs need a login of their own", maintenanceURLKey, maint.User(), adminURLKey)
@@ -384,7 +393,7 @@ func checkAppDatabase(ctx context.Context, app config.DatabaseURL, ms migrationS
 // pool of the login (PRD §5.4).
 func checkMaintenanceDatabase(ctx context.Context, maint config.DatabaseURL, ms migrationSet) error {
 	connConfig := maint.PoolConfig().ConnConfig
-	setApplicationName(connConfig)
+	setApplicationName(connConfig, MaintenanceApplicationName)
 	conn, err := pgx.ConnectConfig(ctx, connConfig)
 	if err != nil {
 		return fmt.Errorf("connect to %s: %w", maint, err)

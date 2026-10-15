@@ -166,7 +166,8 @@ var keys = []key{
 			"or owns the database or objects in it, or that is a member of a role that does, of one of the " +
 			"server's privileged roles, or of `pg_execute_server_program`, `pg_read_server_files`, or " +
 			"`pg_write_server_files`, which give access to the database server's files and programs, because " +
-			"row-level security would not hold it. Migrations create the login if it does not exist, set its " +
+			"row-level security would not hold it, or of `pg_write_all_data`, which may change the rows of every " +
+			"table past what the migrations grant. Migrations create the login if it does not exist, set its " +
 			"password to the one the server logs in with (this URL's, or else the one `PGPASSWORD`, a service " +
 			"file, or a password file supplies), and grant it the `storycreep_app` role. When the server logs in " +
 			"with a password, they refuse a login whose `VALID UNTIL` has passed, which PostgreSQL would refuse as " +
@@ -253,10 +254,13 @@ var keys = []key{
 			"row-level security as `storycreep_maintenance`: one that is a superuser, has `BYPASSRLS` itself, " +
 			"`CREATEROLE`, or `REPLICATION`, owns the database or objects in it, or is a member of a role that " +
 			"does, `storycreep_maintenance` included but for its own `BYPASSRLS`, of `storycreep_app` or " +
-			"`storycreep_definer`, or of one of the roles that give access to the database server's files and " +
-			"programs. Give each Storycreep database on a server a maintenance login of its " +
-			"own, as for `STORYCREEP_DATABASE_URL`. Without it, migrations leave the maintenance login alone. It " +
-			"is shown redacted in the same way.",
+			"`storycreep_definer`, of one of the roles that give access to the database server's files and " +
+			"programs, or of `pg_write_all_data`. Give each Storycreep database on a server a maintenance login of " +
+			"its own, as for `STORYCREEP_DATABASE_URL`. The `storycreep_maintenance` role belongs to the whole " +
+			"PostgreSQL server, and so does its `BYPASSRLS`, so the login could also bypass row-level security in " +
+			"another database on the server that it can connect to, as PostgreSQL lets every role do by default: " +
+			"on a server shared with other applications, revoke `CONNECT` on their databases from `PUBLIC`. " +
+			"Without this URL, migrations leave the maintenance login alone. It is shown redacted in the same way.",
 		valuesDoc: "A `postgres://` URL",
 		parse: func(c *Config, v string) error {
 			d, err := ParseDatabaseURL(v)

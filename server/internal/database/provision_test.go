@@ -272,6 +272,11 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 			`it is a member of "pg_read_server_files", which gives access`},
 		{"member of pg_write_server_files", func(r, _ string) string { return "GRANT pg_write_server_files TO " + r },
 			`it is a member of "pg_write_server_files", which gives access`},
+		// Row-level security holds this one, but it could delete a workspace
+		// or a user, whose cascades reach every workspace's rows, and change
+		// the audit log, which the migrations' grants forbid.
+		{"member of pg_write_all_data", func(r, _ string) string { return "GRANT pg_write_all_data TO " + r },
+			`it is a member of "pg_write_all_data", which may change the rows of every table`},
 		{"table owner", func(r, n string) string {
 			return "CREATE TABLE owned_" + n + " (x int); ALTER TABLE owned_" + n + " OWNER TO " + r
 		}, "it owns objects in the database"},
@@ -584,8 +589,9 @@ func TestProvisionRefusesReservedRoles(t *testing.T) {
 	d := dbtest.Empty(t)
 	for _, login := range []string{"storycreep_app", "storycreep_maintenance", "storycreep_definer", "pg_monitor"} {
 		_, err := database.Migrate(ctx, d.AdminURL, d.URL(t, login, "pw"), database.MigrateOptions{})
-		if err == nil || !strings.Contains(err.Error(), "reserved") {
-			t.Errorf("%s: Migrate returned %v, want a refusal", login, err)
+		if err == nil || !strings.Contains(err.Error(), "reserved") ||
+			!strings.HasSuffix(err.Error(), "name a login of its own in it, such as storycreep") {
+			t.Errorf("%s: Migrate returned %v, want a refusal that suggests the application login's name", login, err)
 		}
 	}
 	var exists bool
@@ -648,8 +654,9 @@ func TestProvisionRefusesMaintenanceLogins(t *testing.T) {
 	d := dbtest.New(t)
 	admin := d.Admin(t)
 	superuser := d.NewLogin(t, "SUPERUSER")
-	member := d.NewLogin(t, "")
-	if _, err := admin.Exec(ctx, "GRANT storycreep_app TO "+pgx.Identifier{member.User()}.Sanitize()); err != nil {
+	member, writer := d.NewLogin(t, ""), d.NewLogin(t, "")
+	if _, err := admin.Exec(ctx, "GRANT storycreep_app TO "+pgx.Identifier{member.User()}.Sanitize()+
+		"; GRANT pg_write_all_data TO "+pgx.Identifier{writer.User()}.Sanitize()); err != nil {
 		t.Fatal(err)
 	}
 	for _, tt := range []struct {
@@ -660,10 +667,15 @@ func TestProvisionRefusesMaintenanceLogins(t *testing.T) {
 	}{
 		{"the application login", d.AppURL, false, "as STORYCREEP_DATABASE_URL does"},
 		{"the admin login", d.AdminURL, false, "as STORYCREEP_DATABASE_ADMIN_URL does"},
-		{"a reserved name", d.URL(t, "storycreep_maintenance", "pw"), false, "reserved for the server's own use"},
+		// The suggestion is the maintenance login's name in the deployment
+		// files, not the application login's, which the URL may not name.
+		{"a reserved name", d.URL(t, "storycreep_maintenance", "pw"), false,
+			"reserved for the server's own use; name a login of its own in it, such as storycreep_maintainer"},
 		{"a superuser", superuser, true, "it is a superuser"},
 		{"a member of storycreep_app", member, true,
 			`it is a member of "storycreep_app", which is reserved for the server's other work`},
+		{"a member of pg_write_all_data", writer, true,
+			`it is a member of "pg_write_all_data", which may change the rows of every table`},
 	} {
 		_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Maintenance: tt.maint})
 		var uerr *database.UnsafeLoginError

@@ -225,9 +225,9 @@ CREATE INDEX audit_entry_workspace ON audit_entry (workspace_id, created_at);
 -- Row-level security on every tenant table (§5.4, NFR-SEC-01). It is forced,
 -- although the superuser that owns the tables bypasses it all the same, so
 -- that it would hold a table's owner if one were ever not a superuser. The
--- policies apply to storycreep_app, so that a role without a policy of its
--- own, which the context bootstrap's storycreep_definer has (00005), sees no
--- rows at all.
+-- policies apply to storycreep_app alone, so that any other role that
+-- row-level security holds sees no rows at all, unless a policy of its own
+-- lets it, as the context bootstrap's policies let storycreep_definer (00005).
 
 ALTER TABLE project ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 CREATE POLICY workspace_isolation ON project TO storycreep_app
@@ -260,9 +260,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON session, project, membership, project_gr
 	TO storycreep_app;
 GRANT SELECT, INSERT ON audit_entry TO storycreep_app;
 
--- The maintenance jobs read across workspaces (§5.4). Each job that changes
--- rows is granted that in the migration that adds it. Like the server, they
--- read which migrations are applied, to tell whether the database is ready
--- for them.
+-- The maintenance jobs read across workspaces (§5.4), so
+-- storycreep_maintenance may read the tables of this migration, and a
+-- migration that adds a tenant table grants it SELECT on the table too, which
+-- TestTenantTables checks. Each job that changes rows is granted that in the
+-- migration that adds it. Like the server, the jobs read which migrations are
+-- applied, to tell whether the database is ready for them.
 GRANT SELECT ON "user", workspace, session, project, membership, project_grant, invite, api_token, audit_entry,
 	goose_db_version TO storycreep_maintenance;
