@@ -40,11 +40,25 @@ func Migrations() fs.FS {
 // versionTable is the table in which goose records the applied migrations.
 const versionTable = goose.DefaultTablename
 
-// migrationLock is the key of the session-level advisory lock that migrations
-// run under, in the single-bigint key space of pg_advisory_lock. It spells
-// "storycrp" in ASCII. Every advisory lock the server takes has its key
-// declared in this package, so that no two share one.
-const migrationLock int64 = 0x73746f7279637270
+// The keys of the session-level advisory locks that migrations run under, in
+// the single-bigint key space of pg_advisory_lock. Every advisory lock the
+// server takes has its key declared in this package, so that no two share one.
+const (
+	// migrationLock is held by Migrate's own session for the whole of
+	// Migrate. It spells "storycrp" in ASCII.
+	migrationLock int64 = 0x73746f7279637270
+	// gooseLock is held by the session that goose applies the migrations
+	// on, while it applies them (gooseLocker). It spells "storycrq".
+	gooseLock int64 = 0x73746f7279637271
+)
+
+// timeoutsOff switches off the timeouts that the server, the database, or the
+// login set and that would end a wait for an advisory lock early, or end an
+// idle session and with it the locks it holds: for the session, or, if $1 is
+// true, for the current transaction only. Each of them that the server has is
+// switched off; PostgreSQL 17 added transaction_timeout.
+const timeoutsOff = `SELECT set_config(name, '0', $1) FROM pg_settings
+	WHERE name IN ('lock_timeout', 'statement_timeout', 'idle_session_timeout', 'transaction_timeout')`
 
 // MigrateOptions configure Migrate.
 type MigrateOptions struct {
@@ -111,8 +125,11 @@ func (e *MigrationError) Unwrap() error { return e.Err }
 // reaches has the migrations (checkAppDatabase). All of it runs while Migrate
 // holds the migration lock, so instances that migrate at the same time wait
 // for each other, and the database ends up with each migration applied
-// exactly once (PRD FR-ADMIN-04). The admin login must be a superuser,
-// because the migrations create roles.
+// exactly once (PRD FR-ADMIN-04). The session that goose applies the
+// migrations on holds a lock of its own while it does, so that they stay
+// applied one instance at a time even if Migrate's session, and with it the
+// migration lock, ends while goose is still at work. The admin login must be
+// a superuser, because the migrations create roles.
 //
 // A failed migration is a *MigrationError: the migrations before it stay
 // applied, and the application login is left as it was. A database that a
@@ -174,14 +191,11 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	}
 	// This session waits for the lock for as long as another instance
 	// migrates, and then sits idle while goose migrates on connections of its
-	// own. Timeouts that the server, the database, or the admin login set for
-	// sessions would end the wait early, or end the idle session and with it
-	// the lock, so that another instance could migrate at the same time. The
-	// wait runs in a transaction of its own, so PostgreSQL 17's
-	// transaction_timeout ends it too. Each of them that the server has is
-	// switched off.
-	if _, err := conn.Exec(ctx, `SELECT set_config(name, '0', false) FROM pg_settings
-		WHERE name IN ('lock_timeout', 'statement_timeout', 'idle_session_timeout', 'transaction_timeout')`); err != nil {
+	// own. Timeouts would end the wait early, or end the idle session and
+	// with it the lock, so they are switched off for the session. The wait
+	// runs in a transaction of its own, so PostgreSQL 17's
+	// transaction_timeout would end it too.
+	if _, err := conn.Exec(ctx, timeoutsOff, false); err != nil {
 		return MigrateResult{}, nil, fmt.Errorf("prepare the session for the migration lock: %w", err)
 	}
 	// pg_advisory_lock waits for as long as another instance migrates. If ctx
@@ -199,16 +213,19 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	}
 
 	// goose works on database/sql. Its connections are opened only while
-	// this one holds the lock.
+	// this one holds the lock. goose applies the migrations on one of them,
+	// which holds gooseLock meanwhile (gooseLocker), so that if this session
+	// ends early, an instance that then takes the migration lock waits for
+	// this goose to finish before it applies anything.
 	gooseDB := stdlib.OpenDB(*connConfig)
 	defer gooseDB.Close()
 	var res MigrateResult
 	res.Applied, err = runGoose(ctx, gooseDB, ms)
 	// The version is read again on this connection, which a failed migration
 	// leaves usable. If the connection failed too, as when the database
-	// server restarted, the database has the migrations it had before and the
-	// ones goose applied, because no other instance migrated while this one
-	// held the lock.
+	// server restarted, the database had, when goose stopped, the migrations
+	// it had before and the ones goose applied, because goose held gooseLock
+	// throughout.
 	after, verr := appliedVersions(context.WithoutCancel(ctx), conn)
 	if verr == nil {
 		applied = after
@@ -249,11 +266,7 @@ func checkAppDatabase(ctx context.Context, app config.DatabaseURL, ms migrationS
 	if err != nil {
 		return nil, err
 	}
-	applied, err := appliedVersions(ctx, db.pool)
-	var p []int64
-	if err == nil {
-		p, err = pending(ms, applied)
-	}
+	p, err := db.pendingIn(ctx, ms)
 	switch {
 	case err != nil:
 		db.Close()
@@ -305,6 +318,7 @@ func runGoose(ctx context.Context, db *sql.DB, ms migrationSet) ([]AppliedMigrat
 	p, err := goose.NewProvider(goose.DialectPostgres, db, ms.fsys,
 		goose.WithDisableGlobalRegistry(true),
 		goose.WithTableName(versionTable),
+		goose.WithSessionLocker(gooseLocker{}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("read the migrations: %w", err)
@@ -333,6 +347,46 @@ func runGoose(ctx context.Context, db *sql.DB, ms migrationSet) ([]AppliedMigrat
 		return applied, fmt.Errorf("apply the migrations: %w", err)
 	}
 	return applied, nil
+}
+
+// gooseLocker is goose's session locker. goose takes it on the connection
+// that it then applies the migrations on, and releases it when it is done, so
+// gooseLock is held by the session that migrates for as long as it migrates.
+// The migration lock alone is held by another session, which can end while
+// goose is still at work.
+type gooseLocker struct{}
+
+// SessionLock waits for gooseLock. Normally it is free, because Migrate holds
+// the migration lock, but an instance whose session took the migration lock
+// after another instance's session ended waits here until that instance's
+// goose is done. The wait runs in a transaction that switches the timeouts
+// off for itself alone, so the migrations keep the session's timeouts, and
+// the lock, which belongs to the session, outlives the transaction.
+func (gooseLocker) SessionLock(ctx context.Context, conn *sql.Conn) error {
+	tx, err := conn.BeginTx(ctx, nil)
+	if err == nil {
+		// After Commit, Rollback does nothing.
+		defer func() { _ = tx.Rollback() }()
+		_, err = tx.ExecContext(ctx, timeoutsOff, true)
+	}
+	if err == nil {
+		_, err = tx.ExecContext(ctx, "SELECT pg_advisory_lock($1)", gooseLock)
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		return fmt.Errorf("take the lock for applying migrations: %w", err)
+	}
+	return nil
+}
+
+// SessionUnlock releases gooseLock.
+func (gooseLocker) SessionUnlock(ctx context.Context, conn *sql.Conn) error {
+	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", gooseLock); err != nil {
+		return fmt.Errorf("release the lock for applying migrations: %w", err)
+	}
+	return nil
 }
 
 // appliedVersions returns the versions of the migrations the database has

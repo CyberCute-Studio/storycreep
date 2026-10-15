@@ -16,6 +16,9 @@
 -- database in the cluster created, is kept, and only the attributes that
 -- differ are corrected. Altering a role that needs no change would still
 -- conflict with the same statement run from another database at the same time.
+-- The advisory lock that migrations run under is the database's own, so the
+-- first migration of another database in the cluster can also create a role
+-- at the same time as this one; the role it created is kept then too.
 
 -- +goose StatementBegin
 DO $$
@@ -32,8 +35,15 @@ BEGIN
 		attributes := 'NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION '
 			|| CASE WHEN r.bypassrls THEN 'BYPASSRLS' ELSE 'NOBYPASSRLS' END;
 		IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = r.name) THEN
-			EXECUTE format('CREATE ROLE %I %s', r.name, attributes);
-		ELSIF EXISTS (
+			BEGIN
+				EXECUTE format('CREATE ROLE %I %s', r.name, attributes);
+			EXCEPTION WHEN unique_violation OR duplicate_object THEN
+				-- Another database's migration created it after the check
+				-- above. Its attributes are checked below.
+				NULL;
+			END;
+		END IF;
+		IF EXISTS (
 			SELECT FROM pg_roles
 			WHERE rolname = r.name
 				AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication

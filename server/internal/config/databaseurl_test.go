@@ -95,6 +95,17 @@ func TestInvalidDatabaseURL(t *testing.T) {
 		// libpq would read the # as part of the database name.
 		{"postgres://app:" + password + "@db/sc#", "fragment"},
 		{"postgres://app:%zz" + password + "@db/sc", "not a valid URL"},
+		// libpq would read these in a password, but url.Parse refuses them
+		// unencoded, so the reason says how to write them.
+		{"postgres://app:p[" + password + "@db/sc", "percent-encode every character"},
+		{"postgres://app:pä" + password + "@db/sc", "percent-encode every character"},
+		// libpq ends the password at the /, which leaves the URL without a
+		// user.
+		{"postgres://app:pw/" + password + "@db/sc", "has a / in its user or password that is not percent-encoded"},
+		// pgx refuses a NUL with an explanation that quotes the value, which
+		// for most parameters is shown redacted.
+		{"postgres://app:pw@db/sc?options=-c%20x%3D" + password + "%00", "has %00"},
+		{"postgres://app:" + password + "%00@db/sc", "has %00"},
 		{"postgres://app:" + password + "@db/sc?sslmode=%zz", "the query is not valid"},
 		// pgx, like libpq, ends the password at the first @, and would log in
 		// with "pw" at the host "<password>@db".

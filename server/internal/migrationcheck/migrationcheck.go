@@ -73,9 +73,15 @@ type Result struct {
 // working tree, with the ones at the commit where the current branch forked
 // from base, such as origin/main. Comparing with the fork point rather than
 // base itself keeps migrations that base gained since from counting as
-// deleted. dir must be in a git repository with the history of both, so a
+// deleted. dir must exist, in a git repository with the history of both, so a
 // shallow clone needs its full history fetched first.
 func Check(ctx context.Context, dir, base string) (Result, error) {
+	// git keeps no empty directory, so a change that deletes every migration
+	// deletes the directory too, and git cannot run in it.
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		return Result{}, fmt.Errorf("the migrations directory %s does not exist; if the change deleted every "+
+			"migration, restore the ones on %s, because a merged migration is never deleted", dir, base)
+	}
 	fork, err := git(ctx, dir, "", "merge-base", "HEAD", base)
 	if err != nil {
 		return Result{}, fmt.Errorf("find where HEAD forked from %s: %w; a shallow clone needs its full history "+

@@ -149,7 +149,9 @@ func TestProvisionPasswordFromFile(t *testing.T) {
 	if err := os.WriteFile(passfile, []byte("*:*:*:"+login+":from-the-file\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	app, err := config.ParseDatabaseURL(d.URL(t, login, "").Reveal() + "&passfile=" + url.QueryEscape(passfile))
+	// QueryEscape writes a space as +, which libpq reads as a +.
+	escaped := strings.ReplaceAll(url.QueryEscape(passfile), "+", "%20")
+	app, err := config.ParseDatabaseURL(d.URL(t, login, "").Reveal() + "&passfile=" + escaped)
 	if err != nil {
 		t.Fatal(err)
 	}

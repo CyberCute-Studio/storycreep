@@ -1,5 +1,5 @@
 // Package database is the server's access to PostgreSQL (PRD ADR-001, ADR-002):
-// the embedded migrations and the advisory lock they run under, the database
+// the embedded migrations and the advisory locks they run under, the database
 // roles and the application's login, the application's connection pool, and
 // the request transaction that sets the row-level security context.
 //
@@ -129,6 +129,11 @@ func (db *DB) Pending(ctx context.Context) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
+	return db.pendingIn(ctx, ms)
+}
+
+// pendingIn is Pending for the migrations ms.
+func (db *DB) pendingIn(ctx context.Context, ms migrationSet) ([]int64, error) {
 	applied, err := appliedVersions(ctx, db.pool)
 	if err != nil {
 		return nil, err

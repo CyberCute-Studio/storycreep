@@ -160,6 +160,15 @@ func TestCheckEditedMigration(t *testing.T) {
 		!strings.Contains(res.Problems[0].Msg, "deleted") {
 		t.Errorf("a deleted migration: %+v, %v; want a problem", res, err)
 	}
+
+	// Deleting every migration deletes the directory, because git keeps no
+	// empty one, and the check says to restore them.
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Check(ctx, dir, "main"); err == nil || !strings.Contains(err.Error(), "restore") {
+		t.Errorf("without the migrations directory: %v, want an error saying to restore the migrations", err)
+	}
 }
 
 func TestCheckBeforeTheFirstMigration(t *testing.T) {

@@ -73,6 +73,11 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 	if strings.ContainsFunc(v, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
 		return fail("has a space or a control character; write a space as %20")
 	}
+	// libpq and pgx refuse a NUL, and pgx's explanation quotes the part of the
+	// URL that holds it, which may be a value that is shown redacted.
+	if strings.Contains(v, "%00") {
+		return fail("has %00, a NUL character, which no part of the URL may hold")
+	}
 	// pgx reads a URL as libpq does, which ends the user and password at the
 	// first @ or /, so a ? or # before that @ is part of them, where
 	// url.Parse would end them there and fail to read the rest.
@@ -92,16 +97,25 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 		return fail("has an @ in its user or password that is not percent-encoded; write it as %40")
 	}
 	userinfo, host, ok := strings.Cut(authority, "@")
-	if !ok {
+	switch {
+	// libpq ends the user and password at the first /, so a / in the
+	// password leaves the URL without a user, and with the @ after the /.
+	case !ok && strings.Contains(tail, "@"):
+		return fail("names no user, or has a / in its user or password that is not percent-encoded; " +
+			"write a / there as %2F")
+	case !ok:
 		return fail("names no user; write it in front of the host, as in postgres://storycreep:password@db/storycreep")
 	}
 	// url.Parse refuses some hosts that libpq reads, such as a Unix socket
 	// directory written as %2Fvar%2Frun%2Fpostgresql, so it reads the URL
 	// with a stand-in host, and pgx reads the real one below. The parser's
-	// explanation can quote part of a password.
+	// explanation can quote part of a password. It refuses the characters
+	// that a URL's user, password, or path cannot hold unencoded, such as a
+	// [ or a letter that is not ASCII, which libpq would read.
 	u, err := url.Parse(scheme + "://" + userinfo + "@host" + tail)
 	if err != nil {
-		return fail("not a valid URL")
+		return fail("not a valid URL; in the user, password, and database name, percent-encode every character " +
+			"that is not an ASCII letter, a digit, or one of - . _ ~, as %5B for [")
 	}
 	switch {
 	case u.User == nil || u.User.Username() == "":

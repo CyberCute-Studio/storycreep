@@ -152,18 +152,25 @@ func TestConcurrentMigrate(t *testing.T) {
 // advisory lock, as Migrate does for the migration lock.
 func waitForLockWaiter(t *testing.T, conn *pgx.Conn) {
 	t.Helper()
+	waitForLockWaiters(t, conn, 1)
+}
+
+// waitForLockWaiters waits until n sessions of conn's database wait for an
+// advisory lock.
+func waitForLockWaiters(t *testing.T, conn *pgx.Conn, n int) {
+	t.Helper()
 	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		var waiting bool
-		if err := conn.QueryRow(context.Background(), `SELECT EXISTS (SELECT FROM pg_locks
+		var waiting int
+		if err := conn.QueryRow(context.Background(), `SELECT count(*) FROM pg_locks
 			WHERE locktype = 'advisory' AND NOT granted
-				AND database = (SELECT oid FROM pg_database WHERE datname = current_database()))`).Scan(&waiting); err != nil {
+				AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
-		if waiting {
+		if waiting >= n {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("no session waits for the migration lock")
+			t.Fatalf("%d sessions wait for the migration lock, want %d", waiting, n)
 		}
 	}
 }
@@ -329,6 +336,14 @@ func TestFailedMigration(t *testing.T) {
 	}
 }
 
+// endLockSession is a migration statement that ends the session of Migrate
+// that holds the migration lock, which is the only session in the database
+// besides goose's own that holds an advisory lock. It waits until the session
+// has ended.
+const endLockSession = "SELECT pg_terminate_backend(pid, 10000) FROM pg_locks\n" +
+	"WHERE locktype = 'advisory' AND granted AND pid <> pg_backend_pid()\n" +
+	"\tAND database = (SELECT oid FROM pg_database WHERE datname = current_database());"
+
 // TestFailedMigrationWithoutTheLockSession checks that a failed migration
 // reports the version the database stays at also when the session that holds
 // the migration lock ends with it, as when the database server restarts.
@@ -338,11 +353,7 @@ func TestFailedMigrationWithoutTheLockSession(t *testing.T) {
 	d := dbtest.Empty(t)
 	fsys := withMigrations(t, map[string]string{
 		"90001_good.sql": "CREATE TABLE good (x int);",
-		// Migrate's session is the only one that holds an advisory lock in
-		// the database. The call waits until the session has ended.
-		"90002_bad.sql": "SELECT pg_terminate_backend(pid, 10000) FROM pg_locks\n" +
-			"WHERE locktype = 'advisory' AND granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database());\n" +
-			"SELECT 1/0;",
+		"90002_bad.sql":  endLockSession + "\nSELECT 1/0;",
 	})
 
 	res, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: fsys})
@@ -351,6 +362,69 @@ func TestFailedMigrationWithoutTheLockSession(t *testing.T) {
 		!strings.Contains(err.Error(), "stays at version 90001") {
 		t.Errorf("Migrate returned %v, version %d; want a *MigrationError for 90002 that leaves the database at 90001",
 			err, res.Version)
+	}
+}
+
+// TestMigrateAfterTheLockSessionEnds checks that the migrations stay applied
+// one instance at a time when the session that holds the migration lock ends
+// while goose migrates: the instance that takes the lock next waits for the
+// first one's goose to finish, and then has nothing to apply.
+func TestMigrateAfterTheLockSessionEnds(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	fsys := withMigrations(t, map[string]string{
+		"90001_runs.sql": "CREATE TABLE migration_runs (n int);",
+		// Each run of it adds a row, and it keeps running after the session
+		// that holds the migration lock has ended.
+		"90002_count.sql": "INSERT INTO migration_runs VALUES (1);\n" + endLockSession + "\nSELECT pg_sleep(2);",
+	})
+	// Both instances wait for the migration lock before either migrates.
+	holder := d.Admin(t)
+	if _, err := holder.Exec(ctx, "SELECT pg_advisory_lock($1)", database.MigrationLock); err != nil {
+		t.Fatal(err)
+	}
+	const instances = 2
+	results := make([]database.MigrateResult, instances)
+	errs := make([]error, instances)
+	var wg sync.WaitGroup
+	for i := range instances {
+		wg.Go(func() {
+			results[i], errs[i] = database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: fsys})
+		})
+	}
+	waitForLockWaiters(t, holder, instances)
+	if _, err := holder.Exec(ctx, "SELECT pg_advisory_unlock($1)", database.MigrationLock); err != nil {
+		t.Fatal(err)
+	}
+	wg.Wait()
+
+	// The instance whose session ended fails once its goose is done, and the
+	// other one finds every migration applied.
+	succeeded := 0
+	for i := range instances {
+		if errs[i] == nil {
+			succeeded++
+			if len(results[i].Applied) != 0 || results[i].Version != 90002 {
+				t.Errorf("instance %d applied %v up to version %d; want nothing, up to 90002", i,
+					versionsOf(results[i].Applied), results[i].Version)
+			}
+		}
+	}
+	if succeeded != 1 {
+		t.Errorf("Migrate returned %v; want one instance to fail and the other to succeed", errs)
+	}
+	admin := d.Admin(t)
+	var runs, duplicates int
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM migration_runs").Scan(&runs); err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM (
+		SELECT version_id FROM goose_db_version GROUP BY version_id HAVING count(*) > 1) d`).Scan(&duplicates); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 || duplicates != 0 {
+		t.Errorf("the counting migration ran %d times, and %d versions were recorded twice; want 1 and 0", runs, duplicates)
 	}
 }
 
