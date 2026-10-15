@@ -21,29 +21,36 @@ var goLang = &language{
 	declares: goDeclares,
 }
 
-// goDeclares reports whether Go source text, such as commented-out code,
-// declares a test or a subtest: "func TestX" or "t.Run(". It reads the text
-// token by token, because a fragment of code does not parse as a file.
+// goDeclares reports whether a line of Go source text, such as commented-out
+// code, starts with the declaration of a test or a subtest: "func TestX" or
+// "t.Run(". It reads the text token by token, because a fragment of code does
+// not parse as a file.
 func goDeclares(_, text string) bool {
 	fset := token.NewFileSet()
+	file := fset.AddFile("", -1, len(text))
 	var s scanner.Scanner
-	s.Init(fset.AddFile("", -1, len(text)), []byte(text), func(token.Position, string) {}, 0)
+	s.Init(file, []byte(text), func(token.Position, string) {}, 0)
 	type item struct {
-		tok token.Token
-		lit string
+		tok   token.Token
+		lit   string
+		first bool // the first token on its line
 	}
 	var prev [3]item // the last three tokens, the latest last
+	line := 0
 	for {
-		_, tok, lit := s.Scan()
+		pos, tok, lit := s.Scan()
+		first := file.Line(pos) != line
+		line = file.Line(pos)
 		switch {
 		case tok == token.EOF:
 			return false
-		case tok == token.IDENT && prev[2].tok == token.FUNC && isGoTest(lit):
+		case tok == token.IDENT && prev[2].tok == token.FUNC && prev[2].first && isGoTest(lit):
 			return true
-		case tok == token.LPAREN && prev[2] == item{token.IDENT, "Run"} && prev[1].tok == token.PERIOD && prev[0].tok == token.IDENT:
+		case tok == token.LPAREN && prev[2].tok == token.IDENT && prev[2].lit == "Run" &&
+			prev[1].tok == token.PERIOD && prev[0].tok == token.IDENT && prev[0].first:
 			return true
 		}
-		prev = [3]item{prev[1], prev[2], {tok, lit}}
+		prev = [3]item{prev[1], prev[2], {tok, lit, first}}
 	}
 }
 
@@ -67,7 +74,8 @@ func isGoTest(name string) bool {
 // Benchmark, and Fuzz functions and the subtests in them (t.Run or b.Run on a
 // *testing.T or *testing.B parameter, however the file imports package
 // testing), named as go test names them: a subtest without a literal name is
-// "*".
+// "*". A test or subtest is skipped when its body skips it whatever happens
+// (see skips), or when a test or subtest it is in is skipped.
 func readGo(file, src string, isTest bool) source {
 	var s source
 	fset := token.NewFileSet()
@@ -110,14 +118,15 @@ func readGo(file, src string, isTest bool) source {
 		if !ok || fn.Recv != nil || !isGoTest(fn.Name.Name) {
 			continue
 		}
-		s.decls = append(s.decls, decl{line: position(fn.Pos()).Line, name: fn.Name.Name})
+		// The names of the testing parameters of the test and of the
+		// functions in it, whose Run calls start subtests.
+		params := map[string]bool{}
+		addTestingParams(fn.Type, pkgs, params)
+		skipped := skips(fn.Body, params)
+		s.decls = append(s.decls, decl{line: position(fn.Pos()).Line, name: fn.Name.Name, skipped: skipped})
 		if fn.Body == nil {
 			continue
 		}
-		// The names of the *testing.T and *testing.B parameters of the test
-		// and of the functions in it, whose Run calls start subtests.
-		params := map[string]bool{}
-		addTestingParams(fn.Type, pkgs, params)
 		isRun := func(call *ast.CallExpr) bool {
 			sel, ok := call.Fun.(*ast.SelectorExpr)
 			if !ok || sel.Sel.Name != "Run" || len(call.Args) != 2 {
@@ -132,7 +141,8 @@ func readGo(file, src string, isTest bool) source {
 			name string
 			// exact is set when the name is the one go test prints: the
 			// subtest's name and those of the subtests it is in are literals.
-			exact bool
+			exact   bool
+			skipped bool // it, or the test or a subtest it is in, skips itself
 		}
 		var runs []bool
 		var subtests []subtest
@@ -152,7 +162,7 @@ func readGo(file, src string, isTest bool) source {
 			run := ok && isRun(call)
 			runs = append(runs, run)
 			if run {
-				parent := subtest{name: fn.Name.Name, exact: true}
+				parent := subtest{name: fn.Name.Name, exact: true, skipped: skipped}
 				if len(subtests) > 0 {
 					parent = subtests[len(subtests)-1]
 				}
@@ -163,8 +173,15 @@ func readGo(file, src string, isTest bool) source {
 						st = subtest{name: uniqueSubtest(seen, parent.name, name), exact: true}
 					}
 				}
+				st.skipped = parent.skipped
+				if lit, ok := call.Args[1].(*ast.FuncLit); ok {
+					// Its parameters are needed now, before the function is
+					// visited.
+					addTestingParams(lit.Type, pkgs, params)
+					st.skipped = st.skipped || skips(lit.Body, params)
+				}
 				subtests = append(subtests, st)
-				s.decls = append(s.decls, decl{line: position(call.Pos()).Line, name: st.name})
+				s.decls = append(s.decls, decl{line: position(call.Pos()).Line, name: st.name, skipped: st.skipped})
 			}
 			return true
 		})
@@ -186,9 +203,11 @@ func testingNames(f *ast.File) map[string]bool {
 }
 
 // addTestingParams adds to names the parameters of a function that are a
-// *testing.T or a *testing.B, whose Run method starts a subtest. pkgs holds
-// the names by which the file refers to package testing (see testingNames).
-// A Run call on anything else, such as app.Run(ctx, args), is not a test.
+// *testing.T, *testing.B, or *testing.F: those whose Run method starts a
+// subtest (a *testing.F has none), and whose Skip methods skip a test. pkgs
+// holds the names by which the file refers to package testing (see
+// testingNames). A Run call on anything else, such as app.Run(ctx, args), is
+// not a test.
 func addTestingParams(ft *ast.FuncType, pkgs, names map[string]bool) {
 	for _, f := range ft.Params.List {
 		star, ok := f.Type.(*ast.StarExpr)
@@ -206,13 +225,45 @@ func addTestingParams(ft *ast.FuncType, pkgs, names map[string]bool) {
 				typ = x.Name
 			}
 		}
-		if typ != "T" && typ != "B" {
+		if typ != "T" && typ != "B" && typ != "F" {
 			continue
 		}
 		for _, n := range f.Names {
 			names[n.Name] = true
 		}
 	}
+}
+
+// skips reports whether the body of a test or subtest skips it whatever
+// happens: one of its own statements, not one inside an if, a loop, or a
+// function, calls Skip, Skipf, or SkipNow on a testing parameter (see
+// addTestingParams), as in t.Skip("flaky"). A skip under a condition, as in
+// if testing.Short() { t.Skip() }, is one the scan cannot evaluate.
+func skips(body *ast.BlockStmt, params map[string]bool) bool {
+	if body == nil {
+		return false
+	}
+	for _, stmt := range body.List {
+		expr, ok := stmt.(*ast.ExprStmt)
+		if !ok {
+			continue
+		}
+		call, ok := expr.X.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+		switch sel.Sel.Name {
+		case "Skip", "Skipf", "SkipNow":
+			if recv, ok := sel.X.(*ast.Ident); ok && params[recv.Name] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // uniqueSubtest returns the full name that go test gives a subtest named sub

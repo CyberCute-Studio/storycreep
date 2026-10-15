@@ -15,10 +15,12 @@
 // TypeScript, JavaScript, and GDScript files, so a comment marker in a string
 // is never taken for a comment, and a declaration's groups are the calls it
 // is written in. A criterion counts as verified when a test names it that is
-// not declared with skip, todo, fixme, or fail (or with Vitest's option skip,
-// todo, or fails set to true) nor inside a group declared so, in which
-// Playwright's test.skip(), test.fixme(), or test.fail() is not called
-// without arguments nor in a group or file it is in.
+// not skipped (see Test.Skipped): one that is not declared with skip, todo,
+// fixme, or fail (or with Vitest's option skip, todo, or fails set to true),
+// does not call Playwright's test.skip(), test.fixme(), or test.fail()
+// without arguments or with the condition true, does not call t.Skip,
+// t.Skipf, or t.SkipNow as a statement of its own body in Go, and is not
+// inside a group, file, or test that does one of these.
 package traceability
 
 import (
@@ -330,7 +332,7 @@ func (r *Report) Markdown() []byte {
 		}
 	}
 	if len(skipped) > 0 {
-		fmt.Fprintf(&b, "\n## Skipped tests\n\nThese tests verify nothing: each is declared with skip, todo, fixme, or fail (or with Vitest's option skip, todo, or fails set to true), or is inside a group declared so, or calls Playwright's test.skip(), test.fixme(), or test.fail() without arguments or is inside a group or file that does.\n\n")
+		fmt.Fprintf(&b, "\n## Skipped tests\n\nThese tests verify nothing: each is declared with skip, todo, fixme, or fail (or with Vitest's option skip, todo, or fails set to true); calls Playwright's test.skip(), test.fixme(), or test.fail() without arguments or with the condition true; calls t.Skip, t.Skipf, or t.SkipNow as a statement of its own body, in Go; or is inside a group, file, or test that does one of these.\n\n")
 		for _, t := range skipped {
 			fmt.Fprintf(&b, "- %s: %s\n", ref(t.TestRef), strings.Join(t.Verifies, ", "))
 		}

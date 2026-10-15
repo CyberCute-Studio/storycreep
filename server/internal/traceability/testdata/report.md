@@ -21,7 +21,7 @@
 
 ## Skipped tests
 
-These tests verify nothing: each is declared with skip, todo, fixme, or fail (or with Vitest's option skip, todo, or fails set to true), or is inside a group declared so, or calls Playwright's test.skip(), test.fixme(), or test.fail() without arguments or is inside a group or file that does.
+These tests verify nothing: each is declared with skip, todo, fixme, or fail (or with Vitest's option skip, todo, or fails set to true); calls Playwright's test.skip(), test.fixme(), or test.fail() without arguments or with the condition true; calls t.Skip, t.Skipf, or t.SkipNow as a statement of its own body, in Go; or is inside a group, file, or test that does one of these.
 
 - `web/app/src/sample.test.ts:9` `a skipped test`: FR-A-02/AC2
 - `web/app/src/sample.test.ts:14` `a test skipped by an option`: FR-A-02/AC2

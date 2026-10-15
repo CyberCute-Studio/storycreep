@@ -22,9 +22,11 @@ type Test struct {
 	Name string
 	// Skipped is set for a test that verifies nothing: it is declared with
 	// skip, todo, fixme, or fail (or with Vitest's option skip, todo, or fails
-	// set to true), or inside a group declared so, or it calls Playwright's
-	// test.skip(), test.fixme(), or test.fail() without arguments or is inside
-	// a group or file that does.
+	// set to true); it calls Playwright's test.skip(), test.fixme(), or
+	// test.fail() without arguments or with the condition true; it is a Go
+	// test whose body calls t.Skip, t.Skipf, or t.SkipNow as one of its own
+	// statements; or it is inside a group, file, or test that does one of
+	// these.
 	Skipped bool
 	Tags    []Tag
 }
@@ -43,8 +45,10 @@ type language struct {
 	// read returns the comments of a source file and, for a test file, its
 	// test declarations. Problems are parts of the file it cannot read.
 	read func(file, src string, isTest bool) source
-	// declares reports whether text, the commented-out code of a test file,
-	// declares a test or a group.
+	// declares reports whether a line of text, the comment lines below a
+	// Verifies comment, starts with the declaration of a test or a group, as
+	// a test that is commented out does. A declaration that prose mentions
+	// after other words, as in "each case runs in t.Run(…)", is not one.
 	declares func(file, text string) bool
 }
 
@@ -78,6 +82,11 @@ type decl struct {
 	// group is set for a group of tests, as a describe block. A group runs
 	// nothing itself, so a Verifies comment belongs on the tests in it.
 	group bool
+	// first is set when the declaration is the first code on its line, as
+	// in a test that is commented out, and not in prose that mentions one,
+	// as "it replaces func test_old". The script and GDScript readers set
+	// it, for declares.
+	first bool
 }
 
 // languageOf returns the language of a source file, or nil for a file the
@@ -181,11 +190,12 @@ const (
 )
 
 var (
-	// nearTagRE finds a line comment that starts with a word and then names a
-	// requirement, as "verifies: FR-…", "Verifies NFR-…", "Verifies — FR-…",
-	// "@verifies (FR-…)", or "Verifes: FR-…" do. nearTag decides whether the
-	// word is meant as "Verifies".
-	nearTagRE = regexp.MustCompile(`(?i)^@?([a-z]+)[^a-z0-9]*n?fr-`)
+	// nearTagRE finds a line comment that starts with a word, after a list
+	// marker or not, and then names a requirement, as "verifies: FR-…",
+	// "Verifies NFR-…", "Verifies — FR-…", "@verifies (FR-…)", "Verifes:
+	// FR-…", or "- Verifies: FR-…" do. nearTag decides whether the word is
+	// meant as "Verifies".
+	nearTagRE = regexp.MustCompile(`(?i)^(?:(?:[-*+]|\d+[.)])\s+)?@?([a-z]+)[^a-z0-9]*n?fr-`)
 
 	// continuedTagRE finds a comment line that continues the ID list of the
 	// Verifies comment on the line above it: "FR-A-01/AC2 …", "- FR-…", or
@@ -239,8 +249,8 @@ func editDistance(a, b string) int {
 // scanFile finds the tagged tests in one source file. A Verifies comment is
 // a line comment on its own line; together with the line comments on the
 // lines directly above and below it, it belongs to the test declared on the
-// next line, unless the comment lines below it hold a test declaration that
-// is commented out, whose tag it is.
+// next line, unless a comment line below it starts with a test declaration
+// that is commented out, whose tag it is.
 func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck.Problem) {
 	src = strings.TrimPrefix(strings.ReplaceAll(src, "\r\n", "\n"), utf8BOM)
 	s := lang.read(file, src, isTest)
@@ -266,7 +276,8 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 		d, above := declAt[last+1]
 		// A test that is commented out below its Verifies comment, as when
 		// the test is commented out but its tag is not, leaves the tag above
-		// whatever test comes next, which it does not verify.
+		// whatever test comes next, which it does not verify. Prose that
+		// mentions a declaration after other words is not such a test.
 		commentedOut := pending != nil && above && len(below) > 0 && lang.declares(file, strings.Join(below, "\n"))
 		// A line that holds nothing but IDs, in a run with a Verifies line or
 		// above a test, is meant as part of a Verifies comment: it continues

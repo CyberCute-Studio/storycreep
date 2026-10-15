@@ -1,6 +1,7 @@
 package traceability
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/doccheck"
@@ -13,14 +14,15 @@ var gdLang = &language{
 	},
 	read: readGD,
 	declares: func(file, text string) bool {
-		return len(readGD(file, text, true).decls) > 0
+		return slices.ContainsFunc(readGD(file, text, true).decls, func(d decl) bool { return d.first })
 	},
 }
 
 // readGD reads a GDScript file. Its test declarations are the GUT test
-// functions, func test_…(). None is marked skipped: GUT has no skip
-// modifier, and the scan does not evaluate pending() or a script's
-// should_skip_script() or skip_script. GDScript has no block comments, but a
+// functions, func test_…(), marked first when "func" is the first code on its
+// line. None is marked skipped: GUT has no skip modifier, and the scan does
+// not evaluate pending() or a script's should_skip_script() or skip_script.
+// GDScript has no block comments, but a
 // multi-line string that starts a line serves as one, so its lines are
 // returned as a block comment. A multi-line string that never closes hides
 // the code after it, which is a problem in a test file with Verifies
@@ -33,9 +35,10 @@ func readGD(file, src string, isTest bool) source {
 		return s
 	}
 	line := 1
-	code := false // a token is on the line before i
-	prev := ""    // the last word or punctuation read, to find "func test_…"
-	unclosed := 0 // the line of a multi-line string that never closes
+	code := false      // a token is on the line before i
+	prev := ""         // the last word or punctuation read, to find "func test_…"
+	funcFirst := false // the last "func" read is the first code on its line
+	unclosed := 0      // the line of a multi-line string that never closes
 	for i := 0; i < len(src); {
 		c := src[i]
 		switch {
@@ -96,7 +99,10 @@ func readGD(file, src string, isTest bool) source {
 			}
 			word := src[i:j]
 			if isTest && prev == "func" && strings.HasPrefix(word, "test_") {
-				s.decls = append(s.decls, decl{line: line, name: word})
+				s.decls = append(s.decls, decl{line: line, name: word, first: funcFirst})
+			}
+			if word == "func" {
+				funcFirst = !code
 			}
 			code = true
 			prev = word

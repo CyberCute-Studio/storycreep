@@ -2,6 +2,7 @@ package traceability
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -24,7 +25,7 @@ var jsLang = &language{
 	isTest:  jsFileRE.MatchString,
 	read:    readJS,
 	declares: func(file, text string) bool {
-		return len(readJS(file, text, true).decls) > 0
+		return slices.ContainsFunc(readJS(file, text, true).decls, func(d decl) bool { return d.first })
 	},
 }
 
@@ -75,8 +76,9 @@ var jsSkipOptions = map[string]bool{"skip": true, "todo": true, "fails": true}
 // jsAnnotations are Playwright's modifiers that also annotate the test or
 // group they are called in, rather than declare one: test.skip(),
 // test.skip(isMobile, "…"), or test.fixme(({ browserName }) => …). Without
-// arguments, the call skips that test or group, or makes it an expected
-// failure, so it verifies nothing.
+// arguments, or with the condition true, as in test.skip(true, "…"), the
+// call skips that test or group, or makes it an expected failure, so it
+// verifies nothing.
 var jsAnnotations = map[string]bool{"skip": true, "fixme": true, "fail": true}
 
 // readJS reads a JavaScript or TypeScript file. Its test declarations are the
@@ -90,8 +92,10 @@ var jsAnnotations = map[string]bool{"skip": true, "fixme": true, "fail": true}
 // describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …), with an
 // option that does, as in test("…", { skip: true }, …), or when it, a group
 // it is in, or the file calls Playwright's test.skip(), test.fixme(), or
-// test.fail() without arguments. A group is returned as one, so that a
-// Verifies comment above it is reported: the tests in it are what runs.
+// test.fail() without arguments or with the condition true. A group is
+// returned as one, so that a Verifies comment above it is reported: the tests
+// in it are what runs. A declaration is marked first when it is the first
+// code on its line.
 func readJS(file, src string, isTest bool) source {
 	// A file that is not a test file matters only for the Verifies comments
 	// in it.
@@ -162,8 +166,8 @@ func readJS(file, src string, isTest bool) source {
 		// annotation.
 		decl bool
 		// unconditional is set for Playwright's test.skip(), test.fixme(), or
-		// test.fail() without arguments, which skips the test or group it is
-		// called in.
+		// test.fail() without arguments or with the condition true, which
+		// skips the test or group it is called in.
 		unconditional bool
 	}
 	var calls []call
@@ -211,7 +215,11 @@ func readJS(file, src string, isTest bool) source {
 		}
 		if t.text == "test" && !group && !table && !conditional && len(mods) == 1 && jsAnnotations[mods[0]] && c.to == match[c.from] {
 			if args := callArgs(toks, c.from, c.to); annotates(toks, args, match) {
-				c.decl, c.unconditional = false, len(args) == 0
+				// A condition that is the literal true, as in test.skip(true,
+				// "…"), holds wherever the test runs.
+				c.decl = false
+				c.unconditional = len(args) == 0 ||
+					(toks[args[0]].is('i', "true") && (args[0]+1 == c.to || toks[args[0]+1].is('(', ",")))
 			}
 		}
 		c.skipped = c.skipped || skippedByOption(toks, c.from, c.to)
@@ -239,9 +247,9 @@ func readJS(file, src string, isTest bool) source {
 			}
 		}
 	}
-	// test.skip() without arguments skips the test or group it is called in,
-	// also from a hook or a step, or every test in the file when it is
-	// called outside them.
+	// test.skip() without arguments, or with the condition true, skips the
+	// test or group it is called in, also from a hook or a step, or every
+	// test in the file when it is called outside them.
 	fileSkipped := false
 	for k, c := range calls {
 		switch {
@@ -262,7 +270,13 @@ func readJS(file, src string, isTest bool) source {
 		if !c.decl {
 			continue
 		}
-		d := decl{line: toks[c.head].line, group: c.group, unnamed: !c.named && !c.group, skipped: skippedAt[k]}
+		d := decl{
+			line:    toks[c.head].line,
+			group:   c.group,
+			unnamed: !c.named && !c.group,
+			skipped: skippedAt[k],
+			first:   c.head == 0 || toks[c.head-1].line < toks[c.head].line,
+		}
 		if c.named {
 			var path []string
 			for _, g := range calls {
