@@ -1,0 +1,96 @@
+# A development environment (PRD §10.8): PostgreSQL, with its port published
+# on this machine, and the server, built from the source tree, and rebuilt
+# and restarted whenever its sources change. It needs Docker Compose 2.32.0
+# or newer, for the watch rule's restart action. From the repository's root:
+#
+#   docker compose -f deploy/dev/docker-compose.yml up --watch
+#
+# The server is at http://localhost:8080, its /metrics at
+# http://localhost:9090/metrics, and the database at localhost:5432. To run
+# the server natively instead, start only the database, with "up -d db", and
+# give the server the URLs in deploy/README.md.
+#
+# The database's password defaults to storycreep-dev, because its port is
+# published on this machine's loopback interface only, and
+# STORYCREEP_DEV_DB_PASSWORD sets another. STORYCREEP_DEV_PORT,
+# STORYCREEP_DEV_ADMIN_PORT, and STORYCREEP_DEV_DB_PORT move the ports. Never
+# use this file for a deployment; deploy/docker-compose.yml is the one for
+# that.
+#
+# This file has a directory of its own, so that Docker Compose reads the .env
+# next to it, and not deploy/.env, which configures an instance of
+# deploy/docker-compose.yml: a COMPOSE_PROJECT_NAME there would make this
+# file's project that instance's, whose containers this file's would then
+# replace. A COMPOSE_PROJECT_NAME in the shell still renames this project,
+# so the volumes are named here, rather than after the project, which keeps
+# them from being an instance's volumes, which "down -v" would delete.
+
+name: storycreep-dev
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: storycreep
+      POSTGRES_PASSWORD: ${STORYCREEP_DEV_DB_PASSWORD:-storycreep-dev}
+    ports:
+      - "127.0.0.1:${STORYCREEP_DEV_DB_PORT:-5432}:5432"
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD, pg_isready, --host=127.0.0.1, --username=postgres, --dbname=storycreep]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 1m
+      start_interval: 1s
+
+  app:
+    image: golang:1.26-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    working_dir: /src/server
+    # The shell builds the server and then becomes it, so that the server is
+    # the container's first process, which receives the SIGTERM that stops
+    # the container, and shuts down as it does in the image. Under go run, it
+    # would be killed instead: go keeps the signal to itself, and exits.
+    command: [sh, -c, "go build -o /tmp/storycreep ./cmd/storycreep && exec /tmp/storycreep serve"]
+    ports:
+      - "127.0.0.1:${STORYCREEP_DEV_PORT:-8080}:8080"
+      - "127.0.0.1:${STORYCREEP_DEV_ADMIN_PORT:-9090}:9090"
+    environment:
+      STORYCREEP_HTTP_ADDR: ":8080"
+      STORYCREEP_ADMIN_ADDR: ":9090"
+      STORYCREEP_DATABASE_URL: postgres://storycreep@db:5432/storycreep
+      STORYCREEP_DATABASE_ADMIN_URL: postgres://postgres@db:5432/storycreep
+      PGPASSWORD: ${STORYCREEP_DEV_DB_PASSWORD:-storycreep-dev}
+      STORYCREEP_PUBLIC_URL: http://localhost:${STORYCREEP_DEV_PORT:-8080}
+      STORYCREEP_LOG_LEVEL: debug
+      # The image has no git, which the go tool would ask for the revision
+      # of the checkout, and builds with its own Go: a go.mod that needs a
+      # newer one fails the build, rather than downloading another toolchain.
+      GOFLAGS: -buildvcs=false
+      GOTOOLCHAIN: local
+    volumes:
+      - ../..:/src:ro
+      - go-modules:/go/pkg/mod
+      - go-build:/root/.cache/go-build
+    stop_grace_period: 30s
+    develop:
+      watch:
+        # The sources are mounted, so a change needs only a restart, which
+        # builds them again.
+        - path: ../../server
+          action: restart
+          ignore:
+            - "**/*_test.go"
+            - "**/testdata/"
+
+volumes:
+  db:
+    name: storycreep-dev_db
+  go-modules:
+    name: storycreep-dev_go-modules
+  go-build:
+    name: storycreep-dev_go-build

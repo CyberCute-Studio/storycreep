@@ -7,6 +7,18 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
+// Variables returns the names of the environment variables that the
+// configuration reads, every key and STORYCREEP_CONFIG_FILE, in the order of
+// the reference, so that a deployment's own list of them, such as the
+// published compose file's, can be checked against it.
+func Variables() []string {
+	names := make([]string, 0, len(keys)+1)
+	for _, k := range keys {
+		names = append(names, k.name)
+	}
+	return append(names, fileKey)
+}
+
 // Reference returns the configuration reference, docs/configuration.md, which
 // is generated from the key declarations so that the documented defaults
 // cannot drift from the real ones.

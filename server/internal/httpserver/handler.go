@@ -47,6 +47,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	})
 	s.registerOperational(s.main)
 	registerDocument(s.main)
+	registerPages(s.main, cfg.Capabilities.PublicSite)
 
 	switch {
 	case cfg.AdminAddr == "":
@@ -87,7 +88,7 @@ type statusOutput struct {
 
 // versionBody is the body of /version.
 type versionBody struct {
-	Version    string `json:"version" doc:"The release version, or (devel) for a build from a checkout"`
+	Version    string `json:"version" doc:"The release version, or (devel) for any other build, such as the main branch's image"`
 	Commit     string `json:"commit,omitempty" doc:"The revision of the source the binary was built from"`
 	CommitTime string `json:"commit_time,omitempty" doc:"The time of that revision, in RFC 3339"`
 	GoVersion  string `json:"go_version" doc:"The version of Go the binary was built with"`

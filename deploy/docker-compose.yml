@@ -1,0 +1,79 @@
+# Storycreep with Docker Compose (PRD FR-ADMIN-07, §10.8): the server and its
+# PostgreSQL database. README.md, next to this file, explains how to run,
+# configure, back up, and upgrade it.
+#
+# Set POSTGRES_PASSWORD in a file named .env next to this one, and start it:
+#
+#   docker compose up -d
+#
+# Then open http://localhost:7777. Every other setting has a default, which
+# .env.example describes.
+
+name: storycreep
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: storycreep
+      # The password of the superuser, postgres, which applies the server's
+      # migrations. The image sets it when it creates the database, the first
+      # time the volume is used, and ignores it afterwards.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env next to docker-compose.yml}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      # Over TCP, as the server connects: while the image creates the
+      # database, its server listens only on its socket, and then restarts.
+      test: [CMD, pg_isready, --host=127.0.0.1, --username=postgres, --dbname=storycreep]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 1m
+      start_interval: 1s
+
+  app:
+    image: ${STORYCREEP_IMAGE:-ghcr.io/cybercute-studio/storycreep:main}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${STORYCREEP_PUBLISH:-127.0.0.1:7777}:8080"
+    # docs/configuration.md describes every STORYCREEP_ variable. An empty
+    # value counts as unset, so the server's default applies.
+    environment:
+      STORYCREEP_HTTP_ADDR: ":8080"
+      # The server's own login, which migrating creates, and the superuser
+      # that applies the migrations at startup. Neither URL has a password:
+      # PGPASSWORD supplies POSTGRES_PASSWORD to both, so it needs no
+      # escaping in a URL.
+      STORYCREEP_DATABASE_URL: postgres://storycreep@db:5432/storycreep
+      STORYCREEP_DATABASE_ADMIN_URL: postgres://postgres@db:5432/storycreep
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env next to docker-compose.yml}
+      STORYCREEP_PUBLIC_URL: ${STORYCREEP_PUBLIC_URL:-http://localhost:7777}
+      STORYCREEP_MODE: ${STORYCREEP_MODE:-self-hosted}
+      STORYCREEP_PUBLIC_SITE: ${STORYCREEP_PUBLIC_SITE:-}
+      STORYCREEP_SIGNUP: ${STORYCREEP_SIGNUP:-}
+      STORYCREEP_ADMIN_ADDR: ${STORYCREEP_ADMIN_ADDR:-}
+      STORYCREEP_METRICS_TOKEN: ${STORYCREEP_METRICS_TOKEN:-}
+      STORYCREEP_LOG_LEVEL: ${STORYCREEP_LOG_LEVEL:-}
+    volumes:
+      - assets:/var/lib/storycreep/assets
+    # When it stops, the server waits up to 20 seconds for the requests in
+    # progress and 5 more for the background jobs. Docker would kill it
+    # after 10.
+    stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, /usr/local/bin/storycreep, healthcheck]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # Startup applies the pending migrations before the server is ready.
+      start_period: 2m
+      start_interval: 2s
+
+volumes:
+  db:
+  assets:

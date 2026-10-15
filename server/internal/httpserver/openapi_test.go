@@ -104,7 +104,7 @@ func operationsOf(item *huma.PathItem) map[string]*huma.Operation {
 
 // TestOpenAPIDocumentsEveryRoute checks that the document describes every
 // route of the API, and nothing else (PRD FR-API-02 AC1). The admin port's
-// /metrics is not part of the API.
+// /metrics, and the pages of the web interface, are not part of the API.
 //
 // Verifies: FR-API-02/AC1
 func TestOpenAPIDocumentsEveryRoute(t *testing.T) {
@@ -116,6 +116,9 @@ func TestOpenAPIDocumentsEveryRoute(t *testing.T) {
 		}
 	}
 	err := s.main.Walk(func(r api.Route) error {
+		if s.main.IsPage(r) {
+			return nil
+		}
 		if !documented[r] {
 			t.Errorf("%s is not in the OpenAPI document; register it with api.Register, or add its operation "+
 				"with Mux.OpenAPI().AddOperation", r)

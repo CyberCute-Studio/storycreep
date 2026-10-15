@@ -29,7 +29,7 @@ export interface VersionBody {
   commit_time?: string;
   /** The version of Go the binary was built with */
   go_version: string;
-  /** The release version, or (devel) for a build from a checkout */
+  /** The release version, or (devel) for any other build, such as the main branch's image */
   version: string;
 }
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Plan version | 1.6 |
+| Plan version | 1.7 |
 | Date | 2026-10-15 |
 | Source | [`PRD.md`](PRD.md) version 1.6 (2026-10-15) |
 | Scope | Phase 0 — MVP (§12.1), then Phase 1 — v1 (§12.2) |
@@ -153,9 +153,9 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-JOBS-01 AC1–AC4 pass.
 
 ### 9. Container image and docker-compose
-**Status:** todo · **Depends on:** 6, 8
-**PRD:** FR-ADMIN-01 (AC4), FR-ADMIN-07 (AC1, AC2), §10.8
-- Multi-stage, non-root image with no build toolchain, built for `linux/amd64` and `linux/arm64`. Static assets are embedded (placeholders until items 53 and 108).
+**Status:** done ([#10](https://github.com/CyberCute-Studio/storycreep/pull/10)) · **Depends on:** 6, 8
+**PRD:** FR-ADMIN-01 (AC4), FR-ADMIN-06 (`healthcheck`), FR-ADMIN-07 (AC1, AC2), FR-PUB-01 (AC3, placeholders), FR-PUB-04 (`/`, placeholders), §10.8
+- Multi-stage, non-root image with no build toolchain, built for `linux/amd64` and `linux/arm64`, and its health check (N18). Static assets are embedded (placeholders until items 53 and 108), and `/` serves the site's placeholder or the tool's, as `STORYCREEP_PUBLIC_SITE` says.
 - `deploy/docker-compose.yml` with exactly two services, named volumes for the database and assets, healthchecks, and documented environment variables, including both database URLs (N16). A development compose file.
 
 **Done when:** FR-ADMIN-01 AC4 and FR-ADMIN-07 AC1–AC2 pass. The compose smoke test (AC3) comes in item 118.
@@ -350,7 +350,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### 29. Blob storage and asset uploads
 **Status:** todo · **Depends on:** 8, 23
 **PRD:** FR-ASSET-01 (AC1, AC2), FR-ASSET-02, NFR-SEC-10, ADR-009
-- A driver interface with local-disk and S3 drivers, and one shared test suite (S3 via MinIO in CI). Content-addressed keys `{workspaceId}/{sha256}.{ext}`.
+- A driver interface with local-disk and S3 drivers, and one shared test suite (S3 via MinIO in CI). Content-addressed keys `{workspaceId}/{sha256}.{ext}`. In the container image, the local driver's directory is `/var/lib/storycreep/assets`, where `deploy/docker-compose.yml` mounts the asset volume (N18).
 - Serving through access-checked local routes and signed S3 URLs. The access check runs before any read.
 - Upload pipeline: content sniffing, size limit, SVG sanitised or rejected, storage quota returns 413. `CSP: sandbox` and `nosniff` on served assets.
 - A thumbnail job and an orphan-reconciliation job. Storage usage deltas.
@@ -1163,7 +1163,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### 119. MVP release pipeline and exit review
 **Status:** todo · **Depends on:** 1–118
 **PRD:** §12.1 exit criteria, FR-ADMIN-04 (AC2, release seed), FR-API-01 (AC3, release baseline), NFR-Q-02 (gate), NFR-PERF-01..15
-- Release workflow: multi-arch images, the addon zip, a changelog, versioned docs, the traceability report, and the OpenAPI compatibility baseline.
+- Release workflow: multi-arch images tagged with the release, which `deploy/docker-compose.yml` then runs instead of `main` (N18), the addon zip, a changelog, versioned docs, the traceability report, and the OpenAPI compatibility baseline.
 - The traceability report becomes a hard gate. The upgrade-test job from item 5 switches its seed from the main branch to the previous release once this release exists, and the OpenAPI gate from item 7 switches its baseline to this release's document and drops the pre-release override.
 - The reference-device performance checklist (tablet and Android phone) and the exit-criteria review. Every NFR-PERF-01…15 target is already measured by its owning item (see the performance table); this item records the results on the reference devices.
 
@@ -1329,10 +1329,10 @@ The PRs that implement each requirement are listed in order. The last one comple
 
 | Requirement | PRs | Complete at |
 | --- | --- | --- |
-| FR-PUB-01 | 108 | 108 |
+| FR-PUB-01 | 9, 108 | 108 |
 | FR-PUB-02 | 6, 108, 109 | 109 |
 | FR-PUB-03 | 137 | 137 |
-| FR-PUB-04 | 108 | 108 |
+| FR-PUB-04 | 9, 108 | 108 |
 | FR-PUB-05 | 60 | 60 |
 | FR-PUB-06 | 109, 116 | 116 |
 | FR-PUB-08 | 121 | 121 |
@@ -1455,7 +1455,7 @@ The PRs that implement each requirement are listed in order. The last one comple
 | FR-ADMIN-03 | 114 | 114 |
 | FR-ADMIN-04 | 5, 6, 119 | 119 |
 | FR-ADMIN-05 | 6, 115 | 115 |
-| FR-ADMIN-06 | 3, 5, 6, 17, 18, 26, 84, 113 | 113 |
+| FR-ADMIN-06 | 3, 5, 6, 9, 17, 18, 26, 84, 113 | 113 |
 | FR-ADMIN-07 | 9, 118 | 118 |
 | FR-ENT-01 | 21, 23, 117 | 117 |
 | FR-ENT-02 | 23, 35 | 35 |
@@ -1515,6 +1515,7 @@ These record where the PRD left a choice open, or where this plan reads the PRD 
 | N15 | FR-DATA-01 AC12 was defined against "a server without FR-EDIT-12", which no longer exists after item 127, and the MVP schema did not define annotation items. | Decided: the first archive schema defines the annotation item, and after item 127 the AC12 fixture uses a test-only section that no importer handles. Recorded in PRD 1.5 FR-DATA-01. | 83, 84, 127 |
 | N16 | Migrations need a superuser, because they create the `BYPASSRLS` maintenance role, but the application must connect as a non-superuser (§5.4). The PRD did not say where each login's credentials come from. | Decided: two URLs. `STORYCREEP_DATABASE_URL` is the application's login and `STORYCREEP_DATABASE_ADMIN_URL` the superuser that applies migrations. Migrating creates or updates the application login from its URL, with the password the server logs in with, sending a SCRAM verifier rather than the password, and grants it `storycreep_app`. Because roles belong to the cluster, every Storycreep database on a server grants its privileges to the same `storycreep_app`, so migrating also revokes `CONNECT` on the database from `PUBLIC` and from `storycreep_app`, grants it to the application login, and to the admin login if the revocation took its `CONNECT`, and fails if `PUBLIC` or `storycreep_app` can still connect, which keeps the login of one Storycreep database out of another. A server that does not apply migrations itself refuses a migrated database that `PUBLIC` or `storycreep_app` can connect to again, as after a dump is restored into a new database. It then connects as that login and fails unless the database it reaches has the migrations. The admin URL must name the same database, and its login must not be, or act as, one of the server's roles, which the first migration makes unable to log in. The server refuses an application login that is a superuser, has `BYPASSRLS`, `CREATEROLE`, or `REPLICATION`, or owns the database or objects in it, directly or through a role, or that is a member of `storycreep_definer`, `storycreep_maintenance`, or one of the predefined roles that give access to the database server's files and programs (`pg_execute_server_program`, `pg_read_server_files`, `pg_write_server_files`). Migrating also refuses an application login named after one of the server's roles or with PostgreSQL's reserved `pg_` prefix, and, when the server logs in with a password, one whose `VALID UNTIL` has passed. How the maintenance pool logs in, including its grant of `CONNECT`, is left to item 11. Recorded in PRD 1.6 §5.4 and §10.8. | 5, 6, 9, 11 |
 | N17 | PRD §10.3 serves `/metrics` "unauthenticated on the admin port" in self-hosted mode and "protected" in hosted mode, without saying where the admin port is or what protects it. NFR-SEC-09 sends HSTS "in hosted mode", and FR-ADMIN-04 AC3 does not say how an instance whose startup migration failed refuses traffic. | Decided: the admin port is a second listener, `STORYCREEP_ADMIN_ADDR` (`127.0.0.1:9090` by default, or `off`), that serves only `/metrics`. Protected means a bearer token, `STORYCREEP_METRICS_TOKEN`, and setting the token protects `/metrics` in self-hosted mode too. Without a token, hosted mode serves no metrics and opens no admin port, which FR-ADMIN-05 AC3 allows ("disabled or protected"). HSTS is sent whenever `STORYCREEP_PUBLIC_URL` is https, which hosted mode requires, as the `Secure` cookie attribute follows the URL (NFR-SEC-04). An instance whose startup migration fails closes its listeners and exits with status 1; until its migrations are applied, `/readyz` and the API answer 503. No PRD change. | 6, 9, 115 |
+| N18 | FR-ADMIN-01 AC4 allows no build toolchain in the image, and FR-ADMIN-07 asks for a health check of the server, which an image without a shell or an HTTP client cannot run. FR-ADMIN-07 AC1 allows no configuration beyond a database password, but the server needs two database logins (N16) and a public URL. AC2 publishes images before any release exists. | Decided: the image is the binary on distroless `static`, running as the non-root user 65532, and the binary gains a `healthcheck` subcommand, which requests `/readyz`, because FR-ADMIN-06's list of subcommands is a minimum. The compose file's one required setting is `POSTGRES_PASSWORD`, which both logins share through `PGPASSWORD`. It publishes the server on `127.0.0.1:7777`, with `http://localhost:7777` as the public URL, for a reverse proxy on the same host that terminates TLS (§10.8). Until the first release, every CI run on the main branch, after a push and weekly, publishes `ghcr.io/cybercute-studio/storycreep` from its commit, tagged `sha-<commit>`, and `main` unless `main` has a newer commit already, and the compose file runs `main`; item 119 adds release tags and points the compose file at the release. The compose file mounts the asset volume at `/var/lib/storycreep/assets`, which item 29's local driver uses in the image. No PRD change. | 9, 29, 119 |
 
 ---
 
@@ -1529,3 +1530,4 @@ These record where the PRD left a choice open, or where this plan reads the PRD 
 | 1.4 | 2026-10-15 | **Status upkeep:** the PR that implements an item now sets the item's status to `done` with a link to itself, in a commit pushed once the PR is open, and that status update needs no change log row (item format, rule 7, standing checklist). Items 1–4 are marked done with links to their PRs, which merged with the status still `todo`. No items added, removed, or renumbered. |
 | 1.5 | 2026-10-15 | Decisions from implementing item 5, with PRD 1.6. **Database logins:** alignment note N16 records the two database URLs and the provisioned application login; items 5 and 9 name them, and item 11 the maintenance pool's login that N16 leaves to it. **Startup migration:** `--no-auto-migrate` moves from item 5 to item 6, because it is a flag of `serve`, which item 6 adds; item 5 provides the startup step that `serve` runs. **Coverage:** items 5 and 6 name the FR-ADMIN-06 subcommands they add, `migrate` and `serve`, in their PRD lines and the coverage matrix. No items added, removed, or renumbered, and no dependency changed. |
 | 1.6 | 2026-10-15 | Decisions from implementing item 6: alignment note N17 records the admin port and the token that protects `/metrics`, HSTS whenever the public URL is https, and how an instance whose startup migration failed refuses traffic. No items added, removed, or renumbered, and no dependency changed. |
+| 1.7 | 2026-10-15 | Decisions from implementing item 9: alignment note N18 records the image's base and health check, the compose file's one required setting and its published port, and the image's tags before the first release. Item 9 names the FR-ADMIN-06 subcommand it adds, `healthcheck`, in its PRD line and the coverage matrix, and FR-PUB-01 and FR-PUB-04, for the embedded placeholder pages and the `/` that `STORYCREEP_PUBLIC_SITE` chooses between them. Items 29 and 119 name what N18 leaves to them: the asset directory in the image, and the release tag that the compose file runs. No items added, removed, or renumbered, and no dependency changed. |

@@ -19,6 +19,10 @@ The product is specified in [`docs/PRD.md`](docs/PRD.md) and built in the order 
 
 The JavaScript packages are pnpm workspaces. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the toolchain and the checks.
 
+## Running Storycreep
+
+Storycreep runs as one container image, `ghcr.io/cybercute-studio/storycreep`, with PostgreSQL. [`deploy/README.md`](deploy/README.md) explains how to run both with Docker Compose.
+
 ## Licence
 
 Storycreep is licensed under the [GNU Affero General Public License v3.0 only](LICENSE) (AGPL-3.0-only). The Godot addon in `godot/addons/storycreep/` is licensed under the [MIT License](godot/addons/storycreep/LICENSE), so games that use it carry no AGPL obligations. Contributions require the [Contributor License Agreement](CLA.md).
