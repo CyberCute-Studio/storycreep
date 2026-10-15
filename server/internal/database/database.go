@@ -304,8 +304,8 @@ const (
 
 // UnsafeLoginError reports a login that is something its rules forbid
 // (checkLogin): an application login that row-level security would not hold,
-// or a maintenance login that has more than storycreep_maintenance's
-// privileges, so the server refuses to use it.
+// or a maintenance login that could do more than bypass row-level security
+// as storycreep_maintenance, so the server refuses to use it.
 type UnsafeLoginError struct {
 	// Key is the configuration key of the URL that names the login.
 	Key   string
@@ -332,8 +332,10 @@ type loginRules struct {
 	want string
 	// forbidden are the server's roles that the login must not have.
 	forbidden []string
-	// allowed is the role of the server that the login acts as, whose
-	// attributes do not count against it, or "" for none.
+	// allowed is the role of the server that the login acts as to bypass
+	// row-level security, whose BYPASSRLS does not count against it, or ""
+	// for none. Its other attributes, and what it owns, count as any role's
+	// do.
 	allowed string
 }
 
@@ -351,6 +353,9 @@ var appLoginRules = &loginRules{
 // would make the application login unsafe, nor the application's role or the
 // context bootstrap's, and it must not bypass row-level security itself,
 // because storycreep_maintenance is to be the only role that does (PRD §5.4).
+// Only that role's BYPASSRLS is let through: the first migration gives it
+// nothing else, but nothing checks the role again afterwards, and if it had
+// been given CREATEROLE or SUPERUSER since, the login would act with it.
 var maintenanceLoginRules = &loginRules{
 	key:       maintenanceURLKey,
 	want:      "an ordinary role that bypasses row-level security only by acting as " + MaintenanceRole,
@@ -371,8 +376,9 @@ var serverAccessRoles = []string{"pg_execute_server_program", "pg_read_server_fi
 // any role that is not a superuser, such as storycreep_maintenance), a role
 // with REPLICATION (which can stream a copy of the whole cluster), a role
 // that owns the current database or objects in it, the server's roles $2
-// that the login must not have, and the server access roles $3. It leaves
-// out the role $4, which the login may act as, if it is not empty. An owner
+// that the login must not have, and the server access roles $3. The
+// BYPASSRLS of the role $4, which the login may act as, does not count, if
+// $4 is not empty, but the role's other attributes do. An owner
 // can switch row-level security off, the owner of the database can drop it,
 // the owner of a schema can drop what is in it, and the owner of a type, a
 // collation, an operator class, or an extension can drop with CASCADE the
@@ -396,8 +402,8 @@ var serverAccessRoles = []string{"pg_execute_server_program", "pg_read_server_fi
 // mappings, which PostgreSQL records as owned by the role they map but which
 // only hold how it logs in to a foreign server.
 const unsafeRolesQuery = `
-SELECT r.rolname, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolreplication, r.owns_database, r.owns,
-	r.rolname = ANY ($3::name[]) AS server_access
+SELECT r.rolname, r.rolsuper, r.rolbypassrls AND r.rolname <> $4::name AS bypass, r.rolcreaterole, r.rolreplication,
+	r.owns_database, r.owns, r.rolname = ANY ($3::name[]) AS server_access
 FROM (
 	SELECT rolname, oid, rolsuper, rolbypassrls, rolcreaterole, rolreplication,
 		EXISTS (SELECT FROM pg_database WHERE datname = current_database() AND datdba = pg_roles.oid)
@@ -443,9 +449,9 @@ FROM (
 	FROM pg_roles
 ) r
 WHERE pg_has_role($1::name, r.oid, 'MEMBER')
-	AND r.rolname <> 'pg_database_owner' AND r.rolname <> $4::name
-	AND (r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR r.rolreplication OR r.owns_database OR r.owns
-		OR r.rolname = ANY ($2::name[]) OR r.rolname = ANY ($3::name[]))
+	AND r.rolname <> 'pg_database_owner'
+	AND (r.rolsuper OR (r.rolbypassrls AND r.rolname <> $4::name) OR r.rolcreaterole OR r.rolreplication
+		OR r.owns_database OR r.owns OR r.rolname = ANY ($2::name[]) OR r.rolname = ANY ($3::name[]))
 ORDER BY r.rolname <> $1::name, r.rolname`
 
 // checkLogin returns an *UnsafeLoginError if the login is something that
@@ -515,8 +521,8 @@ func checkLogin(ctx context.Context, q querier, rules *loginRules, login string)
 }
 
 // CheckMaintenanceLogin returns an *UnsafeLoginError if the session user of
-// tx, a transaction of the maintenance login, has more privileges than
-// storycreep_maintenance's (maintenanceLoginRules).
+// tx, a transaction of the maintenance login, could do more than bypass
+// row-level security as storycreep_maintenance (maintenanceLoginRules).
 func CheckMaintenanceLogin(ctx context.Context, tx pgx.Tx) error {
 	var login string
 	if err := tx.QueryRow(ctx, "SELECT session_user").Scan(&login); err != nil {

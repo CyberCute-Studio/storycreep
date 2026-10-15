@@ -34,9 +34,6 @@ var reservedRoles = append([]string{appRole}, privilegedRoles...)
 // serverLogin is a login that migrating provisions: the application login, or
 // the maintenance login.
 type serverLogin struct {
-	// key is the configuration key of the URL that names the login, which
-	// messages name.
-	key  string
 	name string
 	// password is the password the login's connections send, or unset if
 	// they send none.
@@ -47,22 +44,24 @@ type serverLogin struct {
 	// maintenance login does, rather than only with the privileges it
 	// inherits from it.
 	setsRole bool
-	// rules are what the login must not be (checkLogin).
+	// rules are what the login must not be (checkLogin). Their key is the
+	// configuration key of the URL that names the login, which messages
+	// name.
 	rules *loginRules
 }
 
 // appLogin returns the application login of STORYCREEP_DATABASE_URL, which is
 // named login and logs in with password.
 func appLogin(login string, password secret.Value) serverLogin {
-	return serverLogin{key: appURLKey, name: login, password: password, role: appRole, rules: appLoginRules}
+	return serverLogin{name: login, password: password, role: appRole, rules: appLoginRules}
 }
 
 // maintenanceLogin returns the maintenance login of
 // STORYCREEP_DATABASE_MAINTENANCE_URL, which is named login and logs in with
 // password.
 func maintenanceLogin(login string, password secret.Value) serverLogin {
-	return serverLogin{key: maintenanceURLKey, name: login, password: password, role: MaintenanceRole,
-		setsRole: true, rules: maintenanceLoginRules}
+	return serverLogin{name: login, password: password, role: MaintenanceRole, setsRole: true,
+		rules: maintenanceLoginRules}
 }
 
 // provision makes each of the logins a login of the server: a role that can
@@ -92,10 +91,14 @@ func maintenanceLogin(login string, password secret.Value) serverLogin {
 // passed checkLoginName, and differ.
 func provision(ctx context.Context, conn *pgx.Conn, logins ...serverLogin) error {
 	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		var version int
+		if err := tx.QueryRow(ctx, "SELECT current_setting('server_version_num')::int").Scan(&version); err != nil {
+			return fmt.Errorf("provision the server's logins: %w", err)
+		}
 		expired := make([]bool, len(logins))
 		for i, l := range logins {
 			var err error
-			if expired[i], err = provisionLogin(ctx, tx, l); err != nil {
+			if expired[i], err = provisionLogin(ctx, tx, l, version); err != nil {
 				return err
 			}
 		}
@@ -112,7 +115,7 @@ func provision(ctx context.Context, conn *pgx.Conn, logins ...serverLogin) error
 			if expired[i] && l.password.IsSet() {
 				return fmt.Errorf("the password of the login %q in %s has expired, because the role's VALID UNTIL "+
 					"has passed, so the server could not log in with it; set a later time with ALTER ROLE %s VALID "+
-					"UNTIL, or 'infinity' for none", l.name, l.key, pgx.Identifier{l.name}.Sanitize())
+					"UNTIL, or 'infinity' for none", l.name, l.rules.key, pgx.Identifier{l.name}.Sanitize())
 			}
 			names = append(names, l.name)
 		}
@@ -121,9 +124,10 @@ func provision(ctx context.Context, conn *pgx.Conn, logins ...serverLogin) error
 }
 
 // provisionLogin makes provision's changes to one login, in provision's
-// transaction, and reports whether the login's VALID UNTIL had passed. It
-// neither checks the login nor restricts who connects.
-func provisionLogin(ctx context.Context, tx pgx.Tx, l serverLogin) (expired bool, err error) {
+// transaction, on a database server whose server_version_num is version,
+// and reports whether the login's VALID UNTIL had passed. It neither checks
+// the login nor restricts who connects.
+func provisionLogin(ctx context.Context, tx pgx.Tx, l serverLogin, version int) (expired bool, err error) {
 	ident := pgx.Identifier{l.name}.Sanitize()
 	var canLogin, inherit bool
 	var stored *string
@@ -171,10 +175,6 @@ func provisionLogin(ctx context.Context, tx pgx.Tx, l serverLogin) (expired bool
 	// also record on each grant whether the member may SET ROLE to the role,
 	// which an operator may have granted without, so for a login that acts
 	// as its role, that is read too. On PostgreSQL 15, every member may.
-	var version int
-	if err := tx.QueryRow(ctx, "SELECT current_setting('server_version_num')::int").Scan(&version); err != nil {
-		return false, fmt.Errorf("provision the login %q: %w", l.name, err)
-	}
 	usableQuery := "SELECT pg_has_role($1::name, $2::name, 'USAGE')"
 	if l.setsRole && version >= 160000 {
 		usableQuery += " AND pg_has_role($1::name, $2::name, 'SET')"

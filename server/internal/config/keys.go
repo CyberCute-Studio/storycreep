@@ -249,11 +249,12 @@ var keys = []key{
 			"`STORYCREEP_DATABASE_ADMIN_URL`, and the same database. When it is set, migrations create the login " +
 			"if it does not exist, set its password as they set the application login's, grant it the " +
 			"`storycreep_maintenance` role, and grant it `CONNECT` on the database, and they refuse a login " +
-			"named like one of the server's roles, or starting with `pg_`, or that has more privileges than " +
-			"`storycreep_maintenance` gives it: one that is a superuser, has `BYPASSRLS` itself, `CREATEROLE`, or " +
-			"`REPLICATION`, owns the database or objects in it, or is a member of a role that does, of " +
-			"`storycreep_app` or `storycreep_definer`, or of one of the roles that give access to the database " +
-			"server's files and programs. Give each Storycreep database on a server a maintenance login of its " +
+			"named like one of the server's roles, or starting with `pg_`, or that could do more than bypass " +
+			"row-level security as `storycreep_maintenance`: one that is a superuser, has `BYPASSRLS` itself, " +
+			"`CREATEROLE`, or `REPLICATION`, owns the database or objects in it, or is a member of a role that " +
+			"does, `storycreep_maintenance` included but for its own `BYPASSRLS`, of `storycreep_app` or " +
+			"`storycreep_definer`, or of one of the roles that give access to the database server's files and " +
+			"programs. Give each Storycreep database on a server a maintenance login of its " +
 			"own, as for `STORYCREEP_DATABASE_URL`. Without it, migrations leave the maintenance login alone. It " +
 			"is shown redacted in the same way.",
 		valuesDoc: "A `postgres://` URL",

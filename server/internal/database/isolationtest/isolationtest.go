@@ -15,8 +15,9 @@
 // Tables lists the tenant tables. A migration that adds one adds it there,
 // with how to add a row, and the schema test in package database fails until
 // it does (FR-TEN-01 AC1). Fixture.CheckTables tries reads, updates, deletes,
-// and inserts of every table from the wrong workspace, and Fixture.Check
-// tries a repository's own operations.
+// and inserts of every table from the wrong workspace, and moves of a
+// workspace's rows into another, and Fixture.Check tries a repository's own
+// operations.
 package isolationtest
 
 import (
@@ -321,9 +322,10 @@ func (f *Fixture) snapshot(t testing.TB, w *Workspace) (string, []ids.UUID) {
 
 // CheckTables tries, on every table of the fixture, what a repository with a
 // broken filter would do: read the rows of another workspace's ID, and read
-// without a filter, and update, delete, and add rows of another workspace's
-// ID. Operations that the application login has no privilege for must fail
-// on its own workspace's rows too.
+// without a filter, update, delete, and add rows of another workspace's ID,
+// and move rows of its own workspace into another by changing their
+// workspace_id. Operations that the application login has no privilege for
+// must fail on its own workspace's rows too.
 func (f *Fixture) CheckTables(t testing.TB) {
 	t.Helper()
 	for _, table := range f.tables {
@@ -355,6 +357,23 @@ func (f *Fixture) CheckTables(t testing.TB) {
 				"UPDATE"},
 			{Op{Name: table.Name + ": delete by workspace",
 				Run: query("DELETE FROM "+ident+" WHERE workspace_id = $1 RETURNING id", true)}, "DELETE"},
+			// Unlike the others, this operation changes the rows that the
+			// transaction sees, A's, rather than the target's: it moves them
+			// into the target, which adds rows to the target as surely as an
+			// insert does, so the policy's check of new rows must refuse it in
+			// the same way. The update above, which keeps workspace_id, never
+			// reaches that check. The statement reads no column, as a WHERE
+			// or RETURNING clause would, which would hold the new rows to the
+			// table's SELECT policies too, so that the check of new rows is
+			// all that refuses it. On A's own rows, it moves them nowhere.
+			{Op{Name: table.Name + ": move into a workspace", Denied: true,
+				Run: func(ctx context.Context, tx pgx.Tx, target *Workspace) ([]ids.UUID, error) {
+					moved, err := query("SELECT id FROM "+ident, false)(ctx, tx, target)
+					if err == nil {
+						_, err = tx.Exec(ctx, "UPDATE "+ident+" SET workspace_id = $1", target.ID)
+					}
+					return moved, err
+				}}, "UPDATE"},
 		} {
 			f.check(t, c.op, nil, !can[c.privilege])
 		}

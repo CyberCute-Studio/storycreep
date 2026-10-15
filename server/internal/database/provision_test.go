@@ -678,6 +678,35 @@ func TestProvisionRefusesMaintenanceLogins(t *testing.T) {
 	}
 }
 
+// TestProvisionChecksTheMaintenanceRole checks that the maintenance login's
+// check lets through the BYPASSRLS of storycreep_maintenance, which the login
+// acts as, but not another attribute that the role should not have, such as
+// CREATEROLE, which nothing else checks once the first migration has run. It
+// changes a role that every database of the test server shares, so it does
+// not run in parallel.
+func TestProvisionChecksTheMaintenanceRole(t *testing.T) {
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	maint := d.URL(t, d.FreshLogin(t), "pw")
+	if _, err := admin.Exec(ctx, "ALTER ROLE storycreep_maintenance CREATEROLE"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(ctx, "ALTER ROLE storycreep_maintenance NOCREATEROLE"); err != nil {
+			t.Error(err)
+		}
+	})
+
+	_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Maintenance: maint})
+	var uerr *database.UnsafeLoginError
+	if !errors.As(err, &uerr) || uerr.Key != "STORYCREEP_DATABASE_MAINTENANCE_URL" ||
+		len(uerr.Reasons) != 1 || uerr.Reasons[0] != `it is a member of "storycreep_maintenance", which has CREATEROLE` {
+		t.Errorf("Migrate returned %v, want a refusal of the maintenance login for storycreep_maintenance's "+
+			"CREATEROLE alone", err)
+	}
+}
+
 // TestProvisionChecksTheLoginsTogether checks that migrating checks each login
 // once both have their roles, so that it refuses, and leaves as they were, an
 // application login that is a member of the maintenance login, which granting

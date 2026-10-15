@@ -37,7 +37,30 @@
 -- IDs are UUIDv7s, which the server generates (§5.2), so no column has a
 -- default for them.
 
--- Email addresses compare without regard to case (§5.3).
+-- Email addresses compare without regard to case (§5.3), with the type and
+-- operators of the citext extension, which the migrations and the server
+-- find in the public schema. CREATE EXTENSION IF NOT EXISTS keeps an
+-- extension that the database has in another schema already, as a template
+-- or a hosting provider can give it, and the first column of the type would
+-- then fail with an error that the type does not exist, right after a CREATE
+-- EXTENSION that succeeded. So the migration refuses such a database with an
+-- error that says how to move the extension.
+-- +goose StatementBegin
+DO $$
+DECLARE
+	ext_schema name;
+BEGIN
+	SELECT n.nspname INTO ext_schema
+	FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
+	WHERE e.extname = 'citext';
+	IF ext_schema <> 'public' THEN
+		RAISE EXCEPTION USING MESSAGE = format('the database has the citext extension in the schema %I, where '
+			|| 'Storycreep does not find it; move it to the public schema with ALTER EXTENSION citext SET SCHEMA '
+			|| 'public, as a superuser, and migrate again', ext_schema);
+	END IF;
+END
+$$;
+-- +goose StatementEnd
 CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;
 
 CREATE TABLE "user" (

@@ -46,11 +46,11 @@ through a grant that a role other than the database's owner made. A login
 belongs to the whole PostgreSQL server, as do those roles, so each
 Storycreep database on a server needs logins of its own. The command
 refuses an application login that row-level security would not apply to,
-such as a superuser or the database's owner, a maintenance login with more
-privileges than storycreep_maintenance gives it, a login named after a role
-the migrations create or starting with pg_, which PostgreSQL reserves, two
-URLs that name one login, and, when the server logs in with a password, a
-login whose VALID UNTIL has passed.
+such as a superuser or the database's owner, a maintenance login that could
+do more than bypass row-level security as storycreep_maintenance, a login
+named after a role the migrations create or starting with pg_, which
+PostgreSQL reserves, two URLs that name one login, and, when the server
+logs in with a password, a login whose VALID UNTIL has passed.
 
 Last, it connects as each login, as the server does, and fails unless the
 database it reaches has every migration applied.`,

@@ -90,7 +90,7 @@ func interpolatedVars(text string) (required, optional []string) {
 // and §10.8: exactly two services, PostgreSQL 17 and the server, which waits
 // for the database to be healthy; named volumes for the database and the
 // assets; a health check for each service; and environment variables for
-// both database URLs and every other key of the configuration, of which
+// the three database URLs and every other key of the configuration, of which
 // only the database password has no default.
 func TestComposeFile(t *testing.T) {
 	f, text := readCompose(t, "docker-compose.yml")

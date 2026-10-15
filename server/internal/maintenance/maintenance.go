@@ -49,9 +49,10 @@ type DB struct {
 }
 
 // Open connects to the database as the maintenance login. It returns an
-// *database.UnsafeLoginError if the login has more privileges than
-// storycreep_maintenance gives it (database.CheckMaintenanceLogin), and an
-// error if it cannot act as that role, because migrating did not grant it.
+// *database.UnsafeLoginError if the login could do more than bypass
+// row-level security as storycreep_maintenance
+// (database.CheckMaintenanceLogin), and an error if it cannot act as that
+// role, because migrating did not grant it.
 func Open(ctx context.Context, url config.DatabaseURL) (*DB, error) {
 	if !url.IsSet() {
 		return nil, ErrNoURL

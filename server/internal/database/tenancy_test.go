@@ -2,6 +2,7 @@ package database_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -184,6 +185,35 @@ func TestTenantTablesCheckFindsOmissions(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("problems =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// TestTenancyMigrationNeedsCitextInPublic checks that the tenancy migration
+// refuses a database that has the citext extension in a schema other than
+// public, where the migrations would not find its type, with an error that
+// says how to move the extension, and that it applies once the extension is
+// moved.
+func TestTenancyMigrationNeedsCitextInPublic(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	admin := d.Admin(t)
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA extensions; CREATE EXTENSION citext WITH SCHEMA extensions"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{})
+	var merr *database.MigrationError
+	if !errors.As(err, &merr) || merr.Name != "00004_tenancy.sql" ||
+		!strings.Contains(err.Error(), "the citext extension in the schema extensions") ||
+		!strings.Contains(err.Error(), "ALTER EXTENSION citext SET SCHEMA public") {
+		t.Fatalf("Migrate returned %v, want the tenancy migration to refuse citext outside public, and say how to "+
+			"move it", err)
+	}
+	if _, err := admin.Exec(ctx, "ALTER EXTENSION citext SET SCHEMA public"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{}); err != nil {
+		t.Errorf("Migrate after the extension moved to public: %v", err)
 	}
 }
 
@@ -375,7 +405,7 @@ func TestContextBootstrapResolves(t *testing.T) {
 // from a transaction of workspace A, a read, update, delete, or insert that
 // is pointed at workspace B's rows, by B's ID or by no filter at all, as a
 // repository with a broken filter would be, must neither return, change, nor
-// add any of them.
+// add any of them, and an update must not move A's rows into B.
 //
 // Verifies: NFR-SEC-01
 func TestTenantIsolation(t *testing.T) {
@@ -398,8 +428,9 @@ func (r *recorder) Errorf(format string, args ...any) {
 }
 
 // TestIsolationHarnessFindsLeaks runs the isolation harness on tables that
-// row-level security does not hold, one without it and one whose policy lets
-// every row through, and on operations that fail or find nothing on their own
+// row-level security does not hold, one without it, one whose policy lets
+// every row through, and one whose policy for updates lets a row move into
+// another workspace, and on operations that fail or find nothing on their own
 // workspace's rows, so that TestTenantIsolation cannot pass because the
 // harness stopped working.
 //
@@ -413,7 +444,13 @@ func TestIsolationHarnessFindsLeaks(t *testing.T) {
 		CREATE TABLE open_policy (id uuid PRIMARY KEY, workspace_id uuid NOT NULL);
 		ALTER TABLE open_policy ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 		CREATE POLICY everything ON open_policy TO storycreep_app USING (true);
-		GRANT SELECT, INSERT, UPDATE, DELETE ON leaky, open_policy TO storycreep_app`); err != nil {
+		CREATE TABLE loose_check (id uuid PRIMARY KEY, workspace_id uuid NOT NULL);
+		ALTER TABLE loose_check ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+		CREATE POLICY workspace_isolation ON loose_check TO storycreep_app
+			USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);
+		CREATE POLICY moves ON loose_check FOR UPDATE TO storycreep_app
+			USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid) WITH CHECK (true);
+		GRANT SELECT, INSERT, UPDATE, DELETE ON leaky, open_policy, loose_check TO storycreep_app`); err != nil {
 		t.Fatal(err)
 	}
 	insert := func(table string) isolationtest.Table {
@@ -424,7 +461,7 @@ func TestIsolationHarnessFindsLeaks(t *testing.T) {
 					Args: []any{id, w.ID}}, nil
 			}}
 	}
-	f := isolationtest.New(t, d, []isolationtest.Table{insert("leaky"), insert("open_policy")})
+	f := isolationtest.New(t, d, []isolationtest.Table{insert("leaky"), insert("open_policy"), insert("loose_check")})
 	rec := &recorder{TB: t}
 	f.CheckTables(rec)
 	f.Check(rec, isolationtest.Op{Name: "failing", Run: func(context.Context, pgx.Tx, *isolationtest.Workspace) ([]ids.UUID, error) {
@@ -442,11 +479,19 @@ func TestIsolationHarnessFindsLeaks(t *testing.T) {
 			table+": update by workspace: from another workspace's transaction, reaches 1 of the workspace's rows",
 			table+": delete by workspace: from another workspace's transaction, reaches 1 of the workspace's rows",
 			table+": delete by workspace: from another workspace's transaction, changes the workspace's rows",
+			table+": move into a workspace: from another workspace's transaction: <nil>, want row-level security "+
+				"to refuse it",
+			table+": move into a workspace: from another workspace's transaction, changes the workspace's rows",
 			table+": insert: from another workspace's transaction: <nil>, want row-level security to refuse it",
 			table+": insert: from another workspace's transaction, changes the workspace's rows",
 		)
 	}
+	// loose_check holds every operation but the move, which only the check
+	// of new rows refuses.
 	want = append(want,
+		"loose_check: move into a workspace: from another workspace's transaction: <nil>, want row-level security "+
+			"to refuse it",
+		"loose_check: move into a workspace: from another workspace's transaction, changes the workspace's rows",
 		"failing: fails on its own workspace's rows: no such thing",
 		"empty: finds none of its own workspace's rows, so it shows nothing about another's",
 	)
