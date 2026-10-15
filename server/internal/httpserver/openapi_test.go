@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -373,10 +374,11 @@ func TestErrorEnvelopeContract(t *testing.T) {
 			failed := 0
 			for _, p := range provoke(r, methods[r.Pattern], op) {
 				s.ready.setPhase(p.phase)
-				req := httptest.NewRequest(p.method, p.path, bytes.NewReader(p.body))
-				if p.body == nil {
-					req = httptest.NewRequest(p.method, p.path, nil)
+				var body io.Reader
+				if p.body != nil {
+					body = bytes.NewReader(p.body)
 				}
+				req := httptest.NewRequest(p.method, p.path, body)
 				maps.Copy(req.Header, p.header)
 				if p.contentType != "" {
 					req.Header.Set("Content-Type", p.contentType)

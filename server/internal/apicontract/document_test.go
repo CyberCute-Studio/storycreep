@@ -80,4 +80,14 @@ func TestLoadRefuses(t *testing.T) {
 	if _, err := Load([]byte(alias)); err != nil {
 		t.Errorf("a chain of aliases: Load = %v, want no error", err)
 	}
+
+	// Of two problems, Load names the first, in the order of the paths and
+	// their methods, every time.
+	two := strings.Replace(strings.Replace(string(base), `"operationId": "getThing",`, ``, 1),
+		`"operationId": "listThings",`, ``, 1)
+	for range 20 {
+		if _, err := Load([]byte(two)); err == nil || !strings.Contains(err.Error(), "GET /things has no operationId") {
+			t.Fatalf("two operations without an operationId: Load = %v, want an error naming GET /things", err)
+		}
+	}
 }

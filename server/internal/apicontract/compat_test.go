@@ -475,4 +475,15 @@ func TestBreakingThroughAnAlias(t *testing.T) {
 	if got := messages(Breaking(doc("string"), doc("integer"))); !slices.Equal(got, want) {
 		t.Errorf("Breaking = %q, want %q", got, want)
 	}
+
+	// A document built in code, which Load has not checked, may refer to a
+	// schema without having any; the reference allows any value.
+	bare := doc("string")
+	bare.Components = nil
+	if got := messages(Breaking(bare, bare)); len(got) != 0 {
+		t.Errorf("without components: Breaking = %q, want nothing", got)
+	}
+	if got := messages(Breaking(bare, doc("string"))); len(got) != 0 {
+		t.Errorf("a reference that gains its schema: Breaking = %q, want nothing", got)
+	}
 }

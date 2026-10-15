@@ -77,6 +77,7 @@ export class ApiError extends Error {
   readonly status: number;
   /** The error envelope's object, or undefined if the body is not the envelope, as a proxy's error page is not. */
   readonly error: ErrorBody | undefined;
+  /** The answer, whose body is unread, whatever it holds. */
   readonly response: Response;
 
   constructor(response: Response, error: ErrorBody | undefined) {
@@ -98,6 +99,12 @@ export function createClient<Ops extends Record<keyof Ops, OperationShape>>(
   options: ClientOptions,
 ): Client<Ops> {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
+  // The global fetch is looked up at each call, and called as a function of
+  // the global object, as a browser requires.
+  const doFetch =
+    options.fetch ??
+    ((input: RequestInfo | URL, init?: RequestInit) =>
+      globalThis.fetch(input, init));
   return {
     async call(operation, ...[input, callOptions]) {
       const route = routes[operation];
@@ -116,10 +123,6 @@ export function createClient<Ops extends Record<keyof Ops, OperationShape>>(
       }
       const url =
         baseUrl + fillPath(route.path, parts.path ?? {}) + search(parts.query);
-      const doFetch =
-        options.fetch ??
-        ((input: RequestInfo | URL, init?: RequestInit) =>
-          globalThis.fetch(input, init));
       const response = await doFetch(url, {
         method: route.method,
         headers,
@@ -205,16 +208,19 @@ async function readBody(response: Response): Promise<unknown> {
   return JSON.parse(text);
 }
 
-/** Returns the error envelope's object, or undefined if the body is not the envelope. */
+/**
+ * Returns the error envelope's object, or undefined if the body is not the
+ * envelope. The response's body stays unread, for the caller to read from
+ * the ApiError, whatever it holds.
+ */
 async function readEnvelope(
   response: Response,
 ): Promise<ErrorBody | undefined> {
   if (!isJSON(response)) {
-    // The body stays unread, for the caller to read from the ApiError.
     return undefined;
   }
   try {
-    const body = await readBody(response);
+    const body = await readBody(response.clone());
     const error = (body as { error?: Partial<ErrorBody> } | undefined)?.error;
     if (
       typeof error?.code === "string" &&

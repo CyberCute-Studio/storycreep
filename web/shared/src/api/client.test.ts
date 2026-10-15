@@ -88,6 +88,29 @@ describe("the API client", () => {
     );
   });
 
+  it("leaves a JSON error body that is not the envelope for the caller to read", async () => {
+    const { fetch } = fakeFetch(() => json(502, { message: "upstream down" }));
+    const error = await createApiClient({ baseUrl, fetch })
+      .call("getHealth")
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 502, error: undefined });
+    expect(await (error as ApiError).response.json()).toEqual({
+      message: "upstream down",
+    });
+  });
+
+  it("leaves the envelope's body for the caller to read too", async () => {
+    const envelope = {
+      error: { code: "internal_error", message: "x", request_id: "req-2" },
+    };
+    const { fetch } = fakeFetch(() => json(500, envelope));
+    const error = await createApiClient({ baseUrl, fetch })
+      .call("getHealth")
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 500, error: envelope.error });
+    expect(await (error as ApiError).response.json()).toEqual(envelope);
+  });
+
   it("refuses a success answer whose body is not JSON", async () => {
     const { fetch } = fakeFetch(
       () =>

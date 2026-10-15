@@ -369,7 +369,7 @@ func (c *comparer) schema(loc string, b, h *Schema, dir direction) {
 
 // typeSet returns the types that s allows, apart from null, whether it
 // allows null, and whether it allows any type.
-func typeSet(s *Schema) (types []string, nullable, any bool) {
+func typeSet(s *Schema) (types []string, nullable, anyType bool) {
 	if len(s.Type) == 0 {
 		return nil, true, true
 	}

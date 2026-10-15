@@ -206,6 +206,13 @@ func (g *tsGen) typeOf(s *Schema, n int) (string, error) {
 			}
 		}
 	}
+	// huma writes the enum or const of a nullable field, such as a *string,
+	// without null, but its validator lets null through before it reads
+	// them, and the server sends a nil pointer as null, so a type that
+	// allows null gets it beside the values.
+	if (s.Const != nil || s.Enum != nil) && slices.Contains(s.Type, "null") {
+		add("null")
+	}
 	// null goes last, as people write it.
 	if i := slices.Index(parts, "null"); i >= 0 && len(parts) > 1 {
 		parts = append(slices.Delete(parts, i, i+1), "null")

@@ -171,6 +171,10 @@ func TestTypeScriptCompositions(t *testing.T) {
 		{&Schema{AllOf: []*Schema{ref, {Type: Types{"object"}, Properties: map[string]*Schema{"a": str}}}},
 			"Thing & {\n  a?: string;\n}"},
 		{&Schema{Const: json.RawMessage(`-1.5`)}, "-1.5"},
+		// huma's enum of a nullable field lacks null, which the field takes.
+		{&Schema{Type: Types{"string", "null"}, Enum: []json.RawMessage{raw(`"a"`), raw(`"b"`)}}, `"a" | "b" | null`},
+		{&Schema{Type: Types{"null", "integer"}, Const: raw(`1`)}, "1 | null"},
+		{&Schema{Type: Types{"string", "null"}, Enum: []json.RawMessage{raw(`null`), raw(`"a"`)}}, `"a" | null`},
 		{&Schema{Type: Types{"integer", "number", "null"}}, "number | null"},
 		{&Schema{Type: Types{"null", "boolean"}}, "boolean | null"},
 		{&Schema{Type: Types{"object"}, AdditionalProperties: &Additional{}}, "Record<string, never>"},

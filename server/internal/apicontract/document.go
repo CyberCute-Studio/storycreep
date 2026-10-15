@@ -301,8 +301,11 @@ func (d *Document) check() error {
 			}
 		}
 	}
+	// The paths, and the maps of each operation, are read in order, so that
+	// a document with more than one problem gets the same error every time.
 	ids := map[string]string{}
-	for path, item := range d.Paths {
+	for _, path := range slices.Sorted(maps.Keys(d.Paths)) {
+		item := d.Paths[path]
 		if item == nil {
 			return fmt.Errorf("%s has no operations", path)
 		}
@@ -357,8 +360,8 @@ func (d *Document) checkOperation(path string, op *Operation) error {
 		return fmt.Errorf("the path has the parameters %q, and the operation describes %q", want, inPath)
 	}
 	if rb := op.RequestBody; rb != nil {
-		for mt, m := range rb.Content {
-			if err := d.checkMediaType(m); err != nil {
+		for _, mt := range slices.Sorted(maps.Keys(rb.Content)) {
+			if err := d.checkMediaType(rb.Content[mt]); err != nil {
 				return fmt.Errorf("the request body %s: %w", mt, err)
 			}
 		}
@@ -366,14 +369,16 @@ func (d *Document) checkOperation(path string, op *Operation) error {
 	if len(op.Responses) == 0 {
 		return errors.New("it has no responses")
 	}
-	for status, r := range op.Responses {
+	for _, status := range slices.Sorted(maps.Keys(op.Responses)) {
+		r := op.Responses[status]
 		if r == nil {
 			return fmt.Errorf("the response %s is null", status)
 		}
 		if !validStatus(status) {
 			return fmt.Errorf("the response %s is not a status, a range such as 4XX, or default", status)
 		}
-		for name, h := range r.Headers {
+		for _, name := range slices.Sorted(maps.Keys(r.Headers)) {
+			h := r.Headers[name]
 			if h == nil {
 				return fmt.Errorf("the response %s's header %s is null", status, name)
 			}
@@ -381,8 +386,8 @@ func (d *Document) checkOperation(path string, op *Operation) error {
 				return fmt.Errorf("the response %s's header %s: %w", status, name, err)
 			}
 		}
-		for mt, m := range r.Content {
-			if err := d.checkMediaType(m); err != nil {
+		for _, mt := range slices.Sorted(maps.Keys(r.Content)) {
+			if err := d.checkMediaType(r.Content[mt]); err != nil {
 				return fmt.Errorf("the response %s's body %s: %w", status, mt, err)
 			}
 		}
@@ -486,11 +491,17 @@ func paramKey(p *Parameter) string {
 // values, whose name it returns. Load has checked that every name exists and
 // that no chain of references goes round in a cycle.
 func (d *Document) resolve(s *Schema) (*Schema, string) {
+	var schemas map[string]*Schema
+	if d.Components != nil {
+		schemas = d.Components.Schemas
+	}
 	var name string
-	// A document built in code may have a cycle, which ends here.
-	for i := 0; s != nil && s.Ref != "" && i <= len(d.Components.Schemas); i++ {
+	// A document built in code may have a cycle, which ends here, or a
+	// reference to a schema that it lacks, even with no components, which
+	// resolves to nil, the schema that allows any value.
+	for i := 0; s != nil && s.Ref != "" && i <= len(schemas); i++ {
 		name = refName(s.Ref)
-		s = d.Components.Schemas[name]
+		s = schemas[name]
 	}
 	return s, name
 }
