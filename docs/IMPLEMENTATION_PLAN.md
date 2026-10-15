@@ -145,7 +145,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-API-02 AC1 and FR-API-04 AC1 pass, FR-API-01 AC3 passes in its pre-release form (the gate fails on a fixture that removes a response field), and the generated client builds.
 
 ### 8. Background job queue
-**Status:** todo · **Depends on:** 5
+**Status:** done ([#8](https://github.com/CyberCute-Studio/storycreep/pull/8)) · **Depends on:** 5
 **PRD:** FR-JOBS-01, ADR-008
 - River with transactional enqueue, retries with backoff, periodic and unique jobs, and a dead-letter state.
 - Workers in-process by default, disabled with `--no-inline-workers`. Queue metrics.
