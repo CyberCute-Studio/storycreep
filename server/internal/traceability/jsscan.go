@@ -87,9 +87,8 @@ var jsAnnotations = map[string]bool{"skip": true, "fixme": true, "fail": true}
 // describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …), with an
 // option that does, as in test("…", { skip: true }, …), or when it, a group
 // it is in, or the file calls Playwright's test.skip(), test.fixme(), or
-// test.fail() without arguments. A group is skipped too when it runs no test:
-// everything declared directly in it, its tests and groups, is skipped, as in
-// describe("…", () => { describe.todo("…") }).
+// test.fail() without arguments. A group is returned as one, so that a
+// Verifies comment above it is reported: the tests in it are what runs.
 func readJS(file, src string, isTest bool) source {
 	// A file that is not a test file matters only for the Verifies comments
 	// in it.
@@ -256,30 +255,11 @@ func readJS(file, src string, isTest bool) source {
 	for k, c := range calls {
 		skippedAt[k] = c.skipped || fileSkipped || parent[k] >= 0 && skippedAt[parent[k]]
 	}
-	// runs[k] is set when calls[k] is a declaration that runs a test: a test
-	// that is not skipped, or a group that is not skipped and in which a
-	// declaration runs. A group in which the scan sees no declaration, as one
-	// whose tests a helper function declares, runs. The declarations in a
-	// call come after it, so they are decided first.
-	runs := make([]bool, len(calls))
-	holds := make([]bool, len(calls))  // a declaration is in calls[k]
-	inRuns := make([]bool, len(calls)) // a declaration in calls[k] runs
-	for k := len(calls) - 1; k >= 0; k-- {
-		c := calls[k]
-		if !c.decl {
-			continue
-		}
-		runs[k] = !skippedAt[k] && (!c.group || !holds[k] || inRuns[k])
-		if p := parent[k]; p >= 0 {
-			holds[p] = true
-			inRuns[p] = inRuns[p] || runs[k]
-		}
-	}
 	for k, c := range calls {
 		if !c.decl {
 			continue
 		}
-		d := decl{line: toks[c.head].line, unnamed: !c.named, skipped: !runs[k]}
+		d := decl{line: toks[c.head].line, group: c.group, unnamed: !c.named && !c.group, skipped: skippedAt[k]}
 		if c.named {
 			var path []string
 			for _, g := range calls {

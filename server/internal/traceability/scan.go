@@ -24,8 +24,7 @@ type Test struct {
 	// skip, todo, fixme, or fail (or with Vitest's option skip, todo, or fails
 	// set to true), or inside a group declared so, or it calls Playwright's
 	// test.skip(), test.fixme(), or test.fail() without arguments or is inside
-	// a group or file that does, or it is a group in which everything
-	// declared is skipped.
+	// a group or file that does.
 	Skipped bool
 	Tags    []Tag
 }
@@ -71,8 +70,11 @@ type decl struct {
 	name    string
 	skipped bool
 	// unnamed is set for a declaration the scan cannot name, as a test whose
-	// title is not a literal, a table of tests, or a group without a title.
+	// title is not a literal or a table of tests.
 	unnamed bool
+	// group is set for a group of tests, as a describe block. A group runs
+	// nothing itself, so a Verifies comment belongs on the tests in it.
+	group bool
 }
 
 // languageOf returns the language of a source file, or nil for a file the
@@ -252,6 +254,8 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 		}
 		switch {
 		case pending == nil:
+		case above && d.group:
+			report(pending[0].Line, "a Verifies comment above a group (put it on the tests in the group, which are what runs)")
 		case above && d.unnamed:
 			report(pending[0].Line, "a Verifies comment above a declaration that the report cannot name (give it a literal title, without ${…}, each, or for)")
 		case above:
