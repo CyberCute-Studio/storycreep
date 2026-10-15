@@ -228,6 +228,7 @@ func TestCodeSpan(t *testing.T) {
 		"a `quoted` id": "`` a `quoted` id ``",
 		"a `` b":        "``` a `` b ```",
 		" padded":       "`  padded `",
+		"a\n- b\r\nc":   "`a - b c`",
 	}
 	for in, want := range tests {
 		if got := codeSpan(in); got != want {

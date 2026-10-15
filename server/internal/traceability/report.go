@@ -362,8 +362,11 @@ func ref(t TestRef) string {
 }
 
 // codeSpan writes s as a Markdown code span, with a fence longer than any run
-// of backticks in s.
+// of backticks in s. A line break, as in a test title with "\n", is written
+// as a space, as a code span shows it, so that it cannot end the list item
+// the span is in.
 func codeSpan(s string) string {
+	s = lineBreaks.Replace(s)
 	longest, run := 0, 0
 	for _, c := range s {
 		if c == '`' {
@@ -379,3 +382,5 @@ func codeSpan(s string) string {
 	}
 	return fence + s + fence
 }
+
+var lineBreaks = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")

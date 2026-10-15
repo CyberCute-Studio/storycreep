@@ -43,6 +43,9 @@ type language struct {
 	// read returns the comments of a source file and, for a test file, its
 	// test declarations. Problems are parts of the file it cannot read.
 	read func(file, src string, isTest bool) source
+	// declares reports whether text, the commented-out code of a test file,
+	// declares a test or a group.
+	declares func(file, text string) bool
 }
 
 // source is what the scan needs from a source file, whatever its language.
@@ -101,6 +104,19 @@ func skipDir(name string) bool {
 	return strings.HasPrefix(name, ".")
 }
 
+// goIgnored reports whether the go tool ignores a Go file, given by its
+// slash-separated path below the scanned root: its name, or the name of a
+// directory it is in, starts with "_" or ".". The go tool never builds such a
+// file, so its tests never run.
+func goIgnored(rel string) bool {
+	for _, name := range strings.Split(rel, "/") {
+		if strings.HasPrefix(name, "_") || strings.HasPrefix(name, ".") {
+			return true
+		}
+	}
+	return false
+}
+
 // Scan finds the tagged tests under root, in path and line order. Problems
 // are Verifies comments it cannot read or attach to a test. An error means a
 // directory or file could not be read.
@@ -121,15 +137,19 @@ func Scan(root string) ([]Test, []doccheck.Problem, error) {
 		if lang == nil || !d.Type().IsRegular() {
 			return nil
 		}
-		src, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
-		ts, ps := scanFile(filepath.ToSlash(rel), string(src), lang, lang.isTest(d.Name()))
+		rel = filepath.ToSlash(rel)
+		if lang == goLang && goIgnored(rel) {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		ts, ps := scanFile(rel, string(src), lang, lang.isTest(d.Name()))
 		tests = append(tests, ts...)
 		problems = append(problems, ps...)
 		return nil
@@ -219,7 +239,8 @@ func editDistance(a, b string) int {
 // scanFile finds the tagged tests in one source file. A Verifies comment is
 // a line comment on its own line; together with the line comments on the
 // lines directly above and below it, it belongs to the test declared on the
-// next line.
+// next line, unless the comment lines below it hold a test declaration that
+// is commented out, whose tag it is.
 func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck.Problem) {
 	src = strings.TrimPrefix(strings.ReplaceAll(src, "\r\n", "\n"), utf8BOM)
 	s := lang.read(file, src, isTest)
@@ -237,11 +258,16 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 	var tests []Test
 	var pending []Tag     // the tags of the current run of line comments
 	var idLines []comment // the lines of the run that hold nothing but IDs
+	var below []string    // the text of the lines of the run below its first Verifies line
 	runTagged := false    // the run has a Verifies line
 	last := 0             // the line of the last comment in the run
 	tagEnd := 0           // the line of the last Verifies line, or of a line that continues its list
 	flush := func() {
 		d, above := declAt[last+1]
+		// A test that is commented out below its Verifies comment, as when
+		// the test is commented out but its tag is not, leaves the tag above
+		// whatever test comes next, which it does not verify.
+		commentedOut := pending != nil && above && len(below) > 0 && lang.declares(file, strings.Join(below, "\n"))
 		// A line that holds nothing but IDs, in a run with a Verifies line or
 		// above a test, is meant as part of a Verifies comment: it continues
 		// the ID list as a list item, after "and", or below a blank comment
@@ -254,6 +280,8 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 		}
 		switch {
 		case pending == nil:
+		case commentedOut:
+			report(pending[0].Line, "a Verifies comment above a commented-out test (keep it directly above the test it verifies, or comment it out with the test)")
 		case above && d.group:
 			report(pending[0].Line, "a Verifies comment above a group (put it on the tests in the group, which are what runs)")
 		case above && d.unnamed:
@@ -263,7 +291,7 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 		default:
 			report(pending[0].Line, "a Verifies comment that is not directly above a test declaration")
 		}
-		pending, idLines, runTagged = nil, nil, false
+		pending, idLines, below, runTagged = nil, nil, nil, false
 	}
 	for _, c := range s.comments {
 		rest, tagged := strings.CutPrefix(c.text, "Verifies:")
@@ -283,6 +311,9 @@ func scanFile(file, src string, lang *language, isTest bool) ([]Test, []doccheck
 				flush()
 			}
 			last = c.line
+			if isTest && runTagged && !tagged {
+				below = append(below, c.text)
+			}
 			switch {
 			case !isTest:
 				// Prose in a file that holds no tests is not read for tags.
@@ -348,6 +379,8 @@ func parseTags(s string) (ids, errs []string) {
 	for _, tok := range strings.Split(s, ",") {
 		tok = strings.TrimSpace(tok)
 		switch {
+		case tok == "":
+			errs = append(errs, "an empty entry in a Verifies comment (remove the extra comma)")
 		case criterionTagRE.MatchString(tok), nfrTagRE.MatchString(tok):
 			ids = append(ids, tok)
 		case frTagRE.MatchString(tok):

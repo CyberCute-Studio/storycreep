@@ -12,6 +12,9 @@ var gdLang = &language{
 		return strings.HasPrefix(name, "test_") && strings.HasSuffix(name, ".gd")
 	},
 	read: readGD,
+	declares: func(file, text string) bool {
+		return len(readGD(file, text, true).decls) > 0
+	},
 }
 
 // readGD reads a GDScript file. Its test declarations are the GUT test

@@ -23,6 +23,9 @@ var jsLang = &language{
 	comment: "//",
 	isTest:  jsFileRE.MatchString,
 	read:    readJS,
+	declares: func(file, text string) bool {
+		return len(readJS(file, text, true).decls) > 0
+	},
 }
 
 // jsTestHeads and jsBenchHeads are the functions that declare a test or a

@@ -220,6 +220,73 @@ func TestScanFile(t *testing.T) {
 			want: []Test{{Line: 6, Name: "TestTable/*/inner", Tags: tags(5, "FR-A-01/AC1")}},
 		},
 		{
+			name: "Go subtest names that go test numbers",
+			file: "x_test.go",
+			src: lines(
+				"package x",
+				"func TestNames(t *testing.T) {",
+				`	t.Run("case", func(t *testing.T) {`,
+				"\t\t// Verifies: FR-A-01/AC1",
+				`		t.Run("", func(t *testing.T) {})`,
+				"\t})",
+				"\t// Verifies: FR-A-01/AC2",
+				`	t.Run("case", func(t *testing.T) {`,
+				"\t\t// Verifies: FR-A-01/AC3",
+				`		t.Run("", func(t *testing.T) {})`,
+				"\t\t// Verifies: FR-A-01/AC4",
+				`		t.Run("", func(t *testing.T) {})`,
+				"\t})",
+				"\t// Verifies: FR-A-01/AC5",
+				`	t.Run("case#01", func(t *testing.T) {})`,
+				"\tt.Run(first.name, func(t *testing.T) {",
+				"\t\t// Verifies: FR-B-01/AC1",
+				`		t.Run("inner", func(t *testing.T) {})`,
+				"\t})",
+				"\tt.Run(second.name, func(t *testing.T) {",
+				"\t\t// Verifies: FR-B-01/AC2",
+				`		t.Run("inner", func(t *testing.T) {})`,
+				"\t})",
+				"}",
+			),
+			// The subtests in a subtest without a literal name are not
+			// numbered: go test names them after the name it gets when it runs.
+			want: []Test{
+				{Line: 5, Name: "TestNames/case/#00", Tags: tags(4, "FR-A-01/AC1")},
+				{Line: 8, Name: "TestNames/case#01", Tags: tags(7, "FR-A-01/AC2")},
+				{Line: 10, Name: "TestNames/case#01/#00", Tags: tags(9, "FR-A-01/AC3")},
+				{Line: 12, Name: "TestNames/case#01/#01", Tags: tags(11, "FR-A-01/AC4")},
+				{Line: 15, Name: "TestNames/case#01#01", Tags: tags(14, "FR-A-01/AC5")},
+				{Line: 18, Name: "TestNames/*/inner", Tags: tags(17, "FR-B-01/AC1")},
+				{Line: 22, Name: "TestNames/*/inner", Tags: tags(21, "FR-B-01/AC2")},
+			},
+		},
+		{
+			name: "Go subtests with package testing imported under another name",
+			file: "x_test.go",
+			src: lines(
+				"package x",
+				`import tst "testing"`,
+				"func TestAlias(t *tst.T) {",
+				"\t// Verifies: FR-A-01/AC1",
+				`	t.Run("aliased", func(t *tst.T) {})`,
+				"}",
+			),
+			want: []Test{{Line: 5, Name: "TestAlias/aliased", Tags: tags(4, "FR-A-01/AC1")}},
+		},
+		{
+			name: "Go subtests with package testing dot-imported",
+			file: "x_test.go",
+			src: lines(
+				"package x",
+				`import . "testing"`,
+				"func TestDot(b *B) {",
+				"\t// Verifies: NFR-PERF-01",
+				`	b.Run("dotted", func(b *B) {})`,
+				"}",
+			),
+			want: []Test{{Line: 5, Name: "TestDot/dotted", Tags: tags(4, "NFR-PERF-01")}},
+		},
+		{
 			name: "Run calls that do not start a subtest",
 			file: "x_test.go",
 			src: lines(
@@ -296,6 +363,87 @@ func TestScanFile(t *testing.T) {
 			src:  "package x\n// Verifies: FR-A-01/AC1\n",
 			problems: []string{
 				"x_test.go:2: a Verifies comment that is not directly above a test declaration",
+			},
+		},
+		{
+			name: "Verifies comment above a commented-out Go test",
+			file: "x_test.go",
+			src: lines(
+				"package x",
+				"// Verifies: FR-A-01/AC1",
+				"// func TestOld(t *testing.T) {}",
+				"func TestNew(t *testing.T) {",
+				"\t// Verifies: FR-A-01/AC2",
+				`	// t.Run("old", func(t *testing.T) {`,
+				"\t// })",
+				`	t.Run("new", func(t *testing.T) {})`,
+				"\t// t.Run(\"older\", func(t *testing.T) {})",
+				"\t// Verifies: FR-A-01/AC3",
+				`	t.Run("newer", func(t *testing.T) {})`,
+				"}",
+				"// TestY checks a thing; app.Run and func TestX are prose.",
+				"//",
+				"// Verifies: FR-A-01/AC4",
+				"//",
+				"// It covers the export half, as FR-A-02/AC1 does.",
+				"//",
+				"//nolint:paralleltest",
+				"func TestY(t *testing.T) {}",
+			),
+			want: []Test{
+				{Line: 11, Name: "TestNew/newer", Tags: tags(10, "FR-A-01/AC3")},
+				{Line: 20, Name: "TestY", Tags: tags(15, "FR-A-01/AC4")},
+			},
+			problems: []string{
+				"x_test.go:2: a Verifies comment above a commented-out test (keep it directly above the test it verifies, or comment it out with the test)",
+				"x_test.go:5: a Verifies comment above a commented-out test (keep it directly above the test it verifies, or comment it out with the test)",
+			},
+		},
+		{
+			name: "Verifies comment above a commented-out script test",
+			file: "x.test.ts",
+			src: lines(
+				`describe("group", () => {`,
+				"  // Verifies: FR-A-01/AC1",
+				`  // it("old", () => {`,
+				"  //   expect(1).toBe(1);",
+				"  // });",
+				`  it("new", () => {});`,
+				"  // // Verifies: FR-A-01/AC2",
+				`  // it("commented out with its tag", () => {});`,
+				`  it("after it", () => {});`,
+				"  // Verifies: FR-A-01/AC3",
+				"  // biome-ignore lint/suspicious/noFocusedTests: debugging",
+				`  it.only("focused", () => {});`,
+				"  // Verifies: FR-A-01/AC4",
+				`  // describe("old group", () => {});`,
+				`  it("below a group", () => {});`,
+				"});",
+			),
+			want: []Test{{Line: 12, Name: "group > focused", Tags: tags(10, "FR-A-01/AC3")}},
+			problems: []string{
+				"x.test.ts:2: a Verifies comment above a commented-out test (keep it directly above the test it verifies, or comment it out with the test)",
+				"x.test.ts:13: a Verifies comment above a commented-out test (keep it directly above the test it verifies, or comment it out with the test)",
+			},
+		},
+		{
+			name: "Verifies comment above a commented-out GUT test",
+			file: "test_x.gd",
+			src: lines(
+				"# Verifies: FR-A-01/AC1",
+				"# func test_old():",
+				"#\tassert_true(true)",
+				"func test_new():",
+				"\tpass",
+				"",
+				"# Verifies: FR-A-01/AC2",
+				"## Checks the test_ prefix, which a func needs.",
+				"func test_prose():",
+				"\tpass",
+			),
+			want: []Test{{Line: 9, Name: "test_prose", Tags: tags(7, "FR-A-01/AC2")}},
+			problems: []string{
+				"test_x.gd:1: a Verifies comment above a commented-out test (keep it directly above the test it verifies, or comment it out with the test)",
 			},
 		},
 		{
@@ -475,6 +623,20 @@ func TestScanFile(t *testing.T) {
 				"func TestX(t *testing.T) {}",
 			),
 			problems: []string{"x_test.go:2: a Verifies comment that names no requirement"},
+		},
+		{
+			name: "Verifies list with an extra comma",
+			file: "x_test.go",
+			src: lines(
+				"package x",
+				"// Verifies: FR-A-01/AC1,, FR-A-01/AC2,",
+				"func TestX(t *testing.T) {}",
+			),
+			want: []Test{{Line: 3, Name: "TestX", Tags: tags(2, "FR-A-01/AC1", "FR-A-01/AC2")}},
+			problems: []string{
+				"x_test.go:2: an empty entry in a Verifies comment (remove the extra comma)",
+				"x_test.go:2: an empty entry in a Verifies comment (remove the extra comma)",
+			},
 		},
 		{
 			name:    "Verifies comment outside a test file",
@@ -1480,6 +1642,12 @@ func TestScanLeavesOut(t *testing.T) {
 	}
 	write("docs/notes.md", tagged)      // not a source file
 	write("web/app/x.test.css", tagged) // not a source file
+	// The go tool ignores a Go file whose name, or whose directory's name,
+	// starts with "_" or ".". Vitest does not.
+	for _, path := range []string{"server/_old/x_test.go", "server/internal/a/_x_test.go", "server/internal/a/.x_test.go"} {
+		write(path, tagged)
+	}
+	write("web/app/__tests__/x.test.ts", lines("// Verifies: FR-A-01/AC2", `test("in __tests__", () => {});`))
 
 	// The root is scanned even when its own name would be left out.
 	t.Chdir(root)
@@ -1487,7 +1655,10 @@ func TestScanLeavesOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Test{{File: "server/internal/a/a_test.go", Line: 3, Name: "TestX", Tags: tags(2, "FR-A-01/AC1")}}
+	want := []Test{
+		{File: "server/internal/a/a_test.go", Line: 3, Name: "TestX", Tags: tags(2, "FR-A-01/AC1")},
+		{File: "web/app/__tests__/x.test.ts", Line: 2, Name: "in __tests__", Tags: tags(1, "FR-A-01/AC2")},
+	}
 	if !reflect.DeepEqual(got, want) || len(problems) > 0 {
 		t.Errorf("Scan = %+v, problems:%s\nwant %+v", got, formatProblems(problems), want)
 	}
