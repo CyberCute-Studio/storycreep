@@ -335,6 +335,53 @@ func TestBreakingFromChangedBase(t *testing.T) {
 			input.Properties["colour"] = &Schema{Type: Types{"string"}, ReadOnly: true}
 			input.Required = append(input.Required, "colour")
 		}, nil},
+
+		// Formats and multipleOf that widen or narrow.
+		{"a request's format widens", func(d *Document) {
+			prop(d, "ThingInput", "size").Format = "int32"
+		}, func(d *Document) {
+			prop(d, "ThingInput", "size").Format = "int64"
+		}, nil},
+		{"a request's format narrows", func(d *Document) {
+			prop(d, "ThingInput", "size").Format = "double"
+		}, func(d *Document) {
+			prop(d, "ThingInput", "size").Format = "float"
+		}, []string{`POST /things: the request body.size: format changed from "double" to "float"`}},
+		{"a response's format narrows", func(d *Document) {
+			prop(d, "Thing", "counts").AdditionalProperties.Schema.Format = "int64"
+		}, func(d *Document) {
+			prop(d, "Thing", "counts").AdditionalProperties.Schema.Format = "int32"
+		}, nil},
+		{"a response's format widens", func(d *Document) {
+			prop(d, "Thing", "counts").AdditionalProperties.Schema.Format = "int32"
+		}, func(d *Document) {
+			prop(d, "Thing", "counts").AdditionalProperties.Schema.Format = "int64"
+		}, []string{`GET /things: the response 200 body.items[].counts.*: format changed from "int32" to "int64"`}},
+		{"a request's multipleOf changes to a divisor", func(d *Document) {
+			prop(d, "ThingInput", "size").MultipleOf = ptr(0.3)
+		}, func(d *Document) {
+			prop(d, "ThingInput", "size").MultipleOf = ptr(0.1)
+		}, nil},
+		{"a request's multipleOf changes to a multiple", func(d *Document) {
+			prop(d, "ThingInput", "size").MultipleOf = ptr(2.0)
+		}, func(d *Document) {
+			prop(d, "ThingInput", "size").MultipleOf = ptr(4.0)
+		}, []string{"POST /things: the request body.size: multipleOf changed from \"2\" to \"4\""}},
+		{"a request's multipleOf changes to another", func(d *Document) {
+			prop(d, "ThingInput", "size").MultipleOf = ptr(2.0)
+		}, func(d *Document) {
+			prop(d, "ThingInput", "size").MultipleOf = ptr(3.0)
+		}, []string{"POST /things: the request body.size: multipleOf changed from \"2\" to \"3\""}},
+		{"a response's multipleOf changes to a multiple", func(d *Document) {
+			prop(d, "Thing", "counts").AdditionalProperties.Schema.MultipleOf = ptr(1.0)
+		}, func(d *Document) {
+			prop(d, "Thing", "counts").AdditionalProperties.Schema.MultipleOf = ptr(2.0)
+		}, nil},
+		{"a response's multipleOf changes to a divisor", func(d *Document) {
+			prop(d, "Thing", "counts").AdditionalProperties.Schema.MultipleOf = ptr(2.0)
+		}, func(d *Document) {
+			prop(d, "Thing", "counts").AdditionalProperties.Schema.MultipleOf = ptr(1.0)
+		}, []string{"GET /things: the response 200 body.items[].counts.*: multipleOf changed from \"2\" to \"1\""}},
 	}
 	for _, tt := range tests {
 		base, head := load(t, "base.json"), load(t, "base.json")
@@ -390,10 +437,42 @@ func TestBreakingAdditionalProperties(t *testing.T) {
 			}},
 		{"a response starts taking other properties", object(&Additional{}, nil),
 			object(&Additional{Allowed: true}, nil), nil},
+		{"a map names a property whose values it did not take", object(&Additional{Allowed: true, Schema: integer}, nil),
+			object(&Additional{Allowed: true, Schema: integer}, map[string]*Schema{"total": str}), []string{
+				"POST /x: the request body.total: the type changed from integer to string",
+				"POST /x: the response 200 body.total: the type changed from integer to string",
+			}},
+		{"a map names a property of its values' type", object(&Additional{Allowed: true, Schema: integer}, nil),
+			object(&Additional{Allowed: true, Schema: integer}, map[string]*Schema{"total": integer}), nil},
 	}
 	for _, tt := range tests {
 		if got := messages(Breaking(tt.base, tt.head)); !slices.Equal(got, tt.want) {
 			t.Errorf("%s: Breaking = %q, want %q", tt.name, got, tt.want)
 		}
+	}
+}
+
+// TestBreakingThroughAnAlias checks that a named schema that only refers to
+// another, as an alias does, is compared as the schema it names.
+func TestBreakingThroughAnAlias(t *testing.T) {
+	doc := func(nameType string) *Document {
+		return &Document{
+			OpenAPI: "3.1.0",
+			Paths: map[string]*PathItem{"/x": {Get: &Operation{
+				OperationID: "getX",
+				Responses: map[string]*Response{"200": {Content: map[string]*MediaType{"application/json": {
+					Schema: &Schema{Ref: refPrefix + "Alias"},
+				}}}},
+			}}},
+			Components: &Components{Schemas: map[string]*Schema{
+				"Alias": {Ref: refPrefix + "Target"},
+				"Target": {Type: Types{"object"}, Required: []string{"name"},
+					Properties: map[string]*Schema{"name": {Type: Types{nameType}}}},
+			}},
+		}
+	}
+	want := []string{"GET /x: the response 200 body.name: the type changed from string to integer"}
+	if got := messages(Breaking(doc("string"), doc("integer"))); !slices.Equal(got, want) {
+		t.Errorf("Breaking = %q, want %q", got, want)
 	}
 }

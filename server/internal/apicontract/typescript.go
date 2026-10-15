@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -25,13 +26,16 @@ import (
 // It fails, rather than write a type that is wrong, on what the client
 // cannot express yet: a parameter that is not a string, number, or boolean,
 // or that is in a cookie; a body that is not application/json; a response
-// to a range of statuses, such as 2XX; and a schema whose name is not an
-// identifier, or that has properties and a schema of other properties too.
+// to a range of statuses, such as 2XX; a schema whose name is not an
+// identifier, or that has properties and a schema of other properties too;
+// and a required property that is readOnly or writeOnly, which huma
+// requires only in responses or only in requests, where the type of a
+// named schema is the same in both.
 func TypeScript(d *Document, header string) ([]byte, error) {
 	g := &tsGen{d: d}
 	g.b.WriteString(header)
 	if d.Components != nil {
-		for _, name := range sortedKeys(d.Components.Schemas) {
+		for _, name := range slices.Sorted(maps.Keys(d.Components.Schemas)) {
 			if err := g.declare(name, d.Components.Schemas[name]); err != nil {
 				return nil, fmt.Errorf("schema %s: %w", name, err)
 			}
@@ -150,8 +154,7 @@ func (g *tsGen) typeOf(s *Schema, n int) (string, error) {
 	case s == nil:
 		return "unknown", nil
 	case s.Ref != "":
-		_, name := g.d.resolve(s)
-		return name, nil
+		return refName(s.Ref), nil
 	case s.composed():
 		return g.composition(s, n)
 	}
@@ -288,11 +291,16 @@ func (g *tsGen) object(s *Schema, n int) (string, error) {
 		required[name] = true
 	}
 	var props []prop
-	for _, name := range sortedKeys(s.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(s.Properties)) {
 		p := s.Properties[name]
 		desc, deprecated := "", false
 		if p != nil {
 			desc, deprecated = p.Description, p.Deprecated
+			// TypeScript's comment says why.
+			if required[name] && (p.ReadOnly || p.WriteOnly) {
+				return "", fmt.Errorf("%s: the client cannot type a required property that is readOnly or "+
+					"writeOnly", name)
+			}
 		}
 		props = append(props, prop{name: name, optional: !required[name], schema: p, doc: desc,
 			deprecated: deprecated})
@@ -458,7 +466,7 @@ func (g *tsGen) parameterType(s *Schema) (string, error) {
 func jsonBody(content map[string]*MediaType) (*Schema, error) {
 	if len(content) != 1 || content["application/json"] == nil {
 		return nil, fmt.Errorf("the client handles only application/json, and the body may be %q",
-			sortedKeys(content))
+			slices.Sorted(maps.Keys(content)))
 	}
 	return content["application/json"].Schema, nil
 }

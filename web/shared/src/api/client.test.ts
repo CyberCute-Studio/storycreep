@@ -79,9 +79,28 @@ describe("the API client", () => {
           headers: { "Content-Type": "text/html" },
         }),
     );
+    const error = await createApiClient({ baseUrl, fetch })
+      .call("getHealth")
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 502, error: undefined });
+    expect(await (error as ApiError).response.text()).toBe(
+      "<html>Bad Gateway</html>",
+    );
+  });
+
+  it("refuses a success answer whose body is not JSON", async () => {
+    const { fetch } = fakeFetch(
+      () =>
+        new Response("<!doctype html><title>App</title>", {
+          status: 200,
+          headers: { "Content-Type": "text/html" },
+        }),
+    );
     await expect(
-      createApiClient({ baseUrl, fetch }).call("getHealth"),
-    ).rejects.toMatchObject({ status: 502, error: undefined });
+      createApiClient({ baseUrl, fetch }).call("getVersion"),
+    ).rejects.toThrow(
+      "The server answered with the status 200 and a body that is not JSON (Content-Type: text/html).",
+    );
   });
 
   it("calls the page's own origin without a base URL", async () => {
@@ -157,6 +176,16 @@ describe("a client of generated operations", () => {
     await expect(c.call("getThing", { path: {} })).rejects.toThrow(
       "The path parameter id is missing.",
     );
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses path parameters that would name another path", async () => {
+    const { client: c, calls } = client(() => json(200, {}));
+    for (const id of ["", ".", ".."]) {
+      await expect(c.call("getThing", { path: { id } })).rejects.toThrow(
+        `The path parameter id cannot be ${JSON.stringify(id)}.`,
+      );
+    }
     expect(calls).toHaveLength(0);
   });
 

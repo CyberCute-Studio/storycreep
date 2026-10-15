@@ -62,7 +62,10 @@ type CallArgs<Op extends OperationShape> =
     : [input: Op["input"], options?: CallOptions];
 
 export interface Client<Ops extends Record<keyof Ops, OperationShape>> {
-  /** Calls an operation, and resolves to its answer, or rejects with an ApiError if the server answers with an error. */
+  /**
+   * Calls an operation, and resolves to its answer, or rejects with an ApiError if the server answers with an
+   * error, and with an Error if it answers with a body that is not JSON.
+   */
   call<K extends keyof Ops>(
     operation: K,
     ...args: CallArgs<Ops[K]>
@@ -135,7 +138,12 @@ export function createClient<Ops extends Record<keyof Ops, OperationShape>>(
   };
 }
 
-/** Returns path with each {name} replaced by the parameter's value. */
+/**
+ * Returns path with each {name} replaced by the parameter's value. It
+ * refuses "", which leaves the segment empty, and "." and "..", which a URL
+ * drops, with the segment before "..", even when they are percent-encoded:
+ * each would make the URL name another path.
+ */
 function fillPath(
   path: string,
   params: Record<string, ParameterValue>,
@@ -145,7 +153,13 @@ function fillPath(
     if (value === undefined) {
       throw new TypeError(`The path parameter ${name} is missing.`);
     }
-    return encodeURIComponent(String(value));
+    const s = String(value);
+    if (s === "" || s === "." || s === "..") {
+      throw new TypeError(
+        `The path parameter ${name} cannot be ${JSON.stringify(s)}.`,
+      );
+    }
+    return encodeURIComponent(s);
   });
 }
 
@@ -171,19 +185,34 @@ function isJSON(response: Response): boolean {
   return type === "application/json" || type.endsWith("+json");
 }
 
-/** Returns the JSON body of a response, or undefined if it has none. */
+/**
+ * Returns the JSON body of a response, or undefined if it has none. A body
+ * that is not JSON, such as the page that a proxy or a development server
+ * answers with for a path it does not pass on, is not an answer of the API,
+ * so it is refused rather than taken for an answer without a body.
+ */
 async function readBody(response: Response): Promise<unknown> {
-  if (!isJSON(response)) {
+  const text = await response.text();
+  if (text === "") {
     return undefined;
   }
-  const text = await response.text();
-  return text === "" ? undefined : JSON.parse(text);
+  if (!isJSON(response)) {
+    const type = response.headers.get("Content-Type") ?? "none";
+    throw new Error(
+      `The server answered with the status ${response.status} and a body that is not JSON (Content-Type: ${type}).`,
+    );
+  }
+  return JSON.parse(text);
 }
 
 /** Returns the error envelope's object, or undefined if the body is not the envelope. */
 async function readEnvelope(
   response: Response,
 ): Promise<ErrorBody | undefined> {
+  if (!isJSON(response)) {
+    // The body stays unread, for the caller to read from the ApiError.
+    return undefined;
+  }
   try {
     const body = await readBody(response);
     const error = (body as { error?: Partial<ErrorBody> } | undefined)?.error;

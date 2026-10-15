@@ -96,9 +96,10 @@ func Check(ctx context.Context, path, base string) (Result, error) {
 }
 
 // overrides returns the API-Break trailers of the commits since base, which
-// git finds whatever their case.
+// git finds whatever their case. A signature check, which log.showSignature
+// turns on, would write its output into the records.
 func overrides(ctx context.Context, dir, base string) ([]Override, error) {
-	out, err := gitexec.Run(ctx, dir, "", "log", "-z",
+	out, err := gitexec.Run(ctx, dir, "", "log", "-z", "--no-show-signature",
 		"--format=%H%x1f%(trailers:key="+OverrideTrailer+",valueonly,separator=%x1e,unfold)", base+"..HEAD")
 	if err != nil {
 		return nil, err

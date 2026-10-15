@@ -141,6 +141,12 @@ func TestTypeScriptRefuses(t *testing.T) {
 		{"properties without a type", func(d *Document) {
 			d.Components.Schemas["Odd"] = &Schema{Properties: map[string]*Schema{"a": {}}}
 		}, "has no type"},
+		{"a required readOnly property", func(d *Document) {
+			d.Components.Schemas["Thing"].Properties["id"].ReadOnly = true
+		}, "id: the client cannot type a required property that is readOnly or writeOnly"},
+		{"a required writeOnly property", func(d *Document) {
+			d.Components.Schemas["ThingInput"].Properties["name"].WriteOnly = true
+		}, "name: the client cannot type a required property that is readOnly or writeOnly"},
 	}
 	for _, tt := range tests {
 		d := load(t, "base.json")
@@ -177,6 +183,22 @@ func TestTypeScriptCompositions(t *testing.T) {
 		got, err := g.typeOf(tt.schema, 0)
 		if err != nil || got != tt.want {
 			t.Errorf("typeOf(%+v) = %q, %v; want %q", tt.schema, got, err, tt.want)
+		}
+	}
+
+	// A named schema that only refers to another is an alias of its type,
+	// and a reference to it names it.
+	d := load(t, "base.json")
+	d.Components.Schemas["ThingAlias"] = &Schema{Ref: refPrefix + "Thing"}
+	d.Paths["/things/{id}"].Get.Responses["200"].Content["application/json"].Schema = &Schema{
+		Ref: refPrefix + "ThingAlias"}
+	ts, err := TypeScript(d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"export type ThingAlias = Thing;", "      200: ThingAlias;"} {
+		if !strings.Contains(string(ts), s) {
+			t.Errorf("an alias: the TypeScript lacks %q", s)
 		}
 	}
 }

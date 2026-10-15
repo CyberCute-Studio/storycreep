@@ -54,6 +54,9 @@ func TestLoadRefuses(t *testing.T) {
 		{"a parameter in an unknown place", `"in": "header"`, `"in": "body"`, "not a place for one"},
 		{"an unknown type", `"type": "boolean"`, `"type": "bool"`, `"bool" is not a type`},
 		{"a response key that is not a status", `"304": {`, `"3xx": {`, "is not a status"},
+		{"a null schema", `"schemas": {`, `"schemas": {"Nothing": null,`, "schema Nothing is null"},
+		{"references in a cycle", `"schemas": {`, `"schemas": {"A": {"$ref": "#/components/schemas/B"}, ` +
+			`"B": {"$ref": "#/components/schemas/A"},`, "schema A: its references go round in a cycle"},
 	}
 	for _, tt := range tests {
 		if !strings.Contains(string(base), tt.old) {
@@ -71,5 +74,10 @@ func TestLoadRefuses(t *testing.T) {
 		`"$ref": "#/components/schemas/ThingPage", "description": "A page", "readOnly": true, "deprecated": true`, 1)
 	if _, err := Load([]byte(annotated)); err != nil {
 		t.Errorf("annotations beside a reference: Load = %v, want no error", err)
+	}
+	alias := strings.Replace(string(base), `"schemas": {`,
+		`"schemas": {"A": {"$ref": "#/components/schemas/B"}, "B": {"$ref": "#/components/schemas/Thing"},`, 1)
+	if _, err := Load([]byte(alias)); err != nil {
+		t.Errorf("a chain of aliases: Load = %v, want no error", err)
 	}
 }

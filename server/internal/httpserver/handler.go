@@ -165,12 +165,14 @@ type documentOutput struct {
 // operations are all registered by then, and an ETag lets a client keep a
 // copy until the server changes.
 func registerDocument(m *api.Mux) {
-	var (
-		once      sync.Once
-		doc       []byte
-		etag      string
-		renderErr error
-	)
+	type rendered struct {
+		doc  []byte
+		etag string
+	}
+	render := sync.OnceValues(func() (rendered, error) {
+		doc, err := m.Document()
+		return rendered{doc: doc, etag: api.ETag(doc)}, err
+	})
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "getOpenAPIDocument",
 		Method:      http.MethodGet,
@@ -189,18 +191,15 @@ func registerDocument(m *api.Mux) {
 			"304": api.NotModifiedResponse(),
 		},
 	}, func(_ context.Context, in *documentInput) (*documentOutput, error) {
-		once.Do(func() {
-			doc, renderErr = m.Document()
-			etag = api.ETag(doc)
-		})
-		if renderErr != nil {
-			return nil, renderErr
+		r, err := render()
+		if err != nil {
+			return nil, err
 		}
-		if api.IfNoneMatch(in.IfNoneMatch, etag) {
-			return nil, api.NotModified(etag)
+		if api.IfNoneMatch(in.IfNoneMatch, r.etag) {
+			return nil, api.NotModified(r.etag)
 		}
-		return &documentOutput{ETag: etag, CacheControl: api.CacheRevalidate, ContentType: "application/json",
-			Body: doc}, nil
+		return &documentOutput{ETag: r.etag, CacheControl: api.CacheRevalidate, ContentType: "application/json",
+			Body: r.doc}, nil
 	})
 }
 

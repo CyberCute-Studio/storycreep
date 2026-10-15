@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
 	"regexp"
 	"slices"
@@ -230,8 +231,9 @@ const refPrefix = "#/components/schemas/"
 // Load reads a document, and checks that it is one this package understands:
 // OpenAPI 3.1, with only the objects and keywords that the types above have,
 // references only to named schemas that exist, with nothing but annotations
-// beside them, a unique operationId on every operation, and path parameters
-// that match their path.
+// beside them, and no named schemas that only refer to each other in a
+// cycle, a unique operationId on every operation, and path parameters that
+// match their path.
 func Load(b []byte) (*Document, error) {
 	var d Document
 	if err := decodeStrict(b, &d); err != nil {
@@ -275,9 +277,27 @@ func templateParams(path string) []string {
 
 func (d *Document) check() error {
 	if d.Components != nil {
-		for name, s := range d.Components.Schemas {
+		for _, name := range slices.Sorted(maps.Keys(d.Components.Schemas)) {
+			s := d.Components.Schemas[name]
+			if s == nil {
+				return fmt.Errorf("schema %s is null", name)
+			}
 			if err := d.checkSchema(s); err != nil {
 				return fmt.Errorf("schema %s: %w", name, err)
+			}
+		}
+		// A named schema may be a reference to another, as an alias is, which
+		// the comparison and the generator follow to the schema that it
+		// names, so the references must end.
+		for _, name := range slices.Sorted(maps.Keys(d.Components.Schemas)) {
+			seen := map[string]bool{name: true}
+			for s := d.Components.Schemas[name]; s.Ref != ""; {
+				next := refName(s.Ref)
+				if seen[next] {
+					return fmt.Errorf("schema %s: its references go round in a cycle", name)
+				}
+				seen[next] = true
+				s = d.Components.Schemas[next]
 			}
 		}
 	}
@@ -426,7 +446,7 @@ func (s *Schema) subschemas() []*Schema {
 	if s.AdditionalProperties != nil && s.AdditionalProperties.Schema != nil {
 		out = append(out, s.AdditionalProperties.Schema)
 	}
-	for _, name := range sortedKeys(s.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(s.Properties)) {
 		out = append(out, s.Properties[name])
 	}
 	out = append(out, s.OneOf...)
@@ -461,20 +481,21 @@ func paramKey(p *Parameter) string {
 }
 
 // resolve returns the named schema that s refers to, and its name, or s and
-// "" if s is not a reference. Load has checked that the name exists.
+// "" if s is not a reference. A named schema that is itself a reference, as
+// an alias of another is, is followed to the schema that describes the
+// values, whose name it returns. Load has checked that every name exists and
+// that no chain of references goes round in a cycle.
 func (d *Document) resolve(s *Schema) (*Schema, string) {
-	if s == nil || s.Ref == "" {
-		return s, ""
+	var name string
+	// A document built in code may have a cycle, which ends here.
+	for i := 0; s != nil && s.Ref != "" && i <= len(d.Components.Schemas); i++ {
+		name = refName(s.Ref)
+		s = d.Components.Schemas[name]
 	}
-	name := strings.TrimPrefix(s.Ref, refPrefix)
-	return d.Components.Schemas[name], name
+	return s, name
 }
 
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
+// refName returns the name of the schema that a reference names.
+func refName(ref string) string {
+	return strings.TrimPrefix(ref, refPrefix)
 }

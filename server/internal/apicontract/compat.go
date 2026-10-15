@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -47,14 +49,19 @@ func (c Change) String() string {
 //   - A request's schema accepts less, or a response's allows more: a type,
 //     null, or an enum value; a bound, a length, or a count made tighter in
 //     a request, or looser in a response; a format, pattern, multipleOf, or
-//     uniqueItems added in a request, or removed in a response; an
-//     encoding changed; or, in a request, a default changed or removed.
+//     uniqueItems added or changed in a request, or removed or changed in a
+//     response, except a format that a request widens from int32 to int64
+//     or from float to double, or a response narrows the other way, and a
+//     multipleOf that a request changes to a divisor of the old one, or a
+//     response to a multiple of it; an encoding changed; or, in a request,
+//     a default changed or removed.
 //   - A request's object no longer accepts a property, because it no longer
 //     names it and accepts no others, or newly requires one. A response's
 //     object lacks a property that it had, or no longer always has one that
-//     it always had. A required property is required as huma reads it: not
-//     in a request if it is readOnly, and not in a response if it is
-//     writeOnly.
+//     it always had, or, if it described the properties that it did not
+//     name, as a map does, names one whose values that description did not
+//     allow. A required property is required as huma reads it: not in a
+//     request if it is readOnly, and not in a response if it is writeOnly.
 //
 // Schemas combined with oneOf, anyOf, or allOf are compared member by
 // member, and a change in the number of members breaks a client. Titles,
@@ -123,7 +130,7 @@ type located struct {
 // locate returns the document's operations, by path and then method.
 func locate(d *Document) []located {
 	var out []located
-	for _, path := range sortedKeys(d.Paths) {
+	for _, path := range slices.Sorted(maps.Keys(d.Paths)) {
 		for _, mo := range d.Paths[path].operations() {
 			out = append(out, located{
 				method: mo.method,
@@ -173,7 +180,7 @@ func serialization(in, style string, explode *bool) string {
 
 func (c *comparer) parameters(b, h located) {
 	bp, hp := params(b), params(h)
-	for _, key := range sortedKeys(bp) {
+	for _, key := range slices.Sorted(maps.Keys(bp)) {
 		was := bp[key]
 		name := "the " + was.In + " parameter " + was.Name
 		is, ok := hp[key]
@@ -189,7 +196,7 @@ func (c *comparer) parameters(b, h located) {
 		}
 		c.schema(name, was.Schema, is.Schema, request)
 	}
-	for _, key := range sortedKeys(hp) {
+	for _, key := range slices.Sorted(maps.Keys(hp)) {
 		if is := hp[key]; bp[key] == nil && is.Required {
 			c.report("the %s parameter %s is new and required", is.In, is.Name)
 		}
@@ -212,7 +219,7 @@ func (c *comparer) requestBody(b, h *RequestBody) {
 	if !b.Required && h.Required {
 		c.report("the request body is now required")
 	}
-	for _, mt := range sortedKeys(b.Content) {
+	for _, mt := range slices.Sorted(maps.Keys(b.Content)) {
 		is, ok := h.Content[mt]
 		if !ok {
 			c.report("the request body is no longer taken as %s", mt)
@@ -275,12 +282,12 @@ func (c *comparer) responses(b, h map[string]*Response) {
 
 func (c *comparer) response(status string, b, h *Response) {
 	name := "the response " + status
-	for _, mt := range sortedKeys(h.Content) {
+	for _, mt := range slices.Sorted(maps.Keys(h.Content)) {
 		if b.Content[mt] == nil {
 			c.report("%s may now be %s", name, mt)
 		}
 	}
-	for _, mt := range sortedKeys(b.Content) {
+	for _, mt := range slices.Sorted(maps.Keys(b.Content)) {
 		is, ok := h.Content[mt]
 		if !ok {
 			c.report("%s is no longer %s", name, mt)
@@ -294,7 +301,7 @@ func (c *comparer) response(status string, b, h *Response) {
 	}
 	// A header that base's did not have breaks nothing, because clients
 	// ignore the headers they do not know.
-	for _, n := range sortedKeys(b.Headers) {
+	for _, n := range slices.Sorted(maps.Keys(b.Headers)) {
 		was := b.Headers[n]
 		is, ok := headers[strings.ToLower(n)]
 		if !ok {
@@ -524,37 +531,77 @@ func (c *comparer) bounds(loc string, b, h, wide, narrow *Schema) {
 	}
 }
 
+// formatWidens maps a format to a wider one, which allows every value that
+// it allows: every int32 is an int64, and every float is a double.
+var formatWidens = map[string]string{"int32": "int64", "float": "double"}
+
 // keywords compares the keywords that restrict values without a bound.
 func (c *comparer) keywords(loc string, b, h, wide, narrow *Schema) {
 	for _, k := range []struct {
 		name string
 		get  func(*Schema) string
-		// either makes any change break a client, because the keyword
-		// changes how the value is read rather than which values there are.
-		either bool
+		// within reports whether every value that the keyword's value w
+		// allows is one that its value n allows, "" being its absence.
+		within func(w, n string) bool
 	}{
-		{"format", func(s *Schema) string { return s.Format }, false},
-		{"pattern", func(s *Schema) string { return s.Pattern }, false},
+		{"format", func(s *Schema) string { return s.Format }, formatWithin},
+		{"pattern", func(s *Schema) string { return s.Pattern }, restrictingWithin},
 		{"multipleOf", func(s *Schema) string {
 			if s.MultipleOf == nil {
 				return ""
 			}
 			return strconv.FormatFloat(*s.MultipleOf, 'g', -1, 64)
-		}, false},
+		}, multipleWithin},
 		{"uniqueItems", func(s *Schema) string {
 			if !s.UniqueItems {
 				return ""
 			}
 			return "true"
-		}, false},
-		{"contentEncoding", func(s *Schema) string { return s.ContentEncoding }, true},
-		{"contentMediaType", func(s *Schema) string { return s.ContentMediaType }, true},
+		}, restrictingWithin},
+		{"contentEncoding", func(s *Schema) string { return s.ContentEncoding }, readingWithin},
+		{"contentMediaType", func(s *Schema) string { return s.ContentMediaType }, readingWithin},
 	} {
-		n, w := k.get(narrow), k.get(wide)
-		if n != w && (n != "" || k.either) {
+		if !k.within(k.get(wide), k.get(narrow)) {
 			c.report("%s: %s changed from %s to %s", loc, k.name, quoteOrNone(k.get(b)), quoteOrNone(k.get(h)))
 		}
 	}
+}
+
+// restrictingWithin is within for a keyword that allows every value when it
+// is absent, and whose values the comparison does not order, as it does not
+// order two patterns: n allows what w does if it is absent or the same.
+func restrictingWithin(w, n string) bool {
+	return n == "" || w == n
+}
+
+// readingWithin is within for a keyword that changes how a value is read
+// rather than which values there are, so that any change breaks a client.
+func readingWithin(w, n string) bool {
+	return w == n
+}
+
+// formatWithin is within for format, which a wider format of the same type
+// may replace.
+func formatWithin(w, n string) bool {
+	return restrictingWithin(w, n) || formatWidens[w] == n
+}
+
+// multipleWithin is within for multipleOf: every multiple of w is a
+// multiple of n if w is one, give or take the rounding of their decimals.
+func multipleWithin(w, n string) bool {
+	if n == "" {
+		return true
+	}
+	if w == "" {
+		return false
+	}
+	wf, errW := strconv.ParseFloat(w, 64)
+	nf, errN := strconv.ParseFloat(n, 64)
+	if errW != nil || errN != nil {
+		return false
+	}
+	r := wf / nf
+	return r >= 1 && math.Abs(r-math.Round(r)) <= 1e-9*r
 }
 
 func (c *comparer) composition(loc string, b, h *Schema, dir direction) {
@@ -602,7 +649,7 @@ func needed(s *Schema, dir direction) map[string]bool {
 
 func (c *comparer) object(loc string, b, h *Schema, dir direction) {
 	bReq, hReq := needed(b, dir), needed(h, dir)
-	for _, name := range sortedKeys(b.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(b.Properties)) {
 		at := loc + "." + name
 		is, ok := h.Properties[name]
 		switch {
@@ -625,7 +672,7 @@ func (c *comparer) object(loc string, b, h *Schema, dir direction) {
 		}
 		c.schema(at, b.Properties[name], is, dir)
 	}
-	for _, name := range sortedKeys(h.Properties) {
+	for _, name := range slices.Sorted(maps.Keys(h.Properties)) {
 		if _, ok := b.Properties[name]; ok {
 			continue
 		}
@@ -637,8 +684,12 @@ func (c *comparer) object(loc string, b, h *Schema, dir direction) {
 			// A client may have sent the property, as one that base
 			// accepted without naming it.
 			c.schema(at, additionalSchema(b), h.Properties[name], dir)
+		case dir == response && additionalSchema(b) != nil:
+			// Base described every property that it did not name, as a map
+			// does, so a client reads the new one as one of those.
+			c.schema(at, additionalSchema(b), h.Properties[name], dir)
 		}
-		// A response may gain properties, which clients ignore.
+		// Otherwise a response may gain properties, which clients ignore.
 	}
 	switch {
 	case dir == request && accepted(b) && !accepted(h):

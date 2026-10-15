@@ -8,36 +8,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
-)
 
-// gitRepo returns a new git repository in a temporary directory, and a
-// function that runs git in it. git reads no configuration of the user's or
-// the system's, so that the test does not depend on it.
-func gitRepo(t *testing.T) (string, func(args ...string) string) {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git is not installed")
-	}
-	dir := t.TempDir()
-	global := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(global, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	run := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=Test", "-c", "user.email=test@example.com"},
-			args...)...)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-		return string(out)
-	}
-	run("init", "-q", "-b", "main")
-	return dir, run
-}
+	"github.com/CyberCute-Studio/storycreep/server/internal/gitexec/gitexectest"
+)
 
 // copyFixture writes testdata/name to path.
 func copyFixture(t *testing.T, name, path string) {
@@ -61,7 +34,7 @@ func copyFixture(t *testing.T, name, path string) {
 //
 // Verifies: FR-API-01/AC3
 func TestCheck(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitexectest.Repo(t)
 	doc := filepath.Join(repo, "schema", "api", "v1", "openapi.json")
 	copyFixture(t, "base.json", doc)
 	git("add", ".")
@@ -123,7 +96,7 @@ func TestCheck(t *testing.T) {
 }
 
 func TestCheckBeforeTheFirstDocument(t *testing.T) {
-	repo, git := gitRepo(t)
+	repo, git := gitexectest.Repo(t)
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -145,5 +118,41 @@ func TestCheckBeforeTheFirstDocument(t *testing.T) {
 	}
 	if _, err := Check(context.Background(), doc, "main"); err == nil || !strings.Contains(err.Error(), "restore") {
 		t.Errorf("without the document: %v, want an error saying to restore it", err)
+	}
+}
+
+// TestCheckWithSignatureChecks checks that the commit an override names is
+// the commit, when the user's log.showSignature makes git log check each
+// commit's signature and say what it found.
+func TestCheckWithSignatureChecks(t *testing.T) {
+	keygen, err := exec.LookPath("ssh-keygen")
+	if err != nil {
+		t.Skip("ssh-keygen is not installed")
+	}
+	repo, git := gitexectest.Repo(t)
+	key := filepath.Join(t.TempDir(), "key")
+	if out, err := exec.Command(keygen, "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {
+		t.Skipf("ssh-keygen cannot make a key: %v\n%s", err, out)
+	}
+	doc := filepath.Join(repo, "schema", "api", "v1", "openapi.json")
+	copyFixture(t, "base.json", doc)
+	git("add", ".")
+	git("commit", "-q", "-m", "The first document")
+	git("switch", "-q", "-c", "feature")
+	copyFixture(t, "response-field-removed.json", doc)
+	git("config", "--global", "log.showSignature", "true")
+	sign := exec.Command("git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+		"-c", "gpg.format=ssh", "-c", "gpg.ssh.program="+keygen, "-c", "user.signingKey="+key,
+		"commit", "-q", "-S", "-am", "Remove the name\n\nAPI-Break: no client depends on v1 before the first release")
+	if out, err := sign.CombinedOutput(); err != nil {
+		t.Skipf("git cannot sign a commit with ssh-keygen: %v\n%s", err, out)
+	}
+	head := strings.TrimSpace(git("rev-parse", "HEAD"))
+	res, err := Check(context.Background(), doc, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Overrides) != 1 || res.Overrides[0].Commit != head {
+		t.Errorf("Overrides = %+v, want one by %s", res.Overrides, head)
 	}
 }
