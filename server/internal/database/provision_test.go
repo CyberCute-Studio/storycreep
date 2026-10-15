@@ -3,6 +3,9 @@ package database_test
 import (
 	"context"
 	"errors"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -134,6 +137,39 @@ func quote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
+// TestProvisionPasswordFromFile checks that a login whose URL has no password
+// is given the one its connections take from a password file, as they would
+// from PGPASSWORD, so that the server can log in with it.
+func TestProvisionPasswordFromFile(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	login := d.FreshLogin(t)
+	passfile := filepath.Join(t.TempDir(), "pgpass")
+	if err := os.WriteFile(passfile, []byte("*:*:*:"+login+":from-the-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app, err := config.ParseDatabaseURL(d.URL(t, login, "").Reveal() + "&passfile=" + url.QueryEscape(passfile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Password().IsSet() {
+		t.Fatalf("the URL %s has a password", app)
+	}
+
+	if _, err := database.Migrate(ctx, d.AdminURL, app, database.MigrateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !canConnect(t, d.URL(t, login, "from-the-file")) {
+		t.Errorf("the login cannot connect with the password from the file")
+	}
+	db, err := database.Open(ctx, app)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	db.Close()
+}
+
 // TestProvisionFixesTheLogin checks that an existing login that cannot log in
 // or does not inherit privileges is corrected, including one that was granted
 // storycreep_app while it did not inherit, which on PostgreSQL 16 and later
@@ -194,6 +230,14 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 			`it is a member of "storycreep_maintenance", which has BYPASSRLS`},
 		{"member of definer", func(r, _ string) string { return "GRANT storycreep_definer TO " + r },
 			`it is a member of "storycreep_definer", which is reserved`},
+		// Each of these reaches the superuser through the server's files or
+		// programs, such as by running psql there.
+		{"member of pg_execute_server_program", func(r, _ string) string { return "GRANT pg_execute_server_program TO " + r },
+			`it is a member of "pg_execute_server_program", which gives access to the database server's files`},
+		{"member of pg_read_server_files", func(r, _ string) string { return "GRANT pg_read_server_files TO " + r },
+			`it is a member of "pg_read_server_files", which gives access`},
+		{"member of pg_write_server_files", func(r, _ string) string { return "GRANT pg_write_server_files TO " + r },
+			`it is a member of "pg_write_server_files", which gives access`},
 		{"table owner", func(r, n string) string {
 			return "CREATE TABLE owned_" + n + " (x int); ALTER TABLE owned_" + n + " OWNER TO " + r
 		}, "it owns objects in the database"},

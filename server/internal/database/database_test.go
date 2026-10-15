@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -271,7 +272,7 @@ func TestStart(t *testing.T) {
 		}
 		defer db.Close()
 		p, err := db.Pending(ctx)
-		if err != nil || !equalVersions(p, embeddedVersions(t)) {
+		if err != nil || !slices.Equal(p, embeddedVersions(t)) {
 			t.Errorf("Pending() = %v, %v; want every migration", p, err)
 		}
 		if !strings.Contains(logged.String(), `"level":"WARN","msg":"the database has pending migrations`) {

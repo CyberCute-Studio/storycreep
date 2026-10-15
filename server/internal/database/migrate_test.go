@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -61,18 +62,6 @@ func versionsOf(applied []database.AppliedMigration) []int64 {
 	return vs
 }
 
-func equalVersions(a, b []int64) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func TestMigrateFreshDatabase(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -83,15 +72,20 @@ func TestMigrateFreshDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := versionsOf(res.Applied); !equalVersions(got, want) || res.Version != want[len(want)-1] {
+	if got := versionsOf(res.Applied); !slices.Equal(got, want) || res.Version != want[len(want)-1] {
 		t.Errorf("applied %v up to version %d, want %v", got, res.Version, want)
 	}
 	if res.Applied[0].Name != "00001_roles.sql" {
 		t.Errorf("the first migration is named %q", res.Applied[0].Name)
 	}
 
-	// Applying again does nothing.
-	res, err = database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{})
+	// Applying again does nothing. The admin URL may carry the pool
+	// parameters that the application's URL accepts.
+	admin, err := config.ParseDatabaseURL(d.AdminURL.Reveal() + "&pool_max_conns=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = database.Migrate(ctx, admin, d.AppURL, database.MigrateOptions{})
 	if err != nil || len(res.Applied) != 0 || res.Version != want[len(want)-1] {
 		t.Errorf("the second run applied %v up to version %d, %v; want nothing", res.Applied, res.Version, err)
 	}
@@ -231,7 +225,7 @@ func TestFailedMigration(t *testing.T) {
 	fixed := maps.Clone(good)
 	fixed["90002_bad.sql"] = "CREATE TABLE half (x int);"
 	res, err = database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: withMigrations(t, fixed)})
-	if err != nil || !equalVersions(versionsOf(res.Applied), []int64{90002}) {
+	if err != nil || !slices.Equal(versionsOf(res.Applied), []int64{90002}) {
 		t.Errorf("the fixed migration: applied %v, %v; want 90002", res.Applied, err)
 	}
 }
@@ -250,7 +244,7 @@ func TestNewerDatabase(t *testing.T) {
 
 	_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{})
 	var uerr *database.UnknownMigrationsError
-	if !errors.As(err, &uerr) || !equalVersions(uerr.Versions, []int64{90001}) || !strings.Contains(err.Error(), "newer") {
+	if !errors.As(err, &uerr) || !slices.Equal(uerr.Versions, []int64{90001}) || !strings.Contains(err.Error(), "newer") {
 		t.Errorf("Migrate returned %v, want an *UnknownMigrationsError for 90001", err)
 	}
 	if _, err := d.Open(t).Pending(ctx); !errors.As(err, &uerr) {
@@ -339,7 +333,7 @@ func TestUpgradeMatchesFreshInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := versionsOf(res.Applied); !equalVersions(got, []int64{90001, 90002}) {
+	if got := versionsOf(res.Applied); !slices.Equal(got, []int64{90001, 90002}) {
 		t.Errorf("the upgrade applied %v, want only the newer migrations", got)
 	}
 

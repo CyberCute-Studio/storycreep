@@ -40,8 +40,10 @@ type DB struct {
 // Open connects to the database as the application login and checks that
 // row-level security holds it: the login must not be a superuser, have
 // BYPASSRLS, CREATEROLE, or REPLICATION, own objects in the database, or be
-// a member of a role that does, directly or through other roles. If it is,
-// the error is an *UnsafeLoginError.
+// a member of a role that does, of one of the server's privileged roles, or
+// of one of PostgreSQL's roles that give access to the database server's
+// files and programs, directly or through other roles. If it is, the error
+// is an *UnsafeLoginError.
 func Open(ctx context.Context, app config.DatabaseURL) (*DB, error) {
 	if !app.IsSet() {
 		return nil, errors.New("STORYCREEP_DATABASE_URL is not set")
@@ -149,11 +151,11 @@ type StartOptions struct {
 // Start is the database step of the server's startup (PRD FR-ADMIN-04). With
 // AutoMigrate, it applies the pending migrations under the migration lock,
 // which makes instances that start together safe, and provisions the
-// application login. Then it opens the application login's pool, and checks
-// that the migrations reached the database the pool connects to. Without
-// AutoMigrate, a pending migration is logged as a warning and is for
-// "storycreep migrate" to apply, while the server reports that it is not
-// ready.
+// application login (Migrate, which also checks that the migrations reached
+// the database the application login connects to). Then it opens the
+// application login's pool. Without AutoMigrate, a pending migration is
+// logged as a warning and is for "storycreep migrate" to apply, while the
+// server reports that it is not ready.
 func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, error) {
 	log := opts.Log
 	if log == nil {
@@ -163,12 +165,14 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 	if opts.AutoMigrate {
 		var err error
 		res, err = Migrate(ctx, cfg.DatabaseAdminURL, cfg.DatabaseURL, MigrateOptions{})
-		if err != nil {
-			return nil, err
-		}
+		// The migrations applied before a failed one stay applied, so they
+		// are logged too.
 		for _, m := range res.Applied {
 			log.InfoContext(ctx, "applied a database migration", "version", m.Version, "name", m.Name,
 				"duration", m.Duration)
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 	db, err := Open(ctx, cfg.DatabaseURL)
@@ -180,12 +184,6 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 	case err != nil:
 		db.Close()
 		return nil, err
-	case len(p) > 0 && opts.AutoMigrate:
-		// The admin URL reached a database other than the application's,
-		// such as one of the same name on another server.
-		db.Close()
-		return nil, fmt.Errorf("the database that STORYCREEP_DATABASE_URL connects to still has pending migrations "+
-			"(%s) after migrating; STORYCREEP_DATABASE_ADMIN_URL must connect to the same database", joinVersions(p))
 	case len(p) > 0:
 		log.WarnContext(ctx, "the database has pending migrations; run storycreep migrate to apply them",
 			"pending", p)
@@ -212,18 +210,26 @@ func (e *UnsafeLoginError) Error() string {
 // privileged work. The application login must not have them (checkLogin).
 var privilegedRoles = []string{"storycreep_definer", "storycreep_maintenance"}
 
+// serverAccessRoles are PostgreSQL's predefined roles that read or write
+// files on the database server, or run programs there, as the operating
+// system user that runs PostgreSQL. PostgreSQL warns that each can be turned
+// into superuser access, so the application login must not have them either
+// (checkLogin).
+var serverAccessRoles = []string{"pg_execute_server_program", "pg_read_server_files", "pg_write_server_files"}
+
 // unsafeRolesQuery lists the roles whose privileges the login $1 has, itself
 // included, that row-level security would not hold: a superuser, a role with
 // BYPASSRLS, a role with CREATEROLE (which on PostgreSQL 15 can grant itself
 // any role that is not a superuser, such as storycreep_maintenance), a role
 // with REPLICATION (which can stream a copy of the whole cluster), a role
 // that owns objects in the current database (an owner can switch row-level
-// security off, and the owner of a schema can drop what is in it), and the
-// privileged roles $2. Temporary objects do not count: they belong to the
-// session that made them, and any session of the login may hold some while
-// another instance starts.
+// security off, and the owner of a schema can drop what is in it), the
+// privileged roles $2, and the server access roles $3. Temporary objects do
+// not count: they belong to the session that made them, and any session of
+// the login may hold some while another instance starts.
 const unsafeRolesQuery = `
-SELECT r.rolname, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolreplication, r.owns
+SELECT r.rolname, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolreplication, r.owns,
+	r.rolname = ANY ($3::name[]) AS server_access
 FROM (
 	SELECT rolname, oid, rolsuper, rolbypassrls, rolcreaterole, rolreplication,
 		EXISTS (SELECT FROM pg_class WHERE relowner = pg_roles.oid AND relpersistence <> 't')
@@ -238,13 +244,13 @@ FROM (
 ) r
 WHERE pg_has_role($1::name, r.oid, 'MEMBER')
 	AND (r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR r.rolreplication OR r.owns
-		OR r.rolname = ANY ($2::name[]))
+		OR r.rolname = ANY ($2::name[]) OR r.rolname = ANY ($3::name[]))
 ORDER BY r.rolname <> $1::name, r.rolname`
 
 // checkLogin returns an *UnsafeLoginError if row-level security would not
 // hold the login.
 func checkLogin(ctx context.Context, q querier, login string) error {
-	rows, err := q.Query(ctx, unsafeRolesQuery, login, privilegedRoles)
+	rows, err := q.Query(ctx, unsafeRolesQuery, login, privilegedRoles, serverAccessRoles)
 	if err != nil {
 		return fmt.Errorf("check the login %q: %w", login, err)
 	}
@@ -252,8 +258,8 @@ func checkLogin(ctx context.Context, q querier, login string) error {
 	var reasons []string
 	for rows.Next() {
 		var role string
-		var super, bypass, createRole, replication, owns bool
-		if err := rows.Scan(&role, &super, &bypass, &createRole, &replication, &owns); err != nil {
+		var super, bypass, createRole, replication, owns, serverAccess bool
+		if err := rows.Scan(&role, &super, &bypass, &createRole, &replication, &owns, &serverAccess); err != nil {
 			return fmt.Errorf("check the login %q: %w", login, err)
 		}
 		var what []string
@@ -273,6 +279,9 @@ func checkLogin(ctx context.Context, q querier, login string) error {
 			}
 			if owns {
 				what = append(what, "owns objects in the database")
+			}
+			if serverAccess {
+				what = append(what, "gives access to the database server's files and programs")
 			}
 		}
 		if len(what) == 0 {

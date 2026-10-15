@@ -37,7 +37,8 @@ func TestMigrate(t *testing.T) {
 }
 
 // TestMigrateFailures checks that migrate exits with status 1, saying why,
-// when it cannot apply the migrations.
+// when it cannot apply the migrations, or when the server could not use them
+// as the application login.
 //
 // Verifies: FR-ADMIN-06/AC1
 func TestMigrateFailures(t *testing.T) {
@@ -56,5 +57,16 @@ func TestMigrateFailures(t *testing.T) {
 	if code != ExitFailure || !strings.Contains(stderr, `storycreep migrate: the login "postgres" in STORYCREEP_DATABASE_URL`) ||
 		strings.Contains(stderr, d.AdminURL.Password().Reveal()) {
 		t.Errorf("with a superuser as the application login: exit %d, stderr %q", code, stderr)
+	}
+
+	// The migrations apply, but the server could not connect as the
+	// application login, here because nothing listens where its URL points.
+	e := dbtest.Empty(t)
+	env = migrateEnv(e, true)
+	env["STORYCREEP_DATABASE_URL"] = "postgres://" + e.FreshLogin(t) + ":pw@127.0.0.1:1/" + e.Name + "?sslmode=disable"
+	code, stdout, stderr = run(t, env, "migrate")
+	if code != ExitFailure || !strings.HasPrefix(stdout, "Applied 00001_roles.sql") || strings.Contains(stdout, "ready") ||
+		!strings.Contains(stderr, "storycreep migrate: connect to postgres://") {
+		t.Errorf("with an application login that cannot connect: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }

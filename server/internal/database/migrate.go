@@ -13,10 +13,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
 // embedded holds the migrations, in migrations/. They are forward-only:
@@ -106,12 +108,14 @@ func (e *MigrationError) Error() string {
 
 func (e *MigrationError) Unwrap() error { return e.Err }
 
-// Migrate applies the pending migrations as the admin login and then
-// provisions the application login (provision). Both run while Migrate holds
-// the migration lock, so instances that migrate at the same time wait for
-// each other, and the database ends up with each migration applied exactly
-// once (PRD FR-ADMIN-04). The admin login must be a superuser, because the
-// migrations create roles.
+// Migrate applies the pending migrations as the admin login, provisions the
+// application login (provision), and then connects as the application login,
+// as the server does, to check that the login works and that the database it
+// reaches has the migrations (checkAppDatabase). All of it runs while Migrate
+// holds the migration lock, so instances that migrate at the same time wait
+// for each other, and the database ends up with each migration applied
+// exactly once (PRD FR-ADMIN-04). The admin login must be a superuser,
+// because the migrations create roles.
 //
 // A failed migration is a *MigrationError, and a database that a newer
 // version of Storycreep migrated is an *UnknownMigrationsError; Migrate
@@ -127,11 +131,23 @@ func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	if err != nil {
 		return MigrateResult{}, err
 	}
-	connConfig, err := pgx.ParseConfig(admin.Reveal())
+	// Both URLs are read as the application's pool reads its URL, so that the
+	// admin URL may carry the same pool parameters, which pgx alone would
+	// send to PostgreSQL as settings.
+	adminConfig, err := pgxpool.ParseConfig(admin.Reveal())
 	if err != nil {
 		return MigrateResult{}, fmt.Errorf("STORYCREEP_DATABASE_ADMIN_URL: %w", err)
 	}
+	connConfig := adminConfig.ConnConfig
 	setApplicationName(connConfig)
+	// The application login's password is the one its connections send: the
+	// URL's, or else the one PGPASSWORD, a service file, or a password file
+	// supplies.
+	appConfig, err := pgxpool.ParseConfig(app.Reveal())
+	if err != nil {
+		return MigrateResult{}, fmt.Errorf("STORYCREEP_DATABASE_URL: %w", err)
+	}
+	appPassword := secret.New(appConfig.ConnConfig.Password)
 
 	// The lock is held by this connection's session, so it is released when
 	// the connection closes, however Migrate ends.
@@ -184,10 +200,39 @@ func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	case verr != nil:
 		return res, verr
 	}
-	if err := provision(ctx, conn, app.User(), app.Password()); err != nil {
+	if err := provision(ctx, conn, app.User(), appPassword); err != nil {
+		return res, err
+	}
+	if err := checkAppDatabase(ctx, app, ms); err != nil {
 		return res, err
 	}
 	return res, nil
+}
+
+// checkAppDatabase connects as the application login, as the server does,
+// and returns an error unless row-level security holds the login (Open) and
+// the database it reaches has applied every migration in ms. The admin URL
+// names the same database, but it can still reach another database of that
+// name, such as one on another server.
+func checkAppDatabase(ctx context.Context, app config.DatabaseURL, ms migrationSet) error {
+	db, err := Open(ctx, app)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	applied, err := appliedVersions(ctx, db.pool)
+	if err != nil {
+		return err
+	}
+	p, err := pending(ms, applied)
+	if err != nil {
+		return err
+	}
+	if len(p) > 0 {
+		return fmt.Errorf("the database that STORYCREEP_DATABASE_URL connects to still has pending migrations "+
+			"(%s) after migrating; STORYCREEP_DATABASE_ADMIN_URL must connect to the same database", joinVersions(p))
+	}
+	return nil
 }
 
 // migrationSet is a set of migrations.
