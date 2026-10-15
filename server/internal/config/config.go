@@ -23,6 +23,8 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/text/language"
+
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -46,6 +48,8 @@ type Config struct {
 	MetricsToken secret.Value
 	// LogLevel is the lowest level that is logged.
 	LogLevel slog.Level
+	// DefaultLocale is the instance's default locale, which has a catalog.
+	DefaultLocale language.Tag
 	// Capabilities are the mode-dependent behaviours.
 	Capabilities Capabilities
 

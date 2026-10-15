@@ -25,8 +25,9 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"golang.org/x/text/language"
 
-	"github.com/CyberCute-Studio/storycreep/server/internal/logging"
+	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
 )
 
 // DefaultMaxBodyBytes is the largest request body a route accepts unless it
@@ -83,6 +84,12 @@ type MuxOptions struct {
 	// Middleware wraps every request, the first outermost, including the
 	// requests that no route matches.
 	Middleware []func(http.Handler) http.Handler
+	// Locales are the catalogs that error envelopes' messages come from,
+	// i18n.Default() if nil, and DefaultLocale is the instance's default
+	// locale, which a request whose Accept-Language matches no catalog gets
+	// (PRD FR-I18N-02).
+	Locales       *i18n.Bundle
+	DefaultLocale language.Tag
 }
 
 // NewMux returns a Mux without routes.
@@ -91,12 +98,17 @@ func NewMux(opts MuxOptions) *Mux {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
+	locales := opts.Locales
+	if locales == nil {
+		locales = i18n.Default()
+	}
 	m := &Mux{router: chi.NewRouter(), routes: map[Route]Capability{}}
 	m.router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			next.ServeHTTP(w, r.WithContext(withLogger(r.Context(), log)))
 		})
 	})
+	m.router.Use(negotiateLocale(locales, opts.DefaultLocale))
 	m.router.Use(limitBodyRead(defaultBodyReadTimeout))
 	m.router.Use(opts.Middleware...)
 	// A HEAD request is answered as a GET without the body, as health
@@ -333,11 +345,31 @@ func (m *Mux) methodNotAllowed(w http.ResponseWriter, r *http.Request) {
 	WriteError(w, r, NewError(CodeMethodNotAllowed))
 }
 
-// fillRequestID is a huma transformer that puts the request's ID into a copy
-// of an envelope that huma writes.
+// fillRequestID is a huma transformer that fills in a copy of an envelope that
+// huma writes, as forRequest does, and sets its headers. huma calls it before
+// it writes the headers.
 func fillRequestID(ctx huma.Context, _ string, v any) (any, error) {
-	if env, ok := v.(*ErrorEnvelope); ok {
-		return env.withRequestID(logging.RequestID(ctx.Context())), nil
+	env, ok := v.(*ErrorEnvelope)
+	if !ok || env.status == http.StatusNotModified {
+		return v, nil
 	}
-	return v, nil
+	env, locale := env.forRequest(ctx.Context())
+	ctx.SetHeader("Content-Language", locale.String())
+	ctx.AppendHeader("Vary", "Accept-Language")
+	return env, nil
+}
+
+// negotiateLocale returns middleware that gives each request's context the
+// localizer of the locale that its Accept-Language and the instance's
+// default negotiate in locales (PRD FR-I18N-02), which error envelopes are
+// written in.
+func negotiateLocale(locales *i18n.Bundle, instanceDefault language.Tag) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// A header given on several lines is one list (RFC 9110 §5.3).
+			accept := strings.Join(r.Header.Values("Accept-Language"), ",")
+			l := locales.Localizer(locales.Negotiate("", accept, instanceDefault))
+			next.ServeHTTP(w, r.WithContext(i18n.WithLocalizer(r.Context(), l)))
+		})
+	}
 }

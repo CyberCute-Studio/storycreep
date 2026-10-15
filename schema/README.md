@@ -4,3 +4,4 @@ Everything that must agree between Go, TypeScript, and GDScript: the published J
 
 - [`api/v1/openapi.json`](api/v1/openapi.json) is the OpenAPI document of the REST API, which the server generates from its routes and serves at `/api/v1/openapi.json`. The TypeScript client's types are generated from it; see "The API contract" in [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 - [`ids/`](ids/) holds the vectors of the identifier encoding.
+- [`i18n/`](i18n/) holds the vectors of the message format, which the web app's i18next and the server's formatter both run.

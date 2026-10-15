@@ -1,0 +1,77 @@
+// A Biome lint rule against user-facing text written in the source instead
+// of the message catalog (PRD FR-I18N-01, ADR-024). biome.json applies it to
+// the source of the web app and the public site, and CI runs it with the
+// rest of Biome's checks.
+//
+// It reports text with a letter in it, in any script:
+//
+//   - JSX text, as in <p>Saved</p>;
+//   - a string or template literal that a JSX child shows, as in {"Saved"},
+//     including as a branch of a conditional, as in {done ? "Saved" : t("x")},
+//     after && or ||, as in {dirty && "Unsaved"}, or joined with +, as in
+//     {"Hello, " + name};
+//   - the same as the value of an attribute that people read: alt,
+//     aria-label, aria-description, aria-placeholder, aria-roledescription,
+//     aria-valuetext, label, placeholder, or title.
+//
+// Text without a letter, such as " " or "·", and literals that are not shown,
+// such as t("board.title"), a className, or the "draft" of
+// status === "draft", are not reported. Text that is rightly not translated,
+// such as a product name, is marked with a comment that says why, as in
+// {/* biome-ignore lint/plugin: the product's name */}.
+
+language js
+
+pattern shown_literal() {
+  or {
+    JsStringLiteralExpression() as $string where {
+      $string <: r"(?s).*\p{L}.*"
+    },
+    JsTemplateExpression() as $template where {
+      $template <: contains JsTemplateChunkElement() as $chunk where {
+        $chunk <: r"(?s).*\p{L}.*"
+      }
+    }
+  }
+}
+
+pattern shown_text() {
+  or {
+    shown_literal(),
+    JsConditionalExpression(consequent=shown_literal()),
+    JsConditionalExpression(alternate=shown_literal()),
+    JsLogicalExpression(right=shown_literal()),
+    `$left + $right` where {
+      or { $left <: shown_literal(), $right <: shown_literal() }
+    }
+  }
+}
+
+or {
+  JsxText() as $text where {
+    $text <: r"(?s).*\p{L}.*",
+    register_diagnostic(span=$text, message="User-facing text must come from the message catalog: write it in web/shared/i18n/en.json, and show it with t(). See Strings and translations in CONTRIBUTING.md.")
+  },
+  JsxExpressionChild(expression=$shown) where {
+    $shown <: shown_text(),
+    register_diagnostic(span=$shown, message="User-facing text must come from the message catalog: write it in web/shared/i18n/en.json, and show it with t(). See Strings and translations in CONTRIBUTING.md.")
+  },
+  JsxAttribute(name=$name, initializer=JsxAttributeInitializerClause(value=$value)) where {
+    $name <: or {
+      `alt`,
+      `aria-label`,
+      `aria-description`,
+      `aria-placeholder`,
+      `aria-roledescription`,
+      `aria-valuetext`,
+      `label`,
+      `placeholder`,
+      `title`
+    },
+    $value <: or {
+      JsxString() as $string where { $string <: r"(?s).*\p{L}.*" },
+      JsxExpressionAttributeValue(expression=shown_text())
+    },
+    register_diagnostic(span=$value, message="User-facing text must come from the message catalog: write it in web/shared/i18n/en.json, and show it with t(). See Strings and translations in CONTRIBUTING.md.")
+  }
+}

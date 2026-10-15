@@ -22,8 +22,14 @@ Every response with a 4xx or 5xx status has the same body, the error envelope
 - `code` is one of the codes below. A code keeps its meaning and its
   status once it is released, so clients branch on it.
 - `message` says what went wrong, for people. It may change, and is
-  not for programs to read.
-- `details` is an object whose keys the code decides, or is absent.
+  not for programs to read. It is in the language that the request's
+  `Accept-Language` header asks for, if the server has a catalog for it,
+  or else in the instance's default language, `STORYCREEP_DEFAULT_LOCALE`
+  (PRD FR-I18N-02), and the response's `Content-Language` header names
+  the language. The messages below are the English ones.
+- `details` is an object whose keys the code decides, or is absent. It
+  is for programs, so the messages in it, as in `details.errors`, are
+  in English.
 - `request_id` is the request's ID, which is also in the
   `X-Request-ID` response header and in every line the server logs
   about the request.

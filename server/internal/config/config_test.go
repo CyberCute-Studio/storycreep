@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/text/language"
+
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -112,6 +114,7 @@ func TestDefaults(t *testing.T) {
 		{"STORYCREEP_PUBLIC_URL", testURL, SourceEnvironment},
 		{"STORYCREEP_PUBLIC_SITE", "off", SourceDefault},
 		{"STORYCREEP_SIGNUP", "closed", SourceDefault},
+		{"STORYCREEP_DEFAULT_LOCALE", "en", SourceDefault},
 		{"STORYCREEP_DATABASE_URL", testDatabaseShown, SourceEnvironment},
 		{"STORYCREEP_DATABASE_ADMIN_URL", "", SourceUnset},
 		{"STORYCREEP_HTTP_ADDR", ":8080", SourceDefault},
@@ -262,6 +265,8 @@ func TestInvalidValues(t *testing.T) {
 		{"STORYCREEP_PUBLIC_SITE", "yes", "must be on or off"},
 		{"STORYCREEP_SIGNUP", "public", "must be closed, invite, or open"},
 		{"STORYCREEP_LOG_LEVEL", "verbose", "must be debug, info, warn, or error"},
+		{"STORYCREEP_DEFAULT_LOCALE", "english", "not a BCP 47 language tag, such as en"},
+		{"STORYCREEP_DEFAULT_LOCALE", "fr", "the server has no catalog for that locale, only for en"},
 		{"STORYCREEP_HTTP_ADDR", "8080", "must be host:port"},
 		{"STORYCREEP_HTTP_ADDR", ":http", "the port must be a number"},
 		{"STORYCREEP_HTTP_ADDR", ":0", "the port must be a number between 1 and 65535"},
@@ -396,6 +401,17 @@ func TestLogLevels(t *testing.T) {
 		c := mustLoad(t, withRequired(map[string]string{"STORYCREEP_LOG_LEVEL": v}))
 		if c.LogLevel != want {
 			t.Errorf("STORYCREEP_LOG_LEVEL=%s gives %v, want %v", v, c.LogLevel, want)
+		}
+	}
+}
+
+// TestDefaultLocale checks that a tag selects the catalog of its language,
+// whatever its case or region, and is shown as that catalog's locale.
+func TestDefaultLocale(t *testing.T) {
+	for _, v := range []string{"en", "EN", "en-GB", "en_US"} {
+		c := mustLoad(t, withRequired(map[string]string{"STORYCREEP_DEFAULT_LOCALE": v}))
+		if c.DefaultLocale != language.English || entry(t, c, "STORYCREEP_DEFAULT_LOCALE").Value != "en" {
+			t.Errorf("STORYCREEP_DEFAULT_LOCALE=%s gives %v", v, c.DefaultLocale)
 		}
 	}
 }

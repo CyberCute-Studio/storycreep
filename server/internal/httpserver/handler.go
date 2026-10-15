@@ -35,7 +35,8 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		metrics: newMetrics(),
 	}
 	s.main = api.NewMux(api.MuxOptions{
-		Log: log,
+		Log:           log,
+		DefaultLocale: cfg.DefaultLocale,
 		Middleware: []func(http.Handler) http.Handler{
 			requestID,
 			s.observe(s.metrics),
@@ -55,7 +56,8 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		s.metricsOff = "the MetricsEndpoint capability is protected, and STORYCREEP_METRICS_TOKEN is not set"
 	default:
 		s.admin = api.NewMux(api.MuxOptions{
-			Log: log,
+			Log:           log,
+			DefaultLocale: cfg.DefaultLocale,
 			Middleware: []func(http.Handler) http.Handler{
 				requestID,
 				s.observe(nil),

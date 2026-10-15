@@ -14,7 +14,7 @@
             "type": "object"
           },
           "message": {
-            "description": "What went wrong, for people",
+            "description": "What went wrong, for people, in the language that the Content-Language header names",
             "type": "string"
           },
           "request_id": {

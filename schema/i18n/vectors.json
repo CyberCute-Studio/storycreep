@@ -1,0 +1,564 @@
+{
+  "format": [
+    {
+      "note": "text without arguments",
+      "locale": "en",
+      "message": "Your changes are saved.",
+      "args": {},
+      "output": "Your changes are saved."
+    },
+    {
+      "note": "a string argument",
+      "locale": "en",
+      "message": "Hello, {name}!",
+      "args": {
+        "name": "Ada"
+      },
+      "output": "Hello, Ada!"
+    },
+    {
+      "note": "white space around an argument's name",
+      "locale": "en",
+      "message": "Hello, { name }!",
+      "args": {
+        "name": "Ada"
+      },
+      "output": "Hello, Ada!"
+    },
+    {
+      "note": "a number in a simple argument is not formatted",
+      "locale": "en",
+      "message": "Item {n}",
+      "args": {
+        "n": 1234.5
+      },
+      "output": "Item 1234.5"
+    },
+    {
+      "note": "a large number in a simple argument has an exponent",
+      "locale": "en",
+      "message": "{n}",
+      "args": {
+        "n": 1e21
+      },
+      "output": "1e+21"
+    },
+    {
+      "note": "a number argument, English",
+      "locale": "en",
+      "message": "{n, number}",
+      "args": {
+        "n": 1234.5
+      },
+      "output": "1,234.5"
+    },
+    {
+      "note": "a number argument, Czech",
+      "locale": "cs",
+      "message": "{n, number}",
+      "args": {
+        "n": 1234.5
+      },
+      "output": "1\u00a0234,5"
+    },
+    {
+      "note": "a number argument shows three fraction digits at most",
+      "locale": "en",
+      "message": "{n, number}",
+      "args": {
+        "n": 3.14159
+      },
+      "output": "3.142"
+    },
+    {
+      "note": "rounding reads the number's shortest form and rounds a half away from zero",
+      "locale": "en",
+      "message": "{n, number}",
+      "args": {
+        "n": 1.0005
+      },
+      "output": "1.001"
+    },
+    {
+      "note": "an integer argument rounds a half away from zero",
+      "locale": "en",
+      "message": "{n, number, integer}",
+      "args": {
+        "n": 2.5
+      },
+      "output": "3"
+    },
+    {
+      "note": "an integer argument rounds a negative half away from zero",
+      "locale": "cs",
+      "message": "{n, number, integer}",
+      "args": {
+        "n": -1234.5
+      },
+      "output": "-1\u00a0235"
+    },
+    {
+      "note": "a large integer, Czech",
+      "locale": "cs",
+      "message": "{n, number}",
+      "args": {
+        "n": 1234567
+      },
+      "output": "1\u00a0234\u00a0567"
+    },
+    {
+      "note": "a negative number that rounds to zero keeps its sign",
+      "locale": "en",
+      "message": "{n, number}",
+      "args": {
+        "n": -0.0004
+      },
+      "output": "-0"
+    },
+    {
+      "note": "English one",
+      "locale": "en",
+      "message": "{count, plural, one {# file} other {# files}}",
+      "args": {
+        "count": 1
+      },
+      "output": "1 file"
+    },
+    {
+      "note": "English other for zero",
+      "locale": "en",
+      "message": "{count, plural, one {# file} other {# files}}",
+      "args": {
+        "count": 0
+      },
+      "output": "0 files"
+    },
+    {
+      "note": "English other for two",
+      "locale": "en",
+      "message": "{count, plural, one {# file} other {# files}}",
+      "args": {
+        "count": 2
+      },
+      "output": "2 files"
+    },
+    {
+      "note": "English other for a fraction",
+      "locale": "en",
+      "message": "{count, plural, one {# file} other {# files}}",
+      "args": {
+        "count": 1.5
+      },
+      "output": "1.5 files"
+    },
+    {
+      "note": "English one for minus one",
+      "locale": "en",
+      "message": "{count, plural, one {# file} other {# files}}",
+      "args": {
+        "count": -1
+      },
+      "output": "-1 file"
+    },
+    {
+      "note": "English groups the number in #",
+      "locale": "en",
+      "message": "{count, plural, one {# file} other {# files}}",
+      "args": {
+        "count": 1000
+      },
+      "output": "1,000 files"
+    },
+    {
+      "note": "English one after rounding to three fraction digits",
+      "locale": "en",
+      "message": "{count, plural, one {# file} other {# files}}",
+      "args": {
+        "count": 1.0004
+      },
+      "output": "1 file"
+    },
+    {
+      "note": "Czech one",
+      "locale": "cs",
+      "message": "{count, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}",
+      "args": {
+        "count": 1
+      },
+      "output": "1 soubor"
+    },
+    {
+      "note": "Czech few for two",
+      "locale": "cs",
+      "message": "{count, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}",
+      "args": {
+        "count": 2
+      },
+      "output": "2 soubory"
+    },
+    {
+      "note": "Czech few for four",
+      "locale": "cs",
+      "message": "{count, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}",
+      "args": {
+        "count": 4
+      },
+      "output": "4 soubory"
+    },
+    {
+      "note": "Czech other for five",
+      "locale": "cs",
+      "message": "{count, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}",
+      "args": {
+        "count": 5
+      },
+      "output": "5 souborů"
+    },
+    {
+      "note": "Czech other for zero",
+      "locale": "cs",
+      "message": "{count, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}",
+      "args": {
+        "count": 0
+      },
+      "output": "0 souborů"
+    },
+    {
+      "note": "Czech other for twenty-two, which is not few",
+      "locale": "cs",
+      "message": "{count, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}",
+      "args": {
+        "count": 22
+      },
+      "output": "22 souborů"
+    },
+    {
+      "note": "Czech many for a fraction",
+      "locale": "cs",
+      "message": "{count, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}",
+      "args": {
+        "count": 1.5
+      },
+      "output": "1,5 souboru"
+    },
+    {
+      "note": "Czech many for one half",
+      "locale": "cs",
+      "message": "{count, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}",
+      "args": {
+        "count": 0.5
+      },
+      "output": "0,5 souboru"
+    },
+    {
+      "note": "Czech groups the number in # with a no-break space",
+      "locale": "cs",
+      "message": "{count, plural, one {# soubor} few {# soubory} many {# souboru} other {# souborů}}",
+      "args": {
+        "count": 1000
+      },
+      "output": "1\u00a0000 souborů"
+    },
+    {
+      "note": "an exact match wins over the category",
+      "locale": "en",
+      "message": "{n, plural, =0 {no files} one {# file} other {# files}}",
+      "args": {
+        "n": 0
+      },
+      "output": "no files"
+    },
+    {
+      "note": "an exact match on a negative number",
+      "locale": "en",
+      "message": "{n, plural, =-1 {minus one} other {#}}",
+      "args": {
+        "n": -1
+      },
+      "output": "minus one"
+    },
+    {
+      "note": "no category option falls back to other",
+      "locale": "cs",
+      "message": "{n, plural, one {# soubor} other {# souborů}}",
+      "args": {
+        "n": 3
+      },
+      "output": "3 souborů"
+    },
+    {
+      "note": "an offset: exact match on the value",
+      "locale": "en",
+      "message": "{count, plural, offset:1 =0 {nobody} =1 {only {name}} one {{name} and # other} other {{name} and # others}}",
+      "args": {
+        "count": 1,
+        "name": "Ada"
+      },
+      "output": "only Ada"
+    },
+    {
+      "note": "an offset: # is the value less the offset",
+      "locale": "en",
+      "message": "{count, plural, offset:1 =0 {nobody} =1 {only {name}} one {{name} and # other} other {{name} and # others}}",
+      "args": {
+        "count": 2,
+        "name": "Ada"
+      },
+      "output": "Ada and 1 other"
+    },
+    {
+      "note": "an offset: the category is of the value less the offset",
+      "locale": "en",
+      "message": "{count, plural, offset:1 =0 {nobody} =1 {only {name}} one {{name} and # other} other {{name} and # others}}",
+      "args": {
+        "count": 3,
+        "name": "Ada"
+      },
+      "output": "Ada and 2 others"
+    },
+    {
+      "note": "English ordinal one",
+      "locale": "en",
+      "message": "{n, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
+      "args": {
+        "n": 1
+      },
+      "output": "1st"
+    },
+    {
+      "note": "English ordinal two",
+      "locale": "en",
+      "message": "{n, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
+      "args": {
+        "n": 22
+      },
+      "output": "22nd"
+    },
+    {
+      "note": "English ordinal few",
+      "locale": "en",
+      "message": "{n, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
+      "args": {
+        "n": 3
+      },
+      "output": "3rd"
+    },
+    {
+      "note": "English ordinal other",
+      "locale": "en",
+      "message": "{n, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
+      "args": {
+        "n": 11
+      },
+      "output": "11th"
+    },
+    {
+      "note": "English ordinal other for a hundred and twelve",
+      "locale": "en",
+      "message": "{n, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}",
+      "args": {
+        "n": 112
+      },
+      "output": "112th"
+    },
+    {
+      "note": "Czech ordinals are all other",
+      "locale": "cs",
+      "message": "{n, selectordinal, one {#.a} other {#.}}",
+      "args": {
+        "n": 1
+      },
+      "output": "1."
+    },
+    {
+      "note": "select",
+      "locale": "en",
+      "message": "{role, select, owner {Owner} admin {Administrator} other {Member}}",
+      "args": {
+        "role": "admin"
+      },
+      "output": "Administrator"
+    },
+    {
+      "note": "select falls back to other",
+      "locale": "en",
+      "message": "{role, select, owner {Owner} other {Member}}",
+      "args": {
+        "role": "guest"
+      },
+      "output": "Member"
+    },
+    {
+      "note": "select on a number",
+      "locale": "en",
+      "message": "{n, select, 1 {one} other {many}}",
+      "args": {
+        "n": 1
+      },
+      "output": "one"
+    },
+    {
+      "note": "a plural nested in a select",
+      "locale": "cs",
+      "message": "{kind, select, board {{n, plural, one {# tabule} few {# tabule} other {# tabulí}}} other {{n, number}}}",
+      "args": {
+        "kind": "board",
+        "n": 7
+      },
+      "output": "7 tabulí"
+    },
+    {
+      "note": "# in a select nested in a plural is text",
+      "locale": "en",
+      "message": "{n, plural, other {{g, select, other {# items}}}}",
+      "args": {
+        "n": 2,
+        "g": "x"
+      },
+      "output": "# items"
+    },
+    {
+      "note": "two apostrophes are one",
+      "locale": "en",
+      "message": "It''s {name}''s board",
+      "args": {
+        "name": "Ada"
+      },
+      "output": "It's Ada's board"
+    },
+    {
+      "note": "a lone apostrophe is itself",
+      "locale": "en",
+      "message": "It's {name}'s board",
+      "args": {
+        "name": "Ada"
+      },
+      "output": "It's Ada's board"
+    },
+    {
+      "note": "an apostrophe quotes a brace up to the next apostrophe",
+      "locale": "en",
+      "message": "This '{isn''t}' an argument",
+      "args": {},
+      "output": "This {isn't} an argument"
+    },
+    {
+      "note": "quoting runs to the end without a closing apostrophe",
+      "locale": "en",
+      "message": "'{name} is quoted",
+      "args": {},
+      "output": "{name} is quoted"
+    },
+    {
+      "note": "an apostrophe quotes # in a plural",
+      "locale": "en",
+      "message": "{n, plural, other {'#' is #}}",
+      "args": {
+        "n": 5
+      },
+      "output": "# is 5"
+    },
+    {
+      "note": "an apostrophe before # outside a plural is itself",
+      "locale": "en",
+      "message": "'#' is a hash",
+      "args": {},
+      "output": "'#' is a hash"
+    },
+    {
+      "note": "tags are text",
+      "locale": "en",
+      "message": "<b>{name}</b> joined",
+      "args": {
+        "name": "Ada"
+      },
+      "output": "<b>Ada</b> joined"
+    },
+    {
+      "note": "a closing brace at the top level is text",
+      "locale": "en",
+      "message": "a } b",
+      "args": {},
+      "output": "a } b"
+    },
+    {
+      "note": "options need no white space",
+      "locale": "en",
+      "message": "{n,plural,one{# file}other{# files}}",
+      "args": {
+        "n": 1
+      },
+      "output": "1 file"
+    }
+  ],
+  "invalid": [
+    {
+      "note": "an argument that is not closed",
+      "message": "Hello, {name"
+    },
+    {
+      "note": "an argument without a name",
+      "message": "Hello, {}"
+    },
+    {
+      "note": "an argument name that starts with syntax",
+      "message": "Hello, {-name}"
+    },
+    {
+      "note": "an argument name followed by neither a comma nor a brace",
+      "message": "{name.first}"
+    },
+    {
+      "note": "an argument without a type after its comma",
+      "message": "{n,}"
+    },
+    {
+      "note": "an argument type that does not exist",
+      "message": "{n, currency}"
+    },
+    {
+      "note": "a plural without other",
+      "message": "{n, plural, one {# file}}"
+    },
+    {
+      "note": "a select without other",
+      "message": "{role, select, owner {Owner}}"
+    },
+    {
+      "note": "a plural without options",
+      "message": "{n, plural, }"
+    },
+    {
+      "note": "a plural without a comma before its options",
+      "message": "{n, plural one {#} other {#}}"
+    },
+    {
+      "note": "an option twice",
+      "message": "{n, plural, one {a} one {b} other {c}}"
+    },
+    {
+      "note": "an option without a message in braces",
+      "message": "{n, plural, one # other {#}}"
+    },
+    {
+      "note": "an option that is not closed",
+      "message": "{n, plural, one {# file other {# files}}"
+    },
+    {
+      "note": "an offset without a colon",
+      "message": "{n, plural, offset 1 other {#}}"
+    },
+    {
+      "note": "an offset that is not a number",
+      "message": "{n, plural, offset:x other {#}}"
+    },
+    {
+      "note": "an exact match that is not a number",
+      "message": "{n, plural, =x {a} other {b}}"
+    },
+    {
+      "note": "an exact match in a select",
+      "message": "{n, select, =1 {a} other {b}}"
+    }
+  ]
+}
