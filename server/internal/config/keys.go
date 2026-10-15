@@ -172,13 +172,14 @@ var keys = []key{
 			"with a password, they refuse a login whose `VALID UNTIL` has passed, which PostgreSQL would refuse as " +
 			"if the password were wrong. They also revoke `CONNECT` on the database from `PUBLIC` and from the " +
 			"server's roles, `storycreep_app`, `storycreep_definer`, and `storycreep_maintenance`, and grant it to " +
-			"the login, to the maintenance login of `STORYCREEP_DATABASE_MAINTENANCE_URL`, and to the admin login " +
-			"if that took its `CONNECT`, so that no other role can connect unless it is a superuser, or it is, or " +
-			"inherits the privileges of, one of those logins, the database's owner, or a role granted `CONNECT`, as " +
-			"a monitoring role may need to be. They fail if `PUBLIC` or one of the server's roles can still connect " +
-			"afterwards, as through a grant that a role other than the database's owner made, and a server that " +
-			"does not apply migrations itself refuses a migrated database that they can connect to again, as after " +
-			"a dump is restored into a new database, until migrations run again. A login belongs to the whole PostgreSQL server, not to one database, and " +
+			"the login, to the maintenance login of `STORYCREEP_DATABASE_MAINTENANCE_URL` if that is set, and to " +
+			"the admin login if that took its `CONNECT`, so that no other role can connect unless it is a " +
+			"superuser, or it is, or inherits the privileges of, one of those logins, the database's owner, or a " +
+			"role granted `CONNECT`, as a monitoring role may need to be. They fail if `PUBLIC` or one of the " +
+			"server's roles can still connect afterwards, as through a grant that a role other than the database's " +
+			"owner made, and a server that does not apply migrations itself refuses a migrated database that they " +
+			"can connect to again, as after a dump is restored into a new database, until migrations run again. " +
+			"A login belongs to the whole PostgreSQL server, not to one database, and " +
 			"so does the `storycreep_app` role, which every Storycreep database on the server grants its " +
 			"privileges to. So give each Storycreep database on a server a login of its own, which can connect " +
 			"only to its own database: a shared login would reach all of them, and migrating one would change the " +
@@ -248,13 +249,13 @@ var keys = []key{
 			"`STORYCREEP_DATABASE_ADMIN_URL`, and the same database. When it is set, migrations create the login " +
 			"if it does not exist, set its password as they set the application login's, grant it the " +
 			"`storycreep_maintenance` role, and grant it `CONNECT` on the database, and they refuse a login " +
-			"named like the server's roles, or that has more privileges than `storycreep_maintenance` gives it: " +
-			"one that is a superuser, has `BYPASSRLS` itself, `CREATEROLE`, or `REPLICATION`, owns the database " +
-			"or objects in it, or is a member of a role that does, of `storycreep_app` or " +
-			"`storycreep_definer`, or of one of the roles that give access to the database server's files and " +
-			"programs. Give each Storycreep database on a server a maintenance login of its own, as for " +
-			"`STORYCREEP_DATABASE_URL`. Without it, migrations leave the maintenance login alone. It is shown " +
-			"redacted in the same way.",
+			"named like one of the server's roles, or starting with `pg_`, or that has more privileges than " +
+			"`storycreep_maintenance` gives it: one that is a superuser, has `BYPASSRLS` itself, `CREATEROLE`, or " +
+			"`REPLICATION`, owns the database or objects in it, or is a member of a role that does, of " +
+			"`storycreep_app` or `storycreep_definer`, or of one of the roles that give access to the database " +
+			"server's files and programs. Give each Storycreep database on a server a maintenance login of its " +
+			"own, as for `STORYCREEP_DATABASE_URL`. Without it, migrations leave the maintenance login alone. It " +
+			"is shown redacted in the same way.",
 		valuesDoc: "A `postgres://` URL",
 		parse: func(c *Config, v string) error {
 			d, err := ParseDatabaseURL(v)

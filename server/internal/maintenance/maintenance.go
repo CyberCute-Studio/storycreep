@@ -11,7 +11,8 @@
 //
 // Each of them is written in this package, which keeps the pool to itself:
 // DB runs nothing for its callers but those jobs, and a test fails when a
-// package other than this one imports it (TestOnlyMaintenanceImportsIt). The
+// package other than this one imports it, or uses the names through which it
+// could open such a pool of its own (TestOnlyMaintenanceImportsIt). The
 // request path never uses it.
 //
 // The pool logs in as the maintenance login of

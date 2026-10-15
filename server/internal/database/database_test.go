@@ -31,9 +31,10 @@ func TestMain(m *testing.M) {
 // TestRolesAfterMigrating checks the roles and privileges the migrations
 // leave: the server's roles have only the attributes they need, none of them
 // or the server's logins owns anything, except that storycreep_definer owns
-// the functions of the context bootstrap, which TestContextBootstrapFunctions
-// checks, and the application login has only storycreep_app among them, and
-// the maintenance login only storycreep_maintenance.
+// SECURITY DEFINER functions, which TestContextBootstrapFunctions checks are
+// the context bootstrap's four, and the application login has only
+// storycreep_app among them, and the maintenance login only
+// storycreep_maintenance.
 func TestRolesAfterMigrating(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -46,7 +47,8 @@ func TestRolesAfterMigrating(t *testing.T) {
 		SELECT DISTINCT r.rolname FROM pg_roles r
 		WHERE (r.rolname LIKE 'storycreep\_%' OR r.rolname = ANY ($1::name[]))
 			AND (EXISTS (SELECT FROM pg_class WHERE relowner = r.oid)
-				OR EXISTS (SELECT FROM pg_proc WHERE proowner = r.oid AND r.rolname <> 'storycreep_definer')
+				OR EXISTS (SELECT FROM pg_proc WHERE proowner = r.oid
+					AND NOT (r.rolname = 'storycreep_definer' AND prosecdef))
 				OR EXISTS (SELECT FROM pg_namespace WHERE nspowner = r.oid))`,
 		[]string{dbtest.AppLogin, dbtest.MaintenanceLogin})
 	if err == nil {
@@ -421,8 +423,10 @@ func TestStart(t *testing.T) {
 	t.Run("auto-migrate", func(t *testing.T) {
 		t.Parallel()
 		d := dbtest.Empty(t)
+		maint := d.URL(t, d.FreshLogin(t), "maintenance-password")
 		var logged bytes.Buffer
-		db, err := database.Start(ctx, &config.Config{DatabaseURL: d.AppURL, DatabaseAdminURL: d.AdminURL},
+		db, err := database.Start(ctx, &config.Config{DatabaseURL: d.AppURL, DatabaseAdminURL: d.AdminURL,
+			DatabaseMaintenanceURL: maint},
 			database.StartOptions{AutoMigrate: true, Log: slog.New(slog.NewJSONHandler(&logged, nil))})
 		if err != nil {
 			t.Fatal(err)
@@ -430,6 +434,11 @@ func TestStart(t *testing.T) {
 		defer db.Close()
 		if p, err := db.Pending(ctx); err != nil || len(p) != 0 {
 			t.Errorf("Pending() = %v, %v; want none", p, err)
+		}
+		// Start provisions the maintenance login of the configuration as
+		// migrating does.
+		if !canConnect(t, maint) || !isMember(t, d.Admin(t), maint.User(), "storycreep_maintenance") {
+			t.Errorf("Start did not provision the maintenance login")
 		}
 		if !strings.Contains(logged.String(), `"msg":"applied a database migration","version":1,"name":"00001_roles.sql"`) ||
 			!strings.Contains(logged.String(), `"msg":"the database is up to date"`) {

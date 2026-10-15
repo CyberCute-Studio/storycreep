@@ -2,6 +2,7 @@ package maintenance
 
 import (
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -24,18 +25,35 @@ const packageDir = "internal/maintenance"
 // maintenance path, which the PRD must name first.
 var allowedImporters []string
 
-// importLintResult is what lintImports found.
-type importLintResult struct {
+// guardedNames are the names, besides this package, through which code could
+// reach the maintenance path without importing it, by the package
+// directories, relative to the module root, that may use them: the
+// configuration's field that holds the maintenance login's URL, which the
+// configuration, the server's startup, and storycreep migrate read to
+// provision the login, and package database's helpers, which migrating uses
+// to check the login and this package to act as storycreep_maintenance. A
+// package that used them could open a pool that bypasses row-level security
+// of its own.
+var guardedNames = map[string][]string{
+	"DatabaseMaintenanceURL": {"internal/config", "internal/database", "internal/cli"},
+	"CheckMaintenanceLogin":  {"internal/database"},
+	"SetMaintenanceRole":     {"internal/database"},
+}
+
+// lintResult is what lintAccess found.
+type lintResult struct {
 	violations []string
 	files      int
 }
 
-// lintImports reads the imports of every Go file of the module at root, its
-// tests included, and reports each import of the package in pkg, a directory
-// relative to root, or of a package below it, from a file outside them whose
-// directory is not in allowed.
-func lintImports(root, pkg string, allowed []string) (importLintResult, error) {
-	var r importLintResult
+// lintAccess reads every Go file of the module at root, its tests included,
+// and reports each import of the package in pkg, a directory relative to
+// root, or of a package below it, from a file outside them whose directory is
+// not in allowed, and each identifier of guarded, a name of a field, a
+// function, or anything else that a file declares or uses, in a file outside
+// them whose directory is not among those that guarded lists for the name.
+func lintAccess(root, pkg string, allowed []string, guarded map[string][]string) (lintResult, error) {
+	var r lintResult
 	module, err := modulePath(root)
 	if err != nil {
 		return r, err
@@ -68,23 +86,34 @@ func lintImports(root, pkg string, allowed []string) (importLintResult, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		dir := path.Dir(rel)
-		f, err := parser.ParseFile(fset, p, nil, parser.ImportsOnly)
+		f, err := parser.ParseFile(fset, p, nil, parser.SkipObjectResolution)
 		if err != nil {
 			return err
 		}
 		r.files++
-		if dir == pkg || strings.HasPrefix(dir, pkg+"/") || slices.Contains(allowed, dir) {
+		if dir == pkg || strings.HasPrefix(dir, pkg+"/") {
 			return nil
 		}
-		for _, imp := range f.Imports {
-			ip, err := strconv.Unquote(imp.Path.Value)
-			if err != nil {
-				return err
-			}
-			if ip == target || strings.HasPrefix(ip, target+"/") {
-				r.violations = append(r.violations, fmt.Sprintf("%s:%d: imports %s", rel, fset.Position(imp.Pos()).Line, ip))
+		if !slices.Contains(allowed, dir) {
+			for _, imp := range f.Imports {
+				ip, err := strconv.Unquote(imp.Path.Value)
+				if err != nil {
+					return err
+				}
+				if ip == target || strings.HasPrefix(ip, target+"/") {
+					r.violations = append(r.violations, fmt.Sprintf("%s:%d: imports %s", rel, fset.Position(imp.Pos()).Line, ip))
+				}
 			}
 		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok {
+				if dirs, ok := guarded[id.Name]; ok && !slices.Contains(dirs, dir) {
+					r.violations = append(r.violations, fmt.Sprintf("%s:%d: uses %s", rel, fset.Position(id.Pos()).Line,
+						id.Name))
+				}
+			}
+			return true
+		})
 		return nil
 	})
 	slices.Sort(r.violations)
@@ -125,9 +154,10 @@ func moduleRoot(t *testing.T) string {
 
 // TestOnlyMaintenanceImportsIt checks that no package but this one, its
 // tests included, imports this package, so that only it can obtain the pool
-// that bypasses row-level security (PRD §5.4).
+// that bypasses row-level security (PRD §5.4), and that no package uses the
+// names through which it could open such a pool of its own (guardedNames).
 func TestOnlyMaintenanceImportsIt(t *testing.T) {
-	r, err := lintImports(moduleRoot(t), packageDir, allowedImporters)
+	r, err := lintAccess(moduleRoot(t), packageDir, allowedImporters, guardedNames)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,13 +176,12 @@ func TestImportLintFindsImporters(t *testing.T) {
 	root := t.TempDir()
 	files := map[string][]string{
 		"go.mod":                                    {"module example.com/m"},
-		"internal/maintenance/maintenance.go":       {"package maintenance"},
+		"internal/maintenance/maintenance.go":       {"package maintenance", "var _ = cfg.Guarded"},
 		"internal/maintenance/sub/sub.go":           {"package sub", `import _ "example.com/m/internal/maintenance"`},
 		"internal/maintenance/maintenance_test.go":  {"package maintenance_test", `import _ "example.com/m/internal/maintenance"`},
 		"internal/api/api.go":                       {"package api", `import _ "example.com/m/internal/maintenance"`},
 		"internal/api/api_test.go":                  {"package api", "", `import m "example.com/m/internal/maintenance/sub"`},
 		"internal/maintenancefake/fake.go":          {"package maintenancefake", `import _ "example.com/m/internal/maintenancefake"`},
-		"internal/importer/importer.go":             {"package importer", `import _ "example.com/m/internal/maintenance"`},
 		"internal/other/other.go":                   {"package other", `import _ "example.com/m/internal/maintenancex"`},
 		"internal/other/testdata/x.go":              {"package x", `import _ "example.com/m/internal/maintenance"`},
 		"internal/other/_skipped.go":                {"package other", `import _ "example.com/m/internal/maintenance"`},
@@ -160,6 +189,10 @@ func TestImportLintFindsImporters(t *testing.T) {
 		"nested/n.go":                               {"package nested", `import _ "example.com/m/internal/maintenance"`},
 		"internal/database/dbtest/dbtest.go":        {"package dbtest", `import _ "example.com/m/internal/maintenance"`},
 		"internal/maintenance/sub/deeper/deeper.go": {"package deeper"},
+		"internal/config/config.go":                 {"package config", "type Config struct{ Guarded string }"},
+		"internal/jobs/jobs.go":                     {"package jobs", "", "", "var _ = Config{Guarded: GuardedToo}"},
+		"internal/importer/importer.go": {"package importer", `import _ "example.com/m/internal/maintenance"`,
+			"var _ = cfg.Guarded"},
 	}
 	for name, lines := range files {
 		p := filepath.Join(root, filepath.FromSlash(name))
@@ -171,7 +204,8 @@ func TestImportLintFindsImporters(t *testing.T) {
 		}
 	}
 
-	r, err := lintImports(root, packageDir, []string{"internal/importer"})
+	r, err := lintAccess(root, packageDir, []string{"internal/importer"},
+		map[string][]string{"Guarded": {"internal/config"}, "GuardedToo": nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +213,9 @@ func TestImportLintFindsImporters(t *testing.T) {
 		"internal/api/api.go:2: imports example.com/m/internal/maintenance",
 		"internal/api/api_test.go:3: imports example.com/m/internal/maintenance/sub",
 		"internal/database/dbtest/dbtest.go:2: imports example.com/m/internal/maintenance",
+		"internal/importer/importer.go:3: uses Guarded",
+		"internal/jobs/jobs.go:4: uses Guarded",
+		"internal/jobs/jobs.go:4: uses GuardedToo",
 	}
 	if !slices.Equal(r.violations, want) {
 		t.Errorf("violations =\n%s\nwant\n%s", strings.Join(r.violations, "\n"), strings.Join(want, "\n"))

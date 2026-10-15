@@ -186,7 +186,7 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 		}
 		// The application login must not have storycreep_maintenance, and
 		// the admin login would keep it.
-		for _, other := range []struct{ key, login string }{{appURLKey, app.User()}, {"STORYCREEP_DATABASE_ADMIN_URL", admin.User()}} {
+		for _, other := range []struct{ key, login string }{{appURLKey, app.User()}, {adminURLKey, admin.User()}} {
 			if maint.User() == other.login {
 				return MigrateResult{}, nil, fmt.Errorf("%s connects as %q, as %s does; the maintenance jobs need a "+
 					"login of their own", maintenanceURLKey, maint.User(), other.key)
@@ -253,9 +253,8 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 		return MigrateResult{}, nil, fmt.Errorf("the login %q in STORYCREEP_DATABASE_ADMIN_URL is not a superuser; "+
 			"applying migrations needs one, because they create the server's database roles", admin.User())
 	case maint.IsSet() && maint.User() == role:
-		return MigrateResult{}, nil, fmt.Errorf("%s connects as %q, the role that the login in "+
-			"STORYCREEP_DATABASE_ADMIN_URL acts as; the maintenance jobs need a login of their own",
-			maintenanceURLKey, maint.User())
+		return MigrateResult{}, nil, fmt.Errorf("%s connects as %q, the role that the login in %s acts as; the "+
+			"maintenance jobs need a login of their own", maintenanceURLKey, maint.User(), adminURLKey)
 	}
 	// This session waits for the lock for as long as another instance
 	// migrates, and then sits idle while goose migrates on connections of its

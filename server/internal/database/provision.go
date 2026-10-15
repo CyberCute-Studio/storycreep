@@ -16,6 +16,10 @@ import (
 // migrations grant it what the server may do.
 const appRole = "storycreep_app"
 
+// definerRole is the role that owns the context bootstrap's SECURITY DEFINER
+// functions (PRD §5.4), and nothing else.
+const definerRole = "storycreep_definer"
+
 // MaintenanceRole is the role that bypasses row-level security for the closed
 // list of maintenance jobs (PRD §5.4). The maintenance login is granted it,
 // and acts as it with SET ROLE, because PostgreSQL does not pass BYPASSRLS on
@@ -39,25 +43,31 @@ type serverLogin struct {
 	password secret.Value
 	// role is the server's role that the login is granted.
 	role string
+	// setsRole says that the login acts as its role with SET ROLE, as the
+	// maintenance login does, rather than only with the privileges it
+	// inherits from it.
+	setsRole bool
 	// rules are what the login must not be (checkLogin).
 	rules *loginRules
 }
 
-// appLogin returns the application login that the URL key names, as login
-// with password.
+// appLogin returns the application login of STORYCREEP_DATABASE_URL, which is
+// named login and logs in with password.
 func appLogin(login string, password secret.Value) serverLogin {
 	return serverLogin{key: appURLKey, name: login, password: password, role: appRole, rules: appLoginRules}
 }
 
-// maintenanceLogin returns the maintenance login, as login with password.
+// maintenanceLogin returns the maintenance login of
+// STORYCREEP_DATABASE_MAINTENANCE_URL, which is named login and logs in with
+// password.
 func maintenanceLogin(login string, password secret.Value) serverLogin {
 	return serverLogin{key: maintenanceURLKey, name: login, password: password, role: MaintenanceRole,
-		rules: maintenanceLoginRules}
+		setsRole: true, rules: maintenanceLoginRules}
 }
 
 // provision makes each of the logins a login of the server: a role that can
 // log in, has its password if one is set, and is granted its role of the
-// server, of whose privileges it inherits. It creates a role that does not
+// server, whose privileges it inherits. It creates a role that does not
 // exist. It changes nothing that is already so, because roles belong to the
 // cluster, and an ALTER ROLE that another database runs at the same time
 // would conflict.
@@ -68,20 +78,41 @@ func maintenanceLogin(login string, password secret.Value) serverLogin {
 // granted CONNECT (restrictConnect).
 //
 // It refuses, and changes nothing, if a login is something its rules forbid
-// once it has its role's privileges (checkLogin), or if the server would log
-// in with a password and the role's VALID UNTIL has passed. The checks run at
-// the end of the transaction that makes the changes, which a refusal rolls
-// back, so that they see the login as the server would use it, including the
-// privileges that its role was given. It never makes an existing role less
+// once the logins have their roles' privileges (checkLogin), or if the server
+// would log in with a password and the role's VALID UNTIL has passed. The
+// checks run at the end of the transaction that makes the changes, which a
+// refusal rolls back, so that they see the logins as the server would use
+// them, including the privileges that their roles were given. They run once
+// every login has its role, because a role granted to one login reaches the
+// roles that are members of that login too: an application login that an
+// operator made a member of the maintenance login would reach
+// storycreep_maintenance through it. It never makes an existing role less
 // privileged: an operator who pointed STORYCREEP_DATABASE_URL at a superuser
 // should find out rather than lose the superuser. The logins' names have
 // passed checkLoginName, and differ.
 func provision(ctx context.Context, conn *pgx.Conn, logins ...serverLogin) error {
 	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-		var names []string
-		for _, l := range logins {
-			if err := provisionLogin(ctx, tx, l); err != nil {
+		expired := make([]bool, len(logins))
+		for i, l := range logins {
+			var err error
+			if expired[i], err = provisionLogin(ctx, tx, l); err != nil {
 				return err
+			}
+		}
+		var names []string
+		for i, l := range logins {
+			if err := checkLogin(ctx, tx, l.rules, l.name); err != nil {
+				return err
+			}
+			// PostgreSQL refuses an expired password as a wrong one, which
+			// would leave the operator looking for a typo. The expiry is the
+			// operator's policy, so it is reported rather than lifted. It
+			// does not matter to a login that authenticates without a
+			// password.
+			if expired[i] && l.password.IsSet() {
+				return fmt.Errorf("the password of the login %q in %s has expired, because the role's VALID UNTIL "+
+					"has passed, so the server could not log in with it; set a later time with ALTER ROLE %s VALID "+
+					"UNTIL, or 'infinity' for none", l.name, l.key, pgx.Identifier{l.name}.Sanitize())
 			}
 			names = append(names, l.name)
 		}
@@ -89,17 +120,18 @@ func provision(ctx context.Context, conn *pgx.Conn, logins ...serverLogin) error
 	})
 }
 
-// provisionLogin is provision for one login, in its transaction, without
-// restricting who connects.
-func provisionLogin(ctx context.Context, tx pgx.Tx, l serverLogin) error {
+// provisionLogin makes provision's changes to one login, in provision's
+// transaction, and reports whether the login's VALID UNTIL had passed. It
+// neither checks the login nor restricts who connects.
+func provisionLogin(ctx context.Context, tx pgx.Tx, l serverLogin) (expired bool, err error) {
 	ident := pgx.Identifier{l.name}.Sanitize()
-	var canLogin, inherit, expired bool
+	var canLogin, inherit bool
 	var stored *string
-	err := tx.QueryRow(ctx, "SELECT rolcanlogin, rolinherit, rolpassword, coalesce(rolvaliduntil <= now(), false) "+
+	err = tx.QueryRow(ctx, "SELECT rolcanlogin, rolinherit, rolpassword, coalesce(rolvaliduntil <= now(), false) "+
 		"FROM pg_authid WHERE rolname = $1", l.name).Scan(&canLogin, &inherit, &stored, &expired)
 	exists := !errors.Is(err, pgx.ErrNoRows)
 	if err != nil && exists {
-		return fmt.Errorf("provision the login %q: %w", l.name, err)
+		return false, fmt.Errorf("provision the login %q: %w", l.name, err)
 	}
 
 	var changes []string
@@ -116,31 +148,40 @@ func provisionLogin(ctx context.Context, tx pgx.Tx, l serverLogin) error {
 		var iterations int
 		if err := tx.QueryRow(ctx, "SELECT coalesce(current_setting('scram_iterations', true)::int, $1)",
 			scramIterations).Scan(&iterations); err != nil {
-			return fmt.Errorf("provision the login %q: %w", l.name, err)
+			return false, fmt.Errorf("provision the login %q: %w", l.name, err)
 		}
 		verifier, err := scramVerifier(l.password.Reveal(), iterations)
 		if err != nil {
-			return fmt.Errorf("provision the login %q: %w", l.name, err)
+			return false, fmt.Errorf("provision the login %q: %w", l.name, err)
 		}
 		changes = append(changes, "PASSWORD "+quoteLiteral(verifier))
 	}
 	switch {
 	case !exists:
 		if _, err := tx.Exec(ctx, "CREATE ROLE "+ident+" "+strings.Join(changes, " ")); err != nil {
-			return fmt.Errorf("create the login %q: %w", l.name, err)
+			return false, fmt.Errorf("create the login %q: %w", l.name, err)
 		}
 	case len(changes) > 0:
 		if _, err := tx.Exec(ctx, "ALTER ROLE "+ident+" "+strings.Join(changes, " ")); err != nil {
-			return fmt.Errorf("update the login %q: %w", l.name, err)
+			return false, fmt.Errorf("update the login %q: %w", l.name, err)
 		}
 	}
 	// Whether the login uses its role's privileges is read after the changes
-	// above, which may have just made it inherit.
-	var usable bool
+	// above, which may have just made it inherit. PostgreSQL 16 and later
+	// also record on each grant whether the member may SET ROLE to the role,
+	// which an operator may have granted without, so for a login that acts
+	// as its role, that is read too. On PostgreSQL 15, every member may.
 	var version int
-	if err := tx.QueryRow(ctx, "SELECT pg_has_role($1::name, $2::name, 'USAGE'), "+
-		"current_setting('server_version_num')::int", l.name, l.role).Scan(&usable, &version); err != nil {
-		return fmt.Errorf("provision the login %q: %w", l.name, err)
+	if err := tx.QueryRow(ctx, "SELECT current_setting('server_version_num')::int").Scan(&version); err != nil {
+		return false, fmt.Errorf("provision the login %q: %w", l.name, err)
+	}
+	usableQuery := "SELECT pg_has_role($1::name, $2::name, 'USAGE')"
+	if l.setsRole && version >= 160000 {
+		usableQuery += " AND pg_has_role($1::name, $2::name, 'SET')"
+	}
+	var usable bool
+	if err := tx.QueryRow(ctx, usableQuery, l.name, l.role).Scan(&usable); err != nil {
+		return false, fmt.Errorf("provision the login %q: %w", l.name, err)
 	}
 	if !usable {
 		grant := "GRANT " + pgx.Identifier{l.role}.Sanitize() + " TO " + ident
@@ -148,26 +189,18 @@ func provisionLogin(ctx context.Context, tx pgx.Tx, l serverLogin) error {
 			// PostgreSQL 16 and later record inheritance on each grant,
 			// taken from the member's INHERIT when the grant was made, so a
 			// grant to a login that was NOINHERIT then still does not
-			// inherit. Granting again with the option corrects it.
+			// inherit. Granting again with the options corrects it, and
+			// whether the member may SET ROLE.
 			grant += " WITH INHERIT TRUE"
+			if l.setsRole {
+				grant += ", SET TRUE"
+			}
 		}
 		if _, err := tx.Exec(ctx, grant); err != nil {
-			return fmt.Errorf("grant %s to the login %q: %w", l.role, l.name, err)
+			return false, fmt.Errorf("grant %s to the login %q: %w", l.role, l.name, err)
 		}
 	}
-	if err := checkLogin(ctx, tx, l.rules, l.name); err != nil {
-		return err
-	}
-	// PostgreSQL refuses an expired password as a wrong one, which would
-	// leave the operator looking for a typo. The expiry is the operator's
-	// policy, so it is reported rather than lifted. It does not matter to a
-	// login that authenticates without a password.
-	if expired && l.password.IsSet() {
-		return fmt.Errorf("the password of the login %q in %s has expired, because the role's VALID UNTIL has "+
-			"passed, so the server could not log in with it; set a later time with ALTER ROLE %s VALID UNTIL, or "+
-			"'infinity' for none", l.name, l.key, ident)
-	}
-	return nil
+	return expired, nil
 }
 
 // restrictConnect limits who can connect to the database to the superusers,

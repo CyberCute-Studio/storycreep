@@ -33,11 +33,12 @@ The application login is the one in STORYCREEP_DATABASE_URL. The command
 creates it if it does not exist, sets its password to the one the server
 logs in with (the URL's, or else the one PGPASSWORD, a service file, or a
 password file supplies), and grants it the storycreep_app role. The
-maintenance login, which the maintenance jobs connect as, is made the same
-way, but granted the storycreep_maintenance role, which bypasses row-level
-security. The command also revokes CONNECT on the database from PUBLIC and
-from the roles the migrations create, and grants it to the two logins, and
-to the admin login if that took its CONNECT, so that no other role connects
+maintenance login, the one in STORYCREEP_DATABASE_MAINTENANCE_URL, which the
+maintenance jobs connect as, is made the same way when that URL is set, but
+granted the storycreep_maintenance role, which bypasses row-level security.
+The command also revokes CONNECT on the database from PUBLIC and from the
+roles the migrations create, and grants it to the logins it made, and to
+the admin login if that took its CONNECT, so that no other role connects
 unless it is a superuser, or it is, or inherits the privileges of, one of
 those logins, the database's owner, or a role granted CONNECT. It fails if
 PUBLIC or one of the migrations' roles can still connect afterwards, as

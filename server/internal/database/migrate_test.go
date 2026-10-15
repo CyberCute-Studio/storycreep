@@ -671,7 +671,8 @@ func TestRoleMigrationCorrectsRoles(t *testing.T) {
 // TestMigrateWithoutTheServerRoles checks that migrating a database that has
 // applied migrations, on a database server that lacks the roles the first
 // migration creates, fails before it changes anything, and says how to
-// recover. A dump of the database restored into another server is such a
+// recover, and that Start without auto-migrate refuses the database too. A
+// dump of the database restored into another server is such a
 // database: roles belong to the server, so the dump has none. It renames a
 // role that every database of the test server shares, so it does not run in
 // parallel.
@@ -702,6 +703,14 @@ func TestMigrateWithoutTheServerRoles(t *testing.T) {
 	}
 	if applied || created {
 		t.Errorf("the refused run applied the newer migration: %v, or created the login: %v", applied, created)
+	}
+
+	// A server that does not apply migrations itself refuses the database
+	// too, rather than serving it without the privileges that the
+	// migrations gave the roles.
+	_, err = database.Start(ctx, &config.Config{DatabaseURL: d.AppURL}, database.StartOptions{})
+	if err == nil || !strings.Contains(err.Error(), "lacks roles that the first migration creates (storycreep_app)") {
+		t.Errorf("Start returned %v, want a refusal that names the missing role", err)
 	}
 }
 

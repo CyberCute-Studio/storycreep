@@ -3,12 +3,16 @@
 // roles and the application's login, the application's connection pool, and
 // the request transaction that sets the row-level security context.
 //
-// Two logins are involved. The admin login, a superuser from
+// Three logins are involved. The admin login, a superuser from
 // STORYCREEP_DATABASE_ADMIN_URL, applies the migrations and owns every table.
-// The application login, from STORYCREEP_DATABASE_URL, does everything else.
-// It is an ordinary role, granted storycreep_app, that row-level security
-// applies to: Migrate provisions it, and Open refuses a login that row-level
-// security would not hold.
+// The application login, from STORYCREEP_DATABASE_URL, does everything else
+// but the maintenance jobs. It is an ordinary role, granted storycreep_app,
+// that row-level security applies to: Migrate provisions it, and Open refuses
+// a login that row-level security would not hold. The maintenance login, from
+// STORYCREEP_DATABASE_MAINTENANCE_URL, is the maintenance jobs' (package
+// maintenance): an ordinary role, granted storycreep_maintenance, which it
+// acts as to bypass row-level security. Migrate provisions it too when the
+// URL is set.
 package database
 
 //go:generate go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
@@ -22,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
@@ -293,6 +298,7 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 // name.
 const (
 	appURLKey         = "STORYCREEP_DATABASE_URL"
+	adminURLKey       = "STORYCREEP_DATABASE_ADMIN_URL"
 	maintenanceURLKey = "STORYCREEP_DATABASE_MAINTENANCE_URL"
 )
 
@@ -316,7 +322,7 @@ func (e *UnsafeLoginError) Error() string {
 
 // privilegedRoles are the roles the migrations create for the server's
 // privileged work. The application login must not have them (checkLogin).
-var privilegedRoles = []string{"storycreep_definer", MaintenanceRole}
+var privilegedRoles = []string{definerRole, MaintenanceRole}
 
 // loginRules say what one of the server's logins must not be (checkLogin).
 type loginRules struct {
@@ -348,7 +354,7 @@ var appLoginRules = &loginRules{
 var maintenanceLoginRules = &loginRules{
 	key:       maintenanceURLKey,
 	want:      "an ordinary role that bypasses row-level security only by acting as " + MaintenanceRole,
-	forbidden: []string{appRole, "storycreep_definer"},
+	forbidden: []string{appRole, definerRole},
 	allowed:   MaintenanceRole,
 }
 
@@ -365,12 +371,12 @@ var serverAccessRoles = []string{"pg_execute_server_program", "pg_read_server_fi
 // any role that is not a superuser, such as storycreep_maintenance), a role
 // with REPLICATION (which can stream a copy of the whole cluster), a role
 // that owns the current database or objects in it, the server's roles $2
-// that the login must not have, and the server access roles $3. It leaves out
-// the role $4, which the login may act as, if it is not empty. An owner can switch row-level security
-// off, the owner of the database can drop it, the owner of a schema can drop
-// what is in it, and the owner of a type, a collation, an operator class, or
-// an extension can drop with CASCADE the columns and indexes that use it, in
-// tables it does not own.
+// that the login must not have, and the server access roles $3. It leaves
+// out the role $4, which the login may act as, if it is not empty. An owner
+// can switch row-level security off, the owner of the database can drop it,
+// the owner of a schema can drop what is in it, and the owner of a type, a
+// collation, an operator class, or an extension can drop with CASCADE the
+// columns and indexes that use it, in tables it does not own.
 //
 // PostgreSQL records each object's owner in pg_shdepend, except where the
 // owner is one of the roles that initdb created, whose OIDs are below 16384,
@@ -522,11 +528,18 @@ func CheckMaintenanceLogin(ctx context.Context, tx pgx.Tx) error {
 // SetMaintenanceRole makes tx, a transaction of the maintenance login, act as
 // storycreep_maintenance until it ends, as SET LOCAL ROLE does, so that it
 // bypasses row-level security (PRD §5.4). It returns an error if the login
-// cannot, because migrating has not granted it the role.
+// cannot, because migrating has not granted it the role, or if the statement
+// fails otherwise, as when ctx ends.
 func SetMaintenanceRole(ctx context.Context, tx pgx.Tx) error {
-	if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+pgx.Identifier{MaintenanceRole}.Sanitize()); err != nil {
+	_, err := tx.Exec(ctx, "SET LOCAL ROLE "+pgx.Identifier{MaintenanceRole}.Sanitize())
+	var pgErr *pgconn.PgError
+	switch {
+	// insufficient_privilege: the login may not SET ROLE to the role.
+	case errors.As(err, &pgErr) && pgErr.Code == "42501":
 		return fmt.Errorf("the login in %s cannot act as %s, which storycreep migrate grants it when %s is "+
 			"set: %w", maintenanceURLKey, MaintenanceRole, maintenanceURLKey, err)
+	case err != nil:
+		return fmt.Errorf("act as %s: %w", MaintenanceRole, err)
 	}
 	return nil
 }

@@ -28,7 +28,11 @@
 -- cascade. A cascade is not held by row-level security either, and deleting a
 -- user reaches the rows of every workspace the user belongs to, so the
 -- application login cannot delete from either table: hard deletion is the
--- maintenance path's (§5.4).
+-- maintenance path's (§5.4). Every foreign key to "user" has an index that
+-- leads with it, so that deleting a user finds the rows that refer to the
+-- user without reading every workspace's rows of the table. A foreign key to
+-- another row of the workspace includes workspace_id, which an index of the
+-- table leads with already.
 --
 -- IDs are UUIDv7s, which the server generates (§5.2), so no column has a
 -- default for them.
@@ -109,6 +113,7 @@ CREATE TABLE membership (
 	-- Also what auth_user_memberships looks a user's memberships up by (00005).
 	UNIQUE (user_id, workspace_id)
 );
+CREATE INDEX membership_invited_by ON membership (invited_by);
 
 -- A member's role on one project, which replaces the workspace role there
 -- (FR-TEN-04).
@@ -144,6 +149,7 @@ CREATE TABLE invite (
 	updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX invite_workspace ON invite (workspace_id);
+CREATE INDEX invite_created_by ON invite (created_by);
 
 CREATE TABLE api_token (
 	id uuid PRIMARY KEY,
@@ -169,6 +175,7 @@ CREATE TABLE api_token (
 	FOREIGN KEY (workspace_id, project_id) REFERENCES project (workspace_id, id) ON DELETE CASCADE
 );
 CREATE INDEX api_token_workspace ON api_token (workspace_id, user_id);
+CREATE INDEX api_token_user ON api_token (user_id);
 
 -- The audit log (FR-TEN-07). Neither workspace_id nor the actor's IDs have a
 -- foreign key, so that an entry outlives its workspace, account, and token,

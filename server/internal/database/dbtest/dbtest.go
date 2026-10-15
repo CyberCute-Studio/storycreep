@@ -92,7 +92,7 @@ type Database struct {
 // that directory. It is dropped when the test ends. CREATE DATABASE does not
 // copy the template's privileges on the database itself, so any login can
 // connect to it until it is migrated again, which restricts CONNECT to the
-// application login.
+// logins it provisions.
 func New(t testing.TB) *Database {
 	t.Helper()
 	s := start(t)
