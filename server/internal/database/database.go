@@ -150,21 +150,19 @@ type StartOptions struct {
 
 // Start is the database step of the server's startup (PRD FR-ADMIN-04). With
 // AutoMigrate, it applies the pending migrations under the migration lock,
-// which makes instances that start together safe, and provisions the
-// application login (Migrate, which also checks that the migrations reached
-// the database the application login connects to). Then it opens the
-// application login's pool. Without AutoMigrate, a pending migration is
-// logged as a warning and is for "storycreep migrate" to apply, while the
-// server reports that it is not ready.
+// which makes instances that start together safe, provisions the application
+// login, and returns the application login's pool that Migrate opened to
+// check that the migrations reached the database the login connects to.
+// Without AutoMigrate, it opens the application login's pool, and a pending
+// migration is logged as a warning and is for "storycreep migrate" to apply,
+// while the server reports that it is not ready.
 func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, error) {
 	log := opts.Log
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	var res MigrateResult
 	if opts.AutoMigrate {
-		var err error
-		res, err = Migrate(ctx, cfg.DatabaseAdminURL, cfg.DatabaseURL, MigrateOptions{})
+		res, db, err := migrate(ctx, cfg.DatabaseAdminURL, cfg.DatabaseURL, MigrateOptions{})
 		// The migrations applied before a failed one stay applied, so they
 		// are logged too.
 		for _, m := range res.Applied {
@@ -174,6 +172,8 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 		if err != nil {
 			return nil, err
 		}
+		log.InfoContext(ctx, "the database is up to date", "version", res.Version)
+		return db, nil
 	}
 	db, err := Open(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -187,8 +187,6 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 	case len(p) > 0:
 		log.WarnContext(ctx, "the database has pending migrations; run storycreep migrate to apply them",
 			"pending", p)
-	case opts.AutoMigrate:
-		log.InfoContext(ctx, "the database is up to date", "version", res.Version)
 	}
 	return db, nil
 }

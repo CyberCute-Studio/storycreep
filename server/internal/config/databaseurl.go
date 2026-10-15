@@ -46,6 +46,17 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 	if !strings.HasPrefix(v, "postgres://") && !strings.HasPrefix(v, "postgresql://") {
 		return fail("must start with postgres:// or postgresql://, in lowercase")
 	}
+	// pgx reads a URL as libpq does, which ends the user and password at the
+	// first @, where url.Parse ends them at the last one. With a second @,
+	// the server would log in with the start of the password, at a host
+	// made of the rest, and the connection error would show that rest.
+	_, rest, _ := strings.Cut(v, "://")
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		rest = rest[:i]
+	}
+	if strings.Count(rest, "@") > 1 {
+		return fail("has an @ in its user or password that is not percent-encoded; write it as %40")
+	}
 	// The parser's explanation can quote part of a password.
 	u, err := url.Parse(v)
 	if err != nil {
@@ -64,6 +75,15 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 	query, err := url.ParseQuery(u.RawQuery)
 	if err != nil {
 		return fail("the query is not valid")
+	}
+	// libpq, and pgx with it, also needs exactly one = in each parameter,
+	// which url.ParseQuery does not.
+	for q := u.RawQuery; q != ""; {
+		var pair string
+		pair, q, _ = strings.Cut(q, "&")
+		if strings.Count(pair, "=") != 1 {
+			return fail("each query parameter must be name=value, with an = in the value percent-encoded as %3D")
+		}
 	}
 	for _, p := range reservedDatabaseParams {
 		if query.Has(p) {

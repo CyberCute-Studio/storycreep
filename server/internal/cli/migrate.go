@@ -24,11 +24,11 @@ status 1.
 
 The application login is the one in STORYCREEP_DATABASE_URL. The command
 creates it if it does not exist, sets its password to the one the server
-logs in with (the URL's, or else the one PGPASSWORD or a password file
-supplies), and grants it the storycreep_app role. It refuses a login that
-row-level security would not apply to, such as a superuser. Last, it
-connects as the application login, as the server does, and fails unless the
-database it reaches has every migration applied.`,
+logs in with (the URL's, or else the one PGPASSWORD, a service file, or a
+password file supplies), and grants it the storycreep_app role. It refuses
+a login that row-level security would not apply to, such as a superuser.
+Last, it connects as the application login, as the server does, and fails
+unless the database it reaches has every migration applied.`,
 	loadsConfig: true,
 	run: func(ctx context.Context, inv *invocation) error {
 		res, err := database.Migrate(ctx, inv.cfg.DatabaseAdminURL, inv.cfg.DatabaseURL, database.MigrateOptions{})

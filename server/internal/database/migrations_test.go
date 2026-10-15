@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io/fs"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -22,10 +23,11 @@ func fstestFS(names ...string) fs.FS {
 
 // TestMigrationFiles checks the rules for the embedded migrations: each is
 // named NNNNN_description.sql, the versions count up from 1 without a gap,
-// and each is forward-only, with an Up section and no Down section (PRD
-// FR-ADMIN-04). Numbered versions make two pull requests that add the same
-// version collide in CI, where goose refuses two migrations with one version,
-// instead of applying in different orders on different databases.
+// each is forward-only, with an Up section and no Down section (PRD
+// FR-ADMIN-04), and the directory holds no file that is not embedded.
+// Numbered versions make two pull requests that add the same version collide
+// in CI, where goose refuses two migrations with one version, instead of
+// applying in different orders on different databases.
 func TestMigrationFiles(t *testing.T) {
 	fsys := Migrations()
 	names, err := fs.Glob(fsys, "*")
@@ -69,6 +71,18 @@ func TestMigrationFiles(t *testing.T) {
 		}
 		if !up || first != "-- +goose Up" {
 			t.Errorf("%s: must start with -- +goose Up", name)
+		}
+	}
+
+	// Only .sql files are embedded, so a migration saved under another name
+	// would be left out of the binary without the checks above seeing it.
+	entries, err := os.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			t.Errorf("migrations/%s: is not embedded; the directory holds only the migrations, as .sql files", e.Name())
 		}
 	}
 }

@@ -94,8 +94,6 @@ func (e *UnknownMigrationsError) Error() string {
 type MigrationError struct {
 	Version int64
 	Name    string
-	// Applied are the migrations applied before the failure.
-	Applied []AppliedMigration
 	// DatabaseVersion is the version the database stays at.
 	DatabaseVersion int64
 	Err             error
@@ -121,22 +119,33 @@ func (e *MigrationError) Unwrap() error { return e.Err }
 // version of Storycreep migrated is an *UnknownMigrationsError; Migrate
 // changes nothing then.
 func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOptions) (MigrateResult, error) {
+	res, db, err := migrate(ctx, admin, app, opts)
+	if db != nil {
+		db.Close()
+	}
+	return res, err
+}
+
+// migrate is Migrate, and also returns the application login's pool that
+// checkAppDatabase opened, which Start keeps. The pool is nil if migrate
+// returns an error.
+func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOptions) (MigrateResult, *DB, error) {
 	if !admin.IsSet() {
-		return MigrateResult{}, ErrNoAdminURL
+		return MigrateResult{}, nil, ErrNoAdminURL
 	}
 	if !app.IsSet() {
-		return MigrateResult{}, errors.New("STORYCREEP_DATABASE_URL is not set")
+		return MigrateResult{}, nil, errors.New("STORYCREEP_DATABASE_URL is not set")
 	}
 	ms, err := loadMigrations(opts.Migrations)
 	if err != nil {
-		return MigrateResult{}, err
+		return MigrateResult{}, nil, err
 	}
 	// Both URLs are read as the application's pool reads its URL, so that the
 	// admin URL may carry the same pool parameters, which pgx alone would
 	// send to PostgreSQL as settings.
 	adminConfig, err := pgxpool.ParseConfig(admin.Reveal())
 	if err != nil {
-		return MigrateResult{}, fmt.Errorf("STORYCREEP_DATABASE_ADMIN_URL: %w", err)
+		return MigrateResult{}, nil, fmt.Errorf("STORYCREEP_DATABASE_ADMIN_URL: %w", err)
 	}
 	connConfig := adminConfig.ConnConfig
 	setApplicationName(connConfig)
@@ -145,7 +154,7 @@ func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	// supplies.
 	appConfig, err := pgxpool.ParseConfig(app.Reveal())
 	if err != nil {
-		return MigrateResult{}, fmt.Errorf("STORYCREEP_DATABASE_URL: %w", err)
+		return MigrateResult{}, nil, fmt.Errorf("STORYCREEP_DATABASE_URL: %w", err)
 	}
 	appPassword := secret.New(appConfig.ConnConfig.Password)
 
@@ -153,37 +162,37 @@ func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	// the connection closes, however Migrate ends.
 	conn, err := pgx.ConnectConfig(ctx, connConfig)
 	if err != nil {
-		return MigrateResult{}, fmt.Errorf("connect to %s: %w", admin, err)
+		return MigrateResult{}, nil, fmt.Errorf("connect to %s: %w", admin, err)
 	}
 	defer conn.Close(context.WithoutCancel(ctx))
 	var super bool
 	if err := conn.QueryRow(ctx, "SELECT rolsuper FROM pg_roles WHERE rolname = current_user").Scan(&super); err != nil {
-		return MigrateResult{}, fmt.Errorf("check the admin login: %w", err)
+		return MigrateResult{}, nil, fmt.Errorf("check the admin login: %w", err)
 	}
 	if !super {
-		return MigrateResult{}, fmt.Errorf("the login %q in STORYCREEP_DATABASE_ADMIN_URL is not a superuser; "+
+		return MigrateResult{}, nil, fmt.Errorf("the login %q in STORYCREEP_DATABASE_ADMIN_URL is not a superuser; "+
 			"applying migrations needs one, because they create the server's database roles", admin.User())
 	}
 	// pg_advisory_lock waits for as long as another instance migrates. If ctx
 	// ends first, pgx cancels the wait.
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLock); err != nil {
-		return MigrateResult{}, fmt.Errorf("take the migration lock: %w", err)
+		return MigrateResult{}, nil, fmt.Errorf("take the migration lock: %w", err)
 	}
 
 	applied, err := appliedVersions(ctx, conn)
 	if err != nil {
-		return MigrateResult{}, err
+		return MigrateResult{}, nil, err
 	}
 	if _, err := pending(ms, applied); err != nil {
-		return MigrateResult{}, err
+		return MigrateResult{}, nil, err
 	}
 
 	// goose works on database/sql. Its connections are opened only while
 	// this one holds the lock.
-	db := stdlib.OpenDB(*connConfig)
-	defer db.Close()
+	gooseDB := stdlib.OpenDB(*connConfig)
+	defer gooseDB.Close()
 	var res MigrateResult
-	res.Applied, err = runGoose(ctx, db, ms)
+	res.Applied, err = runGoose(ctx, gooseDB, ms)
 	// The version is read on this connection, which a failed migration
 	// leaves usable.
 	applied, verr := appliedVersions(context.WithoutCancel(ctx), conn)
@@ -196,43 +205,45 @@ func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	}
 	switch {
 	case err != nil:
-		return res, err
+		return res, nil, err
 	case verr != nil:
-		return res, verr
+		return res, nil, verr
 	}
 	if err := provision(ctx, conn, app.User(), appPassword); err != nil {
-		return res, err
+		return res, nil, err
 	}
-	if err := checkAppDatabase(ctx, app, ms); err != nil {
-		return res, err
+	db, err := checkAppDatabase(ctx, app, ms)
+	if err != nil {
+		return res, nil, err
 	}
-	return res, nil
+	return res, db, nil
 }
 
 // checkAppDatabase connects as the application login, as the server does,
-// and returns an error unless row-level security holds the login (Open) and
-// the database it reaches has applied every migration in ms. The admin URL
-// names the same database, but it can still reach another database of that
-// name, such as one on another server.
-func checkAppDatabase(ctx context.Context, app config.DatabaseURL, ms migrationSet) error {
+// and returns the login's pool, or an error unless row-level security holds
+// the login (Open) and the database it reaches has applied every migration
+// in ms. The admin URL names the same database, but it can still reach
+// another database of that name, such as one on another server.
+func checkAppDatabase(ctx context.Context, app config.DatabaseURL, ms migrationSet) (*DB, error) {
 	db, err := Open(ctx, app)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer db.Close()
 	applied, err := appliedVersions(ctx, db.pool)
-	if err != nil {
-		return err
+	var p []int64
+	if err == nil {
+		p, err = pending(ms, applied)
 	}
-	p, err := pending(ms, applied)
-	if err != nil {
-		return err
-	}
-	if len(p) > 0 {
-		return fmt.Errorf("the database that STORYCREEP_DATABASE_URL connects to still has pending migrations "+
+	switch {
+	case err != nil:
+		db.Close()
+		return nil, err
+	case len(p) > 0:
+		db.Close()
+		return nil, fmt.Errorf("the database that STORYCREEP_DATABASE_URL connects to still has pending migrations "+
 			"(%s) after migrating; STORYCREEP_DATABASE_ADMIN_URL must connect to the same database", joinVersions(p))
 	}
-	return nil
+	return db, nil
 }
 
 // migrationSet is a set of migrations.
@@ -296,7 +307,6 @@ func runGoose(ctx context.Context, db *sql.DB, ms migrationSet) ([]AppliedMigrat
 		return applied, &MigrationError{
 			Version: partial.Failed.Source.Version,
 			Name:    path.Base(partial.Failed.Source.Path),
-			Applied: applied,
 			Err:     partial.Err,
 		}
 	case err != nil:

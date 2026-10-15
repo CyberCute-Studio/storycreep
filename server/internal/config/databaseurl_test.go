@@ -25,6 +25,10 @@ func TestParseDatabaseURL(t *testing.T) {
 		{"postgres://app:pw@/sc?host=/var/run/postgresql", "postgres://app:" + secret.Redacted + "@/sc?host=/var/run/postgresql",
 			"app", "sc", "pw"},
 		{"postgres://sc%20app:pw@db/my%20db", "postgres://sc%20app:" + secret.Redacted + "@db/my%20db", "sc app", "my db", "pw"},
+		// An @ after the path, and an = in a value written as %3D, are as
+		// libpq reads them. So is a trailing &.
+		{"postgres://app@db/sc?application_name=a@b&options=-c%20search_path%3Dx&",
+			"postgres://app@db/sc?application_name=a@b&options=-c%20search_path%3Dx&", "app", "sc", ""},
 	}
 	for _, tt := range tests {
 		d, err := ParseDatabaseURL(tt.in)
@@ -65,6 +69,14 @@ func TestInvalidDatabaseURL(t *testing.T) {
 		{"postgres://app:" + password + "@db/sc#" + password, "fragment"},
 		{"postgres://app:%zz" + password + "@db/sc", "not a valid URL"},
 		{"postgres://app:" + password + "@db/sc?sslmode=%zz", "the query is not valid"},
+		// pgx, like libpq, ends the password at the first @, and would log in
+		// with "pw" at the host "<password>@db".
+		{"postgres://app:pw@" + password + "@db/sc", "not percent-encoded; write it as %40"},
+		{"postgres://app@" + password + "@db/sc?sslmode=require", "not percent-encoded"},
+		// libpq, and pgx with it, refuses these, which url.ParseQuery accepts.
+		{"postgres://app:" + password + "@db/sc?options=-c%20search_path=x", "percent-encoded as %3D"},
+		{"postgres://app:" + password + "@db/sc?sslmode", "must be name=value"},
+		{"postgres://app:" + password + "@db/sc?sslmode=require&&application_name=x", "must be name=value"},
 		{"postgres://app@db/sc?password=" + password, "must not set password"},
 		{"postgres://app:" + password + "@db/sc?user=other", "must not set user"},
 		{"postgres://app:" + password + "@db/sc?dbname=other", "must not set dbname"},

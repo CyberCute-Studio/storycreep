@@ -134,10 +134,11 @@ var keys = []key{
 			"the server's privileged roles, or of `pg_execute_server_program`, `pg_read_server_files`, or " +
 			"`pg_write_server_files`, which give access to the database server's files and programs, because " +
 			"row-level security would not hold it. Migrations create the login if it does not exist, set its " +
-			"password to the one the server logs in with (this URL's, or else the one `PGPASSWORD` or a password " +
-			"file supplies), and grant it the `storycreep_app` role. Query parameters such as `sslmode` are passed to " +
-			"PostgreSQL, and the libpq environment variables, such as `PGSSLMODE`, fill in settings the URL " +
-			"leaves out. The password is shown as `" + secret.Redacted + "`.",
+			"password to the one the server logs in with (this URL's, or else the one `PGPASSWORD`, a service " +
+			"file, or a password file supplies), and grant it the `storycreep_app` role. Query parameters, such as " +
+			"`sslmode`, are read as libpq reads them, with an `=` in a value percent-encoded as `%3D`, and the " +
+			"libpq environment variables, such as `PGSSLMODE`, fill in settings the URL leaves out. The password " +
+			"is shown as `" + secret.Redacted + "`.",
 		valuesDoc: "A `postgres://` URL",
 		example:   "postgres://storycreep:password@db:5432/storycreep",
 		required:  true,

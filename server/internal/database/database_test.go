@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
@@ -235,6 +236,58 @@ func TestInTxRollsBack(t *testing.T) {
 	})
 	if err != nil || len(got) != 1 || got[0] != 1 {
 		t.Errorf("the table holds %v, %v; want only the committed row 1", got, err)
+	}
+}
+
+// TestInTxRowLevelSecurity checks that the request transaction's scope is what
+// row-level security holds the application login to: under a policy written
+// as Scope describes, a transaction sees only its workspace's rows, none
+// without a workspace, and cannot add a row of another workspace.
+func TestInTxRowLevelSecurity(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	a, b := ids.New(), ids.New()
+	// The superuser that adds the rows is not held by row-level security.
+	if _, err := d.Admin(t).Exec(ctx, `CREATE TABLE items (workspace_id uuid NOT NULL, name text NOT NULL);
+		ALTER TABLE items ENABLE ROW LEVEL SECURITY;
+		ALTER TABLE items FORCE ROW LEVEL SECURITY;
+		CREATE POLICY items_workspace ON items
+			USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);
+		GRANT SELECT, INSERT ON items TO storycreep_app;
+		INSERT INTO items VALUES ('`+a.String()+`', 'a1'), ('`+a.String()+`', 'a2'), ('`+b.String()+`', 'b1')`); err != nil {
+		t.Fatal(err)
+	}
+	db := d.Open(t)
+
+	for _, tt := range []struct {
+		scope database.Scope
+		want  []string
+	}{
+		{database.Scope{WorkspaceID: a, UserID: ids.New()}, []string{"a1", "a2"}},
+		{database.Scope{WorkspaceID: b}, []string{"b1"}},
+		{database.Scope{UserID: ids.New()}, nil},
+	} {
+		var got []string
+		err := db.InTx(ctx, tt.scope, func(tx pgx.Tx) error {
+			rows, err := tx.Query(ctx, "SELECT name FROM items ORDER BY name")
+			if err == nil {
+				got, err = pgx.CollectRows(rows, pgx.RowTo[string])
+			}
+			return err
+		})
+		if err != nil || !slices.Equal(got, tt.want) {
+			t.Errorf("in workspace %s: rows %v, %v; want %v", tt.scope.WorkspaceID, got, err, tt.want)
+		}
+	}
+
+	err := db.InTx(ctx, database.Scope{WorkspaceID: a}, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, "INSERT INTO items VALUES ($1::uuid, 'b2')", b.String())
+		return err
+	})
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+		t.Errorf("adding a row of another workspace returned %v, want a row-level security violation", err)
 	}
 }
 
