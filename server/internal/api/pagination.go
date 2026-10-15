@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"io"
 )
 
 // The limits of a page (PRD FR-API-04).
@@ -89,7 +88,11 @@ func EncodeCursor[K any](k K) (string, error) {
 
 // DecodeCursor returns the key that the cursor s holds, which EncodeCursor
 // wrote for a K. Any other s is a client's mistake, answered with
-// invalid_cursor.
+// invalid_cursor: s must be exactly what EncodeCursor writes for the key it
+// decodes to. encoding/json alone would accept null, an object that lacks
+// some of the key's fields, or field names in another case, and leave the
+// missing fields at their zero values, which the list's query would compare
+// rows with, or fail on.
 func DecodeCursor[K any](s string) (K, error) {
 	var k K
 	invalid := func() (K, error) {
@@ -103,12 +106,10 @@ func DecodeCursor[K any](s string) (K, error) {
 	if err != nil {
 		return invalid()
 	}
-	d := json.NewDecoder(bytes.NewReader(b))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&k); err != nil {
+	if err := json.Unmarshal(b, &k); err != nil {
 		return invalid()
 	}
-	if _, err := d.Token(); err != io.EOF {
+	if again, err := json.Marshal(k); err != nil || !bytes.Equal(again, b) {
 		return invalid()
 	}
 	return k, nil

@@ -23,10 +23,14 @@ const requestIDHeader = "X-Request-ID"
 const maxRequestIDLength = 128
 
 // requestID gives each request an ID (PRD FR-ADMIN-05): the one in its
-// X-Request-ID header, if a proxy in front of the server set one that is
-// made of letters, digits, and -_.: only, and otherwise a new UUIDv7. The ID
-// is in the response's X-Request-ID header, in every record logged about the
-// request, and in its error envelope.
+// X-Request-ID header, if it has one of at most 128 letters, digits, and
+// -_.: characters, and otherwise a new UUIDv7. A proxy in front of the
+// server sets the header so that its log and the server's share the ID, but
+// the server cannot tell a proxy's header from a client's, so the ID is only
+// a label to find the request's records by, never proof of where the request
+// came from or that no other request has it. The ID is in the response's
+// X-Request-ID header, in every record logged about the request, and in its
+// error envelope.
 func requestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(requestIDHeader)

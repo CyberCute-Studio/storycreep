@@ -129,12 +129,12 @@ func isAPI(path string) bool {
 	return path == "/api" || strings.HasPrefix(path, "/api/")
 }
 
-// gate answers the API's requests with not_ready until the server can serve.
+// gate answers the API's requests with not_ready, and its Retry-After, until
+// the server can serve.
 func (r *readiness) gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if isAPI(req.URL.Path) {
 			if err := r.notReady(req.Context(), false); err != nil {
-				w.Header().Set("Retry-After", retryAfter)
 				api.WriteError(w, req, err)
 				return
 			}

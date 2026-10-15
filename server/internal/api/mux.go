@@ -264,11 +264,11 @@ func (m *Mux) methodNotAllowed(w http.ResponseWriter, r *http.Request) {
 	WriteError(w, r, NewError(CodeMethodNotAllowed))
 }
 
-// fillRequestID is a huma transformer that puts the request's ID into an
-// envelope that huma writes.
+// fillRequestID is a huma transformer that puts the request's ID into a copy
+// of an envelope that huma writes.
 func fillRequestID(ctx huma.Context, _ string, v any) (any, error) {
 	if env, ok := v.(*ErrorEnvelope); ok {
-		env.Body.RequestID = logging.RequestID(ctx.Context())
+		return env.withRequestID(logging.RequestID(ctx.Context())), nil
 	}
 	return v, nil
 }

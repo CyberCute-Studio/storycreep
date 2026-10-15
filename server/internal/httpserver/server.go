@@ -146,17 +146,24 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	}
 	log.InfoContext(ctx, "listening", attrs...)
 
+	// stop stops the servers together, so that each has the whole time to
+	// finish its requests in progress.
 	stop := func() {
 		s.ready.setPhase(phaseStopping)
 		log.InfoContext(ctx, "stopping")
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 		defer cancel()
-		for _, srv := range servers {
-			if err := srv.Shutdown(shutdownCtx); err != nil {
-				log.WarnContext(ctx, "the requests in progress did not finish in time", "error", err)
-				_ = srv.Close()
-			}
+		var wg sync.WaitGroup
+		for i, srv := range servers {
+			wg.Go(func() {
+				if err := srv.Shutdown(shutdownCtx); err != nil {
+					log.WarnContext(ctx, "the requests in progress did not finish in time, so their connections are "+
+						"closed", "address", listeners[i].Addr().String(), "error", err)
+					_ = srv.Close()
+				}
+			})
 		}
+		wg.Wait()
 	}
 
 	db, err := database.Start(ctx, cfg, database.StartOptions{
@@ -180,7 +187,12 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	pollCtx, stopPolling := context.WithCancel(ctx)
 	defer wg.Wait()
 	defer stopPolling()
-	pending, err := db.Pending(ctx)
+	// With auto-migration, Start has checked that the database has every
+	// migration, so only a server without it asks.
+	var pending []int64
+	if !opts.AutoMigrate {
+		pending, err = db.Pending(ctx)
+	}
 	switch {
 	case err != nil:
 		stop()

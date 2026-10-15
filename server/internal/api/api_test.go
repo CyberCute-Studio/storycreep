@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -311,6 +313,22 @@ func TestHandlerErrors(t *testing.T) {
 		!strings.Contains(logged.String(), `"request_id":"`+testRequestID+`"`) {
 		t.Errorf("the error is not logged with the request:\n%s", logged)
 	}
+
+	// An envelope that a handler returns for every request, such as a
+	// package-level error, is answered with the request's ID but not changed,
+	// or concurrent requests would write their IDs into it.
+	shared := huma.Error404NotFound("")
+	fail = shared
+	m.Handle(Public, http.MethodGet, "/shared", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		WriteError(w, r, shared)
+	}))
+	for _, path := range []string{"/fail", "/shared"} {
+		res = serve(m, http.MethodGet, path, "", nil)
+		if b := res.envelope(t); b.Code != CodeNotFound || shared.(*ErrorEnvelope).Body.RequestID != "" {
+			t.Errorf("%s: %s, and the shared envelope has the request ID %q", path, res.body,
+				shared.(*ErrorEnvelope).Body.RequestID)
+		}
+	}
 }
 
 // TestRoutingErrors checks the answers to a path no route matches and to a
@@ -461,6 +479,19 @@ func TestETag(t *testing.T) {
 		t.Errorf("GET with If-None-Match: %d, ETag %q, Cache-Control %q, body %q", w.Code, w.Header().Get("ETag"), cc,
 			w.Body)
 	}
+
+	// A handler that is not a huma operation answers the same with
+	// WriteError.
+	m.Handle(Public, http.MethodGet, "/raw", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		WriteError(w, r, NotModified(a))
+	}))
+	w = httptest.NewRecorder()
+	m.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/raw", nil))
+	if cc := w.Header().Values("Cache-Control"); w.Code != http.StatusNotModified || w.Header().Get("ETag") != a ||
+		w.Body.Len() != 0 || !slices.Equal(cc, []string{CacheRevalidate}) {
+		t.Errorf("WriteError(NotModified): %d, ETag %q, Cache-Control %q, body %q", w.Code, w.Header().Get("ETag"), cc,
+			w.Body)
+	}
 }
 
 func TestCursor(t *testing.T) {
@@ -475,13 +506,41 @@ func TestCursor(t *testing.T) {
 	if k, err := DecodeCursor[key](c); err != nil || k != (key{"a", 7}) {
 		t.Errorf("DecodeCursor(EncodeCursor(k)) = %v, %v", k, err)
 	}
-	for _, bad := range []string{
-		"not base64!",
-		"eyJuIjoiYSJ9eA", // {"n":"a"}x
-		"eyJ4IjoxfQ",     // {"x":1}
-		"eyJuIjoxfQ",     // {"n":1}
-		strings.Repeat("a", 2000),
+	// A time, as a list's sort key often holds, decodes from the cursor it
+	// encodes to, whatever its zone and fraction of a second.
+	type timeKey struct {
+		T time.Time `json:"t"`
+	}
+	for _, tm := range []time.Time{
+		time.Date(2026, 10, 15, 12, 0, 0, 120000000, time.FixedZone("", 2*3600)),
+		time.Date(2026, 3, 29, 1, 30, 0, 1, time.Local),
+		time.Now(),
 	} {
+		c, err := EncodeCursor(timeKey{tm})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if k, err := DecodeCursor[timeKey](c); err != nil || !k.T.Equal(tm) {
+			t.Errorf("DecodeCursor(EncodeCursor(%v)) = %v, %v", tm, k.T, err)
+		}
+	}
+	bad := []string{"not base64!", strings.Repeat("a", 2000)}
+	// JSON that encoding/json would decode into a key, but that EncodeCursor
+	// never writes: a missing field would be compared as its zero value.
+	for _, raw := range []string{
+		`{"n":"a","i":7}x`,
+		`{"n":"a","i":7,"x":1}`,
+		`{"n":1,"i":7}`,
+		`null`,
+		`{}`,
+		`{"n":"a"}`,
+		`{"N":"a","I":7}`,
+		`{"i":7,"n":"a"}`,
+		`{"n": "a", "i": 7}`,
+	} {
+		bad = append(bad, base64.RawURLEncoding.EncodeToString([]byte(raw)))
+	}
+	for _, bad := range bad {
 		_, err := DecodeCursor[key](bad)
 		var apiErr *Error
 		if !errors.As(err, &apiErr) || apiErr.Code != CodeInvalidCursor {

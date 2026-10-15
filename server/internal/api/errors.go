@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -165,6 +166,15 @@ func (e *ErrorEnvelope) ContentType(string) string {
 	return "application/json"
 }
 
+// withRequestID returns a copy of e with the request ID id. The envelope a
+// handler returns is never changed, because it may be one that the handler
+// returns for every request, such as a package-level error.
+func (e *ErrorEnvelope) withRequestID(id string) *ErrorEnvelope {
+	c := *e
+	c.Body.RequestID = id
+	return &c
+}
+
 func envelopeFor(c Code, message string, details map[string]any) *ErrorEnvelope {
 	s := spec(c)
 	if message == "" {
@@ -283,19 +293,35 @@ func errorDetails(msg string, errs []error) []Problem {
 }
 
 // WriteError writes the envelope that answers err, as toEnvelope builds it,
-// for a handler that is not a huma operation.
+// for a handler that is not a huma operation. The headers that err carries,
+// which huma.ErrorWithHeaders adds, as for Retry-After or NotModified's ETag,
+// are sent with it, as Register sends them, and replace any of the same name
+// already set, such as httpserver's Cache-Control: no-store.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
+	var he huma.HeadersError
+	if errors.As(err, &he) {
+		for name, values := range he.GetHeaders() {
+			w.Header()[http.CanonicalHeaderKey(name)] = slices.Clone(values)
+		}
+	}
 	writeEnvelope(w, r, toEnvelope(r.Context(), err))
 }
 
+// writeEnvelope writes env with the request's ID. It fills in a copy, as
+// fillRequestID does, because a handler may return one envelope for many
+// requests.
 func writeEnvelope(w http.ResponseWriter, r *http.Request, env *ErrorEnvelope) {
-	env.Body.RequestID = logging.RequestID(r.Context())
+	if env.status == http.StatusNotModified {
+		// A 304 has no body (RFC 9110 §15.4.5), as huma writes it.
+		w.WriteHeader(env.status)
+		return
+	}
+	env = env.withRequestID(logging.RequestID(r.Context()))
 	b, err := json.Marshal(env)
 	if err != nil {
 		// Details that do not encode are a bug in the code that set them.
 		loggerFrom(r.Context()).ErrorContext(r.Context(), "encode an error envelope", "error", err)
-		env = envelopeFor(CodeInternal, "", nil)
-		env.Body.RequestID = logging.RequestID(r.Context())
+		env = envelopeFor(CodeInternal, "", nil).withRequestID(logging.RequestID(r.Context()))
 		b, _ = json.Marshal(env)
 	}
 	w.Header().Set("Content-Type", "application/json")

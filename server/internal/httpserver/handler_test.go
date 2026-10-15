@@ -154,7 +154,6 @@ func TestRoutesDeclareCapabilities(t *testing.T) {
 			t.Errorf("%s has the routes %q, want %q", name, walked, want[name])
 		}
 	}
-
 }
 
 // TestSecurityHeaders checks the headers of PRD NFR-SEC-09 on responses of
@@ -378,6 +377,25 @@ func TestAbortedResponseIsObserved(t *testing.T) {
 	body := string(do(s.admin, http.MethodGet, "/metrics", nil).body)
 	if !strings.Contains(body, `storycreep_http_requests_total{code="200",method="GET",route="/half"} 1`) {
 		t.Errorf("the aborted request is not counted:\n%s", body)
+	}
+}
+
+// TestNotReadyWhileStopping checks that a server that is stopping reports
+// that it is not ready and refuses the API's requests, each with one
+// Retry-After, while /healthz still answers.
+func TestNotReadyWhileStopping(t *testing.T) {
+	s := newServer(loadConfig(t, nil), slog.New(slog.DiscardHandler))
+	s.ready.setPhase(phaseStopping)
+	for _, path := range []string{"/readyz", "/api/v1/nowhere"} {
+		res := do(s.main, http.MethodGet, path, nil)
+		if res.status != http.StatusServiceUnavailable || res.code() != api.CodeNotReady ||
+			res.details(t)["reason"] != "stopping" || !slices.Equal(res.header.Values("Retry-After"), []string{retryAfter}) {
+			t.Errorf("%s while stopping: %d %s, Retry-After %q", path, res.status, res.body,
+				res.header.Values("Retry-After"))
+		}
+	}
+	if res := do(s.main, http.MethodGet, "/healthz", nil); res.status != http.StatusOK {
+		t.Errorf("/healthz while stopping: %d %s", res.status, res.body)
 	}
 }
 

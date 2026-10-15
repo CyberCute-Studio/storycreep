@@ -46,7 +46,8 @@ func unmarshalStrict(data []byte, v any) error {
 // jsonFrame is an object or array that checkJSON is inside.
 type jsonFrame struct {
 	object bool
-	keys   map[string]bool
+	// keys are the object's keys so far; an array has none.
+	keys map[string]bool
 	// key is the object's current key, and index the array's current
 	// element, -1 before the first.
 	key   string
@@ -119,7 +120,12 @@ func checkJSON(data []byte) error {
 				if len(path) == maxJSONDepth {
 					return fmt.Errorf("%s: the values nest more than %d deep", location(), maxJSONDepth)
 				}
-				path = append(path, &jsonFrame{object: tok == json.Delim('{'), keys: map[string]bool{}, index: -1})
+				f := &jsonFrame{index: -1}
+				if tok == json.Delim('{') {
+					// Only an object has keys to keep apart.
+					f.object, f.keys = true, map[string]bool{}
+				}
+				path = append(path, f)
 			} else {
 				ended()
 			}
