@@ -60,6 +60,12 @@ func WithRequestID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, fieldsKey{}, f)
 }
 
+// RequestID returns the request ID that WithRequestID attached to ctx, or ""
+// if there is none.
+func RequestID(ctx context.Context) string {
+	return fromContext(ctx).requestID
+}
+
 // WithWorkspaceID returns a context whose records carry the workspace ID.
 func WithWorkspaceID(ctx context.Context, id string) context.Context {
 	f := fromContext(ctx)

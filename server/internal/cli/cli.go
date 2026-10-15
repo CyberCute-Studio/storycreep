@@ -56,6 +56,8 @@ type command struct {
 type invocation struct {
 	args           []string
 	stdout, stderr io.Writer
+	// flags are the parsed flags of the command.
+	flags *flag.FlagSet
 	// cfg is the validated configuration, for commands that load it.
 	cfg *config.Config
 }
@@ -67,6 +69,7 @@ func (e usageError) Error() string { return e.msg }
 
 // commands are the subcommands, in the order of the command list.
 var commands = []*command{
+	serve,
 	migrate,
 	validateConfig,
 }
@@ -176,7 +179,7 @@ func (c *command) execute(ctx context.Context, args []string, stdout, stderr io.
 			return usageFailure(stderr, c.name, "the -config path is empty")
 		}
 	}
-	inv := &invocation{args: fs.Args(), stdout: stdout, stderr: stderr}
+	inv := &invocation{args: fs.Args(), stdout: stdout, stderr: stderr, flags: fs}
 
 	if c.loadsConfig {
 		cfg, err := config.Load(config.Options{File: configFile, Env: env})
@@ -197,6 +200,11 @@ func (c *command) execute(ctx context.Context, args []string, stdout, stderr io.
 		return ExitFailure
 	}
 	return ExitOK
+}
+
+// boolFlag returns the value of the command's boolean flag name.
+func (inv *invocation) boolFlag(name string) bool {
+	return inv.flags.Lookup(name).Value.(flag.Getter).Get().(bool)
 }
 
 // isSet reports whether the command line set the named flag.

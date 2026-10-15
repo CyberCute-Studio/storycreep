@@ -35,6 +35,15 @@ type Config struct {
 	// DatabaseAdminURL is the superuser login that applies migrations. It is
 	// unset if the configuration has none.
 	DatabaseAdminURL DatabaseURL
+	// HTTPAddr is the address the server listens on for HTTP.
+	HTTPAddr string
+	// AdminAddr is the address of the admin port, which serves /metrics, or
+	// "" if there is none.
+	AdminAddr string
+	// MetricsToken is the bearer token that /metrics requires when the
+	// MetricsEndpoint capability is protected. It is unset if the
+	// configuration has none.
+	MetricsToken secret.Value
 	// LogLevel is the lowest level that is logged.
 	LogLevel slog.Level
 	// Capabilities are the mode-dependent behaviours.
