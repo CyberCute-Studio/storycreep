@@ -61,6 +61,27 @@ it("renders the shared vectors as the server does, in English and Czech", () => 
   }
 });
 
+// JSON cannot hold NaN and the infinities, so they are outside the vectors.
+// The server formats them as these do (TestArgumentTypes in
+// server/internal/i18n).
+it("formats NaN and the infinities as the server does", () => {
+  const cases: [string, number, string][] = [
+    ["{n, number}", Number.NaN, "NaN"],
+    ["{n, number, integer}", -Infinity, "-∞"],
+    ["{n, plural, one {# one} other {# other}}", Infinity, "∞ other"],
+    [
+      "{n, plural, offset:1 one {# one} other {# other}}",
+      -Infinity,
+      "-∞ other",
+    ],
+    ["{n, selectordinal, one {#st} other {#th}}", Number.NaN, "NaNth"],
+  ];
+  for (const [message, n, output] of cases) {
+    const i18n = createI18n("en", { catalogs: { en: { m: message } } });
+    expect(i18n.t("m", { n }), message).toBe(output);
+  }
+});
+
 it("refuses the shared vectors' invalid messages", () => {
   expect(vectors.invalid.length).toBeGreaterThan(0);
   for (const v of vectors.invalid) {

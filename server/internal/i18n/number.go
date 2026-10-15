@@ -44,6 +44,23 @@ func (l *locale) number(d decimal) string {
 	return l.printer.Sprint(number.Decimal(f, number.MaxFractionDigits(len(d.fraction))))
 }
 
+// format writes the number v, whose value is f, in the locale's format, with
+// at most maxFraction fraction digits, as Intl.NumberFormat does, NaN and the
+// infinities included.
+func (l *locale) format(v any, f float64, maxFraction int) string {
+	d, err := newDecimal(v, f, maxFraction)
+	if err != nil {
+		return l.nonFinite(f)
+	}
+	return l.number(d)
+}
+
+// nonFinite writes NaN or an infinity, f, in the locale's symbols, which x/text
+// takes from CLDR as Intl.NumberFormat does: NaN, ∞, and -∞ in English.
+func (l *locale) nonFinite(f float64) string {
+	return l.printer.Sprint(number.Decimal(f))
+}
+
 // decimal is a number as it is shown: its decimal digits, already rounded.
 type decimal struct {
 	negative bool

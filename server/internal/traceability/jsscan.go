@@ -436,10 +436,3 @@ func lexJS(src string) (toks []jsToken, comments []comment, unclosed int) {
 	}
 	return toks, comments, unclosed
 }
-
-// isIdentByte reports whether c can be part of an identifier. Bytes of
-// non-ASCII characters count, so that such identifiers stay whole.
-func isIdentByte(c byte) bool {
-	return c == '_' || c == '$' || c >= 0x80 ||
-		c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
-}

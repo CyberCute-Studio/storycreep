@@ -60,6 +60,13 @@ func TestArgumentTypes(t *testing.T) {
 		{"{n, select, 2 {two} other {other}}", Args{"n": int32(2)}, "two"},
 		{"{n, plural, =1 {one exactly} other {#}}", Args{"n": 1.0}, "one exactly"},
 		{"{n, plural, one {} other {#}}", Args{"n": 1}, ""},
+		// NaN and the infinities, as intl-messageformat formats them: in
+		// Intl.NumberFormat's symbols, and in a plural's other option.
+		{"{n, number}", Args{"n": math.NaN()}, "NaN"},
+		{"{n, number, integer}", Args{"n": math.Inf(-1)}, "-∞"},
+		{"{n, plural, one {# one} other {# other}}", Args{"n": math.Inf(1)}, "∞ other"},
+		{"{n, plural, offset:1 one {# one} other {# other}}", Args{"n": math.Inf(-1)}, "-∞ other"},
+		{"{n, selectordinal, one {#st} other {#th}}", Args{"n": math.NaN()}, "NaNth"},
 	}
 	for _, tt := range tests {
 		got, err := formatString(t, language.English, tt.msg, tt.args)
@@ -78,9 +85,7 @@ func TestFormatErrors(t *testing.T) {
 		{"{name}", Args{"other": "x"}},
 		{"{name}", Args{"name": true}},
 		{"{n, number}", Args{"n": "12"}},
-		{"{n, number}", Args{"n": math.NaN()}},
 		{"{n, plural, other {#}}", Args{"n": "1"}},
-		{"{n, plural, other {#}}", Args{"n": math.Inf(1)}},
 		{"{g, select, other {x}}", Args{"g": []string{"a"}}},
 	} {
 		if got, err := formatString(t, language.English, tt.msg, tt.args); err == nil {
@@ -101,6 +106,8 @@ func TestNumber(t *testing.T) {
 		{en, -0.0004, "-0"},
 		{en, 1e21, "1,000,000,000,000,000,000,000"},
 		{en, math.NaN(), "NaN"},
+		{en, math.Inf(1), "∞"},
+		{en, math.Inf(-1), "-∞"},
 		{en, "12", "12"},
 		{cs, 1234.5678, "1" + nbsp + "234,568"},
 		{cs, uint64(1) << 63, strings.Join([]string{"9", "223", "372", "036", "854", "775", "808"}, nbsp)},

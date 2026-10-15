@@ -106,6 +106,12 @@ func TestNegotiate(t *testing.T) {
 		{"Accept-Language by quality", "", "en;q=0.5, cs;q=0.9", en, cs},
 		{"Accept-Language skips what has no catalog", "", "de, cs;q=0.8, en;q=0.5", en, cs},
 		{"Accept-Language skips quality 0", "", "cs;q=0, en;q=0.1", cs, en},
+		// x/text's ParseAcceptLanguage returns no tags for the whole header
+		// when one entry is not valid.
+		{"Accept-Language skips an unknown language", "", "xx, cs;q=0.5", en, cs},
+		{"Accept-Language skips a malformed quality", "", "en;q=nonsense, cs;q=0.5", en, cs},
+		{"Accept-Language keeps the order of equal qualities", "", "de, cs, en", en, cs},
+		{"Accept-Language is read only so far", "", strings.Repeat("de, ", maxAcceptLanguages) + "cs", en, en},
 		{"the instance default last", "", "", cs, cs},
 		{"a regional variant of English", "", "en-GB", cs, en},
 		{"Slovak only resembles Czech", "", "sk", en, en},
@@ -225,6 +231,19 @@ func TestLoadProblems(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestInvalidSourceMessage checks that a source message that does not parse
+// is the one problem reported for its key: the arguments of its translation
+// cannot be checked against it, and are not reported as missing from it.
+func TestInvalidSourceMessage(t *testing.T) {
+	_, err := Load(fstest.MapFS{
+		"en.json": {Data: []byte(`{"a": "{n, plural, one {#}}"}`)},
+		"cs.json": {Data: []byte(`{"a": "{n} x"}`)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "en.json: a: at character") || strings.Contains(err.Error(), "cs.json") {
+		t.Errorf("Load: %v, want only the source message's problem", err)
 	}
 }
 

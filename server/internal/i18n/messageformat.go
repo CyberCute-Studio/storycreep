@@ -424,16 +424,16 @@ func arguments(nodes []node, into map[string]bool) {
 	}
 }
 
-// format renders nodes in the locale l with args. value is the number that #
-// stands for, in an option of a plural.
-func format(b *strings.Builder, l *locale, nodes []node, args Args, value *decimal) error {
+// format renders nodes in the locale l with args. hash is what # shows, the
+// number of the plural in whose option nodes are, or nil.
+func format(b *strings.Builder, l *locale, nodes []node, args Args, hash *string) error {
 	for _, n := range nodes {
 		switch n := n.(type) {
 		case literal:
 			b.WriteString(string(n))
 		case pound:
-			if value != nil {
-				b.WriteString(l.number(*value))
+			if hash != nil {
+				b.WriteString(*hash)
 			}
 		case *argument:
 			v, ok := args[n.name]
@@ -474,32 +474,28 @@ func formatArgument(b *strings.Builder, l *locale, a *argument, v any, args Args
 		if a.integer {
 			maxFraction = 0
 		}
-		d, err := newDecimal(v, f, maxFraction)
-		if err != nil {
-			return fmt.Errorf("the argument %s: %w", a.name, err)
-		}
-		b.WriteString(l.number(d))
+		b.WriteString(l.format(v, f, maxFraction))
 		return nil
 	}
 	// A plural or selectordinal: an exact match on the value, or else the
 	// category of the value less the offset, which # shows.
-	var d decimal
-	var err error
-	if a.offset == 0 {
-		d, err = newDecimal(v, f, 3)
+	less, lessValue := f, v
+	if a.offset != 0 {
+		less = f - float64(a.offset)
+		lessValue = less
+	}
+	var hash, category string
+	if d, err := newDecimal(lessValue, less, 3); err == nil {
+		rules := plural.Cardinal
+		if a.kind == argOrdinal {
+			rules = plural.Ordinal
+		}
+		hash, category = l.number(d), categories[d.pluralForm(rules, l.tag)]
 	} else {
-		less := f - float64(a.offset)
-		d, err = newDecimal(less, less, 3)
+		// NaN or an infinity, whose category Intl.PluralRules says is other.
+		hash, category = l.nonFinite(less), "other"
 	}
-	if err != nil {
-		return fmt.Errorf("the argument %s: %w", a.name, err)
-	}
-	rules := plural.Cardinal
-	if a.kind == argOrdinal {
-		rules = plural.Ordinal
-	}
-	category := categories[d.pluralForm(rules, l.tag)]
-	return format(b, l, a.choose("="+jsString(v, f), category), args, &d)
+	return format(b, l, a.choose("="+jsString(v, f), category), args, &hash)
 }
 
 // choose returns the message of the option that selector names, or else of

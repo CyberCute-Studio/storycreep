@@ -100,18 +100,15 @@ func (l *Localizer) Localize(m Message) (string, language.Tag) {
 
 // Number returns the number v in the localizer's locale, as {v, number}
 // formats it in a message: with the locale's separators and at most three
-// fraction digits. It returns a value that is not a number as fmt.Sprint
-// does, and NaN and the infinities as JavaScript writes them.
+// fraction digits, and NaN and the infinities as Intl.NumberFormat writes
+// them, as NaN, ∞, and -∞ in English. It returns a value that is not a number
+// as fmt.Sprint does.
 func (l *Localizer) Number(v any) string {
 	f, ok := toFloat(v)
 	if !ok {
 		return fmt.Sprint(v)
 	}
-	d, err := newDecimal(v, f, 3)
-	if err != nil {
-		return jsString(v, f)
-	}
-	return l.locale.number(d)
+	return l.locale.format(v, f, 3)
 }
 
 type localizerKey struct{}

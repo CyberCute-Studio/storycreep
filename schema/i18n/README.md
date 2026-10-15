@@ -22,3 +22,5 @@ Arguments are JSON values: strings, and numbers, which both sides read as 64-bit
 - **Tags.** `<b>` and other tags are text.
 
 One rule is outside the vectors, which hold one locale each: a message that a translation lacks is shown in English, and formatted with English plural rules and numbers, the locale that its options are written for, so a Czech reader sees `1,200 boards`. The web app passes i18next-icu the locale of the catalog that has the message, which i18next does not do by itself. Tests on both sides check it: `TestPlurals` in `server/internal/i18n`, and `i18n.test.ts` in `web/shared/src/i18n`.
+
+NaN and the infinities are outside the vectors too, because JSON cannot hold them. Both sides write them as `Intl.NumberFormat` does, as `NaN`, `∞`, and `-∞` in English, in `{n, number}` and in `#`, and a plural or selectordinal picks its `other` option for them. `TestArgumentTypes` in `server/internal/i18n` and `i18n.test.ts` check it.

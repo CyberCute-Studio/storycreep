@@ -29,11 +29,27 @@ function argumentsOf(elements: MessageFormatElement[], into: Set<string>) {
 }
 
 /**
+ * Parses a message as i18next-icu reads it, with every plural and select
+ * needing an other option, as the server requires, or returns why it does
+ * not parse.
+ */
+function parseMessage(
+  message: string,
+): { ast: MessageFormatElement[] } | { error: string } {
+  try {
+    return {
+      ast: parse(message, { ignoreTag: true, requiresOtherClause: true }),
+    };
+  } catch (e) {
+    return { error: String(e) };
+  }
+}
+
+/**
  * Returns what is wrong with a set of catalogs: a message that does not
- * parse as i18next-icu reads it (with every plural and select needing an
- * other option, as the server requires), an empty message in the source
- * catalog, a key that the source catalog lacks, or a translation that uses an
- * argument that the source message does not.
+ * parse, an empty message in the source catalog, a key that the source
+ * catalog lacks, or a translation that uses an argument that the source
+ * message does not.
  */
 function check(all: Readonly<Record<string, Catalog>>): string[] {
   const problems: string[] = [];
@@ -46,11 +62,9 @@ function check(all: Readonly<Record<string, Catalog>>): string[] {
         }
         continue;
       }
-      let ast: MessageFormatElement[];
-      try {
-        ast = parse(message, { ignoreTag: true, requiresOtherClause: true });
-      } catch (e) {
-        problems.push(`${locale}: ${key}: ${String(e)}`);
+      const parsed = parseMessage(message);
+      if ("error" in parsed) {
+        problems.push(`${locale}: ${key}: ${parsed.error}`);
         continue;
       }
       if (locale === SOURCE_LOCALE) {
@@ -61,11 +75,14 @@ function check(all: Readonly<Record<string, Catalog>>): string[] {
         problems.push(`${locale}: ${key}: the source catalog has no such key`);
         continue;
       }
-      const allowed = argumentsOf(
-        parse(original, { ignoreTag: true }),
-        new Set(),
-      );
-      for (const arg of argumentsOf(ast, new Set())) {
+      const sourceParsed = parseMessage(original);
+      if (original === "" || "error" in sourceParsed) {
+        // The source message's problem is reported with it, and the
+        // translation's arguments cannot be checked against it.
+        continue;
+      }
+      const allowed = argumentsOf(sourceParsed.ast, new Set());
+      for (const arg of argumentsOf(parsed.ast, new Set())) {
         if (!allowed.has(arg)) {
           problems.push(
             `${locale}: ${key}: the argument ${arg} is not in the source message`,
@@ -102,6 +119,10 @@ it("finds what is wrong with a catalog", () => {
         extra: "Navíc",
         unclosed: "{name",
         skipped: "",
+        // Translations of source messages that do not parse or are empty,
+        // whose problems are the ones reported for their keys.
+        files: "{n} souborů",
+        empty: "{n} prázdné",
       },
     }),
   ).toEqual([

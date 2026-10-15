@@ -2,6 +2,7 @@ package i18n
 
 import (
 	"bytes"
+	"cmp"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -51,6 +52,9 @@ type Bundle struct {
 type compiled struct {
 	source string
 	nodes  []node
+	// invalid is set for a message that is empty or does not parse, which
+	// Load reports, and which then has no nodes.
+	invalid bool
 }
 
 // Load reads the catalogs in fsys: a file named after each locale's BCP 47
@@ -98,7 +102,7 @@ func Load(fsys fs.FS) (*Bundle, error) {
 				// reported as a key that the source catalog lacks.
 				problems = append(problems, fmt.Errorf("%s: %s: %w", file, key, err))
 			}
-			catalog[key] = &compiled{source: msg, nodes: nodes}
+			catalog[key] = &compiled{source: msg, nodes: nodes, invalid: err != nil}
 		}
 		b.catalogs[tag] = catalog
 		b.locales = append(b.locales, tag)
@@ -116,6 +120,11 @@ func Load(fsys fs.FS) (*Bundle, error) {
 			if src == nil {
 				problems = append(problems, fmt.Errorf("%s.json: %s: the source catalog, %s.json, has no such key",
 					tag, key, Source))
+				continue
+			}
+			if src.invalid {
+				// Its problem is reported already, and without its arguments
+				// every argument of the translation would be reported too.
 				continue
 			}
 			used, allowed := map[string]bool{}, map[string]bool{}
@@ -199,6 +208,10 @@ func (b *Bundle) Locales() []language.Tag {
 // Localizer returns the localizer of the locale that tag matches, or of the
 // source locale if tag matches none.
 func (b *Bundle) Localizer(tag language.Tag) *Localizer {
+	if l := b.localizer(tag); l != nil {
+		// A locale with a catalog, as Negotiate returns, matches itself.
+		return l
+	}
 	if m, ok := b.Match(tag); ok {
 		tag = m
 	} else {
@@ -241,7 +254,10 @@ func (b *Bundle) Match(tag language.Tag) (language.Tag, bool) {
 // tag; acceptLanguage, the request's Accept-Language header, by quality; and
 // instanceDefault; or else the source locale. A tag that is invalid or that
 // no catalog matches is skipped, so an unknown locale falls back without an
-// error.
+// error, and so is an entry of acceptLanguage that is not valid, such as one
+// with an unknown language or a malformed quality, rather than the whole
+// header. Only the first maxAcceptLanguages entries of acceptLanguage are
+// read.
 func (b *Bundle) Negotiate(preference, acceptLanguage string, instanceDefault language.Tag) language.Tag {
 	if preference != "" {
 		if tag, err := language.Parse(preference); err == nil {
@@ -250,21 +266,46 @@ func (b *Bundle) Negotiate(preference, acceptLanguage string, instanceDefault la
 			}
 		}
 	}
-	if acceptLanguage != "" {
-		// An invalid header is ignored as a whole, as x/text returns no tags
-		// for it.
-		tags, qs, _ := language.ParseAcceptLanguage(acceptLanguage)
-		for i, tag := range tags {
-			if qs[i] <= 0 {
-				continue
-			}
-			if m, ok := b.Match(tag); ok {
-				return m
-			}
+	for _, tag := range acceptLanguages(acceptLanguage) {
+		if m, ok := b.Match(tag); ok {
+			return m
 		}
 	}
 	if m, ok := b.Match(instanceDefault); ok {
 		return m
 	}
 	return Source
+}
+
+// maxAcceptLanguages is how many entries of an Accept-Language header
+// Negotiate reads, so that a long header costs a request little. A browser
+// sends a few.
+const maxAcceptLanguages = 32
+
+// acceptLanguages returns the tags of an Accept-Language header whose quality
+// is above zero, the highest quality first, and in the header's order among
+// those of the same quality. It skips an entry that is not valid, where
+// x/text's ParseAcceptLanguage, given the whole header, would return no tags
+// at all, and reads only the first maxAcceptLanguages entries.
+func acceptLanguages(header string) []language.Tag {
+	type accepted struct {
+		tag language.Tag
+		q   float32
+	}
+	var entries []accepted
+	for n := 0; header != "" && n < maxAcceptLanguages; n++ {
+		var entry string
+		entry, header, _ = strings.Cut(header, ",")
+		tags, qs, err := language.ParseAcceptLanguage(entry)
+		if err != nil || len(tags) != 1 || qs[0] <= 0 {
+			continue
+		}
+		entries = append(entries, accepted{tags[0], qs[0]})
+	}
+	slices.SortStableFunc(entries, func(x, y accepted) int { return cmp.Compare(y.q, x.q) })
+	tags := make([]language.Tag, len(entries))
+	for i, e := range entries {
+		tags[i] = e.tag
+	}
+	return tags
 }

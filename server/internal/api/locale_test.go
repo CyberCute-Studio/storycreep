@@ -106,6 +106,8 @@ func TestLocalizedErrors(t *testing.T) {
 			[]string{"en-GB"}, "", CodeNotFound, "The resource does not exist.", "en"},
 		{"Accept-Language on two lines", language.English, http.MethodGet, "/nowhere",
 			[]string{"fr", "cs;q=0.8"}, "", CodeNotFound, "Prostředek neexistuje.", "cs"},
+		{"Accept-Language with an entry that is not valid", language.English, http.MethodGet, "/nowhere",
+			[]string{"xx, cs;q=0.8"}, "", CodeNotFound, "Prostředek neexistuje.", "cs"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

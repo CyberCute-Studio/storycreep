@@ -10,7 +10,7 @@
     "./ids": "./src/ids.ts"
   },
   "scripts": {
-    "typecheck": "tsc",
+    "typecheck": "tsc && tsc -p tsconfig.browser.json",
     "test": "vitest run"
   },
   "devDependencies": {
