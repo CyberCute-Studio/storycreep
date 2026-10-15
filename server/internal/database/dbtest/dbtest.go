@@ -31,6 +31,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -94,6 +95,21 @@ func Empty(t testing.TB) *Database {
 	t.Helper()
 	s := start(t)
 	return s.create(t, "TEMPLATE template0")
+}
+
+// IsolateLibpqEnvironment unsets the libpq environment variables, such as
+// PGPASSWORD and PGSERVICE, and points PGPASSFILE at an empty file, for a test
+// binary's TestMain to call before the tests run. pgx fills in from them, and
+// from the user's password file, what a database URL leaves out, so a
+// developer's settings would otherwise change what the tests parse and
+// connect with, or fail them.
+func IsolateLibpqEnvironment() {
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "PG") {
+			os.Unsetenv(name)
+		}
+	}
+	os.Setenv("PGPASSFILE", os.DevNull)
 }
 
 // Image returns the image the harness runs.

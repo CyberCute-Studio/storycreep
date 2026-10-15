@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -176,7 +177,7 @@ func waitForLockWaiters(t *testing.T, conn *pgx.Conn, n int) {
 }
 
 // TestMigrateWaitsForTheLock holds the migration lock and checks that
-// Migrate waits for it, and that a cancelled wait gives up.
+// Migrate waits for it, saying so first, and that a cancelled wait gives up.
 func TestMigrateWaitsForTheLock(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -201,9 +202,12 @@ func TestMigrateWaitsForTheLock(t *testing.T) {
 		t.Errorf("with the lock held and the wait cancelled, Migrate returned %v; want a failure to take the lock", err)
 	}
 
+	var waited atomic.Int32
 	done := make(chan error, 1)
 	go func() {
-		_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{})
+		_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{
+			Waiting: func() { waited.Add(1) },
+		})
 		done <- err
 	}()
 	select {
@@ -221,6 +225,17 @@ func TestMigrateWaitsForTheLock(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("Migrate did not finish after the lock was released")
+	}
+	if n := waited.Load(); n != 1 {
+		t.Errorf("Migrate said %d times that it waits for the lock, want once", n)
+	}
+
+	// With the lock free, Migrate takes it without saying that it waits.
+	_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{
+		Waiting: func() { t.Errorf("Migrate said that it waits for a lock that no one holds") },
+	})
+	if err != nil {
+		t.Errorf("Migrate with the lock free: %v", err)
 	}
 }
 

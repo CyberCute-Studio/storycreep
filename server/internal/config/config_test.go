@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -12,6 +13,22 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
+
+// TestMain clears the libpq environment variables and points PGPASSFILE at an
+// empty file before the tests run. pgx reads the database URLs with them, and
+// with the user's password file, so a developer's PGSERVICE, for one, would
+// make every configuration here invalid, and a password from either would
+// become the password of a URL that has none. It cannot use
+// dbtest.IsolateLibpqEnvironment, because dbtest imports this package.
+func TestMain(m *testing.M) {
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "PG") {
+			os.Unsetenv(name)
+		}
+	}
+	os.Setenv("PGPASSFILE", os.DevNull)
+	os.Exit(m.Run())
+}
 
 const testURL = "https://storycreep.example.com"
 

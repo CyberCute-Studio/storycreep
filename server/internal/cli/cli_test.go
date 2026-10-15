@@ -13,12 +13,22 @@ import (
 	"testing"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 )
 
 const (
 	testURL         = "https://storycreep.example.com"
 	testDatabaseURL = "postgres://storycreep:pw-s3cr3t@db:5432/storycreep"
 )
+
+// TestMain keeps the libpq environment variables and the user's password
+// file, which the configuration reads the database URLs with, out of the
+// tests, so that a developer's PGSERVICE, for one, does not make the
+// configurations here invalid.
+func TestMain(m *testing.M) {
+	dbtest.IsolateLibpqEnvironment()
+	os.Exit(m.Run())
+}
 
 func run(t *testing.T, env map[string]string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()

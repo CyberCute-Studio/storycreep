@@ -25,13 +25,14 @@ func TestMain(m *testing.M) {
 }
 
 // start runs the program with args and an environment holding only vars plus
-// the process environment without its STORYCREEP_ variables, and returns the
-// exit status and output.
+// the process environment without its STORYCREEP_ variables and the libpq
+// variables, such as PGSERVICE, that the configuration reads the database URL
+// with, and returns the exit status and output.
 func start(t *testing.T, vars map[string]string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], args...)
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(strings.ToUpper(kv), "STORYCREEP_") {
+		if !strings.HasPrefix(strings.ToUpper(kv), "STORYCREEP_") && !strings.HasPrefix(kv, "PG") {
 			cmd.Env = append(cmd.Env, kv)
 		}
 	}

@@ -72,6 +72,17 @@ func TestParseDatabaseURL(t *testing.T) {
 	if got := d.PoolConfig().ConnConfig.RuntimeParams["application_name"]; got != "a;b+c" {
 		t.Errorf("a change to one copy reached the next: application_name %q", got)
 	}
+
+	// The password is the one the server logs in with, which PGPASSWORD
+	// supplies when the URL has none. The URL is shown without it.
+	t.Setenv("PGPASSWORD", "from-the-environment")
+	d, err = ParseDatabaseURL("postgres://app@db/sc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Password().Reveal() != "from-the-environment" || d.String() != "postgres://app@db/sc" {
+		t.Errorf("with PGPASSWORD: password %q, shown as %s", d.Password().Reveal(), d)
+	}
 }
 
 // TestInvalidDatabaseURL checks that each invalid URL is rejected with an

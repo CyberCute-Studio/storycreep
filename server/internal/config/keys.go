@@ -139,9 +139,9 @@ var keys = []key{
 			"not exist, set its password to the one the server logs in with (this URL's, or else the one " +
 			"`PGPASSWORD`, a service file, or a password file supplies), and grant it the `storycreep_app` role, " +
 			"unless its password has expired (its `VALID UNTIL` has passed). They also revoke `CONNECT` on the " +
-			"database from `PUBLIC` and grant it to the login, so that another role that is neither a superuser nor " +
-			"the database's owner can connect only if it is granted `CONNECT` itself, as a monitoring role may need " +
-			"to be. A login belongs to the whole PostgreSQL server, not to one database, and so does the " +
+			"database from `PUBLIC` and grant it to the login, so that no other role can connect unless it is a " +
+			"superuser, the database's owner, or granted `CONNECT`, as a monitoring role may need to be, or it " +
+			"inherits the privileges of one of them or of the login, as a member of the login does. A login belongs to the whole PostgreSQL server, not to one database, and so does the " +
 			"`storycreep_app` role, which every Storycreep database on the server grants its privileges to. So " +
 			"give each Storycreep database on a server a login of its own, which can connect only to its own " +
 			"database: a shared login would reach all of them, and migrating one would change the password the " +

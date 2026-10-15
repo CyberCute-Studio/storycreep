@@ -19,16 +19,13 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
-// TestMain clears the libpq environment variables before the tests run. pgx
-// fills in from them what a URL leaves out, so a developer's PGPASSWORD would
-// take the place of the password file that TestProvisionPasswordFromFile
-// names, and PGAPPNAME the name that TestApplicationName expects.
+// TestMain keeps the libpq environment variables and the user's password file
+// out of the tests. pgx fills in from them what a URL leaves out, so a
+// developer's PGPASSWORD would take the place of the password file that
+// TestProvisionPasswordFromFile names, and PGAPPNAME the name that
+// TestApplicationName expects.
 func TestMain(m *testing.M) {
-	for _, kv := range os.Environ() {
-		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "PG") {
-			os.Unsetenv(name)
-		}
-	}
+	dbtest.IsolateLibpqEnvironment()
 	os.Exit(m.Run())
 }
 
@@ -85,6 +82,55 @@ func TestRolesAfterMigrating(t *testing.T) {
 	}
 	if create {
 		t.Errorf("the application login can create objects in the public schema")
+	}
+}
+
+// ownerRightsViews lists the views and materialized views of the database's
+// own schemas that read their tables with their owner's privileges: a view
+// does unless it was created with security_invoker, and a materialized view
+// always does.
+func ownerRightsViews(t *testing.T, conn *pgx.Conn) []string {
+	t.Helper()
+	rows, err := conn.Query(context.Background(), `
+		SELECT c.oid::regclass::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg\_%'
+			AND (c.relkind = 'm' OR c.relkind = 'v' AND NOT EXISTS (
+				SELECT FROM pg_options_to_table(c.reloptions)
+				WHERE option_name = 'security_invoker' AND option_value::bool))
+		ORDER BY 1`)
+	var views []string
+	if err == nil {
+		views, err = pgx.CollectRows(rows, pgx.RowTo[string])
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return views
+}
+
+// TestViewsKeepRowLevelSecurity checks that the migrations create no view
+// that row-level security would not hold the application login to. The
+// superuser that runs the migrations owns what they create, and row-level
+// security never holds a superuser, so a view that reads its tables with its
+// owner's privileges would show the server every workspace's rows. It checks
+// that such views are found, too.
+func TestViewsKeepRowLevelSecurity(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	if views := ownerRightsViews(t, admin); len(views) > 0 {
+		t.Errorf("the migrations create views that read their tables as the superuser: %v; create each view "+
+			"WITH (security_invoker = true), and no materialized view", views)
+	}
+
+	if _, err := admin.Exec(ctx, `CREATE VIEW owner_rights AS SELECT 1 AS x;
+		CREATE VIEW invoker_rights WITH (security_invoker = true) AS SELECT 1 AS x;
+		CREATE MATERIALIZED VIEW materialized AS SELECT 1 AS x`); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ownerRightsViews(t, admin), []string{"materialized", "owner_rights"}; !slices.Equal(got, want) {
+		t.Errorf("the check finds %v, want %v", got, want)
 	}
 }
 

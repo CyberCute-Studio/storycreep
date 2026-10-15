@@ -17,7 +17,6 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
-	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
 // embedded holds the migrations, in migrations/. They are forward-only:
@@ -67,6 +66,10 @@ type MigrateOptions struct {
 	// Migrations are the migrations to apply, one .sql file each. Nil means
 	// the embedded ones; tests apply other sets.
 	Migrations fs.FS
+	// Waiting, if set, is called when another session holds the migration
+	// lock, before Migrate waits for it. The wait has no timeout, so it is
+	// for saying why nothing happens meanwhile.
+	Waiting func()
 }
 
 // MigrateResult says what Migrate did.
@@ -184,7 +187,7 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	// The application login's password is the one its connections send: the
 	// URL's, or else the one PGPASSWORD, a service file, or a password file
 	// supplies.
-	appPassword := secret.New(app.PoolConfig().ConnConfig.Password)
+	appPassword := app.Password()
 
 	// The lock is held by this connection's session, so it is released when
 	// the connection closes, however Migrate ends.
@@ -220,9 +223,19 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 		return MigrateResult{}, nil, fmt.Errorf("prepare the session for the migration lock: %w", err)
 	}
 	// pg_advisory_lock waits for as long as another instance migrates. If ctx
-	// ends first, pgx cancels the wait.
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLock); err != nil {
+	// ends first, pgx cancels the wait. The lock is tried first, so that the
+	// caller can say that it waits.
+	var locked bool
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", migrationLock).Scan(&locked); err != nil {
 		return MigrateResult{}, nil, fmt.Errorf("take the migration lock: %w", err)
+	}
+	if !locked {
+		if opts.Waiting != nil {
+			opts.Waiting()
+		}
+		if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLock); err != nil {
+			return MigrateResult{}, nil, fmt.Errorf("take the migration lock: %w", err)
+		}
 	}
 
 	applied, err := appliedVersions(ctx, conn)

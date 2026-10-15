@@ -2,10 +2,16 @@ package dbtest
 
 import (
 	"context"
+	"os"
 	"regexp"
 	"strconv"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	IsolateLibpqEnvironment()
+	os.Exit(m.Run())
+}
 
 // TestRealPostgres checks that a test's database is a real PostgreSQL server
 // of the version the harness was asked for, so that a CI job set to test a

@@ -21,6 +21,35 @@ func fstestFS(names ...string) fs.FS {
 	return m
 }
 
+// gooseAnnotation returns the goose annotation that line holds, in upper
+// case, or "" if it holds none. It reads the line as goose does, which takes
+// any comment line with +goose in it for an annotation, drops every -- and
+// the +goose, and compares the rest ignoring case, so that "-- +goose no
+// transaction" and "--+goose Down" count too.
+func gooseAnnotation(line string) string {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "--") || !strings.Contains(line, "+goose") {
+		return ""
+	}
+	cmd := strings.Replace(strings.ReplaceAll(line, "--", ""), "+goose", "", 1)
+	return strings.ToUpper(strings.TrimSpace(cmd))
+}
+
+func TestGooseAnnotation(t *testing.T) {
+	for line, want := range map[string]string{
+		"-- +goose Up":             "UP",
+		"-- +goose no transaction": "NO TRANSACTION",
+		"--+goose Down":            "DOWN",
+		"--   +goose   down":       "DOWN",
+		"-- a comment":             "",
+		"SELECT 1; -- +goose Down": "",
+	} {
+		if got := gooseAnnotation(line); got != want {
+			t.Errorf("gooseAnnotation(%q) = %q, want %q", line, got, want)
+		}
+	}
+}
+
 // TestMigrationFiles checks the rules for the embedded migrations: each is
 // named NNNNN_description.sql, the versions count up from 1 without a gap,
 // each is forward-only, with an Up section and no Down section (PRD
@@ -61,12 +90,12 @@ func TestMigrationFiles(t *testing.T) {
 			if first == "" && line != "" {
 				first = line
 			}
-			switch {
-			case strings.HasPrefix(line, "-- +goose Up"):
+			switch gooseAnnotation(line) {
+			case "UP":
 				up = true
-			case strings.HasPrefix(line, "-- +goose Down"):
+			case "DOWN":
 				t.Errorf("%s: has a Down section; migrations are forward-only", name)
-			case strings.HasPrefix(line, "-- +goose NO TRANSACTION"):
+			case "NO TRANSACTION":
 				t.Errorf("%s: runs outside a transaction; each migration runs in its own, so that a failed one "+
 					"leaves no trace", name)
 			}

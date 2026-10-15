@@ -14,6 +14,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
 // canConnect reports whether url can log in.
@@ -151,8 +152,10 @@ func TestProvisionPasswordFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if app.Password().IsSet() {
-		t.Fatalf("the URL %s has a password", app)
+	// The URL has no password, which would be shown redacted, so its
+	// connections send the file's.
+	if strings.Contains(app.String(), secret.Redacted) || app.Password().Reveal() != "from-the-file" {
+		t.Fatalf("the URL %s has a password, or its connections would not send the file's", app)
 	}
 
 	if _, err := database.Migrate(ctx, d.AdminURL, app, database.MigrateOptions{}); err != nil {

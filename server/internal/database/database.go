@@ -158,9 +158,10 @@ type StartOptions struct {
 
 // Start is the database step of the server's startup (PRD FR-ADMIN-04). With
 // AutoMigrate, it applies the pending migrations under the migration lock,
-// which makes instances that start together safe, provisions the application
-// login, and returns the application login's pool that Migrate opened to
-// check that the migrations reached the database the login connects to.
+// which makes instances that start together safe, and logs that it waits if
+// another session holds the lock. It provisions the application login, and
+// returns the application login's pool that Migrate opened to check that the
+// migrations reached the database the login connects to.
 // Without AutoMigrate, it opens the application login's pool, and a pending
 // migration is logged as a warning and is for "storycreep migrate" to apply,
 // while the server reports that it is not ready.
@@ -170,7 +171,9 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 		log = slog.New(slog.DiscardHandler)
 	}
 	if opts.AutoMigrate {
-		res, db, err := migrate(ctx, cfg.DatabaseAdminURL, cfg.DatabaseURL, MigrateOptions{})
+		res, db, err := migrate(ctx, cfg.DatabaseAdminURL, cfg.DatabaseURL, MigrateOptions{Waiting: func() {
+			log.InfoContext(ctx, "waiting for the database migration lock, which another session holds")
+		}})
 		// The migrations applied before a failed one stay applied, so they
 		// are logged too.
 		for _, m := range res.Applied {

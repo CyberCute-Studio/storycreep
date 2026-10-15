@@ -25,7 +25,6 @@ type DatabaseURL struct {
 	display  string
 	user     string
 	database string
-	password secret.Value
 	// pool is what pgx read from the URL, which the server connects with.
 	pool *pgxpool.Config
 }
@@ -173,7 +172,6 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 	}
 	shownUser := url.User(d.user).String()
 	if pw, ok := u.User.Password(); ok && pw != "" {
-		d.password = secret.New(pw)
 		shownUser += ":" + secret.Redacted
 	}
 	d.display = scheme + "://" + shownUser + "@" + host + u.EscapedPath()
@@ -233,9 +231,14 @@ func (d DatabaseURL) Database() string {
 	return d.database
 }
 
-// Password returns the URL's password, which is unset if the URL has none.
+// Password returns the password the server logs in with: the URL's, or else
+// the one that PGPASSWORD, a service file, or a password file supplied when
+// the URL was parsed. It is unset if none did.
 func (d DatabaseURL) Password() secret.Value {
-	return d.password
+	if d.pool == nil {
+		return secret.Value{}
+	}
+	return secret.New(d.pool.ConnConfig.Password)
 }
 
 // PoolConfig returns the connection settings that pgx read from the URL when
