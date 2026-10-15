@@ -31,13 +31,24 @@ func messages(changes []Change) []string {
 	return out
 }
 
+// inThings returns the change msg to a Thing of the fixture as Breaking
+// reports it: for each operation whose response holds a Thing.
+func inThings(msg string) []string {
+	return []string{
+		"GET /things: the response 200 body.items[]." + msg,
+		"POST /things: the response 201 body." + msg,
+		"GET /things/{id}: the response 200 body." + msg,
+	}
+}
+
 // TestBreakingFixture compares the fixture with a version of it that removes
-// a property from a response, and checks that the comparison fails on it.
+// a property from a response, and checks that the comparison fails on it, for
+// each operation that answers with the property.
 //
 // Verifies: FR-API-01/AC3
 func TestBreakingFixture(t *testing.T) {
 	got := messages(Breaking(load(t, "base.json"), load(t, "response-field-removed.json")))
-	want := []string{"GET /things: the response 200 body.items[].name was removed"}
+	want := inThings("name was removed")
 	if !slices.Equal(got, want) {
 		t.Errorf("Breaking = %q, want %q", got, want)
 	}
@@ -71,7 +82,6 @@ func TestBreaking(t *testing.T) {
 		panic("no parameter " + name)
 	}
 	envelope := map[string]*MediaType{"application/json": {Schema: &Schema{Ref: refPrefix + "ErrorEnvelope"}}}
-	const listed = "GET /things: the response 200 body.items[]."
 
 	tests := []struct {
 		name   string
@@ -90,44 +100,44 @@ func TestBreaking(t *testing.T) {
 		// Responses.
 		{"a response property is no longer required", func(d *Document) {
 			thing(d).Required = slices.DeleteFunc(thing(d).Required, func(s string) bool { return s == "kind" })
-		}, []string{listed + "kind is no longer always present"}},
+		}, inThings("kind is no longer always present")},
 		{"a response property changes type", func(d *Document) {
 			thing(d).Properties["name"].Type = Types{"integer"}
-		}, []string{listed + "name: the type changed from string to integer"}},
+		}, inThings("name: the type changed from string to integer")},
 		{"a response property becomes nullable", func(d *Document) {
 			thing(d).Properties["kind"].Type = Types{"string", "null"}
-		}, []string{listed + "kind: the type changed from string to string or null"}},
+		}, inThings("kind: the type changed from string to string or null")},
 		{"a response property is no longer nullable", func(d *Document) {
 			thing(d).Properties["note"].Type = Types{"string"}
 		}, nil},
 		{"a response enum gains a value", func(d *Document) {
 			thing(d).Properties["kind"].Enum = append(thing(d).Properties["kind"].Enum, raw(`"jumper"`))
-		}, []string{listed + `kind: the values "jumper" were added`}},
+		}, inThings(`kind: the values "jumper" were added`)},
 		{"a response enum loses a value", func(d *Document) {
 			thing(d).Properties["kind"].Enum = thing(d).Properties["kind"].Enum[:1]
 		}, nil},
 		{"a response enum is removed", func(d *Document) {
 			thing(d).Properties["kind"].Enum = nil
-		}, []string{listed + `kind: it is no longer limited to "note", "choice"`}},
+		}, inThings(`kind: it is no longer limited to "note", "choice"`)},
 		{"a response gains a property", func(d *Document) {
 			thing(d).Properties["colour"] = &Schema{Type: Types{"string"}}
 			thing(d).Required = append(thing(d).Required, "colour")
 		}, nil},
 		{"a response's maxLength is removed", func(d *Document) {
 			thing(d).Properties["name"].MaxLength = nil
-		}, []string{listed + "name: maxLength changed from 100 to none"}},
+		}, inThings("name: maxLength changed from 100 to none")},
 		{"a response's maxLength falls", func(d *Document) {
 			thing(d).Properties["name"].MaxLength = ptr(50)
 		}, nil},
 		{"a response's format is removed", func(d *Document) {
 			thing(d).Properties["created_at"].Format = ""
-		}, []string{listed + `created_at: format changed from "date-time" to none`}},
+		}, inThings(`created_at: format changed from "date-time" to none`)},
 		{"a response's items change type", func(d *Document) {
 			thing(d).Properties["tags"].Items.Type = Types{"integer"}
-		}, []string{listed + "tags[]: the type changed from string to integer"}},
+		}, inThings("tags[]: the type changed from string to integer")},
 		{"a response map's values change type", func(d *Document) {
 			thing(d).Properties["counts"].AdditionalProperties.Schema.Type = Types{"string"}
-		}, []string{listed + "counts.*: the type changed from integer to string"}},
+		}, inThings("counts.*: the type changed from integer to string")},
 		{"a response header is removed", func(d *Document) {
 			delete(get(d).Responses["200"].Headers, "ETag")
 		}, []string{"GET /things/{id}: the response 200 no longer has the header ETag"}},
@@ -148,6 +158,11 @@ func TestBreaking(t *testing.T) {
 		}, []string{"DELETE /things/{id}: the response may now have the status 200"}},
 		{"an operation gains If-None-Match and a 304", func(d *Document) {
 			list(d).Parameters = append(list(d).Parameters, &Parameter{Name: "If-None-Match", In: "header",
+				Schema: &Schema{Type: Types{"string"}}})
+			list(d).Responses["304"] = &Response{Description: "Not Modified"}
+		}, nil},
+		{"an operation gains If-Modified-Since and a 304", func(d *Document) {
+			list(d).Parameters = append(list(d).Parameters, &Parameter{Name: "If-Modified-Since", In: "header",
 				Schema: &Schema{Type: Types{"string"}}})
 			list(d).Responses["304"] = &Response{Description: "Not Modified"}
 		}, nil},
@@ -268,9 +283,11 @@ func TestBreaking(t *testing.T) {
 		{"a request property is removed", func(d *Document) {
 			delete(input(d).Properties, "note")
 		}, []string{"POST /things: the request body.note was removed, and is rejected"}},
-		{"a request property is no longer nullable", func(d *Document) {
+		// huma's validator lets null through for a property that a request
+		// does not require.
+		{"an optional request property is no longer nullable", func(d *Document) {
 			input(d).Properties["note"].Type = Types{"string"}
-		}, []string{"POST /things: the request body.note: the type changed from string or null to string"}},
+		}, nil},
 		{"a request's minLength rises", func(d *Document) {
 			input(d).Properties["name"].MinLength = ptr(2)
 		}, []string{"POST /things: the request body.name: minLength changed from 1 to 2"}},
@@ -318,10 +335,21 @@ func TestBreaking(t *testing.T) {
 // the fixture: a header that the response always had; the properties that
 // huma does not require, which are readOnly in a request, and writeOnly in a
 // response; a 304 where base took If-None-Match; a range of statuses;
-// formats and multipleOf that widen or narrow; nullable enums; and oneOf.
+// formats and multipleOf that widen or narrow; nullable enums; the null that
+// a request may send for a property that it need not have; the types of an
+// enum's values; and oneOf.
 func TestBreakingFromChangedBase(t *testing.T) {
 	etag := func(d *Document) *Header { return d.Paths["/things/{id}"].Get.Responses["200"].Headers["ETag"] }
 	prop := func(d *Document, schema, name string) *Schema { return d.Components.Schemas[schema].Properties[name] }
+	// requireInput makes ThingInput require the property name, and returns
+	// its schema.
+	requireInput := func(d *Document, name string) *Schema {
+		input := d.Components.Schemas["ThingInput"]
+		if !slices.Contains(input.Required, name) {
+			input.Required = append(input.Required, name)
+		}
+		return input.Properties[name]
+	}
 	none := func(*Document) {}
 	// noteOf makes Thing's note one of the types.
 	noteOf := func(types ...string) func(d *Document) {
@@ -360,7 +388,7 @@ func TestBreakingFromChangedBase(t *testing.T) {
 		}, nil},
 		{"a required response property becomes writeOnly", none, func(d *Document) {
 			prop(d, "Thing", "kind").WriteOnly = true
-		}, []string{"GET /things: the response 200 body.items[].kind is no longer always present"}},
+		}, inThings("kind is no longer always present")},
 		{"a required response property is no longer writeOnly", func(d *Document) {
 			prop(d, "Thing", "kind").WriteOnly = true
 		}, none, nil},
@@ -390,7 +418,7 @@ func TestBreakingFromChangedBase(t *testing.T) {
 			prop(d, "Thing", "counts").AdditionalProperties.Schema.Format = "int32"
 		}, func(d *Document) {
 			prop(d, "Thing", "counts").AdditionalProperties.Schema.Format = "int64"
-		}, []string{`GET /things: the response 200 body.items[].counts.*: format changed from "int32" to "int64"`}},
+		}, inThings(`counts.*: format changed from "int32" to "int64"`)},
 		{"a request's multipleOf changes to a divisor", func(d *Document) {
 			prop(d, "ThingInput", "size").MultipleOf = ptr(0.3)
 		}, func(d *Document) {
@@ -415,9 +443,10 @@ func TestBreakingFromChangedBase(t *testing.T) {
 			prop(d, "Thing", "counts").AdditionalProperties.Schema.MultipleOf = ptr(2.0)
 		}, func(d *Document) {
 			prop(d, "Thing", "counts").AdditionalProperties.Schema.MultipleOf = ptr(1.0)
-		}, []string{"GET /things: the response 200 body.items[].counts.*: multipleOf changed from \"2\" to \"1\""}},
+		}, inThings(`counts.*: multipleOf changed from "2" to "1"`)},
 
-		// Nullable enums, which take null if their type does, listed or not.
+		// Nullable enums, which take null if their type does, listed or not,
+		// in a property that a request requires.
 		{"a response's nullable enum lists null", func(d *Document) {
 			prop(d, "Thing", "kind").Type = Types{"string", "null"}
 		}, func(d *Document) {
@@ -425,24 +454,73 @@ func TestBreakingFromChangedBase(t *testing.T) {
 			k.Type, k.Enum = Types{"string", "null"}, append(k.Enum, raw("null"))
 		}, nil},
 		{"a request's nullable enum stops listing null", func(d *Document) {
-			k := prop(d, "ThingInput", "kind")
+			k := requireInput(d, "kind")
 			k.Type, k.Enum = Types{"string", "null"}, append(k.Enum, raw("null"))
 		}, func(d *Document) {
-			prop(d, "ThingInput", "kind").Type = Types{"string", "null"}
+			requireInput(d, "kind").Type = Types{"string", "null"}
 		}, nil},
 		{"a request's enum without a type stops listing null", func(d *Document) {
+			k := requireInput(d, "kind")
+			k.Type, k.Enum = nil, append(k.Enum, raw("null"))
+		}, func(d *Document) {
+			requireInput(d, "kind").Type = nil
+		}, []string{"POST /things: the request body.kind: the values null were removed"}},
+
+		// huma's validator lets null through for a property that a request
+		// does not require, readOnly or not, whatever its schema.
+		{"a required request property is no longer nullable", func(d *Document) {
+			prop(d, "ThingInput", "name").Type = Types{"string", "null"}
+		}, none, []string{"POST /things: the request body.name: the type changed from string or null to string"}},
+		{"a required readOnly request property is no longer nullable", func(d *Document) {
+			name := prop(d, "ThingInput", "name")
+			name.Type, name.ReadOnly = Types{"string", "null"}, true
+		}, func(d *Document) {
+			prop(d, "ThingInput", "name").ReadOnly = true
+		}, []string{"POST /things: the request body.name: the type changed from string or null to string"}},
+		{"an optional request property's enum without a type stops listing null", func(d *Document) {
 			k := prop(d, "ThingInput", "kind")
 			k.Type, k.Enum = nil, append(k.Enum, raw("null"))
 		}, func(d *Document) {
 			prop(d, "ThingInput", "kind").Type = nil
-		}, []string{"POST /things: the request body.kind: the values null were removed"}},
+		}, nil},
+		{"an optional request property's oneOf member null changes type", func(d *Document) {
+			*prop(d, "ThingInput", "note") = Schema{OneOf: []*Schema{{Type: Types{"string"}}, {Type: Types{"null"}}}}
+		}, func(d *Document) {
+			*prop(d, "ThingInput", "note") = Schema{OneOf: []*Schema{{Type: Types{"string"}}, {Type: Types{"integer"}}}}
+		}, nil},
+		{"a request property that becomes optional is no longer nullable", func(d *Document) {
+			requireInput(d, "note")
+		}, func(d *Document) {
+			prop(d, "ThingInput", "note").Type = Types{"string"}
+		}, nil},
+
+		// An enum or a const allows only the types of its values.
+		{"a request's enum gains the type of its values", func(d *Document) {
+			prop(d, "ThingInput", "kind").Type = nil
+		}, none, nil},
+		{"a request's const gains the type of its value", func(d *Document) {
+			size := prop(d, "ThingInput", "size")
+			size.Type, size.Const = nil, raw("2")
+		}, func(d *Document) {
+			prop(d, "ThingInput", "size").Const = raw("2")
+		}, nil},
+		{"a response's enum allows another type", none, func(d *Document) {
+			prop(d, "Thing", "kind").Type = Types{"string", "integer"}
+		}, nil},
+		{"a request's enum value is not of the new type", func(d *Document) {
+			k := prop(d, "ThingInput", "kind")
+			k.Type, k.Enum = nil, append(k.Enum, raw("1.5"))
+		}, func(d *Document) {
+			k := prop(d, "ThingInput", "kind")
+			k.Type, k.Enum = Types{"string", "integer"}, append(k.Enum, raw("1.5"))
+		}, []string{"POST /things: the request body.kind: the type changed from any type to string or integer"}},
 
 		// Schemas combined with oneOf, member by member.
 		{"a response's oneOf is the same", noteOf("string", "null"), noteOf("string", "null"), nil},
 		{"a response's oneOf gains a member", noteOf("string", "null"), noteOf("string", "null", "integer"),
-			[]string{"GET /things: the response 200 body.items[].note: oneOf changed from 2 schemas to 3"}},
+			inThings("note: oneOf changed from 2 schemas to 3")},
 		{"a response's oneOf member changes type", noteOf("string", "null"), noteOf("integer", "null"),
-			[]string{"GET /things: the response 200 body.items[].note.oneOf[0]: the type changed from string to integer"}},
+			inThings("note.oneOf[0]: the type changed from string to integer")},
 	}
 	for _, tt := range tests {
 		base, head := load(t, "base.json"), load(t, "base.json")

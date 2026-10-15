@@ -61,6 +61,8 @@ func TestLoadRefuses(t *testing.T) {
 		{"an unknown type", `"type": "boolean"`, `"type": "bool"`, `"bool" is not a type`},
 		{"a response key that is not a status", `"304": {`, `"3xx": {`, "is not a status"},
 		{"a null schema", `"schemas": {`, `"schemas": {"Nothing": null,`, "schema Nothing is null"},
+		{"a required property that the schema does not name", `"required": ["name"]`,
+			`"required": ["name", "colour"]`, "schema ThingInput: it requires the property colour, which it does not name"},
 		{"references in a cycle", `"schemas": {`, `"schemas": {"A": {"$ref": "#/components/schemas/B"}, ` +
 			`"B": {"$ref": "#/components/schemas/A"},`, "schema A: its references go round in a cycle"},
 	}

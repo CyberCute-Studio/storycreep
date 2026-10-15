@@ -232,8 +232,8 @@ const refPrefix = "#/components/schemas/"
 // OpenAPI 3.1, with only the objects and keywords that the types above have,
 // references only to named schemas that exist, with nothing but annotations
 // beside them, and no named schemas that only refer to each other in a
-// cycle, a unique operationId on every operation, and path parameters that
-// match their path.
+// cycle, required properties that their schema names, a unique operationId
+// on every operation, and path parameters that match their path.
 func Load(b []byte) (*Document, error) {
 	var d Document
 	if err := decodeStrict(b, &d); err != nil {
@@ -476,9 +476,9 @@ func (d *Document) checkMediaType(m *MediaType) error {
 // typeNames are the names of JSON Schema's types.
 var typeNames = []string{"string", "integer", "number", "boolean", "array", "object", "null"}
 
-// checkSchema checks that every type in s is one of JSON Schema's, and every
-// reference names a schema that exists and has beside it only the keywords
-// that annotate it.
+// checkSchema checks that every type in s is one of JSON Schema's, every
+// property that s requires is one that it names, and every reference names a
+// schema that exists and has beside it only the keywords that annotate it.
 func (d *Document) checkSchema(s *Schema) error {
 	if s == nil {
 		return nil
@@ -486,6 +486,14 @@ func (d *Document) checkSchema(s *Schema) error {
 	for _, t := range s.Type {
 		if !slices.Contains(typeNames, t) {
 			return fmt.Errorf("%q is not a type", t)
+		}
+	}
+	// huma requires only the properties that it names. The comparison and the
+	// generator read a property from the properties, so they would skip one
+	// that only required names.
+	for _, name := range s.Required {
+		if _, ok := s.Properties[name]; !ok {
+			return fmt.Errorf("it requires the property %s, which it does not name", name)
 		}
 	}
 	if s.Ref != "" {

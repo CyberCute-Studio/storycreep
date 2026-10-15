@@ -58,7 +58,10 @@ func (c Change) String() string {
 //     response to a multiple of it; an encoding changed; or, in a request,
 //     a default changed or removed. Whether a schema with a type takes null
 //     is up to the type, as huma's validator reads it, whether or not its
-//     enum lists null.
+//     enum lists null, and a schema with an enum or a const allows only the
+//     types of its values. A property that a request's object does not
+//     require takes null whatever its schema, because huma's validator lets
+//     null through for one without reading its schema.
 //   - A request's object no longer accepts a property, because it no longer
 //     names it and accepts no others, or newly requires one. A response's
 //     object lacks a property that it had, or no longer always has one that
@@ -71,14 +74,18 @@ func (c Change) String() string {
 // member, and a change in the number of members breaks a client. Titles,
 // descriptions, examples, deprecation, and operation IDs are not on the wire,
 // and changing them breaks nothing.
+//
+// A change to a schema that several operations share is reported for each of
+// them, at the first place in the operation where the schema is.
 func Breaking(base, head *Document) []Change {
-	c := &comparer{base: base, head: head, seen: map[seenKey]bool{}}
+	c := &comparer{base: base, head: head}
 	heads := map[string]located{}
 	for _, l := range locate(head) {
 		heads[l.key] = l
 	}
 	for _, b := range locate(base) {
 		c.op = b.method + " " + b.path
+		c.seen = map[seenKey]bool{}
 		h, ok := heads[b.key]
 		if !ok {
 			c.report("the operation was removed")
@@ -118,14 +125,15 @@ type comparer struct {
 	// op is the operation being compared.
 	op      string
 	changes []Change
-	// seen holds the pairs of schemas compared so far, so that a recursive
-	// schema is compared once.
+	// seen holds the pairs of schemas compared so far in the operation, so
+	// that a recursive schema is compared once.
 	seen map[seenKey]bool
 }
 
 type seenKey struct {
 	base, head string
 	dir        direction
+	headNull   bool
 }
 
 func (c *comparer) report(format string, args ...any) {
@@ -353,9 +361,17 @@ func identity(s *Schema, name string) string {
 // schema compares base's and head's schema of the values at loc, which go in
 // direction dir.
 func (c *comparer) schema(loc string, b, h *Schema, dir direction) {
+	c.compare(loc, b, h, dir, false)
+}
+
+// compare is schema, where headNull says that head takes null at loc in a
+// request whatever its schema, as it takes a property that it does not
+// require.
+func (c *comparer) compare(loc string, b, h *Schema, dir direction, headNull bool) {
+	headNull = headNull && dir == request
 	b, bName := c.base.resolve(b)
 	h, hName := c.head.resolve(h)
-	key := seenKey{identity(b, bName), identity(h, hName), dir}
+	key := seenKey{identity(b, bName), identity(h, hName), dir, headNull}
 	if c.seen[key] {
 		return
 	}
@@ -366,19 +382,20 @@ func (c *comparer) schema(loc string, b, h *Schema, dir direction) {
 	if h == nil {
 		h = &Schema{}
 	}
-	// Every value of wide must be a value of narrow.
+	// Every value of wide must be a value of narrow. In a request, narrow is
+	// head, so headNull says that narrow takes null.
 	wide, narrow := b, h
 	if dir == response {
 		wide, narrow = h, b
 	}
-	c.types(loc, b, h, wide, narrow)
-	c.values(loc, wide, narrow, dir)
+	c.types(loc, b, h, wide, narrow, headNull)
+	c.values(loc, wide, narrow, dir, headNull)
 	c.bounds(loc, b, h, wide, narrow)
 	c.keywords(loc, b, h, wide, narrow)
 	if dir == request && b.Default != nil && !sameJSON(b.Default, h.Default) {
 		c.report("%s: the default changed from %s to %s", loc, jsonOrNone(b.Default), jsonOrNone(h.Default))
 	}
-	c.composition(loc, b, h, dir)
+	c.composition(loc, b, h, dir, headNull)
 	c.object(loc, b, h, dir)
 	if b.Items != nil || h.Items != nil {
 		c.schema(loc+"[]", b.Items, h.Items, dir)
@@ -401,6 +418,37 @@ func typeSet(s *Schema) (types []string, nullable, anyType bool) {
 	return types, nullable, false
 }
 
+// valueTypes returns the types of values, which are compact JSON, apart from
+// null, and whether one of them is null: the types that a schema whose enum
+// or const allows only those values allows, whatever its type says.
+func valueTypes(values []string) (types []string, nullable bool) {
+	for _, v := range values {
+		var t string
+		switch {
+		case v == "null":
+			nullable = true
+			continue
+		case v == "true" || v == "false":
+			t = "boolean"
+		case strings.HasPrefix(v, `"`):
+			t = "string"
+		case strings.HasPrefix(v, "{"):
+			t = "object"
+		case strings.HasPrefix(v, "["):
+			t = "array"
+		default:
+			t = "number"
+			if f, err := strconv.ParseFloat(v, 64); err == nil && f == math.Trunc(f) {
+				t = "integer"
+			}
+		}
+		if !slices.Contains(types, t) {
+			types = append(types, t)
+		}
+	}
+	return types, nullable
+}
+
 func typeString(s *Schema) string {
 	if len(s.Type) == 0 {
 		return "any type"
@@ -408,12 +456,19 @@ func typeString(s *Schema) string {
 	return strings.Join(s.Type, " or ")
 }
 
-func (c *comparer) types(loc string, b, h, wide, narrow *Schema) {
+// types reports a type that wide allows and narrow does not; narrowNull says
+// that narrow takes null whatever its type.
+func (c *comparer) types(loc string, b, h, wide, narrow *Schema, narrowNull bool) {
 	wt, wNull, wAny := typeSet(wide)
+	if values, restricted := enumValues(wide); restricted {
+		wt, wNull = valueTypes(values)
+		wAny = false
+	}
 	nt, nNull, nAny := typeSet(narrow)
 	if nAny {
 		return
 	}
+	nNull = nNull || narrowNull
 	lost := wAny || wNull && !nNull
 	for _, t := range wt {
 		// Every integer is a number.
@@ -453,10 +508,15 @@ func enumValues(s *Schema) ([]string, bool) {
 	return out, true
 }
 
-func (c *comparer) values(loc string, wide, narrow *Schema, dir direction) {
+// values reports a value that wide allows and narrow's enum or const does
+// not; narrowNull says that narrow takes null whatever its schema.
+func (c *comparer) values(loc string, wide, narrow *Schema, dir direction, narrowNull bool) {
 	nv, restricted := enumValues(narrow)
 	if !restricted {
 		return
+	}
+	if narrowNull && !slices.Contains(nv, "null") {
+		nv = append(nv, "null")
 	}
 	wv, wasRestricted := enumValues(wide)
 	if !wasRestricted {
@@ -638,7 +698,10 @@ func multipleWithin(w, n string) bool {
 	return r >= 1 && math.Abs(r-math.Round(r)) <= 1e-9*r
 }
 
-func (c *comparer) composition(loc string, b, h *Schema, dir direction) {
+// composition compares the members of b's and h's oneOf, anyOf, and allOf.
+// headNull, that head takes null whatever its schema, holds for its members
+// too, because huma's validator lets that null through before it reads them.
+func (c *comparer) composition(loc string, b, h *Schema, dir direction, headNull bool) {
 	for _, k := range []struct {
 		name string
 		b, h []*Schema
@@ -648,7 +711,7 @@ func (c *comparer) composition(loc string, b, h *Schema, dir direction) {
 			continue
 		}
 		for i := range k.b {
-			c.schema(fmt.Sprintf("%s.%s[%d]", loc, k.name, i), k.b[i], k.h[i], dir)
+			c.compare(fmt.Sprintf("%s.%s[%d]", loc, k.name, i), k.b[i], k.h[i], dir, headNull)
 		}
 	}
 }
@@ -683,6 +746,10 @@ func needed(s *Schema, dir direction) map[string]bool {
 
 func (c *comparer) object(loc string, b, h *Schema, dir direction) {
 	bReq, hReq := needed(b, dir), needed(h, dir)
+	// huma's validator lets null through for a property of a request that
+	// the object does not list as required, readOnly or not, before it reads
+	// the property's schema.
+	takesNull := func(name string) bool { return !slices.Contains(h.Required, name) }
 	for _, name := range slices.Sorted(maps.Keys(b.Properties)) {
 		at := loc + "." + name
 		is, ok := h.Properties[name]
@@ -704,7 +771,7 @@ func (c *comparer) object(loc string, b, h *Schema, dir direction) {
 		case dir == response && bReq[name] && !hReq[name]:
 			c.report("%s is no longer always present", at)
 		}
-		c.schema(at, b.Properties[name], is, dir)
+		c.compare(at, b.Properties[name], is, dir, takesNull(name))
 	}
 	for _, name := range slices.Sorted(maps.Keys(h.Properties)) {
 		if _, ok := b.Properties[name]; ok {
@@ -717,7 +784,7 @@ func (c *comparer) object(loc string, b, h *Schema, dir direction) {
 		case dir == request && accepted(b):
 			// A client may have sent the property, as one that base
 			// accepted without naming it.
-			c.schema(at, additionalSchema(b), h.Properties[name], dir)
+			c.compare(at, additionalSchema(b), h.Properties[name], dir, takesNull(name))
 		case dir == response && additionalSchema(b) != nil:
 			// Base described every property that it did not name, as a map
 			// does, so a client reads the new one as one of those.

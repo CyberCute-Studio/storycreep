@@ -164,20 +164,27 @@ func (g *tsGen) typeOf(s *Schema, n int) (string, error) {
 			parts = append(parts, t)
 		}
 	}
+	// addValue adds the literal type of a value of the enum or const. A
+	// schema with a type takes null exactly when the type allows it, which
+	// is added below, whether or not the enum lists null, because huma's
+	// validator reads the type first.
+	addValue := func(v json.RawMessage) error {
+		lit, err := literal(v)
+		if err == nil && (lit != "null" || len(s.Type) == 0) {
+			add(lit)
+		}
+		return err
+	}
 	switch {
 	case s.Const != nil:
-		lit, err := literal(s.Const)
-		if err != nil {
+		if err := addValue(s.Const); err != nil {
 			return "", err
 		}
-		add(lit)
 	case s.Enum != nil:
 		for _, v := range s.Enum {
-			lit, err := literal(v)
-			if err != nil {
+			if err := addValue(v); err != nil {
 				return "", err
 			}
-			add(lit)
 		}
 	case len(s.Type) == 0:
 		if s.Items != nil || s.Properties != nil || s.AdditionalProperties != nil {
@@ -216,6 +223,11 @@ func (g *tsGen) typeOf(s *Schema, n int) (string, error) {
 	// null goes last, as people write it.
 	if i := slices.Index(parts, "null"); i >= 0 && len(parts) > 1 {
 		parts = append(slices.Delete(parts, i, i+1), "null")
+	}
+	if len(parts) == 0 {
+		// An enum that allows no value, such as one that lists only a null
+		// that its type does not allow.
+		return "never", nil
 	}
 	return strings.Join(parts, " | "), nil
 }

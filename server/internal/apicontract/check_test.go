@@ -64,7 +64,7 @@ func TestCheck(t *testing.T) {
 
 	// Removing a property from a response breaks the API, committed or not.
 	copyFixture(t, "response-field-removed.json", doc)
-	want := []string{"GET /things: the response 200 body.items[].name was removed"}
+	want := inThings("name was removed")
 	res, err = Check(ctx, doc, "main")
 	if err != nil || !slices.Equal(messages(res.Changes), want) || len(res.Overrides) != 0 {
 		t.Fatalf("a removed property: %+v, %v; want %q and no override", res, err, want)
@@ -82,16 +82,20 @@ func TestCheck(t *testing.T) {
 		t.Fatalf("no reason: %+v, %v; want no override", res, err)
 	}
 
-	git("commit", "-q", "--allow-empty", "-m",
-		"Allow it\n\napi-break: no client depends on v1 before the first release\nCo-Authored-By: A <a@example.com>")
+	// A commit may give more than one reason, each in a trailer of its own.
+	git("commit", "-q", "--allow-empty", "-m", "Allow it\n\napi-break: no client depends on v1 before the first "+
+		"release\nCo-Authored-By: A <a@example.com>\nAPI-Break: the fixture says so")
 	head := strings.TrimSpace(git("rev-parse", "HEAD"))
 	res, err = Check(ctx, doc, "main")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(messages(res.Changes), want) || len(res.Overrides) != 1 ||
-		res.Overrides[0] != (Override{Commit: head, Reason: "no client depends on v1 before the first release"}) {
-		t.Errorf("with an API-Break trailer: %+v; want the change, and the trailer's reason", res)
+	wantOverrides := []Override{
+		{Commit: head, Reason: "no client depends on v1 before the first release"},
+		{Commit: head, Reason: "the fixture says so"},
+	}
+	if !slices.Equal(messages(res.Changes), want) || !slices.Equal(res.Overrides, wantOverrides) {
+		t.Errorf("with API-Break trailers: %+v; want the change, and the trailers' reasons", res)
 	}
 }
 

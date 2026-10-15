@@ -175,6 +175,11 @@ func TestTypeScriptCompositions(t *testing.T) {
 		{&Schema{Type: Types{"string", "null"}, Enum: []json.RawMessage{raw(`"a"`), raw(`"b"`)}}, `"a" | "b" | null`},
 		{&Schema{Type: Types{"null", "integer"}, Const: raw(`1`)}, "1 | null"},
 		{&Schema{Type: Types{"string", "null"}, Enum: []json.RawMessage{raw(`null`), raw(`"a"`)}}, `"a" | null`},
+		// A null that the enum lists, and the type does not allow, is not a
+		// value, as huma's validator reads the type first.
+		{&Schema{Type: Types{"string"}, Enum: []json.RawMessage{raw(`"a"`), raw(`null`)}}, `"a"`},
+		{&Schema{Type: Types{"string"}, Const: raw(`null`)}, "never"},
+		{&Schema{Enum: []json.RawMessage{raw(`"a"`), raw(`null`)}}, `"a" | null`},
 		{&Schema{Type: Types{"integer", "number", "null"}}, "number | null"},
 		{&Schema{Type: Types{"null", "boolean"}}, "boolean | null"},
 		{&Schema{Type: Types{"object"}, AdditionalProperties: &Additional{}}, "Record<string, never>"},
