@@ -241,6 +241,14 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 		{"table owner", func(r, n string) string {
 			return "CREATE TABLE owned_" + n + " (x int); ALTER TABLE owned_" + n + " OWNER TO " + r
 		}, "it owns objects in the database"},
+		// The owner of a type or a collation can drop, with CASCADE, the
+		// columns that use it in tables that it does not own.
+		{"type owner", func(r, n string) string {
+			return "CREATE TYPE owned_" + n + " AS ENUM ('a'); ALTER TYPE owned_" + n + " OWNER TO " + r
+		}, "it owns objects in the database"},
+		{"collation owner", func(r, n string) string {
+			return `CREATE COLLATION owned_` + n + ` FROM "C"; ALTER COLLATION owned_` + n + " OWNER TO " + r
+		}, "it owns objects in the database"},
 		{"database owner", func(r, _ string) string { return "ALTER DATABASE " + d.Name + " OWNER TO " + r },
 			`it is a member of "pg_database_owner", which owns objects in the database`},
 	} {

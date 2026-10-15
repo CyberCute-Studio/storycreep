@@ -26,6 +26,8 @@ type DatabaseURL struct {
 	user     string
 	database string
 	password secret.Value
+	// pool is what pgx read from the URL, which the server connects with.
+	pool *pgxpool.Config
 }
 
 // reservedDatabaseParams are the query parameters that would set what the
@@ -50,25 +52,42 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 	if !strings.HasPrefix(v, "postgres://") && !strings.HasPrefix(v, "postgresql://") {
 		return fail("must start with postgres:// or postgresql://, in lowercase")
 	}
+	// libpq, and pgx with it, skips the spaces around each part of the URL,
+	// such as the name of a query parameter, and refuses one inside it. A
+	// name written with a space, such as " password", would otherwise pass
+	// the checks below as another name, with its value shown unredacted.
+	// Control characters are refused too, also in the host, which url.Parse
+	// does not see below.
+	if strings.ContainsFunc(v, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
+		return fail("has a space or a control character; write a space as %20")
+	}
 	// pgx reads a URL as libpq does, which ends the user and password at the
 	// first @ or /, so a ? or # before that @ is part of them, where
 	// url.Parse would end them there and fail to read the rest.
-	_, rest, _ := strings.Cut(v, "://")
+	scheme, rest, _ := strings.Cut(v, "://")
 	if i := strings.IndexAny(rest, "@/"); i >= 0 && rest[i] == '@' && strings.ContainsAny(rest[:i], "?#") {
 		return fail("has a ? or # in its user or password that is not percent-encoded; write them as %3F and %23")
+	}
+	authority, tail := rest, ""
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		authority, tail = rest[:i], rest[i:]
 	}
 	// Where url.Parse ends the user and password at the last @, libpq ends
 	// them at the first. With a second @, the server would log in with the
 	// start of the password, at a host made of the rest, and the connection
 	// error would show that rest.
-	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
-		rest = rest[:i]
-	}
-	if strings.Count(rest, "@") > 1 {
+	if strings.Count(authority, "@") > 1 {
 		return fail("has an @ in its user or password that is not percent-encoded; write it as %40")
 	}
-	// The parser's explanation can quote part of a password.
-	u, err := url.Parse(v)
+	userinfo, host, ok := strings.Cut(authority, "@")
+	if !ok {
+		return fail("names no user; write it in front of the host, as in postgres://storycreep:password@db/storycreep")
+	}
+	// url.Parse refuses some hosts that libpq reads, such as a Unix socket
+	// directory written as %2Fvar%2Frun%2Fpostgresql, so it reads the URL
+	// with a stand-in host, and pgx reads the real one below. The parser's
+	// explanation can quote part of a password.
+	u, err := url.Parse(scheme + "://" + userinfo + "@host" + tail)
 	if err != nil {
 		return fail("not a valid URL")
 	}
@@ -79,24 +98,30 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 		return fail("names no database; write it as the path, as in postgres://storycreep:password@db/storycreep")
 	case strings.Contains(strings.TrimPrefix(u.Path, "/"), "/"):
 		return fail("the path must be only the database name")
-	case u.Fragment != "":
-		return fail("must not have a fragment")
+	// url.Parse reports an empty fragment as none, but libpq reads any # as
+	// part of the database name or of a value.
+	case strings.Contains(tail, "#"):
+		return fail("must not have a fragment, which starts at a #; write a # in a value as %23")
 	}
-	query, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
-		return fail("the query is not valid")
-	}
-	// libpq, and pgx with it, also needs exactly one = in each parameter,
-	// which url.ParseQuery does not.
+	// The query is read as libpq reads it: each parameter is name=value, with
+	// exactly one =, and both are percent-decoded. url.ParseQuery would also
+	// refuse a ; and read a + as a space, which libpq does not.
+	var names []string
 	for q := u.RawQuery; q != ""; {
 		var pair string
 		pair, q, _ = strings.Cut(q, "&")
 		if strings.Count(pair, "=") != 1 {
 			return fail("each query parameter must be name=value, with an = in the value percent-encoded as %3D")
 		}
+		name, value, _ := strings.Cut(pair, "=")
+		name, nameErr := url.PathUnescape(name)
+		if _, valueErr := url.PathUnescape(value); nameErr != nil || valueErr != nil {
+			return fail("the query is not valid")
+		}
+		names = append(names, name)
 	}
 	for _, p := range reservedDatabaseParams {
-		if query.Has(p) {
+		if slices.Contains(names, p) {
 			return fail("must not set " + p + " as a query parameter; write the user, password, and database " +
 				"as in postgres://storycreep:password@db/storycreep")
 		}
@@ -115,13 +140,14 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 		url:      secret.New(v),
 		user:     cfg.ConnConfig.User,
 		database: cfg.ConnConfig.Database,
+		pool:     cfg,
 	}
-	userinfo := url.User(d.user).String()
+	shownUser := url.User(d.user).String()
 	if pw, ok := u.User.Password(); ok && pw != "" {
 		d.password = secret.New(pw)
-		userinfo += ":" + secret.Redacted
+		shownUser += ":" + secret.Redacted
 	}
-	d.display = u.Scheme + "://" + userinfo + "@" + u.Host + u.EscapedPath()
+	d.display = scheme + "://" + shownUser + "@" + host + u.EscapedPath()
 	if u.RawQuery != "" {
 		d.display += "?" + redactQuery(u.RawQuery)
 	}
@@ -141,12 +167,12 @@ func pgxReason(err error) string {
 }
 
 // redactQuery returns the query q, in its original order, with the values of
-// secretDatabaseParams redacted.
+// secretDatabaseParams redacted. The names are decoded as libpq decodes them.
 func redactQuery(q string) string {
 	pairs := strings.Split(q, "&")
 	for i, pair := range pairs {
 		name, _, _ := strings.Cut(pair, "=")
-		if name, err := url.QueryUnescape(name); err == nil && slices.Contains(secretDatabaseParams, name) {
+		if name, err := url.PathUnescape(name); err == nil && slices.Contains(secretDatabaseParams, name) {
 			pairs[i] = url.QueryEscape(name) + "=" + secret.Redacted
 		}
 	}
@@ -177,6 +203,18 @@ func (d DatabaseURL) Database() string {
 // Password returns the URL's password, which is unset if the URL has none.
 func (d DatabaseURL) Password() secret.Value {
 	return d.password
+}
+
+// PoolConfig returns the connection settings that pgx read from the URL when
+// it was parsed, with what the libpq environment variables and the files the
+// URL names supplied then, so that the server connects with the settings the
+// configuration checked. Each call returns a new copy, which the caller may
+// change. It returns nil if the URL is unset.
+func (d DatabaseURL) PoolConfig() *pgxpool.Config {
+	if d.pool == nil {
+		return nil
+	}
+	return d.pool.Copy()
 }
 
 // String returns the URL with its password, and the values of query

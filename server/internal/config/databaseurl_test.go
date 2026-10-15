@@ -21,9 +21,13 @@ func TestParseDatabaseURL(t *testing.T) {
 			"postgres://app:" + secret.Redacted + "@[::1]:5433/sc?sslmode=verify-full&sslpassword=" + secret.Redacted +
 				"&application_name=x",
 			"app", "sc", "p@ss:w/rd"},
-		// A Unix socket directory instead of a host.
+		// A Unix socket directory instead of a host, in both of libpq's forms.
 		{"postgres://app:pw@/sc?host=/var/run/postgresql", "postgres://app:" + secret.Redacted + "@/sc?host=/var/run/postgresql",
 			"app", "sc", "pw"},
+		{"postgres://app:pw@%2Fvar%2Frun%2Fpostgresql/sc", "postgres://app:" + secret.Redacted + "@%2Fvar%2Frun%2Fpostgresql/sc",
+			"app", "sc", "pw"},
+		// libpq reads a ; and a + in a value as they are.
+		{"postgres://app@db/sc?application_name=a;b+c", "postgres://app@db/sc?application_name=a;b+c", "app", "sc", ""},
 		{"postgres://sc%20app:pw@db/my%20db", "postgres://sc%20app:" + secret.Redacted + "@db/my%20db", "sc app", "my db", "pw"},
 		// An @ after the path, and an = in a value written as %3D, are as
 		// libpq reads them. So is a trailing &.
@@ -42,8 +46,25 @@ func TestParseDatabaseURL(t *testing.T) {
 				d.Password().Reveal(), d.Reveal())
 		}
 	}
-	if (DatabaseURL{}).IsSet() {
-		t.Errorf("the zero DatabaseURL is set")
+	if (DatabaseURL{}).IsSet() || (DatabaseURL{}).PoolConfig() != nil {
+		t.Errorf("the zero DatabaseURL is set, or has a pool configuration")
+	}
+
+	// The pool configuration is what pgx read, and each caller gets a copy
+	// of its own.
+	d, err := ParseDatabaseURL("postgres://app:pw@%2Fvar%2Frun%2Fpostgresql/sc?application_name=a;b+c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := d.PoolConfig()
+	if cfg.ConnConfig.Host != "/var/run/postgresql" || cfg.ConnConfig.Password != "pw" ||
+		cfg.ConnConfig.RuntimeParams["application_name"] != "a;b+c" {
+		t.Errorf("pool configuration: host %q, application_name %q", cfg.ConnConfig.Host,
+			cfg.ConnConfig.RuntimeParams["application_name"])
+	}
+	cfg.ConnConfig.RuntimeParams["application_name"] = "changed"
+	if got := d.PoolConfig().ConnConfig.RuntimeParams["application_name"]; got != "a;b+c" {
+		t.Errorf("a change to one copy reached the next: application_name %q", got)
 	}
 }
 
@@ -67,6 +88,8 @@ func TestInvalidDatabaseURL(t *testing.T) {
 		{"postgres://app:" + password + "@db/", "names no database"},
 		{"postgres://app:" + password + "@db/sc/extra", "only the database name"},
 		{"postgres://app:" + password + "@db/sc#" + password, "fragment"},
+		// libpq would read the # as part of the database name.
+		{"postgres://app:" + password + "@db/sc#", "fragment"},
 		{"postgres://app:%zz" + password + "@db/sc", "not a valid URL"},
 		{"postgres://app:" + password + "@db/sc?sslmode=%zz", "the query is not valid"},
 		// pgx, like libpq, ends the password at the first @, and would log in
@@ -85,11 +108,17 @@ func TestInvalidDatabaseURL(t *testing.T) {
 		{"postgres://app:" + password + "@db/sc?user=other", "must not set user"},
 		{"postgres://app:" + password + "@db/sc?dbname=other", "must not set dbname"},
 		{"postgres://app:" + password + "@db/sc?database=other", "must not set database"},
+		// libpq skips the spaces around a name, so these would set the
+		// password and the key's password, under names that the checks and
+		// the redaction would not recognize.
+		{"postgres://app@db/sc?sslmode=disable& password=" + password, "has a space"},
+		{"postgres://app:pw@db/sc?sslpassword =" + password, "has a space"},
+		{"postgres://app:pw@db/sc?application_name=a\x7f" + password, "control character"},
 		// pgx, which the server connects with, refuses these, which the
 		// checks above accept.
 		{"postgres://app:" + password + "@db/sc?sslmode=required", "sslmode is invalid"},
 		{"postgres://app:" + password + "@db/sc?pool_max_conns=many", "cannot parse pool_max_conns"},
-		{"postgres://app:" + password + "@db/my db", "unexpected spaces"},
+		{"postgres://app:" + password + "@db/my db", "has a space"},
 		{"postgres://app:" + password + "@db:0/sc", "invalid port"},
 		{"postgres://app:" + password + "@db/sc?sslmode=verify-full&sslrootcert=no-such-root.crt", "unable to read CA file"},
 	}

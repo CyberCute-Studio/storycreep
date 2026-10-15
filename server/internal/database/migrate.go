@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
@@ -141,23 +140,15 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	if err != nil {
 		return MigrateResult{}, nil, err
 	}
-	// Both URLs are read as the application's pool reads its URL, so that the
-	// admin URL may carry the same pool parameters, which pgx alone would
-	// send to PostgreSQL as settings.
-	adminConfig, err := pgxpool.ParseConfig(admin.Reveal())
-	if err != nil {
-		return MigrateResult{}, nil, fmt.Errorf("STORYCREEP_DATABASE_ADMIN_URL: %w", err)
-	}
-	connConfig := adminConfig.ConnConfig
+	// Both URLs were read as a pool's URL, as the application's is, so the
+	// admin URL may carry the same pool parameters, which pgx alone would send
+	// to PostgreSQL as settings.
+	connConfig := admin.PoolConfig().ConnConfig
 	setApplicationName(connConfig)
 	// The application login's password is the one its connections send: the
 	// URL's, or else the one PGPASSWORD, a service file, or a password file
 	// supplies.
-	appConfig, err := pgxpool.ParseConfig(app.Reveal())
-	if err != nil {
-		return MigrateResult{}, nil, fmt.Errorf("STORYCREEP_DATABASE_URL: %w", err)
-	}
-	appPassword := secret.New(appConfig.ConnConfig.Password)
+	appPassword := secret.New(app.PoolConfig().ConnConfig.Password)
 
 	// The lock is held by this connection's session, so it is released when
 	// the connection closes, however Migrate ends.
@@ -173,6 +164,14 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	if !super {
 		return MigrateResult{}, nil, fmt.Errorf("the login %q in STORYCREEP_DATABASE_ADMIN_URL is not a superuser; "+
 			"applying migrations needs one, because they create the server's database roles", admin.User())
+	}
+	// This session waits for the lock for as long as another instance
+	// migrates, and then sits idle while goose migrates on connections of its
+	// own. Timeouts that the server, the database, or the admin login set for
+	// sessions would end the wait early, or end the idle session and with it
+	// the lock, so that another instance could migrate at the same time.
+	if _, err := conn.Exec(ctx, "SET lock_timeout = 0; SET statement_timeout = 0; SET idle_session_timeout = 0"); err != nil {
+		return MigrateResult{}, nil, fmt.Errorf("prepare the session for the migration lock: %w", err)
 	}
 	// pg_advisory_lock waits for as long as another instance migrates. If ctx
 	// ends first, pgx cancels the wait.

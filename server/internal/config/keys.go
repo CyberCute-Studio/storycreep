@@ -138,9 +138,9 @@ var keys = []key{
 			"`PGPASSWORD`, a service file, or a password file supplies), and grant it the `storycreep_app` role. " +
 			"Query parameters, such as `sslmode`, are read as libpq reads them, with an `=` in a value " +
 			"percent-encoded as `%3D`, and the libpq environment variables, such as `PGSSLMODE`, fill in settings " +
-			"the URL leaves out. The URL is checked as the server's connections read it, so a setting they could " +
-			"not use, such as an unknown `sslmode` or a certificate file that cannot be read, is an error. The " +
-			"password is shown as `" + secret.Redacted + "`.",
+			"the URL leaves out. A space anywhere in the URL is written as `%20`. The URL is checked as the " +
+			"server's connections read it, so a setting they could not use, such as an unknown `sslmode` or a " +
+			"certificate file that cannot be read, is an error. The password is shown as `" + secret.Redacted + "`.",
 		valuesDoc: "A `postgres://` URL",
 		example:   "postgres://storycreep:password@db:5432/storycreep",
 		required:  true,

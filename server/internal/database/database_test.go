@@ -102,16 +102,25 @@ func TestOpenRefusesTheAdmin(t *testing.T) {
 	}
 }
 
-// TestTemporaryObjectsAreNotOwnership checks that the temporary objects a
-// session of the application login holds do not make the login unsafe, so
-// that one instance's session cannot keep another from starting.
-func TestTemporaryObjectsAreNotOwnership(t *testing.T) {
+// TestObjectsThatAreNotOwnership checks that the temporary objects a session
+// of the application login holds do not make the login unsafe, so that one
+// instance's session cannot keep another from starting, and that neither do
+// the large objects it creates or its default privileges, which give it no
+// power over other objects.
+func TestObjectsThatAreNotOwnership(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := dbtest.New(t)
 	session := dbtest.Connect(t, d.AppURL)
 	if _, err := session.Exec(ctx, "CREATE TEMP TABLE scratch (x int PRIMARY KEY, y text); "+
-		"CREATE FUNCTION pg_temp.scratch() RETURNS int LANGUAGE sql AS 'SELECT 1'"); err != nil {
+		"CREATE TEMP VIEW scratch_view AS SELECT x FROM scratch; "+
+		"CREATE FUNCTION pg_temp.scratch() RETURNS int LANGUAGE sql AS 'SELECT 1'; "+
+		"CREATE TYPE pg_temp.scratch_kind AS ENUM ('a'); "+
+		"SELECT lo_create(0)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Admin(t).Exec(ctx, "ALTER DEFAULT PRIVILEGES FOR ROLE "+pgx.Identifier{dbtest.AppLogin}.Sanitize()+
+		" GRANT SELECT ON TABLES TO storycreep_app"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{}); err != nil {

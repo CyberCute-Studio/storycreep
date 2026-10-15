@@ -48,10 +48,7 @@ func Open(ctx context.Context, app config.DatabaseURL) (*DB, error) {
 	if !app.IsSet() {
 		return nil, errors.New("STORYCREEP_DATABASE_URL is not set")
 	}
-	cfg, err := pgxpool.ParseConfig(app.Reveal())
-	if err != nil {
-		return nil, fmt.Errorf("STORYCREEP_DATABASE_URL: %w", err)
-	}
+	cfg := app.PoolConfig()
 	setApplicationName(cfg.ConnConfig)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -220,21 +217,34 @@ var serverAccessRoles = []string{"pg_execute_server_program", "pg_read_server_fi
 // BYPASSRLS, a role with CREATEROLE (which on PostgreSQL 15 can grant itself
 // any role that is not a superuser, such as storycreep_maintenance), a role
 // with REPLICATION (which can stream a copy of the whole cluster), a role
-// that owns objects in the current database (an owner can switch row-level
-// security off, and the owner of a schema can drop what is in it), the
-// privileged roles $2, and the server access roles $3. Temporary objects do
-// not count: they belong to the session that made them, and any session of
-// the login may hold some while another instance starts.
+// that owns objects in the current database, the privileged roles $2, and
+// the server access roles $3. An owner can switch row-level security off,
+// the owner of a schema can drop what is in it, and the owner of a type, a
+// collation, an operator class, or an extension can drop with CASCADE the
+// columns and indexes that use it, in tables it does not own.
+//
+// PostgreSQL records each object's owner in pg_shdepend, except where the
+// owner is one of its built-in roles, so pg_database_owner's ownership of the
+// public schema is read from pg_namespace. The database's owner is read from
+// pg_database, because pg_shdepend records it with the cluster's objects.
+// Temporary objects do not count: they belong to the session that made them,
+// and any session of the login may hold some while another instance starts.
+// Neither do large objects, which any role may create and which give no
+// power over other objects, or default privileges, which own nothing.
 const unsafeRolesQuery = `
 SELECT r.rolname, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolreplication, r.owns,
 	r.rolname = ANY ($3::name[]) AS server_access
 FROM (
 	SELECT rolname, oid, rolsuper, rolbypassrls, rolcreaterole, rolreplication,
-		EXISTS (SELECT FROM pg_class WHERE relowner = pg_roles.oid AND relpersistence <> 't')
-			OR EXISTS (
-				SELECT FROM pg_proc WHERE proowner = pg_roles.oid
-					AND NOT pg_is_other_temp_schema(pronamespace) AND pronamespace <> pg_my_temp_schema()
-			)
+		EXISTS (
+			SELECT FROM pg_shdepend d, pg_identify_object(d.classid, d.objid, d.objsubid) o
+			WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = pg_roles.oid AND d.deptype = 'o'
+				AND d.dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+				AND d.classid NOT IN ('pg_largeobject'::regclass, 'pg_default_acl'::regclass)
+				-- An object that a session dropped since has no identity.
+				AND o.identity IS NOT NULL
+				AND (o.schema IS NULL OR (o.schema NOT LIKE 'pg\_temp%' AND o.schema NOT LIKE 'pg\_toast\_temp%'))
+		)
 			OR EXISTS (SELECT FROM pg_namespace WHERE nspowner = pg_roles.oid)
 			OR EXISTS (SELECT FROM pg_database WHERE datname = current_database() AND datdba = pg_roles.oid)
 			AS owns

@@ -147,6 +147,26 @@ func TestConcurrentMigrate(t *testing.T) {
 	}
 }
 
+// waitForLockWaiter waits until a session of conn's database waits for an
+// advisory lock, as Migrate does for the migration lock.
+func waitForLockWaiter(t *testing.T, conn *pgx.Conn) {
+	t.Helper()
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		var waiting bool
+		if err := conn.QueryRow(context.Background(), `SELECT EXISTS (SELECT FROM pg_locks
+			WHERE locktype = 'advisory' AND NOT granted
+				AND database = (SELECT oid FROM pg_database WHERE datname = current_database()))`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no session waits for the migration lock")
+		}
+	}
+}
+
 // TestMigrateWaitsForTheLock holds the migration lock and checks that
 // Migrate waits for it, and that a cancelled wait gives up.
 func TestMigrateWaitsForTheLock(t *testing.T) {
@@ -158,11 +178,19 @@ func TestMigrateWaitsForTheLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	short, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	// The wait is cancelled once it has started, however long connecting
+	// took.
+	short, cancel := context.WithCancel(ctx)
 	defer cancel()
-	if _, err := database.Migrate(short, d.AdminURL, d.AppURL, database.MigrateOptions{}); err == nil ||
-		!strings.Contains(err.Error(), "migration lock") {
-		t.Errorf("with the lock held and a short deadline, Migrate returned %v; want a failure to take the lock", err)
+	cancelled := make(chan error, 1)
+	go func() {
+		_, err := database.Migrate(short, d.AdminURL, d.AppURL, database.MigrateOptions{})
+		cancelled <- err
+	}()
+	waitForLockWaiter(t, holder)
+	cancel()
+	if err := <-cancelled; err == nil || !strings.Contains(err.Error(), "migration lock") {
+		t.Errorf("with the lock held and the wait cancelled, Migrate returned %v; want a failure to take the lock", err)
 	}
 
 	done := make(chan error, 1)
@@ -182,6 +210,57 @@ func TestMigrateWaitsForTheLock(t *testing.T) {
 	case err := <-done:
 		if err != nil {
 			t.Errorf("Migrate failed after the lock was released: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Migrate did not finish after the lock was released")
+	}
+}
+
+// TestMigrateLockIgnoresSessionTimeouts checks that timeouts set for the
+// database's sessions neither end Migrate's wait for the migration lock nor
+// end the idle session that holds the lock while goose migrates on
+// connections of its own, which would release the lock to another instance.
+func TestMigrateLockIgnoresSessionTimeouts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	ident := pgx.Identifier{d.Name}.Sanitize()
+	admin := d.Admin(t)
+	for _, stmt := range []string{
+		"ALTER DATABASE " + ident + " SET lock_timeout = '100ms'",
+		"ALTER DATABASE " + ident + " SET idle_session_timeout = '300ms'",
+	} {
+		if _, err := admin.Exec(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The holder connects after the settings, and keeps its own session.
+	holder := d.Admin(t)
+	if _, err := holder.Exec(ctx, "SET idle_session_timeout = 0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := holder.Exec(ctx, "SELECT pg_advisory_lock($1)", database.MigrationLock); err != nil {
+		t.Fatal(err)
+	}
+	slow := withMigrations(t, map[string]string{"90001_slow.sql": "SELECT pg_sleep(1);"})
+	done := make(chan error, 1)
+	go func() {
+		_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: slow})
+		done <- err
+	}()
+	waitForLockWaiter(t, holder)
+	select {
+	case err := <-done:
+		t.Fatalf("Migrate stopped waiting for the lock: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	if _, err := holder.Exec(ctx, "SELECT pg_advisory_unlock($1)", database.MigrationLock); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Migrate failed while it held the lock: %v", err)
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("Migrate did not finish after the lock was released")
