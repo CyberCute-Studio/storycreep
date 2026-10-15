@@ -162,6 +162,24 @@ func TestOpenRefusesTheAdmin(t *testing.T) {
 	}
 }
 
+// TestCheckServerVersion checks that a database server older than PostgreSQL
+// 15, which Storycreep does not support (PRD ADR-001), is refused with an
+// error that names its version, and that newer ones are not. Open and Migrate
+// check every server they connect to, which the other tests run on 15 and
+// newer.
+func TestCheckServerVersion(t *testing.T) {
+	err := database.CheckServerVersion(140012, "14.12 (Debian 14.12-1.pgdg120+1)")
+	if err == nil || !strings.Contains(err.Error(), "runs PostgreSQL 14.12 (Debian") ||
+		!strings.Contains(err.Error(), "needs PostgreSQL 15 or newer") {
+		t.Errorf("PostgreSQL 14: %v, want a refusal naming the version", err)
+	}
+	for _, num := range []int{150000, 160004, 170002, 180001} {
+		if err := database.CheckServerVersion(num, "a supported version"); err != nil {
+			t.Errorf("server_version_num %d: %v", num, err)
+		}
+	}
+}
+
 // TestApplicationName checks that the server's connections report themselves
 // as storycreep, as pg_stat_activity shows them, unless the URL names them
 // otherwise.

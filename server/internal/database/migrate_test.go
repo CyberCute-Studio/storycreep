@@ -491,6 +491,21 @@ func TestMigrateNeedsTheAdminLogin(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `acts as the role "`+plain.User()+`", which is not a superuser`) {
 		t.Errorf("with the superuser acting as an ordinary role: %v, want a refusal naming the role", err)
 	}
+	// The first migration makes the server's roles unable to log in, and
+	// takes SUPERUSER away from them, so an admin login that is, or acts as,
+	// one of them would lose both partway through.
+	_, err = database.Migrate(ctx, d.URL(t, "storycreep_maintenance", "pw"), d.AppURL, database.MigrateOptions{})
+	if err == nil || !strings.Contains(err.Error(), `connects as "storycreep_maintenance", a role that is reserved`) {
+		t.Errorf("with an admin login named after a server role: %v, want a refusal", err)
+	}
+	asReserved, err := config.ParseDatabaseURL(d.AdminURL.Reveal() + "&role=storycreep_definer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = database.Migrate(ctx, asReserved, d.AppURL, database.MigrateOptions{})
+	if err == nil || !strings.Contains(err.Error(), `acts as the role "storycreep_definer", which is reserved`) {
+		t.Errorf("with the superuser acting as a server role: %v, want a refusal naming the role", err)
+	}
 	var exists bool
 	if err := d.Admin(t).QueryRow(ctx, "SELECT to_regclass('goose_db_version') IS NOT NULL").Scan(&exists); err != nil {
 		t.Fatal(err)

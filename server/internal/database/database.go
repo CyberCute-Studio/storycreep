@@ -42,13 +42,36 @@ type DB struct {
 	pool *pgxpool.Pool
 }
 
-// Open connects to the database as the application login and checks that
-// row-level security holds it: the login must not be a superuser, have
-// BYPASSRLS, CREATEROLE, or REPLICATION, own the database or objects in it,
-// or be a member of a role that does, of one of the server's privileged
-// roles, or of one of PostgreSQL's roles that give access to the database
-// server's files and programs, directly or through other roles. If it is,
-// the error is an *UnsafeLoginError.
+// minServerVersion is the oldest PostgreSQL that Storycreep supports (PRD
+// ADR-001), as server_version_num gives it.
+const minServerVersion = 150000
+
+// serverVersionColumns read the database server's version, as
+// server_version_num and as server_version, for checkServerVersion.
+const serverVersionColumns = "current_setting('server_version_num')::int, current_setting('server_version')"
+
+// checkServerVersion returns an error if the database server, whose
+// server_version_num is num and whose server_version is version, runs a
+// PostgreSQL older than Storycreep supports. The migrations may use what
+// PostgreSQL 15 added, such as views WITH (security_invoker), and an older
+// server would fail on the first of them with an error that does not say
+// why.
+func checkServerVersion(num int, version string) error {
+	if num < minServerVersion {
+		return fmt.Errorf("the database server runs PostgreSQL %s, but Storycreep needs PostgreSQL 15 or newer", version)
+	}
+	return nil
+}
+
+// Open connects to the database as the application login. It returns an
+// error unless the database server runs PostgreSQL 15 or newer
+// (checkServerVersion), and checks that row-level security holds the login:
+// the login must not be a superuser, have BYPASSRLS, CREATEROLE, or
+// REPLICATION, own the database or objects in it, or be a member of a role
+// that does, of one of the server's privileged roles, or of one of
+// PostgreSQL's roles that give access to the database server's files and
+// programs, directly or through other roles. If it is, the error is an
+// *UnsafeLoginError.
 func Open(ctx context.Context, app config.DatabaseURL) (*DB, error) {
 	if !app.IsSet() {
 		return nil, errNoURL
@@ -63,10 +86,16 @@ func Open(ctx context.Context, app config.DatabaseURL) (*DB, error) {
 	// current user can be another role, set by a role parameter in the URL
 	// or by a default of the login, but the session can still SET ROLE to
 	// any role the login has.
-	var login string
-	if err := pool.QueryRow(ctx, "SELECT session_user").Scan(&login); err != nil {
+	var login, version string
+	var versionNum int
+	if err := pool.QueryRow(ctx, "SELECT session_user, "+serverVersionColumns).
+		Scan(&login, &versionNum, &version); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("connect to %s: %w", app, err)
+	}
+	if err := checkServerVersion(versionNum, version); err != nil {
+		pool.Close()
+		return nil, err
 	}
 	if err := checkLogin(ctx, pool, login); err != nil {
 		pool.Close()

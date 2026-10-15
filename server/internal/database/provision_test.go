@@ -298,6 +298,41 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 	}
 }
 
+// TestProvisionChecksTheGrantedRole checks that migrating refuses a login that
+// the privileges of storycreep_app make unsafe, and leaves no trace of it: the
+// check sees the login as the server would use it, after storycreep_app is
+// granted, in the transaction that a refusal rolls back. It changes
+// storycreep_app, which every database of the test server shares, so it does
+// not run in parallel.
+func TestProvisionChecksTheGrantedRole(t *testing.T) {
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	t.Cleanup(func() {
+		if _, err := admin.Exec(ctx, "REVOKE pg_read_server_files FROM storycreep_app"); err != nil {
+			t.Error(err)
+		}
+	})
+	if _, err := admin.Exec(ctx, "GRANT pg_read_server_files TO storycreep_app"); err != nil {
+		t.Fatal(err)
+	}
+	login := d.FreshLogin(t)
+
+	_, err := database.Migrate(ctx, d.AdminURL, d.URL(t, login, "pw"), database.MigrateOptions{})
+	var uerr *database.UnsafeLoginError
+	if !errors.As(err, &uerr) || !strings.Contains(err.Error(), `it is a member of "pg_read_server_files"`) {
+		t.Fatalf("Migrate returned %v, want an *UnsafeLoginError naming pg_read_server_files", err)
+	}
+	var exists bool
+	if err := admin.QueryRow(ctx, "SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = $1)", login).
+		Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Errorf("the refused login was created")
+	}
+}
+
 // TestProvisionRefusesAnExpiredPassword checks that migrating refuses a login
 // whose VALID UNTIL has passed, saying why, and leaves it as it was, where
 // PostgreSQL would refuse the server's connections as if the password were
@@ -385,6 +420,36 @@ func TestProvisionRestrictsConnect(t *testing.T) {
 	}
 	if !canConnect(t, monitor) {
 		t.Errorf("after migrating again, the role granted CONNECT cannot connect")
+	}
+
+	// Every Storycreep database's login is a member of storycreep_app, so a
+	// CONNECT granted to it is revoked again.
+	aIdent := pgx.Identifier{a.Name}.Sanitize()
+	if _, err := a.Admin(t).Exec(ctx, "GRANT CONNECT ON DATABASE "+aIdent+" TO storycreep_app"); err != nil {
+		t.Fatal(err)
+	}
+	if !canConnect(t, a.URL(t, loginB, "b-password")) {
+		t.Fatalf("with CONNECT granted to storycreep_app, the login of the other database cannot connect")
+	}
+	if _, err := database.Migrate(ctx, a.AdminURL, appA, database.MigrateOptions{}); err != nil || !canConnect(t, appA) {
+		t.Errorf("migrating with CONNECT granted to storycreep_app: %v; want the login still connecting", err)
+	}
+	if canConnect(t, a.URL(t, loginB, "b-password")) {
+		t.Errorf("after migrating, the login of the other database can still connect through storycreep_app")
+	}
+
+	// The revocation, made as the database's owner, leaves a grant that
+	// another role made, so migrating fails then.
+	if _, err := a.Admin(t).Exec(ctx, "GRANT CONNECT ON DATABASE "+aIdent+" TO "+
+		pgx.Identifier{monitor.User()}.Sanitize()+" WITH GRANT OPTION"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbtest.Connect(t, monitor).Exec(ctx, "GRANT CONNECT ON DATABASE "+aIdent+" TO PUBLIC"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := database.Migrate(ctx, a.AdminURL, appA, database.MigrateOptions{})
+	if err == nil || !strings.Contains(err.Error(), "PUBLIC can still connect to the database") {
+		t.Errorf("migrating with CONNECT granted to PUBLIC by another role: %v, want a refusal", err)
 	}
 }
 

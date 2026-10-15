@@ -139,9 +139,11 @@ func (e *MigrationError) Unwrap() error { return e.Err }
 // A failed migration is a *MigrationError: the migrations before it stay
 // applied, and the application login is left as it was. A database that a
 // newer version of Storycreep migrated is an *UnknownMigrationsError, and
-// Migrate changes nothing then, nor when the application login has the name
-// of one of the server's roles or PostgreSQL's reserved pg_ prefix
-// (checkLoginName).
+// Migrate changes nothing then, nor when the database server runs a version
+// of PostgreSQL older than 15 (checkServerVersion), when the application login
+// has the name of one of the server's roles or PostgreSQL's reserved pg_ prefix
+// (checkLoginName), or when the admin login is, or acts as, one of the
+// server's roles.
 func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOptions) (MigrateResult, error) {
 	res, db, err := migrate(ctx, admin, app, opts)
 	if db != nil {
@@ -160,11 +162,18 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	if !app.IsSet() {
 		return MigrateResult{}, nil, errNoURL
 	}
-	// The name is checked before anything changes: the first migration makes
-	// the server's roles unable to log in, so it would lock out a login that
-	// had the name of one of them.
+	// The names are checked before anything changes: the first migration
+	// makes the server's roles unable to log in, so it would lock out a login
+	// that had the name of one of them. It also takes SUPERUSER away from
+	// them, so an admin login with such a name would lose it partway through,
+	// and the migrations' grants after that would only warn.
 	if err := checkLoginName(app.User()); err != nil {
 		return MigrateResult{}, nil, err
+	}
+	if slices.Contains(reservedRoles, admin.User()) {
+		return MigrateResult{}, nil, fmt.Errorf("STORYCREEP_DATABASE_ADMIN_URL connects as %q, a role that is reserved "+
+			"for the server's own use, which the first migration makes unable to log in and takes SUPERUSER away from; "+
+			"apply the migrations as another superuser, such as postgres", admin.User())
 	}
 	ms, err := loadMigrations(opts.Migrations)
 	if err != nil {
@@ -198,13 +207,21 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	defer conn.Close(context.WithoutCancel(ctx))
 	// The migrations run as the current user, which a role parameter in the
 	// URL or a default of the login can make a role other than the login.
-	var role string
+	var role, version string
 	var super bool
-	if err := conn.QueryRow(ctx, "SELECT current_user, rolsuper FROM pg_roles WHERE rolname = current_user").
-		Scan(&role, &super); err != nil {
+	var versionNum int
+	if err := conn.QueryRow(ctx, "SELECT current_user, rolsuper, "+serverVersionColumns+
+		" FROM pg_roles WHERE rolname = current_user").Scan(&role, &super, &versionNum, &version); err != nil {
 		return MigrateResult{}, nil, fmt.Errorf("check the admin login: %w", err)
 	}
+	if err := checkServerVersion(versionNum, version); err != nil {
+		return MigrateResult{}, nil, err
+	}
 	switch {
+	case slices.Contains(reservedRoles, role):
+		return MigrateResult{}, nil, fmt.Errorf("the login %q in STORYCREEP_DATABASE_ADMIN_URL acts as the role %q, "+
+			"which is reserved for the server's own use, and which the first migration makes unable to log in and "+
+			"takes SUPERUSER away from; apply the migrations as another superuser, such as postgres", admin.User(), role)
 	case !super && role != admin.User():
 		return MigrateResult{}, nil, fmt.Errorf("the login %q in STORYCREEP_DATABASE_ADMIN_URL acts as the role %q, "+
 			"which is not a superuser; applying migrations needs one, because they create the server's database roles",

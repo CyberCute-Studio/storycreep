@@ -11,3 +11,7 @@ var ScramMatches = scramMatches
 // QuoteLiteral is quoteLiteral, for the tests in database_test that have
 // PostgreSQL compute a verifier from a password.
 var QuoteLiteral = quoteLiteral
+
+// CheckServerVersion is checkServerVersion, for the test in database_test of
+// the versions that the test servers do not run.
+var CheckServerVersion = checkServerVersion

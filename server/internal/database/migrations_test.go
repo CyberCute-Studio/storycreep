@@ -39,6 +39,7 @@ func TestGooseAnnotation(t *testing.T) {
 	for line, want := range map[string]string{
 		"-- +goose Up":             "UP",
 		"-- +goose no transaction": "NO TRANSACTION",
+		"-- +goose ENVSUB ON":      "ENVSUB ON",
 		"--+goose Down":            "DOWN",
 		"--   +goose   down":       "DOWN",
 		"-- a comment":             "",
@@ -54,8 +55,9 @@ func TestGooseAnnotation(t *testing.T) {
 // named NNNNN_description.sql, the versions count up from 1 without a gap,
 // each is forward-only, with an Up section and no Down section (PRD
 // FR-ADMIN-04), each runs in a transaction, so that a failed one leaves the
-// database at the one before (FR-ADMIN-04 AC3), and the directory holds no
-// file that is not embedded.
+// database at the one before (FR-ADMIN-04 AC3), none has goose fill it in
+// from the environment, which only internal/config reads (FR-ADMIN-01 AC3),
+// and the directory holds no file that is not embedded.
 //
 // Numbered versions make two pull requests that add the same version collide
 // in CI, where goose refuses two migrations with one version, instead of
@@ -98,6 +100,9 @@ func TestMigrationFiles(t *testing.T) {
 			case "NO TRANSACTION":
 				t.Errorf("%s: runs outside a transaction; each migration runs in its own, so that a failed one "+
 					"leaves no trace", name)
+			case "ENVSUB ON":
+				t.Errorf("%s: fills in ${...} from the environment, which only internal/config reads; a migration "+
+					"is the same on every server", name)
 			}
 		}
 		f.Close()
