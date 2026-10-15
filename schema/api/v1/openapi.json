@@ -1,0 +1,251 @@
+{
+  "components": {
+    "schemas": {
+      "ErrorBody": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "description": "A stable error code; docs/error-codes.md lists them",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": {},
+            "description": "More about the error, for programs; the code decides the keys",
+            "type": "object"
+          },
+          "message": {
+            "description": "What went wrong, for people",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "The request's ID, which the server's log records it under",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ErrorEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "StatusBody": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "description": "ok for /healthz, and ready for /readyz",
+            "enum": [
+              "ok",
+              "ready"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "VersionBody": {
+        "additionalProperties": false,
+        "properties": {
+          "commit": {
+            "description": "The revision of the source the binary was built from",
+            "type": "string"
+          },
+          "commit_time": {
+            "description": "The time of that revision, in RFC 3339",
+            "type": "string"
+          },
+          "go_version": {
+            "description": "The version of Go the binary was built with",
+            "type": "string"
+          },
+          "version": {
+            "description": "The release version, or (devel) for a build from a checkout",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "go_version"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Storycreep",
+    "version": "v1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/openapi.json": {
+      "get": {
+        "description": "The OpenAPI 3.1 document of the server's operations, this one included. It is the same for every server of a release, and is committed to the repository as schema/api/v1/openapi.json.",
+        "operationId": "getOpenAPIDocument",
+        "parameters": [
+          {
+            "description": "The ETag of the copy of the document that the client has",
+            "in": "header",
+            "name": "If-None-Match",
+            "schema": {
+              "description": "The ETag of the copy of the document that the client has",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "An OpenAPI 3.1 document",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "description": "private, no-cache: a client may keep a copy, and revalidates it",
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "description": "The document's entity tag, which If-None-Match takes",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified: the copy whose ETag the client sent in If-None-Match is current"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes"
+          }
+        },
+        "summary": "Get the API's OpenAPI document",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes"
+          }
+        },
+        "summary": "Report that the process is alive",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "description": "Answers 200 when the server has finished starting, the database has every migration applied, and the database answers. Otherwise it answers 503 with not_ready, and details.reason says why.",
+        "operationId": "getReadiness",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes"
+          }
+        },
+        "summary": "Report whether the server can serve",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/version": {
+      "get": {
+        "operationId": "getVersion",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes"
+          }
+        },
+        "summary": "Describe the server's build",
+        "tags": [
+          "Operations"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,504 @@
+package apicontract
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+)
+
+// TypeScript returns the TypeScript module of the document's types, which
+// the client in web/shared is built on (PRD FR-API-02): a type for each
+// named schema; Operations, which says what each operation takes and
+// answers; and routes, the method and path of each. header, a comment that
+// says where the module comes from, starts it.
+//
+// An operation's input has the parts it takes: path, query, and headers,
+// each an object of parameters, and body. Its responses map each status
+// that is not an error's to the type of its body, or undefined for none;
+// the client reports errors, which have the envelope, as exceptions.
+//
+// It fails, rather than write a type that is wrong, on what the client
+// cannot express yet: a parameter that is not a string, number, or boolean,
+// or that is in a cookie; a body that is not application/json; a response
+// to a range of statuses, such as 2XX; and a schema whose name is not an
+// identifier, or that has properties and a schema of other properties too.
+func TypeScript(d *Document, header string) ([]byte, error) {
+	g := &tsGen{d: d}
+	g.b.WriteString(header)
+	if d.Components != nil {
+		for _, name := range sortedKeys(d.Components.Schemas) {
+			if err := g.declare(name, d.Components.Schemas[name]); err != nil {
+				return nil, fmt.Errorf("schema %s: %w", name, err)
+			}
+		}
+	}
+	if err := g.operations(); err != nil {
+		return nil, err
+	}
+	return []byte(g.b.String()), nil
+}
+
+type tsGen struct {
+	d *Document
+	b strings.Builder
+}
+
+// identifier matches the names that TypeScript takes as they are.
+var identifier = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
+
+// reservedNames are the names that a schema's type may not have: the
+// reserved words of TypeScript, its predefined types, the globals that the
+// module uses, the module's own names, and the names that the client in
+// web/shared/src/api exports beside the module's, which would hide them.
+var reservedNames = []string{
+	"Answer", "any", "ApiError", "Array", "as", "bigint", "boolean", "break", "CallOptions", "case", "catch",
+	"class", "Client", "ClientOptions", "const", "continue", "createApiClient", "createClient", "debugger",
+	"declare", "default", "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for", "from",
+	"function", "if", "implements", "import", "in", "instanceof", "interface", "let", "never", "new", "null",
+	"number", "object", "OperationShape", "Operations", "package", "private", "protected", "public", "Record",
+	"return", "Route", "routes", "static", "string", "super", "switch", "symbol", "this", "throw", "true", "try",
+	"type", "typeof", "undefined", "unknown", "var", "void", "while", "with", "yield",
+}
+
+// propertyName returns name as a property name: as it is if it is an
+// identifier, and quoted otherwise.
+func propertyName(name string) string {
+	if identifier.MatchString(name) {
+		return name
+	}
+	return jsString(name)
+}
+
+// jsString returns s as a string literal. A JSON string is one.
+func jsString(s string) string {
+	var b bytes.Buffer
+	e := json.NewEncoder(&b)
+	e.SetEscapeHTML(false)
+	_ = e.Encode(s)
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+func indent(n int) string {
+	return strings.Repeat("  ", n)
+}
+
+// comment writes text, and @deprecated if deprecated is set, to b as a JSDoc
+// comment at the indentation n.
+func comment(b *strings.Builder, n int, text string, deprecated bool) {
+	var lines []string
+	if text = strings.TrimSpace(text); text != "" {
+		lines = strings.Split(text, "\n")
+	}
+	if deprecated {
+		lines = append(lines, "@deprecated")
+	}
+	if len(lines) == 0 {
+		return
+	}
+	for i, l := range lines {
+		lines[i] = strings.ReplaceAll(strings.TrimRight(l, " \t\r"), "*/", "*\\/")
+	}
+	if len(lines) == 1 {
+		fmt.Fprintf(b, "%s/** %s */\n", indent(n), lines[0])
+		return
+	}
+	fmt.Fprintf(b, "%s/**\n", indent(n))
+	for _, l := range lines {
+		if l == "" {
+			fmt.Fprintf(b, "%s *\n", indent(n))
+		} else {
+			fmt.Fprintf(b, "%s * %s\n", indent(n), l)
+		}
+	}
+	fmt.Fprintf(b, "%s */\n", indent(n))
+}
+
+// declare writes the type of a named schema: an interface for an object
+// with properties, and a type alias for anything else.
+func (g *tsGen) declare(name string, s *Schema) error {
+	if !identifier.MatchString(name) || slices.Contains(reservedNames, name) {
+		return errors.New("the name is not one that a TypeScript type may have")
+	}
+	g.b.WriteString("\n")
+	comment(&g.b, 0, s.Description, s.Deprecated)
+	if slices.Equal(s.Type, Types{"object"}) && len(s.Properties) > 0 && !s.composed() && s.Enum == nil &&
+		s.Const == nil {
+		body, err := g.typeOf(s, 0)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&g.b, "export interface %s %s\n", name, body)
+		return nil
+	}
+	t, err := g.typeOf(s, 0)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(&g.b, "export type %s = %s;\n", name, t)
+	return nil
+}
+
+func (s *Schema) composed() bool {
+	return len(s.OneOf)+len(s.AnyOf)+len(s.AllOf) > 0
+}
+
+// typeOf returns the type of the values of s, whose lines after the first
+// are indented by n.
+func (g *tsGen) typeOf(s *Schema, n int) (string, error) {
+	switch {
+	case s == nil:
+		return "unknown", nil
+	case s.Ref != "":
+		_, name := g.d.resolve(s)
+		return name, nil
+	case s.composed():
+		return g.composition(s, n)
+	}
+	var parts []string
+	add := func(t string) {
+		if !slices.Contains(parts, t) {
+			parts = append(parts, t)
+		}
+	}
+	switch {
+	case s.Const != nil:
+		lit, err := literal(s.Const)
+		if err != nil {
+			return "", err
+		}
+		add(lit)
+	case s.Enum != nil:
+		for _, v := range s.Enum {
+			lit, err := literal(v)
+			if err != nil {
+				return "", err
+			}
+			add(lit)
+		}
+	case len(s.Type) == 0:
+		if s.Items != nil || s.Properties != nil || s.AdditionalProperties != nil {
+			return "", errors.New("a schema with items or properties has no type")
+		}
+		return "unknown", nil
+	default:
+		for _, t := range s.Type {
+			switch t {
+			case "string", "boolean", "null":
+				add(t)
+			case "integer", "number":
+				add("number")
+			case "array":
+				items, err := g.typeOf(s.Items, n)
+				if err != nil {
+					return "", err
+				}
+				add("Array<" + items + ">")
+			case "object":
+				obj, err := g.object(s, n)
+				if err != nil {
+					return "", err
+				}
+				add(obj)
+			}
+		}
+	}
+	// null goes last, as people write it.
+	if i := slices.Index(parts, "null"); i >= 0 && len(parts) > 1 {
+		parts = append(slices.Delete(parts, i, i+1), "null")
+	}
+	return strings.Join(parts, " | "), nil
+}
+
+// composition returns the type of a schema made of others with oneOf,
+// anyOf, or allOf.
+func (g *tsGen) composition(s *Schema, n int) (string, error) {
+	if len(s.Type) > 0 || s.Properties != nil || s.Items != nil || s.Enum != nil || s.Const != nil ||
+		s.AdditionalProperties != nil {
+		return "", errors.New("a schema with oneOf, anyOf, or allOf has other keywords too")
+	}
+	var members []*Schema
+	sep := " | "
+	switch {
+	case len(s.OneOf) > 0 && len(s.AnyOf) == 0 && len(s.AllOf) == 0:
+		members = s.OneOf
+	case len(s.AnyOf) > 0 && len(s.OneOf) == 0 && len(s.AllOf) == 0:
+		members = s.AnyOf
+	case len(s.AllOf) > 0 && len(s.OneOf) == 0 && len(s.AnyOf) == 0:
+		members, sep = s.AllOf, " & "
+	default:
+		return "", errors.New("a schema combines more than one of oneOf, anyOf, and allOf")
+	}
+	var parts []string
+	for _, m := range members {
+		t, err := g.typeOf(m, n)
+		if err != nil {
+			return "", err
+		}
+		if strings.ContainsAny(t, "|&") {
+			t = "(" + t + ")"
+		}
+		parts = append(parts, t)
+	}
+	return strings.Join(parts, sep), nil
+}
+
+// literal returns the literal type of a JSON scalar.
+func literal(v json.RawMessage) (string, error) {
+	var x any
+	d := json.NewDecoder(bytes.NewReader(v))
+	d.UseNumber()
+	if err := d.Decode(&x); err != nil {
+		return "", err
+	}
+	switch x := x.(type) {
+	case nil:
+		return "null", nil
+	case bool:
+		return strconv.FormatBool(x), nil
+	case json.Number:
+		return x.String(), nil
+	case string:
+		return jsString(x), nil
+	}
+	return "", fmt.Errorf("the enum or const value %s is not a string, number, boolean, or null", v)
+}
+
+// object returns the type of an object schema.
+func (g *tsGen) object(s *Schema, n int) (string, error) {
+	add := s.AdditionalProperties
+	if len(s.Properties) == 0 {
+		switch {
+		case add != nil && !add.Allowed:
+			return "Record<string, never>", nil
+		case add != nil && add.Schema != nil:
+			t, err := g.typeOf(add.Schema, n)
+			if err != nil {
+				return "", err
+			}
+			return "Record<string, " + t + ">", nil
+		}
+		return "Record<string, unknown>", nil
+	}
+	if add != nil && add.Schema != nil && !add.Schema.empty() {
+		return "", errors.New("an object has properties, and a schema of its other properties too")
+	}
+	required := map[string]bool{}
+	for _, name := range s.Required {
+		required[name] = true
+	}
+	var props []prop
+	for _, name := range sortedKeys(s.Properties) {
+		p := s.Properties[name]
+		desc, deprecated := "", false
+		if p != nil {
+			desc, deprecated = p.Description, p.Deprecated
+		}
+		props = append(props, prop{name: name, optional: !required[name], schema: p, doc: desc,
+			deprecated: deprecated})
+	}
+	return g.objectOf(props, n)
+}
+
+// empty reports whether s allows any value: it has no keyword that
+// restricts one.
+func (s *Schema) empty() bool {
+	return len(s.Type) == 0 && s.Ref == "" && s.Enum == nil && s.Const == nil && s.Items == nil &&
+		s.Properties == nil && s.AdditionalProperties == nil && !s.composed()
+}
+
+// prop is a member of an object type.
+type prop struct {
+	name       string
+	optional   bool
+	schema     *Schema
+	doc        string
+	deprecated bool
+	// typ, if set, is the member's type, in place of the schema's.
+	typ string
+	// numeric makes the name a numeric literal, as a status is, so that
+	// keyof gives the number.
+	numeric bool
+}
+
+// objectOf returns an object type with the members props, whose lines
+// after the first are indented by n.
+func (g *tsGen) objectOf(props []prop, n int) (string, error) {
+	if len(props) == 0 {
+		return "Record<string, never>", nil
+	}
+	var b strings.Builder
+	b.WriteString("{\n")
+	for _, p := range props {
+		t := p.typ
+		if t == "" {
+			var err error
+			if t, err = g.typeOf(p.schema, n+1); err != nil {
+				return "", fmt.Errorf("%s: %w", p.name, err)
+			}
+		}
+		comment(&b, n+1, p.doc, p.deprecated)
+		optional := ""
+		if p.optional {
+			optional = "?"
+		}
+		name := propertyName(p.name)
+		if p.numeric {
+			name = p.name
+		}
+		fmt.Fprintf(&b, "%s%s%s: %s;\n", indent(n+1), name, optional, t)
+	}
+	b.WriteString(indent(n) + "}")
+	return b.String(), nil
+}
+
+// operations writes Operations and routes.
+func (g *tsGen) operations() error {
+	ops := locate(g.d)
+	slices.SortFunc(ops, func(a, b located) int { return strings.Compare(a.op.OperationID, b.op.OperationID) })
+
+	g.b.WriteString("\n")
+	comment(&g.b, 0, "The API's operations, by operation ID: what each takes, and what it answers with each status "+
+		"that is not an error's.", false)
+	g.b.WriteString("export interface Operations {\n")
+	for _, l := range ops {
+		op := l.op
+		text := op.Summary
+		if op.Description != "" {
+			text += "\n\n" + op.Description
+		}
+		input, err := g.input(op)
+		if err != nil {
+			return fmt.Errorf("%s %s: %w", l.method, l.path, err)
+		}
+		responses, err := g.responses(op)
+		if err != nil {
+			return fmt.Errorf("%s %s: %w", l.method, l.path, err)
+		}
+		comment(&g.b, 1, text, op.Deprecated)
+		fmt.Fprintf(&g.b, "%s%s: {\n", indent(1), propertyName(op.OperationID))
+		fmt.Fprintf(&g.b, "%sinput: %s;\n", indent(2), input)
+		fmt.Fprintf(&g.b, "%sresponses: %s;\n", indent(2), responses)
+		fmt.Fprintf(&g.b, "%s};\n", indent(1))
+	}
+	g.b.WriteString("}\n\n")
+
+	comment(&g.b, 0, "The method and path of each operation.", false)
+	g.b.WriteString("export const routes = {\n")
+	for _, l := range ops {
+		fmt.Fprintf(&g.b, "%s%s: { method: %s, path: %s },\n", indent(1), propertyName(l.op.OperationID),
+			jsString(l.method), jsString(l.path))
+	}
+	g.b.WriteString("} as const satisfies Record<keyof Operations, { method: string; path: string }>;\n")
+	return nil
+}
+
+// input returns the type of an operation's input.
+func (g *tsGen) input(op *Operation) (string, error) {
+	groups := map[string][]prop{}
+	for _, p := range op.Parameters {
+		if p.In == "cookie" {
+			return "", fmt.Errorf("the client cannot send the cookie parameter %s", p.Name)
+		}
+		t, err := g.parameterType(p.Schema)
+		if err != nil {
+			return "", fmt.Errorf("the %s parameter %s: %w", p.In, p.Name, err)
+		}
+		groups[p.In] = append(groups[p.In], prop{name: p.Name, optional: !p.Required, doc: p.Description,
+			deprecated: p.Deprecated, typ: t})
+	}
+	var parts []prop
+	for _, part := range []struct{ in, name string }{{"path", "path"}, {"query", "query"}, {"header", "headers"}} {
+		members := groups[part.in]
+		if len(members) == 0 {
+			continue
+		}
+		slices.SortFunc(members, func(a, b prop) int { return strings.Compare(a.name, b.name) })
+		t, err := g.objectOf(members, 3)
+		if err != nil {
+			return "", err
+		}
+		optional := true
+		for _, m := range members {
+			optional = optional && m.optional
+		}
+		parts = append(parts, prop{name: part.name, optional: optional, typ: t})
+	}
+	if rb := op.RequestBody; rb != nil {
+		schema, err := jsonBody(rb.Content)
+		if err != nil {
+			return "", fmt.Errorf("the request body: %w", err)
+		}
+		t, err := g.typeOf(schema, 3)
+		if err != nil {
+			return "", fmt.Errorf("the request body: %w", err)
+		}
+		parts = append(parts, prop{name: "body", optional: !rb.Required, doc: rb.Description, typ: t})
+	}
+	return g.objectOf(parts, 2)
+}
+
+// parameterType returns the type of a parameter's values, which the client
+// writes with String.
+func (g *tsGen) parameterType(s *Schema) (string, error) {
+	r, _ := g.d.resolve(s)
+	if r == nil || r.composed() || r.Items != nil || r.Properties != nil || len(r.Type) == 0 {
+		return "", errors.New("the client can send only strings, numbers, and booleans as parameters")
+	}
+	for _, t := range r.Type {
+		if !slices.Contains([]string{"string", "integer", "number", "boolean"}, t) {
+			return "", errors.New("the client can send only strings, numbers, and booleans as parameters")
+		}
+	}
+	return g.typeOf(s, 0)
+}
+
+// jsonBody returns the schema of a body that is application/json, and
+// fails if it may be anything else.
+func jsonBody(content map[string]*MediaType) (*Schema, error) {
+	if len(content) != 1 || content["application/json"] == nil {
+		return nil, fmt.Errorf("the client handles only application/json, and the body may be %q",
+			sortedKeys(content))
+	}
+	return content["application/json"].Schema, nil
+}
+
+// responses returns the type of an operation's responses that are not
+// errors.
+func (g *tsGen) responses(op *Operation) (string, error) {
+	var statuses []string
+	for status := range op.Responses {
+		if isError(status) {
+			continue
+		}
+		if strings.HasSuffix(status, "XX") {
+			return "", fmt.Errorf("the client cannot type the responses to a range of statuses, such as %s",
+				status)
+		}
+		statuses = append(statuses, status)
+	}
+	if len(statuses) == 0 {
+		return "", errors.New("it has no response other than an error's")
+	}
+	slices.Sort(statuses)
+	var members []prop
+	for _, status := range statuses {
+		r := op.Responses[status]
+		t := "undefined"
+		if len(r.Content) > 0 {
+			schema, err := jsonBody(r.Content)
+			if err != nil {
+				return "", fmt.Errorf("the response %s: %w", status, err)
+			}
+			if t, err = g.typeOf(schema, 3); err != nil {
+				return "", fmt.Errorf("the response %s: %w", status, err)
+			}
+		}
+		members = append(members, prop{name: status, typ: t, numeric: true})
+	}
+	return g.objectOf(members, 2)
+}

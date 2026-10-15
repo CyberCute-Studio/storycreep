@@ -133,7 +133,7 @@ func (r response) details(t *testing.T) map[string]any {
 func TestRoutesDeclareCapabilities(t *testing.T) {
 	s := newServer(loadConfig(t, nil), slog.New(slog.DiscardHandler))
 	want := map[string][]string{
-		"main":  {"GET /healthz", "GET /readyz", "GET /version"},
+		"main":  {"GET /api/v1/openapi.json", "GET /healthz", "GET /readyz", "GET /version"},
 		"admin": {"GET /metrics"},
 	}
 	for name, m := range map[string]*api.Mux{"main": s.main, "admin": s.admin} {

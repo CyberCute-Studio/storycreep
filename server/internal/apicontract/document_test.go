@@ -1,0 +1,66 @@
+package apicontract
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestLoadCommittedDocument checks that the package reads the document that
+// the server serves, which huma writes.
+func TestLoadCommittedDocument(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "schema", "api", "v1", "openapi.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := Load(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Paths["/api/v1/openapi.json"] == nil || d.Components.Schemas["ErrorEnvelope"] == nil {
+		t.Errorf("the document lacks its own operation or the error envelope")
+	}
+}
+
+// TestLoadRefuses checks that Load refuses what the package does not
+// understand, rather than skip it.
+func TestLoadRefuses(t *testing.T) {
+	base, err := os.ReadFile(filepath.Join("testdata", "base.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name, old, new, want string
+	}{
+		{"an unknown keyword in a schema", `"maxLength": 1024`, `"maxLength": 1024, "not": {}`, `unknown field "not"`},
+		{"an extension", `"title": "Fixture"`, `"title": "Fixture", "x-logo": "a.png"`, `unknown field "x-logo"`},
+		{"an unknown object of an operation", `"operationId": "listThings",`,
+			`"operationId": "listThings", "security": [],`, `unknown field "security"`},
+		{"another version of OpenAPI", `"openapi": "3.1.0"`, `"openapi": "3.0.3"`, "not 3.1"},
+		{"a reference to a schema that does not exist", `"$ref": "#/components/schemas/ThingPage"`,
+			`"$ref": "#/components/schemas/Nothing"`, "does not name a schema"},
+		{"a reference outside the schemas", `"$ref": "#/components/schemas/ThingPage"`,
+			`"$ref": "other.json#/Thing"`, "does not name a schema"},
+		{"an operationId twice", `"operationId": "getThing"`, `"operationId": "listThings"`,
+			"the same operationId listThings"},
+		{"no operationId", `"operationId": "getThing",`, ``, "has no operationId"},
+		{"a path parameter that the path lacks", `"/things/{id}": {`, `"/things/{key}": {`,
+			`the path has the parameters ["key"], and the operation describes ["id"]`},
+		{"a parameter in an unknown place", `"in": "header"`, `"in": "body"`, "not a place for one"},
+		{"an unknown type", `"type": "boolean"`, `"type": "bool"`, `"bool" is not a type`},
+		{"a response key that is not a status", `"304": {`, `"3xx": {`, "is not a status"},
+	}
+	for _, tt := range tests {
+		if !strings.Contains(string(base), tt.old) {
+			t.Fatalf("%s: the fixture lacks %q", tt.name, tt.old)
+		}
+		_, err := Load([]byte(strings.Replace(string(base), tt.old, tt.new, 1)))
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: Load = %v, want an error saying %q", tt.name, err, tt.want)
+		}
+	}
+	if _, err := Load(append(base, "{}"...)); err == nil || !strings.Contains(err.Error(), "more after") {
+		t.Errorf("more after the document: Load = %v, want an error", err)
+	}
+}

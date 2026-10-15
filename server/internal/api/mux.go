@@ -108,8 +108,10 @@ func NewMux(opts MuxOptions) *Mux {
 	m.router.MethodNotAllowed(m.methodNotAllowed)
 
 	config := huma.DefaultConfig("Storycreep", "v1")
-	// The OpenAPI document and its routes come with plan item 7. Until then
-	// huma serves nothing of its own, and adds no $schema to bodies.
+	// huma serves no routes of its own, which would declare no capability,
+	// and adds no $schema to bodies. The server serves the OpenAPI document
+	// as an operation of its own (package httpserver), and Document renders
+	// it.
 	config.OpenAPIPath, config.DocsPath, config.SchemasPath = "", "", ""
 	config.CreateHooks = nil
 	config.Formats = map[string]huma.Format{"application/json": jsonFormat, "json": jsonFormat}
@@ -208,9 +210,20 @@ func (m *Mux) Handle(c Capability, method, pattern string, h http.Handler) {
 // limited to DefaultMaxBodyBytes, unless op.MaxBodyBytes sets another limit,
 // or a negative one for none, and must arrive within a minute, unless
 // op.BodyReadTimeout says otherwise. An error that handler returns is
-// answered in the envelope, as Error describes.
+// answered in the envelope, as Error describes, and the operation's default
+// response in the OpenAPI document is the envelope, unless op sets one.
 func Register[I, O any](m *Mux, c Capability, op huma.Operation, handler func(context.Context, *I) (*O, error)) {
 	m.declare(op.Method, op.Path, c)
+	// huma documents the envelope as the default response only for an
+	// operation that documents no other response than its success, so an
+	// operation that does, such as one that answers 304 too, would have its
+	// errors undocumented (PRD FR-API-04).
+	if op.Responses == nil {
+		op.Responses = map[string]*huma.Response{}
+	}
+	if op.Responses["default"] == nil {
+		op.Responses["default"] = m.errorResponse()
+	}
 	if op.MaxBodyBytes == 0 {
 		op.MaxBodyBytes = DefaultMaxBodyBytes
 	}
