@@ -14,20 +14,22 @@ import (
 	"golang.org/x/text/secure/precis"
 )
 
-// scramIterations is the iteration count of the verifiers the server writes,
-// PostgreSQL's default.
+// scramIterations is PostgreSQL's default iteration count for SCRAM
+// verifiers, which the server's verifiers use where the database server has
+// no scram_iterations setting, as before PostgreSQL 16.
 const scramIterations = 4096
 
 // scramVerifier returns the SCRAM-SHA-256 verifier that PostgreSQL stores for
-// password (RFC 5802, RFC 7677), with a new random salt. CREATE ROLE and
-// ALTER ROLE accept a verifier in place of the password, so the password
-// itself is never sent to the server, which could log the statement.
-func scramVerifier(password string) (string, error) {
+// password (RFC 5802, RFC 7677), with a new random salt and the given
+// iteration count. CREATE ROLE and ALTER ROLE accept a verifier in place of
+// the password, so the password itself is never sent to the server, which
+// could log the statement.
+func scramVerifier(password string, iterations int) (string, error) {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	return scramVerifierWith(password, salt, scramIterations)
+	return scramVerifierWith(password, salt, iterations)
 }
 
 func scramVerifierWith(password string, salt []byte, iterations int) (string, error) {

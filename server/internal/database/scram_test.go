@@ -8,11 +8,11 @@ import (
 
 func TestScramVerifier(t *testing.T) {
 	for _, password := range []string{"pencil", "pässwörd", "", "with ' quote", "\x07bell"} {
-		v, err := scramVerifier(password)
+		v, err := scramVerifier(password, 5000)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasPrefix(v, "SCRAM-SHA-256$4096:") || strings.Contains(v, password) && password != "" {
+		if !strings.HasPrefix(v, "SCRAM-SHA-256$5000:") || strings.Contains(v, password) && password != "" {
 			t.Errorf("%q: verifier %q", password, v)
 		}
 		if !scramMatches(v, password) {
@@ -21,7 +21,7 @@ func TestScramVerifier(t *testing.T) {
 		if scramMatches(v, password+"x") {
 			t.Errorf("%q: the verifier matches another password", password)
 		}
-		if again, _ := scramVerifier(password); again == v {
+		if again, _ := scramVerifier(password, 5000); again == v {
 			t.Errorf("%q: two verifiers share a salt", password)
 		}
 	}

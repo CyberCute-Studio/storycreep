@@ -23,7 +23,10 @@ the lock says so. If a migration fails, the database stays at the last one
 that succeeded, and the command exits with status 1. The command refuses a
 database server older than PostgreSQL 15, and an admin login that is, or
 acts as, a role the migrations create (storycreep_app, storycreep_definer,
-or storycreep_maintenance), which they make unable to log in.
+or storycreep_maintenance), which they make unable to log in. It also
+refuses a database that has applied migrations on a database server that
+lacks those roles, as after a dump of the database, which holds no roles,
+is restored into another server, and says how to recover.
 
 The application login is the one in STORYCREEP_DATABASE_URL. The command
 creates it if it does not exist, sets its password to the one the server
@@ -37,11 +40,11 @@ granted CONNECT. It fails if PUBLIC or storycreep_app can still connect
 afterwards, as through a grant that a role other than the database's owner
 made. A login belongs to the whole PostgreSQL server, as does the
 storycreep_app role, so each Storycreep database on a server needs a login
-of its own. The command
-refuses a login that row-level security would not apply to, such as a
-superuser or the database's owner, one named after a role the migrations
-create or starting with pg_, which PostgreSQL reserves, and, when the server
-logs in with a password, one whose VALID UNTIL has passed.
+of its own. The command refuses a login that row-level security would not
+apply to, such as a superuser or the database's owner, one named after a
+role the migrations create or starting with pg_, which PostgreSQL reserves,
+and, when the server logs in with a password, one whose VALID UNTIL has
+passed.
 
 Last, it connects as the application login, as the server does, and fails
 unless the database it reaches has every migration applied.`,

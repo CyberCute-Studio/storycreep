@@ -134,6 +134,37 @@ func TestProvisionPasswords(t *testing.T) {
 	}
 }
 
+// TestProvisionScramIterations checks that the verifier the server writes has
+// the iteration count PostgreSQL would use for the password itself: the one
+// the database server's scram_iterations sets, on PostgreSQL 16 and later,
+// which have the setting, and PostgreSQL's default before.
+func TestProvisionScramIterations(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	var configurable bool
+	if err := admin.QueryRow(ctx, "SELECT EXISTS (SELECT FROM pg_settings WHERE name = 'scram_iterations')").
+		Scan(&configurable); err != nil {
+		t.Fatal(err)
+	}
+	want := "SCRAM-SHA-256$4096:"
+	if configurable {
+		// The admin login's sessions connect after the setting.
+		if _, err := admin.Exec(ctx, "ALTER DATABASE "+pgx.Identifier{d.Name}.Sanitize()+" SET scram_iterations = 5000"); err != nil {
+			t.Fatal(err)
+		}
+		want = "SCRAM-SHA-256$5000:"
+	}
+	app := d.URL(t, d.FreshLogin(t), "pw")
+	if _, err := database.Migrate(ctx, d.AdminURL, app, database.MigrateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if stored := storedPassword(t, admin, app.User()); !strings.HasPrefix(stored, want) || !canConnect(t, app) {
+		t.Errorf("the stored verifier is %q, want one starting with %q that the login connects with", stored, want)
+	}
+}
+
 // TestProvisionPasswordFromFile checks that a login whose URL has no password
 // is given the one its connections take from a password file, as they would
 // from PGPASSWORD, so that the server can log in with it.

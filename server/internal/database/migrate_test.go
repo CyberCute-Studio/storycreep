@@ -668,6 +668,43 @@ func TestRoleMigrationCorrectsRoles(t *testing.T) {
 	checkRoles(t, admin)
 }
 
+// TestMigrateWithoutTheServerRoles checks that migrating a database that has
+// applied migrations, on a database server that lacks the roles the first
+// migration creates, fails before it changes anything, and says how to
+// recover. A dump of the database restored into another server is such a
+// database: roles belong to the server, so the dump has none. It renames a
+// role that every database of the test server shares, so it does not run in
+// parallel.
+func TestMigrateWithoutTheServerRoles(t *testing.T) {
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	login := d.FreshLogin(t)
+	if _, err := admin.Exec(ctx, "ALTER ROLE storycreep_app RENAME TO storycreep_app_elsewhere"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(ctx, "ALTER ROLE storycreep_app_elsewhere RENAME TO storycreep_app"); err != nil {
+			t.Error(err)
+		}
+	})
+
+	newer := withMigrations(t, map[string]string{"90001_newer.sql": "CREATE TABLE newer (x int);"})
+	_, err := database.Migrate(ctx, d.AdminURL, d.URL(t, login, "pw"), database.MigrateOptions{Migrations: newer})
+	if err == nil || !strings.Contains(err.Error(), "lacks roles that the first migration creates (storycreep_app)") ||
+		!strings.Contains(err.Error(), "pg_dumpall --roles-only") {
+		t.Fatalf("Migrate returned %v, want a refusal that names the missing role and how to restore it", err)
+	}
+	var applied, created bool
+	if err := admin.QueryRow(ctx, `SELECT EXISTS (SELECT FROM goose_db_version WHERE version_id = 90001),
+		EXISTS (SELECT FROM pg_roles WHERE rolname = $1)`, login).Scan(&applied, &created); err != nil {
+		t.Fatal(err)
+	}
+	if applied || created {
+		t.Errorf("the refused run applied the newer migration: %v, or created the login: %v", applied, created)
+	}
+}
+
 // checkRoles checks the attributes of the server's roles.
 func checkRoles(t *testing.T, conn *pgx.Conn) {
 	t.Helper()

@@ -61,7 +61,15 @@ func provision(ctx context.Context, conn *pgx.Conn, login string, password secre
 			changes = append(changes, "INHERIT")
 		}
 		if password.IsSet() && (stored == nil || !scramMatches(*stored, password.Reveal())) {
-			verifier, err := scramVerifier(password.Reveal())
+			// The iteration count is the one PostgreSQL would use for the
+			// password itself: scram_iterations on PostgreSQL 16 and later,
+			// which an operator may have raised, and its default before.
+			var iterations int
+			if err := tx.QueryRow(ctx, "SELECT coalesce(current_setting('scram_iterations', true)::int, $1)",
+				scramIterations).Scan(&iterations); err != nil {
+				return fmt.Errorf("provision the login %q: %w", login, err)
+			}
+			verifier, err := scramVerifier(password.Reveal(), iterations)
 			if err != nil {
 				return fmt.Errorf("provision the login %q: %w", login, err)
 			}
@@ -216,6 +224,34 @@ func checkConnectRestricted(ctx context.Context, q querier) error {
 		return fmt.Errorf("%s can connect to the database %q, as after a dump is restored into a new database, so the "+
 			"application logins of the other Storycreep databases on the server could connect to it too; run "+
 			"storycreep migrate, which revokes that CONNECT", who, database)
+	}
+	return nil
+}
+
+// checkServerRoles returns an error unless the server's roles exist, which the
+// first migration creates. Roles belong to the database server rather than to
+// the database, so a dump of the database restored into another server
+// arrives with its migrations applied but without the roles. The restore
+// could not grant them the privileges that the migrations gave them either,
+// and migrating again would not, because those migrations are applied, so the
+// error says to create the roles and restore the dump again.
+func checkServerRoles(ctx context.Context, q querier) error {
+	rows, err := q.Query(ctx, "SELECT r FROM unnest($1::name[]) AS r "+
+		"WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = r) ORDER BY r", reservedRoles)
+	if err != nil {
+		return fmt.Errorf("check the server's roles: %w", err)
+	}
+	missing, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return fmt.Errorf("check the server's roles: %w", err)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("the database has applied migrations, but the database server lacks roles that the first "+
+			"migration creates (%s), as when a dump of the database is restored into another server: roles belong "+
+			"to the server, so the dump has none, and the restore could not grant them the privileges that the "+
+			"migrations gave them, which migrating again does not grant; create the roles on this server, with "+
+			"pg_dumpall --roles-only on the old one, or by running storycreep migrate with both database URLs naming "+
+			"an empty database here, and then restore the dump again", strings.Join(missing, ", "))
 	}
 	return nil
 }

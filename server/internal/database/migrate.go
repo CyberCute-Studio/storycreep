@@ -142,8 +142,10 @@ func (e *MigrationError) Unwrap() error { return e.Err }
 // Migrate changes nothing then, nor when the database server runs a version
 // of PostgreSQL older than 15 (checkServerVersion), when the application login
 // has the name of one of the server's roles or PostgreSQL's reserved pg_ prefix
-// (checkLoginName), or when the admin login is, or acts as, one of the
-// server's roles, or does not act as a superuser.
+// (checkLoginName), when the admin login is, or acts as, one of the server's
+// roles, or does not act as a superuser, or when the database has applied
+// migrations but its server lacks the server's roles, as after a dump of it is
+// restored into another server (checkServerRoles).
 func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOptions) (MigrateResult, error) {
 	res, db, err := migrate(ctx, admin, app, opts)
 	if db != nil {
@@ -261,6 +263,15 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	}
 	if _, err := pending(ms, applied); err != nil {
 		return MigrateResult{}, nil, err
+	}
+	// A database that has applied a migration has applied the first, which
+	// creates the server's roles, so they must exist on its server: the
+	// newer migrations grant them privileges, and provision grants
+	// storycreep_app to the login.
+	if len(applied) > 0 {
+		if err := checkServerRoles(ctx, conn); err != nil {
+			return MigrateResult{}, nil, err
+		}
 	}
 
 	// goose works on database/sql. Its connections are opened only while
