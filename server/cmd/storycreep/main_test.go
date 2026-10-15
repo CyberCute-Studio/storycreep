@@ -50,9 +50,11 @@ func start(t *testing.T, vars map[string]string, args ...string) (code int, stdo
 	return code, out.String(), errOut.String()
 }
 
-// TestStartWithInvalidConfig covers FR-ADMIN-01/AC1 end to end: the binary
-// exits non-zero, naming the key, when a required key is missing or a key is
+// TestStartWithInvalidConfig checks end to end that the binary exits
+// non-zero, naming the key, when a required key is missing or a key is
 // invalid.
+//
+// Verifies: FR-ADMIN-01/AC1
 func TestStartWithInvalidConfig(t *testing.T) {
 	tests := []struct {
 		name string

@@ -46,8 +46,10 @@ func TestTopLevelHelp(t *testing.T) {
 	}
 }
 
-// TestCommandHelp covers FR-ADMIN-06/AC1 for --help: every subcommand
-// describes itself and its flags.
+// TestCommandHelp checks that every subcommand has --help, which describes
+// the command and its flags.
+//
+// Verifies: FR-ADMIN-06/AC1
 func TestCommandHelp(t *testing.T) {
 	for _, c := range commands {
 		for _, args := range [][]string{{c.name, "--help"}, {c.name, "-h"}, {"help", c.name}} {
@@ -73,8 +75,10 @@ func TestCommandHelp(t *testing.T) {
 	}
 }
 
-// TestUsageErrors covers FR-ADMIN-06/AC1 for exit statuses: a wrong command
-// line exits with ExitUsage and says what is wrong.
+// TestUsageErrors checks that a wrong command line exits with ExitUsage and
+// says what is wrong.
+//
+// Verifies: FR-ADMIN-06/AC1
 func TestUsageErrors(t *testing.T) {
 	tests := []struct {
 		args []string
@@ -123,9 +127,11 @@ func fakeCommand(t *testing.T) *bool {
 	return ran
 }
 
-// TestInvalidConfigStopsCommands covers FR-ADMIN-01/AC1: a command that needs
-// the configuration does not run if a key is missing or invalid; it exits
-// with ExitFailure and names every offending key.
+// TestInvalidConfigStopsCommands checks that a command that needs the
+// configuration does not run if a key is missing or invalid; it exits with
+// ExitFailure and names every offending key.
+//
+// Verifies: FR-ADMIN-01/AC1
 func TestInvalidConfigStopsCommands(t *testing.T) {
 	tests := []struct {
 		name string

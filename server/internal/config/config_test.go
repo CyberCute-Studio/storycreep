@@ -168,7 +168,10 @@ func TestDescribeListsEveryCapability(t *testing.T) {
 	}
 }
 
-// TestMissingRequiredKey covers FR-ADMIN-01/AC1 for a missing key.
+// TestMissingRequiredKey checks that a missing required key is a problem
+// that names it.
+//
+// Verifies: FR-ADMIN-01/AC1
 func TestMissingRequiredKey(t *testing.T) {
 	for _, env := range []map[string]string{{}, {"STORYCREEP_PUBLIC_URL": ""}} {
 		problems := loadProblems(t, Options{Env: MapEnvironment(env)})
@@ -181,8 +184,10 @@ func TestMissingRequiredKey(t *testing.T) {
 	}
 }
 
-// TestInvalidValues covers FR-ADMIN-01/AC1 for invalid values: each problem
-// names the key, where the value came from, and the value.
+// TestInvalidValues checks that each invalid value is a problem that names
+// the key, where the value came from, and the value.
+//
+// Verifies: FR-ADMIN-01/AC1
 func TestInvalidValues(t *testing.T) {
 	tests := []struct {
 		key, value, want string
@@ -228,8 +233,10 @@ func TestEveryProblemIsReported(t *testing.T) {
 	}
 }
 
-// TestCredentialsInPublicURL covers NFR-SEC-14: a public URL that carries a
+// TestCredentialsInPublicURL checks that a public URL that carries a
 // password is rejected without repeating the password.
+//
+// Verifies: NFR-SEC-14
 func TestCredentialsInPublicURL(t *testing.T) {
 	const password = "pw-s3cr3t"
 	for _, v := range []string{
@@ -407,8 +414,10 @@ func TestUnknownVariables(t *testing.T) {
 	}
 }
 
-// TestSecretKeys covers NFR-SEC-14 for configuration: a secret key's value is
-// redacted in the entries and never repeated in a problem, even escaped.
+// TestSecretKeys checks that a secret key's value is redacted in the entries
+// and never repeated in a problem, even escaped.
+//
+// Verifies: NFR-SEC-14
 func TestSecretKeys(t *testing.T) {
 	// The quote and the backslash make %q escape the value, so that an echo
 	// of it does not contain it verbatim; the tail is in every form.

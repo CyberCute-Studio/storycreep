@@ -169,9 +169,11 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// TestModeIsReadInOnePackage covers FR-ADMIN-01/AC3: STORYCREEP_MODE is read
-// in exactly one package, and no code outside it branches on the mode or
-// reads the environment.
+// TestModeIsReadInOnePackage checks that STORYCREEP_MODE is read in exactly
+// one package, and that no code outside it branches on the mode or reads the
+// environment.
+//
+// Verifies: FR-ADMIN-01/AC3
 func TestModeIsReadInOnePackage(t *testing.T) {
 	r, err := lintModeIsolation(moduleRoot(t))
 	if err != nil {
@@ -191,6 +193,8 @@ func TestModeIsReadInOnePackage(t *testing.T) {
 
 // TestModeLintFindsViolations runs the lint over a fixture module, so that
 // TestModeIsReadInOnePackage cannot pass because the lint stopped working.
+//
+// Verifies: FR-ADMIN-01/AC3
 func TestModeLintFindsViolations(t *testing.T) {
 	root := t.TempDir()
 	files := map[string][]string{

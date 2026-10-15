@@ -79,8 +79,10 @@ func TestFilePrecedence(t *testing.T) {
 	}
 }
 
-// TestFileProblems covers FR-ADMIN-01/AC1 for the file: each problem names
+// TestFileProblems checks the problems in a configuration file: each names
 // the key and the line, and none repeats a value.
+//
+// Verifies: FR-ADMIN-01/AC1
 func TestFileProblems(t *testing.T) {
 	// Text that might be a secret: a value, and a word that looks like a key.
 	const secretish, secretWord = "hunter2-correct-horse", "hunter2horse"

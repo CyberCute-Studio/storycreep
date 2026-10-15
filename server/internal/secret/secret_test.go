@@ -27,8 +27,10 @@ type pointer struct {
 	Secret *Value
 }
 
-// TestValueNeverPrints covers NFR-SEC-14: no way of printing, logging, or
-// encoding a Value shows the secret, including inside other values.
+// TestValueNeverPrints checks that no way of printing, logging, or encoding
+// a Value shows the secret, including inside other values.
+//
+// Verifies: NFR-SEC-14
 func TestValueNeverPrints(t *testing.T) {
 	v := New(plain)
 	in := exported{Name: "smtp", Secret: v}

@@ -30,8 +30,10 @@ func requestContext() context.Context {
 	return WithUserID(ctx, "usr_1")
 }
 
-// TestContextFields covers NFR-OBS-01: records carry the request, workspace,
-// and user IDs of their context as top-level JSON fields.
+// TestContextFields checks that records carry the request, workspace, and
+// user IDs of their context as top-level JSON fields.
+//
+// Verifies: NFR-OBS-01
 func TestContextFields(t *testing.T) {
 	var buf bytes.Buffer
 	log := New(&buf, slog.LevelInfo)
