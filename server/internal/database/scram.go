@@ -49,10 +49,14 @@ func scramKeys(password string, salt []byte, iterations int) (storedKey, serverK
 	return sum[:], hmacSHA256(salted, "Server Key"), nil
 }
 
-// normalizePassword prepares a password the way libpq and pgx do before they
-// hash it for SCRAM: with SASLprep (RFC 4013), whose equivalent is the PRECIS
-// OpaqueString profile, or unchanged if SASLprep rejects it. A verifier made
-// from the password differently would not match what the client sends.
+// normalizePassword prepares a password the way pgx, the server's client,
+// does before it hashes it for SCRAM: with the PRECIS OpaqueString profile
+// (RFC 8265), or unchanged if the profile rejects it. A verifier made from
+// the password differently would not match what the server's connections
+// send. pgx uses the profile in place of SASLprep (RFC 4013), which libpq
+// and PostgreSQL use. The two agree on most passwords, but not on all:
+// SASLprep applies NFKC normalization where the profile applies NFC, so
+// they differ on compatibility characters such as the ligature "ﬁ".
 func normalizePassword(password string) string {
 	if p, err := precis.OpaqueString.String(password); err == nil {
 		return p

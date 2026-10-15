@@ -17,7 +17,7 @@ func TestParseDatabaseURL(t *testing.T) {
 		{testDatabaseURL, testDatabaseShown, "storycreep", "storycreep", "pw-s3cr3t"},
 		{"postgresql://app@db/sc", "postgresql://app@db/sc", "app", "sc", ""},
 		{"postgres://app:@db/sc", "postgres://app@db/sc", "app", "sc", ""},
-		{"POSTGRES://app:p%40ss%3Aw%2Frd@[::1]:5433/sc?sslmode=verify-full&sslpassword=key-pw&application_name=x",
+		{"postgres://app:p%40ss%3Aw%2Frd@[::1]:5433/sc?sslmode=verify-full&sslpassword=key-pw&application_name=x",
 			"postgres://app:" + secret.Redacted + "@[::1]:5433/sc?sslmode=verify-full&sslpassword=" + secret.Redacted +
 				"&application_name=x",
 			"app", "sc", "p@ss:w/rd"},
@@ -54,6 +54,9 @@ func TestInvalidDatabaseURL(t *testing.T) {
 		{"host=db user=app password=" + password, "must start with postgres://"},
 		{"mysql://app:" + password + "@db/sc", "must start with postgres://"},
 		{"postgres:app:" + password, "must start with postgres://"},
+		// pgx would read these as keyword=value settings and ignore the URL.
+		{"POSTGRES://app:" + password + "@db/sc", "in lowercase"},
+		{"Postgresql://app:" + password + "@db/sc?sslmode=require", "in lowercase"},
 		{"postgres://:" + password + "@db/sc", "names no user"},
 		{"postgres://db/sc", "names no user"},
 		{"postgres://app:" + password + "@db", "names no database"},
@@ -126,4 +129,22 @@ func TestAdminLoginDiffers(t *testing.T) {
 		!strings.Contains(problems[0].Msg, "same login") || strings.Contains(problems[0].Msg, "other") {
 		t.Errorf("problems = %v, want one saying the logins must differ, without the URL", problems)
 	}
+}
+
+// TestAdminDatabaseMatches checks that the admin URL must name the server's
+// database, so that migrations are not applied to another one, such as the
+// postgres database a superuser URL often names.
+func TestAdminDatabaseMatches(t *testing.T) {
+	problems := loadProblems(t, Options{Env: MapEnvironment(withRequired(map[string]string{
+		"STORYCREEP_DATABASE_ADMIN_URL": "postgres://postgres:other@db/postgres",
+	}))})
+	if len(problems) != 1 || problems[0].Key != "STORYCREEP_DATABASE_ADMIN_URL" ||
+		!strings.Contains(problems[0].Msg, "different database") || strings.Contains(problems[0].Msg, "other") {
+		t.Errorf("problems = %v, want one saying the databases must match, without the URL", problems)
+	}
+	// Another host for the same database is allowed, as when the server
+	// connects through a pooler and migrations connect directly.
+	mustLoad(t, withRequired(map[string]string{
+		"STORYCREEP_DATABASE_ADMIN_URL": "postgres://postgres:other@db-direct:5432/storycreep",
+	}))
 }

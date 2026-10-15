@@ -84,9 +84,38 @@ func TestOpenRefusesTheAdmin(t *testing.T) {
 		!strings.Contains(err.Error(), "it is a superuser") {
 		t.Errorf("Open returned %v, want an *UnsafeLoginError for the superuser alone", err)
 	}
+
+	// A role parameter makes the session's current user an ordinary role,
+	// but the session can still SET ROLE back to the superuser.
+	withRole, err := config.ParseDatabaseURL(d.AdminURL.Reveal() + "&role=" + dbtest.AppLogin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Open(context.Background(), withRole); !errors.As(err, &uerr) || uerr.Login != "postgres" {
+		t.Errorf("Open with a role parameter returned %v, want an *UnsafeLoginError for the superuser", err)
+	}
+
 	if _, err := database.Open(context.Background(), config.DatabaseURL{}); err == nil {
 		t.Errorf("Open without a URL succeeded")
 	}
+}
+
+// TestTemporaryObjectsAreNotOwnership checks that the temporary objects a
+// session of the application login holds do not make the login unsafe, so
+// that one instance's session cannot keep another from starting.
+func TestTemporaryObjectsAreNotOwnership(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	session := dbtest.Connect(t, d.AppURL)
+	if _, err := session.Exec(ctx, "CREATE TEMP TABLE scratch (x int PRIMARY KEY, y text); "+
+		"CREATE FUNCTION pg_temp.scratch() RETURNS int LANGUAGE sql AS 'SELECT 1'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{}); err != nil {
+		t.Errorf("Migrate: %v", err)
+	}
+	d.Open(t)
 }
 
 // singleConnection returns the application URL of d with a pool of one
@@ -225,7 +254,8 @@ func TestStart(t *testing.T) {
 		if p, err := db.Pending(ctx); err != nil || len(p) != 0 {
 			t.Errorf("Pending() = %v, %v; want none", p, err)
 		}
-		if !strings.Contains(logged.String(), `"msg":"applied a database migration","version":1,"name":"00001_roles.sql"`) {
+		if !strings.Contains(logged.String(), `"msg":"applied a database migration","version":1,"name":"00001_roles.sql"`) ||
+			!strings.Contains(logged.String(), `"msg":"the database is up to date"`) {
 			t.Errorf("the log does not report the migration:\n%s", logged.String())
 		}
 	})
@@ -246,6 +276,16 @@ func TestStart(t *testing.T) {
 		}
 		if !strings.Contains(logged.String(), `"level":"WARN","msg":"the database has pending migrations`) {
 			t.Errorf("the log does not warn about the pending migrations:\n%s", logged.String())
+		}
+	})
+
+	t.Run("auto-migrate of another database", func(t *testing.T) {
+		t.Parallel()
+		app, other := dbtest.Empty(t), dbtest.Empty(t)
+		_, err := database.Start(ctx, &config.Config{DatabaseURL: app.AppURL, DatabaseAdminURL: other.AdminURL},
+			database.StartOptions{AutoMigrate: true})
+		if err == nil || !strings.Contains(err.Error(), "still has pending migrations") {
+			t.Errorf("Start returned %v, want a refusal of the unmigrated database", err)
 		}
 	})
 

@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strconv"
 	"strings"
 	"testing/fstest"
 )
@@ -75,7 +76,7 @@ type Result struct {
 // deleted. dir must be in a git repository with the history of both, so a
 // shallow clone needs its full history fetched first.
 func Check(ctx context.Context, dir, base string) (Result, error) {
-	fork, err := git(ctx, dir, "merge-base", "HEAD", base)
+	fork, err := git(ctx, dir, "", "merge-base", "HEAD", base)
 	if err != nil {
 		return Result{}, fmt.Errorf("find where HEAD forked from %s: %w; a shallow clone needs its full history "+
 			"(git fetch --unshallow)", base, err)
@@ -105,10 +106,11 @@ func Tree(ctx context.Context, dir, rev string) (fs.FS, error) {
 		return os.DirFS(dir), nil
 	}
 	files := fstest.MapFS{}
-	out, err := git(ctx, dir, "ls-tree", "-z", rev, "--", ".")
+	out, err := git(ctx, dir, "", "ls-tree", "-z", rev, "--", ".")
 	if err != nil {
 		return nil, fmt.Errorf("list the migrations at %s: %w", rev, err)
 	}
+	var names, objects []string
 	for entry := range strings.SplitSeq(strings.TrimSuffix(out, "\x00"), "\x00") {
 		if entry == "" {
 			continue
@@ -122,18 +124,51 @@ func Tree(ctx context.Context, dir, rev string) (fs.FS, error) {
 		if fields[1] != "blob" || path.Base(name) != name {
 			continue
 		}
-		content, err := git(ctx, dir, "cat-file", "blob", fields[2])
-		if err != nil {
-			return nil, fmt.Errorf("read %s at %s: %w", name, rev, err)
-		}
-		files[name] = &fstest.MapFile{Data: []byte(content)}
+		names = append(names, name)
+		objects = append(objects, fields[2])
+	}
+	contents, err := readBlobs(ctx, dir, objects)
+	if err != nil {
+		return nil, fmt.Errorf("read the migrations at %s: %w", rev, err)
+	}
+	for i, name := range names {
+		files[name] = &fstest.MapFile{Data: contents[i]}
 	}
 	return files, nil
 }
 
-// git runs git in dir and returns its output.
-func git(ctx context.Context, dir string, args ...string) (string, error) {
+// readBlobs returns the contents of the blobs named by objects, read with a
+// single git cat-file --batch, whatever their number. For each object, its
+// output is a line "<object> <type> <size>", the content, and a newline.
+func readBlobs(ctx context.Context, dir string, objects []string) ([][]byte, error) {
+	if len(objects) == 0 {
+		return nil, nil
+	}
+	out, err := git(ctx, dir, strings.Join(objects, "\n")+"\n", "cat-file", "--batch")
+	if err != nil {
+		return nil, err
+	}
+	contents := make([][]byte, len(objects))
+	for i, object := range objects {
+		header, rest, ok := strings.Cut(out, "\n")
+		fields := strings.Fields(header)
+		if !ok || len(fields) != 3 || fields[0] != object || fields[1] != "blob" {
+			return nil, fmt.Errorf("unexpected git cat-file output %q for %s", header, object)
+		}
+		size, err := strconv.Atoi(fields[2])
+		if err != nil || size < 0 || size > len(rest)-1 || rest[size] != '\n' {
+			return nil, fmt.Errorf("unexpected git cat-file output %q for %s", header, object)
+		}
+		contents[i] = []byte(rest[:size])
+		out = rest[size+1:]
+	}
+	return contents, nil
+}
+
+// git runs git in dir, with stdin as its input, and returns its output.
+func git(ctx context.Context, dir, stdin string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.Stdin = strings.NewReader(stdin)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

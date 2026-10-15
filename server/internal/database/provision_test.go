@@ -135,26 +135,37 @@ func quote(s string) string {
 }
 
 // TestProvisionFixesTheLogin checks that an existing login that cannot log in
-// or does not inherit privileges is corrected.
+// or does not inherit privileges is corrected, including one that was granted
+// storycreep_app while it did not inherit, which on PostgreSQL 16 and later
+// leaves that grant without inheritance.
 func TestProvisionFixesTheLogin(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := dbtest.New(t)
-	app := d.NewLogin(t, "")
 	admin := d.Admin(t)
-	if _, err := admin.Exec(ctx, "ALTER ROLE "+pgx.Identifier{app.User()}.Sanitize()+" NOLOGIN NOINHERIT"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.Migrate(ctx, d.AdminURL, app, database.MigrateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	var canLogin, inherit bool
-	if err := admin.QueryRow(ctx, "SELECT rolcanlogin, rolinherit FROM pg_roles WHERE rolname = $1", app.User()).
-		Scan(&canLogin, &inherit); err != nil {
-		t.Fatal(err)
-	}
-	if !canLogin || !inherit || !canConnect(t, app) {
-		t.Errorf("login %v, inherit %v; want both, and a working connection", canLogin, inherit)
+	for _, granted := range []bool{false, true} {
+		app := d.NewLogin(t, "")
+		ident := pgx.Identifier{app.User()}.Sanitize()
+		if _, err := admin.Exec(ctx, "ALTER ROLE "+ident+" NOLOGIN NOINHERIT"); err != nil {
+			t.Fatal(err)
+		}
+		if granted {
+			if _, err := admin.Exec(ctx, "GRANT storycreep_app TO "+ident); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := database.Migrate(ctx, d.AdminURL, app, database.MigrateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		var canLogin, inherit, usable bool
+		if err := admin.QueryRow(ctx, `SELECT rolcanlogin, rolinherit, pg_has_role(rolname, 'storycreep_app', 'USAGE')
+			FROM pg_roles WHERE rolname = $1`, app.User()).Scan(&canLogin, &inherit, &usable); err != nil {
+			t.Fatal(err)
+		}
+		if !canLogin || !inherit || !usable || !canConnect(t, app) {
+			t.Errorf("granted before: %v; login %v, inherit %v, has the privileges of storycreep_app %v; "+
+				"want all three, and a working connection", granted, canLogin, inherit, usable)
+		}
 	}
 }
 
@@ -174,6 +185,9 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 	}{
 		{"superuser", func(r, _ string) string { return "ALTER ROLE " + r + " SUPERUSER" }, "it is a superuser"},
 		{"BYPASSRLS", func(r, _ string) string { return "ALTER ROLE " + r + " BYPASSRLS" }, "it has BYPASSRLS"},
+		// On PostgreSQL 15, CREATEROLE can grant itself storycreep_maintenance.
+		{"CREATEROLE", func(r, _ string) string { return "ALTER ROLE " + r + " CREATEROLE" }, "it has CREATEROLE"},
+		{"REPLICATION", func(r, _ string) string { return "ALTER ROLE " + r + " REPLICATION" }, "it has REPLICATION"},
 		{"member of a superuser", func(r, _ string) string { return "GRANT postgres TO " + r },
 			`it is a member of "postgres", which is a superuser`},
 		{"member of maintenance", func(r, _ string) string { return "GRANT storycreep_maintenance TO " + r },

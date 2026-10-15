@@ -127,10 +127,12 @@ var keys = []key{
 	{
 		name: "STORYCREEP_DATABASE_URL",
 		doc: "The PostgreSQL database, and the login the server connects to it as: " +
-			"`postgres://user:password@host:port/database`, with characters such as `@`, `:`, and `/` in the " +
-			"password percent-encoded. The login must be an ordinary role. The server refuses to use one that is a " +
-			"superuser, has `BYPASSRLS`, or owns objects in the database, because row-level security would not " +
-			"apply to it. Migrations create the login if it does not exist, set its password to the one in this " +
+			"`postgres://user:password@host:port/database`, with the scheme (`postgres` or `postgresql`) in " +
+			"lowercase and characters such as `@`, `:`, and `/` in the password percent-encoded. The login must be " +
+			"an ordinary role. The server refuses to use one that is a superuser, has `BYPASSRLS`, `CREATEROLE`, or " +
+			"`REPLICATION`, or owns objects in the database, or that is a member of a role that does or of one of " +
+			"the server's privileged roles, because row-level security would not hold it. Migrations create the " +
+			"login if it does not exist, set its password to the one in this " +
 			"URL, and grant it the `storycreep_app` role. Query parameters such as `sslmode` are passed to " +
 			"PostgreSQL, and the libpq environment variables, such as `PGSSLMODE`, fill in settings the URL " +
 			"leaves out. The password is shown as `" + secret.Redacted + "`.",
@@ -152,7 +154,8 @@ var keys = []key{
 		doc: "A PostgreSQL superuser login for the same database, written like `STORYCREEP_DATABASE_URL`. Only " +
 			"applying migrations uses it, as `storycreep migrate` does. Migrations need a superuser because they " +
 			"create the server's database roles, and one of them bypasses row-level security. It must name a " +
-			"different login from `STORYCREEP_DATABASE_URL`. The password is shown as `" + secret.Redacted + "`.",
+			"different login from `STORYCREEP_DATABASE_URL`, and the same database. The password is shown as `" +
+			secret.Redacted + "`.",
 		valuesDoc: "A `postgres://` URL",
 		parse: func(c *Config, v string) error {
 			d, err := ParseDatabaseURL(v)
@@ -162,6 +165,12 @@ var keys = []key{
 			if c.DatabaseURL.IsSet() && d.User() == c.DatabaseURL.User() {
 				return hiddenValueError{errors.New("names the same login as STORYCREEP_DATABASE_URL; migrations " +
 					"need a superuser and the server an ordinary login, so they must be different logins")}
+			}
+			// A superuser URL often names the postgres database, which would
+			// migrate that database and leave the server's unmigrated.
+			if c.DatabaseURL.IsSet() && d.Database() != c.DatabaseURL.Database() {
+				return hiddenValueError{errors.New("names a different database from STORYCREEP_DATABASE_URL; " +
+					"migrations must be applied to the database the server uses, so name the same one")}
 			}
 			c.DatabaseAdminURL = d
 			return nil

@@ -39,9 +39,9 @@ type DB struct {
 
 // Open connects to the database as the application login and checks that
 // row-level security holds it: the login must not be a superuser, have
-// BYPASSRLS, own objects in the database, or be a member of a role that
-// does, directly or through other roles. If it is, the error is an
-// *UnsafeLoginError.
+// BYPASSRLS, CREATEROLE, or REPLICATION, own objects in the database, or be
+// a member of a role that does, directly or through other roles. If it is,
+// the error is an *UnsafeLoginError.
 func Open(ctx context.Context, app config.DatabaseURL) (*DB, error) {
 	if !app.IsSet() {
 		return nil, errors.New("STORYCREEP_DATABASE_URL is not set")
@@ -55,8 +55,12 @@ func Open(ctx context.Context, app config.DatabaseURL) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect to %s: %w", app, err)
 	}
+	// The check is of the session user, which is the login itself. The
+	// current user can be another role, set by a role parameter in the URL
+	// or by a default of the login, but the session can still SET ROLE to
+	// any role the login has.
 	var login string
-	if err := pool.QueryRow(ctx, "SELECT current_user").Scan(&login); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT session_user").Scan(&login); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("connect to %s: %w", app, err)
 	}
@@ -82,9 +86,11 @@ func setApplicationName(c *pgx.ConnConfig) {
 // Scope is who a request transaction acts for. Row-level security policies
 // compare against it through the settings app.workspace_id and app.user_id,
 // which hold the IDs as UUIDs (PRD §5.4). A zero ID sets its setting to the
-// empty string, so a policy must read the setting with
-// NULLIF(current_setting('app.workspace_id', true), ”)::uuid, which is null,
-// and matches no row, when the transaction has no workspace.
+// empty string, so a policy must read the setting as
+//
+//	NULLIF(current_setting('app.workspace_id', true), '')::uuid
+//
+// which is null, and matches no row, when the transaction has no workspace.
 type Scope struct {
 	WorkspaceID ids.UUID
 	UserID      ids.UUID
@@ -143,7 +149,8 @@ type StartOptions struct {
 // Start is the database step of the server's startup (PRD FR-ADMIN-04). With
 // AutoMigrate, it applies the pending migrations under the migration lock,
 // which makes instances that start together safe, and provisions the
-// application login. Then it opens the application login's pool. Without
+// application login. Then it opens the application login's pool, and checks
+// that the migrations reached the database the pool connects to. Without
 // AutoMigrate, a pending migration is logged as a warning and is for
 // "storycreep migrate" to apply, while the server reports that it is not
 // ready.
@@ -152,8 +159,10 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
+	var res MigrateResult
 	if opts.AutoMigrate {
-		res, err := Migrate(ctx, cfg.DatabaseAdminURL, cfg.DatabaseURL, MigrateOptions{})
+		var err error
+		res, err = Migrate(ctx, cfg.DatabaseAdminURL, cfg.DatabaseURL, MigrateOptions{})
 		if err != nil {
 			return nil, err
 		}
@@ -161,22 +170,27 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 			log.InfoContext(ctx, "applied a database migration", "version", m.Version, "name", m.Name,
 				"duration", m.Duration)
 		}
-		log.InfoContext(ctx, "the database is up to date", "version", res.Version)
 	}
 	db, err := Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, err
 	}
-	if !opts.AutoMigrate {
-		p, err := db.Pending(ctx)
-		if err != nil {
-			db.Close()
-			return nil, err
-		}
-		if len(p) > 0 {
-			log.WarnContext(ctx, "the database has pending migrations; run storycreep migrate to apply them",
-				"pending", p)
-		}
+	p, err := db.Pending(ctx)
+	switch {
+	case err != nil:
+		db.Close()
+		return nil, err
+	case len(p) > 0 && opts.AutoMigrate:
+		// The admin URL reached a database other than the application's,
+		// such as one of the same name on another server.
+		db.Close()
+		return nil, fmt.Errorf("the database that STORYCREEP_DATABASE_URL connects to still has pending migrations "+
+			"(%s) after migrating; STORYCREEP_DATABASE_ADMIN_URL must connect to the same database", joinVersions(p))
+	case len(p) > 0:
+		log.WarnContext(ctx, "the database has pending migrations; run storycreep migrate to apply them",
+			"pending", p)
+	case opts.AutoMigrate:
+		log.InfoContext(ctx, "the database is up to date", "version", res.Version)
 	}
 	return db, nil
 }
@@ -194,30 +208,43 @@ func (e *UnsafeLoginError) Error() string {
 		"applies to, but %s", e.Login, strings.Join(e.Reasons, "; "))
 }
 
+// privilegedRoles are the roles the migrations create for the server's
+// privileged work. The application login must not have them (checkLogin).
+var privilegedRoles = []string{"storycreep_definer", "storycreep_maintenance"}
+
 // unsafeRolesQuery lists the roles whose privileges the login $1 has, itself
 // included, that row-level security would not hold: a superuser, a role with
-// BYPASSRLS, a role that owns objects in the current database (an owner can
-// switch row-level security off, and the owner of a schema can drop what is
-// in it), and the server's privileged roles.
+// BYPASSRLS, a role with CREATEROLE (which on PostgreSQL 15 can grant itself
+// any role that is not a superuser, such as storycreep_maintenance), a role
+// with REPLICATION (which can stream a copy of the whole cluster), a role
+// that owns objects in the current database (an owner can switch row-level
+// security off, and the owner of a schema can drop what is in it), and the
+// privileged roles $2. Temporary objects do not count: they belong to the
+// session that made them, and any session of the login may hold some while
+// another instance starts.
 const unsafeRolesQuery = `
-SELECT r.rolname, r.rolsuper, r.rolbypassrls, r.owns
+SELECT r.rolname, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolreplication, r.owns
 FROM (
-	SELECT rolname, oid, rolsuper, rolbypassrls,
-		EXISTS (SELECT FROM pg_class WHERE relowner = pg_roles.oid)
-			OR EXISTS (SELECT FROM pg_proc WHERE proowner = pg_roles.oid)
+	SELECT rolname, oid, rolsuper, rolbypassrls, rolcreaterole, rolreplication,
+		EXISTS (SELECT FROM pg_class WHERE relowner = pg_roles.oid AND relpersistence <> 't')
+			OR EXISTS (
+				SELECT FROM pg_proc WHERE proowner = pg_roles.oid
+					AND NOT pg_is_other_temp_schema(pronamespace) AND pronamespace <> pg_my_temp_schema()
+			)
 			OR EXISTS (SELECT FROM pg_namespace WHERE nspowner = pg_roles.oid)
 			OR EXISTS (SELECT FROM pg_database WHERE datname = current_database() AND datdba = pg_roles.oid)
 			AS owns
 	FROM pg_roles
 ) r
 WHERE pg_has_role($1::name, r.oid, 'MEMBER')
-	AND (r.rolsuper OR r.rolbypassrls OR r.owns OR r.rolname IN ('storycreep_definer', 'storycreep_maintenance'))
+	AND (r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR r.rolreplication OR r.owns
+		OR r.rolname = ANY ($2::name[]))
 ORDER BY r.rolname <> $1::name, r.rolname`
 
 // checkLogin returns an *UnsafeLoginError if row-level security would not
 // hold the login.
 func checkLogin(ctx context.Context, q querier, login string) error {
-	rows, err := q.Query(ctx, unsafeRolesQuery, login)
+	rows, err := q.Query(ctx, unsafeRolesQuery, login, privilegedRoles)
 	if err != nil {
 		return fmt.Errorf("check the login %q: %w", login, err)
 	}
@@ -225,19 +252,28 @@ func checkLogin(ctx context.Context, q querier, login string) error {
 	var reasons []string
 	for rows.Next() {
 		var role string
-		var super, bypass, owns bool
-		if err := rows.Scan(&role, &super, &bypass, &owns); err != nil {
+		var super, bypass, createRole, replication, owns bool
+		if err := rows.Scan(&role, &super, &bypass, &createRole, &replication, &owns); err != nil {
 			return fmt.Errorf("check the login %q: %w", login, err)
 		}
 		var what []string
 		if super {
+			// A superuser has every privilege, and usually every attribute
+			// too, so the others say nothing more.
 			what = append(what, "is a superuser")
-		}
-		if bypass {
-			what = append(what, "has BYPASSRLS")
-		}
-		if owns {
-			what = append(what, "owns objects in the database")
+		} else {
+			if bypass {
+				what = append(what, "has BYPASSRLS")
+			}
+			if createRole {
+				what = append(what, "has CREATEROLE")
+			}
+			if replication {
+				what = append(what, "has REPLICATION")
+			}
+			if owns {
+				what = append(what, "owns objects in the database")
+			}
 		}
 		if len(what) == 0 {
 			what = append(what, "is reserved for the server's privileged work")

@@ -40,14 +40,18 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 	fail := func(msg string) (DatabaseURL, error) {
 		return DatabaseURL{}, hiddenValueError{errors.New(msg)}
 	}
+	// pgx reads a value as a URL only if it starts with one of these, in
+	// lowercase, and reads anything else as keyword=value settings, which
+	// would ignore the URL. url.Parse accepts the scheme in any case.
+	if !strings.HasPrefix(v, "postgres://") && !strings.HasPrefix(v, "postgresql://") {
+		return fail("must start with postgres:// or postgresql://, in lowercase")
+	}
 	// The parser's explanation can quote part of a password.
 	u, err := url.Parse(v)
 	if err != nil {
 		return fail("not a valid URL")
 	}
 	switch {
-	case u.Scheme != "postgres" && u.Scheme != "postgresql" || u.Opaque != "":
-		return fail("must start with postgres:// or postgresql://")
 	case u.User == nil || u.User.Username() == "":
 		return fail("names no user; write it in front of the host, as in postgres://storycreep:password@db/storycreep")
 	case u.Path == "" || u.Path == "/":

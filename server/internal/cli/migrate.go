@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 )
@@ -29,7 +30,7 @@ not apply to, such as a superuser.`,
 	run: func(ctx context.Context, inv *invocation) error {
 		res, err := database.Migrate(ctx, inv.cfg.DatabaseAdminURL, inv.cfg.DatabaseURL, database.MigrateOptions{})
 		for _, m := range res.Applied {
-			fmt.Fprintf(inv.stdout, "Applied %s in %s.\n", m.Name, m.Duration.Round(1e6))
+			fmt.Fprintf(inv.stdout, "Applied %s in %s.\n", m.Name, m.Duration.Round(time.Millisecond))
 		}
 		if err != nil {
 			return err

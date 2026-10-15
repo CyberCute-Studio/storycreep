@@ -18,14 +18,14 @@ const appRole = "storycreep_app"
 
 // reservedRoles are the roles the migrations create. None of them can be the
 // application login.
-var reservedRoles = []string{appRole, "storycreep_definer", "storycreep_maintenance"}
+var reservedRoles = append([]string{appRole}, privilegedRoles...)
 
 // provision makes the role login, on the admin connection conn, into the
-// application login: a role that can log in, inherits privileges, has
-// password if it is set, and is granted storycreep_app. It creates the role
-// if it does not exist. It changes nothing that is already so, because roles
-// belong to the cluster, and an ALTER ROLE that another database runs at the
-// same time would conflict.
+// application login: a role that can log in, has password if it is set, and
+// is granted storycreep_app so that it inherits that role's privileges. It
+// creates the role if it does not exist. It changes nothing that is already
+// so, because roles belong to the cluster, and an ALTER ROLE that another
+// database runs at the same time would conflict.
 //
 // It refuses, and changes nothing, if the role exists and row-level security
 // would not hold it (checkLogin). It never makes an existing role less
@@ -38,15 +38,10 @@ func provision(ctx context.Context, conn *pgx.Conn, login string, password secre
 	}
 	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 		ident := pgx.Identifier{login}.Sanitize()
-		var canLogin, inherit, member bool
+		var canLogin, inherit bool
 		var stored *string
-		err := tx.QueryRow(ctx, `
-			SELECT u.rolcanlogin, u.rolinherit, u.rolpassword, EXISTS (
-				SELECT FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid
-				WHERE m.member = u.oid AND r.rolname = $2
-			)
-			FROM pg_authid u
-			WHERE u.rolname = $1`, login, appRole).Scan(&canLogin, &inherit, &stored, &member)
+		err := tx.QueryRow(ctx, "SELECT rolcanlogin, rolinherit, rolpassword FROM pg_authid WHERE rolname = $1", login).
+			Scan(&canLogin, &inherit, &stored)
 		exists := !errors.Is(err, pgx.ErrNoRows)
 		if err != nil && exists {
 			return fmt.Errorf("provision the login %q: %w", login, err)
@@ -82,8 +77,24 @@ func provision(ctx context.Context, conn *pgx.Conn, login string, password secre
 				return fmt.Errorf("update the login %q: %w", login, err)
 			}
 		}
-		if !member {
-			if _, err := tx.Exec(ctx, "GRANT "+pgx.Identifier{appRole}.Sanitize()+" TO "+ident); err != nil {
+		// Whether the login uses storycreep_app's privileges is read after the
+		// changes above, which may have just made it inherit.
+		var usable bool
+		var version int
+		if err := tx.QueryRow(ctx, "SELECT pg_has_role($1::name, $2::name, 'USAGE'), "+
+			"current_setting('server_version_num')::int", login, appRole).Scan(&usable, &version); err != nil {
+			return fmt.Errorf("provision the login %q: %w", login, err)
+		}
+		if !usable {
+			grant := "GRANT " + pgx.Identifier{appRole}.Sanitize() + " TO " + ident
+			if version >= 160000 {
+				// PostgreSQL 16 and later record inheritance on each grant,
+				// taken from the member's INHERIT when the grant was made, so
+				// a grant to a login that was NOINHERIT then still does not
+				// inherit. Granting again with the option corrects it.
+				grant += " WITH INHERIT TRUE"
+			}
+			if _, err := tx.Exec(ctx, grant); err != nil {
 				return fmt.Errorf("grant %s to the login %q: %w", appRole, login, err)
 			}
 		}
