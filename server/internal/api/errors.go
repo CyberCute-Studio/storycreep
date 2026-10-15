@@ -74,7 +74,8 @@ var codes = []codeSpec{
 		"The request body is larger than the route accepts, 5 MB unless the route says otherwise " +
 			"(PRD NFR-SEC-07). `details.max_bytes` is the limit."},
 	{CodeUnsupportedMediaType, http.StatusUnsupportedMediaType, "The request body is not in a supported format.",
-		"The `Content-Type` of the request body is not `application/json`."},
+		"The `Content-Type` of the request body is neither `application/json` nor a type ending in `+json`, " +
+			"such as `application/merge-patch+json`. A body sent without a `Content-Type` is read as JSON."},
 	{CodeValidationFailed, http.StatusUnprocessableEntity, "The request is invalid.",
 		"A parameter or the body does not match the route's schema: a field that the schema does not have, " +
 			"which is never ignored (PRD FR-API-01 AC2), a missing field, a value of the wrong type, or one out of " +
@@ -239,8 +240,15 @@ func fromHuma(ctx context.Context, op *huma.Operation, status int, msg string, e
 			details = map[string]any{"max_bytes": op.MaxBodyBytes - 1}
 		}
 	case CodeInternal:
-		loggerFrom(ctx).ErrorContext(ctx, "the request failed", "error", errors.Join(append([]error{errors.New(msg)},
-			errs...)...))
+		err := errors.Join(append([]error{errors.New(msg)}, errs...)...)
+		if ctx.Err() != nil {
+			// The client went away, as while it sent the body, which net/http
+			// reports by ending the request's context. Nothing failed, as in
+			// toEnvelope.
+			loggerFrom(ctx).DebugContext(ctx, "the request ended early", "error", err)
+		} else {
+			loggerFrom(ctx).ErrorContext(ctx, "the request failed", "error", err)
+		}
 	}
 	return envelopeFor(c, "", details)
 }

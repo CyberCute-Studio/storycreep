@@ -58,40 +58,62 @@ var quietRoutes = map[string]bool{"/healthz": true, "/readyz": true, "/metrics":
 // observe logs each request when it ends (PRD NFR-OBS-01), with its method,
 // route, path, status, size, and duration, and counts it in m, if m is set.
 // The path is logged without its query, which may hold what a user searched
-// for.
+// for. A request whose response was aborted with a panic, as recoverPanics
+// does once the status is sent, is logged and counted too, with the status
+// that was sent, or 0 if none was, and the log says that it was aborted.
 func (s *server) observe(m *metrics) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			defer func() {
+				aborted := recover()
+				s.logRequest(m, r, ww, time.Since(start), aborted != nil)
+				if aborted != nil {
+					// net/http ends the connection, which tells the client
+					// that the response is broken.
+					panic(aborted)
+				}
+			}()
 			next.ServeHTTP(ww, r)
-			elapsed := time.Since(start)
-			status := ww.Status()
-			if status == 0 {
-				// The handler wrote nothing, which net/http answers with 200.
-				status = http.StatusOK
-			}
-			route := ""
-			if rctx := chi.RouteContext(r.Context()); rctx != nil {
-				route = rctx.RoutePattern()
-			}
-			if m != nil {
-				m.observe(r.Method, route, status, elapsed)
-			}
-			level := slog.LevelInfo
-			if quietRoutes[route] {
-				level = slog.LevelDebug
-			}
-			s.log.LogAttrs(r.Context(), level, "request",
-				slog.String("method", r.Method),
-				slog.String("route", route),
-				slog.String("path", r.URL.Path),
-				slog.Int("status", status),
-				slog.Int("bytes", ww.BytesWritten()),
-				slog.Duration("duration", elapsed),
-			)
 		})
 	}
+}
+
+// logRequest logs and counts a request that observe watched.
+func (s *server) logRequest(m *metrics, r *http.Request, ww middleware.WrapResponseWriter, elapsed time.Duration,
+	aborted bool) {
+	status := ww.Status()
+	if status == 0 && !aborted {
+		// The handler wrote nothing, which net/http answers with 200.
+		status = http.StatusOK
+	}
+	route := ""
+	if rctx := chi.RouteContext(r.Context()); rctx != nil {
+		route = rctx.RoutePattern()
+	}
+	if m != nil {
+		m.observe(r.Method, route, status, elapsed)
+	}
+	level := slog.LevelInfo
+	switch {
+	case aborted:
+		level = slog.LevelWarn
+	case quietRoutes[route]:
+		level = slog.LevelDebug
+	}
+	attrs := []slog.Attr{
+		slog.String("method", r.Method),
+		slog.String("route", route),
+		slog.String("path", r.URL.Path),
+		slog.Int("status", status),
+		slog.Int("bytes", ww.BytesWritten()),
+		slog.Duration("duration", elapsed),
+	}
+	if aborted {
+		attrs = append(attrs, slog.Bool("aborted", true))
+	}
+	s.log.LogAttrs(r.Context(), level, "request", attrs...)
 }
 
 // recoverPanics answers a request whose handler panicked with internal_error,
@@ -127,9 +149,11 @@ func (s *server) recoverPanics(next http.Handler) http.Handler {
 const contentSecurityPolicy = "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; " +
 	"object-src 'none'"
 
-// hstsPolicy keeps browsers on HTTPS for a year, on the host name and its
-// subdomains, without asking to be preloaded.
-const hstsPolicy = "max-age=31536000; includeSubDomains"
+// hstsPolicy keeps browsers on HTTPS for a year, on the public URL's host
+// name only, without asking to be preloaded. It leaves out includeSubDomains,
+// because a self-hosted instance's host may have subdomains that are other
+// services, without HTTPS, which browsers would refuse to load for a year.
+const hstsPolicy = "max-age=31536000"
 
 // securityHeaders sets the security headers of PRD NFR-SEC-09 on every
 // response, and Strict-Transport-Security if hsts is set, which it is when

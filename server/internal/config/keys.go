@@ -223,9 +223,10 @@ var keys = []key{
 	{
 		name: "STORYCREEP_ADMIN_ADDR",
 		doc: "The address of the admin port, which serves only `/metrics`, in Prometheus's text format, written " +
-			"like `STORYCREEP_HTTP_ADDR`, or `off` for no admin port. The default listens on the loopback " +
-			"interface only, so that only the machine itself can reach it; in a container, set it to `:9090` to " +
-			"let a Prometheus on the container's network scrape it. How `/metrics` answers depends on the " +
+			"like `STORYCREEP_HTTP_ADDR`, or `off` for no admin port. Its port must differ from the port of " +
+			"`STORYCREEP_HTTP_ADDR`, unless both name a host, and different ones. The default listens on the " +
+			"loopback interface only, so that only the machine itself can reach it; in a container, set it to " +
+			"`:9090` to let a Prometheus on the container's network scrape it. How `/metrics` answers depends on the " +
 			"`MetricsEndpoint` [capability](#capabilities): `unauthenticated` serves it to anyone who can reach " +
 			"the port, and `protected` only to a request with `STORYCREEP_METRICS_TOKEN` as its bearer token. " +
 			"With `protected` and no token set, there are no metrics, and the admin port is not opened.",
@@ -236,10 +237,17 @@ var keys = []key{
 				return nil
 			}
 			if err := checkListenAddr(v); err != nil {
+				if errors.Is(err, errListenForm) {
+					return errors.New("must be host:port, :port for every network interface, or off for no admin " +
+						"port, with an IPv6 address in brackets")
+				}
 				return err
 			}
-			if v == c.HTTPAddr {
-				return errors.New("is the address of STORYCREEP_HTTP_ADDR; the admin port needs an address of its own")
+			// An invalid STORYCREEP_HTTP_ADDR leaves HTTPAddr empty, and is
+			// reported on its own.
+			if c.HTTPAddr != "" && listenersOverlap(v, c.HTTPAddr) {
+				return errors.New("listens on the port of STORYCREEP_HTTP_ADDR, on the same network interface or on " +
+					"every one; the admin port needs an address of its own, such as another port, or off")
 			}
 			c.AdminAddr = v
 			return nil

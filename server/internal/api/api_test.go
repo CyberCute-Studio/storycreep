@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -190,6 +192,42 @@ func TestStrictDecoding(t *testing.T) {
 	res = serve(m, http.MethodPost, "/items", "text/plain", []byte(`{"name":"a"}`))
 	if b := res.envelope(t); b.Code != CodeUnsupportedMediaType {
 		t.Errorf("a text/plain body: code %s, want %s", b.Code, CodeUnsupportedMediaType)
+	}
+	// A +json type is JSON too, and so is a body without a Content-Type, as
+	// docs/error-codes.md says.
+	for _, ct := range []string{"application/merge-patch+json", "application/json; charset=utf-8", ""} {
+		if res := serve(m, http.MethodPost, "/items", ct, []byte(`{"name":"a"}`)); res.status != http.StatusOK {
+			t.Errorf("a body sent as %q: %d %s", ct, res.status, res.body)
+		}
+	}
+}
+
+// TestBodyReadError checks that a body that cannot be read is answered with
+// internal_error, and logged as a failure only if the client is still there.
+func TestBodyReadError(t *testing.T) {
+	for _, gone := range []bool{false, true} {
+		m, logged := testMux(t)
+		Register(m, Public, huma.Operation{OperationID: "createItem", Method: http.MethodPost, Path: "/items"},
+			func(_ context.Context, in *itemInput) (*itemOutput, error) { return &itemOutput{Body: in.Body}, nil })
+		ctx, cancel := context.WithCancel(context.Background())
+		if gone {
+			// net/http ends the request's context when the connection fails.
+			cancel()
+		}
+		r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/items", iotest.ErrReader(io.ErrUnexpectedEOF))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		m.ServeHTTP(w, r)
+		cancel()
+		res := response{status: w.Code, header: w.Header(), body: w.Body.Bytes()}
+		if b := res.envelope(t); b.Code != CodeInternal {
+			t.Errorf("client gone %v: code %s, want %s", gone, b.Code, CodeInternal)
+		}
+		failed := strings.Contains(logged.String(), `"msg":"the request failed"`)
+		early := strings.Contains(logged.String(), `"msg":"the request ended early"`)
+		if failed == gone || early != gone {
+			t.Errorf("client gone %v: the log is\n%s", gone, logged)
+		}
 	}
 }
 
@@ -383,32 +421,45 @@ func TestETag(t *testing.T) {
 		}
 	}
 
-	m, _ := testMux(t)
+	// As in httpserver, every response is no-store unless its operation says
+	// otherwise.
+	m := NewMux(MuxOptions{Middleware: []func(http.Handler) http.Handler{func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			next.ServeHTTP(w, r)
+		})
+	}}})
 	type input struct {
 		IfNoneMatch string `header:"If-None-Match"`
 	}
 	type output struct {
-		ETag string `header:"ETag"`
-		Body itemBody
+		ETag         string `header:"ETag"`
+		CacheControl string `header:"Cache-Control"`
+		Body         itemBody
 	}
 	Register(m, Public, huma.Operation{OperationID: "getItem", Method: http.MethodGet, Path: "/item"},
 		func(_ context.Context, in *input) (*output, error) {
 			if IfNoneMatch(in.IfNoneMatch, a) {
 				return nil, NotModified(a)
 			}
-			return &output{ETag: a, Body: itemBody{Name: "one"}}, nil
+			return &output{ETag: a, CacheControl: CacheRevalidate, Body: itemBody{Name: "one"}}, nil
 		})
 	r := httptest.NewRequest(http.MethodGet, "/item", nil)
 	w := httptest.NewRecorder()
 	m.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || w.Header().Get("ETag") != a {
-		t.Fatalf("GET: %d, ETag %q", w.Code, w.Header().Get("ETag"))
+	if cc := w.Header().Values("Cache-Control"); w.Code != http.StatusOK || w.Header().Get("ETag") != a ||
+		!slices.Equal(cc, []string{CacheRevalidate}) {
+		t.Fatalf("GET: %d, ETag %q, Cache-Control %q", w.Code, w.Header().Get("ETag"), cc)
 	}
+	// The 304 must not say no-store, or the browser drops the response it
+	// revalidated.
 	r.Header.Set("If-None-Match", a)
 	w = httptest.NewRecorder()
 	m.ServeHTTP(w, r)
-	if w.Code != http.StatusNotModified || w.Header().Get("ETag") != a || w.Body.Len() != 0 {
-		t.Errorf("GET with If-None-Match: %d, ETag %q, body %q", w.Code, w.Header().Get("ETag"), w.Body)
+	if cc := w.Header().Values("Cache-Control"); w.Code != http.StatusNotModified || w.Header().Get("ETag") != a ||
+		w.Body.Len() != 0 || !slices.Equal(cc, []string{CacheRevalidate}) {
+		t.Errorf("GET with If-None-Match: %d, ETag %q, Cache-Control %q, body %q", w.Code, w.Header().Get("ETag"), cc,
+			w.Body)
 	}
 }
 

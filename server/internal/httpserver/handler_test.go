@@ -353,6 +353,34 @@ func TestPanicIsAnswered(t *testing.T) {
 	}
 }
 
+// TestAbortedResponseIsObserved checks that a request whose handler panics
+// after it sent the status, which ends the connection, is still logged and
+// counted.
+func TestAbortedResponseIsObserved(t *testing.T) {
+	log, logged := newTestLog()
+	s := newServer(loadConfig(t, nil), log)
+	s.main.Handle(api.Public, http.MethodGet, "/half", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		panic("the handler broke halfway")
+	}))
+	func() {
+		defer func() {
+			if v := recover(); v != http.ErrAbortHandler {
+				t.Errorf("the response ends with the panic %v, want http.ErrAbortHandler", v)
+			}
+		}()
+		do(s.main, http.MethodGet, "/half", nil)
+	}()
+	if rs := logged.records(t, "request"); len(rs) != 1 || rs[0]["status"] != float64(200) || rs[0]["aborted"] != true ||
+		rs[0]["level"] != "WARN" {
+		t.Errorf("the aborted request is not logged as one: %v", rs)
+	}
+	body := string(do(s.admin, http.MethodGet, "/metrics", nil).body)
+	if !strings.Contains(body, `storycreep_http_requests_total{code="200",method="GET",route="/half"} 1`) {
+		t.Errorf("the aborted request is not counted:\n%s", body)
+	}
+}
+
 func TestOperationalEndpoints(t *testing.T) {
 	s := newServer(loadConfig(t, nil), slog.New(slog.DiscardHandler))
 	if res := do(s.main, http.MethodGet, "/healthz", nil); res.status != http.StatusOK ||

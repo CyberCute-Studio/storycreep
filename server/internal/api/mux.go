@@ -115,7 +115,43 @@ func NewMux(opts MuxOptions) *Mux {
 	config.DefaultFormat = "application/json"
 	config.Transformers = []huma.Transformer{fillRequestID}
 	m.api = humachi.New(m.router, config)
+	m.api.UseMiddleware(replaceCacheControl)
 	return m
+}
+
+// replaceCacheControl is huma middleware that makes a Cache-Control that an
+// operation returns with an error, as NotModified does, replace the one that
+// the router's middleware set before it, such as httpserver's no-store. huma
+// adds an error's headers to those already set, and a cache reads two
+// Cache-Control headers as one, in which no-store wins.
+func replaceCacheControl(ctx huma.Context, next func(huma.Context)) {
+	next(&cacheControlContext{wrapped: ctx})
+}
+
+// wrapped is huma.Context under a name that, embedded, does not clash with
+// the interface's method Context.
+type wrapped = huma.Context
+
+// cacheControlContext is a huma.Context whose first Cache-Control appended
+// replaces the one already set. Those appended after it add to it.
+type cacheControlContext struct {
+	wrapped
+	replaced bool
+}
+
+func (c *cacheControlContext) AppendHeader(name, value string) {
+	if !c.replaced && http.CanonicalHeaderKey(name) == "Cache-Control" {
+		c.replaced = true
+		c.SetHeader(name, value)
+		return
+	}
+	c.wrapped.AppendHeader(name, value)
+}
+
+// Unwrap returns the context that c wraps, as humachi.Unwrap expects of a
+// context that middleware wraps.
+func (c *cacheControlContext) Unwrap() huma.Context {
+	return c.wrapped
 }
 
 func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -192,8 +228,9 @@ func (m *Mux) Walk(fn func(Route) error) error {
 	})
 }
 
-// methods are the methods that methodNotAllowed offers in the Allow header.
-var methods = []string{
+// Methods are the methods that routes take, in the order of the Allow header
+// that methodNotAllowed writes.
+var Methods = []string{
 	http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
 	http.MethodOptions,
 }
@@ -211,7 +248,7 @@ func (m *Mux) methodNotAllowed(w http.ResponseWriter, r *http.Request) {
 		path = rctx.RoutePath
 	}
 	var allow []string
-	for _, method := range methods {
+	for _, method := range Methods {
 		// GetHead answers HEAD wherever GET is routed.
 		match := method
 		if method == http.MethodHead && !m.router.Match(chi.NewRouteContext(), method, path) {

@@ -270,6 +270,7 @@ func TestInvalidValues(t *testing.T) {
 		{"STORYCREEP_HTTP_ADDR", "::1:8080", "must be host:port"},
 		{"STORYCREEP_HTTP_ADDR", "local_host:8080", "the host must be an IP address or a host name"},
 		{"STORYCREEP_ADMIN_ADDR", "on", "must be host:port"},
+		{"STORYCREEP_ADMIN_ADDR", "OFF", "or off for no admin port"},
 		{"STORYCREEP_ADMIN_ADDR", ":8080", "the admin port needs an address of its own"},
 		// Only the file trims a value, so the space is pointed out.
 		{"STORYCREEP_SIGNUP", "invite ", "starts or ends with white space"},

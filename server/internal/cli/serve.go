@@ -14,7 +14,9 @@ var serve = &command{
 	help: `
 Runs the server: the API and the health endpoints on STORYCREEP_HTTP_ADDR,
 and /metrics on the admin port, STORYCREEP_ADMIN_ADDR. It logs to standard
-error, one JSON object per line.
+error, one JSON object per line. A warning about the configuration, and the
+error that stops the server, are written there as lines of plain text too,
+starting with "storycreep serve:".
 
 It listens first, and then applies the pending database migrations as the
 superuser in STORYCREEP_DATABASE_ADMIN_URL, under the same advisory lock as

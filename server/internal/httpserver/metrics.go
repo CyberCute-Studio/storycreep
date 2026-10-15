@@ -1,13 +1,14 @@
 package httpserver
 
 import (
-	"net/http"
 	"slices"
 	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 )
 
 // metrics are the server's Prometheus metrics (PRD FR-ADMIN-05). Plan item
@@ -44,20 +45,14 @@ func newMetrics() *metrics {
 // Labelling them by path would let any client add series without end.
 const unmatchedRoute = "unmatched"
 
-// labelMethods are the methods that are their own label value. Any other is
-// "other", for the same reason.
-var labelMethods = []string{
-	http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
-	http.MethodOptions,
-}
-
 // observe counts a request that the route answered with status after
-// elapsed.
+// elapsed. A method that no route takes (api.Methods) is labelled "other",
+// for the same reason as an unmatched path.
 func (m *metrics) observe(method, route string, status int, elapsed time.Duration) {
 	if route == "" {
 		route = unmatchedRoute
 	}
-	if !slices.Contains(labelMethods, method) {
+	if !slices.Contains(api.Methods, method) {
 		method = "other"
 	}
 	m.requests.WithLabelValues(route, method, strconv.Itoa(status)).Inc()
