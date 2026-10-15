@@ -37,8 +37,9 @@ func TestMigrate(t *testing.T) {
 }
 
 // TestMigrateFailures checks that migrate exits with status 1, saying why,
-// when it cannot apply the migrations, or when the server could not use them
-// as the application login.
+// when it cannot apply the migrations, when the login in
+// STORYCREEP_DATABASE_URL cannot be the application login, or when the server
+// could not connect as that login.
 //
 // Verifies: FR-ADMIN-06/AC1
 func TestMigrateFailures(t *testing.T) {

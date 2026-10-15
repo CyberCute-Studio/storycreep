@@ -250,6 +250,12 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 		{"collation owner", func(r, n string) string {
 			return `CREATE COLLATION owned_` + n + ` FROM "C"; ALTER COLLATION owned_` + n + " OWNER TO " + r
 		}, "it owns objects in the database"},
+		// pg_shdepend records no owner for the roles that initdb created, so
+		// the check reads their objects from the catalogs.
+		{"member of a built-in role that owns a table", func(r, n string) string {
+			return "CREATE TABLE owned_" + n + " (x int); ALTER TABLE owned_" + n + " OWNER TO pg_monitor; " +
+				"GRANT pg_monitor TO " + r
+		}, `it is a member of "pg_monitor", which owns objects in the database`},
 		// The database's owner is the likeliest owner of all, as after
 		// CREATE DATABASE storycreep OWNER storycreep, so the reason says
 		// that it owns the database.
@@ -296,6 +302,29 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestProvisionAcceptsBuiltinRoles checks that a login that is a member of one
+// of the roles that initdb created, here pg_monitor and the roles it is a
+// member of, is accepted while none of them owns anything in the database, as
+// by default: the check reads the objects of those roles from the catalogs,
+// which hold PostgreSQL's own objects too.
+func TestProvisionAcceptsBuiltinRoles(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	app := d.NewLogin(t, "")
+	if _, err := d.Admin(t).Exec(ctx, "GRANT pg_monitor TO "+pgx.Identifier{app.User()}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Migrate(ctx, d.AdminURL, app, database.MigrateOptions{}); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	db, err := database.Open(ctx, app)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	db.Close()
 }
 
 // TestProvisionChecksTheGrantedRole checks that migrating refuses a login that
@@ -450,6 +479,27 @@ func TestProvisionRestrictsConnect(t *testing.T) {
 	_, err := database.Migrate(ctx, a.AdminURL, appA, database.MigrateOptions{})
 	if err == nil || !strings.Contains(err.Error(), "PUBLIC can still connect to the database") {
 		t.Errorf("migrating with CONNECT granted to PUBLIC by another role: %v, want a refusal", err)
+	}
+}
+
+// TestProvisionRefusesConnectThroughARole checks that migrating fails when
+// storycreep_app can still connect to the database after the revocation,
+// through a role that it is a member of and that was granted CONNECT: the
+// application login of every other Storycreep database on the server could
+// connect through that role too. It changes storycreep_app, which every
+// database of the test server shares, so it does not run in parallel.
+func TestProvisionRefusesConnectThroughARole(t *testing.T) {
+	ctx := context.Background()
+	d := dbtest.New(t)
+	// The role, and with it the membership, is dropped when the test ends.
+	role := pgx.Identifier{d.FreshLogin(t)}.Sanitize()
+	if _, err := d.Admin(t).Exec(ctx, "CREATE ROLE "+role+"; GRANT CONNECT ON DATABASE "+
+		pgx.Identifier{d.Name}.Sanitize()+" TO "+role+"; GRANT "+role+" TO storycreep_app"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{})
+	if err == nil || !strings.Contains(err.Error(), "storycreep_app can still connect to the database") {
+		t.Errorf("migrating with CONNECT granted to a role that storycreep_app is a member of: %v, want a refusal", err)
 	}
 }
 

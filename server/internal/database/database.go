@@ -268,13 +268,15 @@ var serverAccessRoles = []string{"pg_execute_server_program", "pg_read_server_fi
 // tables it does not own.
 //
 // PostgreSQL records each object's owner in pg_shdepend, except where the
-// owner is one of its built-in roles, so the owners of schemas are also read
-// from pg_namespace. The database's owner is read from pg_database, because
-// pg_shdepend records it with the cluster's objects. PostgreSQL makes the
-// database's owner, and with it the roles that are members of the owner, a
-// member of pg_database_owner, which owns the public schema. That role's row
-// is left out, because the row of the role that owns the database says the
-// same more plainly.
+// owner is one of the roles that initdb created, whose OIDs are below 16384,
+// such as pg_monitor. What those roles own, except the superusers, which count
+// already, is read from the catalog of each kind of object that has an owner.
+// By default, only pg_database_owner owns anything: the public schema. The
+// database's owner is read from pg_database, because pg_shdepend records it
+// with the cluster's objects. PostgreSQL makes the database's owner, and with
+// it the roles that are members of the owner, a member of pg_database_owner.
+// That role's row is left out, because the row of the role that owns the
+// database says the same more plainly.
 //
 // Temporary objects do not count: they belong to the session that made them,
 // and any session of the login may hold some while another instance starts.
@@ -298,7 +300,34 @@ FROM (
 				AND o.identity IS NOT NULL
 				AND (o.schema IS NULL OR (o.schema NOT LIKE 'pg\_temp%' AND o.schema NOT LIKE 'pg\_toast\_temp%'))
 		)
-			OR EXISTS (SELECT FROM pg_namespace WHERE nspowner = pg_roles.oid)
+			OR NOT pg_roles.rolsuper AND pg_roles.oid < 16384 AND EXISTS (
+				SELECT FROM (
+					SELECT oid FROM pg_namespace WHERE nspowner = pg_roles.oid
+					UNION ALL SELECT relnamespace FROM pg_class WHERE relowner = pg_roles.oid
+					UNION ALL SELECT typnamespace FROM pg_type WHERE typowner = pg_roles.oid
+					UNION ALL SELECT pronamespace FROM pg_proc WHERE proowner = pg_roles.oid
+					UNION ALL SELECT collnamespace FROM pg_collation WHERE collowner = pg_roles.oid
+					UNION ALL SELECT connamespace FROM pg_conversion WHERE conowner = pg_roles.oid
+					UNION ALL SELECT oprnamespace FROM pg_operator WHERE oprowner = pg_roles.oid
+					UNION ALL SELECT opcnamespace FROM pg_opclass WHERE opcowner = pg_roles.oid
+					UNION ALL SELECT opfnamespace FROM pg_opfamily WHERE opfowner = pg_roles.oid
+					UNION ALL SELECT cfgnamespace FROM pg_ts_config WHERE cfgowner = pg_roles.oid
+					UNION ALL SELECT dictnamespace FROM pg_ts_dict WHERE dictowner = pg_roles.oid
+					UNION ALL SELECT stxnamespace FROM pg_statistic_ext WHERE stxowner = pg_roles.oid
+					UNION ALL SELECT NULL FROM pg_language WHERE lanowner = pg_roles.oid
+					UNION ALL SELECT NULL FROM pg_extension WHERE extowner = pg_roles.oid
+					UNION ALL SELECT NULL FROM pg_foreign_data_wrapper WHERE fdwowner = pg_roles.oid
+					UNION ALL SELECT NULL FROM pg_foreign_server WHERE srvowner = pg_roles.oid
+					UNION ALL SELECT NULL FROM pg_event_trigger WHERE evtowner = pg_roles.oid
+					UNION ALL SELECT NULL FROM pg_publication WHERE pubowner = pg_roles.oid
+					UNION ALL SELECT NULL FROM pg_subscription WHERE subowner = pg_roles.oid
+						AND subdbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+				) owned (namespace)
+				WHERE NOT EXISTS (
+					SELECT FROM pg_namespace
+					WHERE oid = owned.namespace AND (nspname LIKE 'pg\_temp%' OR nspname LIKE 'pg\_toast\_temp%')
+				)
+			)
 			AS owns
 	FROM pg_roles
 ) r

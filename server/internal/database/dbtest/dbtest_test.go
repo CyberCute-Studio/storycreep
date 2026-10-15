@@ -9,8 +9,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	IsolateLibpqEnvironment()
-	os.Exit(m.Run())
+	os.Exit(Run(m))
 }
 
 // TestRealPostgres checks that a test's database is a real PostgreSQL server

@@ -200,7 +200,9 @@ func redactQuery(q string) string {
 	pairs := strings.Split(q, "&")
 	for i, pair := range pairs {
 		if pair == "" {
-			continue // libpq skips an empty parameter, as after a trailing &
+			// libpq skips what follows a trailing &, the only empty
+			// parameter that ParseDatabaseURL accepts.
+			continue
 		}
 		raw, _, _ := strings.Cut(pair, "=")
 		if name, err := url.PathUnescape(raw); err != nil || !slices.Contains(shownDatabaseParams, name) {

@@ -21,13 +21,12 @@ const (
 	testDatabaseURL = "postgres://storycreep:pw-s3cr3t@db:5432/storycreep"
 )
 
-// TestMain keeps the libpq environment variables and the user's password
-// file, which the configuration reads the database URLs with, out of the
-// tests, so that a developer's PGSERVICE, for one, does not make the
-// configurations here invalid.
+// TestMain runs the tests with dbtest.Run, which keeps the libpq environment
+// variables and the user's password file, which the configuration reads the
+// database URLs with, out of the tests, so that a developer's PGSERVICE, for
+// one, does not make the configurations here invalid.
 func TestMain(m *testing.M) {
-	dbtest.IsolateLibpqEnvironment()
-	os.Exit(m.Run())
+	os.Exit(dbtest.Run(m))
 }
 
 func run(t *testing.T, env map[string]string, args ...string) (code int, stdout, stderr string) {

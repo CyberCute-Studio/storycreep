@@ -143,7 +143,7 @@ func (e *MigrationError) Unwrap() error { return e.Err }
 // of PostgreSQL older than 15 (checkServerVersion), when the application login
 // has the name of one of the server's roles or PostgreSQL's reserved pg_ prefix
 // (checkLoginName), or when the admin login is, or acts as, one of the
-// server's roles.
+// server's roles, or does not act as a superuser.
 func Migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOptions) (MigrateResult, error) {
 	res, db, err := migrate(ctx, admin, app, opts)
 	if db != nil {

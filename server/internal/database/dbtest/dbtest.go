@@ -10,17 +10,22 @@
 // (PRD §9.9). Without -short, a missing Docker fails the test, so that a
 // broken Docker never passes for a passing suite.
 //
+// A test binary that uses it runs its tests with Run, from its TestMain, so
+// that the libpq environment stays out of them and the container is stopped
+// when they are done.
+//
 // Two environment variables configure it. Only tests import this package, so
 // it is not part of the server, which reads its configuration only through
 // package config.
 //
 //	STORYCREEP_TEST_POSTGRES_IMAGE  The image to run. The default is
 //	                                postgres:17-alpine.
-//	STORYCREEP_TEST_UPGRADE_FROM    A directory of migrations that the
-//	                                template is migrated with first, before
-//	                                the embedded migrations upgrade it. CI's
-//	                                upgrade test (FR-ADMIN-04 AC2) points it at
-//	                                the main branch's migrations.
+//	STORYCREEP_TEST_UPGRADE_FROM    The absolute path of a directory of
+//	                                migrations that the template is migrated
+//	                                with first, before the embedded migrations
+//	                                upgrade it. CI's upgrade test (FR-ADMIN-04
+//	                                AC2) points it at the main branch's
+//	                                migrations.
 package dbtest
 
 import (
@@ -31,6 +36,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -97,19 +103,29 @@ func Empty(t testing.TB) *Database {
 	return s.create(t, "TEMPLATE template0")
 }
 
-// IsolateLibpqEnvironment unsets the libpq environment variables, such as
-// PGPASSWORD and PGSERVICE, and points PGPASSFILE at an empty file, for a test
-// binary's TestMain to call before the tests run. pgx fills in from them, and
-// from the user's password file, what a database URL leaves out, so a
-// developer's settings would otherwise change what the tests parse and
-// connect with, or fail them.
-func IsolateLibpqEnvironment() {
+// Run runs the tests of m, for a test binary's TestMain, and returns the exit
+// code for os.Exit. Before the tests, it unsets the libpq environment
+// variables, such as PGPASSWORD and PGSERVICE, and points PGPASSFILE at an
+// empty file. pgx fills in from them, and from the user's password file, what
+// a database URL leaves out, so a developer's settings would otherwise change
+// what the tests parse and connect with, or fail them. After the tests, it
+// stops the PostgreSQL server if they started it. testcontainers' reaper
+// would remove the container when the test binary exits, but it does not run
+// where it is disabled, as it often is with Podman.
+func Run(m *testing.M) int {
 	for _, kv := range os.Environ() {
 		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "PG") {
 			os.Unsetenv(name)
 		}
 	}
 	os.Setenv("PGPASSFILE", os.DevNull)
+	code := m.Run()
+	if s := shared.srv; s != nil {
+		if err := s.stop(); err != nil {
+			fmt.Fprintf(os.Stderr, "dbtest: stop PostgreSQL: %v\n", err)
+		}
+	}
+	return code
 }
 
 // Image returns the image the harness runs.
@@ -202,6 +218,7 @@ func (d *Database) FreshLogin(t testing.TB) string {
 
 // server is the PostgreSQL server of the test binary.
 type server struct {
+	container     *postgres.PostgresContainer
 	host, port    string
 	adminPassword string
 	appPassword   string
@@ -235,9 +252,9 @@ func start(t testing.TB) *server {
 	return shared.srv
 }
 
-func startServer(ctx context.Context) (*server, error) {
+func startServer(ctx context.Context) (_ *server, err error) {
 	s := &server{adminPassword: rand.Text(), appPassword: rand.Text()}
-	c, err := postgres.Run(ctx, Image(),
+	s.container, err = postgres.Run(ctx, Image(),
 		postgres.WithUsername(adminLogin),
 		postgres.WithPassword(s.adminPassword),
 		postgres.WithDatabase("postgres"),
@@ -247,16 +264,23 @@ func startServer(ctx context.Context) (*server, error) {
 		testcontainers.WithCmd("postgres", "-c", "fsync=off", "-c", "synchronous_commit=off",
 			"-c", "full_page_writes=off", "-c", "max_connections=500"),
 	)
+	// A server that the tests cannot use is stopped at once, and one they
+	// can use when they are done (Run). postgres.Run may return a container
+	// together with its error.
+	defer func() {
+		if err != nil {
+			_ = s.stop()
+		}
+	}()
 	if err != nil {
 		return nil, fmt.Errorf("start PostgreSQL (%s): %w\n"+
 			"The database tests run PostgreSQL in Docker. Start Docker, or run go test -short to skip them.",
 			Image(), err)
 	}
-	// testcontainers removes the container when the test binary exits.
-	if s.host, err = c.Host(ctx); err != nil {
+	if s.host, err = s.container.Host(ctx); err != nil {
 		return nil, err
 	}
-	port, err := c.MappedPort(ctx, "5432/tcp")
+	port, err := s.container.MappedPort(ctx, "5432/tcp")
 	if err != nil {
 		return nil, err
 	}
@@ -275,6 +299,14 @@ func startServer(ctx context.Context) (*server, error) {
 	return s, nil
 }
 
+// stop closes the superuser's pool and removes the container.
+func (s *server) stop() error {
+	if s.admin != nil {
+		s.admin.Close()
+	}
+	return testcontainers.TerminateContainer(s.container)
+}
+
 // buildTemplate creates the template database and migrates it.
 func (s *server) buildTemplate(ctx context.Context) error {
 	ident := pgx.Identifier{template}.Sanitize()
@@ -290,6 +322,11 @@ func (s *server) buildTemplate(ctx context.Context) error {
 		return err
 	}
 	if seed := os.Getenv(UpgradeFromVariable); seed != "" {
+		// go test runs each package's tests in the package's directory, so
+		// a relative path would name another directory in each package.
+		if !filepath.IsAbs(seed) {
+			return fmt.Errorf("%s is %s, but must be an absolute path", UpgradeFromVariable, seed)
+		}
 		if err := migrateSeed(ctx, admin, app, seed); err != nil {
 			return fmt.Errorf("migrate with the seed migrations in %s: %w", seed, err)
 		}

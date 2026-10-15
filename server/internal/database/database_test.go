@@ -19,14 +19,13 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
-// TestMain keeps the libpq environment variables and the user's password file
-// out of the tests. pgx fills in from them what a URL leaves out, so a
-// developer's PGPASSWORD would take the place of the password file that
-// TestProvisionPasswordFromFile names, and PGAPPNAME the name that
-// TestApplicationName expects.
+// TestMain runs the tests with dbtest.Run, which keeps the libpq environment
+// variables and the user's password file out of them. pgx fills in from them
+// what a URL leaves out, so a developer's PGPASSWORD would take the place of
+// the password file that TestProvisionPasswordFromFile names, and PGAPPNAME
+// the name that TestApplicationName expects.
 func TestMain(m *testing.M) {
-	dbtest.IsolateLibpqEnvironment()
-	os.Exit(m.Run())
+	os.Exit(dbtest.Run(m))
 }
 
 // TestRolesAfterMigrating checks the roles and privileges the migrations
