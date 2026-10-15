@@ -473,7 +473,12 @@ func TestRoutePattern(t *testing.T) {
 func TestDeclarations(t *testing.T) {
 	m := itemMux(t, 0)
 	m.Handle(ScrapeMetrics, http.MethodGet, "/metrics", http.NotFoundHandler())
-	want := map[Route]Capability{{http.MethodPost, "/items"}: Public, {http.MethodGet, "/metrics"}: ScrapeMetrics}
+	m.HandlePage("/app/*", http.NotFoundHandler())
+	want := map[Route]Capability{
+		{http.MethodPost, "/items"}:  Public,
+		{http.MethodGet, "/metrics"}: ScrapeMetrics,
+		{http.MethodGet, "/app/*"}:   Public,
+	}
 	got := m.Routes()
 	if len(got) != len(want) {
 		t.Errorf("Routes() = %v, want %v", got, want)
@@ -489,6 +494,14 @@ func TestDeclarations(t *testing.T) {
 	}
 	if len(walked) != len(want) {
 		t.Errorf("Walk visited %v, want %v", walked, want)
+	}
+	for r := range want {
+		if page := r.Pattern == "/app/*"; m.IsPage(r) != page {
+			t.Errorf("IsPage(%s) = %t, want %t", r, !page, page)
+		}
+	}
+	if m.IsPage(Route{http.MethodPost, "/app/*"}) {
+		t.Error("IsPage is true for a method that the page does not take")
 	}
 
 	// Walk finds a route that bypassed the Mux, which declares nothing.

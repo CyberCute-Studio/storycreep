@@ -74,6 +74,8 @@ type Mux struct {
 	router *chi.Mux
 	api    huma.API
 	routes map[Route]Capability
+	// pages are the patterns that HandlePage registered.
+	pages map[string]bool
 }
 
 // MuxOptions configure NewMux.
@@ -102,7 +104,7 @@ func NewMux(opts MuxOptions) *Mux {
 	if locales == nil {
 		locales = i18n.Default()
 	}
-	m := &Mux{router: chi.NewRouter(), routes: map[Route]Capability{}}
+	m := &Mux{router: chi.NewRouter(), routes: map[Route]Capability{}, pages: map[string]bool{}}
 	m.router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			next.ServeHTTP(w, r.WithContext(withLogger(r.Context(), log)))
@@ -216,6 +218,23 @@ func (m *Mux) declare(method, pattern string, c Capability) {
 func (m *Mux) Handle(c Capability, method, pattern string, h http.Handler) {
 	m.declare(method, pattern, c)
 	m.router.Method(method, pattern, h)
+}
+
+// HandlePage registers h for GET requests to pattern, which serve a page of
+// the web interface, or a file of one, rather than an operation of the API.
+// A page requires no credentials, because it holds no user's data: the
+// interface fetches that from the API. The OpenAPI document does not
+// describe pages, and IsPage tells which routes they are. h writes its own
+// errors, with WriteError.
+func (m *Mux) HandlePage(pattern string, h http.Handler) {
+	m.Handle(Public, http.MethodGet, pattern, h)
+	m.pages[pattern] = true
+}
+
+// IsPage reports whether r is the route of a page, which HandlePage
+// registered.
+func (m *Mux) IsPage(r Route) bool {
+	return r.Method == http.MethodGet && m.pages[r.Pattern]
 }
 
 // Register registers a huma operation that requires c. Its request body is

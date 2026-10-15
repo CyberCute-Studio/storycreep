@@ -54,3 +54,23 @@ func TestReferenceContents(t *testing.T) {
 		}
 	}
 }
+
+// TestVariables checks that Variables names every variable that the
+// reference documents, each once, and STORYCREEP_CONFIG_FILE last.
+func TestVariables(t *testing.T) {
+	names := Variables()
+	if len(names) != len(keys)+1 || names[len(names)-1] != fileKey {
+		t.Fatalf("Variables() = %q, want the %d keys and %s", names, len(keys), fileKey)
+	}
+	ref := Reference()
+	seen := map[string]bool{}
+	for _, name := range names {
+		if seen[name] {
+			t.Errorf("Variables() names %s twice", name)
+		}
+		seen[name] = true
+		if !strings.Contains(ref, "| `"+name+"` |") {
+			t.Errorf("the reference has no row for %s", name)
+		}
+	}
+}

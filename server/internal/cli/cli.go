@@ -72,6 +72,7 @@ var commands = []*command{
 	serve,
 	migrate,
 	validateConfig,
+	healthcheck,
 }
 
 func lookup(name string) *command {

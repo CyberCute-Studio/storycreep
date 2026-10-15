@@ -53,8 +53,31 @@ These are the checks CI runs. Run them before you push.
 | `pnpm docs:check` | The PRD dependency graph and acceptance criteria, and the plan's ordering, coverage, and reference rules. |
 | `pnpm traceability` | The requirement traceability report (PRD NFR-Q-02): which tests verify each requirement, and which MVP acceptance criteria no test verifies yet. It writes `traceability-report/traceability.md` and `traceability.json`, and fails on a tag it cannot use (see below) or on a problem in the PRD. A criterion without a test does not fail the build until the MVP release gate (plan item 119). CI publishes the report as the `traceability-report` artifact. |
 | `pnpm audit --audit-level high`, and `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...` in `server/` | Known vulnerabilities in the dependencies. CI runs these in a separate job, on every pull request and weekly. |
+| `go test ./internal/deploy` in `server/`, with an image built from `deploy/Dockerfile` | The container image and `deploy/docker-compose.yml` (see [The container image](#the-container-image)). Without an image, it checks only the compose files' contents. |
 
 `pnpm docs:check` runs `go run ./cmd/doccheck` in `server/`, and `pnpm traceability` runs `go run ./cmd/traceability`. Both report every problem as `file:line: message`. Run `go run ./cmd/traceability` in `server/` to print the report to the terminal instead.
+
+## The container image
+
+`deploy/Dockerfile` builds the container image (PRD FR-ADMIN-01 AC4), and `deploy/docker-compose.yml` runs it with PostgreSQL (FR-ADMIN-07). [`deploy/README.md`](deploy/README.md) describes both, and how to run the development compose file. The tests in `server/internal/deploy` check them:
+
+- `go test ./...` checks the compose files' contents, on every OS. The published compose file must pass every configuration key to the server, so a new key needs a line in its `environment`, in `deploy/.env.example`, and in `deploy/README.md`.
+- The image's tests need Docker, and skip without an image to test. CI's image job runs them on a `linux/amd64` and a `linux/arm64` runner: it builds the image for both platforms into an OCI archive, whose platforms, user, and files `STORYCREEP_TEST_IMAGE_ARCHIVE` lets the tests check, and loads the runner's platform's image, which `STORYCREEP_TEST_IMAGE` names and the tests start `docker-compose.yml` with.
+
+To run them locally, build both from the repository's root, with the archive outside the repository:
+
+```sh
+docker buildx build --platform linux/amd64,linux/arm64 -f deploy/Dockerfile --output type=oci,dest=/tmp/storycreep.tar .
+docker build -f deploy/Dockerfile -t storycreep:test .
+```
+
+Docker Desktop builds both platforms as it is. Docker Engine may need a builder that can, which `docker buildx create --use --driver docker-container` creates. Then run, in `server/`:
+
+```sh
+STORYCREEP_TEST_IMAGE_ARCHIVE=/tmp/storycreep.tar STORYCREEP_TEST_IMAGE=storycreep:test go test ./internal/deploy
+```
+
+The compose test publishes the server on `127.0.0.1:7777`, the documented port, or on another port if something already listens there, and removes its containers and volumes when it is done. Every CI run on the main branch, after a push and weekly, publishes the image of its commit to `ghcr.io/cybercute-studio/storycreep`, once its checks pass, tagged `sha-<commit>`, and `main` unless `main` already has a newer commit, as when an older run is re-run. GitHub creates a new package as private, so after the first publish a maintainer makes the package public, once, in its settings on GitHub: until then, `docker-compose.yml` cannot pull the image without signing in.
 
 ## Tagging tests with requirements
 
@@ -159,7 +182,7 @@ Database tests get their own database from `dbtest.New(t)`, in `server/internal/
 
 - Text files use LF line endings everywhere. `.gitattributes` enforces this, and `.editorconfig` sets the indentation: two spaces, except tabs for Go and GDScript.
 - Every user-facing string is a message in a catalog (see [Strings and translations](#strings-and-translations)), and every new endpoint is in the OpenAPI document. The plan's standing checklist lists the rest.
-- Register every route with `api.Register`, or `Mux.Handle` for a handler that is not a huma operation, in `server/internal/api`, which records the capability the route requires. A test walks the routers and fails on a route that declares none (PRD NFR-SEC-02).
+- Register every route with `api.Register`, or `Mux.Handle` for a handler that is not a huma operation, or `Mux.HandlePage` for a page of the web interface, which the OpenAPI document leaves out, in `server/internal/api`, which records the capability the route requires. A test walks the routers and fails on a route that declares none (PRD NFR-SEC-02).
 - A handler reports an error by returning an `*api.Error` with a code from the registry, which the client receives in the error envelope. Any other error is answered with `internal_error`, and logged with the request ID, so its text never reaches the client.
 - Outside tests, only `server/internal/config` reads the environment or knows the deployment mode (`STORYCREEP_MODE`). Code that behaves differently in the two modes reads `config.Capabilities`. A test fails on non-test code in any other package that reads an environment variable, names `STORYCREEP_MODE`, or uses a mode value (PRD FR-ADMIN-01 AC3). Test files are exempt, because they set the mode up, and so are test-support packages: a package whose name ends in `test`, such as `dbtest`, and that only test files and other test-support packages import, so that it is not part of the binary.
 - Secrets are held as `secret.Value` (`server/internal/secret`), which prints, logs, and encodes as `[REDACTED]`. Call `Reveal` only where the secret is used.

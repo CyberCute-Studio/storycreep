@@ -74,7 +74,7 @@
             "type": "string"
           },
           "version": {
-            "description": "The release version, or (devel) for a build from a checkout",
+            "description": "The release version, or (devel) for any other build, such as the main branch's image",
             "type": "string"
           }
         },
