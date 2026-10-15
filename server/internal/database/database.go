@@ -77,11 +77,22 @@ func checkServerVersion(num int, version string) error {
 // programs, directly or through other roles. If it is, the error is an
 // *UnsafeLoginError.
 func Open(ctx context.Context, app config.DatabaseURL) (*DB, error) {
+	return OpenWith(ctx, app, nil)
+}
+
+// OpenWith is Open, with the pool's configuration, which the URL's pool
+// parameters set, changed by configure first, if it is not nil. The job
+// queue's workers open a pool of their own with it, sized for them (package
+// jobs).
+func OpenWith(ctx context.Context, app config.DatabaseURL, configure func(*pgxpool.Config)) (*DB, error) {
 	if !app.IsSet() {
 		return nil, errNoURL
 	}
 	cfg := app.PoolConfig()
 	setApplicationName(cfg.ConnConfig)
+	if configure != nil {
+		configure(cfg)
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect to %s: %w", app, err)
@@ -116,6 +127,15 @@ func (db *DB) Close() {
 // Ping checks that the database answers, on one of the pool's connections.
 func (db *DB) Ping(ctx context.Context) error {
 	return db.pool.Ping(ctx)
+}
+
+// Pool returns the pool, for the job queue (package jobs), whose library runs
+// its own queries on it, in River's tables, which have no row-level security
+// (PRD §5.4). Row-level security holds the pool's connections as it holds
+// every connection of the login, so work on a workspace's rows still goes
+// through InTx.
+func (db *DB) Pool() *pgxpool.Pool {
+	return db.pool
 }
 
 // setApplicationName names the connections, unless the URL, PGAPPNAME, or a

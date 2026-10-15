@@ -2,6 +2,10 @@
 # migrations build. Run "go generate ./internal/database" in server/ after
 # changing a query or a migration; CI fails when the generated code is out of
 # date.
+#
+# Only the structs of the tables and enums that a query uses are generated.
+# River's tables (migrations 00002 and 00003) belong to the job queue, which
+# reads and writes them through River (package jobs), not through queries.
 version: "2"
 sql:
   - engine: postgresql
@@ -12,3 +16,4 @@ sql:
         package: queries
         out: queries
         sql_package: pgx/v5
+        omit_unused_structs: true

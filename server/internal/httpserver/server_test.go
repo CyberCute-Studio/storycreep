@@ -21,6 +21,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 )
 
 // testLock is an advisory lock that a test migration waits for, so that a
@@ -488,5 +489,137 @@ func TestRunWithoutMetrics(t *testing.T) {
 	if rs := inst.log.records(t, "listening"); len(rs) != 1 || !strings.Contains(fmt.Sprint(rs[0]["metrics"]),
 		"STORYCREEP_METRICS_TOKEN is not set") {
 		t.Errorf("the log does not say why there are no metrics: %v", rs)
+	}
+}
+
+// workArgs are the arguments of the test job that the servers run.
+type workArgs struct{}
+
+func (workArgs) Kind() string { return "test_work" }
+
+// workRegistry returns a registry whose worker of test_work sends name to ran.
+func workRegistry(name string, ran chan<- string) *jobs.Registry {
+	reg := jobs.NewRegistry()
+	jobs.Register(reg, func(context.Context, *jobs.Job[workArgs]) error {
+		ran <- name
+		return nil
+	})
+	return reg
+}
+
+// enqueueWork enqueues a test_work job in a transaction of the application
+// login, as the server's requests will, and returns its ID.
+func enqueueWork(t *testing.T, d *dbtest.Database) int64 {
+	t.Helper()
+	ctx := context.Background()
+	db := d.Open(t)
+	q, err := jobs.Open(ctx, db, d.AppURL, jobs.Options{Registry: workRegistry("enqueuer", nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	var e jobs.Enqueued
+	err = db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		e, err = q.Enqueue(ctx, tx, workArgs{}, nil)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e.ID
+}
+
+// receiveName returns the name that a job sent to ran, or fails the test
+// after a minute.
+func receiveName(t *testing.T, ran <-chan string) string {
+	t.Helper()
+	select {
+	case name := <-ran:
+		return name
+	case <-time.After(time.Minute):
+		t.Fatal("no job ran")
+		return ""
+	}
+}
+
+// TestInlineWorkers checks that a server without inline workers, as serve
+// --no-inline-workers runs, runs no jobs, and that a server with them, as
+// serve runs by default, runs the jobs that are enqueued, as a dedicated
+// worker instance does for the other instances. It checks the queue's
+// metrics on the worker's admin port too.
+//
+// Verifies: FR-JOBS-01/AC4
+func TestInlineWorkers(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	cfg := dbConfig(t, d)
+	ran := make(chan string, 10)
+	web := startInstance(t, cfg, Options{AutoMigrate: true, Jobs: workRegistry("web", ran)})
+	web.waitFor(t, "/readyz", http.StatusOK)
+	enqueueWork(t, d)
+	select {
+	case name := <-ran:
+		t.Fatalf("the job ran on %s, which runs no workers", name)
+	case <-time.After(2 * time.Second):
+	}
+	if len(web.log.records(t, "the job workers are off in this process, so the instances that run them do its "+
+		"jobs")) != 1 {
+		t.Errorf("the log does not say that the workers are off:\n%s", web.log)
+	}
+
+	worker := startInstance(t, cfg, Options{AutoMigrate: true, InlineWorkers: true, Jobs: workRegistry("worker", ran)})
+	if name := receiveName(t, ran); name != "worker" {
+		t.Errorf("the job ran on %s, want the worker", name)
+	}
+	if len(worker.log.records(t, "the job workers started")) != 1 {
+		t.Errorf("the log does not say that the workers started:\n%s", worker.log)
+	}
+	want := []string{
+		`storycreep_job_attempts_total{kind="test_work",outcome="completed"} 1`,
+		`storycreep_jobs{queue="default",state="available"} 0`,
+	}
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(20 * time.Millisecond) {
+		_, body, _ := get(t, worker.adminURL+"/metrics")
+		if !slices.ContainsFunc(want, func(w string) bool { return !strings.Contains(string(body), w) }) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("/metrics lacks %v:\n%s", want, body)
+		}
+	}
+}
+
+// TestWorkersStartOnceMigrated checks that a server without auto-migration
+// starts its workers only once the pending migrations, which create the
+// queue's tables, have been applied.
+func TestWorkersStartOnceMigrated(t *testing.T) {
+	t.Parallel()
+	d := dbtest.Empty(t)
+	cfg := dbConfig(t, d)
+	ran := make(chan string, 10)
+	inst := startInstance(t, cfg, Options{InlineWorkers: true, PollInterval: 20 * time.Millisecond,
+		Jobs: workRegistry("server", ran)})
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(20 * time.Millisecond) {
+		if _, body, _ := get(t, inst.url+"/readyz"); reason(body) == "migrations_pending" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the server does not report the pending migrations")
+		}
+	}
+	if rs := inst.log.records(t, "the job workers started"); len(rs) != 0 {
+		t.Fatalf("the workers started before the migrations were applied")
+	}
+	if _, err := database.Migrate(context.Background(), cfg.DatabaseAdminURL, cfg.DatabaseURL,
+		database.MigrateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	inst.waitFor(t, "/readyz", http.StatusOK)
+	enqueueWork(t, d)
+	if name := receiveName(t, ran); name != "server" {
+		t.Errorf("the job ran on %s", name)
+	}
+	if rs := inst.log.records(t, "the job workers started"); len(rs) != 1 {
+		t.Errorf("the log says %d times that the workers started, want once:\n%s", len(rs), inst.log)
 	}
 }
