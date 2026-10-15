@@ -25,7 +25,8 @@ const documentedPublish = "127.0.0.1:7777"
 // TestComposeUp starts the published compose file as a user does on a clean
 // machine, in a directory that holds nothing but the file, with the
 // database password as its only setting, and checks that the instance comes
-// up healthy and serves on the documented port (PRD FR-ADMIN-07 AC1). Then it
+// up healthy and serves on the documented port (PRD FR-ADMIN-07 AC1), and
+// that it reports the commit that the image was built from. Then it
 // recreates the server's container on the same volumes, as an upgrade does,
 // and checks that the instance serves again.
 //
@@ -112,6 +113,7 @@ func TestComposeUp(t *testing.T) {
 	}
 	checkServing(t, "http://"+publish)
 	checkHealthy(t, compose)
+	checkVersion(ctx, t, "http://"+publish, image)
 
 	// The server runs as the image's user, not root.
 	out, err := compose("top", "app")
@@ -164,6 +166,41 @@ func checkServing(t *testing.T, base string) {
 		if err != nil || res.StatusCode != http.StatusOK || !bytes.HasPrefix(body, []byte(want)) {
 			t.Errorf("GET %s: %d %s, %v; want 200 and %s", path, res.StatusCode, body, err, want)
 		}
+	}
+}
+
+// checkVersion checks that the instance at base reports, at /version, the
+// commit that image was built from, which its revision label names. The
+// build stamps the commit into the binary with -ldflags -X
+// (deploy/Dockerfile), which go build ignores for a variable that does not
+// exist, so a renamed variable would drop the commit without an error. An
+// image built without STORYCREEP_COMMIT has no revision to compare.
+func checkVersion(ctx context.Context, t *testing.T, base, image string) {
+	t.Helper()
+	out, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format",
+		`{{index .Config.Labels "org.opencontainers.image.revision"}}`, image).Output()
+	if err != nil {
+		t.Fatalf("docker image inspect %s: %v", image, err)
+	}
+	revision := strings.TrimSpace(string(out))
+	if revision == "" {
+		t.Logf("%s has no revision label, so its /version is not checked", image)
+		return
+	}
+	res, err := (&http.Client{Timeout: 10 * time.Second}).Get(base + "/version")
+	if err != nil {
+		t.Fatalf("GET /version: %v", err)
+	}
+	defer res.Body.Close()
+	var v struct {
+		Commit string `json:"commit"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&v); err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /version: %d, %v", res.StatusCode, err)
+	}
+	if v.Commit != revision {
+		t.Errorf("/version reports the commit %q, and the image's revision label %q; want the same", v.Commit,
+			revision)
 	}
 }
 

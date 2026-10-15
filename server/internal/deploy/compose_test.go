@@ -293,8 +293,8 @@ func TestDevComposeFile(t *testing.T) {
 	if n := len(app.Command); n == 0 || app.Command[0] != "sh" || !strings.Contains(app.Command[n-1], "&& exec ") {
 		t.Errorf("app runs %q; want a shell that builds the server and then execs it", app.Command)
 	}
-	// The server runs on the Go that builds the image, which builds the
-	// go.mod's Go.
+	// The development server is built by the Go that builds the image, so
+	// that a go.mod that needs a newer Go fails both builds alike.
 	if goImage := goImageOfDockerfile(t); app.Image != goImage {
 		t.Errorf("app runs %q, and the Dockerfile builds with %q; want the same", app.Image, goImage)
 	}

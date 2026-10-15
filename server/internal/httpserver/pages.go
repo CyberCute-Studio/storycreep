@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"errors"
+	"io"
 	"io/fs"
 	"mime"
 	"net/http"
@@ -50,15 +51,17 @@ func registerPages(m *api.Mux, publicSite bool) {
 }
 
 // serveFile answers r with the file name of fsys, or with not_found if there
-// is no such file, as for a directory or a path with a .. in it.
+// is no such file, as for a directory or a path with a .. in it. It copies
+// the file to the response as it reads it, without a copy of its own.
 func serveFile(w http.ResponseWriter, r *http.Request, fsys fs.FS, name string) {
-	var body []byte
-	info, err := fs.Stat(fsys, name)
+	f, err := fsys.Open(name)
+	var info fs.FileInfo
+	if err == nil {
+		defer f.Close()
+		info, err = f.Stat()
+	}
 	if err == nil && info.IsDir() {
 		err = fs.ErrNotExist
-	}
-	if err == nil {
-		body, err = fs.ReadFile(fsys, name)
 	}
 	switch {
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, fs.ErrInvalid):
@@ -73,6 +76,8 @@ func serveFile(w http.ResponseWriter, r *http.Request, fsys fs.FS, name string) 
 		ctype = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", ctype)
-	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-	w.Write(body)
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	// An error here comes after the status was sent, and leaves the body short
+	// of its Content-Length, which tells the client.
+	_, _ = io.Copy(w, f)
 }

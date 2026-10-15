@@ -22,7 +22,7 @@ On its first start, the server applies the database migrations, and creates its 
 
 The data lives in two named volumes: `db`, the database, and `assets`, mounted at `/var/lib/storycreep/assets`, for the files that users upload. `docker compose down` keeps them; `docker compose down -v` deletes them, and with them everything stored in Storycreep.
 
-The compose file names its Compose project `storycreep`, and the containers and volumes are named after the project, whatever directory the file is in. So a second copy of the directory on the same machine runs the same instance: its `docker compose up -d` recreates the first copy's containers on the same volumes, and its `docker compose down -v` deletes them. To run a second instance, such as one to try a new version on, set `COMPOSE_PROJECT_NAME` to a name of its own in its `.env` before its first start.
+The compose file names its Compose project `storycreep`, and the containers and volumes are named after the project, whatever directory the file is in. So a second copy of the directory on the same machine runs the same instance: its `docker compose up -d` recreates the first copy's containers on the same volumes, and its `docker compose down -v` deletes them. To run a second instance, such as one to try a new version on, set `COMPOSE_PROJECT_NAME` to a name of its own in its `.env` before its first start, and `STORYCREEP_PUBLISH` to a port of its own, such as `127.0.0.1:7778`, with `STORYCREEP_PUBLIC_URL` to match: the first instance has `127.0.0.1:7777`, so the second one's server would not start.
 
 ### Settings
 
@@ -87,7 +87,7 @@ A `storycreep backup` command, and a tested restore procedure, are planned (PRD 
 
 ## The image
 
-The image is published as `ghcr.io/cybercute-studio/storycreep`, for `linux/amd64` and `linux/arm64`, from the newest commit on the main branch each time CI passes there, after a push and weekly, tagged `main` and `sha-<commit>`. The weekly build picks up its base images' updates. Release tags start with the first release.
+The image is published as `ghcr.io/cybercute-studio/storycreep`, for `linux/amd64` and `linux/arm64`, from the newest commit on the main branch each time CI passes there, after a push and weekly, tagged `main` and `sha-<commit>`. `main` never moves back to an older commit, whose server would refuse a database that a newer one has migrated. The weekly build picks up its base images' updates. Release tags start with the first release.
 
 It holds the `storycreep` binary, with the web interface embedded in it, on a [distroless](https://github.com/GoogleContainerTools/distroless) base: there is no shell, package manager, or build toolchain in it, and it runs as the non-root user 65532 (PRD FR-ADMIN-01 AC4). It runs `storycreep serve` unless given another command, as in `docker run --rm ghcr.io/cybercute-studio/storycreep:main --help`. Its health check runs `storycreep healthcheck`, which requests `/readyz`. The health check runs without arguments, so name a configuration file with `STORYCREEP_CONFIG_FILE`, which it reads as `serve` does, rather than with `serve --config`, which it does not see.
 

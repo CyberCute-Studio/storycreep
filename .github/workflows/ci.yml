@@ -279,12 +279,15 @@ jobs:
 
   # PRD FR-ADMIN-07 AC2: every run on the main branch publishes the image of
   # its commit for both platforms, once the checks have passed, as
-  # ghcr.io/cybercute-studio/storycreep:main and :sha-<commit>. That is every
-  # run, not only a push's: a scheduled or manual run that takes the place of
-  # a queued push's run publishes its commit, and the weekly run rebuilds the
-  # image on its base images' updates. Release tags come with the release
-  # workflow (plan item 119). GitHub creates the package as private, and a
-  # maintainer makes it public once (CONTRIBUTING.md).
+  # ghcr.io/cybercute-studio/storycreep:sha-<commit>, and as :main unless
+  # :main already has a newer commit. That is every run, not only a push's: a
+  # scheduled or manual run that takes the place of a queued push's run
+  # publishes its commit, and the weekly run rebuilds the image on its base
+  # images' updates. A re-run of an older run leaves :main alone, because the
+  # newer image may have migrated databases, which an older server refuses.
+  # Release tags come with the release workflow (plan item 119). GitHub
+  # creates the package as private, and a maintainer makes it public once
+  # (CONTRIBUTING.md).
   publish:
     name: Publish the image
     if: github.ref == 'refs/heads/main'
@@ -299,6 +302,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Whether :main's commit is older than this one is read from the
+          # main branch's history.
+          fetch-depth: 0
 
       - name: Set up the image builder
         run: docker buildx create --use --driver docker-container --name storycreep
@@ -311,10 +317,25 @@ jobs:
       - name: Build and push the image
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tags=(--tag "$image:sha-$COMMIT")
+          # The commit of :main's image, from its revision label, or nothing
+          # before the first publish. :main moves to this commit unless it has
+          # one that this commit does not descend from: a newer one, when an
+          # older run is re-run. A commit missing from the history, as after
+          # main was rewritten, does not hold it back.
+          current="$(docker buildx imagetools inspect "$image:main" --format \
+            '{{index (index .Image "linux/amd64").Config.Labels "org.opencontainers.image.revision"}}' \
+            2>/dev/null || true)"
+          if [ -n "$current" ] && git cat-file -e "$current^{commit}" 2>/dev/null &&
+            ! git merge-base --is-ancestor "$current" "$COMMIT"; then
+            echo "::notice::$image:main has the newer commit $current, so this run publishes only :sha-$COMMIT."
+          else
+            tags+=(--tag "$image:main")
+          fi
           docker buildx build --file deploy/Dockerfile --platform linux/amd64,linux/arm64 \
             --build-arg STORYCREEP_COMMIT="$COMMIT" \
             --build-arg STORYCREEP_COMMIT_TIME="$(git log -1 --format=%cI)" \
-            --tag "$image:main" --tag "$image:sha-$COMMIT" --push .
+            "${tags[@]}" --push .
 
       - name: Check the published platforms
         run: |

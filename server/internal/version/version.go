@@ -30,8 +30,8 @@ var commit, commitTime string
 // Info describes a build.
 type Info struct {
 	// Version is the release version, or for any other build the module
-	// version the go tool recorded, which is "(devel)" for a build from a
-	// checkout.
+	// version the go tool recorded, which is "(devel)" for a build of the
+	// module's own source, as from a checkout or in the container image.
 	Version string
 	// Commit is the revision of the source the binary was built from, or ""
 	// if neither the go tool nor the build recorded it, as in a build by go
