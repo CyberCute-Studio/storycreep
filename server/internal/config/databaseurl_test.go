@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -149,6 +152,12 @@ func TestInvalidDatabaseURL(t *testing.T) {
 		{"postgres://app:" + password + "@db/my db", "has a space"},
 		{"postgres://app:" + password + "@db:0/sc", "invalid port"},
 		{"postgres://app:" + password + "@db/sc?sslmode=verify-full&sslrootcert=no-such-root.crt", "unable to read CA file"},
+		// pgx would send these libpq parameters to the database server as
+		// settings, which the server does not have, so every connection
+		// would fail.
+		{"postgres://app:" + password + "@db/sc?gssencmode=disable", "sets gssencmode, a libpq parameter"},
+		{"postgres://app@db/sc?sslmode=require&keepalives=1", "sets keepalives, a libpq parameter"},
+		{"postgres://app@db/sc?oauth_client_secret=" + password, "sets oauth_client_secret, a libpq parameter"},
 	}
 	for _, tt := range tests {
 		for _, key := range []string{"STORYCREEP_DATABASE_URL", "STORYCREEP_DATABASE_ADMIN_URL"} {
@@ -166,6 +175,23 @@ func TestInvalidDatabaseURL(t *testing.T) {
 				t.Errorf("%s=%s: the message repeats the URL: %s", key, tt.in, msg)
 			}
 		}
+	}
+}
+
+// TestUnsupportedParamInServiceFile checks that a libpq parameter that the
+// server's client does not support is refused also when the service file that
+// the URL names sets it, because pgx would send it to the database server as a
+// setting all the same.
+func TestUnsupportedParamInServiceFile(t *testing.T) {
+	servicefile := filepath.Join(t.TempDir(), "pg_service.conf")
+	if err := os.WriteFile(servicefile, []byte("[sc]\ngssencmode=disable\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// QueryEscape writes a space as +, which libpq reads as a +.
+	escaped := strings.ReplaceAll(url.QueryEscape(servicefile), "+", "%20")
+	_, err := ParseDatabaseURL("postgres://app@db/sc?service=sc&servicefile=" + escaped)
+	if err == nil || !strings.Contains(err.Error(), "sets gssencmode") || !strings.Contains(err.Error(), "service file") {
+		t.Errorf("ParseDatabaseURL returned %v, want a refusal of gssencmode from the service file", err)
 	}
 }
 

@@ -34,6 +34,21 @@ type DatabaseURL struct {
 // login the server provisions and checks is the one it connects as.
 var reservedDatabaseParams = []string{"user", "password", "dbname", "database"}
 
+// unsupportedDatabaseParams are the libpq parameters that pgx, which the
+// server connects with, does not support. pgx sends a parameter it does not
+// know to the database server as a setting, and the server has no setting of
+// these names, or none that a connection may set, so every connection that
+// sent one would fail. They are rejected, from the URL or a service file it
+// names, so that a URL copied from a libpq client fails here rather than when
+// the server connects.
+var unsupportedDatabaseParams = []string{
+	"hostaddr", "fallback_application_name", "keepalives", "keepalives_idle", "keepalives_interval",
+	"keepalives_count", "gssencmode", "gsslib", "gssdelegation", "requiressl", "requirepeer", "sslcompression",
+	"sslcertmode", "sslcrl", "sslcrldir", "sslkeylogfile", "ssl_min_protocol_version", "ssl_max_protocol_version",
+	"load_balance_hosts", "oauth_issuer", "oauth_client_id", "oauth_client_secret", "oauth_scope",
+	"scram_client_key", "scram_server_key",
+}
+
 // shownDatabaseParams are the query parameters whose values are shown when
 // the URL is shown: the libpq and pgx settings that hold no secret, and the
 // common PostgreSQL settings. Every other parameter's value is redacted, such
@@ -162,6 +177,12 @@ func ParseDatabaseURL(v string) (DatabaseURL, error) {
 	cfg, err := pgxpool.ParseConfig(v)
 	if err != nil {
 		return fail(pgxReason(err))
+	}
+	for _, p := range unsupportedDatabaseParams {
+		if _, ok := cfg.ConnConfig.RuntimeParams[p]; ok {
+			return fail("sets " + p + ", a libpq parameter that the server's PostgreSQL client does not support, so " +
+				"every connection would fail; remove it from the URL, or from the service file that sets it")
+		}
 	}
 
 	d := DatabaseURL{

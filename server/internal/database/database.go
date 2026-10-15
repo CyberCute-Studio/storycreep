@@ -193,7 +193,11 @@ type StartOptions struct {
 // migrations reached the database the login connects to.
 // Without AutoMigrate, it opens the application login's pool, and a pending
 // migration is logged as a warning and is for "storycreep migrate" to apply,
-// while the server reports that it is not ready.
+// while the server reports that it is not ready. It refuses a database that
+// migrating has set up but that PUBLIC or storycreep_app can connect to again,
+// as after a dump is restored into a new database, because nothing else
+// would revoke that CONNECT until "storycreep migrate" runs
+// (checkConnectRestricted).
 func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, error) {
 	log := opts.Log
 	if log == nil {
@@ -219,12 +223,22 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 	if err != nil {
 		return nil, err
 	}
-	p, err := db.Pending(ctx)
-	switch {
-	case err != nil:
+	ms, err := loadMigrations(nil)
+	var p []int64
+	if err == nil {
+		p, err = db.pendingIn(ctx, ms)
+	}
+	// A database that has applied a migration was set up by migrating, which
+	// restricted who can connect to it. One that has applied none has no data
+	// yet.
+	if err == nil && len(p) < len(ms.versions) {
+		err = checkConnectRestricted(ctx, db.pool)
+	}
+	if err != nil {
 		db.Close()
 		return nil, err
-	case len(p) > 0:
+	}
+	if len(p) > 0 {
 		log.WarnContext(ctx, "the database has pending migrations; run storycreep migrate to apply them",
 			"pending", p)
 	}

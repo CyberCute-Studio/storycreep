@@ -28,7 +28,8 @@ jobs:
       fail-fast: false
       matrix:
         # PRD §9.9: development is first-class on Windows ARM64 and macOS, so
-        # the whole suite runs natively on all three.
+        # the suite runs natively on all three, except the database tests,
+        # which need Linux containers and run in the database job.
         os: [ubuntu-latest, windows-11-arm, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:

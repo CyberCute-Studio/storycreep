@@ -467,6 +467,67 @@ func TestStart(t *testing.T) {
 		}
 	})
 
+	// Without auto-migrate, Start refuses a migrated database that every
+	// role can connect to, as after a dump is restored into a new database,
+	// and a copy of the template is one, until migrating restricts it again.
+	t.Run("without auto-migrate on a database that PUBLIC can connect to", func(t *testing.T) {
+		t.Parallel()
+		d := dbtest.New(t)
+		cfg := &config.Config{DatabaseURL: d.AppURL}
+		_, err := database.Start(ctx, cfg, database.StartOptions{})
+		if err == nil || !strings.Contains(err.Error(), "PUBLIC can connect to the database") ||
+			!strings.Contains(err.Error(), "run storycreep migrate") {
+			t.Fatalf("Start returned %v, want a refusal of the database that PUBLIC can connect to", err)
+		}
+		if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		db, err := database.Start(ctx, cfg, database.StartOptions{})
+		if err != nil {
+			t.Fatalf("Start after migrating: %v", err)
+		}
+		db.Close()
+
+		if _, err := d.Admin(t).Exec(ctx, "GRANT CONNECT ON DATABASE "+pgx.Identifier{d.Name}.Sanitize()+
+			" TO storycreep_app"); err != nil {
+			t.Fatal(err)
+		}
+		_, err = database.Start(ctx, cfg, database.StartOptions{})
+		if err == nil || !strings.Contains(err.Error(), "storycreep_app can connect to the database") {
+			t.Errorf("Start returned %v, want a refusal of the database that storycreep_app can connect to", err)
+		}
+	})
+
+	t.Run("auto-migrate waits for the lock", func(t *testing.T) {
+		t.Parallel()
+		d := dbtest.Empty(t)
+		holder := d.Admin(t)
+		if _, err := holder.Exec(ctx, "SELECT pg_advisory_lock($1)", database.MigrationLock); err != nil {
+			t.Fatal(err)
+		}
+		var logged bytes.Buffer
+		done := make(chan error, 1)
+		go func() {
+			db, err := database.Start(ctx, &config.Config{DatabaseURL: d.AppURL, DatabaseAdminURL: d.AdminURL},
+				database.StartOptions{AutoMigrate: true, Log: slog.New(slog.NewJSONHandler(&logged, nil))})
+			if err == nil {
+				db.Close()
+			}
+			done <- err
+		}()
+		waitForLockWaiter(t, holder)
+		if _, err := holder.Exec(ctx, "SELECT pg_advisory_unlock($1)", database.MigrationLock); err != nil {
+			t.Fatal(err)
+		}
+		// The log is read once Start has returned, so it has finished writing.
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(logged.String(), `"msg":"waiting for the database migration lock, which another session holds"`) {
+			t.Errorf("the log does not say that Start waited for the lock:\n%s", logged.String())
+		}
+	})
+
 	t.Run("auto-migrate of another database", func(t *testing.T) {
 		t.Parallel()
 		app, other := dbtest.Empty(t), dbtest.Empty(t)

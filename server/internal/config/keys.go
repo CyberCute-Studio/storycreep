@@ -141,11 +141,13 @@ var keys = []key{
 			"file, or a password file supplies), and grant it the `storycreep_app` role. When the server logs in " +
 			"with a password, they refuse a login whose `VALID UNTIL` has passed, which PostgreSQL would refuse as " +
 			"if the password were wrong. They also revoke `CONNECT` on the database from `PUBLIC` and from " +
-			"`storycreep_app`, and grant it to the login, so that no other role can connect unless it is a " +
-			"superuser, the database's owner, or granted `CONNECT`, as a monitoring role may need to be, or it " +
-			"inherits the privileges of one of them or of the login, as a member of the login does. They fail if " +
-			"`PUBLIC` or `storycreep_app` can still connect afterwards, as through a grant that a role other than " +
-			"the database's owner made. A login belongs to the whole PostgreSQL server, not to one database, and " +
+			"`storycreep_app`, and grant it to the login, and to the admin login if that took its `CONNECT`, so " +
+			"that no other role can connect unless it is a superuser, or it is, or inherits the privileges of, the " +
+			"login, the database's owner, or a role granted `CONNECT`, as a monitoring role may need to be. They " +
+			"fail if `PUBLIC` or `storycreep_app` can still connect afterwards, as through a grant that a role other " +
+			"than the database's owner made, and a server that does not apply migrations itself refuses a migrated " +
+			"database that they can connect to again, as after a dump is restored into a new database, until " +
+			"migrations run again. A login belongs to the whole PostgreSQL server, not to one database, and " +
 			"so does the `storycreep_app` role, which every Storycreep database on the server grants its " +
 			"privileges to. So give each Storycreep database on a server a login of its own, which can connect " +
 			"only to its own database: a shared login would reach all of them, and migrating one would change the " +
@@ -153,7 +155,8 @@ var keys = []key{
 			"with an `=` in a value percent-encoded as `%3D`, and the libpq environment variables, such as " +
 			"`PGSSLMODE`, fill in settings the URL leaves out. A space anywhere in the URL is written as `%20`. " +
 			"The URL is checked as the server's connections read it, so a setting they could not use, such as an " +
-			"unknown `sslmode` or a certificate file that cannot be read, is an error. Where the URL is shown, its " +
+			"unknown `sslmode`, a certificate file that cannot be read, or a libpq parameter that they do not " +
+			"support, such as `gssencmode` or `keepalives`, is an error. Where the URL is shown, its " +
 			"password is `" + secret.Redacted + "`, and so is the value of every query parameter except the libpq " +
 			"and pgx settings that hold no secret, such as `sslmode`, and `application_name`, `search_path`, " +
 			"`timezone`, and `client_encoding`.",

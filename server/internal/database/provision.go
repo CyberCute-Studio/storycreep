@@ -27,10 +27,10 @@ var reservedRoles = append([]string{appRole}, privilegedRoles...)
 // so, because roles belong to the cluster, and an ALTER ROLE that another
 // database runs at the same time would conflict.
 //
-// It also makes the login the only role, besides the superusers, the
-// database's owner, the roles other than storycreep_app that the operator
-// granted CONNECT, and the roles that inherit the privileges of one of them or
-// of the login, that can connect to the database (restrictConnect).
+// It also limits who can connect to the database to the superusers, the admin
+// login, and the roles that are, or inherit the privileges of, the login, the
+// database's owner, or a role other than storycreep_app that the operator
+// granted CONNECT (restrictConnect).
 //
 // It refuses, and changes nothing, if row-level security would not hold the
 // login once it has storycreep_app's privileges (checkLogin), or if the server
@@ -114,64 +114,108 @@ func provision(ctx context.Context, conn *pgx.Conn, login string, password secre
 	})
 }
 
-// restrictConnect makes the login the only role, besides the superusers, the
-// database's owner, which keeps the CONNECT that owners have by default, any
-// role other than storycreep_app that the operator granted CONNECT, and the
-// roles that inherit the privileges of one of them or of the login, that can
-// connect to the database: it revokes CONNECT from PUBLIC, which PostgreSQL
-// grants it to by default, and from storycreep_app, and grants it to the
-// login. Roles belong to the cluster, so the application login of every other
-// Storycreep database on the server is a member of storycreep_app too, and
-// could otherwise connect to this database with the privileges that its
-// migrations grant storycreep_app, and read and change its data. A migration
-// could not grant the login CONNECT, because it does not know the login, and
-// this runs every time Migrate does rather than once, because a database that
-// a dump was restored into, or that CREATE DATABASE copied, has PostgreSQL's
-// default privileges again.
+// restrictConnect limits who can connect to the database to the superusers,
+// the admin login, and the roles that are, or inherit the privileges of, the
+// login, the database's owner, which keeps the CONNECT that owners have by
+// default, or a role other than storycreep_app that the operator granted
+// CONNECT. It revokes CONNECT from PUBLIC, which PostgreSQL grants it to by
+// default, and from storycreep_app, and grants it to the login. Roles belong
+// to the cluster, so the application login of every other Storycreep
+// database on the server is a member of storycreep_app too, and could
+// otherwise connect to this database with the privileges that its migrations
+// grant storycreep_app, and read and change its data. A migration could not
+// grant the login CONNECT, because it does not know the login, and this runs
+// every time Migrate does rather than once, because a database that a dump
+// was restored into, or that CREATE DATABASE copied, has PostgreSQL's default
+// privileges again.
+//
+// The admin login, the session user of tx, is granted CONNECT too if the
+// revocation took it. A superuser always connects, but an admin login that
+// acts as a superuser through a role is not one itself, and it does not
+// inherit the superuser's power to connect, so it would otherwise be unable
+// to migrate again.
 //
 // The revocation is made as the database's owner, so it leaves a grant that
 // another role made, which a role with the grant option can, and a CONNECT
 // that storycreep_app has through a role it is a member of. It returns an
 // error if PUBLIC or storycreep_app can still connect after it.
 func restrictConnect(ctx context.Context, tx pgx.Tx, login string) error {
-	const connects = "SELECT current_database(), has_database_privilege('public', current_database(), 'CONNECT'), " +
-		"has_database_privilege($1::name, current_database(), 'CONNECT'), " +
-		"has_database_privilege($2::name, current_database(), 'CONNECT')"
-	var database string
-	var publicConnects, appRoleConnects, loginConnects bool
-	if err := tx.QueryRow(ctx, connects, appRole, login).
-		Scan(&database, &publicConnects, &appRoleConnects, &loginConnects); err != nil {
+	database, who, err := openConnect(ctx, tx)
+	if err != nil {
 		return fmt.Errorf("restrict who connects to the database: %w", err)
 	}
 	ident := pgx.Identifier{database}.Sanitize()
-	if publicConnects || appRoleConnects {
+	if who != "" {
 		if _, err := tx.Exec(ctx, "REVOKE CONNECT ON DATABASE "+ident+" FROM PUBLIC, "+
 			pgx.Identifier{appRole}.Sanitize()); err != nil {
 			return fmt.Errorf("restrict who connects to the database: %w", err)
 		}
-		// Read again after the revocation, which may have taken the login's
-		// CONNECT with it.
-		if err := tx.QueryRow(ctx, connects, appRole, login).
-			Scan(&database, &publicConnects, &appRoleConnects, &loginConnects); err != nil {
+		if _, who, err = openConnect(ctx, tx); err != nil {
 			return fmt.Errorf("restrict who connects to the database: %w", err)
 		}
-		if publicConnects || appRoleConnects {
-			// Every role has PUBLIC's CONNECT, so PUBLIC is named if it has
-			// one.
-			who := appRole
-			if publicConnects {
-				who = "PUBLIC"
-			}
+		if who != "" {
 			return fmt.Errorf("%s can still connect to the database %q after migrating revoked its CONNECT, because a "+
 				"role other than the database's owner granted it, or it has CONNECT through another role; remove that "+
 				"grant, so that the application logins of the other Storycreep databases on the server cannot connect",
 				who, database)
 		}
 	}
-	if !loginConnects {
-		if _, err := tx.Exec(ctx, "GRANT CONNECT ON DATABASE "+ident+" TO "+pgx.Identifier{login}.Sanitize()); err != nil {
-			return fmt.Errorf("grant CONNECT to the login %q: %w", login, err)
+	// Read after the revocation, which may have taken the CONNECT of either
+	// login with it.
+	var admin string
+	var loginConnects, adminConnects bool
+	if err := tx.QueryRow(ctx, "SELECT session_user, has_database_privilege($1::name, current_database(), 'CONNECT'), "+
+		"has_database_privilege(session_user, current_database(), 'CONNECT')", login).
+		Scan(&admin, &loginConnects, &adminConnects); err != nil {
+		return fmt.Errorf("restrict who connects to the database: %w", err)
+	}
+	for _, r := range []struct {
+		role     string
+		connects bool
+	}{{login, loginConnects}, {admin, adminConnects}} {
+		if r.connects {
+			continue
 		}
+		if _, err := tx.Exec(ctx, "GRANT CONNECT ON DATABASE "+ident+" TO "+pgx.Identifier{r.role}.Sanitize()); err != nil {
+			return fmt.Errorf("grant CONNECT to the login %q: %w", r.role, err)
+		}
+	}
+	return nil
+}
+
+// openConnect returns the name of the current database, and PUBLIC or
+// storycreep_app if that role can connect to it, or "" if neither can. Every
+// role has PUBLIC's CONNECT, so PUBLIC is named if both can.
+func openConnect(ctx context.Context, q querier) (database, who string, err error) {
+	var public, app bool
+	if err := q.QueryRow(ctx, "SELECT current_database(), has_database_privilege('public', current_database(), 'CONNECT'), "+
+		"has_database_privilege($1::name, current_database(), 'CONNECT')", appRole).Scan(&database, &public, &app); err != nil {
+		return "", "", err
+	}
+	switch {
+	case public:
+		return database, "PUBLIC", nil
+	case app:
+		return database, appRole, nil
+	}
+	return database, "", nil
+}
+
+// checkConnectRestricted returns an error if PUBLIC or storycreep_app can
+// connect to the database, which migrating revokes (restrictConnect). A
+// database that a dump was restored into, or that CREATE DATABASE copied, has
+// PostgreSQL's default privileges again, which let every role connect,
+// including the application logins of the other Storycreep databases on the
+// server, until migrating restricts them again.
+func checkConnectRestricted(ctx context.Context, q querier) error {
+	database, who, err := openConnect(ctx, q)
+	if err != nil {
+		return fmt.Errorf("check who connects to the database: %w", err)
+	}
+	if who != "" {
+		return fmt.Errorf("%s can connect to the database %q, as after a dump is restored into a new database, so the "+
+			"application logins of the other Storycreep databases on the server could connect to it too; run "+
+			"storycreep migrate, which revokes that CONNECT", who, database)
 	}
 	return nil
 }

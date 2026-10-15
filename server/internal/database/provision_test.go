@@ -482,6 +482,43 @@ func TestProvisionRestrictsConnect(t *testing.T) {
 	}
 }
 
+// TestProvisionKeepsTheAdminConnecting checks that an admin login that acts as
+// a superuser through a role, rather than being one itself, can still connect
+// after migrating restricts who connects, and so can migrate again, also when
+// another role owns the database: a member of a superuser does not inherit
+// its power to connect to every database.
+func TestProvisionKeepsTheAdminConnecting(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	admin := d.Admin(t)
+	login := d.NewLogin(t, "")
+	owner := pgx.Identifier{d.FreshLogin(t)}.Sanitize()
+	db := pgx.Identifier{d.Name}.Sanitize()
+	if _, err := admin.Exec(ctx, "GRANT postgres TO "+pgx.Identifier{login.User()}.Sanitize()+"; CREATE ROLE "+owner+
+		"; ALTER DATABASE "+db+" OWNER TO "+owner); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		// A role that owns the database cannot be dropped.
+		if _, err := admin.Exec(ctx, "ALTER DATABASE "+db+" OWNER TO postgres"); err != nil {
+			t.Error(err)
+		}
+	})
+	asSuperuser, err := config.ParseDatabaseURL(login.Reveal() + "&role=postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range []string{"first", "second"} {
+		if _, err := database.Migrate(ctx, asSuperuser, d.AppURL, database.MigrateOptions{}); err != nil {
+			t.Fatalf("the %s run: %v", run, err)
+		}
+	}
+	if !canConnect(t, login) {
+		t.Errorf("the admin login cannot connect after migrating")
+	}
+}
+
 // TestProvisionRefusesConnectThroughARole checks that migrating fails when
 // storycreep_app can still connect to the database after the revocation,
 // through a role that it is a member of and that was granted CONNECT: the
