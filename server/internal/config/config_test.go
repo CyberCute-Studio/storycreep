@@ -32,6 +32,9 @@ func TestMain(m *testing.M) {
 
 const testURL = "https://storycreep.example.com"
 
+// testMetricsToken is a valid STORYCREEP_METRICS_TOKEN.
+const testMetricsToken = "Zm9vYmFyYmF6cXV4LTAxMjM0NTY3ODk="
+
 // testDatabaseURL is a valid STORYCREEP_DATABASE_URL, and testDatabaseShown
 // is how the configuration shows it.
 const (
@@ -111,7 +114,13 @@ func TestDefaults(t *testing.T) {
 		{"STORYCREEP_SIGNUP", "closed", SourceDefault},
 		{"STORYCREEP_DATABASE_URL", testDatabaseShown, SourceEnvironment},
 		{"STORYCREEP_DATABASE_ADMIN_URL", "", SourceUnset},
+		{"STORYCREEP_HTTP_ADDR", ":8080", SourceDefault},
+		{"STORYCREEP_ADMIN_ADDR", "127.0.0.1:9090", SourceDefault},
+		{"STORYCREEP_METRICS_TOKEN", "", SourceUnset},
 		{"STORYCREEP_LOG_LEVEL", "info", SourceDefault},
+	}
+	if c.HTTPAddr != ":8080" || c.AdminAddr != "127.0.0.1:9090" || c.MetricsToken.IsSet() {
+		t.Errorf("HTTPAddr %q, AdminAddr %q, MetricsToken set %v", c.HTTPAddr, c.AdminAddr, c.MetricsToken.IsSet())
 	}
 	if got := c.Entries(); !slices.Equal(got, want) {
 		t.Errorf("Entries() =\n%v\nwant\n%v", got, want)
@@ -169,6 +178,20 @@ func TestCapabilities(t *testing.T) {
 				c.Signup = SignupOpen
 				return c
 			}(),
+		},
+		{
+			name: "self-hosted with a metrics token",
+			env:  map[string]string{"STORYCREEP_METRICS_TOKEN": testMetricsToken},
+			want: func() Capabilities {
+				c := modeCapabilities(modeSelfHosted)
+				c.MetricsEndpoint = MetricsProtected
+				return c
+			}(),
+		},
+		{
+			name: "hosted with a metrics token",
+			env:  map[string]string{"STORYCREEP_MODE": "hosted", "STORYCREEP_METRICS_TOKEN": testMetricsToken},
+			want: modeCapabilities(modeHosted),
 		},
 		{
 			name: "hosted without the public site",
@@ -239,6 +262,27 @@ func TestInvalidValues(t *testing.T) {
 		{"STORYCREEP_PUBLIC_SITE", "yes", "must be on or off"},
 		{"STORYCREEP_SIGNUP", "public", "must be closed, invite, or open"},
 		{"STORYCREEP_LOG_LEVEL", "verbose", "must be debug, info, warn, or error"},
+		{"STORYCREEP_HTTP_ADDR", "8080", "must be host:port"},
+		{"STORYCREEP_HTTP_ADDR", ":http", "the port must be a number"},
+		{"STORYCREEP_HTTP_ADDR", ":0", "the port must be a number between 1 and 65535"},
+		{"STORYCREEP_HTTP_ADDR", ":65536", "the port must be a number between 1 and 65535"},
+		{"STORYCREEP_HTTP_ADDR", ":08080", "the port must be a number"},
+		{"STORYCREEP_HTTP_ADDR", "::1:8080", "must be host:port"},
+		{"STORYCREEP_HTTP_ADDR", "local_host:8080", "the host must be an IP address, such as 127.0.0.1, or a host name"},
+		// Not host names, although made of letters, digits, hyphens, and dots.
+		{"STORYCREEP_HTTP_ADDR", "-:8080", "or a host name"},
+		{"STORYCREEP_HTTP_ADDR", ".:8080", "or a host name"},
+		{"STORYCREEP_HTTP_ADDR", "app..internal:8080", "none of them empty"},
+		{"STORYCREEP_HTTP_ADDR", "app-.internal:8080", "starting or ending with a hyphen"},
+		{"STORYCREEP_HTTP_ADDR", strings.Repeat("a", 64) + ".example:8080", "or a host name"},
+		// IPv4 addresses written short, which resolvers read as addresses.
+		{"STORYCREEP_HTTP_ADDR", "0:8080", "the last not a number"},
+		{"STORYCREEP_HTTP_ADDR", "127.1:8080", "the last not a number"},
+		{"STORYCREEP_HTTP_ADDR", "127.000.000.001:8080", "the last not a number"},
+		{"STORYCREEP_HTTP_ADDR", "0x7f000001:8080", "the last not a number"},
+		{"STORYCREEP_ADMIN_ADDR", "on", "must be host:port"},
+		{"STORYCREEP_ADMIN_ADDR", "OFF", "or off for no admin port"},
+		{"STORYCREEP_ADMIN_ADDR", ":8080", "the admin port needs an address of its own"},
 		// Only the file trims a value, so the space is pointed out.
 		{"STORYCREEP_SIGNUP", "invite ", "starts or ends with white space"},
 		{"STORYCREEP_PUBLIC_URL", " " + testURL, "starts or ends with white space"},

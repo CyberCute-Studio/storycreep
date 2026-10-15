@@ -1,0 +1,234 @@
+// Package httpserver is the server that "storycreep serve" runs (PRD
+// FR-ADMIN-05, FR-ADMIN-06): it listens for HTTP, takes the database step of
+// startup, which applies the pending migrations unless told not to
+// (FR-ADMIN-04), and serves until its context ends.
+//
+// It listens before the database step, so that /healthz answers while the
+// migrations run and /readyz answers 503 until the server can serve: until
+// the database step is done, and, without auto-migration, until the pending
+// migrations are applied by "storycreep migrate". Until then, the API answers
+// not_ready too. If the database step fails, as when a migration fails, Run
+// closes the listeners and returns the error, so the instance serves no
+// traffic, and the database stays at the last migration that succeeded
+// (FR-ADMIN-04 AC3).
+//
+// The admin port, a second listener, serves /metrics, with or without a
+// bearer token as the MetricsEndpoint capability says. Every route declares
+// the capability it requires (NFR-SEC-02), and every response carries the
+// security headers of NFR-SEC-09.
+package httpserver
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"net"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/version"
+)
+
+// Timeouts of the HTTP servers. A request's body has a time limit of its own
+// (package api).
+const (
+	readHeaderTimeout = 10 * time.Second
+	idleTimeout       = 2 * time.Minute
+	// shutdownTimeout is how long Run waits for the requests in progress
+	// when it stops. It is shorter than the 30 seconds that Kubernetes waits
+	// by default before it kills a container. Docker and Docker Compose wait
+	// only 10 seconds by default, so a deployment with them sets a longer
+	// grace period, such as a compose file's stop_grace_period.
+	shutdownTimeout = 20 * time.Second
+	// defaultPollInterval is how often a server without auto-migration
+	// checks whether the pending migrations have been applied.
+	defaultPollInterval = 5 * time.Second
+)
+
+// ErrNoAdminURL is returned by Run when auto-migration is on but
+// STORYCREEP_DATABASE_ADMIN_URL, which applying migrations needs, is not set.
+var ErrNoAdminURL = errors.New("STORYCREEP_DATABASE_ADMIN_URL is not set, and the server applies the pending " +
+	"migrations at startup with it; set it, or start the server with --no-auto-migrate and apply the migrations " +
+	"with storycreep migrate")
+
+// Options configure Run.
+type Options struct {
+	// AutoMigrate makes the server apply the pending migrations at startup,
+	// which is what serve does unless --no-auto-migrate is given.
+	AutoMigrate bool
+	// Log receives the server's log. Nil discards it.
+	Log *slog.Logger
+	// Listener, if set, is where the server listens, instead of
+	// STORYCREEP_HTTP_ADDR. AdminListener is the same for the admin port,
+	// and Run closes it unasked if the configuration has no metrics to
+	// serve. Tests listen on ports of their own.
+	Listener, AdminListener net.Listener
+	// Migrations are the migrations of the database step, as
+	// database.StartOptions.Migrations. Nil means the embedded ones.
+	Migrations fs.FS
+	// PollInterval is how often a server without auto-migration checks
+	// whether the pending migrations have been applied. Zero means every 5
+	// seconds.
+	PollInterval time.Duration
+}
+
+// Run runs the server until ctx ends, and then stops it gracefully: it stops
+// accepting connections and waits up to 20 seconds for the requests in
+// progress. It returns an error if the server cannot listen, or if the
+// database step fails, which leaves the database as database.Start
+// describes. A ctx that ends during the database step stops the server
+// without an error.
+func Run(ctx context.Context, cfg *config.Config, opts Options) error {
+	log := opts.Log
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	if opts.AutoMigrate && !cfg.DatabaseAdminURL.IsSet() {
+		closeListeners(opts.Listener, opts.AdminListener)
+		return ErrNoAdminURL
+	}
+	s := newServer(cfg, log)
+
+	ln, adminLn := opts.Listener, opts.AdminListener
+	if s.admin == nil && adminLn != nil {
+		_ = adminLn.Close()
+		adminLn = nil
+	}
+	var err error
+	if ln == nil {
+		if ln, err = net.Listen("tcp", cfg.HTTPAddr); err != nil {
+			closeListeners(adminLn)
+			return fmt.Errorf("listen on STORYCREEP_HTTP_ADDR: %w", err)
+		}
+	}
+	if s.admin != nil && adminLn == nil {
+		if adminLn, err = net.Listen("tcp", cfg.AdminAddr); err != nil {
+			closeListeners(ln)
+			return fmt.Errorf("listen on STORYCREEP_ADMIN_ADDR: %w", err)
+		}
+	}
+
+	errorLog := slog.NewLogLogger(log.Handler(), slog.LevelWarn)
+	servers := []*http.Server{{
+		Handler:           s.main,
+		ReadHeaderTimeout: readHeaderTimeout,
+		IdleTimeout:       idleTimeout,
+		ErrorLog:          errorLog,
+	}}
+	listeners := []net.Listener{ln}
+	if s.admin != nil {
+		servers = append(servers, &http.Server{
+			Handler:           s.admin,
+			ReadHeaderTimeout: readHeaderTimeout,
+			IdleTimeout:       idleTimeout,
+			ErrorLog:          errorLog,
+		})
+		listeners = append(listeners, adminLn)
+	}
+	serveErr := make(chan error, len(servers))
+	for i, srv := range servers {
+		go func() {
+			if err := srv.Serve(listeners[i]); !errors.Is(err, http.ErrServerClosed) {
+				serveErr <- err
+			}
+		}()
+	}
+
+	info := version.Get()
+	attrs := []any{"address", ln.Addr().String(), "version", info.Version, "commit", info.Commit}
+	if adminLn != nil {
+		attrs = append(attrs, "admin_address", adminLn.Addr().String())
+	} else {
+		attrs = append(attrs, "metrics", s.metricsOff)
+	}
+	log.InfoContext(ctx, "listening", attrs...)
+
+	// stop stops the servers together, so that each has the whole time to
+	// finish its requests in progress.
+	stop := func() {
+		s.ready.setPhase(phaseStopping)
+		log.InfoContext(ctx, "stopping")
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		defer cancel()
+		var wg sync.WaitGroup
+		for i, srv := range servers {
+			wg.Go(func() {
+				if err := srv.Shutdown(shutdownCtx); err != nil {
+					log.WarnContext(ctx, "the requests in progress did not finish in time, so their connections are "+
+						"closed", "address", listeners[i].Addr().String(), "error", err)
+					_ = srv.Close()
+				}
+			})
+		}
+		wg.Wait()
+	}
+
+	db, err := database.Start(ctx, cfg, database.StartOptions{
+		AutoMigrate: opts.AutoMigrate,
+		Log:         log,
+		Migrations:  opts.Migrations,
+	})
+	if err != nil {
+		stop()
+		if ctx.Err() != nil {
+			log.InfoContext(ctx, "stopped before the database step finished", "error", err)
+			return nil
+		}
+		log.ErrorContext(ctx, "the database step of startup failed, so the server does not serve", "error", err)
+		return err
+	}
+	defer db.Close()
+	s.ready.db.Store(db)
+
+	var wg sync.WaitGroup
+	pollCtx, stopPolling := context.WithCancel(ctx)
+	defer wg.Wait()
+	defer stopPolling()
+	// With auto-migration, Start has checked that the database has every
+	// migration, so only a server without it asks.
+	var pending []int64
+	if !opts.AutoMigrate {
+		pending, err = db.Pending(ctx)
+	}
+	switch {
+	case err != nil:
+		stop()
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
+	case len(pending) == 0:
+		s.ready.setPhase(phaseReady)
+		log.InfoContext(ctx, "ready")
+	default:
+		s.ready.setPhase(phaseMigrationsPending)
+		interval := opts.PollInterval
+		if interval <= 0 {
+			interval = defaultPollInterval
+		}
+		wg.Go(func() { s.ready.waitForMigrations(pollCtx, db, interval) })
+	}
+
+	select {
+	case <-ctx.Done():
+		stop()
+		log.InfoContext(ctx, "stopped")
+		return nil
+	case err := <-serveErr:
+		stop()
+		return fmt.Errorf("serve HTTP: %w", err)
+	}
+}
+
+func closeListeners(ls ...net.Listener) {
+	for _, l := range ls {
+		if l != nil {
+			_ = l.Close()
+		}
+	}
+}

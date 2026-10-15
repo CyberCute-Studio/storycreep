@@ -328,6 +328,7 @@ func checkAppDatabase(ctx context.Context, app config.DatabaseURL, ms migrationS
 	if err != nil {
 		return nil, err
 	}
+	db.migrations = ms.fsys
 	p, err := db.pendingIn(ctx, ms)
 	switch {
 	case err != nil:

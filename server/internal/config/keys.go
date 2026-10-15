@@ -205,6 +205,76 @@ var keys = []key{
 		effective: func(c *Config) string { return c.DatabaseAdminURL.String() },
 	},
 	{
+		name: "STORYCREEP_HTTP_ADDR",
+		doc: "The address the server listens on for HTTP: `host:port`, or `:port` for every network interface. " +
+			"The host is an IP address or a host name, and the port a number. It serves the API, the health " +
+			"endpoints `/healthz`, `/readyz`, and `/version`, and everything else except `/metrics`. Behind a " +
+			"reverse proxy, the proxy forwards to this address, and users open `STORYCREEP_PUBLIC_URL`.",
+		valuesDoc: "`host:port` or `:port`",
+		def:       constant(":8080"),
+		parse: func(c *Config, v string) error {
+			if err := checkListenAddr(v); err != nil {
+				return err
+			}
+			c.HTTPAddr = v
+			return nil
+		},
+	},
+	{
+		name: "STORYCREEP_ADMIN_ADDR",
+		doc: "The address of the admin port, which serves only `/metrics`, in Prometheus's text format, written " +
+			"like `STORYCREEP_HTTP_ADDR`, or `off` for no admin port. Its port must differ from the port of " +
+			"`STORYCREEP_HTTP_ADDR`, unless both name a host, and different ones. The default listens on the " +
+			"loopback interface only, so that only the machine itself can reach it; in a container, set it to " +
+			"`:9090` to let a Prometheus on the container's network scrape it. How `/metrics` answers depends on the " +
+			"`MetricsEndpoint` [capability](#capabilities): `unauthenticated` serves it to anyone who can reach " +
+			"the port, and `protected` only to a request with `STORYCREEP_METRICS_TOKEN` as its bearer token. " +
+			"With `protected` and no token set, there are no metrics, and the admin port is not opened.",
+		valuesDoc: "`host:port`, `:port`, or `off`",
+		def:       constant("127.0.0.1:9090"),
+		parse: func(c *Config, v string) error {
+			if v == "off" {
+				return nil
+			}
+			if err := checkListenAddr(v); err != nil {
+				if errors.Is(err, errListenForm) {
+					return errors.New("must be host:port, :port for every network interface, or off for no admin " +
+						"port, with an IPv6 address in brackets")
+				}
+				return err
+			}
+			// An invalid STORYCREEP_HTTP_ADDR leaves HTTPAddr empty, and is
+			// reported on its own.
+			if c.HTTPAddr != "" && listenersOverlap(v, c.HTTPAddr) {
+				return errors.New("listens on the port of STORYCREEP_HTTP_ADDR, on the same network interface or on " +
+					"every one; the admin port needs an address of its own, such as another port, or off")
+			}
+			c.AdminAddr = v
+			return nil
+		},
+	},
+	{
+		name: "STORYCREEP_METRICS_TOKEN",
+		doc: "The bearer token that a scraper sends to `/metrics` on the admin port, in an " +
+			"`Authorization: Bearer` header, when the `MetricsEndpoint` capability is `protected`. Setting it " +
+			"also makes the capability `protected` in self-hosted mode. It is at least 16 characters of " +
+			"letters, digits, and `-._~+/`, optionally followed by `=` characters, as RFC 6750 allows; " +
+			"`openssl rand -hex 32` makes one. Hosted mode protects `/metrics` whether or not it is set, so " +
+			"without it, hosted mode serves no metrics.",
+		valuesDoc: "A token of at least 16 characters",
+		secret:    true,
+		parse: func(c *Config, v string) error {
+			if err := checkBearerToken(v); err != nil {
+				return err
+			}
+			c.MetricsToken = secret.New(v)
+			c.Capabilities.MetricsEndpoint = MetricsProtected
+			return nil
+		},
+		capability:      "MetricsEndpoint",
+		capabilityLimit: "`protected` when set",
+	},
+	{
 		name:   "STORYCREEP_LOG_LEVEL",
 		doc:    "The lowest level that is logged.",
 		values: []string{"debug", "info", "warn", "error"},

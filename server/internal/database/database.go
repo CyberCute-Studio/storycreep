@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"strings"
 
@@ -40,6 +41,9 @@ var errNoURL = errors.New("STORYCREEP_DATABASE_URL is not set")
 // DB is the application login's connection pool.
 type DB struct {
 	pool *pgxpool.Pool
+	// migrations are the migrations that Pending compares the database with,
+	// or nil for the embedded ones.
+	migrations fs.FS
 }
 
 // minServerVersion is the oldest PostgreSQL that Storycreep supports (PRD
@@ -109,6 +113,11 @@ func (db *DB) Close() {
 	db.pool.Close()
 }
 
+// Ping checks that the database answers, on one of the pool's connections.
+func (db *DB) Ping(ctx context.Context) error {
+	return db.pool.Ping(ctx)
+}
+
 // setApplicationName names the connections, unless the URL, PGAPPNAME, or a
 // service file already does.
 func setApplicationName(c *pgx.ConnConfig) {
@@ -155,12 +164,13 @@ func settingValue(id ids.UUID) string {
 	return id.String()
 }
 
-// Pending returns the versions of the embedded migrations that the database
+// Pending returns the versions of the embedded migrations, or of the
+// StartOptions.Migrations that Start opened the DB with, that the database
 // has not applied, in ascending order. If the database has applied a
 // migration that the server does not have, because a newer version of
 // Storycreep migrated it, the error is an *UnknownMigrationsError.
 func (db *DB) Pending(ctx context.Context) ([]int64, error) {
-	ms, err := loadMigrations(nil)
+	ms, err := loadMigrations(db.migrations)
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +193,10 @@ type StartOptions struct {
 	AutoMigrate bool
 	// Log receives what Start did. Nil discards it.
 	Log *slog.Logger
+	// Migrations are the migrations to apply, or to compare the database
+	// with, as MigrateOptions.Migrations. The DB that Start returns compares
+	// with them in Pending too.
+	Migrations fs.FS
 }
 
 // Start is the database step of the server's startup (PRD FR-ADMIN-04). With
@@ -204,9 +218,12 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 		log = slog.New(slog.DiscardHandler)
 	}
 	if opts.AutoMigrate {
-		res, db, err := migrate(ctx, cfg.DatabaseAdminURL, cfg.DatabaseURL, MigrateOptions{Waiting: func() {
-			log.InfoContext(ctx, "waiting for the database migration lock, which another session holds")
-		}})
+		res, db, err := migrate(ctx, cfg.DatabaseAdminURL, cfg.DatabaseURL, MigrateOptions{
+			Migrations: opts.Migrations,
+			Waiting: func() {
+				log.InfoContext(ctx, "waiting for the database migration lock, which another session holds")
+			},
+		})
 		// The migrations applied before a failed one stay applied, so they
 		// are logged too.
 		for _, m := range res.Applied {
@@ -223,9 +240,10 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 	if err != nil {
 		return nil, err
 	}
-	ms, err := loadMigrations(nil)
+	ms, err := loadMigrations(opts.Migrations)
 	var p []int64
 	if err == nil {
+		db.migrations = ms.fsys
 		p, err = db.pendingIn(ctx, ms)
 	}
 	// A database that has applied a migration was set up by migrating, which

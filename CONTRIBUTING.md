@@ -99,6 +99,8 @@ A test skipped in any other way still counts, because the report does not run th
 
 [`docs/configuration.md`](docs/configuration.md) is generated from the key declarations in `server/internal/config/keys.go`, and `go test ./...` fails when it is out of date. After you add or change a configuration key, regenerate it by running `go test ./internal/config -run TestReference -update` in `server/`.
 
+[`docs/error-codes.md`](docs/error-codes.md) is generated the same way, from the registry of error codes in `server/internal/api/errors.go`. After you add or change an error code, regenerate it by running `go test ./internal/api -run TestReference -update` in `server/`.
+
 ## Database migrations
 
 The migrations are SQL files in `server/internal/database/migrations/`, embedded in the binary and applied by [goose](https://github.com/pressly/goose). `storycreep migrate` applies them, as the superuser in `STORYCREEP_DATABASE_ADMIN_URL`, under an advisory lock (PRD FR-ADMIN-04).
@@ -116,6 +118,8 @@ Database tests get their own database from `dbtest.New(t)`, in `server/internal/
 
 - Text files use LF line endings everywhere. `.gitattributes` enforces this, and `.editorconfig` sets the indentation: two spaces, except tabs for Go and GDScript.
 - Every user-facing string goes through the i18n layer, and every new endpoint is in the OpenAPI document. The plan's standing checklist lists the rest.
+- Register every route with `api.Register`, or `Mux.Handle` for a handler that is not a huma operation, in `server/internal/api`, which records the capability the route requires. A test walks the routers and fails on a route that declares none (PRD NFR-SEC-02).
+- A handler reports an error by returning an `*api.Error` with a code from the registry, which the client receives in the error envelope. Any other error is answered with `internal_error`, and logged with the request ID, so its text never reaches the client.
 - Outside tests, only `server/internal/config` reads the environment or knows the deployment mode (`STORYCREEP_MODE`). Code that behaves differently in the two modes reads `config.Capabilities`. A test fails on non-test code in any other package that reads an environment variable, names `STORYCREEP_MODE`, or uses a mode value (PRD FR-ADMIN-01 AC3). Test files are exempt, because they set the mode up, and so are test-support packages: a package whose name ends in `test`, such as `dbtest`, and that only test files and other test-support packages import, so that it is not part of the binary.
 - Secrets are held as `secret.Value` (`server/internal/secret`), which prints, logs, and encodes as `[REDACTED]`. Call `Reveal` only where the secret is used.
 
