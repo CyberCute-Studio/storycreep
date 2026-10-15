@@ -3,6 +3,7 @@ package doccheck
 import (
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -24,11 +25,20 @@ var appendixPhases = map[string]string{
 }
 
 type requirement struct {
-	id          string
-	line        int
-	phase       string
-	depends     []string
-	dependsLine int
+	id           string
+	title        string
+	line         int
+	phase        string
+	depends      []string
+	dependsLine  int
+	criteria     []criterion // in document order
+	criteriaLine int         // the Acceptance criteria field; 0 if there is none
+}
+
+// criterion is one acceptance criterion, ACn.
+type criterion struct {
+	num  int
+	line int
 }
 
 type prd struct {
@@ -36,6 +46,7 @@ type prd struct {
 	reqs        map[string]*requirement
 	ids         []string // requirement IDs in document order
 	nfrs        map[string]bool
+	nfrIDs      []string // NFR IDs in document order
 	adrs        map[string]bool
 	scope       map[string]string // FR ID → phase code, from Appendix B
 	scopeLine   map[string]int
@@ -46,7 +57,7 @@ type prd struct {
 }
 
 var (
-	reqHeadingRE   = regexp.MustCompile(`^(FR-[A-Z0-9]+-\d+)\b`)
+	reqHeadingRE   = regexp.MustCompile(`^(FR-[A-Z0-9]+-\d+)\b(?:\s*—\s*(.*))?`)
 	adrHeadingRE   = regexp.MustCompile(`^(ADR-\d+)\b`)
 	nfrRowRE       = regexp.MustCompile(`^\|\s*(NFR-[A-Z0-9]+-\d+)\s*\|`)
 	phaseFieldRE   = regexp.MustCompile(`\*\*Phase:\*\*\s*([^·*]+?)\s*(?:·|$)`)
@@ -54,7 +65,39 @@ var (
 	frIDRE         = regexp.MustCompile(`^FR-[A-Z0-9]+-\d+$`)
 	scopeLineRE    = regexp.MustCompile(`^\*\*([^*]+?)\.\*\*\s*(.*)$`)
 	perfRefRE      = regexp.MustCompile(`NFR-PERF-\d+` + idListTail)
+
+	// The acceptance criteria of a requirement follow its "Acceptance
+	// criteria" field, either as indented bullets ("  - AC1 — …") or inline
+	// on the field's line ("AC1 — … AC2 — …").
+	criteriaFieldRE   = regexp.MustCompile(`^-\s+\*\*Acceptance criteria:\*\*\s*(.*?)\s*$`)
+	criterionBulletRE = regexp.MustCompile(`^\s+-\s+(.*)$`)
+	criterionRE       = regexp.MustCompile(`^AC([1-9]\d*) — `)
+	// inlineLabelRE finds what reads as a criterion's label in text, "AC2 — "
+	// or a misspelling such as "AC2 – ", "AC2 - ", "AC2: ", "**AC2** — ",
+	// "AC 2 — ", "ac2 — ", or one with a no-break space, wherever it is, as
+	// after "works." or "(", but not a reference such as "FR-DATA-01 AC1, AC5"
+	// or "FR-DATA-01/AC1".
+	inlineLabelRE = regexp.MustCompile(`(?:^|[^\p{L}\p{N}/])(` + labelPattern + `[*_\s\p{Zs}]*[-–—:])`)
+	// listItemRE finds a list item that is not a "-" bullet: "* …", "+ …",
+	// "1. …".
+	listItemRE = regexp.MustCompile(`^\s*(?:[*+]|\d+[.)])\s`)
+	// criterionLineRE finds a line that starts with a criterion's label, as a
+	// list item or as text, at the margin or indented: "- AC3 — …",
+	// "AC3 — …", "  - AC3 — …", or a misspelling such as "- AC 3 — …".
+	criterionLineRE = regexp.MustCompile(`^\s*(?:(?:[-*+]|\d+[.)])\s+)?` + labelPattern + `\b`)
 )
+
+// labelPattern matches a criterion's number as text might write it: "AC3",
+// or misspelled, as "AC 3" or "ac3".
+const labelPattern = `(?i:AC)[\s\p{Zs}]*\d+`
+
+// strayCriterion reports whether a line that is not read as a criterion
+// reads as one: it starts with a criterion's label, or its text holds one, as
+// a line at the margin that a criterion's text is wrapped onto can. The
+// Acceptance criteria field is read on its own.
+func strayCriterion(l string) bool {
+	return !criteriaFieldRE.MatchString(l) && (criterionLineRE.MatchString(l) || inlineLabelRE.MatchString(l))
+}
 
 func parsePRD(file, src string, r *reporter) *prd {
 	d := newDocument(src)
@@ -69,15 +112,16 @@ func parsePRD(file, src string, r *reporter) *prd {
 	}
 	for _, s := range d.sections() {
 		if m := reqHeadingRE.FindStringSubmatch(s.text); m != nil && s.level == 4 {
-			p.parseRequirement(d, s, m[1], r)
+			p.parseRequirement(d, s, m[1], m[2], r)
 		}
 		if m := adrHeadingRE.FindStringSubmatch(s.text); m != nil && s.level == 3 {
 			p.adrs[m[1]] = true
 		}
 	}
 	for _, l := range d.lines {
-		if m := nfrRowRE.FindStringSubmatch(l); m != nil {
+		if m := nfrRowRE.FindStringSubmatch(l); m != nil && !p.nfrs[m[1]] {
 			p.nfrs[m[1]] = true
+			p.nfrIDs = append(p.nfrIDs, m[1])
 		}
 	}
 	p.parseAppendixB(d, r)
@@ -86,16 +130,84 @@ func parsePRD(file, src string, r *reporter) *prd {
 	return p
 }
 
-func (p *prd) parseRequirement(d *document, s section, id string, r *reporter) {
+func (p *prd) parseRequirement(d *document, s section, id, title string, r *reporter) {
 	if prev, dup := p.reqs[id]; dup {
 		r.add(p.file, s.line, "%s is defined twice (also on line %d)", id, prev.line)
 		return
 	}
-	req := &requirement{id: id, line: s.line}
+	req := &requirement{id: id, title: title, line: s.line}
 	p.reqs[id] = req
 	p.ids = append(p.ids, id)
+	inCriteria := false
+	listEnd := 0 // the line that ended the list of criteria, once it has ended
+	textCol := 0 // the column of a criterion bullet's text, once one is read
 	for n := s.start; n < s.end; n++ {
 		l := d.line(n)
+		switch {
+		case inCriteria:
+			// A line indented to a criterion's text, as a nested list or a
+			// wrapped line, belongs to that criterion. One that reads as a
+			// criterion of its own is reported, so that a criterion is never
+			// silently left out.
+			text := strings.TrimLeft(l, " \t")
+			if textCol > 0 && text != "" && column(l[:len(l)-len(text)]) >= textCol {
+				if inlineLabelRE.MatchString(l) {
+					r.add(p.file, n, "%s: cannot read %q as an acceptance criterion (write each criterion as its own \"- ACn — …\" bullet)", id, strings.TrimSpace(l))
+				}
+				continue
+			}
+			if m := criterionBulletRE.FindStringSubmatch(l); m != nil {
+				req.addCriteria(p.file, n, m[1], false, r)
+				if textCol == 0 {
+					textCol = column(l[:len(l)-len(m[1])])
+				}
+				continue
+			}
+			// A blank line, as in a loose list, or an indented line that
+			// continues a criterion's text does not end the list. An indented
+			// line that reads as a criterion written another way is reported,
+			// so that a criterion is never silently left out.
+			if strings.TrimSpace(l) == "" {
+				continue
+			}
+			if strings.TrimLeft(l, " \t") != l {
+				if listItemRE.MatchString(l) || inlineLabelRE.MatchString(l) {
+					r.add(p.file, n, "%s: cannot read %q as an acceptance criterion (write it as a \"- ACn — …\" bullet)", id, strings.TrimSpace(l))
+				}
+				continue
+			}
+			// A line at the margin ends the list, unless it reads as a
+			// criterion that is not indented.
+			if strayCriterion(l) {
+				r.add(p.file, n, "%s: cannot read %q as an acceptance criterion (indent it as a \"  - ACn — …\" bullet under the field)", id, l)
+				continue
+			}
+			inCriteria = false
+			listEnd = n
+		case listEnd != 0 && strayCriterion(l):
+			// A criterion after the end of the list, as after a line of text
+			// at the margin, is reported, so that it is never silently left
+			// out.
+			r.add(p.file, n, "%s: cannot read %q as an acceptance criterion, because the list of acceptance criteria ends on line %d (keep the criteria together under the field)", id, strings.TrimSpace(l), listEnd)
+			continue
+		case req.criteriaLine == 0 && strayCriterion(l):
+			// So is a criterion before the field, as one written under the
+			// Requirement field. The line is still read for the other
+			// fields.
+			r.add(p.file, n, "%s: cannot read %q as an acceptance criterion, because it comes before the Acceptance criteria field (keep the criteria together under the field)", id, strings.TrimSpace(l))
+		}
+		if m := criteriaFieldRE.FindStringSubmatch(l); m != nil {
+			if req.criteriaLine != 0 {
+				r.add(p.file, n, "%s has a second Acceptance criteria field (first on line %d)", id, req.criteriaLine)
+				continue
+			}
+			req.criteriaLine = n
+			if m[1] != "" {
+				req.addCriteria(p.file, n, m[1], true, r)
+			}
+			inCriteria = true
+			continue
+		}
 		if m := phaseFieldRE.FindStringSubmatch(l); m != nil && req.phase == "" {
 			req.phase = m[1]
 		}
@@ -129,6 +241,82 @@ func (p *prd) parseRequirement(d *document, s section, id string, r *reporter) {
 	if req.dependsLine == 0 {
 		r.add(p.file, s.line, "%s has no Depends on field", id)
 	}
+	req.checkCriteria(p.file, s.line, r)
+}
+
+// addCriteria reads the acceptance criteria in text: one indented bullet
+// ("AC1 — …"), or, when inline, the rest of the field's line ("AC1 — …
+// AC2 — …"). Each label that inlineLabelRE finds is a criterion: in inline
+// text, one that is not written "ACn — " is reported, and so is a second
+// label in a bullet, so that a criterion is never silently left out.
+func (req *requirement) addCriteria(file string, line int, text string, inline bool, r *reporter) {
+	if !criterionRE.MatchString(text) {
+		r.add(file, line, "%s: cannot read %q as an acceptance criterion (write \"ACn — …\")", req.id, text)
+		return
+	}
+	// The text starts with a label, so the first one is the bullet's own.
+	for i, m := range inlineLabelRE.FindAllStringSubmatchIndex(text, -1) {
+		found := text[m[2]:m[3]]
+		label := criterionRE.FindStringSubmatch(text[m[2]:])
+		switch {
+		case !inline && i > 0:
+			r.add(file, line, "%s: cannot read %q as an acceptance criterion (write each criterion as its own \"- ACn — …\" bullet)", req.id, found)
+		case label == nil:
+			r.add(file, line, "%s: cannot read %q as an acceptance criterion (write \"ACn — …\")", req.id, found)
+		default:
+			n, err := strconv.Atoi(label[1])
+			if err != nil {
+				r.add(file, line, "%s: cannot read AC%s as an acceptance criterion", req.id, label[1])
+				continue
+			}
+			req.criteria = append(req.criteria, criterion{num: n, line: line})
+		}
+	}
+}
+
+// checkCriteria checks that the acceptance criteria are numbered AC1 to ACn
+// (§4.0), each once. They may be listed in any order.
+func (req *requirement) checkCriteria(file string, headingLine int, r *reporter) {
+	if req.criteriaLine == 0 {
+		r.add(file, headingLine, "%s has no Acceptance criteria field", req.id)
+		return
+	}
+	if len(req.criteria) == 0 {
+		r.add(file, req.criteriaLine, "%s lists no acceptance criteria", req.id)
+		return
+	}
+	seen := map[int]int{}
+	last := 0
+	for _, c := range req.criteria {
+		if prev, dup := seen[c.num]; dup {
+			r.add(file, c.line, "%s lists AC%d twice (also on line %d)", req.id, c.num, prev)
+			continue
+		}
+		seen[c.num] = c.line
+		last = max(last, c.num)
+	}
+	for n := 1; n < last; n++ {
+		if seen[n] == 0 {
+			r.add(file, req.criteriaLine, "%s has no AC%d, although its criteria run to AC%d", req.id, n, last)
+		}
+	}
+}
+
+// criterionIDs returns the IDs of the acceptance criteria, "AC1" to "ACn",
+// in number order.
+func (req *requirement) criterionIDs() []string {
+	var nums []int
+	for _, c := range req.criteria {
+		if !slices.Contains(nums, c.num) {
+			nums = append(nums, c.num)
+		}
+	}
+	slices.Sort(nums)
+	ids := make([]string, len(nums))
+	for i, n := range nums {
+		ids[i] = "AC" + strconv.Itoa(n)
+	}
+	return ids
 }
 
 // splitScope splits a scope list such as Appendix B's "FR-PUB-01, 02 ·
