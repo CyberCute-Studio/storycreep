@@ -253,6 +253,12 @@ func TestCheckFails(t *testing.T) {
 			want: `FR-A-02: cannot read "and again. AC3 — It is wrapped." as an acceptance criterion, because the list of acceptance criteria ends on line 26`,
 		},
 		{
+			name: "acceptance criterion nested in another",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too:\n    - AC3 — Nested.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "- AC3 — Nested." as an acceptance criterion (write each criterion as its own "- ACn — …" bullet)`,
+		},
+		{
 			name: "two acceptance criteria in one bullet",
 			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too. AC3 — It works thrice.\n"}},
 			file: "PRD.md",
@@ -714,6 +720,19 @@ func TestParsePRD(t *testing.T) {
 	}
 	if want := []string{"AC1", "AC2", "AC3"}; !slices.Equal(got.Requirements[1].Criteria, want) {
 		t.Errorf("FR-A-02 criteria in a loose list = %q, want %q", got.Requirements[1].Criteria, want)
+	}
+
+	// A list nested in a criterion belongs to it.
+	nested := applyEdits(t, readFixture(t, "PRD.md"), []edit{{
+		"  - AC1 — It works too.\n",
+		"  - AC1 — It rejects:\n    - a missing name;\n    * a long name;\n\t1. and an empty one.\n  - AC3 — It follows a nested list.\n",
+	}})
+	got, problems = ParsePRD("PRD.md", nested)
+	if len(problems) > 0 {
+		t.Fatalf("a nested list should pass, got:%s", formatProblems(problems))
+	}
+	if want := []string{"AC1", "AC2", "AC3"}; !slices.Equal(got.Requirements[1].Criteria, want) {
+		t.Errorf("FR-A-02 criteria with a nested list = %q, want %q", got.Requirements[1].Criteria, want)
 	}
 
 	// An inline label is read wherever it is, not only after a space.

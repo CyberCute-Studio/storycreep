@@ -135,12 +135,27 @@ func (p *prd) parseRequirement(d *document, s section, id, title string, r *repo
 	p.ids = append(p.ids, id)
 	inCriteria := false
 	listEnd := 0 // the line that ended the list of criteria, once it has ended
+	textCol := 0 // the column of a criterion bullet's text, once one is read
 	for n := s.start; n < s.end; n++ {
 		l := d.line(n)
 		switch {
 		case inCriteria:
+			// A line indented to a criterion's text, as a nested list or a
+			// wrapped line, belongs to that criterion. One that reads as a
+			// criterion of its own is reported, so that a criterion is never
+			// silently left out.
+			text := strings.TrimLeft(l, " \t")
+			if textCol > 0 && text != "" && column(l[:len(l)-len(text)]) >= textCol {
+				if inlineLabelRE.MatchString(l) {
+					r.add(p.file, n, "%s: cannot read %q as an acceptance criterion (write each criterion as its own \"- ACn — …\" bullet)", id, strings.TrimSpace(l))
+				}
+				continue
+			}
 			if m := criterionBulletRE.FindStringSubmatch(l); m != nil {
 				req.addCriteria(p.file, n, m[1], false, r)
+				if textCol == 0 {
+					textCol = column(l[:len(l)-len(m[1])])
+				}
 				continue
 			}
 			// A blank line, as in a loose list, or an indented line that

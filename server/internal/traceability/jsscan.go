@@ -69,18 +69,27 @@ var jsTables = map[string]bool{"each": true, "for": true}
 // true }, …).
 var jsSkipOptions = map[string]bool{"skip": true, "todo": true, "fails": true}
 
+// jsAnnotations are Playwright's modifiers that also annotate the test or
+// group they are called in, rather than declare one: test.skip(),
+// test.skip(isMobile, "…"), or test.fixme(({ browserName }) => …). Without
+// arguments, the call skips that test or group, or makes it an expected
+// failure, so it verifies nothing.
+var jsAnnotations = map[string]bool{"skip": true, "fixme": true, "fail": true}
+
 // readJS reads a JavaScript or TypeScript file. Its test declarations are the
 // calls of jsTestHeads, or of jsBenchHeads in a benchmark file, with a string
 // literal title, named after the groups they are in as Vitest names them:
 // "group > title". A group without a literal title is "*", and a group
 // without a title, as Playwright's test.describe(() => …), adds nothing to
-// the name. A test is skipped when it, or a group it is in, is declared with
-// a modifier that verifies nothing, whatever the group's arguments, as in
-// describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …), or with
-// an option that does, as in test("…", { skip: true }, …). A group
-// is skipped too when everything declared in it, its tests and the groups in
-// it that hold no test, is skipped, as in describe("…", () => {
-// describe.todo("…") }), because it runs no test then.
+// the name. A declaration without a literal title is returned unnamed. A test
+// is skipped when it, or a group it is in, is declared with a modifier that
+// verifies nothing, whatever the group's arguments, as in
+// describe.skip.each([…])("…", …) or describe.skip.each`…`("…", …), with an
+// option that does, as in test("…", { skip: true }, …), or when it, a group
+// it is in, or the file calls Playwright's test.skip(), test.fixme(), or
+// test.fail() without arguments. A group is skipped too when it runs no test:
+// everything declared directly in it, its tests and groups, is skipped, as in
+// describe("…", () => { describe.todo("…") }).
 func readJS(file, src string, isTest bool) source {
 	// A file that is not a test file matters only for the Verifies comments
 	// in it.
@@ -147,11 +156,13 @@ func readJS(file, src string, isTest bool) source {
 		anonymous bool
 		group     bool // a describe or suite group, or a call on one, as test.describe.configure(…)
 		// decl is set for the declaration of a test, tests, or a group,
-		// named or not, rather than of a hook, a step, or a setting.
+		// named or not, rather than of a hook, a step, a setting, or an
+		// annotation.
 		decl bool
-		// test is set for the declaration of a test or tests, rather than of
-		// a group.
-		test bool
+		// unconditional is set for Playwright's test.skip(), test.fixme(), or
+		// test.fail() without arguments, which skips the test or group it is
+		// called in.
+		unconditional bool
 	}
 	var calls []call
 	for i, t := range toks {
@@ -162,8 +173,9 @@ func readJS(file, src string, isTest bool) source {
 			continue
 		}
 		j := i + 1
-		known, declares, skipped := true, true, false
+		known, declares, skipped, conditional := true, true, false, false
 		group := t.text == "describe" || t.text == "suite"
+		var mods []string // the modifiers, without conditions
 		for j+1 < len(toks) && toks[j].is('(', ".") && toks[j+1].kind == 'i' {
 			m := toks[j+1].text
 			j += 2
@@ -172,8 +184,10 @@ func readJS(file, src string, isTest bool) source {
 				if j < len(toks) && toks[j].is('(', "(") {
 					j = match[j] + 1
 				}
+				conditional = true
 				continue
 			}
+			mods = append(mods, m)
 			skip, ok := jsModifiers[m]
 			known = known && ok
 			declares = declares && (ok || jsTables[m])
@@ -189,9 +203,14 @@ func readJS(file, src string, isTest bool) source {
 		if j >= len(toks) || !toks[j].is('(', "(") {
 			continue
 		}
-		c := call{head: i, from: j, to: match[j], skipped: skipped, name: "*", group: group, decl: declares, test: declares && !group}
+		c := call{head: i, from: j, to: match[j], skipped: skipped, name: "*", group: group, decl: declares}
 		for c.to+1 < len(toks) && toks[c.to+1].is('(', "(") {
 			c.to = match[c.to+1]
+		}
+		if t.text == "test" && !group && !table && !conditional && len(mods) == 1 && jsAnnotations[mods[0]] && c.to == match[c.from] {
+			if args := callArgs(toks, c.from, c.to); annotates(toks, args, match) {
+				c.decl, c.unconditional = false, len(args) == 0
+			}
 		}
 		c.skipped = c.skipped || skippedByOption(toks, c.from, c.to)
 		// The title is a literal only when nothing is added to it, as in
@@ -206,51 +225,113 @@ func readJS(file, src string, isTest bool) source {
 
 	// inside reports whether c is declared inside the call of g.
 	inside := func(g, c call) bool { return g.from < c.head && c.head <= g.to }
-	// skippedAt[k] is set when calls[k], or a group it is in, is declared
-	// with a modifier that verifies nothing.
-	skippedAt := make([]bool, len(calls))
-	// holdsTests[k] is set when a test is declared inside calls[k].
-	holdsTests := make([]bool, len(calls))
+	// parent[k] is the innermost declaration that calls[k] is inside, or -1.
+	// The calls are in source order, so it is the last one before calls[k]
+	// that holds it.
+	parent := make([]int, len(calls))
 	for k, c := range calls {
-		skippedAt[k] = c.skipped
-		for _, g := range calls {
-			skippedAt[k] = skippedAt[k] || inside(g, c) && g.skipped
-			holdsTests[k] = holdsTests[k] || g.test && inside(c, g)
+		parent[k] = -1
+		for g := range k {
+			if calls[g].decl && inside(calls[g], c) {
+				parent[k] = g
+			}
 		}
 	}
+	// test.skip() without arguments skips the test or group it is called in,
+	// also from a hook or a step, or every test in the file when it is
+	// called outside them.
+	fileSkipped := false
 	for k, c := range calls {
-		if !c.named {
+		switch {
+		case !c.unconditional:
+		case parent[k] >= 0:
+			calls[parent[k]].skipped = true
+		default:
+			fileSkipped = true
+		}
+	}
+	// skippedAt[k] is set when calls[k], or a group it is in, is declared to
+	// verify nothing.
+	skippedAt := make([]bool, len(calls))
+	for k, c := range calls {
+		skippedAt[k] = c.skipped || fileSkipped || parent[k] >= 0 && skippedAt[parent[k]]
+	}
+	// runs[k] is set when calls[k] is a declaration that runs a test: a test
+	// that is not skipped, or a group that is not skipped and in which a
+	// declaration runs. A group in which the scan sees no declaration, as one
+	// whose tests a helper function declares, runs. The declarations in a
+	// call come after it, so they are decided first.
+	runs := make([]bool, len(calls))
+	holds := make([]bool, len(calls))  // a declaration is in calls[k]
+	inRuns := make([]bool, len(calls)) // a declaration in calls[k] runs
+	for k := len(calls) - 1; k >= 0; k-- {
+		c := calls[k]
+		if !c.decl {
 			continue
 		}
-		var path []string
-		for _, g := range calls {
-			if inside(g, c) && !g.anonymous {
-				path = append(path, g.name)
-			}
+		runs[k] = !skippedAt[k] && (!c.group || !holds[k] || inRuns[k])
+		if p := parent[k]; p >= 0 {
+			holds[p] = true
+			inRuns[p] = inRuns[p] || runs[k]
 		}
-		skipped := skippedAt[k]
-		// A group runs only what is declared in it: its tests, and the groups
-		// in it that hold no test the scan sees, as describe.todo("…") or a
-		// group whose tests a helper function declares. One in which all of
-		// that is skipped verifies nothing. A group in which the scan sees
-		// none of it counts.
-		if c.group && !skipped {
-			content, runs := 0, false
-			for m, d := range calls {
-				if d.decl && (d.test || !holdsTests[m]) && inside(c, d) {
-					content++
-					runs = runs || !skippedAt[m]
+	}
+	for k, c := range calls {
+		if !c.decl {
+			continue
+		}
+		d := decl{line: toks[c.head].line, unnamed: !c.named, skipped: !runs[k]}
+		if c.named {
+			var path []string
+			for _, g := range calls {
+				if inside(g, c) && !g.anonymous {
+					path = append(path, g.name)
 				}
 			}
-			skipped = content > 0 && !runs
+			d.name = strings.Join(append(path, c.name), " > ")
 		}
-		s.decls = append(s.decls, decl{
-			line:    toks[c.head].line,
-			name:    strings.Join(append(path, c.name), " > "),
-			skipped: skipped,
-		})
+		s.decls = append(s.decls, d)
 	}
 	return s
+}
+
+// callArgs returns the index of the first token of each argument of the call
+// whose parentheses are toks[open] and toks[close].
+func callArgs(toks []jsToken, open, close int) []int {
+	var args []int
+	depth := 0 // brackets of any kind, and template literals
+	for k := open + 1; k < close; k++ {
+		if depth == 0 && (k == open+1 || toks[k-1].is('(', ",")) {
+			args = append(args, k)
+		}
+		switch t := toks[k]; {
+		case t.kind == 't', t.kind == '(' && (t.text == "(" || t.text == "[" || t.text == "{"):
+			depth++
+		case t.kind == 'e', t.kind == '(' && (t.text == ")" || t.text == "]" || t.text == "}"):
+			depth--
+		}
+	}
+	return args
+}
+
+// annotates reports whether the arguments of a call of test.skip,
+// test.fixme, or test.fail are those of Playwright's annotation rather than
+// of a declaration: none; a callback, as in test.fixme(({ browserName }) =>
+// …); or a condition and a description, as in test.skip(isMobile, "…"). A
+// declaration's first argument is its title, so it is a string or template
+// literal, or a function follows it, as in test.skip(title, async () => …).
+func annotates(toks []jsToken, args []int, match map[int]int) bool {
+	if len(args) == 0 || isFunctionAt(toks, args[0], match) {
+		return true
+	}
+	if k := toks[args[0]].kind; k == 's' || k == 't' {
+		return false
+	}
+	for _, a := range args[1:] {
+		if isFunctionAt(toks, a, match) {
+			return false
+		}
+	}
+	return true
 }
 
 // jsToken is a token of JavaScript or TypeScript source.
