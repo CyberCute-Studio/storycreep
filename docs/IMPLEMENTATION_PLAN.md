@@ -161,7 +161,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-ADMIN-01 AC4 and FR-ADMIN-07 AC1–AC2 pass. The compose smoke test (AC3) comes in item 118.
 
 ### 10. i18n foundation
-**Status:** todo · **Depends on:** 6
+**Status:** done ([#11](https://github.com/CyberCute-Studio/storycreep/pull/11)) · **Depends on:** 6
 **PRD:** FR-I18N-01, FR-I18N-02 (server), ADR-024
 - Catalogs in `/web/shared/i18n` with i18next and ICU, shared by both bundles.
 - A server-side catalog for display messages and email templates, with ICU plurals for English and Czech rules.
