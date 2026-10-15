@@ -131,11 +131,12 @@ var keys = []key{
 	},
 	{
 		name: "STORYCREEP_DEFAULT_LOCALE",
-		doc: "The instance's default locale, as a BCP 47 language tag (PRD FR-I18N-02). The server shows a user its " +
-			"messages, such as those of the API's errors, in the locale that the user prefers, or else in the first " +
-			"that the browser's `Accept-Language` header asks for and the server has, or else in this one. A tag " +
-			"with a region, such as `en-GB`, selects the catalog of its language. Only a locale that the server has " +
-			"a catalog for is accepted, so that a mistake is found when the server starts.",
+		doc: "The instance's default locale, as a BCP 47 language tag (PRD FR-I18N-02). The server writes its " +
+			"messages, such as those of the API's errors, in the locale that the request's `Accept-Language` header " +
+			"prefers among those that the server has a catalog for, or else in this one. A tag with a region, such " +
+			"as `en-GB`, selects the catalog of that region if the server has one, and else the catalog of its " +
+			"language. Only a locale that the server has a catalog for is accepted, so that a mistake is found when " +
+			"the server starts.",
 		valuesDoc: "A locale that the server has a catalog for: " + localeNames("`"),
 		def:       constant(i18n.Source.String()),
 		parse: func(c *Config, v string) error {

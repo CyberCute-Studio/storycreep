@@ -9,7 +9,7 @@ The web app's formatter is the reference: each output is what i18next-icu, which
 | Key | Contents |
 | --- | --- |
 | `format` | A locale, a message, its arguments, and the text it renders. The Czech vectors check its plural rules (`one`, `few`, `many`, and `other`) and its number format, which groups digits with a no-break space (U+00A0) and writes a decimal comma. |
-| `invalid` | Messages that both formatters refuse, such as a plural without an `other` option. Every plural and select must have one, which intl-messageformat checks only when it is asked to. |
+| `invalid` | Messages that both formatters refuse, such as a plural without an `other` option. Every plural and select must have one, as intl-messageformat requires unless it is told otherwise. |
 
 Arguments are JSON values: strings, and numbers, which both sides read as 64-bit floats.
 

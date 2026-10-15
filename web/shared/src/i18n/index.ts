@@ -43,11 +43,25 @@ export interface LocaleSources {
   instanceDefault?: string | null;
 }
 
+// Orders locales as the server's Bundle orders its catalogs: the source
+// locale first, and then by tag.
+function sourceFirst(a: string, b: string): number {
+  if (a === b) {
+    return 0;
+  }
+  if (a === SOURCE_LOCALE || b === SOURCE_LOCALE) {
+    return a === SOURCE_LOCALE ? -1 : 1;
+  }
+  return a < b ? -1 : 1;
+}
+
 /**
  * Returns the locale of `supported` that `tag` asks for: the same locale,
- * such as en-GB for en-GB, or else the same language in the same script,
- * such as en for en-GB, but not zh-Hans for zh-Hant. It returns undefined for
- * a tag that no locale matches, or that is not a valid BCP 47 tag.
+ * such as en-GB for en-GB, or else the first of the same language in the same
+ * script, the source locale first and then by tag, such as en for en-AU, but
+ * not zh-Hans for zh-Hant. It returns undefined for a tag that no locale
+ * matches, for und, and for a tag that is not a valid BCP 47 tag. The
+ * server's Bundle.Match picks the same locale (TestMatchRegion).
  */
 export function matchLocale(
   tag: string,
@@ -55,13 +69,18 @@ export function matchLocale(
 ): string | undefined {
   let wanted: Intl.Locale;
   try {
-    wanted = new Intl.Locale(tag).maximize();
+    const parsed = new Intl.Locale(tag);
+    if (parsed.baseName === "und") {
+      // A tag that names no language asks for none.
+      return undefined;
+    }
+    wanted = parsed.maximize();
   } catch {
     return undefined;
   }
   // Both sides are maximized, so that en-GB matches the catalog en-GB, and
   // en-US the catalog en, whose likely region is US.
-  const offered = supported.map((locale) => ({
+  const offered = [...supported].sort(sourceFirst).map((locale) => ({
     locale,
     max: new Intl.Locale(locale).maximize(),
   }));

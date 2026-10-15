@@ -187,15 +187,41 @@ describe("matchLocale", () => {
     expect(matchLocale("sk", ["en", "cs"])).toBeUndefined();
     expect(matchLocale("en_US", ["en"])).toBeUndefined();
   });
-  // As the server's Bundle.Match does (TestMatchRegion).
+  // The cases of the server's Bundle.Match (TestMatchRegion), which picks
+  // the same locales, whatever the order of the catalogs.
   it("matches the catalog of the same region first", () => {
-    const regional = ["en", "en-GB", "pt-BR", "pt-PT"];
-    expect(matchLocale("en-GB", regional)).toBe("en-GB");
-    expect(matchLocale("en-US", regional)).toBe("en");
-    expect(matchLocale("en", regional)).toBe("en");
-    expect(matchLocale("pt-PT", regional)).toBe("pt-PT");
-    expect(matchLocale("pt-BR", regional)).toBe("pt-BR");
-    expect(matchLocale("pt", regional)).toBe("pt-BR");
+    const regional = [
+      "zh",
+      "pt-PT",
+      "pt-BR",
+      "nb",
+      "es-419",
+      "es",
+      "en-GB",
+      "en",
+    ];
+    const cases: [string, string | undefined][] = [
+      ["en-GB", "en-GB"],
+      ["en-US", "en"],
+      ["en", "en"],
+      ["en-AU", "en"],
+      ["pt-PT", "pt-PT"],
+      ["pt-BR", "pt-BR"],
+      ["pt", "pt-BR"],
+      ["pt-AO", "pt-BR"],
+      ["es-MX", "es"],
+      ["es-419", "es-419"],
+      ["zh-SG", "zh"],
+      ["zh-TW", undefined],
+      ["no", undefined],
+      ["sk", undefined],
+      ["und", undefined],
+      ["und-u-nu-arab", undefined],
+      ["en-u-nu-arab", "en"],
+    ];
+    for (const [tag, want] of cases) {
+      expect(matchLocale(tag, regional), tag).toBe(want);
+    }
   });
 });
 

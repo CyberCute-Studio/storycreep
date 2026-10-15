@@ -116,6 +116,15 @@
       "output": "-0"
     },
     {
+      "note": "a number beyond 64 bits in its shortest form, not the float's exact value",
+      "locale": "en",
+      "message": "{n, number}",
+      "args": {
+        "n": 1e23
+      },
+      "output": "100,000,000,000,000,000,000,000"
+    },
+    {
       "note": "English one",
       "locale": "en",
       "message": "{count, plural, one {# file} other {# files}}",

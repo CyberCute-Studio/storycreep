@@ -76,9 +76,25 @@ var z = i18n.K("only.in.test.data")
   );
 }
 `,
-	"web/app/src/board.test.tsx":   `test("renders", () => t("only.in.a.test"));`,
-	"web/shared/src/i18n/index.ts": `export function translate(key: string) { return i18n.t(key); }`,
-	"web/shared/i18n/en.json":      `{"board.title": "Board"}`,
+	// A pathless route of TanStack Router, in a directory whose name starts
+	// with _, and a page of the Astro site.
+	"web/app/src/routes/_auth/login.tsx": `export const Login = () => <h1>{t("auth.login")}</h1>;
+`,
+	"web/site/src/pages/index.astro": `---
+const title = t("site.title");
+---
+<h1>{t("site.hero")}</h1>
+`,
+	"server/internal/_old/old.go": `package old
+
+import "github.com/CyberCute-Studio/storycreep/server/internal/i18n"
+
+var z = i18n.K("only.in.an.ignored.go.directory")
+`,
+	"web/app/src/__tests__/helper.ts": `t("only.in.a.test.directory");`,
+	"web/app/src/board.test.tsx":      `test("renders", () => t("only.in.a.test"));`,
+	"web/shared/src/i18n/index.ts":    `export function translate(key: string) { return i18n.t(key); }`,
+	"web/shared/i18n/en.json":         `{"board.title": "Board"}`,
 }
 
 // TestExtract checks that extraction keeps each catalog to exactly the keys
@@ -112,8 +128,8 @@ func TestExtract(t *testing.T) {
 		"server/internal/i18n/catalog/en.json": "{\n  \"a.key\": \"A & <b>\",\n  \"b.key\": \"\",\n  \"c.key\": \"\"\n}\n",
 		// Another catalog keeps only the keys the code uses, and gains none.
 		"server/internal/i18n/catalog/cs.json": "{\n  \"a.key\": \"Á\",\n  \"b.key\": \"B\"\n}\n",
-		"web/shared/i18n/en.json": "{\n  \"board.count\": \"\",\n  \"board.help\": \"\",\n  \"board.hint\": \"\",\n" +
-			"  \"board.title\": \"Board\"\n}\n",
+		"web/shared/i18n/en.json": "{\n  \"auth.login\": \"\",\n  \"board.count\": \"\",\n  \"board.help\": \"\",\n" +
+			"  \"board.hint\": \"\",\n  \"board.title\": \"Board\",\n  \"site.hero\": \"\",\n  \"site.title\": \"\"\n}\n",
 	} {
 		if got := readFile(t, root, name); got != want {
 			t.Errorf("%s =\n%s\nwant\n%s", name, got, want)
@@ -138,9 +154,12 @@ func TestExtract(t *testing.T) {
 		"server/internal/y/y.go:5: the key c.key has no message in server/internal/i18n/catalog/en.json; write it there",
 		"server/internal/i18n/catalog/en.json:1: b.key: the message is empty",
 		"server/internal/i18n/catalog/en.json:1: c.key: the message is empty",
+		"web/app/src/routes/_auth/login.tsx:1: the key auth.login has no message in web/shared/i18n/en.json; write it there",
 		"web/app/src/board.tsx:6: the key board.count has no message in web/shared/i18n/en.json; write it there",
 		"web/app/src/board.tsx:8: the key board.help has no message in web/shared/i18n/en.json; write it there",
 		"web/app/src/board.tsx:7: the key board.hint has no message in web/shared/i18n/en.json; write it there",
+		"web/site/src/pages/index.astro:4: the key site.hero has no message in web/shared/i18n/en.json; write it there",
+		"web/site/src/pages/index.astro:2: the key site.title has no message in web/shared/i18n/en.json; write it there",
 	}
 	if !slices.Equal(problems, wantProblems) {
 		t.Errorf("problems:\n%s\nwant:\n%s", strings.Join(problems, "\n"), strings.Join(wantProblems, "\n"))

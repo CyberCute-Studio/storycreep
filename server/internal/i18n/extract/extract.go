@@ -12,9 +12,9 @@
 // Code names a key in a way that extraction can read without running it:
 //
 //   - Go calls i18n.K("key") with a string literal (package i18n);
-//   - TypeScript and JavaScript call t("key") or x.t("key"), as i18next's t
-//     is called, or set the i18nKey attribute of react-i18next's Trans, with a
-//     string literal, as in i18nKey="key".
+//   - TypeScript, JavaScript, and Astro components call t("key") or
+//     x.t("key"), as i18next's t is called, or set the i18nKey attribute of
+//     react-i18next's Trans, with a string literal, as in i18nKey="key".
 //
 // Extraction reports any other call of i18n.K or t, such as one with a
 // variable, so that no key the code uses can escape it.
@@ -230,7 +230,7 @@ func (c Catalog) scan(root, dir string, uses map[string][]use, problems *[]docch
 		rel = filepath.ToSlash(rel)
 		name := d.Name()
 		if d.IsDir() {
-			if rel != dir && (skipDir(name) || slices.Contains(c.Skip, rel)) {
+			if rel != dir && (c.skipDir(name) || slices.Contains(c.Skip, rel)) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -263,14 +263,15 @@ func (c Catalog) scan(root, dir string, uses map[string][]use, problems *[]docch
 }
 
 // skipDir reports whether a directory is skipped: one of dependencies, of
-// build output, of test data, or a hidden one, or one whose Go files the go
-// tool ignores.
-func skipDir(name string) bool {
+// build output, of test data, or a hidden one, or, for Go, one whose files
+// the go tool ignores. Other code's directories that start with _ are read,
+// such as the web app's pathless routes in src/routes/_auth.
+func (c Catalog) skipDir(name string) bool {
 	switch name {
-	case "node_modules", "dist", "coverage", "testdata", "vendor":
+	case "node_modules", "dist", "coverage", "testdata", "vendor", "__tests__", "__mocks__":
 		return true
 	}
-	return strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
+	return strings.HasPrefix(name, ".") || c.Go && strings.HasPrefix(name, "_")
 }
 
 // goSource reports whether a Go file is part of a program: not a test.
@@ -280,7 +281,10 @@ func goSource(name string) bool {
 }
 
 var (
-	jsSourceRE = regexp.MustCompile(`\.[cm]?[jt]sx?$`)
+	// jsSourceRE are JavaScript and TypeScript files, and the public site's
+	// Astro components, whose frontmatter is TypeScript and whose template
+	// calls t in expressions, as {t("key")}.
+	jsSourceRE = regexp.MustCompile(`\.(?:[cm]?[jt]sx?|astro)$`)
 	// jsNotSourceRE are the files that are not the app's code: tests,
 	// benchmarks, type declarations, and generated code.
 	jsNotSourceRE = regexp.MustCompile(`\.(?:test|spec|bench|benchmark)\.[cm]?[jt]sx?$|\.d\.[cm]?ts$|\.gen\.[cm]?[jt]sx?$`)
@@ -368,7 +372,7 @@ func literal(call *ast.CallExpr) (string, bool) {
 }
 
 // readJS returns the keys of the calls of t, and of the i18nKey attributes,
-// in a TypeScript or JavaScript file, and where each is.
+// in a TypeScript, JavaScript, or Astro file, and where each is.
 func readJS(file string, src []byte) (uses []use, keys []string, problems []doccheck.Problem) {
 	toks, _, unclosed := jslex.Lex(string(src))
 	if unclosed > 0 {

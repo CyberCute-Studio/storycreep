@@ -44,7 +44,6 @@ type Bundle struct {
 	// locales are the locales that have a catalog, the source locale first.
 	locales    []language.Tag
 	catalogs   map[language.Tag]map[string]*compiled
-	matcher    language.Matcher
 	localizers map[language.Tag]*Localizer
 }
 
@@ -141,7 +140,8 @@ func Load(fsys fs.FS) (*Bundle, error) {
 	if err := errors.Join(problems...); err != nil {
 		return nil, err
 	}
-	// The source locale first: the matcher falls back to it.
+	// The source locale first, and then by tag, so that Match prefers it, as
+	// matchLocale in web/shared does.
 	slices.SortFunc(b.locales, func(x, y language.Tag) int {
 		switch {
 		case x == Source:
@@ -151,7 +151,6 @@ func Load(fsys fs.FS) (*Bundle, error) {
 		}
 		return strings.Compare(x.String(), y.String())
 	})
-	b.matcher = language.NewMatcher(b.locales)
 	for _, tag := range b.locales {
 		b.localizers[tag] = &Localizer{bundle: b, locale: newLocale(tag)}
 	}
@@ -234,19 +233,52 @@ func (b *Bundle) lookup(tag language.Tag, key string) (*compiled, language.Tag) 
 	return b.catalogs[Source][key], Source
 }
 
-// Match returns the locale with a catalog that tag asks for: the same
-// language, such as en for en-GB, in a variant that its speakers read. It
-// reports false if no locale matches that closely, as for sk, which only
-// resembles cs.
+// Match returns the locale with a catalog that tag asks for, as matchLocale
+// in web/shared does, so that the API and the web app pick the same one: the
+// locale that is tag, once both have their likely script and region filled
+// in, such as en-GB for en-GB and en for en-US, or else the first locale, the
+// source locale first, of tag's language in tag's script, such as en for
+// en-AU, but not zh-Hans for zh-Hant. It reports false if no locale matches,
+// as for sk, which only resembles cs, or for und.
 func (b *Bundle) Match(tag language.Tag) (language.Tag, bool) {
-	if tag == language.Und {
+	// A tag that names no language, script, region, or variant, such as und
+	// or und-u-nu-arab, asks for none, as matchLocale reads its baseName.
+	base, script, region := tag.Raw()
+	if name, _ := language.Compose(base, script, region, tag.Variants()); name == language.Und {
 		return language.Und, false
 	}
-	_, i, conf := b.matcher.Match(tag)
-	if conf < language.High {
-		return language.Und, false
+	want := maximize(tag)
+	for _, l := range b.locales {
+		if maximize(l) == want {
+			return l, true
+		}
 	}
-	return b.locales[i], true
+	for _, l := range b.locales {
+		if m := maximize(l); m.base == want.base && m.script == want.script {
+			return l, true
+		}
+	}
+	return language.Und, false
+}
+
+// likely is a tag with its likely script and region filled in, as
+// Intl.Locale's maximize fills them in, from CLDR's likely subtags.
+type likely struct {
+	base     language.Base
+	script   language.Script
+	region   language.Region
+	variants string
+}
+
+func maximize(tag language.Tag) likely {
+	base, _ := tag.Base()
+	script, _ := tag.Script()
+	region, _ := tag.Region()
+	var variants []string
+	for _, v := range tag.Variants() {
+		variants = append(variants, v.String())
+	}
+	return likely{base, script, region, strings.Join(variants, "-")}
 }
 
 // Negotiate returns the locale of a request (PRD FR-I18N-02): the first that

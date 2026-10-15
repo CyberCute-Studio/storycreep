@@ -67,6 +67,9 @@ func TestArgumentTypes(t *testing.T) {
 		{"{n, plural, one {# one} other {# other}}", Args{"n": math.Inf(1)}, "∞ other"},
 		{"{n, plural, offset:1 one {# one} other {# other}}", Args{"n": math.Inf(-1)}, "-∞ other"},
 		{"{n, selectordinal, one {#st} other {#th}}", Args{"n": math.NaN()}, "NaNth"},
+		{"{n, plural, one {# one} other {# other}}", Args{"n": float32(math.Inf(1))}, "∞ other"},
+		{"{n, number}", Args{"n": float32(math.NaN())}, "NaN"},
+		{"{n, plural, other {#}}", Args{"n": 1e23}, "100,000,000,000,000,000,000,000"},
 	}
 	for _, tt := range tests {
 		got, err := formatString(t, language.English, tt.msg, tt.args)
@@ -105,6 +108,16 @@ func TestNumber(t *testing.T) {
 		{en, -0.5, "-0.5"},
 		{en, -0.0004, "-0"},
 		{en, 1e21, "1,000,000,000,000,000,000,000"},
+		// A float beyond 64 bits is written in its shortest form, as
+		// Intl.NumberFormat writes it, and not as the float's exact value,
+		// 99,999,999,999,999,991,611,392.
+		{en, 1e23, "100,000,000,000,000,000,000,000"},
+		{en, -1e23, "-100,000,000,000,000,000,000,000"},
+		{en, math.Pow(2, 64), "18,446,744,073,709,552,000"},
+		{en, 1.2345678901234567e19, "12,345,678,901,234,567,000"},
+		// An integer is written exactly, whatever its size.
+		{en, uint64(math.MaxUint64), "18,446,744,073,709,551,615"},
+		{en, int64(math.MinInt64), "-9,223,372,036,854,775,808"},
 		{en, math.NaN(), "NaN"},
 		{en, math.Inf(1), "∞"},
 		{en, math.Inf(-1), "-∞"},

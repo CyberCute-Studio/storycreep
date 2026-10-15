@@ -36,6 +36,15 @@ func (l *locale) number(d decimal) string {
 		if n, err := strconv.ParseInt(d.String(), 10, 64); err == nil {
 			return l.printer.Sprint(number.Decimal(n))
 		}
+		if n, err := strconv.ParseUint(d.integer, 10, 64); err == nil && !d.negative {
+			return l.printer.Sprint(number.Decimal(n))
+		}
+		// A whole number beyond 64 bits is a float's shortest form, such as
+		// 1 and 23 zeros for 1e23. x/text would write the float's exact
+		// value, 99999999999999991611392, so it is given the digits that
+		// shortest form has, as Intl.NumberFormat writes it.
+		f, _ := strconv.ParseFloat(d.String(), 64)
+		return l.printer.Sprint(number.Decimal(f, number.Precision(len(strings.TrimRight(d.integer, "0")))))
 	}
 	// d has at most three fraction digits, which x/text keeps, and
 	// ParseFloat reads it back as the float whose shortest form it is, so
@@ -85,6 +94,9 @@ func (d decimal) String() string {
 // form, as 1.0005 rather than the 1.000499… that the float holds, and a half
 // is rounded away from zero.
 func newDecimal(v any, f float64, maxFraction int) (decimal, error) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return decimal{}, errors.New("the number is not finite")
+	}
 	var s string
 	switch v := v.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
@@ -92,9 +104,6 @@ func newDecimal(v any, f float64, maxFraction int) (decimal, error) {
 	case float32:
 		s = strconv.FormatFloat(float64(v), 'f', -1, 32)
 	default:
-		if math.IsNaN(f) || math.IsInf(f, 0) {
-			return decimal{}, errors.New("the number is not finite")
-		}
 		s = strconv.FormatFloat(f, 'f', -1, 64)
 	}
 	var d decimal

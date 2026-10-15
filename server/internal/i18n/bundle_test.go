@@ -126,15 +126,15 @@ func TestNegotiate(t *testing.T) {
 }
 
 // TestMatchRegion checks that a tag matches the catalog of its own region,
-// if there is one, and else the catalog of its language, as matchLocale in
-// web/shared does, so that the API and the web app pick the same locale.
+// if there is one, and else the first catalog of its language and script, as
+// matchLocale in web/shared does, with the same cases, so that the API and the
+// web app pick the same locale.
 func TestMatchRegion(t *testing.T) {
-	b, err := Load(fstest.MapFS{
-		"en.json":    {Data: []byte(`{}`)},
-		"en-GB.json": {Data: []byte(`{}`)},
-		"pt-BR.json": {Data: []byte(`{}`)},
-		"pt-PT.json": {Data: []byte(`{}`)},
-	})
+	fsys := fstest.MapFS{}
+	for _, locale := range []string{"zh", "pt-PT", "pt-BR", "nb", "es-419", "es", "en-GB", "en"} {
+		fsys[locale+".json"] = &fstest.MapFile{Data: []byte(`{}`)}
+	}
+	b, err := Load(fsys)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,12 +142,24 @@ func TestMatchRegion(t *testing.T) {
 		{"en-GB", "en-GB"},
 		{"en-US", "en"},
 		{"en", "en"},
+		{"en-AU", "en"},
 		{"pt-PT", "pt-PT"},
 		{"pt-BR", "pt-BR"},
 		{"pt", "pt-BR"},
+		{"pt-AO", "pt-BR"},
+		{"es-MX", "es"},
+		{"es-419", "es-419"},
+		{"zh-SG", "zh"},
+		{"zh-TW", ""},
+		{"no", ""},
+		{"sk", ""},
+		{"und", ""},
+		{"und-u-nu-arab", ""},
+		{"en-u-nu-arab", "en"},
 	} {
-		if got, ok := b.Match(language.Make(tt.tag)); !ok || got.String() != tt.want {
-			t.Errorf("Match(%s) = %s, %v, want %s", tt.tag, got, ok, tt.want)
+		got, ok := b.Match(language.Make(tt.tag))
+		if tt.want == "" && ok || tt.want != "" && (!ok || got.String() != tt.want) {
+			t.Errorf("Match(%s) = %s, %v, want %q", tt.tag, got, ok, tt.want)
 		}
 	}
 }
