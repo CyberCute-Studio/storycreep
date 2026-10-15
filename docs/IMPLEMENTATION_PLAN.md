@@ -123,7 +123,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** migrations run once under the advisory lock on all three PostgreSQL versions, and FR-ADMIN-04 AC2 passes in its pre-release form, including the immutability check failing on a fixture that edits a merged migration. AC1 and AC3 need the readiness endpoint and land in item 6.
 
 ### 6. HTTP server skeleton and operational endpoints
-**Status:** todo · **Depends on:** 4, 5
+**Status:** done ([#7](https://github.com/CyberCute-Studio/storycreep/pull/7)) · **Depends on:** 4, 5
 **PRD:** FR-ADMIN-05, FR-ADMIN-04 (AC1, AC3), FR-ADMIN-06 (`serve`), FR-API-01 (AC2), FR-API-04 (envelope, pagination), NFR-SEC-02, NFR-SEC-07, NFR-SEC-09, FR-PUB-02 (AC4), §10.5
 - `chi` and `huma` v2 with the `serve` subcommand. Request IDs. `serve` runs item 5's database startup step, which applies pending migrations unless `--no-auto-migrate` is given.
 - Error envelope and a registry of error codes. Display messages are wired to i18n in item 10.
