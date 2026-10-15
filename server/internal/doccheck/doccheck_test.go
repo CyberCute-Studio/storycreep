@@ -3,6 +3,7 @@ package doccheck
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -124,6 +125,192 @@ func TestCheckFails(t *testing.T) {
 			prd:  []edit{{"NFR-PERF-01…02 met", "NFR-PERF-01...02 met"}},
 			file: "PRD.md",
 			want: `§12.1 exit criteria: cannot read "NFR-PERF-01...02" as a requirement ID`,
+		},
+		{
+			name: "requirement without acceptance criteria",
+			prd:  []edit{{"- **Acceptance criteria:**\n  - AC1 — It is hosted.\n", ""}},
+			file: "PRD.md",
+			want: "FR-B-02 has no Acceptance criteria field",
+		},
+		{
+			name: "Acceptance criteria field listing nothing",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", ""}},
+			file: "PRD.md",
+			want: "FR-B-02 lists no acceptance criteria",
+		},
+		{
+			name: "requirement with a second Acceptance criteria field",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC1 — It is hosted.\n- **Acceptance criteria:** AC2 — Again.\n"}},
+			file: "PRD.md",
+			want: "FR-B-02 has a second Acceptance criteria field (first on line 41)",
+		},
+		{
+			name: "unreadable acceptance criterion",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC1 — It is hosted.\n  - AC 2 — It is hosted well.\n"}},
+			file: "PRD.md",
+			want: `FR-B-02: cannot read "AC 2 — It is hosted well." as an acceptance criterion`,
+		},
+		{
+			name: "unreadable inline acceptance criteria",
+			prd:  []edit{{"AC1 — It shines. AC2 — It still works.", "It shines and still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "It shines and still works." as an acceptance criterion`,
+		},
+		{
+			name: "inline acceptance criterion with an en dash",
+			prd:  []edit{{"AC2 — It still works.", "AC2 – It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "AC2 –" as an acceptance criterion (write "ACn — …")`,
+		},
+		{
+			name: "inline acceptance criterion with a colon",
+			prd:  []edit{{"AC2 — It still works.", "AC2: It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "AC2:" as an acceptance criterion`,
+		},
+		{
+			name: "inline acceptance criterion with a no-break space",
+			prd:  []edit{{"AC2 — It still works.", "AC2\u00a0— It still works."}},
+			file: "PRD.md",
+			want: "FR-B-01: cannot read \"AC2\\u00a0—\" as an acceptance criterion",
+		},
+		{
+			name: "inline acceptance criterion with a space in its label",
+			prd:  []edit{{"AC2 — It still works.", "AC 2 — It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "AC 2 —" as an acceptance criterion (write "ACn — …")`,
+		},
+		{
+			name: "inline acceptance criterion in lower case",
+			prd:  []edit{{"AC2 — It still works.", "ac2 — It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "ac2 —" as an acceptance criterion (write "ACn — …")`,
+		},
+		{
+			name: "inline acceptance criterion in bold",
+			prd:  []edit{{"AC2 — It still works.", "**AC2** — It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "AC2** —" as an acceptance criterion`,
+		},
+		{
+			name: "acceptance criterion in parentheses in a bullet",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too (AC3 — and thrice).\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "AC3 —" as an acceptance criterion (write each criterion as its own "- ACn — …" bullet)`,
+		},
+		{
+			name: "inline acceptance criterion without a space after the dash",
+			prd:  []edit{{"AC2 — It still works.", "AC2 —It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "AC2 —" as an acceptance criterion`,
+		},
+		{
+			name: "acceptance criterion in a star bullet",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC1 — It is hosted.\n  * AC2 — It is starred.\n"}},
+			file: "PRD.md",
+			want: `FR-B-02: cannot read "* AC2 — It is starred." as an acceptance criterion (write it as a "- ACn — …" bullet)`,
+		},
+		{
+			name: "acceptance criterion in a numbered item",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC1 — It is hosted.\n\n  1. It is numbered.\n"}},
+			file: "PRD.md",
+			want: `FR-B-02: cannot read "1. It is numbered." as an acceptance criterion`,
+		},
+		{
+			name: "acceptance criterion without a bullet",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC1 — It is hosted.\n  AC2 — It has no bullet.\n"}},
+			file: "PRD.md",
+			want: `FR-B-02: cannot read "AC2 — It has no bullet." as an acceptance criterion`,
+		},
+		{
+			name: "acceptance criterion bullet at the margin",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too.\n- AC3 — At the margin.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "- AC3 — At the margin." as an acceptance criterion (indent it as a "  - ACn — …" bullet under the field)`,
+		},
+		{
+			name: "acceptance criterion bullet at the margin with a space in its label",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too.\n- AC 3 — At the margin.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "- AC 3 — At the margin." as an acceptance criterion (indent it as a "  - ACn — …" bullet under the field)`,
+		},
+		{
+			name: "acceptance criterion text at the margin",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too.\nAC3 — A lazy continuation line.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "AC3 — A lazy continuation line." as an acceptance criterion`,
+		},
+		{
+			name: "acceptance criterion before the Acceptance criteria field",
+			prd:  []edit{{"- **Acceptance criteria:**\n  - AC2 — It is listed out of order.\n", "  - AC3 — Before the field.\n- **Acceptance criteria:**\n  - AC2 — It is listed out of order.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "- AC3 — Before the field." as an acceptance criterion, because it comes before the Acceptance criteria field`,
+		},
+		{
+			name: "acceptance criterion in text before the Acceptance criteria field",
+			prd:  []edit{{"- **Acceptance criteria:**\n  - AC2 — It is listed out of order.\n", "It works. AC3 — It works before the field.\n- **Acceptance criteria:**\n  - AC2 — It is listed out of order.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "It works. AC3 — It works before the field." as an acceptance criterion, because it comes before the Acceptance criteria field`,
+		},
+		{
+			name: "acceptance criterion after a line of text at the margin",
+			prd:  []edit{{"  - AC2 — It is listed out of order.\n", "  - AC2 — It is listed out of order,\nwrapped at the margin.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "- AC1 — It works too." as an acceptance criterion, because the list of acceptance criteria ends on line 26`,
+		},
+		{
+			name: "inline acceptance criteria wrapped onto a line at the margin",
+			prd:  []edit{{"AC1 — It shines. AC2 — It still works.", "AC1 — It shines. AC2 — It still\nworks. AC3 — It is wrapped."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "works. AC3 — It is wrapped." as an acceptance criterion (indent it`,
+		},
+		{
+			name: "acceptance criterion in text at the margin after the list",
+			prd:  []edit{{"  - AC2 — It is listed out of order.\n", "  - AC2 — It is listed out of order,\nwrapped at the margin,\nand again. AC3 — It is wrapped.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "and again. AC3 — It is wrapped." as an acceptance criterion, because the list of acceptance criteria ends on line 26`,
+		},
+		{
+			name: "acceptance criterion nested in another",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too:\n    - AC3 — Nested.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "- AC3 — Nested." as an acceptance criterion (write each criterion as its own "- ACn — …" bullet)`,
+		},
+		{
+			name: "two acceptance criteria in one bullet",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too. AC3 — It works thrice.\n"}},
+			file: "PRD.md",
+			want: `FR-A-02: cannot read "AC3 —" as an acceptance criterion (write each criterion as its own "- ACn — …" bullet)`,
+		},
+		{
+			name: "inline acceptance criterion on a wrapped line",
+			prd:  []edit{{"AC1 — It shines. AC2 — It still works.", "AC1 — It shines.\n  AC2 — It still works."}},
+			file: "PRD.md",
+			want: `FR-B-01: cannot read "AC2 — It still works." as an acceptance criterion`,
+		},
+		{
+			name: "acceptance criterion numbered from zero",
+			prd:  []edit{{"  - AC1 — It is hosted.\n", "  - AC0 — It is hosted.\n"}},
+			file: "PRD.md",
+			want: `FR-B-02: cannot read "AC0 — It is hosted." as an acceptance criterion`,
+		},
+		{
+			name: "acceptance criterion listed twice",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC1 — It works too.\n  - AC2 — Twice.\n"}},
+			file: "PRD.md",
+			want: "FR-A-02 lists AC2 twice (also on line 25)",
+		},
+		{
+			name: "inline acceptance criterion listed twice",
+			prd:  []edit{{"AC2 — It still works.", "AC1 — It still works."}},
+			file: "PRD.md",
+			want: "FR-B-01 lists AC1 twice (also on line 37)",
+		},
+		{
+			name: "gap in the acceptance criteria",
+			prd:  []edit{{"  - AC1 — It works too.\n", "  - AC4 — It works too.\n"}},
+			file: "PRD.md",
+			want: "FR-A-02 has no AC1, although its criteria run to AC4",
 		},
 		{
 			name: "requirement with a second Depends on field",
@@ -517,6 +704,87 @@ func TestCheckFails(t *testing.T) {
 				t.Errorf("want a problem in %s containing %q, got:%s", tt.file, tt.want, formatProblems(problems))
 			}
 		})
+	}
+}
+
+func TestParsePRD(t *testing.T) {
+	got, problems := ParsePRD("PRD.md", readFixture(t, "PRD.md"))
+	if len(problems) > 0 {
+		t.Fatalf("the fixture should pass, got:%s", formatProblems(problems))
+	}
+	want := PRD{
+		Requirements: []Requirement{
+			{ID: "FR-A-01", Title: "First", Phase: "MVP", Criteria: []string{"AC1"}},
+			{ID: "FR-A-02", Title: "Second", Phase: "MVP", Criteria: []string{"AC1", "AC2"}},
+			{ID: "FR-A-03", Title: "Third", Phase: "MVP", Criteria: []string{"AC1"}},
+			{ID: "FR-B-01", Title: "Polish", Phase: "v1", Criteria: []string{"AC1", "AC2"}},
+			{ID: "FR-B-02", Title: "Hosted only", Phase: "SaaS", Criteria: []string{"AC1"}},
+		},
+		NFRs: []string{"NFR-PERF-01", "NFR-PERF-02", "NFR-PERF-03", "NFR-A11Y-01", "NFR-A11Y-02"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParsePRD =\n%+v\nwant\n%+v", got, want)
+	}
+
+	// A blank line, as in a loose list, or a criterion's text wrapped onto
+	// an indented line does not end the list.
+	loose := applyEdits(t, readFixture(t, "PRD.md"), []edit{{
+		"  - AC1 — It works too.\n",
+		"  - AC1 — It works\n    too.\n\n  - AC3 — It follows a blank line.\n",
+	}})
+	got, problems = ParsePRD("PRD.md", loose)
+	if len(problems) > 0 {
+		t.Fatalf("a loose list should pass, got:%s", formatProblems(problems))
+	}
+	if want := []string{"AC1", "AC2", "AC3"}; !slices.Equal(got.Requirements[1].Criteria, want) {
+		t.Errorf("FR-A-02 criteria in a loose list = %q, want %q", got.Requirements[1].Criteria, want)
+	}
+
+	// A list nested in a criterion belongs to it.
+	nested := applyEdits(t, readFixture(t, "PRD.md"), []edit{{
+		"  - AC1 — It works too.\n",
+		"  - AC1 — It rejects:\n    - a missing name;\n    * a long name;\n\t1. and an empty one.\n  - AC3 — It follows a nested list.\n",
+	}})
+	got, problems = ParsePRD("PRD.md", nested)
+	if len(problems) > 0 {
+		t.Fatalf("a nested list should pass, got:%s", formatProblems(problems))
+	}
+	if want := []string{"AC1", "AC2", "AC3"}; !slices.Equal(got.Requirements[1].Criteria, want) {
+		t.Errorf("FR-A-02 criteria with a nested list = %q, want %q", got.Requirements[1].Criteria, want)
+	}
+
+	// An inline label is read wherever it is, not only after a space.
+	for _, inline := range []string{
+		"AC1 — It shines.AC2 — It still works.",
+		"AC1 — It shines (AC2 — It still works).",
+		"AC1 — It shines.\u00a0AC2 — It still works.",
+		"AC1 — AC2 — It still works.",
+	} {
+		got, problems = ParsePRD("PRD.md", applyEdits(t, readFixture(t, "PRD.md"), []edit{{"AC1 — It shines. AC2 — It still works.", inline}}))
+		if len(problems) > 0 {
+			t.Errorf("%q: unexpected problems:%s", inline, formatProblems(problems))
+		}
+		if want := []string{"AC1", "AC2"}; !slices.Equal(got.Requirements[3].Criteria, want) {
+			t.Errorf("%q: FR-B-01 criteria = %q, want %q", inline, got.Requirements[3].Criteria, want)
+		}
+	}
+
+	// A criterion at the margin is reported, and the list goes on after it.
+	margin := applyEdits(t, readFixture(t, "PRD.md"), []edit{{
+		"  - AC1 — It works too.\n",
+		"  - AC1 — It works too.\n- AC3 — At the margin.\n  - AC4 — Indented again.\n",
+	}})
+	got, problems = ParsePRD("PRD.md", margin)
+	if want := []string{"AC1", "AC2", "AC4"}; !slices.Equal(got.Requirements[1].Criteria, want) {
+		t.Errorf("FR-A-02 criteria around one at the margin = %q, want %q", got.Requirements[1].Criteria, want)
+	}
+	if len(problems) != 2 || problems[0].Msg != "FR-A-02 has no AC3, although its criteria run to AC4" || !strings.Contains(problems[1].Msg, `"- AC3 — At the margin."`) {
+		t.Errorf("a criterion at the margin: problems =%s", formatProblems(problems))
+	}
+
+	_, problems = ParsePRD("PRD.md", applyEdits(t, readFixture(t, "PRD.md"), []edit{{"**Hosted SaaS.** FR-B-02", ""}}))
+	if !slices.ContainsFunc(problems, func(p Problem) bool { return p.Msg == "FR-B-02 is not listed in Appendix B" }) {
+		t.Errorf("ParsePRD should check the PRD, got:%s", formatProblems(problems))
 	}
 }
 

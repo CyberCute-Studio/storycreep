@@ -1,0 +1,123 @@
+package traceability
+
+import (
+	"slices"
+	"strings"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/doccheck"
+)
+
+var gdLang = &language{
+	comment: "#",
+	isTest: func(name string) bool {
+		return strings.HasPrefix(name, "test_") && strings.HasSuffix(name, ".gd")
+	},
+	read: readGD,
+	declares: func(file, text string) bool {
+		return slices.ContainsFunc(readGD(file, text, true).decls, func(d decl) bool { return d.first })
+	},
+}
+
+// readGD reads a GDScript file. Its test declarations are the GUT test
+// functions, func test_…(), marked first when "func" is the first code on its
+// line. None is marked skipped: GUT has no skip modifier, and the scan does
+// not evaluate pending() or a script's should_skip_script() or skip_script.
+// GDScript has no block comments, but a
+// multi-line string that starts a line serves as one, so its lines are
+// returned as a block comment. A multi-line string that never closes hides
+// the code after it, which is a problem in a test file with Verifies
+// comments.
+func readGD(file, src string, isTest bool) source {
+	var s source
+	// A file that is not a test file matters only for the Verifies comments
+	// in it.
+	if !isTest && !strings.Contains(src, "Verifies:") {
+		return s
+	}
+	line := 1
+	code := false      // a token is on the line before i
+	prev := ""         // the last word or punctuation read, to find "func test_…"
+	funcFirst := false // the last "func" read is the first code on its line
+	unclosed := 0      // the line of a multi-line string that never closes
+	for i := 0; i < len(src); {
+		c := src[i]
+		switch {
+		case c == '\n':
+			line++
+			code = false
+			i++
+		case c == ' ' || c == '\t' || c == '\r':
+			i++
+		case c == '#':
+			end := strings.IndexByte(src[i:], '\n')
+			if end < 0 {
+				end = len(src) - i
+			}
+			s.comments = append(s.comments, comment{line: line, text: lineCommentText(src[i:i+end], "#"), ownLine: !code})
+			i += end
+		case strings.HasPrefix(src[i:], `"""`), strings.HasPrefix(src[i:], `'''`):
+			quote := src[i : i+3]
+			end := i + 3
+			for end < len(src) && !strings.HasPrefix(src[end:], quote) {
+				if src[end] == '\\' {
+					end++
+				}
+				end++
+			}
+			if end >= len(src) {
+				unclosed = line
+			}
+			end = min(end+3, len(src))
+			text := src[i:end]
+			if !code {
+				s.comments = append(s.comments, blockComment(text, line, quote, quote)...)
+			}
+			line += strings.Count(text, "\n")
+			code = true
+			prev = ""
+			i = end
+		case c == '"' || c == '\'':
+			j := i + 1
+			for j < len(src) && src[j] != c && src[j] != '\n' {
+				if src[j] == '\\' {
+					j++
+				}
+				j++
+			}
+			if j < len(src) && src[j] == c {
+				j++
+			}
+			j = min(j, len(src))
+			line += strings.Count(src[i:j], "\n") // escaped line breaks
+			code = true
+			prev = ""
+			i = j
+		case isIdentByte(c):
+			j := i
+			for j < len(src) && isIdentByte(src[j]) {
+				j++
+			}
+			word := src[i:j]
+			if isTest && prev == "func" && strings.HasPrefix(word, "test_") {
+				s.decls = append(s.decls, decl{line: line, name: word, first: funcFirst})
+			}
+			if word == "func" {
+				funcFirst = !code
+			}
+			code = true
+			prev = word
+			i = j
+		default:
+			code = true
+			prev = string(c)
+			i++
+		}
+	}
+	// The source is searched, not the comments, because the comments after
+	// such a string are hidden too.
+	if isTest && unclosed > 0 && strings.Contains(src, "Verifies:") {
+		s.problems = append(s.problems, doccheck.Problem{File: file, Line: unclosed,
+			Msg: "cannot find the end of the multi-line string that starts here, so the scan cannot read the code after it"})
+	}
+	return s
+}

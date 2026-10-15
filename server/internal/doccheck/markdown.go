@@ -30,6 +30,20 @@ func newDocument(src string) *document {
 	return &document{lines: lines}
 }
 
+// column returns the width of s, the start of a line, as Markdown counts it:
+// a tab advances to the next multiple of 4.
+func column(s string) int {
+	w := 0
+	for _, c := range s {
+		if c == '\t' {
+			w += 4 - w%4
+		} else {
+			w++
+		}
+	}
+	return w
+}
+
 // line returns line n, counting from 1.
 func (d *document) line(n int) string {
 	return d.lines[n-1]

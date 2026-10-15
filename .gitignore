@@ -7,6 +7,7 @@ coverage/
 *.tsbuildinfo
 /server/storycreep
 /server/storycreep.exe
+traceability-report/
 
 # Godot editor cache
 .godot/
