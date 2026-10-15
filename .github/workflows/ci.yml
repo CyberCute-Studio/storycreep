@@ -162,7 +162,12 @@ jobs:
       # Until the first release, a pull request may break the API if one of
       # its commits says why in an "API-Break: <reason>" trailer. Item 119
       # compares with the last release instead, and removes the override.
+      # The check gates pull requests, and skips a push to main, which it
+      # cannot stop: a squash merge rewrites a pull request's commits into
+      # one whose message no longer ends with their trailers, so the check
+      # would fail on main for a break that the pull request was allowed.
       - name: The API is compatible with the main branch
+        if: github.event_name != 'push'
         working-directory: server
         run: go run ./cmd/apicompat -base "$BASE"
 

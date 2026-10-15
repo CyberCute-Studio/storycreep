@@ -37,6 +37,12 @@ func TestLoadRefuses(t *testing.T) {
 		{"an extension", `"title": "Fixture"`, `"title": "Fixture", "x-logo": "a.png"`, `unknown field "x-logo"`},
 		{"an unknown object of an operation", `"operationId": "listThings",`,
 			`"operationId": "listThings", "security": [],`, `unknown field "security"`},
+		// encoding/json would take each of these as the key in its own case.
+		{"a keyword in another case", `"maxLength": 1024`, `"maxLength": 1024, "Enum": ["a"]`, `unknown field "Enum"`},
+		{"a key of an operation in another case", `"operationId": "listThings"`, `"OperationId": "listThings"`,
+			`unknown field "OperationId"`},
+		{"a keyword in another case in additionalProperties", `"additionalProperties": {}`,
+			`"additionalProperties": {"Type": "string"}`, `unknown field "Type"`},
 		{"another version of OpenAPI", `"openapi": "3.1.0"`, `"openapi": "3.0.3"`, "not 3.1"},
 		{"a reference to a schema that does not exist", `"$ref": "#/components/schemas/ThingPage"`,
 			`"$ref": "#/components/schemas/Nothing"`, "does not name a schema"},

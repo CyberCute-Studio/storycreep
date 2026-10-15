@@ -45,7 +45,9 @@ func (c Change) String() string {
 //     base's did not have, or it lacks a format or a header that base's had.
 //     A header that base's always had is no longer always there, or is
 //     serialised in another style. Errors may gain statuses, because every
-//     error has the envelope.
+//     error has the envelope, and an operation may gain a 304 if base's
+//     took neither If-None-Match nor If-Modified-Since, because only a
+//     request with one of them gets a 304.
 //   - A request's schema accepts less, or a response's allows more: a type,
 //     null, or an enum value; a bound, a length, or a count made tighter in
 //     a request, or looser in a response; a format, pattern, multipleOf, or
@@ -54,7 +56,9 @@ func (c Change) String() string {
 //     or from float to double, or a response narrows the other way, and a
 //     multipleOf that a request changes to a divisor of the old one, or a
 //     response to a multiple of it; an encoding changed; or, in a request,
-//     a default changed or removed.
+//     a default changed or removed. Whether a schema with a type takes null
+//     is up to the type, as huma's validator reads it, whether or not its
+//     enum lists null.
 //   - A request's object no longer accepts a property, because it no longer
 //     names it and accepts no others, or newly requires one. A response's
 //     object lacks a property that it had, or no longer always has one that
@@ -82,9 +86,19 @@ func Breaking(base, head *Document) []Change {
 		}
 		c.parameters(b, h)
 		c.requestBody(b.op.RequestBody, h.op.RequestBody)
-		c.responses(b.op.Responses, h.op.Responses)
+		c.responses(b.op.Responses, h.op.Responses, conditional(b.op))
 	}
 	return c.changes
+}
+
+// conditional reports whether op takes a header that makes a request
+// conditional, If-None-Match or If-Modified-Since, which a 304 answers (RFC
+// 9110 §15.4.5).
+func conditional(op *Operation) bool {
+	return slices.ContainsFunc(op.Parameters, func(p *Parameter) bool {
+		key := paramKey(p)
+		return key == "header if-none-match" || key == "header if-modified-since"
+	})
 }
 
 // direction is which way the values that a schema describes go.
@@ -253,7 +267,11 @@ func lookup(responses map[string]*Response, status string) *Response {
 	return nil
 }
 
-func (c *comparer) responses(b, h map[string]*Response) {
+// responses compares base's and head's responses of an operation. cond says
+// whether base's took a conditional header, without which no client of it
+// got a 304, so that a 304 that head adds breaks none of them, as when an
+// operation gains an ETag and If-None-Match.
+func (c *comparer) responses(b, h map[string]*Response, cond bool) {
 	var statuses []string
 	for s := range b {
 		statuses = append(statuses, s)
@@ -271,7 +289,7 @@ func (c *comparer) responses(b, h map[string]*Response) {
 			// Head no longer answers with the status, which no client
 			// relies on getting.
 		case was == nil:
-			if !isError(status) {
+			if !isError(status) && (status != "304" || cond) {
 				c.report("the response may now have the status %s", status)
 			}
 		default:
@@ -409,19 +427,30 @@ func (c *comparer) types(loc string, b, h, wide, narrow *Schema) {
 }
 
 // enumValues returns the values that s allows, as compact JSON, if its enum
-// or const restricts them.
+// or const restricts them. huma's validator lets null through a type that
+// allows it before it reads the enum, and the TypeScript generator types
+// such a schema the same way. So null is one of the values of a schema with
+// a type exactly when the type allows it, whether or not the enum lists it.
 func enumValues(s *Schema) ([]string, bool) {
+	var listed []json.RawMessage
 	switch {
 	case s.Const != nil:
-		return []string{compactJSON(s.Const)}, true
+		listed = []json.RawMessage{s.Const}
 	case s.Enum != nil:
-		var out []string
-		for _, v := range s.Enum {
-			out = append(out, compactJSON(v))
-		}
-		return out, true
+		listed = s.Enum
+	default:
+		return nil, false
 	}
-	return nil, false
+	var out []string
+	for _, v := range listed {
+		if c := compactJSON(v); c != "null" || len(s.Type) == 0 {
+			out = append(out, c)
+		}
+	}
+	if slices.Contains(s.Type, "null") {
+		out = append(out, "null")
+	}
+	return out, true
 }
 
 func (c *comparer) values(loc string, wide, narrow *Schema, dir direction) {
@@ -440,6 +469,11 @@ func (c *comparer) values(loc string, wide, narrow *Schema, dir direction) {
 	}
 	var lost []string
 	for _, v := range wv {
+		// When both schemas have a type, null is up to it, and types
+		// reports a change.
+		if v == "null" && len(wide.Type) > 0 && len(narrow.Type) > 0 {
+			continue
+		}
 		if !slices.Contains(nv, v) {
 			lost = append(lost, v)
 		}

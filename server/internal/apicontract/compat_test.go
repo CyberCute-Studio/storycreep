@@ -146,6 +146,21 @@ func TestBreaking(t *testing.T) {
 		{"a response may have a new status", func(d *Document) {
 			d.Paths["/things/{id}"].Delete.Responses["200"] = &Response{Description: "OK"}
 		}, []string{"DELETE /things/{id}: the response may now have the status 200"}},
+		{"an operation gains If-None-Match and a 304", func(d *Document) {
+			list(d).Parameters = append(list(d).Parameters, &Parameter{Name: "If-None-Match", In: "header",
+				Schema: &Schema{Type: Types{"string"}}})
+			list(d).Responses["304"] = &Response{Description: "Not Modified"}
+		}, nil},
+		{"a success status widens to its range", func(d *Document) {
+			r := get(d).Responses
+			r["2XX"] = r["200"]
+			delete(r, "200")
+		}, []string{"GET /things/{id}: the response may now have the status 2XX"}},
+		{"an error range has another body", func(d *Document) {
+			get(d).Responses["4XX"] = &Response{Description: "Client error",
+				Content: map[string]*MediaType{"application/json": {Schema: &Schema{Type: Types{"string"}}}}}
+		}, []string{"GET /things/{id}: the response 4XX body: the type changed from object to string",
+			"GET /things/{id}: the response 4XX body.error was removed"}},
 		{"an error status is added", func(d *Document) {
 			get(d).Responses["404"] = &Response{Description: "Not Found", Content: envelope}
 		}, nil},
@@ -300,13 +315,24 @@ func TestBreaking(t *testing.T) {
 }
 
 // TestBreakingFromChangedBase checks the rules that need a base other than
-// the fixture: a header that the response always had, and the properties
-// that huma does not require, which are readOnly in a request, and writeOnly
-// in a response.
+// the fixture: a header that the response always had; the properties that
+// huma does not require, which are readOnly in a request, and writeOnly in a
+// response; a 304 where base took If-None-Match; a range of statuses;
+// formats and multipleOf that widen or narrow; nullable enums; and oneOf.
 func TestBreakingFromChangedBase(t *testing.T) {
 	etag := func(d *Document) *Header { return d.Paths["/things/{id}"].Get.Responses["200"].Headers["ETag"] }
 	prop := func(d *Document, schema, name string) *Schema { return d.Components.Schemas[schema].Properties[name] }
 	none := func(*Document) {}
+	// noteOf makes Thing's note one of the types.
+	noteOf := func(types ...string) func(d *Document) {
+		return func(d *Document) {
+			var members []*Schema
+			for _, t := range types {
+				members = append(members, &Schema{Type: Types{t}})
+			}
+			*prop(d, "Thing", "note") = Schema{OneOf: members}
+		}
+	}
 	tests := []struct {
 		name       string
 		base, head func(d *Document)
@@ -318,6 +344,14 @@ func TestBreakingFromChangedBase(t *testing.T) {
 		{"a response header becomes always present", none, func(d *Document) {
 			etag(d).Required = true
 		}, nil},
+		{"a 304 is new where a client could send If-None-Match", func(d *Document) {
+			delete(d.Paths["/things/{id}"].Get.Responses, "304")
+		}, none, []string{"GET /things/{id}: the response may now have the status 304"}},
+		{"a success range narrows to one of its statuses", func(d *Document) {
+			r := d.Paths["/things/{id}"].Get.Responses
+			r["2XX"] = r["200"]
+			delete(r, "200")
+		}, none, nil},
 		{"a required request property is no longer readOnly", func(d *Document) {
 			prop(d, "ThingInput", "name").ReadOnly = true
 		}, none, []string{"POST /things: the request body.name is now required"}},
@@ -382,6 +416,33 @@ func TestBreakingFromChangedBase(t *testing.T) {
 		}, func(d *Document) {
 			prop(d, "Thing", "counts").AdditionalProperties.Schema.MultipleOf = ptr(1.0)
 		}, []string{"GET /things: the response 200 body.items[].counts.*: multipleOf changed from \"2\" to \"1\""}},
+
+		// Nullable enums, which take null if their type does, listed or not.
+		{"a response's nullable enum lists null", func(d *Document) {
+			prop(d, "Thing", "kind").Type = Types{"string", "null"}
+		}, func(d *Document) {
+			k := prop(d, "Thing", "kind")
+			k.Type, k.Enum = Types{"string", "null"}, append(k.Enum, raw("null"))
+		}, nil},
+		{"a request's nullable enum stops listing null", func(d *Document) {
+			k := prop(d, "ThingInput", "kind")
+			k.Type, k.Enum = Types{"string", "null"}, append(k.Enum, raw("null"))
+		}, func(d *Document) {
+			prop(d, "ThingInput", "kind").Type = Types{"string", "null"}
+		}, nil},
+		{"a request's enum without a type stops listing null", func(d *Document) {
+			k := prop(d, "ThingInput", "kind")
+			k.Type, k.Enum = nil, append(k.Enum, raw("null"))
+		}, func(d *Document) {
+			prop(d, "ThingInput", "kind").Type = nil
+		}, []string{"POST /things: the request body.kind: the values null were removed"}},
+
+		// Schemas combined with oneOf, member by member.
+		{"a response's oneOf is the same", noteOf("string", "null"), noteOf("string", "null"), nil},
+		{"a response's oneOf gains a member", noteOf("string", "null"), noteOf("string", "null", "integer"),
+			[]string{"GET /things: the response 200 body.items[].note: oneOf changed from 2 schemas to 3"}},
+		{"a response's oneOf member changes type", noteOf("string", "null"), noteOf("integer", "null"),
+			[]string{"GET /things: the response 200 body.items[].note.oneOf[0]: the type changed from string to integer"}},
 	}
 	for _, tt := range tests {
 		base, head := load(t, "base.json"), load(t, "base.json")

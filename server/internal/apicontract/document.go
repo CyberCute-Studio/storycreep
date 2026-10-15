@@ -248,8 +248,9 @@ func Load(b []byte) (*Document, error) {
 	return &d, nil
 }
 
-// decodeStrict decodes the JSON value b into v, and fails on a key that v's
-// type does not have, or on anything after the value.
+// decodeStrict decodes the JSON value b into v, a pointer, and fails on a
+// key that v's type does not have, spelled exactly, or on anything after the
+// value.
 func decodeStrict(b []byte, v any) error {
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
@@ -259,7 +260,77 @@ func decodeStrict(b []byte, v any) error {
 	if _, err := d.Token(); err != io.EOF {
 		return errors.New("there is more after the JSON value")
 	}
+	return exactKeys(b, reflect.TypeOf(v))
+}
+
+var (
+	rawMessageType = reflect.TypeFor[json.RawMessage]()
+	typesType      = reflect.TypeFor[Types]()
+	additionalType = reflect.TypeFor[Additional]()
+)
+
+// exactKeys checks that every key of an object in the JSON value b, which
+// decodes into a value of type t, is spelled as the json tag of a field of
+// t's, unless the object is a map. encoding/json also takes a key that
+// differs from a tag only in case, such as "Enum", which JSON Schema ignores,
+// as the field, which would read a keyword that the document does not have.
+// The keys inside additionalProperties are checked when Additional decodes
+// its schema.
+func exactKeys(b []byte, t reflect.Type) error {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch {
+	case t == rawMessageType || t == typesType || t == additionalType:
+		return nil
+	case t.Kind() == reflect.Struct:
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(b, &fields); err != nil {
+			return err
+		}
+		for _, key := range slices.Sorted(maps.Keys(fields)) {
+			f, ok := fieldByTag(t, key)
+			if !ok {
+				return fmt.Errorf("json: unknown field %q", key)
+			}
+			if err := exactKeys(fields[key], f.Type); err != nil {
+				return err
+			}
+		}
+	case t.Kind() == reflect.Map:
+		var values map[string]json.RawMessage
+		if err := json.Unmarshal(b, &values); err != nil {
+			return err
+		}
+		for _, key := range slices.Sorted(maps.Keys(values)) {
+			if err := exactKeys(values[key], t.Elem()); err != nil {
+				return err
+			}
+		}
+	case t.Kind() == reflect.Slice:
+		var items []json.RawMessage
+		if err := json.Unmarshal(b, &items); err != nil {
+			return err
+		}
+		for _, item := range items {
+			if err := exactKeys(item, t.Elem()); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+// fieldByTag returns the field of the struct type t whose json tag names
+// key, spelled exactly.
+func fieldByTag(t reflect.Type, key string) (reflect.StructField, bool) {
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if name, _, _ := strings.Cut(f.Tag.Get("json"), ","); name == key {
+			return f, true
+		}
+	}
+	return reflect.StructField{}, false
 }
 
 // pathParam matches a parameter of a path template, such as {id}.
