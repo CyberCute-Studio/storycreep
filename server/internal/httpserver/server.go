@@ -12,6 +12,11 @@
 // traffic, and the database stays at the last migration that succeeded
 // (FR-ADMIN-04 AC3).
 //
+// Once the server is ready, it runs the job queue's workers (PRD FR-JOBS-01,
+// package jobs), unless Options.InlineWorkers is off, so that other instances
+// run them. Not being able to start them stops the server, as a failed
+// database step does.
+//
 // The admin port, a second listener, serves /metrics, with or without a
 // bearer token as the MetricsEndpoint capability says. Every route declares
 // the capability it requires (NFR-SEC-02), and every response carries the
@@ -31,6 +36,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 	"github.com/CyberCute-Studio/storycreep/server/internal/version"
 )
 
@@ -75,14 +81,24 @@ type Options struct {
 	// whether the pending migrations have been applied. Zero means every 5
 	// seconds.
 	PollInterval time.Duration
+	// InlineWorkers makes the server run the job queue's workers in its own
+	// process once it is ready, which is what serve does unless
+	// --no-inline-workers is given.
+	InlineWorkers bool
+	// Jobs holds the kinds of job that the server enqueues and runs. Nil
+	// means the server's own, which are none yet: the plan items that add
+	// jobs register them here.
+	Jobs *jobs.Registry
 }
 
 // Run runs the server until ctx ends, and then stops it gracefully: it stops
-// accepting connections and waits up to 20 seconds for the requests in
-// progress. It returns an error if the server cannot listen, or if the
-// database step fails, which leaves the database as database.Start
-// describes. A ctx that ends during the database step stops the server
-// without an error.
+// accepting connections and taking jobs, and waits up to 20 seconds for the
+// requests and the jobs in progress, and then up to 5 seconds more for the
+// jobs, once it has cancelled them (jobs.Queue.Stop). It returns an error if
+// the server cannot listen, if the database step fails, which leaves the
+// database as database.Start describes, or if the job workers cannot start.
+// A ctx that ends during the database step stops the server without an
+// error.
 func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	log := opts.Log
 	if log == nil {
@@ -148,8 +164,9 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	}
 	log.InfoContext(ctx, "listening", attrs...)
 
-	// stop stops the servers together, so that each has the whole time to
-	// finish its requests in progress.
+	// stop stops the servers and the job workers together, so that each has
+	// the whole time to finish its requests or jobs in progress.
+	var workers workers
 	stop := func() {
 		s.ready.setPhase(phaseStopping)
 		log.InfoContext(ctx, "stopping")
@@ -165,6 +182,11 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 				}
 			})
 		}
+		wg.Go(func() {
+			if err := workers.stop(shutdownCtx); err != nil {
+				log.ErrorContext(ctx, "the job workers did not stop", "error", err)
+			}
+		})
 		wg.Wait()
 	}
 
@@ -184,6 +206,24 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	}
 	defer db.Close()
 	s.ready.db.Store(db)
+
+	// The queue enqueues jobs from the start, and its workers start once the
+	// server is ready, when River's tables exist.
+	queue, err := jobs.Open(ctx, db, cfg.DatabaseURL, jobs.Options{
+		Registry: opts.Jobs,
+		Work:     opts.InlineWorkers,
+		Log:      log,
+	})
+	if err != nil {
+		stop()
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
+	}
+	defer queue.Close()
+	s.metrics.registry.MustRegister(queue.Collector())
+	workerErr := make(chan error, 1)
 
 	var wg sync.WaitGroup
 	pollCtx, stopPolling := context.WithCancel(ctx)
@@ -205,13 +245,24 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	case len(pending) == 0:
 		s.ready.setPhase(phaseReady)
 		log.InfoContext(ctx, "ready")
+		if err := workers.start(ctx, queue); err != nil {
+			stop()
+			log.ErrorContext(ctx, "the job workers could not start, so the server stops", "error", err)
+			return err
+		}
 	default:
 		s.ready.setPhase(phaseMigrationsPending)
 		interval := opts.PollInterval
 		if interval <= 0 {
 			interval = defaultPollInterval
 		}
-		wg.Go(func() { s.ready.waitForMigrations(pollCtx, db, interval) })
+		wg.Go(func() {
+			if s.ready.waitForMigrations(pollCtx, db, interval) {
+				if err := workers.start(ctx, queue); err != nil {
+					workerErr <- err
+				}
+			}
+		})
 	}
 
 	select {
@@ -222,7 +273,41 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	case err := <-serveErr:
 		stop()
 		return fmt.Errorf("serve HTTP: %w", err)
+	case err := <-workerErr:
+		stop()
+		log.ErrorContext(ctx, "the job workers could not start, so the server stops", "error", err)
+		return err
 	}
+}
+
+// workers starts the job queue's workers once the server is ready, unless it
+// has stopped by then, and stops them when it stops.
+type workers struct {
+	mu      sync.Mutex
+	queue   *jobs.Queue
+	stopped bool
+}
+
+// start starts the queue's workers, unless stop has been called.
+func (w *workers) start(ctx context.Context, q *jobs.Queue) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stopped {
+		return nil
+	}
+	w.queue = q
+	return q.Start(ctx)
+}
+
+// stop stops the workers, if start started them, as jobs.Queue.Stop does.
+func (w *workers) stop(ctx context.Context) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.stopped = true
+	if w.queue == nil {
+		return nil
+	}
+	return w.queue.Stop(ctx)
 }
 
 func closeListeners(ls ...net.Listener) {

@@ -30,17 +30,28 @@ once the database has every migration applied, which 'storycreep migrate'
 does, and checks for that every 5 seconds. Until then, /readyz and the API
 answer 503.
 
-It stops on SIGINT or SIGTERM: it stops accepting connections, waits up to
-20 seconds for the requests in progress, and exits with status 0. A second
-signal ends it at once.`,
+Once it serves, it also runs the background jobs that it and the other
+instances enqueue, 4 at a time, on a pool of 7 database connections of its
+own.
+With --no-inline-workers, it only enqueues them, for the instances started
+without the flag to run, as a deployment does that runs its job workers on
+instances of their own. If no instance runs them, the jobs wait.
+
+It stops on SIGINT or SIGTERM: it stops accepting connections and taking
+jobs, waits up to 20 seconds for the requests and the jobs in progress, and
+exits with status 0. A job that has not finished by then is cancelled, and is
+attempted again later; the server waits up to 5 seconds more for it to
+return. A second signal ends it at once.`,
 	loadsConfig: true,
 	flags: func(fs *flag.FlagSet) {
 		fs.Bool("no-auto-migrate", false, "do not apply pending migrations at startup; 'storycreep migrate' applies them")
+		fs.Bool("no-inline-workers", false, "do not run background jobs in this process; instances without the flag run them")
 	},
 	run: func(ctx context.Context, inv *invocation) error {
 		return httpserver.Run(ctx, inv.cfg, httpserver.Options{
-			AutoMigrate: !inv.boolFlag("no-auto-migrate"),
-			Log:         logging.New(inv.stderr, inv.cfg.LogLevel),
+			AutoMigrate:   !inv.boolFlag("no-auto-migrate"),
+			InlineWorkers: !inv.boolFlag("no-inline-workers"),
+			Log:           logging.New(inv.stderr, inv.cfg.LogLevel),
 		})
 	},
 }

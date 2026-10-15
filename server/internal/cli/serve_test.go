@@ -46,8 +46,8 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// TestServe runs serve, with and without --no-auto-migrate, until it is
-// ready, and stops it as a signal would.
+// TestServe runs serve, with and without --no-auto-migrate and
+// --no-inline-workers, until it is ready, and stops it as a signal would.
 func TestServe(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
@@ -58,10 +58,16 @@ func TestServe(t *testing.T) {
 		// started.
 		ready   int
 		started string
+		// workers is what the log says about the job workers, if anything.
+		// The server has no kinds of job yet, so they never start.
+		workers string
 	}{
-		{"auto-migrate", true, nil, http.StatusOK, "ready"},
+		{"auto-migrate", true, nil, http.StatusOK, "ready",
+			"the job workers do not start, because no kinds of job are registered"},
 		{"no-auto-migrate", false, []string{"--no-auto-migrate"}, http.StatusServiceUnavailable,
-			"the database has pending migrations; run storycreep migrate to apply them"},
+			"the database has pending migrations; run storycreep migrate to apply them", ""},
+		{"no-inline-workers", true, []string{"--no-inline-workers"}, http.StatusOK, "ready",
+			"the job workers are off in this process, so the instances that run them do its jobs"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -99,7 +105,11 @@ func TestServe(t *testing.T) {
 			case <-time.After(time.Minute):
 				t.Fatal("serve did not stop")
 			}
-			for _, want := range []string{`"msg":"listening"`, `"msg":"stopped"`} {
+			wants := []string{`"msg":"listening"`, `"msg":"stopped"`}
+			if tt.workers != "" {
+				wants = append(wants, `"msg":"`+tt.workers+`"`)
+			}
+			for _, want := range wants {
 				if !strings.Contains(stderr.String(), want) {
 					t.Errorf("the log lacks %s:\n%s", want, stderr.String())
 				}

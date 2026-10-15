@@ -93,22 +93,23 @@ func (r *readiness) notReady(ctx context.Context, pingDB bool) error {
 
 // waitForMigrations checks every interval whether the database has applied
 // the pending migrations, and makes the server ready once it has. It returns
-// then, or when ctx ends.
-func (r *readiness) waitForMigrations(ctx context.Context, db *database.DB, interval time.Duration) {
+// then, reporting whether it made the server ready, which it does not if the
+// server is stopping, or when ctx ends.
+func (r *readiness) waitForMigrations(ctx context.Context, db *database.DB, interval time.Duration) bool {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	var lastErr string
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-t.C:
 		}
 		pending, err := db.Pending(ctx)
 		switch {
 		case err != nil:
 			if ctx.Err() != nil {
-				return
+				return false
 			}
 			// One record per kind of failure, not one per check.
 			if msg := err.Error(); msg != lastErr {
@@ -117,10 +118,11 @@ func (r *readiness) waitForMigrations(ctx context.Context, db *database.DB, inte
 					"applied, and tries again", "error", err)
 			}
 		case len(pending) == 0:
-			if r.phase.CompareAndSwap(int32(phaseMigrationsPending), int32(phaseReady)) {
+			ready := r.phase.CompareAndSwap(int32(phaseMigrationsPending), int32(phaseReady))
+			if ready {
 				r.log.InfoContext(ctx, "ready, now that the pending migrations have been applied")
 			}
-			return
+			return ready
 		}
 	}
 }
