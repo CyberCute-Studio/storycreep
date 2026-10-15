@@ -29,6 +29,7 @@ The required tools run natively on Windows ARM64, macOS, and Linux. No tool in t
 - **Go** 1.26 or newer.
 - **Node.js** 24 (see `.nvmrc`).
 - **pnpm** at the version pinned in `package.json`. With Node.js 24, `corepack enable pnpm` installs it.
+- **Docker**, for the server's database tests, which run PostgreSQL in a container (PRD NFR-Q-01): Docker Desktop on Windows and macOS, Docker Engine on Linux.
 
 Then install the JavaScript dependencies:
 
@@ -45,7 +46,9 @@ These are the checks CI runs. Run them before you push.
 | `pnpm check` | Biome lint and format for the web packages and root configuration. `pnpm fix` applies the fixes. |
 | `pnpm typecheck` | TypeScript in every web package that has a `typecheck` script. |
 | `pnpm test` | Tests in every web package that has a `test` script. |
-| `gofmt -l .`, `go vet ./...`, and `go test ./...` in `server/` | The Go module. `gofmt -l .` must print nothing; `gofmt -w .` formats the code. |
+| `gofmt -l .`, `go vet ./...`, and `go test ./...` in `server/` | The Go module. `gofmt -l .` must print nothing; `gofmt -w .` formats the code. The database tests need Docker, and `go test -short ./...` skips them. CI runs them on Linux against PostgreSQL 15, 16, and 17, and with `-short` on Windows and macOS, whose runners cannot run Linux containers. |
+| `pnpm migrations:check` | No migration that is on the main branch was changed, deleted, or renamed (see [Database migrations](#database-migrations)). It needs the history of `origin/main`. |
+| `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff` in `server/internal/database/` | The code generated from the SQL queries is up to date. |
 | `pnpm docs:check` | The PRD dependency graph and acceptance criteria, and the plan's ordering, coverage, and reference rules. |
 | `pnpm traceability` | The requirement traceability report (PRD NFR-Q-02): which tests verify each requirement, and which MVP acceptance criteria no test verifies yet. It writes `traceability-report/traceability.md` and `traceability.json`, and fails on a tag it cannot use (see below) or on a problem in the PRD. A criterion without a test does not fail the build until the MVP release gate (plan item 119). CI publishes the report as the `traceability-report` artifact. |
 | `pnpm audit --audit-level high`, and `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...` in `server/` | Known vulnerabilities in the dependencies. CI runs these in a separate job, on every pull request and weekly. |
@@ -96,11 +99,23 @@ A test skipped in any other way still counts, because the report does not run th
 
 [`docs/configuration.md`](docs/configuration.md) is generated from the key declarations in `server/internal/config/keys.go`, and `go test ./...` fails when it is out of date. After you add or change a configuration key, regenerate it by running `go test ./internal/config -run TestReference -update` in `server/`.
 
+## Database migrations
+
+The migrations are SQL files in `server/internal/database/migrations/`, embedded in the binary and applied by [goose](https://github.com/pressly/goose). `storycreep migrate` applies them, as the superuser in `STORYCREEP_DATABASE_ADMIN_URL`, under an advisory lock (PRD FR-ADMIN-04).
+
+- Name a new migration with the next version, as in `00002_workspaces.sql`. Versions count up from `00001` without a gap, and a test fails otherwise. Two pull requests that add the same version fail CI once both are merged into one branch, so renumber yours if that happens.
+- Migrations are forward-only: start the file with `-- +goose Up` and write no `-- +goose Down` section. Each migration runs in its own transaction.
+- A migration on the main branch is never changed, deleted, or renamed, because no database that applied it would apply the new version. `pnpm migrations:check` fails a branch that does, and CI runs it on every pull request. To change the schema again, add a new migration.
+- The superuser that runs the migrations owns the tables. Grant the server's privileges to the `storycreep_app` role in the migration that creates a table; the server's login has no other privileges.
+- After you change a migration or a query in `server/internal/database/queries/`, run `go generate ./internal/database` in `server/` to regenerate the code that sqlc builds from them.
+
+Database tests get their own database from `dbtest.New(t)`, in `server/internal/database/dbtest`, which copies a template with the migrations applied. Two environment variables configure it: `STORYCREEP_TEST_POSTGRES_IMAGE` picks the image (the default is `postgres:17-alpine`), and `STORYCREEP_TEST_UPGRADE_FROM` names a directory of older migrations that the template is migrated with first. CI's upgrade test sets it to the main branch's migrations and runs the whole suite on the upgraded database (FR-ADMIN-04 AC2).
+
 ## Conventions
 
 - Text files use LF line endings everywhere. `.gitattributes` enforces this, and `.editorconfig` sets the indentation: two spaces, except tabs for Go and GDScript.
 - Every user-facing string goes through the i18n layer, and every new endpoint is in the OpenAPI document. The plan's standing checklist lists the rest.
-- Outside tests, only `server/internal/config` reads the environment or knows the deployment mode (`STORYCREEP_MODE`). Code that behaves differently in the two modes reads `config.Capabilities`. A test fails on non-test code in any other package that reads an environment variable, names `STORYCREEP_MODE`, or uses a mode value (PRD FR-ADMIN-01 AC3). Test files are exempt, because they set the mode up.
+- Outside tests, only `server/internal/config` reads the environment or knows the deployment mode (`STORYCREEP_MODE`). Code that behaves differently in the two modes reads `config.Capabilities`. A test fails on non-test code in any other package that reads an environment variable, names `STORYCREEP_MODE`, or uses a mode value (PRD FR-ADMIN-01 AC3). Test files are exempt, because they set the mode up, and so are test-support packages: a package whose name ends in `test`, such as `dbtest`, and that only test files import, so that it is not part of the binary.
 - Secrets are held as `secret.Value` (`server/internal/secret`), which prints, logs, and encodes as `[REDACTED]`. Call `Reveal` only where the secret is used.
 
 ## Security issues

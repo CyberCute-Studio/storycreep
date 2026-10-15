@@ -12,6 +12,7 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "docs:check": "go -C server run ./cmd/doccheck",
+    "migrations:check": "go -C server run ./cmd/migrationcheck",
     "traceability": "go -C server run ./cmd/traceability -out ../traceability-report"
   },
   "devDependencies": {

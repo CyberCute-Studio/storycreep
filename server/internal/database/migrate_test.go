@@ -283,6 +283,77 @@ func TestMigrateNeedsTheAdminLogin(t *testing.T) {
 	}
 }
 
+// schemaOf describes the public schema of the database: its columns,
+// indexes, row-level security policies, and privileges.
+func schemaOf(t *testing.T, conn *pgx.Conn) string {
+	t.Helper()
+	var s string
+	err := conn.QueryRow(context.Background(), `
+		SELECT string_agg(x, E'\n' ORDER BY x) FROM (
+			SELECT format('column %s.%s %s %s %s', table_name, column_name, data_type, is_nullable, column_default) AS x
+			FROM information_schema.columns WHERE table_schema = 'public'
+			UNION ALL
+			SELECT format('privilege %s on %s: %s', grantee, table_name, privilege_type)
+			FROM information_schema.table_privileges WHERE table_schema = 'public'
+			UNION ALL
+			SELECT format('index %s', indexdef) FROM pg_indexes WHERE schemaname = 'public'
+			UNION ALL
+			SELECT format('policy %s on %s: %s %s %s', policyname, tablename, cmd, qual, with_check)
+			FROM pg_policies WHERE schemaname = 'public'
+			UNION ALL
+			SELECT format('rls %s %s %s', relname, relrowsecurity, relforcerowsecurity)
+			FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind = 'r'
+			UNION ALL
+			SELECT format('schema %s', nspacl) FROM pg_namespace WHERE nspname = 'public'
+		) s`).Scan(&s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// TestUpgradeMatchesFreshInstall upgrades a database from a seed, an earlier
+// set of migrations, as CI's upgrade test does with the main branch's, and
+// checks that it applies only the newer migrations and ends up with the
+// schema a fresh install of the same set has.
+//
+// Verifies: FR-ADMIN-04/AC2
+func TestUpgradeMatchesFreshInstall(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	newer := withMigrations(t, map[string]string{
+		"90001_items.sql": "CREATE TABLE items (workspace_id uuid NOT NULL, id uuid PRIMARY KEY);\n" +
+			"ALTER TABLE items ENABLE ROW LEVEL SECURITY;\nALTER TABLE items FORCE ROW LEVEL SECURITY;\n" +
+			"CREATE POLICY items_workspace ON items " +
+			"USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);\n" +
+			"GRANT SELECT, INSERT ON items TO storycreep_app;",
+		"90002_item_names.sql": "ALTER TABLE items ADD COLUMN name text NOT NULL DEFAULT '';\n" +
+			"CREATE INDEX items_by_workspace ON items (workspace_id, name);",
+	})
+
+	upgraded := dbtest.Empty(t)
+	if _, err := database.Migrate(ctx, upgraded.AdminURL, upgraded.AppURL, database.MigrateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := database.Migrate(ctx, upgraded.AdminURL, upgraded.AppURL, database.MigrateOptions{Migrations: newer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := versionsOf(res.Applied); !equalVersions(got, []int64{90001, 90002}) {
+		t.Errorf("the upgrade applied %v, want only the newer migrations", got)
+	}
+
+	fresh := dbtest.Empty(t)
+	if _, err := database.Migrate(ctx, fresh.AdminURL, fresh.AppURL, database.MigrateOptions{Migrations: newer}); err != nil {
+		t.Fatal(err)
+	}
+	if u, f := schemaOf(t, upgraded.Admin(t)), schemaOf(t, fresh.Admin(t)); u != f {
+		t.Errorf("the upgraded schema differs from a fresh install's:\nupgraded:\n%s\nfresh:\n%s", u, f)
+	} else if !strings.Contains(u, "policy items_workspace") {
+		t.Errorf("the schema description misses the policy:\n%s", u)
+	}
+}
+
 // TestRoleMigrationCorrectsRoles checks that the first migration corrects the
 // attributes of server roles that exist already with the wrong ones, as roles
 // another database in the cluster created could. It changes roles that every

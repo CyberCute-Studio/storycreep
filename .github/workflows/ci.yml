@@ -39,7 +39,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
-          cache-dependency-path: server/go.mod
+          cache-dependency-path: server/go.sum
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -76,9 +76,12 @@ jobs:
         working-directory: server
         run: go vet ./...
 
+      # The database tests need Linux containers, which the Windows and macOS
+      # runners cannot run, so -short skips them here and the database job
+      # runs them.
       - name: Go tests
         working-directory: server
-        run: go test ./...
+        run: go test -short ./...
 
       - name: PRD and plan checks
         run: pnpm docs:check
@@ -102,6 +105,81 @@ jobs:
           path: traceability-report/
           if-no-files-found: error
 
+  # PRD NFR-Q-01 and §9.9: the server's tests run against real PostgreSQL, in
+  # Docker, on every supported version.
+  database:
+    name: Database tests (PostgreSQL ${{ matrix.postgres }})
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [15, 16, 17]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache-dependency-path: server/go.sum
+
+      - name: Go tests
+        working-directory: server
+        env:
+          STORYCREEP_TEST_POSTGRES_IMAGE: postgres:${{ matrix.postgres }}-alpine
+        run: go test ./...
+
+  # PRD FR-ADMIN-04 AC2: merged migrations are immutable, and every change is
+  # tested as an upgrade. Until the first release, the upgrade seeds the
+  # database from the migrations of the main branch (plan note N8); item 119
+  # switches the seed to the previous release.
+  migrations:
+    name: Migrations and generated code
+    runs-on: ubuntu-latest
+    env:
+      # A pull request is compared with the main branch, and a push with
+      # the commit it replaced.
+      BASE: ${{ github.event_name == 'push' && github.event.before || 'origin/main' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The checks compare with the main branch's history.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache-dependency-path: server/go.sum
+
+      - name: Merged migrations are unchanged
+        working-directory: server
+        run: go run ./cmd/migrationcheck -base "$BASE"
+
+      - name: Generated SQL code is up to date
+        working-directory: server/internal/database
+        run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff
+
+      - name: Extract the seed migrations
+        id: seed
+        shell: bash
+        run: |
+          fork="$(git merge-base HEAD "$BASE")"
+          seed="$RUNNER_TEMP/seed-migrations"
+          mkdir -p "$seed"
+          if git cat-file -e "$fork:server/internal/database/migrations" 2>/dev/null; then
+            git archive "$fork" server/internal/database/migrations | tar -x -C "$seed" --strip-components=4
+          fi
+          echo "The upgrade starts from $(find "$seed" -name '*.sql' | wc -l) migration(s) at $fork."
+          echo "dir=$seed" >> "$GITHUB_OUTPUT"
+
+      - name: Upgrade test
+        working-directory: server
+        env:
+          STORYCREEP_TEST_UPGRADE_FROM: ${{ steps.seed.outputs.dir }}
+        run: go test ./...
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
@@ -113,7 +191,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
-          cache-dependency-path: server/go.mod
+          cache-dependency-path: server/go.sum
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

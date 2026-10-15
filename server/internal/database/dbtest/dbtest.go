@@ -216,9 +216,7 @@ func start(t testing.TB) *server {
 		shared.srv, shared.err = startServer(context.Background())
 	})
 	if shared.err != nil {
-		t.Fatalf("start PostgreSQL (%s): %v\n"+
-			"The database tests run PostgreSQL in Docker. Start Docker, or run go test -short to skip them.",
-			Image(), shared.err)
+		t.Fatal(shared.err)
 	}
 	return shared.srv
 }
@@ -236,7 +234,9 @@ func startServer(ctx context.Context) (*server, error) {
 			"-c", "full_page_writes=off", "-c", "max_connections=500"),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("start PostgreSQL (%s): %w\n"+
+			"The database tests run PostgreSQL in Docker. Start Docker, or run go test -short to skip them.",
+			Image(), err)
 	}
 	// testcontainers removes the container when the test binary exits.
 	if s.host, err = c.Host(ctx); err != nil {
