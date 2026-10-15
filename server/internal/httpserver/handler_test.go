@@ -399,6 +399,31 @@ func TestNotReadyWhileStopping(t *testing.T) {
 	}
 }
 
+// TestRefusedRequestsKeepTheirRoute checks that a request that the readiness
+// gate refuses, before it is routed, is logged and counted under the route it
+// was for, not as one that no route matches.
+func TestRefusedRequestsKeepTheirRoute(t *testing.T) {
+	log, logged := newTestLog()
+	s := newServer(loadConfig(t, nil), log)
+	api.Register(s.main, api.Public, huma.Operation{OperationID: "getThing", Method: http.MethodGet,
+		Path: "/api/v1/things/{id}"}, func(context.Context, *struct {
+		ID string `path:"id"`
+	}) (*statusOutput, error) {
+		return &statusOutput{Body: statusBody{Status: "ok"}}, nil
+	})
+	s.ready.setPhase(phaseStarting)
+	if res := do(s.main, http.MethodGet, "/api/v1/things/1", nil); res.status != http.StatusServiceUnavailable {
+		t.Fatalf("the API answers %d while starting, want 503", res.status)
+	}
+	if rs := logged.records(t, "request"); len(rs) != 1 || rs[0]["route"] != "/api/v1/things/{id}" {
+		t.Errorf("the refused request is not logged with its route: %v", rs)
+	}
+	body := string(do(s.admin, http.MethodGet, "/metrics", nil).body)
+	if !strings.Contains(body, `storycreep_http_requests_total{code="503",method="GET",route="/api/v1/things/{id}"} 1`) {
+		t.Errorf("the refused request is not counted under its route:\n%s", body)
+	}
+}
+
 func TestOperationalEndpoints(t *testing.T) {
 	s := newServer(loadConfig(t, nil), slog.New(slog.DiscardHandler))
 	if res := do(s.main, http.MethodGet, "/healthz", nil); res.status != http.StatusOK ||

@@ -40,8 +40,10 @@ const (
 	readHeaderTimeout = 10 * time.Second
 	idleTimeout       = 2 * time.Minute
 	// shutdownTimeout is how long Run waits for the requests in progress
-	// when it stops. It is shorter than the 30 seconds that orchestrators
-	// usually wait before they kill a container.
+	// when it stops. It is shorter than the 30 seconds that Kubernetes waits
+	// by default before it kills a container. Docker and Docker Compose wait
+	// only 10 seconds by default, so a deployment with them sets a longer
+	// grace period, such as a compose file's stop_grace_period.
 	shutdownTimeout = 20 * time.Second
 	// defaultPollInterval is how often a server without auto-migration
 	// checks whether the pending migrations have been applied.

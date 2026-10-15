@@ -443,6 +443,32 @@ func TestRunWithoutTheAdminURL(t *testing.T) {
 	}
 }
 
+// TestRunCannotListen checks that a server that cannot listen on one of its
+// addresses returns an error that names the key of the address, and closes
+// the listener it was given for the other.
+func TestRunCannotListen(t *testing.T) {
+	t.Parallel()
+	busy := listen(t)
+	defer busy.Close()
+	for _, key := range []string{"STORYCREEP_HTTP_ADDR", "STORYCREEP_ADMIN_ADDR"} {
+		cfg := loadConfig(t, nil)
+		given := listen(t)
+		opts := Options{}
+		if key == "STORYCREEP_HTTP_ADDR" {
+			cfg.HTTPAddr, opts.AdminListener = busy.Addr().String(), given
+		} else {
+			cfg.AdminAddr, opts.Listener = busy.Addr().String(), given
+		}
+		if err := Run(context.Background(), cfg, opts); err == nil || !strings.Contains(err.Error(), "listen on "+key) {
+			t.Errorf("%s in use: Run returned %v", key, err)
+		}
+		if c, err := net.Dial("tcp", given.Addr().String()); err == nil {
+			c.Close()
+			t.Errorf("%s in use: the other listener, %s, is still open", key, given.Addr())
+		}
+	}
+}
+
 // TestRunWithoutMetrics checks that a server with no metrics to serve does
 // not open the admin port.
 func TestRunWithoutMetrics(t *testing.T) {

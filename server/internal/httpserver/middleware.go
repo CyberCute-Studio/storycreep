@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
@@ -92,10 +91,9 @@ func (s *server) logRequest(m *metrics, r *http.Request, ww middleware.WrapRespo
 		// The handler wrote nothing, which net/http answers with 200.
 		status = http.StatusOK
 	}
-	route := ""
-	if rctx := chi.RouteContext(r.Context()); rctx != nil {
-		route = rctx.RoutePattern()
-	}
+	// A request that the readiness gate refused is logged and counted under
+	// the route it was for, too.
+	route := api.RoutePattern(r)
 	if m != nil {
 		m.observe(r.Method, route, status, elapsed)
 	}

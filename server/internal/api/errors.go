@@ -242,8 +242,12 @@ func fromHuma(ctx context.Context, op *huma.Operation, status int, msg string, e
 	}
 	var details map[string]any
 	switch c {
-	case CodeInvalidRequest, CodeValidationFailed:
-		details = map[string]any{"errors": errorDetails(msg, errs)}
+	case CodeInvalidRequest:
+		// huma answers 400 itself only for the body, as when a required body
+		// is missing, which it reports without a location.
+		details = map[string]any{"errors": errorDetails(msg, "body", errs)}
+	case CodeValidationFailed:
+		details = map[string]any{"errors": errorDetails(msg, "", errs)}
 	case CodeRequestTooLarge:
 		if op != nil && op.MaxBodyBytes > 0 {
 			// Register adds the byte that huma's limit takes away.
@@ -270,9 +274,10 @@ type Problem struct {
 	Message  string `json:"message"`
 }
 
-// errorDetails lists huma's problems. huma also records the offending value,
-// which is left out: it may be a password, and it may be large.
-func errorDetails(msg string, errs []error) []Problem {
+// errorDetails lists huma's problems, or, if huma gave none, msg as the one
+// problem, at location. huma also records the offending value, which is left
+// out: it may be a password, and it may be large.
+func errorDetails(msg, location string, errs []error) []Problem {
 	var out []Problem
 	for _, err := range errs {
 		if err == nil {
@@ -287,7 +292,7 @@ func errorDetails(msg string, errs []error) []Problem {
 		out = append(out, Problem{Message: err.Error()})
 	}
 	if len(out) == 0 {
-		out = append(out, Problem{Message: msg})
+		out = append(out, Problem{Location: location, Message: msg})
 	}
 	return out
 }

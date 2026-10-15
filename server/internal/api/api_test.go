@@ -165,6 +165,7 @@ func TestStrictDecoding(t *testing.T) {
 		{"second value", `{"name":"a"} {"name":"b"}`, CodeInvalidRequest, "body", "more after its JSON value"},
 		{"invalid UTF-8", "{\"name\":\"\xff\"}", CodeInvalidRequest, "body", "not valid UTF-8"},
 		{"syntax error", `{"name":`, CodeInvalidRequest, "body", "not valid JSON"},
+		{"missing body", ``, CodeInvalidRequest, "body", "request body is required"},
 		{"not an object", `[1]`, CodeValidationFailed, "body", "expected object"},
 	}
 	for _, tt := range tests {
@@ -339,9 +340,57 @@ func TestRoutingErrors(t *testing.T) {
 	if b := res.envelope(t); b.Code != CodeNotFound {
 		t.Errorf("an unknown path: code %s", b.Code)
 	}
-	res = serve(m, http.MethodDelete, "/items", "", nil)
-	if b := res.envelope(t); b.Code != CodeMethodNotAllowed || res.header.Get("Allow") != "POST" {
-		t.Errorf("an unknown method: code %s, Allow %q", b.Code, res.header.Get("Allow"))
+	// chi sends a method it does not route, such as BREW, to the
+	// method-not-allowed handler whatever the path.
+	for _, method := range []string{http.MethodDelete, "BREW"} {
+		res = serve(m, method, "/items", "", nil)
+		if b := res.envelope(t); b.Code != CodeMethodNotAllowed || res.header.Get("Allow") != "POST" {
+			t.Errorf("%s /items: code %s, Allow %q", method, b.Code, res.header.Get("Allow"))
+		}
+		res = serve(m, method, "/nowhere", "", nil)
+		if b := res.envelope(t); b.Code != CodeNotFound || res.header.Get("Allow") != "" {
+			t.Errorf("%s /nowhere: code %s, Allow %q", method, b.Code, res.header.Get("Allow"))
+		}
+	}
+}
+
+// TestRoutePattern checks that a request has the pattern of the route that
+// answers it, or would have if middleware had not answered it first.
+func TestRoutePattern(t *testing.T) {
+	var refuse bool
+	got := map[string]string{}
+	m := NewMux(MuxOptions{Middleware: []func(http.Handler) http.Handler{func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if refuse {
+				WriteError(w, r, NewError(CodeNotReady))
+			} else {
+				next.ServeHTTP(w, r)
+			}
+			got[r.Method+" "+r.URL.Path] = RoutePattern(r)
+		})
+	}}})
+	Register(m, Public, huma.Operation{OperationID: "getThing", Method: http.MethodGet, Path: "/things/{id}"},
+		func(context.Context, *struct {
+			ID string `path:"id"`
+		}) (*itemOutput, error) {
+			return &itemOutput{}, nil
+		})
+	want := map[string]string{
+		"GET /things/1":  "/things/{id}",
+		"HEAD /things/1": "/things/{id}",
+		"POST /things/1": "",
+		"GET /nowhere":   "",
+	}
+	for _, refuse = range []bool{false, true} {
+		for req := range want {
+			method, path, _ := strings.Cut(req, " ")
+			serve(m, method, path, "", nil)
+		}
+		for req, pattern := range want {
+			if got[req] != pattern {
+				t.Errorf("refused %v: %s has the route %q, want %q", refuse, req, got[req], pattern)
+			}
+		}
 	}
 }
 

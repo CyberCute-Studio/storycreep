@@ -235,18 +235,49 @@ var Methods = []string{
 	http.MethodOptions,
 }
 
+// routingPath returns the path that chi routes r by.
+func routingPath(r *http.Request) string {
+	if rctx := chi.RouteContext(r.Context()); rctx != nil && rctx.RoutePath != "" {
+		return rctx.RoutePath
+	}
+	if r.URL.RawPath != "" {
+		return r.URL.RawPath
+	}
+	if r.URL.Path == "" {
+		return "/"
+	}
+	return r.URL.Path
+}
+
+// RoutePattern returns the pattern of the route that r was routed to, such as
+// /api/v1/projects/{id}, or "" if no route matches it. A request that
+// middleware answered before chi routed it, as the readiness gate of package
+// httpserver does, gets the pattern of the route that would have answered it,
+// so that it is logged and counted under its route.
+func RoutePattern(r *http.Request) string {
+	rctx := chi.RouteContext(r.Context())
+	if rctx == nil {
+		return ""
+	}
+	if pattern := rctx.RoutePattern(); pattern != "" || rctx.Routes == nil {
+		return pattern
+	}
+	path := routingPath(r)
+	pattern := rctx.Routes.Find(chi.NewRouteContext(), r.Method, path)
+	if pattern == "" && r.Method == http.MethodHead {
+		// GetHead answers HEAD wherever GET is routed.
+		pattern = rctx.Routes.Find(chi.NewRouteContext(), http.MethodGet, path)
+	}
+	return pattern
+}
+
 // methodNotAllowed answers a request whose path a route matches, but not its
 // method, with the methods that the path takes in the Allow header (RFC 9110
-// §15.5.6).
+// §15.5.6). chi also sends here a request with a method that it does not
+// route at all, such as PROPFIND, whatever its path, so a path that no route
+// matches is answered with not_found, as for any other method.
 func (m *Mux) methodNotAllowed(w http.ResponseWriter, r *http.Request) {
-	// The path is the one chi routed by.
-	path := r.URL.RawPath
-	if path == "" {
-		path = r.URL.Path
-	}
-	if rctx := chi.RouteContext(r.Context()); rctx != nil && rctx.RoutePath != "" {
-		path = rctx.RoutePath
-	}
+	path := routingPath(r)
 	var allow []string
 	for _, method := range Methods {
 		// GetHead answers HEAD wherever GET is routed.
@@ -258,9 +289,11 @@ func (m *Mux) methodNotAllowed(w http.ResponseWriter, r *http.Request) {
 			allow = append(allow, method)
 		}
 	}
-	if len(allow) > 0 {
-		w.Header().Set("Allow", strings.Join(allow, ", "))
+	if len(allow) == 0 {
+		WriteError(w, r, NewError(CodeNotFound))
+		return
 	}
+	w.Header().Set("Allow", strings.Join(allow, ", "))
 	WriteError(w, r, NewError(CodeMethodNotAllowed))
 }
 
