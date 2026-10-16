@@ -15,9 +15,9 @@
 // Tables lists the tenant tables. A migration that adds one adds it there,
 // with how to add a row, and the schema test in package database fails until
 // it does (FR-TEN-01 AC1). Fixture.CheckTables tries reads, updates, deletes,
-// and inserts of every table from the wrong workspace, and moves of a
-// workspace's rows into another, and Fixture.Check tries a repository's own
-// operations.
+// and inserts of every table from the wrong workspace, reads, updates, and
+// deletes without a filter, and moves of a workspace's rows into another, and
+// Fixture.Check tries a repository's own operations.
 package isolationtest
 
 import (
@@ -215,6 +215,14 @@ type Op struct {
 	// another workspace's rows with an error, rather than find none of them,
 	// as it refuses an insert.
 	Denied bool
+	// Blind says that Run cannot tell which rows it changed, as an UPDATE or
+	// DELETE without a WHERE or RETURNING clause cannot. The harness then
+	// finds them itself, as the target's rows that Run's transaction holds
+	// locked, as it holds every row that it updated or deleted, and rolls the
+	// transaction back rather than commit it: such an operation changes its
+	// own workspace's rows too, which the operations that the harness tries
+	// next need. Run's IDs are not used.
+	Blind bool
 }
 
 // Check tries op on workspace A's rows, where it must work, and then on
@@ -245,7 +253,7 @@ func (f *Fixture) check(t testing.TB, op Op, prepare func(target *Workspace) err
 	var own []ids.UUID
 	err := f.DB.InTx(ctx, f.A.Scope(), func(tx pgx.Tx) error {
 		var err error
-		if own, err = op.Run(ctx, tx, f.A); err == nil {
+		if own, err = f.run(ctx, t, tx, op, f.A); err == nil {
 			err = errRollback
 		}
 		return err
@@ -271,9 +279,14 @@ func (f *Fixture) check(t testing.TB, op Op, prepare func(target *Workspace) err
 	var got []ids.UUID
 	err = f.DB.InTx(ctx, f.A.Scope(), func(tx pgx.Tx) error {
 		var err error
-		got, err = op.Run(ctx, tx, f.B)
+		if got, err = f.run(ctx, t, tx, op, f.B); err == nil && op.Blind {
+			err = errRollback
+		}
 		return err
 	})
+	if errors.Is(err, errRollback) {
+		err = nil
+	}
 	if leaked := slices.DeleteFunc(slices.Clone(got), func(id ids.UUID) bool { return !slices.Contains(rows, id) }); len(leaked) > 0 {
 		t.Errorf("%s: from another workspace's transaction, reaches %d of the workspace's rows", op.Name, len(leaked))
 	}
@@ -283,6 +296,45 @@ func (f *Fixture) check(t testing.TB, op Op, prepare func(target *Workspace) err
 	if after, _ := f.snapshot(t, f.B); after != before {
 		t.Errorf("%s: from another workspace's transaction, changes the workspace's rows", op.Name)
 	}
+}
+
+// run runs op in tx on the rows of target, and returns the IDs of the rows
+// that it read, changed, or added: for a blind operation, those of target's
+// rows that tx holds locked.
+func (f *Fixture) run(ctx context.Context, t testing.TB, tx pgx.Tx, op Op, target *Workspace) ([]ids.UUID, error) {
+	t.Helper()
+	got, err := op.Run(ctx, tx, target)
+	if err != nil || !op.Blind {
+		return got, err
+	}
+	return f.locked(t, target), nil
+}
+
+// locked returns, as the superuser, the IDs of the rows of w in the
+// fixture's tables that another transaction holds locked, as one holds each
+// row that it updated or deleted until it ends. The superuser tries to lock
+// every row of w, and skips, rather than waits for, those it cannot lock at
+// once. Its lock, FOR NO KEY UPDATE, does not conflict with the one that a
+// foreign key check takes on the row that a new row refers to, so that a row
+// that the transaction only refers to does not count.
+func (f *Fixture) locked(t testing.TB, w *Workspace) []ids.UUID {
+	t.Helper()
+	var all []ids.UUID
+	for _, table := range f.tables {
+		ident := pgx.Identifier{table.Name}.Sanitize()
+		rows, err := f.admin.Query(context.Background(), "WITH free AS (SELECT id FROM "+ident+
+			" WHERE workspace_id = $1 FOR NO KEY UPDATE SKIP LOCKED) "+
+			"SELECT id FROM "+ident+" WHERE workspace_id = $1 AND id NOT IN (SELECT id FROM free)", w.ID)
+		var got []ids.UUID
+		if err == nil {
+			got, err = pgx.CollectRows(rows, pgx.RowTo[ids.UUID])
+		}
+		if err != nil {
+			t.Fatalf("read the locked rows of %s: %v", table.Name, err)
+		}
+		all = append(all, got...)
+	}
+	return all
 }
 
 // isDenied reports whether err is PostgreSQL's refusal for want of a
@@ -321,11 +373,11 @@ func (f *Fixture) snapshot(t testing.TB, w *Workspace) (string, []ids.UUID) {
 }
 
 // CheckTables tries, on every table of the fixture, what a repository with a
-// broken filter would do: read the rows of another workspace's ID, and read
-// without a filter, update, delete, and add rows of another workspace's ID,
-// and move rows of its own workspace into another by changing their
-// workspace_id. Operations that the application login has no privilege for
-// must fail on its own workspace's rows too.
+// broken filter would do: read, update, delete, and add rows of another
+// workspace's ID, read, update, and delete rows without a filter, and move
+// rows of its own workspace into another by changing their workspace_id.
+// Operations that the application login has no privilege for must fail on
+// its own workspace's rows too.
 func (f *Fixture) CheckTables(t testing.TB) {
 	t.Helper()
 	for _, table := range f.tables {
@@ -344,6 +396,12 @@ func (f *Fixture) CheckTables(t testing.TB) {
 				return pgx.CollectRows(rows, pgx.RowTo[ids.UUID])
 			}
 		}
+		blind := func(sql string, args ...any) func(context.Context, pgx.Tx, *Workspace) ([]ids.UUID, error) {
+			return func(ctx context.Context, tx pgx.Tx, _ *Workspace) ([]ids.UUID, error) {
+				_, err := tx.Exec(ctx, sql, args...)
+				return nil, err
+			}
+		}
 		for _, c := range []struct {
 			op        Op
 			privilege string
@@ -352,6 +410,24 @@ func (f *Fixture) CheckTables(t testing.TB) {
 				Run: query("SELECT id FROM "+ident+" WHERE workspace_id = $1", true)}, "SELECT"},
 			{Op{Name: table.Name + ": read without a filter",
 				Run: query("SELECT id FROM "+ident, false)}, "SELECT"},
+			// A WHERE or RETURNING clause that reads the table's columns, as
+			// those of the update and the delete by workspace below do, holds
+			// the rows that the statement reaches to the table's SELECT
+			// policies too, which would hide behind them a looser policy for
+			// updates or deletes, such as one that lets a transaction delete
+			// every workspace's rows. These statements read no column, so that
+			// the policies for updates and deletes are all that holds them,
+			// and the harness finds the rows that they reach by their locks
+			// (Op.Blind). The update sets workspace_id to A's, the workspace of
+			// the transaction, which a policy's check of new rows lets
+			// through, so that it would take another workspace's rows into A.
+			// They come before the operations that commit what they change if
+			// row-level security fails to hold them, so that they find every
+			// workspace's rows as the fixture seeded them.
+			{Op{Name: table.Name + ": update without a filter", Blind: true,
+				Run: blind("UPDATE "+ident+" SET workspace_id = $1", f.A.ID)}, "UPDATE"},
+			{Op{Name: table.Name + ": delete without a filter", Blind: true,
+				Run: blind("DELETE FROM " + ident)}, "DELETE"},
 			{Op{Name: table.Name + ": update by workspace",
 				Run: query("UPDATE "+ident+" SET workspace_id = workspace_id WHERE workspace_id = $1 RETURNING id", true)},
 				"UPDATE"},
