@@ -181,8 +181,9 @@ func TestParseHashRejects(t *testing.T) {
 }
 
 // TestHasherWaitsForASlot checks that a Hasher runs at most as many hashes
-// at a time as it has slots, and that a hash waiting for a slot stops when
-// its context ends.
+// at a time as it has slots, that a hash waiting for a slot stops when its
+// context ends, and that a hash whose context has ended runs not even when a
+// slot is free, which select would otherwise pick about half the time.
 func TestHasherWaitsForASlot(t *testing.T) {
 	t.Parallel()
 	h := newHasher(cheapParams, 1)
@@ -200,6 +201,17 @@ func TestHasherWaitsForASlot(t *testing.T) {
 		t.Errorf("Verify while every slot is taken: %v, want context.Canceled", err)
 	}
 	<-h.slots
+	for range 20 {
+		if _, err := h.Hash(ctx, secret.New("x")); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Hash with a free slot and an ended context: %v, want context.Canceled", err)
+		}
+		if _, _, err := h.Verify(ctx, encoded, secret.New("x")); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Verify with a free slot and an ended context: %v, want context.Canceled", err)
+		}
+	}
+	if n := len(h.slots); n != 0 {
+		t.Fatalf("%d slots are still taken after the hashes of an ended context", n)
+	}
 	if match, _, err := h.Verify(context.Background(), encoded, secret.New("x")); err != nil || !match {
 		t.Errorf("Verify once the slot is free: match %t, error %v", match, err)
 	}

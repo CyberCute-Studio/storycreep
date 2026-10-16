@@ -33,7 +33,10 @@ func (d readyDB) InTx(ctx context.Context, scope database.Scope, fn func(pgx.Tx)
 
 // registerBody is the body of POST /api/v1/auth/register.
 type registerBody struct {
-	Email string `json:"email" format:"email" maxLength:"254" doc:"The account's email address, which signs in: an address alone, as jo@example.com, of at most 254 bytes, without spaces or characters that are not printed. Addresses compare without regard to case or to how their characters are composed."`
+	// The format is idn-email, because JSON Schema's email is an address in
+	// ASCII (RFC 5321), and the account package takes addresses outside ASCII
+	// too (RFC 6531).
+	Email string `json:"email" format:"idn-email" maxLength:"254" doc:"The account's email address, which signs in: an address alone, as jo@example.com, of at most 254 bytes, without spaces or characters that are not printed. Addresses compare without regard to case or to how their characters are composed."`
 	// The limits are the account package's.
 	DisplayName string `json:"display_name" maxLength:"100" doc:"The name that other people see, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls and line separators among them. White space around it is removed."`
 	Password    string `json:"password" maxLength:"256" doc:"The password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password."`

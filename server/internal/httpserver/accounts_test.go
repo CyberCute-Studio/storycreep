@@ -187,6 +187,30 @@ func TestRegisterInvalidFields(t *testing.T) {
 	}
 }
 
+// TestRegisterInternationalAddress checks that the route takes the addresses
+// outside ASCII that the account package takes, so that the format check of
+// its schema, which runs first, refuses none of them, and that the document
+// gives the field the format of such addresses, idn-email.
+func TestRegisterInternationalAddress(t *testing.T) {
+	t.Parallel()
+	s, d := readyServer(t, map[string]string{"STORYCREEP_SIGNUP": "open"})
+	addresses := []string{"žofie@example.com", "jo@bücher.example", "用户@例子.广告"}
+	for _, email := range addresses {
+		res := send(s.main, http.MethodPost, registerPath,
+			registration(t, email, "Jo", "correct horse battery staple"), "", nil)
+		if res.status != http.StatusAccepted {
+			t.Errorf("%q: %d %s", email, res.status, res.body)
+		}
+	}
+	if n := countAccounts(t, d); n != len(addresses) {
+		t.Errorf("%d accounts, want %d", n, len(addresses))
+	}
+	schema := s.main.OpenAPI().Components.Schemas.Map()["RegisterBody"]
+	if schema == nil || schema.Properties["email"] == nil || schema.Properties["email"].Format != "idn-email" {
+		t.Error("the document does not give the email field the format idn-email")
+	}
+}
+
 // TestRegisterRefusedByPolicy checks that with the closed signup policy,
 // self-hosted mode's default, registration answers 403 signup_closed, and
 // with the invite policy 403 invite_required, whatever the request holds,

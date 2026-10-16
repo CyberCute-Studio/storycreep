@@ -69,8 +69,7 @@ func newHasher(p params, concurrent int) *Hasher {
 }
 
 // derive computes the key of password with salt and p, of p.keyLen bytes,
-// once it has a slot. It returns ctx's error if ctx ends while it waits for
-// one.
+// once it has a slot. It returns ctx's error if ctx ends before it has one.
 func (h *Hasher) derive(ctx context.Context, password secret.Value, salt []byte, p params) ([]byte, error) {
 	select {
 	case h.slots <- struct{}{}:
@@ -78,6 +77,11 @@ func (h *Hasher) derive(ctx context.Context, password secret.Value, salt []byte,
 		return nil, ctx.Err()
 	}
 	defer func() { <-h.slots }()
+	// select picks at random between a free slot and an ended context, and a
+	// hash that nobody waits for would hold the slot from those who do.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return argon2.IDKey(normalize(password), salt, p.time, p.memory, p.threads, p.keyLen), nil
 }
 
@@ -95,7 +99,7 @@ func normalize(password secret.Value) []byte {
 //	$argon2id$v=19$m=65536,t=3,p=4$<salt>$<key>
 //
 // with the salt and the key in unpadded base64. It returns ctx's error if
-// ctx ends while it waits for a slot.
+// ctx ends before it has a slot.
 func (h *Hasher) Hash(ctx context.Context, password secret.Value) (string, error) {
 	salt := make([]byte, h.params.saltLen)
 	_, _ = rand.Read(salt)
@@ -120,8 +124,8 @@ func (h *Hasher) decoy() string {
 // Verify reports whether password matches encoded, a hash that Hash
 // returned, and, if it does, whether the hash was made with other
 // parameters than the Hasher's, so that it should be made again. It returns
-// an error if encoded is not an argon2id hash, or if ctx ends while it waits
-// for a slot.
+// an error if encoded is not an argon2id hash, or if ctx ends before it has a
+// slot.
 func (h *Hasher) Verify(ctx context.Context, encoded string, password secret.Value) (match, rehash bool,
 	err error) {
 	p, salt, key, err := parseHash(encoded)

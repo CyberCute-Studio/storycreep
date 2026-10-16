@@ -195,9 +195,12 @@ func (r Registration) fields() (email, name string, err error) {
 // composes differently, such as ž typed as z and a combining caron, is the
 // same address, and is not a second account that looks like the first.
 // citext compares addresses without regard to case, but not to how their
-// characters are composed. NFC changes only how characters are composed, not
-// which they are, as the NFKC of a password may, so the address stays the
-// one that mail is delivered to.
+// characters are composed. NFC changes how characters are composed, and
+// replaces the few that Unicode defines as another character written twice,
+// such as U+212A KELVIN SIGN, which becomes K, but it keeps the characters
+// that the NFKC of a password changes, such as full-width letters, so the
+// address stays the one that mail is delivered to: NFC is the form that RFC
+// 6532 §3.1 recommends for mail.
 func canonicalEmail(email string) string {
 	return norm.NFC.String(strings.TrimSpace(email))
 }
@@ -246,11 +249,26 @@ func checkDisplayName(name string) string {
 // that shows nothing. Those are the characters that Unicode ignores by
 // default (Default_Ignorable_Code_Point) although their category is a mark's
 // or a letter's, such as U+FE0F VARIATION SELECTOR-16, U+034F COMBINING
-// GRAPHEME JOINER, and U+3164 HANGUL FILLER, and U+2800 BRAILLE PATTERN
-// BLANK, a symbol without dots.
+// GRAPHEME JOINER, and U+3164 HANGUL FILLER, and the blank characters that
+// it does not ignore (blank).
 func printed(r rune) bool {
-	return unicode.IsGraphic(r) && !unicode.IsSpace(r) && r != '\u2800' &&
-		!unicode.In(r, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector)
+	return unicode.IsGraphic(r) && !unicode.IsSpace(r) &&
+		!unicode.In(r, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector, blank)
+}
+
+// blank holds the characters that show nothing although Unicode neither
+// ignores them by default nor counts them as spaces, because they stand for
+// an empty place in a script's own writing: U+2800 BRAILLE PATTERN BLANK, a
+// symbol without dots, U+13441 EGYPTIAN HIEROGLYPH FULL BLANK and U+13442
+// EGYPTIAN HIEROGLYPH HALF BLANK, which are letters, U+16FE4 KHITAN SMALL
+// SCRIPT FILLER, a mark, and U+1D159 MUSICAL SYMBOL NULL NOTEHEAD, a symbol.
+var blank = &unicode.RangeTable{
+	R16: []unicode.Range16{{Lo: 0x2800, Hi: 0x2800, Stride: 1}},
+	R32: []unicode.Range32{
+		{Lo: 0x13441, Hi: 0x13442, Stride: 1},
+		{Lo: 0x16FE4, Hi: 0x16FE4, Stride: 1},
+		{Lo: 0x1D159, Hi: 0x1D159, Stride: 1},
+	},
 }
 
 // isControl reports whether r is a control character of a display name: one
