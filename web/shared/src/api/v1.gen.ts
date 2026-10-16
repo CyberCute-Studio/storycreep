@@ -2,6 +2,15 @@
 // "go test ./internal/httpserver -run TestOpenAPIDocument -update" in server/
 // instead.
 
+export interface CreateWorkspaceBody {
+  /** The workspace's default locale, as a BCP 47 tag of a locale that the server has a catalog for. Without it, the locale of the request: the one that its Accept-Language prefers among those, or else STORYCREEP_DEFAULT_LOCALE. */
+  default_locale?: string;
+  /** The workspace's name, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls and line separators among them. White space around it is removed. */
+  name: string;
+  /** The workspace's slug: groups of lowercase ASCII letters and digits joined by single hyphens, of at most 64 characters, and not a reserved word, or the answer is 422 slug_invalid; if another workspace has it, the answer is 409 slug_taken. Without it, the slug is derived from the name: its letters and digits in lowercase ASCII, without accents, with -2, -3, and so on added if another workspace has that already. */
+  slug?: string;
+}
+
 export interface ErrorBody {
   /** A stable error code; docs/error-codes.md lists them */
   code: string;
@@ -22,6 +31,31 @@ export interface LoginBody {
   email: string;
   /** The account's password */
   password: string;
+}
+
+export interface MembershipBody {
+  /** When the workspace was created */
+  created_at: string;
+  /** The workspace's default locale, as a BCP 47 tag of a locale that the server has a catalog for */
+  default_locale: string;
+  /** The workspace's ID */
+  id: string;
+  /** The ID of the signed-in user's membership of the workspace */
+  membership_id: string;
+  /** The workspace's name */
+  name: string;
+  /** The role of the signed-in user's membership. A guest acts only on the projects granted to them, and GET /api/v1/workspaces/{workspace_id} answers them with 404 not_found. */
+  role: "owner" | "admin" | "editor" | "commenter" | "viewer" | "guest";
+  /** The workspace's slug, which is unique on the instance */
+  slug: string;
+  /** When its name, slug, or settings last changed */
+  updated_at: string;
+}
+
+export interface PageMembershipBody {
+  items: Array<MembershipBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
 }
 
 export interface PageSessionBody {
@@ -84,6 +118,15 @@ export interface StatusBody {
   status: "ok" | "ready";
 }
 
+export interface UpdateWorkspaceBody {
+  /** The workspace's new default locale, a BCP 47 tag of a locale that the server has a catalog for */
+  default_locale?: string;
+  /** The workspace's new name, as for POST /api/v1/workspaces */
+  name?: string;
+  /** The workspace's new slug, as for POST /api/v1/workspaces, with the same errors. A slug that the workspace has already is kept, as a reserved word that a later release added to the list is. */
+  slug?: string;
+}
+
 export interface VersionBody {
   /** The revision of the source the binary was built from */
   commit?: string;
@@ -93,6 +136,23 @@ export interface VersionBody {
   go_version: string;
   /** The release version, or (devel) for any other build, such as the main branch's image */
   version: string;
+}
+
+export interface WorkspaceBody {
+  /** When the workspace was created */
+  created_at: string;
+  /** The workspace's default locale, as a BCP 47 tag of a locale that the server has a catalog for */
+  default_locale: string;
+  /** The workspace's ID */
+  id: string;
+  /** The workspace's name */
+  name: string;
+  /** The role that the signed-in user acts with in the workspace: their membership's, or owner for an instance admin when STORYCREEP_INSTANCE_ADMIN_ACCESS is on */
+  role: "owner" | "admin" | "editor" | "commenter" | "viewer";
+  /** The workspace's slug, which is unique on the instance */
+  slug: string;
+  /** When its name, slug, or settings last changed */
+  updated_at: string;
 }
 
 /** The API's operations, by operation ID: what each takes, and what it answers with each status that is not an error's. */
@@ -112,6 +172,23 @@ export interface Operations {
     };
     responses: {
       200: SignedInBody;
+    };
+  };
+  /**
+   * Create a workspace
+   *
+   * Creates a workspace, whose owner the signed-in user becomes. A name or a default locale that its field does not allow is answered with 422 validation_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  createWorkspace: {
+    input: {
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: CreateWorkspaceBody;
+    };
+    responses: {
+      201: WorkspaceBody;
     };
   };
   /** Report that the process is alive */
@@ -168,6 +245,22 @@ export interface Operations {
     };
   };
   /**
+   * Get a workspace
+   *
+   * Returns a workspace, with the role that the signed-in user acts with in it. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
+   */
+  getWorkspace: {
+    input: {
+      path: {
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+    };
+    responses: {
+      200: WorkspaceBody;
+    };
+  };
+  /**
    * List the account's sessions
    *
    * Lists the signed-in account's active sessions, newest first, each with the IP address and user agent that it started with, and when it was last used. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
@@ -186,9 +279,27 @@ export interface Operations {
     };
   };
   /**
+   * List the account's workspaces
+   *
+   * Lists the workspaces that the signed-in user is a member of, in the order of their IDs, oldest first, each with the role of the user's membership, guest included. A client switches between them by naming one by its ID in the routes that it calls: the server keeps no current workspace. Every account has one at least from its first sign-in, which gives it its personal workspace. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
+   */
+  listWorkspaces: {
+    input: {
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageMembershipBody;
+    };
+  };
+  /**
    * Sign in
    *
-   * Signs in with an account's email address and password, and starts a session, whose secret the Set-Cookie header gives the client, and whose CSRF token the body holds. An address of no account, a wrong password, and an account that cannot sign in, such as a suspended one, are all answered with 401 invalid_credentials, after the same work, so that the answer does not tell them apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another origin of the same site, is answered with 403 csrf_failed; browsers send that header only to https URLs and to loopback addresses, such as localhost.
+   * Signs in with an account's email address and password, and starts a session, whose secret the Set-Cookie header gives the client, and whose CSRF token the body holds. The account's first sign-in also gives it its personal workspace, named after its display name, which it owns; GET /api/v1/workspaces lists it. An address of no account, a wrong password, and an account that cannot sign in, such as a suspended one, are all answered with 401 invalid_credentials, after the same work, so that the answer does not tell them apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another origin of the same site, is answered with 403 csrf_failed; browsers send that header only to https URLs and to loopback addresses, such as localhost.
    */
   login: {
     input: {
@@ -263,20 +374,45 @@ export interface Operations {
       204: undefined;
     };
   };
+  /**
+   * Change a workspace's settings
+   *
+   * Changes a workspace's name, slug, or default locale; a field that the body leaves out, or sets to null, stays as it is. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. A name or a default locale that its field does not allow is answered with 422 validation_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  updateWorkspace: {
+    input: {
+      path: {
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: UpdateWorkspaceBody;
+    };
+    responses: {
+      200: WorkspaceBody;
+    };
+  };
 }
 
 /** The method and path of each operation. */
 export const routes = {
   changePassword: { method: "POST", path: "/api/v1/auth/password" },
+  createWorkspace: { method: "POST", path: "/api/v1/workspaces" },
   getHealth: { method: "GET", path: "/healthz" },
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
   getReadiness: { method: "GET", path: "/readyz" },
   getSession: { method: "GET", path: "/api/v1/auth/session" },
   getVersion: { method: "GET", path: "/version" },
+  getWorkspace: { method: "GET", path: "/api/v1/workspaces/{workspace_id}" },
   listSessions: { method: "GET", path: "/api/v1/auth/sessions" },
+  listWorkspaces: { method: "GET", path: "/api/v1/workspaces" },
   login: { method: "POST", path: "/api/v1/auth/login" },
   logout: { method: "POST", path: "/api/v1/auth/logout" },
   registerAccount: { method: "POST", path: "/api/v1/auth/register" },
   revokeOtherSessions: { method: "DELETE", path: "/api/v1/auth/sessions" },
   revokeSession: { method: "DELETE", path: "/api/v1/auth/sessions/{session_id}" },
+  updateWorkspace: { method: "PATCH", path: "/api/v1/workspaces/{workspace_id}" },
 } as const satisfies Record<keyof Operations, { method: string; path: string }>;

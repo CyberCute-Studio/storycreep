@@ -13,6 +13,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -88,7 +89,7 @@ func registerAccounts(m *api.Mux, accounts *account.Service) {
 // accountError returns the error that the API answers err with, an error
 // of package account, or err itself if it is none of them.
 func accountError(err error) error {
-	var fields account.FieldErrors
+	var fields input.FieldErrors
 	var weak *account.PasswordError
 	switch {
 	case err == nil:
@@ -98,11 +99,7 @@ func accountError(err error) error {
 	case errors.Is(err, account.ErrInviteRequired):
 		return api.NewError(api.CodeInviteRequired)
 	case errors.As(err, &fields):
-		problems := make([]api.Problem, len(fields))
-		for i, f := range fields {
-			problems[i] = api.Problem{Location: "body." + f.Field, Message: f.Message}
-		}
-		return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
+		return fieldErrors(fields)
 	case errors.As(err, &weak):
 		return weakPasswordError(weak, "body.password")
 	}

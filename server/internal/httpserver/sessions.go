@@ -354,7 +354,9 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 		Path:        "/api/v1/auth/login",
 		Summary:     "Sign in",
 		Description: "Signs in with an account's email address and password, and starts a session, whose secret " +
-			"the Set-Cookie header gives the client, and whose CSRF token the body holds. An address of no " +
+			"the Set-Cookie header gives the client, and whose CSRF token the body holds. The account's first " +
+			"sign-in also gives it its personal workspace, named after its display name, which it owns; " +
+			"GET /api/v1/workspaces lists it. An address of no " +
 			"account, a wrong password, and an account that cannot sign in, such as a suspended one, are all " +
 			"answered with 401 invalid_credentials, after the same work, so that the answer does not tell them " +
 			"apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another " +

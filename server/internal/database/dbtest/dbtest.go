@@ -41,6 +41,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -409,4 +410,30 @@ func (s *server) parseURL(login, password, db string) (config.DatabaseURL, error
 		RawQuery: "sslmode=disable",
 	}
 	return config.ParseDatabaseURL(u.String())
+}
+
+// AwaitWaiter returns once another transaction waits for a lock that tx
+// holds, and fails the test if done receives first, because what, which
+// should wait, did not, or if nothing waits within a minute.
+func AwaitWaiter(t testing.TB, tx pgx.Tx, done <-chan error, what string) {
+	t.Helper()
+	const waiters = `SELECT count(*) FROM pg_locks WHERE NOT granted AND locktype = 'transactionid'
+		AND transactionid::text = pg_current_xact_id()::text`
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(20 * time.Millisecond) {
+		var waiting int
+		if err := tx.QueryRow(context.Background(), waiters).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting > 0 {
+			return
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("%s did not wait for the lock: %v", what, err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s never waits for the lock", what)
+		}
+	}
 }

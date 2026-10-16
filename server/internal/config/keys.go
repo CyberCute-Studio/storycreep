@@ -131,6 +131,25 @@ var keys = []key{
 		capabilityLimit: "self-hosted only",
 	},
 	{
+		name: "STORYCREEP_INSTANCE_ADMIN_ACCESS",
+		doc: "Whether an instance admin acts as the owner of every workspace and project, without being a member " +
+			"(PRD §5.5): `on` lets them read and manage any workspace, as when its last owner has left, and `off` " +
+			"resolves their role by their memberships, like anyone else's. Hosted mode, where instance admin is " +
+			"restricted to operator accounts, refuses `on`.",
+		values: []string{"on", "off"},
+		def:    func(m mode) string { return onOff(modeCapabilities(m).InstanceAdminAccess) },
+		parse: func(c *Config, v string) error {
+			if c.mode == modeHosted && v == "on" {
+				return errors.New("hosted mode never lets an instance admin act as a workspace's owner; remove the " +
+					"setting or set it to off")
+			}
+			c.Capabilities.InstanceAdminAccess = v == "on"
+			return nil
+		},
+		capability:      "InstanceAdminAccess",
+		capabilityLimit: "self-hosted only",
+	},
+	{
 		name: "STORYCREEP_SESSION_IDLE_TIMEOUT",
 		doc: "How long a session lasts without being used before it ends, and its user must sign in again " +
 			"(PRD FR-AUTH-02). A request made with the session counts as using it, although the server records " +

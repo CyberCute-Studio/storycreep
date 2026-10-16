@@ -39,6 +39,7 @@ func TestFile(t *testing.T) {
 		{"STORYCREEP_PUBLIC_URL", testURL, path + ":3"},
 		{"STORYCREEP_PUBLIC_SITE", "on", path + ":5"},
 		{"STORYCREEP_SIGNUP", "invite", path + ":4"},
+		{"STORYCREEP_INSTANCE_ADMIN_ACCESS", "off", SourceDefault},
 		{"STORYCREEP_SESSION_IDLE_TIMEOUT", "720h", SourceDefault},
 		{"STORYCREEP_SESSION_LIFETIME", "2160h", SourceDefault},
 		{"STORYCREEP_DEFAULT_LOCALE", "en", SourceDefault},

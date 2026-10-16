@@ -40,6 +40,14 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/logging"
 )
 
+// Client is what the audit log records of the client that makes a request.
+type Client struct {
+	// IP is the client's address, or zero if it is unknown.
+	IP netip.Addr
+	// UserAgent is the client's User-Agent header.
+	UserAgent string
+}
+
 // Entry is an event to record.
 type Entry struct {
 	Action Action

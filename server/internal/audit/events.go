@@ -27,6 +27,12 @@ const (
 	// account's password, which fails when the current password given is
 	// not the account's. It belongs to no workspace.
 	ActionPasswordChange Action = "auth.password_change"
+	// ActionWorkspaceCreate is the creation of a workspace (FR-TEN-01), whose
+	// creator becomes its owner: by a user, or by the first sign-in of an
+	// account, which gives it its personal workspace, as its metadata's
+	// personal says. It belongs to the workspace that it creates, which is
+	// its subject.
+	ActionWorkspaceCreate Action = "workspace.create"
 )
 
 // Result is how an event ended.
@@ -72,6 +78,8 @@ var events = []eventSpec{
 		metadata: []string{"session_id"}, attemptedEmail: true},
 	{action: ActionSessionRevoke, subject: "session", results: []Result{ResultSuccess}, metadata: []string{"reason"}},
 	{action: ActionPasswordChange, subject: "user", results: []Result{ResultSuccess, ResultFailure}},
+	{action: ActionWorkspaceCreate, inWorkspace: true, subject: "workspace", results: []Result{ResultSuccess},
+		metadata: []string{"personal"}},
 }
 
 // lookup returns the registration of a, and false if a is not registered.

@@ -17,6 +17,15 @@ const (
 	// account's sessions and password, and signing out. It needs a signed-in
 	// caller, whom the Mux's Authenticator finds.
 	OwnAccount Capability = "account.own"
+	// CreateWorkspace is creating a workspace, which any signed-in user may
+	// do, and becomes its owner of (PRD FR-TEN-01).
+	CreateWorkspace Capability = "workspace.create"
+	// ReadWorkspace is reading a workspace, which needs a role in it other
+	// than none (§5.5).
+	ReadWorkspace Capability = "workspace.read"
+	// ManageWorkspaceSettings is changing a workspace's settings, which
+	// needs owner or admin (§5.6).
+	ManageWorkspaceSettings Capability = "workspace.settings"
 )
 
 // capabilities are the declared capabilities, each with whether it needs an
@@ -25,6 +34,11 @@ var capabilities = map[Capability]bool{
 	Public:        false,
 	ScrapeMetrics: false,
 	OwnAccount:    true,
+	// The role that a workspace's capabilities need is resolved in the
+	// service, from the authenticated user (package workspace).
+	CreateWorkspace:         true,
+	ReadWorkspace:           true,
+	ManageWorkspaceSettings: true,
 }
 
 // Known reports whether c is a declared capability.

@@ -31,8 +31,6 @@ import (
 	"net/mail"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -42,6 +40,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -83,6 +82,12 @@ type Options struct {
 	// IdleTimeout is how long a session lasts unused, and Lifetime how long
 	// it lasts at most. Both must be positive.
 	IdleTimeout, Lifetime time.Duration
+	// Authenticated, if set, is called by Login once the password has matched
+	// the account userID's, which client signs in to, before the session
+	// starts, in no transaction. An error fails the sign-in, which then
+	// starts no session. The server gives the account its personal workspace
+	// there (FR-TEN-01), so it must be safe to call at every sign-in.
+	Authenticated func(ctx context.Context, userID ids.UUID, client Client) error
 }
 
 // Service creates accounts, checks their passwords, and keeps their
@@ -92,7 +97,9 @@ type Service struct {
 	signup config.SignupPolicy
 	// idle and lifetime are the sessions' idle timeout and lifetime.
 	idle, lifetime time.Duration
-	hasher         *Hasher
+	// authenticated is Options.Authenticated.
+	authenticated func(ctx context.Context, userID ids.UUID, client Client) error
+	hasher        *Hasher
 	// decoy is a hash with the current parameters that no password matches
 	// (Hasher.decoy), which signing in checks a password against when the
 	// address has no account, so that it takes as long as when it has one.
@@ -111,8 +118,8 @@ func newService(db DB, opts Options, h *Hasher) *Service {
 		panic(fmt.Sprintf("account: the sessions' idle timeout %v and lifetime %v must be positive", opts.IdleTimeout,
 			opts.Lifetime))
 	}
-	return &Service{db: db, signup: opts.Signup, idle: opts.IdleTimeout, lifetime: opts.Lifetime, hasher: h,
-		decoy: h.decoy()}
+	return &Service{db: db, signup: opts.Signup, idle: opts.IdleTimeout, lifetime: opts.Lifetime,
+		authenticated: opts.Authenticated, hasher: h, decoy: h.decoy()}
 }
 
 // CheckSignup returns ErrSignupClosed or ErrInviteRequired unless the signup
@@ -136,34 +143,13 @@ type Registration struct {
 	Password    secret.Value
 }
 
-// FieldError is a field of a registration that is not valid.
-type FieldError struct {
-	// Field is the field's name in the API, such as display_name.
-	Field string
-	// Message says what is wrong with it, in English, for programs and
-	// logs.
-	Message string
-}
-
-// FieldErrors are the fields of a registration that are not valid.
-type FieldErrors []FieldError
-
-func (e FieldErrors) Error() string {
-	var b strings.Builder
-	b.WriteString("account: the registration is not valid:")
-	for _, f := range e {
-		fmt.Fprintf(&b, " %s %s;", f.Field, f.Message)
-	}
-	return strings.TrimSuffix(b.String(), ";")
-}
-
 // Register creates an account, unless the address has one already, which it
 // leaves as it was. Either way it returns nil, after it has done the same
 // work, hashing the password included, so that the caller answers the same
 // and as late (FR-AUTH-01 AC1). It returns the error of CheckSignup unless
-// the policy lets anyone register, FieldErrors if the email address or the
-// display name is not valid, and a *PasswordError if the password breaks the
-// policy, in that order, and adds nothing then.
+// the policy lets anyone register, input.FieldErrors if the email address or
+// the display name is not valid, and a *PasswordError if the password breaks
+// the policy, in that order, and adds nothing then.
 func (s *Service) Register(ctx context.Context, r Registration) error {
 	if err := s.CheckSignup(ctx); err != nil {
 		return err
@@ -195,16 +181,16 @@ func (s *Service) Register(ctx context.Context, r Registration) error {
 
 // fields returns the registration's email address and display name as an
 // account holds them, without the white space around them, and the address
-// in its canonical form (canonicalEmail), or FieldErrors.
+// in its canonical form (canonicalEmail), or input.FieldErrors.
 func (r Registration) fields() (email, name string, err error) {
-	var errs FieldErrors
+	var errs input.FieldErrors
 	email = canonicalEmail(r.Email)
 	if msg := checkEmail(email); msg != "" {
-		errs = append(errs, FieldError{Field: "email", Message: msg})
+		errs = append(errs, input.FieldError{Field: "email", Message: msg})
 	}
 	name = strings.TrimSpace(r.DisplayName)
 	if msg := checkDisplayName(name); msg != "" {
-		errs = append(errs, FieldError{Field: "display_name", Message: msg})
+		errs = append(errs, input.FieldError{Field: "display_name", Message: msg})
 	}
 	if len(errs) > 0 {
 		return "", "", errs
@@ -241,7 +227,7 @@ func checkEmail(email string) string {
 		return "is empty"
 	case len(email) > MaxEmailLength:
 		return fmt.Sprintf("is longer than %d bytes", MaxEmailLength)
-	case strings.IndexFunc(email, func(r rune) bool { return !printed(r) }) >= 0:
+	case strings.IndexFunc(email, func(r rune) bool { return !input.Printed(r) }) >= 0:
 		return "contains a space or a character that is not printed"
 	}
 	if a, err := mail.ParseAddress(email); err != nil || a.Name != "" || a.Address != email {
@@ -250,58 +236,10 @@ func checkEmail(email string) string {
 	return ""
 }
 
-// checkDisplayName says what is wrong with a display name, or returns "". A
-// display name has a character that is printed, so that it is not blank, and
-// no control character (isControl), so that it cannot change how the text
-// around it is shown.
+// checkDisplayName says what is wrong with a display name, or returns "", as
+// input.CheckName does of a name of at most MaxDisplayNameLength characters.
 func checkDisplayName(name string) string {
-	switch n := utf8.RuneCountInString(name); {
-	case n == 0 || strings.IndexFunc(name, printed) < 0:
-		return "is empty"
-	case n > MaxDisplayNameLength:
-		return fmt.Sprintf("is longer than %d characters", MaxDisplayNameLength)
-	case strings.IndexFunc(name, isControl) >= 0:
-		return "contains a control character"
-	}
-	return ""
-}
-
-// printed reports whether r is printed: a letter, a mark, a number,
-// punctuation, or a symbol, rather than a space, a control character, a
-// format character, such as U+200B ZERO WIDTH SPACE, or another character
-// that shows nothing. Those are the characters that Unicode ignores by
-// default (Default_Ignorable_Code_Point) although their category is a mark's
-// or a letter's, such as U+FE0F VARIATION SELECTOR-16, U+034F COMBINING
-// GRAPHEME JOINER, and U+3164 HANGUL FILLER, and the blank characters that
-// it does not ignore (blank).
-func printed(r rune) bool {
-	return unicode.IsGraphic(r) && !unicode.IsSpace(r) &&
-		!unicode.In(r, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector, blank)
-}
-
-// blank holds the characters that show nothing although Unicode neither
-// ignores them by default nor counts them as spaces, because they stand for
-// an empty place in a script's own writing: U+2800 BRAILLE PATTERN BLANK, a
-// symbol without dots, U+13441 EGYPTIAN HIEROGLYPH FULL BLANK and U+13442
-// EGYPTIAN HIEROGLYPH HALF BLANK, which are letters, U+16FE4 KHITAN SMALL
-// SCRIPT FILLER, a mark, and U+1D159 MUSICAL SYMBOL NULL NOTEHEAD, a symbol.
-var blank = &unicode.RangeTable{
-	R16: []unicode.Range16{{Lo: 0x2800, Hi: 0x2800, Stride: 1}},
-	R32: []unicode.Range32{
-		{Lo: 0x13441, Hi: 0x13442, Stride: 1},
-		{Lo: 0x16FE4, Hi: 0x16FE4, Stride: 1},
-		{Lo: 0x1D159, Hi: 0x1D159, Stride: 1},
-	},
-}
-
-// isControl reports whether r is a control character of a display name: one
-// of category Cc, a bidirectional control, such as U+202E, which reverses
-// the text after it, or a line or paragraph separator. Other format
-// characters are allowed, because names need some of them, as U+200D ZERO
-// WIDTH JOINER joins the emoji of a family, and U+200C ZERO WIDTH NON-JOINER
-// writes Persian.
-func isControl(r rune) bool {
-	return unicode.IsControl(r) || unicode.In(r, unicode.Bidi_Control, unicode.Zl, unicode.Zp)
+	return input.CheckName(name, MaxDisplayNameLength)
 }
 
 // authenticate checks a sign-in, for Login. It returns as id the ID of the

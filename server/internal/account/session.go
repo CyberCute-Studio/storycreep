@@ -75,12 +75,7 @@ var (
 
 // Client is what a session and the audit log record of the client that
 // makes a request.
-type Client struct {
-	// IP is the client's address, or zero if it is unknown.
-	IP netip.Addr
-	// UserAgent is the client's User-Agent header.
-	UserAgent string
-}
+type Client = audit.Client
 
 // Session is an active session.
 type Session struct {
@@ -127,11 +122,12 @@ func secretHash(s secret.Value) ([]byte, bool) {
 }
 
 // Login signs an account in, as authenticate checks its address and
-// password, and starts a session for it, with client, and the audit entry of
-// the login, in one transaction (startSession). A failed sign-in returns
-// ErrInvalidCredentials, and is recorded in the audit log, in a transaction
-// of its own, with the account that the address belongs to, if any, and the
-// address's keyed hash otherwise (FR-TEN-07).
+// password, calls Options.Authenticated, and starts a session for it, with
+// client, and the audit entry of the login, in one transaction
+// (startSession). A failed sign-in returns ErrInvalidCredentials, and is
+// recorded in the audit log, in a transaction of its own, with the account
+// that the address belongs to, if any, and the address's keyed hash
+// otherwise (FR-TEN-07).
 //
 // If the account's password changes, or the account stops being active,
 // between the check of the password and the start of the session, Login
@@ -147,6 +143,11 @@ func (s *Service) Login(ctx context.Context, email string, password secret.Value
 		}
 		if err != nil {
 			return Issued{}, err
+		}
+		if s.authenticated != nil {
+			if err := s.authenticated(ctx, id, client); err != nil {
+				return Issued{}, err
+			}
 		}
 		issued, err := s.startSession(ctx, id, hash, client)
 		switch {
