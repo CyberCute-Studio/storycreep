@@ -222,7 +222,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-AUTH-05 AC1–AC3 (AC2 across two processes) and FR-API-04 AC3 pass.
 
 ### 16. Workspaces and role resolution
-**Status:** todo · **Depends on:** 12, 14
+**Status:** done ([#17](https://github.com/CyberCute-Studio/storycreep/pull/17)) · **Depends on:** 12, 14
 **PRD:** FR-TEN-01 (AC2, AC3), §5.5, FR-TEN-04 (AC3, AC6 for the resolution functions)
 - Workspace create, rename, and settings (name, slug, default locale, retention placeholders, N22). The creator becomes owner. Slugs are validated against a reserved-word list.
 - A personal workspace on first login (N22). Membership listing through `auth_user_memberships` and switching between workspaces.
