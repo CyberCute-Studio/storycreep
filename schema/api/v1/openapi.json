@@ -50,7 +50,7 @@
             "type": "string"
           },
           "email": {
-            "description": "The account's email address, which signs in: an address alone, as jo@example.com, of at most 254 bytes, without spaces or characters that are not printed. Addresses compare without regard to case.",
+            "description": "The account's email address, which signs in: an address alone, as jo@example.com, of at most 254 bytes, without spaces or characters that are not printed. Addresses compare without regard to case or to how their characters are composed.",
             "format": "email",
             "maxLength": 254,
             "type": "string"

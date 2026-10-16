@@ -68,17 +68,17 @@ func newHasher(p params, concurrent int) *Hasher {
 	return &Hasher{params: p, slots: make(chan struct{}, concurrent)}
 }
 
-// derive computes the key of password with salt and p, once it has a slot.
-// It returns ctx's error if ctx ends while it waits for one.
-func (h *Hasher) derive(ctx context.Context, password secret.Value, salt []byte, p params, keyLen uint32) ([]byte,
-	error) {
+// derive computes the key of password with salt and p, of p.keyLen bytes,
+// once it has a slot. It returns ctx's error if ctx ends while it waits for
+// one.
+func (h *Hasher) derive(ctx context.Context, password secret.Value, salt []byte, p params) ([]byte, error) {
 	select {
 	case h.slots <- struct{}{}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 	defer func() { <-h.slots }()
-	return argon2.IDKey(normalize(password), salt, p.time, p.memory, p.threads, keyLen), nil
+	return argon2.IDKey(normalize(password), salt, p.time, p.memory, p.threads, p.keyLen), nil
 }
 
 // normalize returns the password as it is hashed: in Unicode normalization
@@ -99,7 +99,7 @@ func normalize(password secret.Value) []byte {
 func (h *Hasher) Hash(ctx context.Context, password secret.Value) (string, error) {
 	salt := make([]byte, h.params.saltLen)
 	_, _ = rand.Read(salt)
-	key, err := h.derive(ctx, password, salt, h.params, h.params.keyLen)
+	key, err := h.derive(ctx, password, salt, h.params)
 	if err != nil {
 		return "", err
 	}
@@ -128,7 +128,7 @@ func (h *Hasher) Verify(ctx context.Context, encoded string, password secret.Val
 	if err != nil {
 		return false, false, err
 	}
-	got, err := h.derive(ctx, password, salt, p, uint32(len(key)))
+	got, err := h.derive(ctx, password, salt, p)
 	if err != nil {
 		return false, false, err
 	}

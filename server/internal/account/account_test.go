@@ -121,6 +121,32 @@ func TestRegisterExistingAddress(t *testing.T) {
 	}
 }
 
+// TestRegisterComposition checks that an email address is one address however
+// its characters are composed: an account holds it in NFC, registering it
+// composed otherwise adds no second account, and either form signs in.
+func TestRegisterComposition(t *testing.T) {
+	t.Parallel()
+	s, admin := setup(t, config.SignupOpen)
+	ctx := context.Background()
+	const composed, decomposed = "\u017Eofie@example.com", "z\u030Cofie@example.com"
+	password := secret.New("correct horse battery staple")
+	if err := s.Register(ctx, Registration{Email: decomposed, DisplayName: "Žofie", Password: password}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Register(ctx, Registration{Email: " " + composed, DisplayName: "Mallory",
+		Password: secret.New("another long password")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := accounts(t, admin); len(got) != 1 || got[0].email != composed || got[0].displayName != "Žofie" {
+		t.Errorf("the accounts are %+v, want one, of %q", got, composed)
+	}
+	for _, email := range []string{composed, decomposed} {
+		if _, err := s.Authenticate(ctx, email, password); err != nil {
+			t.Errorf("signing in as %q: %v", email, err)
+		}
+	}
+}
+
 // TestRegisterPolicy checks that only the open policy lets a registration
 // in, and that the others refuse it before they look at it, so that they
 // refuse even one that is not valid.
@@ -204,6 +230,18 @@ func TestRegisterRefuses(t *testing.T) {
 			Password: good}, []string{"email"}, ""},
 		{"a bidirectional override in the address", Registration{Email: "jo@exa‮mple.com", DisplayName: "Jo",
 			Password: good}, []string{"email"}, ""},
+		{"a variation selector in the address", Registration{Email: "jo\uFE0F@example.com", DisplayName: "Jo",
+			Password: good}, []string{"email"}, ""},
+		{"a combining grapheme joiner in the address", Registration{Email: "jo\u034F@example.com",
+			DisplayName: "Jo", Password: good}, []string{"email"}, ""},
+		{"a Hangul filler in the address", Registration{Email: "jo@exam\u3164ple.com", DisplayName: "Jo",
+			Password: good}, []string{"email"}, ""},
+		{"a display name of Hangul fillers", Registration{Email: "jo@example.com", DisplayName: "\u3164\u3164",
+			Password: good}, []string{"display_name"}, ""},
+		{"a display name of marks that show nothing", Registration{Email: "jo@example.com", DisplayName: "\uFE0F\u034F",
+			Password: good}, []string{"display_name"}, ""},
+		{"a display name of Braille blanks", Registration{Email: "jo@example.com", DisplayName: "\u2800",
+			Password: good}, []string{"display_name"}, ""},
 		{"both fields", Registration{Email: "jo", DisplayName: "", Password: secret.New("short")},
 			[]string{"email", "display_name"}, ""},
 		{"a short password", Registration{Email: "jo@example.com", DisplayName: "Jo", Password: secret.New("short")},
@@ -240,7 +278,8 @@ func TestRegisterRefuses(t *testing.T) {
 
 // TestFieldsOutsideASCII checks that the checks of a registration's fields
 // take addresses and names outside ASCII, with the format characters that
-// names need, as the joiner in an emoji family and the non-joiner of Persian.
+// names need, as the joiner in an emoji family and the non-joiner of Persian,
+// and the variation selector that shows a heart as an emoji.
 func TestFieldsOutsideASCII(t *testing.T) {
 	t.Parallel()
 	for _, email := range []string{"žofie@example.com", "jo@bücher.example", "用户@例子.广告"} {
@@ -249,7 +288,7 @@ func TestFieldsOutsideASCII(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"Žofie Nováková", "\U0001F468‍\U0001F469‍\U0001F467 Doe",
-		"می‌خواهم", "יוסף Jo", "Jó"} {
+		"می‌خواهم", "יוסף Jo", "Jó", "Jo \u2764\uFE0F"} {
 		if msg := checkDisplayName(name); msg != "" {
 			t.Errorf("the display name %q %s", name, msg)
 		}

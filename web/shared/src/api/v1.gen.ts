@@ -20,7 +20,7 @@ export interface ErrorEnvelope {
 export interface RegisterBody {
   /** The name that other people see, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls and line separators among them. White space around it is removed. */
   display_name: string;
-  /** The account's email address, which signs in: an address alone, as jo@example.com, of at most 254 bytes, without spaces or characters that are not printed. Addresses compare without regard to case. */
+  /** The account's email address, which signs in: an address alone, as jo@example.com, of at most 254 bytes, without spaces or characters that are not printed. Addresses compare without regard to case or to how their characters are composed. */
   email: string;
   /** The password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password. */
   password: string;

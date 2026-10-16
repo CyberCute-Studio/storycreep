@@ -32,6 +32,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
@@ -170,10 +171,11 @@ func (s *Service) Register(ctx context.Context, r Registration) error {
 }
 
 // fields returns the registration's email address and display name as an
-// account holds them, without the white space around them, or FieldErrors.
+// account holds them, without the white space around them, and the address
+// in its canonical form (canonicalEmail), or FieldErrors.
 func (r Registration) fields() (email, name string, err error) {
 	var errs FieldErrors
-	email = strings.TrimSpace(r.Email)
+	email = canonicalEmail(r.Email)
 	if msg := checkEmail(email); msg != "" {
 		errs = append(errs, FieldError{Field: "email", Message: msg})
 	}
@@ -185,6 +187,19 @@ func (r Registration) fields() (email, name string, err error) {
 		return "", "", errs
 	}
 	return email, name, nil
+}
+
+// canonicalEmail returns an email address as accounts hold it and look it
+// up: without the white space around it, and in Unicode normalization form
+// NFC, so that an address whose characters another keyboard or system
+// composes differently, such as ž typed as z and a combining caron, is the
+// same address, and is not a second account that looks like the first.
+// citext compares addresses without regard to case, but not to how their
+// characters are composed. NFC changes only how characters are composed, not
+// which they are, as the NFKC of a password may, so the address stays the
+// one that mail is delivered to.
+func canonicalEmail(email string) string {
+	return norm.NFC.String(strings.TrimSpace(email))
 }
 
 // checkEmail says what is wrong with an email address, or returns "". It
@@ -226,10 +241,16 @@ func checkDisplayName(name string) string {
 }
 
 // printed reports whether r is printed: a letter, a mark, a number,
-// punctuation, or a symbol, rather than a space, a control character, or a
-// format character, such as U+200B ZERO WIDTH SPACE, which shows nothing.
+// punctuation, or a symbol, rather than a space, a control character, a
+// format character, such as U+200B ZERO WIDTH SPACE, or another character
+// that shows nothing. Those are the characters that Unicode ignores by
+// default (Default_Ignorable_Code_Point) although their category is a mark's
+// or a letter's, such as U+FE0F VARIATION SELECTOR-16, U+034F COMBINING
+// GRAPHEME JOINER, and U+3164 HANGUL FILLER, and U+2800 BRAILLE PATTERN
+// BLANK, a symbol without dots.
 func printed(r rune) bool {
-	return unicode.IsGraphic(r) && !unicode.IsSpace(r)
+	return unicode.IsGraphic(r) && !unicode.IsSpace(r) && r != '\u2800' &&
+		!unicode.In(r, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector)
 }
 
 // isControl reports whether r is a control character of a display name: one
@@ -247,8 +268,13 @@ func isControl(r rune) bool {
 // address belongs to no account, to one that is not active, as a suspended
 // one or one whose deletion is pending (FR-GDPR-02), or to one without a
 // password, or if the password is another. It takes as long whichever of
-// these it is, because it checks the password against a decoy hash when it
-// has no hash to check it against.
+// these it is, because it checks the password against a decoy hash, with the
+// current parameters, when it has no hash to check it against. The exception
+// is an account whose hash was made with other parameters, against which a
+// wrong password takes as long as those parameters take: after a release
+// changes them, the time of a failed sign-in tells such an account from an
+// address without one, until the account's next sign-in replaces its hash.
+// The address is looked up in its canonical form (canonicalEmail).
 //
 // When the password matches a hash made with other parameters than the
 // current ones, Authenticate hashes the password again and replaces the
@@ -259,7 +285,7 @@ func (s *Service) Authenticate(ctx context.Context, email string, password secre
 	var row queries.UserCredentialsRow
 	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		var err error
-		row, err = queries.New(tx).UserCredentials(ctx, strings.TrimSpace(email))
+		row, err = queries.New(tx).UserCredentials(ctx, canonicalEmail(email))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
