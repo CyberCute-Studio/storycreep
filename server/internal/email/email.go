@@ -22,15 +22,15 @@
 // server offers only that.
 //
 // Sending takes time and can fail, so it is the work of a job (package jobs),
-// which is attempted again when it fails, and never of a request, whose
-// answer would otherwise take as long as the server does to accept the
-// email, and tell whether an email was sent.
+// which is attempted again when it fails, unless the server refuses the email
+// for good (Permanent), and never of a request, whose answer would otherwise
+// take as long as the server does to accept the email, and tell whether an
+// email was sent.
 package email
 
 import (
 	"context"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"time"
 
@@ -41,9 +41,6 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
-
-// ErrNotConfigured is returned by Send when the instance has no SMTP server.
-var ErrNotConfigured = errors.New("email: the instance has no SMTP server, so it sends no email")
 
 // DB runs a transaction of the application login, as *database.DB does.
 type DB interface {
@@ -146,17 +143,4 @@ func (s *Service) Settings(ctx context.Context) (config.SMTP, bool, error) {
 func (s *Service) Configured(ctx context.Context) (bool, error) {
 	_, ok, err := s.Settings(ctx)
 	return ok, err
-}
-
-// Send sends msg through the instance's SMTP server, and returns once the
-// server has accepted it, or ErrNotConfigured if the instance has none.
-func (s *Service) Send(ctx context.Context, msg Message) error {
-	settings, ok, err := s.Settings(ctx)
-	switch {
-	case err != nil:
-		return err
-	case !ok:
-		return ErrNotConfigured
-	}
-	return s.Deliver(ctx, settings, msg)
 }

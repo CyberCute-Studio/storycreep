@@ -11,9 +11,10 @@
 // failure (backoff), until it has had its attempts, 25 unless it says
 // otherwise. Then it is discarded, which is the dead-letter state: it is not
 // attempted again, and it stays in the database for 7 days with the error of
-// each attempt (AC3). The server runs the workers in its own process, unless
-// it is told not to, so that a deployment can run them on instances of their
-// own (AC4).
+// each attempt (AC3). Work that meets a failure that no attempt would mend
+// ends its job at once instead (Cancel). The server runs the workers in its
+// own process, unless it is told not to, so that a deployment can run them on
+// instances of their own (AC4).
 //
 // Delivery is at least once. An instance that stops without finishing a job,
 // as when its process is killed, leaves the job running in the database, and
@@ -122,8 +123,9 @@ func NewRegistry() *Registry {
 // and the job is attempted again later, or discarded if that was its last
 // attempt. The exception is a stopping server that cancels ctx (Queue.Stop):
 // work that returns ctx's error then, or an error that wraps it, is attempted
-// again later without the attempt counting, so return the error with %w.
-// Register panics if kind T has a worker already.
+// again later without the attempt counting, so return the error with %w. The
+// other exception is an error of Cancel, which ends the job without another
+// attempt. Register panics if kind T has a worker already.
 func Register[T Args](r *Registry, work func(ctx context.Context, job *Job[T]) error) {
 	var args T
 	river.AddWorker(r.workers, river.WorkFunc(func(ctx context.Context, j *river.Job[T]) error {
@@ -132,6 +134,24 @@ func Register[T Args](r *Registry, work func(ctx context.Context, job *Job[T]) e
 	}))
 	r.kinds = append(r.kinds, args.Kind())
 }
+
+// Cancel returns err as the error of work that ends its job: work that
+// returns it, or an error that wraps it, fails its attempt, and the job is
+// cancelled rather than attempted again, however many attempts it has left,
+// and keeps err with the errors of its attempts. It is for a failure that no
+// attempt would mend, such as an email to an address that the SMTP server
+// refuses for good.
+func Cancel(err error) error {
+	return cancelError{err}
+}
+
+// cancelError is an error of Cancel. It wraps River's own, which cancels the
+// job, but reads as err alone, which the job keeps.
+type cancelError struct{ err error }
+
+func (e cancelError) Error() string { return e.err.Error() }
+
+func (e cancelError) Unwrap() error { return river.JobCancel(e.err) }
 
 // Periodic makes the server enqueue a job with args every interval, which
 // is at least a second. The instance that River elects as the leader among

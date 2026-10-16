@@ -24,7 +24,8 @@ import (
 // them, and returns once the server has accepted it, within the Service's
 // timeout. Its errors say which step failed, and hold neither the password
 // nor an email address that the server's replies quote (replyError), because
-// a job keeps its errors (package jobs).
+// a job keeps its errors (package jobs), and Permanent tells those that
+// sending the email again would meet again.
 func (s *Service) Deliver(ctx context.Context, settings config.SMTP, msg Message) error {
 	from, problem := config.ParseSMTPFrom(settings.From)
 	if problem != "" {
@@ -91,7 +92,8 @@ func (s *Service) Deliver(ctx context.Context, settings config.SMTP, msg Message
 	}
 	recipient, err := envelopeAddress(msg.To.Address, smtpUTF8)
 	if err != nil {
-		return fmt.Errorf("email: the SMTP server %s offers no SMTPUTF8, and the recipient's address %w", addr, err)
+		return permanentError{fmt.Errorf("email: the SMTP server %s offers no SMTPUTF8, and the recipient's "+
+			"address %w", addr, err)}
 	}
 	msg.To.Address = recipient
 	data, err := compose(&mail.Address{Name: from.Name, Address: sender}, msg, time.Now())
@@ -102,7 +104,8 @@ func (s *Service) Deliver(ctx context.Context, settings config.SMTP, msg Message
 		return fmt.Errorf("email: the SMTP server %s refuses the sender: %w", addr, replyError(err))
 	}
 	if err := c.Rcpt(recipient); err != nil {
-		return fmt.Errorf("email: the SMTP server %s refuses the recipient: %w", addr, replyError(err))
+		return recipientRefused(fmt.Errorf("email: the SMTP server %s refuses the recipient: %w", addr,
+			replyError(err)))
 	}
 	w, err := c.Data()
 	if err != nil {
@@ -118,6 +121,35 @@ func (s *Service) Deliver(ctx context.Context, settings config.SMTP, msg Message
 	// goodbye does not fail the sending, which would send it again.
 	_ = c.Quit()
 	return nil
+}
+
+// Permanent reports whether err, an error of Deliver, says that the email
+// cannot be delivered, however often it is sent again: the server refuses the
+// recipient with a permanent reply, of 5xx, or the recipient's address has a
+// local part outside ASCII, and the server offers no SMTPUTF8. A reply of 552
+// is not one, because RFC 5321 §4.5.3.1.10 has a client take it, from RCPT,
+// for a full mailbox, which may empty. Nor is a refusal of the sender, of the
+// sign-in, or of the email itself, which the settings cause, and which the
+// operator can mend while a job still has attempts left.
+func Permanent(err error) bool {
+	var p permanentError
+	return errors.As(err, &p)
+}
+
+// permanentError is an error of Deliver that sending the email again would
+// meet again (Permanent).
+type permanentError struct{ error }
+
+func (e permanentError) Unwrap() error { return e.error }
+
+// recipientRefused returns err, the error of a refused RCPT, as a
+// permanentError if the server's reply is permanent (Permanent).
+func recipientRefused(err error) error {
+	var reply *textproto.Error
+	if errors.As(err, &reply) && reply.Code >= 500 && reply.Code != 552 {
+		return permanentError{err}
+	}
+	return err
 }
 
 // replyError returns err, an error that net/smtp returned for a command

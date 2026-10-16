@@ -31,9 +31,9 @@ var message = email.Message{
 // certificate.
 func send(t *testing.T, server *emailtest.Server, settings config.SMTP) error {
 	t.Helper()
-	s := email.New(nil, email.Options{SMTP: &settings, Hostname: "storycreep.example.com",
-		RootCAs: server.CertPool(), Timeout: 10 * time.Second})
-	return s.Send(context.Background(), message)
+	s := email.New(nil, email.Options{Hostname: "storycreep.example.com", RootCAs: server.CertPool(),
+		Timeout: 10 * time.Second})
+	return s.Deliver(context.Background(), settings, message)
 }
 
 // checkDelivered checks that server was sent message, once, as package email
@@ -143,25 +143,33 @@ func TestSendWithURLCredentials(t *testing.T) {
 // TestSendRefusals checks that the client refuses a server that does not
 // protect the connection as the settings say, or whose certificate is not
 // valid for its host, and one whose password is wrong, that it fails when the
-// server refuses the recipient, with an error that holds neither the
-// password nor the address that the server's reply quotes, which a job keeps,
-// and that it sends nothing to any of them.
+// server refuses the sender or the recipient, with an error that holds
+// neither the password nor the address that the server's reply quotes, which
+// a job keeps, and that it sends nothing to any of them. Only a recipient
+// refused for good, but for a full mailbox, is a permanent failure, which no
+// attempt would mend.
 func TestSendRefusals(t *testing.T) {
 	for _, c := range []struct {
-		name     string
-		opts     emailtest.Options
-		security config.SMTPSecurity
-		mutate   func(*config.SMTP)
-		want     string
+		name      string
+		opts      emailtest.Options
+		security  config.SMTPSecurity
+		mutate    func(*config.SMTP)
+		want      string
+		permanent bool
 	}{
-		{"no STARTTLS", emailtest.Options{}, config.SMTPStartTLS, nil, "does not offer STARTTLS"},
+		{"no STARTTLS", emailtest.Options{}, config.SMTPStartTLS, nil, "does not offer STARTTLS", false},
 		{"no AUTH", emailtest.Options{StartTLS: true}, config.SMTPStartTLS,
-			func(s *config.SMTP) { s.Username, s.Password = "storycreep", secret.New("s3cret") }, "offers no sign-in"},
+			func(s *config.SMTP) { s.Username, s.Password = "storycreep", secret.New("s3cret") }, "offers no sign-in",
+			false},
 		{"wrong password", emailtest.Options{StartTLS: true, Mechanisms: []string{"PLAIN"}, Username: "storycreep",
 			Password: "s3cret"}, config.SMTPStartTLS, func(s *config.SMTP) { s.Password = secret.New("wrong") },
-			"sign in"},
-		{"a refused recipient", emailtest.Options{RefuseRecipients: true}, config.SMTPNone, nil,
-			`refuses the recipient: 550 "5.1.1 [address] Recipient address rejected`},
+			"sign in", false},
+		{"a refused sender", emailtest.Options{Mechanisms: []string{"PLAIN"}}, config.SMTPNone, nil,
+			"refuses the sender: 530", false},
+		{"a refused recipient", emailtest.Options{RefuseRecipients: 550}, config.SMTPNone, nil,
+			`refuses the recipient: 550 "5.1.1 [address] Recipient address rejected`, true},
+		{"a full mailbox", emailtest.Options{RefuseRecipients: 552}, config.SMTPNone, nil,
+			`refuses the recipient: 552 "5.2.2 [address] Mailbox full`, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			server := emailtest.Start(t, c.opts)
@@ -172,6 +180,9 @@ func TestSendRefusals(t *testing.T) {
 			err := send(t, server, settings)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("error %v, want one that says %q", err, c.want)
+			}
+			if email.Permanent(err) != c.permanent {
+				t.Errorf("Permanent(%v) is %v, want %v", err, !c.permanent, c.permanent)
 			}
 			if err != nil && strings.Contains(err.Error(), "s3cret") {
 				t.Errorf("the error holds the password: %v", err)
@@ -192,10 +203,9 @@ func TestSendRefusals(t *testing.T) {
 func TestHeaderInjection(t *testing.T) {
 	server := emailtest.Start(t, emailtest.Options{})
 	settings := server.Settings(config.SMTPNone, testFrom)
-	s := email.New(nil, email.Options{SMTP: &settings})
 	msg := email.Message{To: mail.Address{Name: "Jo\r\nBcc: mallory@example.com", Address: "jo@example.com"},
 		Subject: "Hello\r\nBcc: mallory@example.com", Body: "Hello\n"}
-	if err := s.Send(context.Background(), msg); err != nil {
+	if err := email.New(nil, email.Options{}).Deliver(context.Background(), settings, msg); err != nil {
 		t.Fatal(err)
 	}
 	m := server.Messages()[0]
@@ -210,7 +220,7 @@ func TestHeaderInjection(t *testing.T) {
 // with its domain in its xn-- form to one that does not, in the envelope and
 // in the header alike, and that one whose local part is outside ASCII is
 // refused before it is sent to such a server, with an error that names
-// SMTPUTF8.
+// SMTPUTF8, which is permanent, since no attempt would send it.
 func TestInternationalAddresses(t *testing.T) {
 	for _, c := range []struct {
 		name      string
@@ -226,12 +236,15 @@ func TestInternationalAddresses(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			server := emailtest.Start(t, emailtest.Options{ASCII: c.ascii})
 			settings := server.Settings(config.SMTPNone, testFrom)
-			s := email.New(nil, email.Options{SMTP: &settings, Timeout: 10 * time.Second})
-			err := s.Send(context.Background(), email.Message{To: mail.Address{Name: "Jo", Address: c.address},
-				Subject: "Hello", Body: "Hello\n"})
+			s := email.New(nil, email.Options{Timeout: 10 * time.Second})
+			err := s.Deliver(context.Background(), settings, email.Message{To: mail.Address{Name: "Jo",
+				Address: c.address}, Subject: "Hello", Body: "Hello\n"})
 			if c.err != "" {
 				if err == nil || !strings.Contains(err.Error(), c.err) || strings.Contains(err.Error(), c.address) {
 					t.Errorf("error %v, want one that says %q without the address", err, c.err)
+				}
+				if !email.Permanent(err) {
+					t.Errorf("Permanent(%v) is false, want true", err)
 				}
 				if n := len(server.Messages()); n != 0 {
 					t.Errorf("%v was sent %d emails", server, n)
@@ -268,8 +281,8 @@ func TestHelloName(t *testing.T) {
 	} {
 		server := emailtest.Start(t, emailtest.Options{})
 		settings := server.Settings(config.SMTPNone, testFrom)
-		s := email.New(nil, email.Options{SMTP: &settings, Hostname: hostname, Timeout: 10 * time.Second})
-		if err := s.Send(context.Background(), message); err != nil {
+		s := email.New(nil, email.Options{Hostname: hostname, Timeout: 10 * time.Second})
+		if err := s.Deliver(context.Background(), settings, message); err != nil {
 			t.Fatal(err)
 		}
 		if got := server.Messages()[0].Hello; got != want {
@@ -283,9 +296,10 @@ func TestHelloName(t *testing.T) {
 func TestUntrustedCertificate(t *testing.T) {
 	server := emailtest.Start(t, emailtest.Options{TLS: true})
 	settings := server.Settings(config.SMTPTLS, testFrom)
-	s := email.New(nil, email.Options{SMTP: &settings, Timeout: 10 * time.Second})
-	if err := s.Send(context.Background(), message); err == nil || !strings.Contains(err.Error(), "certificate") {
-		t.Errorf("Send() = %v, want an error about the certificate", err)
+	s := email.New(nil, email.Options{Timeout: 10 * time.Second})
+	if err := s.Deliver(context.Background(), settings, message); err == nil ||
+		!strings.Contains(err.Error(), "certificate") {
+		t.Errorf("Deliver() = %v, want an error about the certificate", err)
 	}
 	if n := len(server.Messages()); n != 0 {
 		t.Errorf("%v was sent %d emails", server, n)

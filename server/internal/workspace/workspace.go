@@ -371,6 +371,18 @@ func (s *Service) EnsurePersonal(ctx context.Context, userID ids.UUID, client au
 	})
 }
 
+// EmailVerified gives the account userID, whose email address client has
+// just verified, the personal workspace that its first sign-in could not,
+// where the Service requires a verified address (EnsurePersonal). Elsewhere
+// it does nothing, because the first sign-in gives the workspace, whether
+// or not the address is verified (FR-TEN-01).
+func (s *Service) EmailVerified(ctx context.Context, userID ids.UUID, client audit.Client) error {
+	if !s.verified {
+		return nil
+	}
+	return s.EnsurePersonal(ctx, userID, client)
+}
+
 // insert adds the workspace w in tx, a transaction of w, with the first slug
 // of slugs that no workspace has, and its owner, the user userID, and records
 // that, personal saying whether it is the user's personal workspace. It

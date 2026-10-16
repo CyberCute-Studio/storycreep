@@ -257,6 +257,26 @@ func TestFailingJobIsDiscarded(t *testing.T) {
 	}
 }
 
+// TestCancelledJob checks that a job whose work returns an error of Cancel,
+// wrapped, is cancelled after that attempt, however many it has left, and
+// keeps the error, as its work wrote it.
+func TestCancelledJob(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	reg := NewRegistry()
+	Register(reg, func(context.Context, *Job[failArgs]) error {
+		return fmt.Errorf("send: %w", Cancel(errors.New("the address does not exist")))
+	})
+	q, db := open(t, d, reg, true)
+
+	e := enqueue(t, q, db, failArgs{}, &EnqueueOptions{MaxAttempts: 3})
+	job := waitForState(t, q, e.ID, rivertype.JobStateCancelled)
+	if job.Attempt != 1 || len(job.Errors) != 1 || job.Errors[0].Error != "send: the address does not exist" {
+		t.Errorf("the job was attempted %d times, with the errors %+v; want once, with the work's", job.Attempt,
+			job.Errors)
+	}
+}
+
 // TestBackoff checks the retry policy: the wait doubles with each failure,
 // from a second up to an hour, give or take 10%, and the failures are counted
 // by the job's errors.

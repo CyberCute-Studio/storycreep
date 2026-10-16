@@ -64,6 +64,21 @@ func emailJobs(t *testing.T, d *dbtest.Database) int {
 	return countRows(t, d, "SELECT count(*) FROM river_job WHERE kind = 'email_link'")
 }
 
+// waitForEmailJobs waits until every job that emails a link that the
+// database d holds is in state, as completed or cancelled.
+func waitForEmailJobs(t *testing.T, d *dbtest.Database, state string) {
+	t.Helper()
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if countRows(t, d, "SELECT count(*) FROM river_job WHERE kind = 'email_link' AND state::text <> $1",
+			state) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the jobs that email links are not all %s", state)
+		}
+	}
+}
+
 // tokenBody returns the JSON body of a request that uses the link token,
 // with a new password if password is not empty.
 func tokenBody(t *testing.T, token, password string) []byte {
@@ -456,6 +471,31 @@ func TestEmailedReset(t *testing.T) {
 	}
 }
 
+// TestRefusedAddressEndsTheJob checks that the job of a link whose email the
+// SMTP server refuses for good, as for an address that does not exist, is
+// cancelled after its first attempt, rather than attempted again for a day,
+// and keeps the error, which does not quote the address.
+func TestRefusedAddressEndsTheJob(t *testing.T) {
+	t.Parallel()
+	server := emailtest.Start(t, emailtest.Options{RefuseRecipients: 550})
+	env := smtpEnv(server)
+	env["STORYCREEP_SIGNUP"] = "open"
+	s, d := readyServer(t, env)
+	startWorkers(t, s, d)
+	newAccount(t, s.main, "nobody@example.com")
+	waitForEmailJobs(t, d, "cancelled")
+	var attempt int
+	var errs string
+	if err := d.Admin(t).QueryRow(context.Background(),
+		"SELECT attempt, errors::text FROM river_job WHERE kind = 'email_link'").Scan(&attempt, &errs); err != nil {
+		t.Fatal(err)
+	}
+	if attempt != 1 || !strings.Contains(errs, "refuses the recipient: 550") ||
+		strings.Contains(errs, "nobody@example.com") {
+		t.Errorf("the job was attempted %d times, with the errors %s; want once, with the refusal", attempt, errs)
+	}
+}
+
 // TestHostedVerificationRequired checks that in hosted mode, which always
 // sends email, a user who has not verified their address gets no personal
 // workspace at sign-in, and cannot create a workspace, whatever the request
@@ -481,13 +521,16 @@ func TestHostedVerificationRequired(t *testing.T) {
 				res.status, res.body)
 		}
 	}
+	// Another link asked for at once is answered as always, but not emailed,
+	// because the first one's email has just been sent.
 	if res := send(s.main, http.MethodPost, emailVerificationPath, nil, "", jo.header(true)); res.status !=
 		http.StatusAccepted {
 		t.Errorf("ask for another link: %d %s, want 202", res.status, res.body)
 	}
-	sent := server.Wait(t, 2, 30*time.Second)
-	if !strings.Contains(sent[0].Body(t), "https://storycreep.example.com/app/verify-email#token=") {
-		t.Fatalf("the email says %s", sent[0].Body(t))
+	waitForEmailJobs(t, d, "completed")
+	sent := server.Messages()
+	if len(sent) != 1 || !strings.Contains(sent[0].Body(t), "https://storycreep.example.com/app/verify-email#token=") {
+		t.Fatalf("sent %d emails, want the one of the registration: %+v", len(sent), sent)
 	}
 	if res := send(s.main, http.MethodPost, verifyEmailPath, tokenBody(t, sent[0].Token(t), ""), "", nil); res.status !=
 		http.StatusNoContent {

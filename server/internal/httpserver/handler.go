@@ -86,10 +86,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		// can only be refused, and the account's next sign-in gives the
 		// workspace instead.
 		Verified: func(ctx context.Context, userID ids.UUID, client account.Client) error {
-			if !cfg.Capabilities.EmailRequired {
-				return nil
-			}
-			if err := s.workspaces.EnsurePersonal(ctx, userID, client); err != nil {
+			if err := s.workspaces.EmailVerified(ctx, userID, client); err != nil {
 				s.log.ErrorContext(ctx, "the verified account's personal workspace could not be created, so its "+
 					"next sign-in creates it", "error", err)
 			}

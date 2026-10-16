@@ -43,6 +43,16 @@ import (
 // display name was chosen by whoever registered the address, who need not be
 // its owner.
 //
+// The job emails an account one link of a kind in ResendInterval at most: it
+// sends nothing for a link of an account that was emailed another of that
+// kind in that time which still works, so that whoever asks again and again,
+// as for an address that is not theirs, cannot flood its inbox, nor spend the
+// SMTP server's quota. The request does its work and answers as always, so
+// that it still does not tell whether the address has an account, and the
+// earlier email's link keeps working. An email that the SMTP server refuses
+// for good, as to an address that does not exist, is not attempted again
+// (email.Permanent).
+//
 // An instance that sends no email says so, refuses those requests with
 // ErrEmailNotConfigured, the same for every address, and never reaches the
 // email's code (AC1). Its links go, as text, only to who may already do what
@@ -63,6 +73,12 @@ const (
 	VerificationLifetime  = 24 * time.Hour
 	PasswordResetLifetime = time.Hour
 )
+
+// ResendInterval is the least time between two emails of one kind of link to
+// one account, while the first one's link still works. It is short enough
+// that a user whose email did not come can soon ask again, and long enough
+// that asking without end sends six emails an hour at most.
+const ResendInterval = 10 * time.Minute
 
 // LinkKind is what a link does.
 type LinkKind string
@@ -131,6 +147,8 @@ type Link struct {
 	URL secret.Value
 	// ExpiresAt is when it expires.
 	ExpiresAt time.Time
+	// Email is the address of the link's account, as the account holds it.
+	Email string
 }
 
 // linkURL returns the URL of a link of kind k with the secret value, on the
@@ -153,7 +171,9 @@ func (emailLink) Kind() string { return "email_link" }
 // emailLinkAttempts is how many times the job tries to email a link: with
 // the queue's backoff, which waits an hour at most between attempts, over
 // about a day, the life of a verification link. An attempt once the request
-// is older than the life of its link sends nothing, and ends the job.
+// is older than the life of its link sends nothing, and ends the job, and so
+// does one whose email the SMTP server refuses for good, which no later
+// attempt would send.
 const emailLinkAttempts = 36
 
 // emailTokenCleanup is the job that deletes the tokens that have expired.
@@ -271,14 +291,16 @@ func (s *Service) RequestVerification(ctx context.Context, userID ids.UUID) erro
 // in the account's preferred locale, or else the request's. A token that has
 // been used, or was asked for longer ago than its link's lifetime, or whose
 // account is no longer active, or no longer has the address that it
-// verifies, or has verified it since, is sent no email, and a token without
-// an account, of a reset requested for an address of no account or of a
-// registration of an address that has one, is deleted. An instance that no
-// longer sends email sends none either. An attempt that fails to send the
-// email is made again later, with a new secret, which replaces the one that
-// the failed attempt may have sent, so that only the latest email's link
-// works. The job reads the SMTP settings, as it does the token, on the
-// workers' pool that it carries, db.
+// verifies, or has verified it since, or was emailed another link of the
+// kind in the last ResendInterval that still works, is sent no email, and a
+// token without an account, of a reset requested for an address of no
+// account or of a registration of an address that has one, is deleted. An
+// instance that no longer sends email sends none either. An attempt that
+// fails to send the email is made again later, with a new secret, which
+// replaces the one that the failed attempt may have sent, so that only the
+// latest email's link works, unless the SMTP server refuses the email for
+// good (email.Permanent), which ends the job. The job reads the SMTP
+// settings, as it does the token, on the workers' pool that it carries, db.
 func (s *Service) sendLink(ctx context.Context, db DB, id ids.UUID) error {
 	if s.email == nil {
 		return nil
@@ -293,10 +315,17 @@ func (s *Service) sendLink(ctx context.Context, db DB, id ids.UUID) error {
 	found := false
 	err = db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
+		// The account is locked first, so that the job of another of its
+		// links, which waits for this one, finds the email that this one
+		// makes, and sends none within ResendInterval.
+		if err := q.LockEmailTokenAccount(ctx, nullUUID(id)); err != nil {
+			return err
+		}
 		var err error
 		row, err = q.LockEmailTokenToSend(ctx, queries.LockEmailTokenToSendParams{ID: nullUUID(id),
 			PasswordResetLifetime: database.Interval(PasswordResetLifetime),
-			VerificationLifetime:  database.Interval(VerificationLifetime)})
+			VerificationLifetime:  database.Interval(VerificationLifetime),
+			ResendInterval:        database.Interval(ResendInterval)})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return q.DeleteUnclaimedToken(ctx, nullUUID(id))
 		}
@@ -315,12 +344,17 @@ func (s *Service) sendLink(ctx context.Context, db DB, id ids.UUID) error {
 	}
 	msg := linkEmail(s.publicURL, LinkKind(row.Kind), row.Locale.String, value, row.Email)
 	if err := mailer.Deliver(ctx, settings, msg); err != nil {
-		if ctx.Err() != nil {
+		switch {
+		case ctx.Err() != nil:
 			// The job's context ended: the server is stopping, and the
 			// attempt is made again without counting (jobs.Register), or the
 			// job's minute ran out, as when the database was slow to answer
 			// before the mailer's own, shorter timeout could end the send.
 			return fmt.Errorf("account: email the link: %w", errors.Join(ctx.Err(), err))
+		case email.Permanent(err):
+			// The server refuses the address for good, so no other attempt
+			// would send the email either.
+			return jobs.Cancel(fmt.Errorf("account: email the link: %w", err))
 		}
 		return fmt.Errorf("account: email the link: %w", err)
 	}
@@ -381,32 +415,33 @@ func tokenState(ctx context.Context, tx pgx.Tx, value secret.Value, kind LinkKin
 // VerifyEmail uses the link whose secret is value to verify the email
 // address of its account, which client asks for, and records that in the
 // audit log. It returns ErrTokenInvalid, ErrTokenUsed, or ErrTokenExpired
-// for a link that cannot verify it (tokenState), or whose account stopped
-// being active, or changed its address, since tokenState read it, which
-// locks the token but not the account. A link of an address that another
-// link verified meanwhile is used, but records nothing, because nothing
-// changes. Once the address is verified, it calls Options.Verified, and
-// returns its error, although the address stays verified, and the link used.
+// for a link that cannot verify it (tokenState). It locks the account before
+// the token, as the job that emails a link does, so that the account stays
+// as tokenState finds it until the address is verified. A link of an address
+// that another link verified already is used, but records nothing, because
+// nothing changes. Once the address is verified, it calls Options.Verified,
+// and returns its error, although the address stays verified, and the link
+// used.
 func (s *Service) VerifyEmail(ctx context.Context, value secret.Value, client Client) error {
 	var userID ids.UUID
 	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		q := queries.New(tx)
+		if hash, ok := secretHash(value); ok {
+			if err := q.LockEmailTokenAccountByHash(ctx, hash); err != nil {
+				return fmt.Errorf("account: lock the link's account: %w", err)
+			}
+		}
 		row, err := tokenState(ctx, tx, value, LinkVerification)
 		if err != nil {
 			return err
 		}
 		userID = row.UserID.Bytes
-		q := queries.New(tx)
+		// The account is active, and still has the address, which the lock
+		// keeps it from changing, so no row changes only if the address is
+		// verified already.
 		n, err := q.VerifyEmail(ctx, queries.VerifyEmailParams{ID: row.UserID, Email: row.Email.String})
 		if err != nil {
 			return fmt.Errorf("account: verify the email address: %w", err)
-		}
-		if n == 0 {
-			// The account stopped being active, or changed its address,
-			// which tokenState finds when it reads the account again, or else
-			// it has verified the address already.
-			if _, err := tokenState(ctx, tx, value, LinkVerification); err != nil {
-				return err
-			}
 		}
 		if err := q.UseEmailToken(ctx, row.ID); err != nil {
 			return fmt.Errorf("account: use the link's token: %w", err)
@@ -464,14 +499,10 @@ func (s *Service) ResetPassword(ctx context.Context, value, password secret.Valu
 		}
 		// Another use of the link, or a change of the password, may have
 		// come first.
-		locked, err := tokenState(ctx, tx, value, LinkPasswordReset)
-		switch {
-		case err != nil:
+		if _, err := tokenState(ctx, tx, value, LinkPasswordReset); err != nil {
 			return err
-		case locked.UserID != row.UserID:
-			return ErrTokenInvalid
 		}
-		if err := q.UseEmailToken(ctx, locked.ID); err != nil {
+		if err := q.UseEmailToken(ctx, row.ID); err != nil {
 			return fmt.Errorf("account: use the link's token: %w", err)
 		}
 		if err := q.DeleteResetTokens(ctx, row.UserID); err != nil {
@@ -560,13 +591,15 @@ func issueLink(ctx context.Context, tx pgx.Tx, u config.PublicURL, kind LinkKind
 	if err != nil {
 		return Link{}, err
 	}
+	// The account's address as it holds it, which a verification verifies,
+	// and the link names.
+	stored, err := queries.New(tx).UserEmail(ctx, account.ID)
+	if err != nil {
+		return Link{}, fmt.Errorf("account: read the email address: %w", err)
+	}
 	var verified pgtype.Text
 	if kind == LinkVerification {
-		row, err := queries.New(tx).UserEmail(ctx, account.ID)
-		if err != nil {
-			return Link{}, fmt.Errorf("account: read the email address: %w", err)
-		}
-		verified = pgtype.Text{String: row.Email, Valid: true}
+		verified = pgtype.Text{String: stored.Email, Valid: true}
 	}
 	value, hash := newSecret()
 	expires, err := queries.New(tx).InsertEmailToken(ctx, queries.InsertEmailTokenParams{
@@ -585,7 +618,8 @@ func issueLink(ctx context.Context, tx pgx.Tx, u config.PublicURL, kind LinkKind
 		Metadata: map[string]any{"kind": string(kind)}}); err != nil {
 		return Link{}, err
 	}
-	return Link{Kind: kind, URL: secret.New(linkURL(u, kind, value)), ExpiresAt: expires.Time}, nil
+	return Link{Kind: kind, URL: secret.New(linkURL(u, kind, value)), ExpiresAt: expires.Time, Email: stored.Email},
+		nil
 }
 
 // cleanUpEmailTokens deletes the tokens that have expired, in batches, each

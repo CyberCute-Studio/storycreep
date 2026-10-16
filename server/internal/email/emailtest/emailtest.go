@@ -49,9 +49,11 @@ type Options struct {
 	// ASCII makes the server offer no SMTPUTF8, so that it refuses an
 	// address outside ASCII in MAIL or RCPT, as such a server does.
 	ASCII bool
-	// RefuseRecipients makes the server refuse every recipient, with a reply
-	// that quotes the address, as many servers do.
-	RefuseRecipients bool
+	// RefuseRecipients, if it is not zero, is the code of the reply with
+	// which the server refuses every recipient: 550 for an address that does
+	// not exist, or 552 for a full mailbox. The reply quotes the address, as
+	// many servers' do.
+	RefuseRecipients int
 }
 
 // Message is an email that the server was sent.
@@ -283,8 +285,12 @@ func (s *Server) serve(conn net.Conn) {
 				reply(553, "an address outside ASCII needs SMTPUTF8")
 				continue
 			}
-			if s.opts.RefuseRecipients {
-				reply(550, "5.1.1 <"+address(arg)+">: Recipient address rejected: User unknown")
+			if code := s.opts.RefuseRecipients; code != 0 {
+				text := "5.1.1 <" + address(arg) + ">: Recipient address rejected: User unknown"
+				if code == 552 {
+					text = "5.2.2 <" + address(arg) + ">: Mailbox full"
+				}
+				reply(code, text)
 				continue
 			}
 			current.To = append(current.To, address(arg))

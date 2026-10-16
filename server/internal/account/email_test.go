@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -197,10 +198,14 @@ func TestVerifyEmailVerifiedAlready(t *testing.T) {
 	m := withEmail(t, true)
 	ctx := context.Background()
 	jo := register(t, m.Service, m.admin, "jo@example.com")
+	sent := m.sendAll(t)
+	// The second link is asked for once the first one's email is older than
+	// ResendInterval.
+	exec(t, m.admin, "UPDATE email_token SET sent_at = sent_at - interval '11 minutes' WHERE user_id = $1", jo)
 	if err := m.RequestVerification(ctx, jo); err != nil {
 		t.Fatal(err)
 	}
-	sent := m.sendAll(t)
+	sent = append(sent, m.sendAll(t)...)
 	if len(sent) != 2 {
 		t.Fatalf("sent %d emails, want 2", len(sent))
 	}
@@ -272,12 +277,16 @@ func TestResetPassword(t *testing.T) {
 	id := register(t, m.Service, m.admin, "jo@example.com")
 	m.queue.take(t)
 	session := login(t, m.Service, "jo@example.com")
+	var sent []emailtest.Message
 	for range 2 {
 		if err := m.RequestPasswordReset(ctx, "jo@example.com"); err != nil {
 			t.Fatal(err)
 		}
+		sent = append(sent, m.sendAll(t)...)
+		// The next link is asked for once this one's email is older than
+		// ResendInterval.
+		exec(t, m.admin, "UPDATE email_token SET sent_at = sent_at - interval '11 minutes' WHERE user_id = $1", id)
 	}
-	sent := m.sendAll(t)
 	if len(sent) != 2 {
 		t.Fatalf("sent %d emails, want 2", len(sent))
 	}
@@ -364,6 +373,104 @@ func TestSendLinkAgain(t *testing.T) {
 	}
 	if err := m.VerifyEmail(ctx, secret.New(sent[1].Token(t)), testClient); err != nil {
 		t.Errorf("the second link: %v", err)
+	}
+}
+
+// TestResendInterval checks that the email job sends an account no second
+// link of a kind within ResendInterval of the first while the first one
+// works, however often the link is asked for, and however many of its jobs
+// run at once, while each request still adds its token and its job, as for
+// an address of no account (FR-AUTH-03 AC3). The earlier email's link keeps
+// working, and a link is emailed again once it has been used, or once the
+// interval has passed.
+func TestResendInterval(t *testing.T) {
+	t.Parallel()
+	m := withEmail(t, true)
+	ctx := context.Background()
+	jo := register(t, m.Service, m.admin, "jo@example.com")
+	if sent := m.sendAll(t); len(sent) != 1 {
+		t.Fatalf("registering sent %d emails, want 1", len(sent))
+	}
+	if err := m.RequestVerification(ctx, jo); err != nil {
+		t.Fatal(err)
+	}
+	if sent := m.sendAll(t); len(sent) != 0 {
+		t.Errorf("another verification at once sent %d emails, want none", len(sent))
+	}
+
+	// Of four requests whose jobs run at once, one is emailed. The test holds
+	// the account and the tokens until every job waits for them, and then
+	// lets them go together, so that jobs that did not wait for each other
+	// would each find no email sent.
+	for range 4 {
+		if err := m.RequestPasswordReset(ctx, "jo@example.com"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tokens := m.queue.take(t)
+	if n := count(t, m.admin, "SELECT count(*) FROM email_token WHERE kind = 'password_reset'"); len(tokens) != 4 ||
+		n != 4 {
+		t.Fatalf("4 requests enqueued %d jobs, and added %d tokens", len(tokens), n)
+	}
+	exec(t, m.admin, "BEGIN")
+	exec(t, m.admin, `SELECT id FROM "user" WHERE id = $1 FOR NO KEY UPDATE`, jo)
+	exec(t, m.admin, "SELECT id FROM email_token WHERE user_id = $1 FOR UPDATE", jo)
+	before := len(m.server.Messages())
+	errs := make([]error, len(tokens))
+	var wg sync.WaitGroup
+	for i, id := range tokens {
+		wg.Go(func() { errs[i] = m.sendLink(ctx, m.db, id) })
+	}
+	waiting := func() int {
+		// The transaction would otherwise read the activity as it was when it
+		// first did.
+		exec(t, m.admin, "SELECT pg_stat_clear_snapshot()")
+		return count(t, m.admin, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`)
+	}
+	for deadline := time.Now().Add(time.Minute); waiting() < len(tokens); {
+		if time.Now().After(deadline) {
+			t.Fatal("the jobs do not wait for the account")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	exec(t, m.admin, "COMMIT")
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		t.Fatal(err)
+	}
+	sent := m.server.Messages()[before:]
+	if len(sent) != 1 {
+		t.Fatalf("4 requests at once sent %d emails, want 1", len(sent))
+	}
+	if err := m.RequestPasswordReset(ctx, "jo@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if sent := m.sendAll(t); len(sent) != 0 {
+		t.Errorf("another request sent %d emails, want none", len(sent))
+	}
+	if err := m.ResetPassword(ctx, secret.New(sent[0].Token(t)), secret.New("an entirely new passphrase"),
+		testClient); err != nil {
+		t.Fatalf("the earlier email's link: %v", err)
+	}
+
+	// The link has been used, so the next request is emailed, and the one
+	// after it is not, until its email is older than the interval.
+	for _, want := range []int{1, 0} {
+		if err := m.RequestPasswordReset(ctx, "jo@example.com"); err != nil {
+			t.Fatal(err)
+		}
+		if sent := m.sendAll(t); len(sent) != want {
+			t.Errorf("a request after the reset sent %d emails, want %d", len(sent), want)
+		}
+	}
+	exec(t, m.admin, "UPDATE email_token SET sent_at = sent_at - $1::interval WHERE user_id = $2",
+		database.Interval(ResendInterval), jo)
+	if err := m.RequestPasswordReset(ctx, "jo@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if sent := m.sendAll(t); len(sent) != 1 {
+		t.Errorf("a request once the interval had passed sent %d emails, want 1", len(sent))
 	}
 }
 

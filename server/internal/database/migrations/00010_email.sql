@@ -44,6 +44,11 @@ GRANT UPDATE (smtp_host, smtp_port, smtp_security, smtp_username, smtp_password,
 -- nothing for a request older than that lifetime. A link that an instance
 -- admin or the operator takes as text has its secret at once.
 --
+-- The job emails an account one link of a kind in 10 minutes at most: it
+-- sends nothing for a token of an account that was emailed another link of
+-- that kind that still works in that time, as sent_at tells, so that asking
+-- again and again cannot flood the address's inbox.
+--
 -- A request to reset the password of an address that belongs to no active
 -- account adds a row too, without an account, which the email job deletes,
 -- so that the request does the same work whether or not the address has an
@@ -60,6 +65,9 @@ CREATE TABLE email_token (
 	-- tag.
 	locale text,
 	token_hash bytea UNIQUE CHECK (octet_length(token_hash) = 32),
+	-- When the job last made the link's email, and gave the token the hash
+	-- of its secret, or null if it never did, as for a link taken as text.
+	sent_at timestamptz,
 	expires_at timestamptz NOT NULL,
 	used_at timestamptz,
 	created_at timestamptz NOT NULL DEFAULT now(),

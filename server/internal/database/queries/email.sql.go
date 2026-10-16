@@ -166,6 +166,35 @@ func (q *Queries) LockEmailToken(ctx context.Context, tokenHash []byte) (LockEma
 	return i, err
 }
 
+const lockEmailTokenAccount = `-- name: LockEmailTokenAccount :exec
+SELECT u.id FROM "user" u JOIN email_token t ON t.user_id = u.id WHERE t.id = $1 FOR NO KEY UPDATE OF u
+`
+
+// LockEmailTokenAccount locks the account of the token id, if it has one, as
+// the job that emails the token's link does before it locks the token, so
+// that two jobs of one account's links run one after the other, and the
+// second finds the first's email (LockEmailTokenToSend). Whatever locks an
+// account's row and its tokens locks the row first, so that none waits for
+// another that waits for it.
+func (q *Queries) LockEmailTokenAccount(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, lockEmailTokenAccount, id)
+	return err
+}
+
+const lockEmailTokenAccountByHash = `-- name: LockEmailTokenAccountByHash :exec
+SELECT u.id FROM "user" u JOIN email_token t ON t.user_id = u.id WHERE t.token_hash = $1
+FOR NO KEY UPDATE OF u
+`
+
+// LockEmailTokenAccountByHash locks the account of the token whose secret
+// has the SHA-256 hash token_hash, if there is one, as using a link that
+// verifies an address does before it locks the token
+// (LockEmailTokenAccount).
+func (q *Queries) LockEmailTokenAccountByHash(ctx context.Context, tokenHash []byte) error {
+	_, err := q.db.Exec(ctx, lockEmailTokenAccountByHash, tokenHash)
+	return err
+}
+
 const lockEmailTokenToSend = `-- name: LockEmailTokenToSend :one
 SELECT t.kind, COALESCE(u.locale, t.locale) AS locale, u.email
 FROM email_token t
@@ -176,6 +205,14 @@ WHERE t.id = $1
         ELSE $3::interval END > now()
     AND u.status = 'active'
     AND (t.kind <> 'email_verification' OR t.email = u.email AND u.email_verified_at IS NULL)
+    AND NOT EXISTS (
+        SELECT 1 FROM email_token o
+        WHERE o.user_id = t.user_id AND o.kind = t.kind AND o.id <> t.id
+            AND o.sent_at > now() - $4::interval
+            AND o.used_at IS NULL
+            AND o.expires_at > now()
+            AND (o.kind <> 'email_verification' OR o.email = u.email)
+    )
 FOR UPDATE OF t
 `
 
@@ -183,6 +220,7 @@ type LockEmailTokenToSendParams struct {
 	ID                    pgtype.UUID
 	PasswordResetLifetime pgtype.Interval
 	VerificationLifetime  pgtype.Interval
+	ResendInterval        pgtype.Interval
 }
 
 type LockEmailTokenToSendRow struct {
@@ -195,19 +233,28 @@ type LockEmailTokenToSendRow struct {
 // the token has not been used, was asked for less than the lifetime of its
 // kind of link ago, password_reset_lifetime or verification_lifetime, and
 // its account is active, and, for a verification, still has the address
-// that it verifies, which is not verified yet. The email's locale is the
-// account's preferred one, or else the one of the request that asked for the
-// link. It locks the token, so that the job that sends it and a use of it run
-// one after the other.
+// that it verifies, which is not verified yet, and if the account was
+// emailed no other link of the kind in the last resend_interval that still
+// works: one that has not been used or expired, and, for a verification,
+// verifies the account's address. The email's locale is the account's
+// preferred one, or else the one of the request that asked for the link. It
+// locks the token, so that the job that sends it and a use of it run one
+// after the other.
 func (q *Queries) LockEmailTokenToSend(ctx context.Context, arg LockEmailTokenToSendParams) (LockEmailTokenToSendRow, error) {
-	row := q.db.QueryRow(ctx, lockEmailTokenToSend, arg.ID, arg.PasswordResetLifetime, arg.VerificationLifetime)
+	row := q.db.QueryRow(ctx, lockEmailTokenToSend,
+		arg.ID,
+		arg.PasswordResetLifetime,
+		arg.VerificationLifetime,
+		arg.ResendInterval,
+	)
 	var i LockEmailTokenToSendRow
 	err := row.Scan(&i.Kind, &i.Locale, &i.Email)
 	return i, err
 }
 
 const setEmailTokenHash = `-- name: SetEmailTokenHash :exec
-UPDATE email_token SET token_hash = $1, expires_at = now() + $2::interval, updated_at = now()
+UPDATE email_token SET token_hash = $1, sent_at = now(), expires_at = now() + $2::interval,
+    updated_at = now()
 WHERE id = $3
 `
 
@@ -219,9 +266,9 @@ type SetEmailTokenHashParams struct {
 
 // SetEmailTokenHash gives a token the SHA-256 hash of its secret, which the
 // email that the job sends holds, in place of the hash of any secret that an
-// earlier attempt of the job sent, and makes it expire lifetime from now, so
-// that the link lasts as long as the email says, however late the job sends
-// it.
+// earlier attempt of the job sent, records that the job made the email then,
+// and makes the token expire lifetime from now, so that the link lasts as
+// long as the email says, however late the job sends it.
 func (q *Queries) SetEmailTokenHash(ctx context.Context, arg SetEmailTokenHashParams) error {
 	_, err := q.db.Exec(ctx, setEmailTokenHash, arg.TokenHash, arg.Lifetime, arg.ID)
 	return err

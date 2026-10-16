@@ -119,7 +119,7 @@ active, as a suspended one.
 		if err != nil {
 			return findError(err)
 		}
-		fmt.Fprintf(inv.stdout, "This link resets the password of %s, once, until %s:\n\n  %s\n", inv.args[0],
+		fmt.Fprintf(inv.stdout, "This link resets the password of %s, once, until %s:\n\n  %s\n", link.Email,
 			link.ExpiresAt.UTC().Format("2006-01-02 15:04 MST"), link.URL.Reveal())
 		return nil
 	},

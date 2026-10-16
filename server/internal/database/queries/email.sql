@@ -21,15 +21,35 @@ INSERT INTO email_token (id, kind, user_id, locale, expires_at)
 SELECT @id, 'password_reset', (SELECT u.id FROM "user" u WHERE u.email = @email AND u.status = 'active'), @locale,
     now() + @lifetime::interval;
 
+-- name: LockEmailTokenAccount :exec
+-- LockEmailTokenAccount locks the account of the token id, if it has one, as
+-- the job that emails the token's link does before it locks the token, so
+-- that two jobs of one account's links run one after the other, and the
+-- second finds the first's email (LockEmailTokenToSend). Whatever locks an
+-- account's row and its tokens locks the row first, so that none waits for
+-- another that waits for it.
+SELECT u.id FROM "user" u JOIN email_token t ON t.user_id = u.id WHERE t.id = @id FOR NO KEY UPDATE OF u;
+
+-- name: LockEmailTokenAccountByHash :exec
+-- LockEmailTokenAccountByHash locks the account of the token whose secret
+-- has the SHA-256 hash token_hash, if there is one, as using a link that
+-- verifies an address does before it locks the token
+-- (LockEmailTokenAccount).
+SELECT u.id FROM "user" u JOIN email_token t ON t.user_id = u.id WHERE t.token_hash = @token_hash
+FOR NO KEY UPDATE OF u;
+
 -- name: LockEmailTokenToSend :one
 -- LockEmailTokenToSend returns what the email of a token's link needs, if
 -- the token has not been used, was asked for less than the lifetime of its
 -- kind of link ago, password_reset_lifetime or verification_lifetime, and
 -- its account is active, and, for a verification, still has the address
--- that it verifies, which is not verified yet. The email's locale is the
--- account's preferred one, or else the one of the request that asked for the
--- link. It locks the token, so that the job that sends it and a use of it run
--- one after the other.
+-- that it verifies, which is not verified yet, and if the account was
+-- emailed no other link of the kind in the last resend_interval that still
+-- works: one that has not been used or expired, and, for a verification,
+-- verifies the account's address. The email's locale is the account's
+-- preferred one, or else the one of the request that asked for the link. It
+-- locks the token, so that the job that sends it and a use of it run one
+-- after the other.
 SELECT t.kind, COALESCE(u.locale, t.locale) AS locale, u.email
 FROM email_token t
 JOIN "user" u ON u.id = t.user_id
@@ -39,15 +59,24 @@ WHERE t.id = @id
         ELSE @verification_lifetime::interval END > now()
     AND u.status = 'active'
     AND (t.kind <> 'email_verification' OR t.email = u.email AND u.email_verified_at IS NULL)
+    AND NOT EXISTS (
+        SELECT 1 FROM email_token o
+        WHERE o.user_id = t.user_id AND o.kind = t.kind AND o.id <> t.id
+            AND o.sent_at > now() - @resend_interval::interval
+            AND o.used_at IS NULL
+            AND o.expires_at > now()
+            AND (o.kind <> 'email_verification' OR o.email = u.email)
+    )
 FOR UPDATE OF t;
 
 -- name: SetEmailTokenHash :exec
 -- SetEmailTokenHash gives a token the SHA-256 hash of its secret, which the
 -- email that the job sends holds, in place of the hash of any secret that an
--- earlier attempt of the job sent, and makes it expire lifetime from now, so
--- that the link lasts as long as the email says, however late the job sends
--- it.
-UPDATE email_token SET token_hash = @token_hash, expires_at = now() + @lifetime::interval, updated_at = now()
+-- earlier attempt of the job sent, records that the job made the email then,
+-- and makes the token expire lifetime from now, so that the link lasts as
+-- long as the email says, however late the job sends it.
+UPDATE email_token SET token_hash = @token_hash, sent_at = now(), expires_at = now() + @lifetime::interval,
+    updated_at = now()
 WHERE id = @id;
 
 -- name: DeleteUnclaimedToken :exec

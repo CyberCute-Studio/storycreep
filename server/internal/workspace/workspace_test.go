@@ -206,6 +206,52 @@ func TestEnsurePersonalOnce(t *testing.T) {
 	}
 }
 
+// TestEmailVerified checks that the verification of an account's email
+// address gives it its personal workspace only where the Service requires a
+// verified address, which its first sign-in could not give it without, and
+// that elsewhere the workspace waits for the first sign-in (FR-TEN-01).
+func TestEmailVerified(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for _, required := range []bool{false, true} {
+		d := dbtest.New(t)
+		s := New(d.Open(t), Options{PlanKey: "unlimited", DefaultLocale: language.English,
+			RequireVerifiedEmail: required})
+		user := addUser(t, d, "Jo")
+		if err := s.EnsurePersonal(ctx, user, audit.Client{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Admin(t).Exec(ctx, `UPDATE "user" SET email_verified_at = now() WHERE id = $1`,
+			user); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.EmailVerified(ctx, user, audit.Client{}); err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, d, `SELECT count(*) FROM membership WHERE user_id = $1`, user); n != 1 {
+			t.Errorf("with a verified address required %v, the account has %d workspaces, want 1", required, n)
+		}
+		// An account that has not signed in yet gets its workspace from the
+		// verification only where a verified address is required.
+		other := addUser(t, d, "Ana")
+		if _, err := d.Admin(t).Exec(ctx, `UPDATE "user" SET email_verified_at = now() WHERE id = $1`,
+			other); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.EmailVerified(ctx, other, audit.Client{}); err != nil {
+			t.Fatal(err)
+		}
+		want := 0
+		if required {
+			want = 1
+		}
+		if n := count(t, d, `SELECT count(*) FROM membership WHERE user_id = $1`, other); n != want {
+			t.Errorf("with a verified address required %v, the verification gave %d workspaces, want %d", required,
+				n, want)
+		}
+	}
+}
+
 // TestCreateRollsBack checks that a workspace whose slug is taken adds
 // nothing, neither a workspace nor a membership nor an audit entry.
 func TestCreateRollsBack(t *testing.T) {

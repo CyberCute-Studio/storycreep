@@ -188,9 +188,9 @@ func TestUserCommandsNeedMigrations(t *testing.T) {
 }
 
 // TestResetPassword checks that reset-password prints a link that resets the
-// account's password, for an hour, on the instance's URL, which the audit log
-// records without an actor, and that it fails for an address of no active
-// account.
+// account's password, for an hour, on the instance's URL, with the account's
+// address, which the audit log records without an actor, and that it fails
+// for an address of no active account.
 //
 // Verifies: FR-ADMIN-06/AC1, FR-AUTH-03/AC1
 func TestResetPassword(t *testing.T) {
@@ -207,6 +207,11 @@ func TestResetPassword(t *testing.T) {
 	_, link, ok := strings.Cut(stdout, "\n\n  ")
 	if !ok || !strings.HasPrefix(link, testURL+"/app/reset-password#token=") {
 		t.Fatalf("the output holds no link: %q", stdout)
+	}
+	// The output names the account's address as the account holds it, not
+	// as the command was given it.
+	if !strings.HasPrefix(stdout, "This link resets the password of jo@example.com, once, until ") {
+		t.Errorf("the output names another address: %q", stdout)
 	}
 	if got := query(t, d, `SELECT format('%s %s hash=%s hour=%s', t.kind, u.email, t.token_hash IS NOT NULL,
 		t.expires_at BETWEEN now() + interval '59 minutes' AND now() + interval '1 hour')

@@ -180,7 +180,9 @@ func registerEmail(m *api.Mux, accounts *account.Service, limits *ratelimit.Limi
 		Description: "Emails a link that resets the password of the active account that the email address " +
 			"belongs to, which lasts an hour, and is used once with POST /api/v1/auth/password-reset/confirm. The " +
 			"answer is 202 without a body, as soon, whether or not the address belongs to an account, so that it " +
-			"does not tell whether it does; an address of no account is emailed nothing." + noEmailDoc +
+			"does not tell whether it does; an address of no account is emailed nothing. Nor is an account that was " +
+			"emailed such a link in the last 10 minutes that still works, so that asking again and again does not " +
+			"flood its inbox: the answer is the same, and the earlier link keeps working." + noEmailDoc +
 			authLimitDoc,
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusAccepted,
@@ -242,7 +244,9 @@ func registerEmail(m *api.Mux, accounts *account.Service, limits *ratelimit.Limi
 		Summary:     "Ask for a link that verifies the account's email address",
 		Description: "Emails a link that verifies the signed-in account's email address, which lasts 24 hours, " +
 			"and is used once with POST /api/v1/auth/verify-email. An address that is verified already is emailed " +
-			"nothing. Registering emails one too." + noEmailDoc + csrfDoc + authLimitDoc,
+			"nothing, and nor is one that was emailed such a link in the last 10 minutes that still works: the " +
+			"answer is the same, and the earlier link keeps working. Registering emails one too." + noEmailDoc +
+			csrfDoc + authLimitDoc,
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusAccepted,
 		Middlewares:   huma.Middlewares{emailConfigured, rateLimit(limits, ratelimit.Auth)},
