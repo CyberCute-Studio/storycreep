@@ -77,7 +77,8 @@ type InsertEmailTokenParams struct {
 // expired, and only by an account that is still active.
 // InsertEmailToken adds a token that expires after lifetime, of an account,
 // or of none, which the job that emails its link deletes, with the SHA-256
-// hash of its secret, or with none, which that job adds.
+// hash of its secret, or with none, which that job adds, when the link's
+// lifetime starts again (SetEmailTokenHash).
 func (q *Queries) InsertEmailToken(ctx context.Context, arg InsertEmailTokenParams) (pgtype.Timestamptz, error) {
 	row := q.db.QueryRow(ctx, insertEmailToken,
 		arg.ID,
@@ -166,60 +167,63 @@ func (q *Queries) LockEmailToken(ctx context.Context, tokenHash []byte) (LockEma
 }
 
 const lockEmailTokenToSend = `-- name: LockEmailTokenToSend :one
-SELECT t.kind, COALESCE(u.locale, t.locale) AS locale, t.expires_at, u.id AS user_id, u.email, u.display_name
+SELECT t.kind, COALESCE(u.locale, t.locale) AS locale, u.email
 FROM email_token t
 JOIN "user" u ON u.id = t.user_id
 WHERE t.id = $1
     AND t.used_at IS NULL
-    AND t.expires_at > now()
+    AND t.created_at + CASE t.kind WHEN 'password_reset' THEN $2::interval
+        ELSE $3::interval END > now()
     AND u.status = 'active'
     AND (t.kind <> 'email_verification' OR t.email = u.email AND u.email_verified_at IS NULL)
 FOR UPDATE OF t
 `
 
+type LockEmailTokenToSendParams struct {
+	ID                    pgtype.UUID
+	PasswordResetLifetime pgtype.Interval
+	VerificationLifetime  pgtype.Interval
+}
+
 type LockEmailTokenToSendRow struct {
-	Kind        string
-	Locale      pgtype.Text
-	ExpiresAt   pgtype.Timestamptz
-	UserID      pgtype.UUID
-	Email       string
-	DisplayName string
+	Kind   string
+	Locale pgtype.Text
+	Email  string
 }
 
 // LockEmailTokenToSend returns what the email of a token's link needs, if
-// the token has neither been used nor expired, and its account is active,
-// and, for a verification, still has the address that it verifies, which is
-// not verified yet. The email's locale is the account's preferred one, or
-// else the one of the request that asked for the link. It locks the token,
-// so that the job that sends it and a use of it run one after the other.
-func (q *Queries) LockEmailTokenToSend(ctx context.Context, id pgtype.UUID) (LockEmailTokenToSendRow, error) {
-	row := q.db.QueryRow(ctx, lockEmailTokenToSend, id)
+// the token has not been used, was asked for less than the lifetime of its
+// kind of link ago, password_reset_lifetime or verification_lifetime, and
+// its account is active, and, for a verification, still has the address
+// that it verifies, which is not verified yet. The email's locale is the
+// account's preferred one, or else the one of the request that asked for the
+// link. It locks the token, so that the job that sends it and a use of it run
+// one after the other.
+func (q *Queries) LockEmailTokenToSend(ctx context.Context, arg LockEmailTokenToSendParams) (LockEmailTokenToSendRow, error) {
+	row := q.db.QueryRow(ctx, lockEmailTokenToSend, arg.ID, arg.PasswordResetLifetime, arg.VerificationLifetime)
 	var i LockEmailTokenToSendRow
-	err := row.Scan(
-		&i.Kind,
-		&i.Locale,
-		&i.ExpiresAt,
-		&i.UserID,
-		&i.Email,
-		&i.DisplayName,
-	)
+	err := row.Scan(&i.Kind, &i.Locale, &i.Email)
 	return i, err
 }
 
 const setEmailTokenHash = `-- name: SetEmailTokenHash :exec
-UPDATE email_token SET token_hash = $1, updated_at = now() WHERE id = $2
+UPDATE email_token SET token_hash = $1, expires_at = now() + $2::interval, updated_at = now()
+WHERE id = $3
 `
 
 type SetEmailTokenHashParams struct {
 	TokenHash []byte
+	Lifetime  pgtype.Interval
 	ID        pgtype.UUID
 }
 
 // SetEmailTokenHash gives a token the SHA-256 hash of its secret, which the
 // email that the job sends holds, in place of the hash of any secret that an
-// earlier attempt of the job sent.
+// earlier attempt of the job sent, and makes it expire lifetime from now, so
+// that the link lasts as long as the email says, however late the job sends
+// it.
 func (q *Queries) SetEmailTokenHash(ctx context.Context, arg SetEmailTokenHashParams) error {
-	_, err := q.db.Exec(ctx, setEmailTokenHash, arg.TokenHash, arg.ID)
+	_, err := q.db.Exec(ctx, setEmailTokenHash, arg.TokenHash, arg.Lifetime, arg.ID)
 	return err
 }
 

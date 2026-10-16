@@ -39,8 +39,10 @@ GRANT UPDATE (smtp_host, smtp_port, smtp_security, smtp_username, smtp_password,
 -- hash, as the session table does. A link that is emailed gets its secret
 -- from the job that sends the email, so that neither the request nor the
 -- job's arguments, which River's tables keep, hold it: token_hash is null
--- until then. A link that an instance admin or the operator takes as text
--- has its secret at once.
+-- until then. The link's lifetime starts then too, so that it lasts as long
+-- as the email says, however late the job sends it, while the job sends
+-- nothing for a request older than that lifetime. A link that an instance
+-- admin or the operator takes as text has its secret at once.
 --
 -- A request to reset the password of an address that belongs to no active
 -- account adds a row too, without an account, which the email job deletes,

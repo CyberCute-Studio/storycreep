@@ -123,10 +123,29 @@ func TestSendWithoutTLS(t *testing.T) {
 	checkDelivered(t, server, false, "storycreep")
 }
 
+// TestSendWithURLCredentials checks that a username and a password that
+// STORYCREEP_SMTP_URL percent-encodes, such as ones with @, :, /, and #,
+// sign in to the server as they are.
+func TestSendWithURLCredentials(t *testing.T) {
+	server := emailtest.Start(t, emailtest.Options{Mechanisms: []string{"PLAIN"}, Username: "jo@example.com",
+		Password: "p@ss:w/rd#1"})
+	settings, err := config.ParseSMTPURL(server.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.From = testFrom
+	if err := send(t, server, settings); err != nil {
+		t.Fatal(err)
+	}
+	checkDelivered(t, server, false, "jo@example.com")
+}
+
 // TestSendRefusals checks that the client refuses a server that does not
 // protect the connection as the settings say, or whose certificate is not
-// valid for its host, and one whose password is wrong, and sends nothing to
-// any of them.
+// valid for its host, and one whose password is wrong, that it fails when the
+// server refuses the recipient, with an error that holds neither the
+// password nor the address that the server's reply quotes, which a job keeps,
+// and that it sends nothing to any of them.
 func TestSendRefusals(t *testing.T) {
 	for _, c := range []struct {
 		name     string
@@ -141,6 +160,8 @@ func TestSendRefusals(t *testing.T) {
 		{"wrong password", emailtest.Options{StartTLS: true, Mechanisms: []string{"PLAIN"}, Username: "storycreep",
 			Password: "s3cret"}, config.SMTPStartTLS, func(s *config.SMTP) { s.Password = secret.New("wrong") },
 			"sign in"},
+		{"a refused recipient", emailtest.Options{RefuseRecipients: true}, config.SMTPNone, nil,
+			`refuses the recipient: 550 "5.1.1 [address] Recipient address rejected`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			server := emailtest.Start(t, c.opts)
@@ -154,6 +175,9 @@ func TestSendRefusals(t *testing.T) {
 			}
 			if err != nil && strings.Contains(err.Error(), "s3cret") {
 				t.Errorf("the error holds the password: %v", err)
+			}
+			if err != nil && strings.Contains(err.Error(), message.To.Address) {
+				t.Errorf("the error holds the recipient's address: %v", err)
 			}
 			if n := len(server.Messages()); n != 0 {
 				t.Errorf("%v was sent %d emails", server, n)

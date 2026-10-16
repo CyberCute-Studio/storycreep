@@ -1,7 +1,7 @@
 {
-  "email.email_verification.body": "Hello {name},\n\nTo verify the email address of your Storycreep account at {site}, open this link within {hours, plural, one {# hour} other {# hours}}:\n\n{url}\n\nIf you did not create an account at {site}, you can ignore this email.\n",
+  "email.email_verification.body": "Hello,\n\nTo verify the email address of your Storycreep account at {site}, open this link within {hours, plural, one {# hour} other {# hours}}:\n\n{url}\n\nIf you did not create an account at {site}, you can ignore this email.\n",
   "email.email_verification.subject": "Verify your email address for Storycreep",
-  "email.password_reset.body": "Hello {name},\n\nSomeone asked to reset the password of your Storycreep account at {site}. To choose a new password, open this link within {minutes, plural, one {# minute} other {# minutes}}. It works once, and signs your account out everywhere:\n\n{url}\n\nIf it was not you, you can ignore this email, and your password stays as it is.\n",
+  "email.password_reset.body": "Hello,\n\nSomeone asked to reset the password of your Storycreep account at {site}. To choose a new password, open this link within {minutes, plural, one {# minute} other {# minutes}}. It works once, and signs your account out everywhere:\n\n{url}\n\nIf it was not you, you can ignore this email, and your password stays as it is.\n",
   "email.password_reset.subject": "Reset your Storycreep password",
   "error.csrf_failed": "The request lacks the session's CSRF token, or came from another origin.",
   "error.email_configured": "This server emails its links to each account's own address, so it gives none as text.",

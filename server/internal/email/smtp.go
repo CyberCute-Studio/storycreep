@@ -9,6 +9,7 @@ import (
 	"net/mail"
 	"net/netip"
 	"net/smtp"
+	"net/textproto"
 	"strconv"
 	"strings"
 	"time"
@@ -19,10 +20,12 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 )
 
-// deliver sends msg through the SMTP server of settings, and returns once
-// the server has accepted it, within the Service's timeout. Its errors say
-// which step failed, and never hold the password.
-func (s *Service) deliver(ctx context.Context, settings config.SMTP, msg Message) error {
+// Deliver sends msg through the SMTP server of settings, as Settings returns
+// them, and returns once the server has accepted it, within the Service's
+// timeout. Its errors say which step failed, and hold neither the password
+// nor an email address that the server's replies quote (replyError), because
+// a job keeps its errors (package jobs).
+func (s *Service) Deliver(ctx context.Context, settings config.SMTP, msg Message) error {
 	from, problem := config.ParseSMTPFrom(settings.From)
 	if problem != "" {
 		return fmt.Errorf("email: the address that email comes from %s", problem)
@@ -96,25 +99,45 @@ func (s *Service) deliver(ctx context.Context, settings config.SMTP, msg Message
 		return fmt.Errorf("email: compose the email: %w", err)
 	}
 	if err := c.Mail(sender); err != nil {
-		return fmt.Errorf("email: the SMTP server %s refuses the sender: %w", addr, err)
+		return fmt.Errorf("email: the SMTP server %s refuses the sender: %w", addr, replyError(err))
 	}
 	if err := c.Rcpt(recipient); err != nil {
-		return fmt.Errorf("email: the SMTP server %s refuses the recipient: %w", addr, err)
+		return fmt.Errorf("email: the SMTP server %s refuses the recipient: %w", addr, replyError(err))
 	}
 	w, err := c.Data()
 	if err != nil {
-		return fmt.Errorf("email: send the email to the SMTP server %s: %w", addr, err)
+		return fmt.Errorf("email: send the email to the SMTP server %s: %w", addr, replyError(err))
 	}
 	if _, err := w.Write(data); err != nil {
 		return fmt.Errorf("email: send the email to the SMTP server %s: %w", addr, err)
 	}
 	if err := w.Close(); err != nil {
-		return fmt.Errorf("email: the SMTP server %s refuses the email: %w", addr, err)
+		return fmt.Errorf("email: the SMTP server %s refuses the email: %w", addr, replyError(err))
 	}
 	// The server has accepted the email once DATA ends, so a failure to say
 	// goodbye does not fail the sending, which would send it again.
 	_ = c.Quit()
 	return nil
+}
+
+// replyError returns err, an error that net/smtp returned for a command
+// about the email, but, if err is the server's reply, with every word of the
+// reply that holds an @ replaced by [address]. A server often quotes the
+// address that it refuses, as in 550 5.1.1 <jo@example.com>: Recipient
+// address rejected, and the reply's code and the rest of its text say why
+// without it.
+func replyError(err error) error {
+	var reply *textproto.Error
+	if !errors.As(err, &reply) {
+		return err
+	}
+	words := strings.Fields(reply.Msg)
+	for i, w := range words {
+		if strings.ContainsRune(w, '@') {
+			words[i] = "[address]"
+		}
+	}
+	return &textproto.Error{Code: reply.Code, Msg: strings.Join(words, " ")}
 }
 
 // helloName returns the name that the client gives itself in its EHLO: the

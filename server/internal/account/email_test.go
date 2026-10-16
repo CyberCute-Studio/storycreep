@@ -114,22 +114,35 @@ func (m *mailer) sendAll(t *testing.T) []emailtest.Message {
 
 // TestRegisterEmailsVerification checks that registering on an instance that
 // sends email emails the new account a link that verifies its address, once,
-// which works for 24 hours, and that registering an address that has an
-// account emails nothing, after it has done the same work: it adds a token
-// without the account, and a job, which deletes the token (FR-AUTH-01 AC1).
+// which works for 24 hours, without the display name that the registration
+// chose, which the address's owner may not have, and that registering an
+// address that has an account emails nothing, after it has done the same
+// work: it adds a token without the account, and a job, which deletes the
+// token (FR-AUTH-01 AC1).
 func TestRegisterEmailsVerification(t *testing.T) {
 	t.Parallel()
 	m := withEmail(t, true)
 	ctx := context.Background()
-	id := register(t, m.Service, m.admin, "jo@example.com")
+	const name = "Claim your prize at https://prize.example"
+	if err := m.Register(ctx, Registration{Email: "jo@example.com", DisplayName: name,
+		Password: secret.New(testPassword)}); err != nil {
+		t.Fatal(err)
+	}
+	var id ids.UUID
+	if err := m.admin.QueryRow(ctx, `SELECT id FROM "user" WHERE email = 'jo@example.com'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
 	sent := m.sendAll(t)
 	if len(sent) != 1 || sent[0].To[0] != "jo@example.com" {
 		t.Fatalf("sent %+v, want one email to jo@example.com", sent)
 	}
 	body := sent[0].Body(t)
 	if !strings.Contains(body, "https://storycreep.example.com/app/verify-email#token=") ||
-		!strings.Contains(body, "24 hours") || !strings.HasPrefix(body, "Hello Jo,") {
+		!strings.Contains(body, "24 hours") || !strings.HasPrefix(body, "Hello,\n") || strings.Contains(body, "prize") {
 		t.Errorf("the email says %q", body)
+	}
+	if to := sent[0].Header(t).Get("To"); to != "<jo@example.com>" {
+		t.Errorf("the To header is %q, want the address alone", to)
 	}
 	if n := count(t, m.admin, `SELECT count(*) FROM email_token WHERE user_id = $1 AND kind = 'email_verification'
 		AND expires_at BETWEEN now() + interval '23 hours 59 minutes' AND now() + interval '24 hours'`, id); n != 1 {
@@ -366,7 +379,9 @@ func TestSendLinkReadsTheAccount(t *testing.T) {
 	var locales []string
 	if err := m.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		for _, token := range tokens {
-			row, err := queries.New(tx).LockEmailTokenToSend(ctx, nullUUID(token))
+			row, err := queries.New(tx).LockEmailTokenToSend(ctx, queries.LockEmailTokenToSendParams{
+				ID: nullUUID(token), PasswordResetLifetime: database.Interval(PasswordResetLifetime),
+				VerificationLifetime: database.Interval(VerificationLifetime)})
 			if err != nil {
 				return err
 			}
@@ -436,13 +451,51 @@ func TestLinksRefused(t *testing.T) {
 		t.Errorf("%d addresses are verified", n)
 	}
 
-	// The email job sends nothing for an expired token.
+	// The email job sends nothing for a request older than its link's
+	// lifetime.
 	if err := m.RequestVerification(ctx, jo); err != nil {
 		t.Fatal(err)
 	}
-	exec(t, m.admin, "UPDATE email_token SET expires_at = now() WHERE user_id = $1", jo)
+	exec(t, m.admin, `UPDATE email_token SET created_at = now() - interval '24 hours',
+		expires_at = now() WHERE user_id = $1`, jo)
 	if sent := m.sendAll(t); len(sent) != 0 {
 		t.Errorf("sent %d emails for an expired link", len(sent))
+	}
+}
+
+// TestSendLinkLate checks that a link that the email job sends late, as
+// after attempts that the SMTP server failed, lasts as long as the email
+// says from when it is sent, and that the job sends none once the request
+// is older than that.
+func TestSendLinkLate(t *testing.T) {
+	t.Parallel()
+	m := withEmail(t, true)
+	ctx := context.Background()
+	jo := register(t, m.Service, m.admin, "jo@example.com")
+	m.queue.take(t)
+	for _, late := range []string{"50 minutes", "61 minutes"} {
+		if err := m.RequestPasswordReset(ctx, "jo@example.com"); err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range m.queue.take(t) {
+			exec(t, m.admin, `UPDATE email_token SET created_at = created_at - $1::interval,
+				expires_at = expires_at - $1::interval WHERE id = $2`, late, id)
+			if err := m.sendLink(ctx, m.db, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	sent := m.server.Messages()
+	if len(sent) != 1 || !strings.Contains(sent[0].Body(t), "within 60 minutes") {
+		t.Fatalf("sent %d emails, want one, for the request of 50 minutes ago, that says 60 minutes", len(sent))
+	}
+	if n := count(t, m.admin, `SELECT count(*) FROM email_token WHERE user_id = $1 AND token_hash IS NOT NULL
+		AND expires_at BETWEEN now() + interval '59 minutes' AND now() + interval '1 hour'`, jo); n != 1 {
+		t.Errorf("%d sent links that last an hour from now, want 1", n)
+	}
+	if err := m.ResetPassword(ctx, secret.New(sent[0].Token(t)), secret.New("an entirely new passphrase"),
+		testClient); err != nil {
+		t.Errorf("the link sent late: %v", err)
 	}
 }
 

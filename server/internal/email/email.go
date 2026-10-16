@@ -94,6 +94,15 @@ func New(db DB, opts Options) *Service {
 	return &Service{db: db, override: opts.SMTP, hostname: opts.Hostname, rootCAs: opts.RootCAs, timeout: timeout}
 }
 
+// WithDB returns a Service like s that reads the SMTP settings that
+// first-run setup chose in db, as a job reads them on the workers' pool that
+// it carries (package jobs).
+func (s *Service) WithDB(db DB) *Service {
+	c := *s
+	c.db = db
+	return &c
+}
+
 // Fixed reports whether the configuration sets the SMTP server, which then
 // overrides the one that first-run setup chose.
 func (s *Service) Fixed() bool {
@@ -148,5 +157,5 @@ func (s *Service) Send(ctx context.Context, msg Message) error {
 	case !ok:
 		return ErrNotConfigured
 	}
-	return s.deliver(ctx, settings, msg)
+	return s.Deliver(ctx, settings, msg)
 }

@@ -35,10 +35,13 @@ import (
 // when anyone asks for an address. The email is sent by a job, which makes
 // the link's secret when it sends it, so that neither the request nor the
 // job's arguments hold the secret, and a request does not wait for the SMTP
-// server. A request to reset a password does the same work whether or not
-// the address belongs to an account (AC3), and so does registering
+// server. The link's lifetime starts then, so that it lasts as long as the
+// email says. A request to reset a password does the same work whether or
+// not the address belongs to an account (AC3), and so does registering
 // (FR-AUTH-01 AC1): each adds a token either way, which the job deletes when
-// it has no account.
+// it has no account. The email names no one but its address: the account's
+// display name was chosen by whoever registered the address, who need not be
+// its owner.
 //
 // An instance that sends no email says so, refuses those requests with
 // ErrEmailNotConfigured, the same for every address, and never reaches the
@@ -149,8 +152,8 @@ func (emailLink) Kind() string { return "email_link" }
 
 // emailLinkAttempts is how many times the job tries to email a link: with
 // the queue's backoff, which waits an hour at most between attempts, over
-// about a day, the life of a verification link. An attempt once the link
-// has expired sends nothing, and ends the job.
+// about a day, the life of a verification link. An attempt once the request
+// is older than the life of its link sends nothing, and ends the job.
 const emailLinkAttempts = 36
 
 // emailTokenCleanup is the job that deletes the tokens that have expired.
@@ -263,18 +266,25 @@ func (s *Service) RequestVerification(ctx context.Context, userID ids.UUID) erro
 }
 
 // sendLink is the work of the job that emails the link of the token id: it
-// makes the link's secret, holds its hash in the token, and sends the email
-// to the account's address, in the account's preferred locale, or else the
-// request's. A token that has been used, has expired, or whose account is no
-// longer active, or no longer has the address that it verifies, or has
-// verified it since, is sent no email, and a token without an account, of a
-// reset requested for an address of no account or of a registration of an
-// address that has one, is deleted. An instance that no longer sends email
-// sends none either. An attempt that fails to send the email is made again
-// later, with a new secret, which replaces the one that the failed attempt
-// may have sent, so that only the latest email's link works.
+// makes the link's secret, holds its hash in the token, which then expires
+// after the link's lifetime, and sends the email to the account's address,
+// in the account's preferred locale, or else the request's. A token that has
+// been used, or was asked for longer ago than its link's lifetime, or whose
+// account is no longer active, or no longer has the address that it
+// verifies, or has verified it since, is sent no email, and a token without
+// an account, of a reset requested for an address of no account or of a
+// registration of an address that has one, is deleted. An instance that no
+// longer sends email sends none either. An attempt that fails to send the
+// email is made again later, with a new secret, which replaces the one that
+// the failed attempt may have sent, so that only the latest email's link
+// works. The job reads the SMTP settings, as it does the token, on the
+// workers' pool that it carries, db.
 func (s *Service) sendLink(ctx context.Context, db DB, id ids.UUID) error {
-	configured, err := s.EmailConfigured(ctx)
+	if s.email == nil {
+		return nil
+	}
+	mailer := s.email.WithDB(db)
+	settings, configured, err := mailer.Settings(ctx)
 	if err != nil || !configured {
 		return err
 	}
@@ -284,7 +294,9 @@ func (s *Service) sendLink(ctx context.Context, db DB, id ids.UUID) error {
 	err = db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
 		var err error
-		row, err = q.LockEmailTokenToSend(ctx, nullUUID(id))
+		row, err = q.LockEmailTokenToSend(ctx, queries.LockEmailTokenToSendParams{ID: nullUUID(id),
+			PasswordResetLifetime: database.Interval(PasswordResetLifetime),
+			VerificationLifetime:  database.Interval(VerificationLifetime)})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return q.DeleteUnclaimedToken(ctx, nullUUID(id))
 		}
@@ -292,7 +304,8 @@ func (s *Service) sendLink(ctx context.Context, db DB, id ids.UUID) error {
 			return err
 		}
 		found = true
-		return q.SetEmailTokenHash(ctx, queries.SetEmailTokenHashParams{TokenHash: hash, ID: nullUUID(id)})
+		return q.SetEmailTokenHash(ctx, queries.SetEmailTokenHashParams{TokenHash: hash,
+			Lifetime: database.Interval(LinkKind(row.Kind).lifetime()), ID: nullUUID(id)})
 	})
 	if err != nil {
 		return fmt.Errorf("account: prepare the link's email: %w", err)
@@ -300,9 +313,8 @@ func (s *Service) sendLink(ctx context.Context, db DB, id ids.UUID) error {
 	if !found {
 		return nil
 	}
-	msg := linkEmail(s.publicURL, LinkKind(row.Kind), row.Locale.String, value,
-		mail.Address{Name: row.DisplayName, Address: row.Email})
-	if err := s.email.Send(ctx, msg); err != nil {
+	msg := linkEmail(s.publicURL, LinkKind(row.Kind), row.Locale.String, value, row.Email)
+	if err := mailer.Deliver(ctx, settings, msg); err != nil {
 		if ctx.Err() != nil {
 			// The job's context ended: the server is stopping, and the
 			// attempt is made again without counting (jobs.Register), or the
@@ -316,15 +328,19 @@ func (s *Service) sendLink(ctx context.Context, db DB, id ids.UUID) error {
 }
 
 // linkEmail returns the email of a link of kind, with the secret value, to
-// to, in locale, a BCP 47 tag, or the source locale if the server has no
-// catalog for it.
-func linkEmail(u config.PublicURL, kind LinkKind, locale string, value secret.Value, to mail.Address) email.Message {
+// the address address, in locale, a BCP 47 tag, or the source locale if the
+// server has no catalog for it. It names the recipient by their address
+// alone, never by the account's display name, which whoever registered the
+// address chose, so that someone who registers an address that is not
+// theirs cannot put text of their own in the email that its owner receives.
+func linkEmail(u config.PublicURL, kind LinkKind, locale string, value secret.Value, address string) email.Message {
 	tag, err := language.Parse(locale)
 	if err != nil {
 		tag = i18n.Source
 	}
 	l := i18n.Default().Localizer(tag)
-	args := i18n.Args{"name": to.Name, "site": u.URL().Host, "url": linkURL(u, kind, value)}
+	to := mail.Address{Address: address}
+	args := i18n.Args{"site": u.URL().Host, "url": linkURL(u, kind, value)}
 	if kind == LinkPasswordReset {
 		args["minutes"] = int(PasswordResetLifetime / time.Minute)
 		return email.Message{To: to,

@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/mail"
 	"net/textproto"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -48,6 +49,9 @@ type Options struct {
 	// ASCII makes the server offer no SMTPUTF8, so that it refuses an
 	// address outside ASCII in MAIL or RCPT, as such a server does.
 	ASCII bool
+	// RefuseRecipients makes the server refuse every recipient, with a reply
+	// that quotes the address, as many servers do.
+	RefuseRecipients bool
 }
 
 // Message is an email that the server was sent.
@@ -162,13 +166,14 @@ func (s *Server) Settings(security config.SMTPSecurity, from string) config.SMTP
 }
 
 // URL returns the server as STORYCREEP_SMTP_URL writes it, without TLS, as
-// its Options must allow.
+// its Options must allow, with the username and the password
+// percent-encoded.
 func (s *Server) URL() string {
-	u := "smtp://"
+	u := url.URL{Scheme: "smtp", Host: "127.0.0.1:" + strconv.Itoa(s.Port()), RawQuery: "security=none"}
 	if s.opts.Username != "" {
-		u += s.opts.Username + ":" + s.opts.Password + "@"
+		u.User = url.UserPassword(s.opts.Username, s.opts.Password)
 	}
-	return u + "127.0.0.1:" + strconv.Itoa(s.Port()) + "?security=none"
+	return u.String()
 }
 
 // Messages returns the email that the server was sent, in order.
@@ -276,6 +281,10 @@ func (s *Server) serve(conn net.Conn) {
 		case "RCPT":
 			if s.opts.ASCII && !ascii(arg) {
 				reply(553, "an address outside ASCII needs SMTPUTF8")
+				continue
+			}
+			if s.opts.RefuseRecipients {
+				reply(550, "5.1.1 <"+address(arg)+">: Recipient address rejected: User unknown")
 				continue
 			}
 			current.To = append(current.To, address(arg))
