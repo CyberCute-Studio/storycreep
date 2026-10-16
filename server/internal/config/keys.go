@@ -56,6 +56,13 @@ type key struct {
 	// that is groupRequired must be set too.
 	group         string
 	groupRequired bool
+	// needs names the keys that must be set too when this one is, such as
+	// the address that email is sent from with the server that sends it.
+	needs []string
+	// requiredIn is the mode that requires the key, as hosted mode, which
+	// always sends email, requires an SMTP server, or "" if none does. A
+	// required key is required in both.
+	requiredIn mode
 }
 
 // setupGroup is the group of the keys of unattended first-run setup.
@@ -162,6 +169,51 @@ var keys = []key{
 		capabilityLimit: "self-hosted only",
 	},
 	{
+		name: "STORYCREEP_SMTP_URL",
+		doc: "The SMTP server that the instance sends its email through (PRD FR-AUTH-03): the links that verify " +
+			"an email address and reset a password. `smtp://` connects with STARTTLS, which the server must " +
+			"offer, on port 587 unless the URL names another port; `smtp://` with `?security=none` sends without " +
+			"TLS, for a relay on the same host or network, and then cannot sign in to it unless it is on a " +
+			"loopback address; and `smtps://` uses TLS from the start, on port 465 unless the URL names another. " +
+			"A username and a password in the URL, percent-encoded, sign in with PLAIN or LOGIN. With " +
+			"`STORYCREEP_SMTP_FROM`, which it needs, it overrides the SMTP settings that first-run setup chose " +
+			"(PRD FR-ADMIN-02), for as long as it is set. When neither sets a server, the instance sends no " +
+			"email, says so to its users, and an instance admin gives them the links as text instead " +
+			"(`POST /api/v1/admin/password-reset-links`, or `storycreep reset-password`). Hosted mode always " +
+			"sends email (the `EmailRequired` [capability](#capabilities)), so it requires this key. Where the " +
+			"URL is shown, its password is `" + secret.Redacted + "`.",
+		valuesDoc:  "An `smtp://` or `smtps://` URL",
+		example:    "smtp://apikey:password@smtp.example.com:587",
+		needs:      []string{"STORYCREEP_SMTP_FROM"},
+		requiredIn: modeHosted,
+		parse: func(c *Config, v string) error {
+			s, err := ParseSMTPURL(v)
+			if err != nil {
+				return err
+			}
+			s.From = c.smtp().From
+			*c.SMTP = s
+			return nil
+		},
+		effective: func(c *Config) string { return c.SMTP.URL() },
+	},
+	{
+		name: "STORYCREEP_SMTP_FROM",
+		doc: "The address that the instance's email comes from, alone or with a name, with " +
+			"`STORYCREEP_SMTP_URL`, which needs it. The SMTP server must let the instance send from it.",
+		valuesDoc:  "An email address, alone or with a name",
+		example:    "Storycreep <noreply@example.com>",
+		needs:      []string{"STORYCREEP_SMTP_URL"},
+		requiredIn: modeHosted,
+		parse: func(c *Config, v string) error {
+			if _, msg := ParseSMTPFrom(v); msg != "" {
+				return errors.New(msg)
+			}
+			c.smtp().From = v
+			return nil
+		},
+	},
+	{
 		name: "STORYCREEP_SETUP_OWNER_EMAIL",
 		doc: "The email address of the first owner, for unattended first-run setup (PRD FR-ADMIN-02). With " +
 			"`STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, and `STORYCREEP_SETUP_WORKSPACE_NAME`, " +
@@ -242,6 +294,50 @@ var keys = []key{
 		group:  setupGroup,
 		parse: func(c *Config, v string) error {
 			c.unattendedSetup().Signup = SignupPolicy(v)
+			return nil
+		},
+	},
+	{
+		name: "STORYCREEP_SETUP_SMTP_URL",
+		doc: "The SMTP server that unattended first-run setup records, written like `STORYCREEP_SMTP_URL`, as " +
+			"the setup API's `smtp` does, with `STORYCREEP_SETUP_SMTP_FROM`, which it needs. Not set, setup " +
+			"records none, and the instance sends no email unless `STORYCREEP_SMTP_URL` is set, which overrides " +
+			"the recorded server for as long as it is set. The server reads it only while setup is pending, so " +
+			"remove it from the configuration once setup has completed. Where it is shown, its password is `" +
+			secret.Redacted + "`.",
+		valuesDoc: "An `smtp://` or `smtps://` URL",
+		group:     setupGroup,
+		needs:     []string{"STORYCREEP_SETUP_SMTP_FROM"},
+		parse: func(c *Config, v string) error {
+			s, err := ParseSMTPURL(v)
+			if err != nil {
+				return err
+			}
+			u := c.unattendedSetup()
+			if u.SMTP != nil {
+				s.From = u.SMTP.From
+			}
+			u.SMTP = &s
+			return nil
+		},
+		effective: func(c *Config) string { return c.Setup.SMTP.URL() },
+	},
+	{
+		name: "STORYCREEP_SETUP_SMTP_FROM",
+		doc: "The address that the email of the SMTP server of `STORYCREEP_SETUP_SMTP_URL`, which needs it, " +
+			"comes from, written like `STORYCREEP_SMTP_FROM`.",
+		valuesDoc: "An email address, alone or with a name",
+		group:     setupGroup,
+		needs:     []string{"STORYCREEP_SETUP_SMTP_URL"},
+		parse: func(c *Config, v string) error {
+			if _, msg := ParseSMTPFrom(v); msg != "" {
+				return errors.New(msg)
+			}
+			u := c.unattendedSetup()
+			if u.SMTP == nil {
+				u.SMTP = &SMTP{}
+			}
+			u.SMTP.From = v
 			return nil
 		},
 	},

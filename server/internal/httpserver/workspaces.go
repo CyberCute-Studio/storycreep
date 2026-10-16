@@ -150,8 +150,10 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 		Method:      http.MethodPost,
 		Path:        "/api/v1/workspaces",
 		Summary:     "Create a workspace",
-		Description: "Creates a workspace, whose owner the signed-in user becomes. A name or a default locale that " +
-			"its field does not allow is answered with 422 validation_failed." + csrfDoc,
+		Description: "Creates a workspace, whose owner the signed-in user becomes. Where the instance always sends " +
+			"email, as hosted mode does, a user who has not verified their email address is answered with 403 " +
+			"email_unverified, whatever the request holds. A name or a default locale that its field does not " +
+			"allow is answered with 422 validation_failed." + csrfDoc,
 		Tags:          []string{"Workspaces"},
 		DefaultStatus: http.StatusCreated,
 	}, func(ctx context.Context, in *createWorkspaceInput) (*createdWorkspaceOutput, error) {
@@ -230,6 +232,8 @@ func workspaceError(err error) error {
 		return api.NewError(api.CodeNotFound)
 	case errors.Is(err, workspace.ErrInsufficientRole):
 		return api.NewError(api.CodeInsufficientRole)
+	case errors.Is(err, workspace.ErrEmailUnverified):
+		return api.NewError(api.CodeEmailUnverified)
 	case errors.Is(err, workspace.ErrSlugTaken):
 		return slugTakenError("body.slug")
 	case errors.As(err, &slug):

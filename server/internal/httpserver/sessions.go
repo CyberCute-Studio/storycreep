@@ -356,7 +356,9 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 		Description: "Signs in with an account's email address and password, and starts a session, whose secret " +
 			"the Set-Cookie header gives the client, and whose CSRF token the body holds. The account's first " +
 			"sign-in also gives it its personal workspace, named after its display name, which it owns; " +
-			"GET /api/v1/workspaces lists it. An address of no " +
+			"GET /api/v1/workspaces lists it. Where the instance always sends email, as hosted mode does, that is " +
+			"the first sign-in once the account's email address is verified, or the verification itself. An " +
+			"address of no " +
 			"account, a wrong password, and an account that cannot sign in, such as a suspended one, are all " +
 			"answered with 401 invalid_credentials, after the same work, so that the answer does not tell them " +
 			"apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another " +
@@ -513,9 +515,10 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 		Description: "Changes the signed-in account's password, if current_password is the account's, or the " +
 			"answer is 403 wrong_password. The new password must have at least 12 characters, counted as Unicode " +
 			"code points once it is in NFKC, and must not be one of the 10,000 most common passwords, or the " +
-			"answer is 422 weak_password. Changing it revokes every other session of the account, and gives the " +
-			"session of the request a new secret, in the Set-Cookie header, and a new CSRF token, in the body, " +
-			"so that the old ones are no longer valid." + csrfDoc + authLimitDoc,
+			"answer is 422 weak_password. Changing it revokes every other session of the account, stops the " +
+			"account's links that reset its password from working, and gives the session of the request a new " +
+			"secret, in the Set-Cookie header, and a new CSRF token, in the body, so that the old ones are no " +
+			"longer valid." + csrfDoc + authLimitDoc,
 		Tags:        []string{"Authentication"},
 		Middlewares: huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
 	}, func(ctx context.Context, in *passwordInput) (*signedInOutput, error) {

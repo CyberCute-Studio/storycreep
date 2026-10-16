@@ -85,6 +85,46 @@ password breaks the policy, or if the address has an account already.
 	},
 }
 
+var resetPassword = &command{
+	name:    "reset-password",
+	summary: "Print a link that resets an account's password",
+	args:    "<email>",
+	help: `
+Prints a link that resets the password of the active account that the email
+address belongs to. Whoever opens it chooses the account's new password,
+once, within an hour, which signs the account out everywhere. So give it to
+the account's user alone, by a way that only they can read.
+
+The link opens STORYCREEP_PUBLIC_URL, with its token after the URL's #,
+which a browser does not send to the server. It is printed whether or not
+the instance sends email: an instance that does emails its users their own
+links when they ask, and an instance admin who has no access to the server
+takes one with POST /api/v1/admin/password-reset-links, on an instance that
+does not. The audit log records the link's issue.
+
+It fails if the address belongs to no account, or to one that is not
+active, as a suspended one.
+` + databaseHelp,
+	loadsConfig: true,
+	run: func(ctx context.Context, inv *invocation) error {
+		if len(inv.args) != 1 {
+			return usageError{"expected an email address"}
+		}
+		db, err := openDatabase(ctx, inv)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		link, err := account.IssueResetLink(ctx, db, inv.cfg.PublicURL, inv.args[0])
+		if err != nil {
+			return findError(err)
+		}
+		fmt.Fprintf(inv.stdout, "This link resets the password of %s, once, until %s:\n\n  %s\n", inv.args[0],
+			link.ExpiresAt.UTC().Format("2006-01-02 15:04 MST"), link.URL)
+		return nil
+	},
+}
+
 // readPassword reads a password from the command's standard input: its first
 // line, without the line break, of at most account.MaxPasswordLength
 // characters. If standard input is a terminal, it asks for the password of

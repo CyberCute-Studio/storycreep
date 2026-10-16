@@ -229,6 +229,44 @@ func (q *Queries) RevokeSession(ctx context.Context, arg RevokeSessionParams) (i
 	return result.RowsAffected(), nil
 }
 
+const revokeUserSessions = `-- name: RevokeUserSessions :many
+UPDATE session s SET revoked_at = now(), updated_at = now()
+WHERE s.user_id = $1
+    AND s.revoked_at IS NULL
+    AND s.expires_at > now()
+    AND s.created_at + $2::interval > now()
+    AND s.last_seen_at + $3::interval > now()
+RETURNING s.id
+`
+
+type RevokeUserSessionsParams struct {
+	UserID   pgtype.UUID
+	Lifetime pgtype.Interval
+	Idle     pgtype.Interval
+}
+
+// RevokeUserSessions revokes every active session of a user, as resetting
+// the password does, and returns their IDs.
+func (q *Queries) RevokeUserSessions(ctx context.Context, arg RevokeUserSessionsParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, revokeUserSessions, arg.UserID, arg.Lifetime, arg.Idle)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const rotateSession = `-- name: RotateSession :execrows
 UPDATE session s SET token_hash = $1, updated_at = now()
 WHERE s.id = $2

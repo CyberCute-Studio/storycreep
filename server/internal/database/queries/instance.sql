@@ -14,9 +14,16 @@ SELECT (setup_completed_at IS NOT NULL)::boolean AS setup_completed, signup_poli
 SELECT (setup_completed_at IS NOT NULL)::boolean AS setup_completed, signup_policy FROM instance FOR UPDATE;
 
 -- name: CompleteSetup :exec
--- CompleteSetup marks first-run setup completed, with the signup policy that
--- it chose.
-UPDATE instance SET setup_completed_at = now(), signup_policy = @signup_policy, updated_at = now();
+-- CompleteSetup marks first-run setup completed, with the signup policy and
+-- the SMTP settings that it chose, which are all null if it chose none.
+UPDATE instance SET setup_completed_at = now(), signup_policy = @signup_policy, smtp_host = @smtp_host,
+    smtp_port = @smtp_port, smtp_security = @smtp_security, smtp_username = @smtp_username,
+    smtp_password = @smtp_password, smtp_from = @smtp_from, updated_at = now();
+
+-- name: InstanceSMTP :one
+-- InstanceSMTP returns the SMTP settings that first-run setup chose (package
+-- mail), whose host is null if it chose none.
+SELECT smtp_host, smtp_port, smtp_security, smtp_username, smtp_password, smtp_from FROM instance;
 
 -- name: SetupCodeKey :one
 -- SetupCodeKey returns the key that the setup code is made of.

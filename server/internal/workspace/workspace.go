@@ -13,6 +13,10 @@
 // digits, joined by single hyphens, at most 64 characters, and not one of
 // the reserved words (FR-TEN-01 AC3), which CheckSlug lists.
 //
+// Where the instance sends email for certain (the EmailRequired capability,
+// as in hosted mode), a user must have verified their email address before
+// they can create a workspace, the personal one included (PRD FR-AUTH-03).
+//
 // Every operation on a workspace resolves the user's role in it with
 // role.Policy.Workspace, from whether the user is an instance admin and
 // their membership. A user whose role is none, as one who is not a member,
@@ -69,6 +73,9 @@ var (
 	// ErrLastOwner is returned for a change that would leave a workspace
 	// without an owner whose account is active (FR-TEN-02 AC2).
 	ErrLastOwner = errors.New("workspace: the change would leave the workspace without an owner")
+	// ErrEmailUnverified is returned by Create for a user who has not
+	// verified their email address, where the Service requires it.
+	ErrEmailUnverified = errors.New("workspace: the user has not verified their email address")
 )
 
 // SlugReason says why a slug is not valid.
@@ -159,6 +166,10 @@ type Options struct {
 	// DefaultLocale is the instance's default locale, which a workspace
 	// whose settings name no locale that the server has a catalog for has.
 	DefaultLocale language.Tag
+	// RequireVerifiedEmail makes a user verify their email address before
+	// they create a workspace, the personal one included (FR-AUTH-03), as
+	// the EmailRequired capability does.
+	RequireVerifiedEmail bool
 }
 
 // Service keeps the workspaces.
@@ -167,11 +178,14 @@ type Service struct {
 	policy role.Policy
 	plan   string
 	locale language.Tag
+	// verified is Options.RequireVerifiedEmail.
+	verified bool
 }
 
 // New returns a Service that keeps the workspaces in db, with opts.
 func New(db DB, opts Options) *Service {
-	return &Service{db: db, policy: opts.Policy, plan: opts.PlanKey, locale: opts.DefaultLocale}
+	return &Service{db: db, policy: opts.Policy, plan: opts.PlanKey, locale: opts.DefaultLocale,
+		verified: opts.RequireVerifiedEmail}
 }
 
 // Workspace is a workspace.
@@ -221,13 +235,18 @@ type Patch struct {
 
 // Create creates a workspace with in, whose owner is the user userID, which
 // client asks for, and records that in the audit log, in one transaction
-// (FR-TEN-01 AC2). It returns input.FieldErrors if the name or the default
-// locale is not valid, then a *SlugError if the slug is not, and
-// ErrSlugTaken if another workspace has it, and creates nothing then. A slug
-// derived from the name is the first of the name's slug, then that with -2,
-// -3, and so on, that no workspace has and that is not reserved.
+// (FR-TEN-01 AC2). It returns ErrEmailUnverified if the Service requires a
+// verified email address and the user has none, whatever in holds, then
+// input.FieldErrors if the name or the default locale is not valid, then a
+// *SlugError if the slug is not, and ErrSlugTaken if another workspace has
+// it, and creates nothing then. A slug derived from the name is the first of
+// the name's slug, then that with -2, -3, and so on, that no workspace has
+// and that is not reserved.
 func (s *Service) Create(ctx context.Context, userID ids.UUID, in Settings, client audit.Client) (Workspace,
 	error) {
+	if err := s.checkVerified(ctx, userID); err != nil {
+		return Workspace{}, err
+	}
 	d, err := s.Check(ctx, in)
 	if err != nil {
 		return Workspace{}, err
@@ -242,6 +261,32 @@ func (s *Service) Create(ctx context.Context, userID ids.UUID, in Settings, clie
 		return Workspace{}, err
 	}
 	return w, nil
+}
+
+// checkVerified returns ErrEmailUnverified if the Service requires a
+// verified email address and the user userID has not verified theirs, or
+// is not active, and nil otherwise. A verified address stays verified, so
+// the check need not hold in the transaction that creates the workspace.
+func (s *Service) checkVerified(ctx context.Context, userID ids.UUID) error {
+	if !s.verified {
+		return nil
+	}
+	var verified bool
+	err := s.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
+		var err error
+		verified, err = queries.New(tx).EmailVerified(ctx, nullUUID(userID))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	})
+	switch {
+	case err != nil:
+		return fmt.Errorf("workspace: read whether the email address is verified: %w", err)
+	case !verified:
+		return ErrEmailUnverified
+	}
+	return nil
 }
 
 // Draft is a workspace to create, whose settings Check has checked.
@@ -301,12 +346,15 @@ func (s *Service) Insert(ctx context.Context, tx pgx.Tx, d Draft, userID ids.UUI
 // workspace named after the account's display name, with a slug derived from
 // it, and the request's locale (i18n.FromContext), which the account owns.
 // It does nothing for an account that has had one, whatever it belongs to
-// and whatever became of that workspace, or that is not active. Two sign-ins
-// at once give it one workspace.
+// and whatever became of that workspace, or that is not active, or, where
+// the Service requires a verified email address, that has not verified its
+// own, which the first call after the verification then gives it. Two
+// sign-ins at once give it one workspace.
 func (s *Service) EnsurePersonal(ctx context.Context, userID ids.UUID, client audit.Client) error {
 	w := Workspace{ID: ids.New(), DefaultLocale: i18n.FromContext(ctx).Locale()}
 	return s.db.InTx(ctx, database.Scope{WorkspaceID: w.ID, UserID: userID}, func(tx pgx.Tx) error {
-		name, err := queries.New(tx).ClaimPersonalWorkspace(ctx, nullUUID(userID))
+		name, err := queries.New(tx).ClaimPersonalWorkspace(ctx, queries.ClaimPersonalWorkspaceParams{
+			ID: nullUUID(userID), RequireVerified: s.verified})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}

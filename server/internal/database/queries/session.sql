@@ -80,6 +80,17 @@ WHERE s.user_id = @user_id
     AND s.last_seen_at + @idle::interval > now()
 RETURNING s.id;
 
+-- name: RevokeUserSessions :many
+-- RevokeUserSessions revokes every active session of a user, as resetting
+-- the password does, and returns their IDs.
+UPDATE session s SET revoked_at = now(), updated_at = now()
+WHERE s.user_id = @user_id
+    AND s.revoked_at IS NULL
+    AND s.expires_at > now()
+    AND s.created_at + @lifetime::interval > now()
+    AND s.last_seen_at + @idle::interval > now()
+RETURNING s.id;
+
 -- name: RotateSession :execrows
 -- RotateSession gives a user's active session a new secret, whose SHA-256
 -- hash is token_hash, so that the old secret no longer finds it. The

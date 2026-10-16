@@ -72,7 +72,7 @@ func TestSetupRouteGone(t *testing.T) {
 	s, _ := pendingServer(t, nil)
 	res := send(s.main, http.MethodGet, setupPath, nil, "", nil)
 	if res.status != http.StatusOK ||
-		strings.TrimSpace(string(res.body)) != `{"signup_policy_fixed":false,"signup_policy":"closed"}` {
+		strings.TrimSpace(string(res.body)) != `{"signup_policy_fixed":false,"signup_policy":"closed","smtp_fixed":false}` {
 		t.Errorf("GET %s before setup: %d %s", setupPath, res.status, res.body)
 	}
 	code := setupCode(t, s)
@@ -190,6 +190,13 @@ func TestSetupRefuses(t *testing.T) {
 		}), http.StatusUnprocessableEntity, api.CodeSlugInvalid, []string{"body.workspace.slug"}},
 		{"an unknown policy", setupRequest(t, code, "jo@example.com", map[string]any{"signup_policy": "anyone"}),
 			http.StatusUnprocessableEntity, api.CodeValidationFailed, []string{"body.signup_policy"}},
+		{"an SMTP server", setupRequest(t, code, "jo@example.com", map[string]any{"smtp": map[string]any{
+			"host": "smtp example.com", "port": 25, "security": "none", "username": "jo", "from": "noreply"}}),
+			http.StatusUnprocessableEntity, api.CodeValidationFailed,
+			[]string{"body.smtp.host", "body.smtp.security", "body.smtp.password", "body.smtp.from"}},
+		{"an SMTP server's port", setupRequest(t, code, "jo@example.com", map[string]any{"smtp": map[string]any{
+			"host": "smtp.example.com", "port": 0, "security": "tls", "from": "noreply@example.com"}}),
+			http.StatusUnprocessableEntity, api.CodeValidationFailed, []string{"body.smtp.port"}},
 		{"no owner", jsonBody(t, map[string]any{"setup_code": code, "workspace": map[string]any{"name": "W"}}),
 			http.StatusUnprocessableEntity, api.CodeValidationFailed, []string{"body"}},
 	} {
@@ -242,15 +249,15 @@ func TestSetupSignupPolicy(t *testing.T) {
 		get    string
 		want   api.Code
 	}{
-		{nil, "open", `{"signup_policy_fixed":false,"signup_policy":"closed"}`, ""},
-		{nil, "invite", `{"signup_policy_fixed":false,"signup_policy":"closed"}`, api.CodeInviteRequired},
-		{nil, "", `{"signup_policy_fixed":false,"signup_policy":"closed"}`, api.CodeSignupClosed},
+		{nil, "open", `{"signup_policy_fixed":false,"signup_policy":"closed","smtp_fixed":false}`, ""},
+		{nil, "invite", `{"signup_policy_fixed":false,"signup_policy":"closed","smtp_fixed":false}`, api.CodeInviteRequired},
+		{nil, "", `{"signup_policy_fixed":false,"signup_policy":"closed","smtp_fixed":false}`, api.CodeSignupClosed},
 		{map[string]string{"STORYCREEP_SIGNUP": "closed"}, "open",
-			`{"signup_policy_fixed":true,"signup_policy":"closed"}`, api.CodeSignupClosed},
+			`{"signup_policy_fixed":true,"signup_policy":"closed","smtp_fixed":false}`, api.CodeSignupClosed},
 		{map[string]string{"STORYCREEP_SIGNUP": "open"}, "closed",
-			`{"signup_policy_fixed":true,"signup_policy":"open"}`, ""},
+			`{"signup_policy_fixed":true,"signup_policy":"open","smtp_fixed":false}`, ""},
 		{map[string]string{"STORYCREEP_MODE": "hosted", "STORYCREEP_PUBLIC_URL": "https://storycreep.example.com"},
-			"closed", `{"signup_policy_fixed":true,"signup_policy":"open"}`, ""},
+			"closed", `{"signup_policy_fixed":true,"signup_policy":"open","smtp_fixed":true}`, ""},
 	} {
 		s, _ := pendingServer(t, c.env)
 		if res := send(s.main, http.MethodGet, setupPath, nil, "", nil); strings.TrimSpace(string(res.body)) != c.get {
@@ -282,6 +289,8 @@ var unattendedEnv = map[string]string{
 	"STORYCREEP_SETUP_WORKSPACE_NAME": "Harbour Studio",
 	"STORYCREEP_SETUP_WORKSPACE_SLUG": "harbour",
 	"STORYCREEP_SETUP_SIGNUP":         "invite",
+	"STORYCREEP_SETUP_SMTP_URL":       "smtps://jo%40example.com:p%40ss@SMTP.Example.com",
+	"STORYCREEP_SETUP_SMTP_FROM":      "Harbour Studio <noreply@example.com>",
 }
 
 // instanceState describes what setup leaves in the database d, without what
@@ -300,7 +309,8 @@ func instanceState(t *testing.T, d *dbtest.Database) string {
 		FROM workspace
 		UNION ALL SELECT format('membership %s of %s by %s', m.role, w.slug, u.email)
 		FROM membership m JOIN workspace w ON w.id = m.workspace_id JOIN "user" u ON u.id = m.user_id
-		UNION ALL SELECT format('instance completed=%s signup=%s', setup_completed_at IS NOT NULL, signup_policy)
+		UNION ALL SELECT format('instance completed=%s signup=%s smtp=%s %s %s %s %s %s', setup_completed_at IS NOT NULL,
+			signup_policy, smtp_host, smtp_port, smtp_security, smtp_username, smtp_password, smtp_from)
 		FROM instance
 		UNION ALL SELECT format('audit %s %s %s %s in=%s actor=%s token=%s subject=%s', a.action, a.subject_kind,
 			a.result, a.metadata, w.slug, u.email, a.actor_token_id, a.subject_id = w.id)
@@ -340,6 +350,8 @@ func TestUnattendedSetupMatchesTheAPI(t *testing.T) {
 		"owner":         map[string]any{"email": "Jo@Example.com", "display_name": "Jo Novak", "password": testPassword},
 		"workspace":     map[string]any{"name": "Harbour Studio", "slug": "harbour"},
 		"signup_policy": "invite",
+		"smtp": map[string]any{"host": "smtp.example.com", "port": 465, "security": "tls",
+			"username": "jo@example.com", "password": "p@ss", "from": "Harbour Studio <noreply@example.com>"},
 	})
 
 	d := dbtest.New(t)
@@ -356,7 +368,8 @@ func TestUnattendedSetupMatchesTheAPI(t *testing.T) {
 
 	if a, u := instanceState(t, apiDB), instanceState(t, d); a != u {
 		t.Errorf("the API's setup left\n%s\nand unattended setup\n%s", a, u)
-	} else if !strings.Contains(a, "instance completed=t signup=invite") {
+	} else if !strings.Contains(a, "instance completed=t signup=invite smtp=smtp.example.com 465 tls jo@example.com "+
+		"p@ss Harbour Studio <noreply@example.com>") {
 		t.Errorf("setup left\n%s", a)
 	}
 	signIn(t, viaAPI.main, "jo@example.com")

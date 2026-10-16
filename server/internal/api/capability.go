@@ -26,6 +26,10 @@ const (
 	// ManageWorkspaceSettings is changing a workspace's settings, which
 	// needs owner or admin (§5.6).
 	ManageWorkspaceSettings Capability = "workspace.settings"
+	// ManageInstance is the instance-admin area (PRD FR-ADMIN-03), which
+	// needs a signed-in instance admin, whom the service checks (package
+	// account).
+	ManageInstance Capability = "instance.manage"
 )
 
 // capabilities are the declared capabilities, each with whether it needs an
@@ -39,6 +43,7 @@ var capabilities = map[Capability]bool{
 	CreateWorkspace:         true,
 	ReadWorkspace:           true,
 	ManageWorkspaceSettings: true,
+	ManageInstance:          true,
 }
 
 // Known reports whether c is a declared capability.

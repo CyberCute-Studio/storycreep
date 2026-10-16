@@ -12,14 +12,63 @@ import (
 )
 
 const completeSetup = `-- name: CompleteSetup :exec
-UPDATE instance SET setup_completed_at = now(), signup_policy = $1, updated_at = now()
+UPDATE instance SET setup_completed_at = now(), signup_policy = $1, smtp_host = $2,
+    smtp_port = $3, smtp_security = $4, smtp_username = $5,
+    smtp_password = $6, smtp_from = $7, updated_at = now()
 `
 
-// CompleteSetup marks first-run setup completed, with the signup policy that
-// it chose.
-func (q *Queries) CompleteSetup(ctx context.Context, signupPolicy pgtype.Text) error {
-	_, err := q.db.Exec(ctx, completeSetup, signupPolicy)
+type CompleteSetupParams struct {
+	SignupPolicy pgtype.Text
+	SmtpHost     pgtype.Text
+	SmtpPort     pgtype.Int4
+	SmtpSecurity pgtype.Text
+	SmtpUsername pgtype.Text
+	SmtpPassword pgtype.Text
+	SmtpFrom     pgtype.Text
+}
+
+// CompleteSetup marks first-run setup completed, with the signup policy and
+// the SMTP settings that it chose, which are all null if it chose none.
+func (q *Queries) CompleteSetup(ctx context.Context, arg CompleteSetupParams) error {
+	_, err := q.db.Exec(ctx, completeSetup,
+		arg.SignupPolicy,
+		arg.SmtpHost,
+		arg.SmtpPort,
+		arg.SmtpSecurity,
+		arg.SmtpUsername,
+		arg.SmtpPassword,
+		arg.SmtpFrom,
+	)
 	return err
+}
+
+const instanceSMTP = `-- name: InstanceSMTP :one
+SELECT smtp_host, smtp_port, smtp_security, smtp_username, smtp_password, smtp_from FROM instance
+`
+
+type InstanceSMTPRow struct {
+	SmtpHost     pgtype.Text
+	SmtpPort     pgtype.Int4
+	SmtpSecurity pgtype.Text
+	SmtpUsername pgtype.Text
+	SmtpPassword pgtype.Text
+	SmtpFrom     pgtype.Text
+}
+
+// InstanceSMTP returns the SMTP settings that first-run setup chose (package
+// mail), whose host is null if it chose none.
+func (q *Queries) InstanceSMTP(ctx context.Context) (InstanceSMTPRow, error) {
+	row := q.db.QueryRow(ctx, instanceSMTP)
+	var i InstanceSMTPRow
+	err := row.Scan(
+		&i.SmtpHost,
+		&i.SmtpPort,
+		&i.SmtpSecurity,
+		&i.SmtpUsername,
+		&i.SmtpPassword,
+		&i.SmtpFrom,
+	)
+	return i, err
 }
 
 const instanceSetup = `-- name: InstanceSetup :one

@@ -61,6 +61,7 @@ const (
 	revokedBySignOut        = "sign_out"
 	revokedByUser           = "revoked"
 	revokedByPasswordChange = "password_changed"
+	revokedByPasswordReset  = "password_reset"
 )
 
 // The reasons that an audit entry of a failed sign-in records, as its
@@ -506,9 +507,10 @@ func (s *Service) rotate(ctx context.Context, tx pgx.Tx, current Session) (Issue
 // a *PasswordError if replacement breaks the password policy, and
 // ErrWrongPassword if password is not the account's, which it records in
 // the audit log. Otherwise, in one transaction, it replaces the password's
-// hash, revokes every other session of the account (FR-AUTH-02 AC4), gives
-// current a new secret (Rotate), and records all of that in the audit log,
-// and it returns current with its new secret. It returns ErrNoSession if
+// hash, revokes every other session of the account (FR-AUTH-02 AC4),
+// deletes the account's reset links that have not been used (FR-AUTH-03
+// AC4), gives current a new secret (Rotate), and records all of that in the
+// audit log, and it returns current with its new secret. It returns ErrNoSession if
 // current has ended meanwhile, and changes nothing then.
 //
 // If the password's hash changes between the check of password and the
@@ -581,6 +583,9 @@ func (s *Service) changePassword(ctx context.Context, current Session, password,
 		if _, err := s.revokeOthers(ctx, tx, current, revokedByPasswordChange, client); err != nil {
 			return err
 		}
+		if err := queries.New(tx).DeleteResetTokens(ctx, nullUUID(current.UserID)); err != nil {
+			return fmt.Errorf("account: delete the reset links: %w", err)
+		}
 		if issued, err = s.rotate(ctx, tx, current); err != nil {
 			return err
 		}
@@ -618,14 +623,29 @@ type sessionCleanup struct{}
 
 func (sessionCleanup) Kind() string { return "session_cleanup" }
 
-// RegisterJobs registers the jobs of accounts in r: the session cleanup,
-// which runs every hour.
+// RegisterJobs registers the jobs of accounts in r: the session cleanup and
+// the cleanup of the links' tokens, which run every hour, and the job that
+// emails a link (email.go).
 func (s *Service) RegisterJobs(r *jobs.Registry) {
 	jobs.Register(r, func(ctx context.Context, job *jobs.Job[sessionCleanup]) error {
 		_, err := s.cleanUpSessions(ctx, job.DB)
 		return err
 	})
 	jobs.Periodic(r, cleanupInterval, sessionCleanup{})
+	jobs.Register(r, func(ctx context.Context, job *jobs.Job[emailTokenCleanup]) error {
+		_, err := cleanUpEmailTokens(ctx, job.DB)
+		return err
+	})
+	jobs.Periodic(r, cleanupInterval, emailTokenCleanup{})
+	jobs.Register(r, func(ctx context.Context, job *jobs.Job[emailLink]) error {
+		id, err := ids.ParseUUID(job.Args.Token)
+		if err != nil {
+			// The job's arguments are the server's own, so this is a bug,
+			// which no attempt would mend.
+			return fmt.Errorf("account: the job's token %q is not a UUID: %w", job.Args.Token, err)
+		}
+		return s.sendLink(ctx, job.DB, id)
+	})
 }
 
 // cleanUpSessions deletes the sessions that have ended, in batches, each in

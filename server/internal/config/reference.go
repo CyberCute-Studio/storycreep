@@ -73,6 +73,12 @@ func (k key) defaultCell() string {
 	switch {
 	case k.required:
 		return "Required"
+	case k.requiredIn != "":
+		other := modeSelfHosted
+		if k.requiredIn == modeSelfHosted {
+			other = modeHosted
+		}
+		return fmt.Sprintf("Not set (%s), required (%s)", other, k.requiredIn)
 	case k.def == nil:
 		return "Not set"
 	}

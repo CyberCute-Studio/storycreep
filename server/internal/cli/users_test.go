@@ -178,11 +178,61 @@ func TestUserCommandsNeedMigrations(t *testing.T) {
 	for _, args := range [][]string{
 		{"create-user", "jo@example.com", "Jo"},
 		{"grant-role", "jo@example.com", "instance-admin"},
+		{"reset-password", "jo@example.com"},
 	} {
 		code, _, stderr := runWithInput(t, databaseEnv(d), testPassword, args...)
 		if code != ExitFailure || !strings.Contains(stderr, "the database has pending migrations") {
 			t.Errorf("%s: exit %d, stderr %q", args[0], code, stderr)
 		}
+	}
+}
+
+// TestResetPassword checks that reset-password prints a link that resets the
+// account's password, for an hour, on the instance's URL, which the audit log
+// records without an actor, and that it fails for an address of no active
+// account.
+//
+// Verifies: FR-ADMIN-06/AC1, FR-AUTH-03/AC1
+func TestResetPassword(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	env := databaseEnv(d)
+	if code, _, stderr := runWithInput(t, env, testPassword, "create-user", "jo@example.com", "Jo"); code != ExitOK {
+		t.Fatalf("create-user: exit %d, stderr %q", code, stderr)
+	}
+	code, stdout, stderr := run(t, env, "reset-password", "JO@example.com")
+	if code != ExitOK || stderr != "" {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	_, link, ok := strings.Cut(stdout, "\n\n  ")
+	if !ok || !strings.HasPrefix(link, testURL+"/app/reset-password#token=") {
+		t.Fatalf("the output holds no link: %q", stdout)
+	}
+	if got := query(t, d, `SELECT format('%s %s hash=%s hour=%s', t.kind, u.email, t.token_hash IS NOT NULL,
+		t.expires_at BETWEEN now() + interval '59 minutes' AND now() + interval '1 hour')
+		FROM email_token t JOIN "user" u ON u.id = t.user_id`); !slices.Equal(got,
+		[]string{"password_reset jo@example.com hash=t hour=t"}) {
+		t.Errorf("the tokens are %q", got)
+	}
+	if got := auditOf(t, d); !slices.Contains(got,
+		`auth.link_issue jo@example.com success {"kind": "password_reset"} actor=`) {
+		t.Errorf("the audit log is %q", got)
+	}
+	if _, err := d.Admin(t).Exec(context.Background(), `UPDATE "user" SET status = 'suspended'`); err != nil {
+		t.Fatal(err)
+	}
+	for email, want := range map[string]string{
+		"nobody@example.com": "the email address belongs to no account",
+		"jo@example.com":     "the email address belongs to an account that is not active",
+	} {
+		code, stdout, stderr := run(t, env, "reset-password", email)
+		if code != ExitFailure || stdout != "" || !strings.Contains(stderr, want) {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q", email, code, stdout, stderr)
+		}
+	}
+	if code, _, stderr := run(t, env, "reset-password"); code != ExitUsage || !strings.Contains(stderr,
+		"expected an email address") {
+		t.Errorf("without an address: exit %d, stderr %q", code, stderr)
 	}
 }
 
@@ -290,13 +340,15 @@ func TestGrantRole(t *testing.T) {
 	}
 }
 
-// TestUserCommandsHelp checks the help of create-user and grant-role.
+// TestUserCommandsHelp checks the help of create-user, grant-role, and
+// reset-password.
 //
 // Verifies: FR-ADMIN-06/AC1
 func TestUserCommandsHelp(t *testing.T) {
 	for name, want := range map[string]string{
-		"create-user": "Usage: storycreep create-user [flags] <email> <display-name>\n",
-		"grant-role":  "Usage: storycreep grant-role [flags] <email> <role> [workspace]\n",
+		"create-user":    "Usage: storycreep create-user [flags] <email> <display-name>\n",
+		"grant-role":     "Usage: storycreep grant-role [flags] <email> <role> [workspace]\n",
+		"reset-password": "Usage: storycreep reset-password [flags] <email>\n",
 	} {
 		code, stdout, stderr := run(t, nil, name, "--help")
 		if code != ExitOK || !strings.HasPrefix(stdout, want) || stderr != "" {
@@ -307,7 +359,7 @@ func TestUserCommandsHelp(t *testing.T) {
 		}
 	}
 	code, stdout, _ := run(t, nil, "--help")
-	for _, name := range []string{"create-user", "grant-role"} {
+	for _, name := range []string{"create-user", "grant-role", "reset-password"} {
 		if code != ExitOK || !strings.Contains(stdout, fmt.Sprintf("\n  %s ", name)) {
 			t.Errorf("the command list lacks %s:\n%s", name, stdout)
 		}

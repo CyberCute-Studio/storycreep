@@ -25,6 +25,7 @@ const setupPath = "/api/v1/setup"
 type setupBody struct {
 	SignupPolicyFixed bool   `json:"signup_policy_fixed" doc:"Whether the configuration sets the signup policy, with STORYCREEP_SIGNUP, or because the instance is hosted, which then overrides the policy that setup records, for as long as it sets it. A setup screen offers no choice of policy then."`
 	SignupPolicy      string `json:"signup_policy" enum:"closed,invite,open" doc:"The signup policy that the configuration sets, if it sets one, or else the one that setup records when the request names none: closed."`
+	SMTPFixed         bool   `json:"smtp_fixed" doc:"Whether the configuration sets the SMTP server, with STORYCREEP_SMTP_URL, which then overrides the one that setup records, for as long as it sets it. A setup screen asks for no SMTP server then."`
 }
 
 type setupOutput struct {
@@ -46,12 +47,24 @@ type setupWorkspaceBody struct {
 	Slug string `json:"slug,omitempty" doc:"The workspace's slug, as for POST /api/v1/workspaces, with the same errors. Without it, the slug is derived from the name."`
 }
 
+// setupSMTPBody is the SMTP server in the body of POST /api/v1/setup. The
+// limits are package config's.
+type setupSMTPBody struct {
+	Host     string `json:"host" maxLength:"253" doc:"The SMTP server's host name or IP address"`
+	Port     int    `json:"port" minimum:"1" maximum:"65535" doc:"The SMTP server's port, as 587 for starttls or 465 for tls"`
+	Security string `json:"security" enum:"tls,starttls,none" doc:"How the connection is protected: tls, from its start; starttls, which the server must offer, before anything is sent; or none, for a relay on the same host or network, which then cannot sign in unless it is on localhost, 127.0.0.1, or ::1"`
+	Username string `json:"username,omitempty" maxLength:"256" doc:"The username that signs in to the server, with PLAIN or LOGIN, with the password; without it, the server is not signed in to"`
+	Password string `json:"password,omitempty" maxLength:"256" doc:"The password that signs in to the server, with the username"`
+	From     string `json:"from" maxLength:"320" doc:"The address that the instance's email comes from, alone or with a name, as Storycreep <noreply@example.com>, which the server must let it send from"`
+}
+
 // completeSetupBody is the body of POST /api/v1/setup.
 type completeSetupBody struct {
 	SetupCode    string             `json:"setup_code" maxLength:"64" doc:"The setup code, which the server writes to its log while setup is pending, as 7K2M-Q9XD-4RTB-H8VW. Case, hyphens, and spaces do not matter, and O is read as 0, and I and L as 1."`
 	Owner        setupOwnerBody     `json:"owner" doc:"The first owner's account, which is an instance admin"`
 	Workspace    setupWorkspaceBody `json:"workspace" doc:"The first workspace, which the owner owns, and which is the owner's personal workspace. Its default locale is STORYCREEP_DEFAULT_LOCALE."`
 	SignupPolicy string             `json:"signup_policy,omitempty" enum:"closed,invite,open" doc:"Who can register an account once setup has completed: closed (no one), invite (people holding an invitation), or open (anyone). Without it, closed. STORYCREEP_SIGNUP overrides it for as long as it is set, as GET /api/v1/setup says."`
+	SMTP         *setupSMTPBody     `json:"smtp,omitempty" doc:"The SMTP server that the instance sends its email through: the links that verify an email address and reset a password. Without it, the instance sends no email, and an instance admin gives out the links as text. STORYCREEP_SMTP_URL overrides it for as long as it is set, as GET /api/v1/setup says. Setup does not connect to it."`
 }
 
 type completeSetupInput struct {
@@ -97,7 +110,7 @@ func registerSetup(m *api.Mux, setups *setup.Service, limits *ratelimit.Limiter)
 		Path:        setupPath,
 		Summary:     "Get what first-run setup asks for",
 		Description: "Tells a setup screen that the instance's first-run setup is pending, and whether it can " +
-			"choose the signup policy." + setupDoc,
+			"choose the signup policy and the SMTP server." + setupDoc,
 		Tags: []string{"Setup"},
 	}, func(ctx context.Context, _ *struct{}) (*setupOutput, error) {
 		st, err := setups.Status(ctx)
@@ -107,7 +120,8 @@ func registerSetup(m *api.Mux, setups *setup.Service, limits *ratelimit.Limiter)
 		if st.Completed {
 			return nil, api.NewError(api.CodeNotFound)
 		}
-		return &setupOutput{Body: setupBody{SignupPolicyFixed: st.SignupFixed, SignupPolicy: string(st.Signup)}}, nil
+		return &setupOutput{Body: setupBody{SignupPolicyFixed: st.SignupFixed, SignupPolicy: string(st.Signup),
+			SMTPFixed: st.SMTPFixed}}, nil
 	})
 
 	api.Register(m, api.Public, huma.Operation{
@@ -116,10 +130,12 @@ func registerSetup(m *api.Mux, setups *setup.Service, limits *ratelimit.Limiter)
 		Path:        setupPath,
 		Summary:     "Complete first-run setup",
 		Description: "Completes the instance's first-run setup, once: creates the first owner's account, which is " +
-			"an instance admin, and the first workspace, which the owner owns, and records the signup policy. " +
+			"an instance admin, and the first workspace, which the owner owns, and records the signup policy and " +
+			"the SMTP server. " +
 			"Until then, POST /api/v1/auth/register answers 403 setup_required, whatever the policy. The setup " +
 			"code, which the server writes to its log while setup is pending, must be the instance's, or the " +
-			"answer is 403 invalid_setup_code. A field that the request does not allow, or an email address " +
+			"answer is 403 invalid_setup_code. A field that the request does not allow, as an SMTP server's host " +
+			"that is not one, or a username without a password, or an email address " +
 			"that has an account, as one that storycreep create-user made, is answered with 422 " +
 			"validation_failed. Of two setups at once, one completes, and the other is answered with 404 " +
 			"not_found. The owner then signs in with POST /api/v1/auth/login." + setupDoc + authLimitDoc,
@@ -136,6 +152,7 @@ func registerSetup(m *api.Mux, setups *setup.Service, limits *ratelimit.Limiter)
 			WorkspaceName: in.Body.Workspace.Name,
 			WorkspaceSlug: in.Body.Workspace.Slug,
 			Signup:        config.SignupPolicy(in.Body.SignupPolicy),
+			SMTP:          in.Body.SMTP.settings(),
 		}, clientFrom(ctx))
 		if err != nil {
 			return nil, setupError(err)
@@ -143,6 +160,15 @@ func registerSetup(m *api.Mux, setups *setup.Service, limits *ratelimit.Limiter)
 		return &completedSetupOutput{Body: completedSetupBody{OwnerID: ids.Encode(ids.User, res.OwnerID),
 			Workspace: newWorkspaceFields(res.Workspace)}}, nil
 	})
+}
+
+// settings returns the SMTP server of b, or nil if b is nil.
+func (b *setupSMTPBody) settings() *config.SMTP {
+	if b == nil {
+		return nil
+	}
+	return &config.SMTP{Host: b.Host, Port: b.Port, Security: config.SMTPSecurity(b.Security), Username: b.Username,
+		Password: secret.New(b.Password), From: b.From}
 }
 
 // setupError returns the error that the API answers err with, an error of

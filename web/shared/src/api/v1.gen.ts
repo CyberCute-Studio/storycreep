@@ -9,6 +9,8 @@ export interface CompleteSetupBody {
   setup_code: string;
   /** Who can register an account once setup has completed: closed (no one), invite (people holding an invitation), or open (anyone). Without it, closed. STORYCREEP_SIGNUP overrides it for as long as it is set, as GET /api/v1/setup says. */
   signup_policy?: "closed" | "invite" | "open";
+  /** The SMTP server that the instance sends its email through: the links that verify an email address and reset a password. Without it, the instance sends no email, and an instance admin gives out the links as text. STORYCREEP_SMTP_URL overrides it for as long as it is set, as GET /api/v1/setup says. Setup does not connect to it. */
+  smtp?: SetupSMTPBody;
   /** The first workspace, which the owner owns, and which is the owner's personal workspace. Its default locale is STORYCREEP_DEFAULT_LOCALE. */
   workspace: SetupWorkspaceBody;
 }
@@ -42,6 +44,23 @@ export interface ErrorBody {
 
 export interface ErrorEnvelope {
   error: ErrorBody;
+}
+
+export interface InstanceBody {
+  /** Whether the instance sends email, through the SMTP server of STORYCREEP_SMTP_URL or of first-run setup. Without it, a page says that email is not configured: the links that reset a password and verify an email address are not emailed, and an instance admin gives them out as text. */
+  email_configured: boolean;
+}
+
+export interface IssueLinkBody {
+  /** The email address of the account, in any case */
+  email: string;
+}
+
+export interface LinkBody {
+  /** When the link expires */
+  expires_at: string;
+  /** The link, which opens the web app's page that uses it, with its token in the URL's fragment. Whoever holds it can use it, so give it only to the account's user. */
+  url: string;
 }
 
 export interface LoginBody {
@@ -89,6 +108,11 @@ export interface PasswordBody {
   new_password: string;
 }
 
+export interface PasswordResetBody {
+  /** The email address of the account whose password to reset, in any case */
+  email: string;
+}
+
 export interface RegisterBody {
   /** The name that other people see, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls and line separators among them. White space around it is removed. */
   display_name: string;
@@ -96,6 +120,13 @@ export interface RegisterBody {
   email: string;
   /** The password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password. */
   password: string;
+}
+
+export interface ResetPasswordBody {
+  /** The new password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password */
+  new_password: string;
+  /** The token of the link that resets the password: what follows token= in the fragment of the URL that the link opens */
+  token: string;
 }
 
 export interface RevokedBody {
@@ -127,6 +158,8 @@ export interface SetupBody {
   signup_policy: "closed" | "invite" | "open";
   /** Whether the configuration sets the signup policy, with STORYCREEP_SIGNUP, or because the instance is hosted, which then overrides the policy that setup records, for as long as it sets it. A setup screen offers no choice of policy then. */
   signup_policy_fixed: boolean;
+  /** Whether the configuration sets the SMTP server, with STORYCREEP_SMTP_URL, which then overrides the one that setup records, for as long as it sets it. A setup screen asks for no SMTP server then. */
+  smtp_fixed: boolean;
 }
 
 export interface SetupOwnerBody {
@@ -136,6 +169,21 @@ export interface SetupOwnerBody {
   email: string;
   /** The owner's password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password. */
   password: string;
+}
+
+export interface SetupSMTPBody {
+  /** The address that the instance's email comes from, alone or with a name, as Storycreep <noreply@example.com>, which the server must let it send from */
+  from: string;
+  /** The SMTP server's host name or IP address */
+  host: string;
+  /** The password that signs in to the server, with the username */
+  password?: string;
+  /** The SMTP server's port, as 587 for starttls or 465 for tls */
+  port: number;
+  /** How the connection is protected: tls, from its start; starttls, which the server must offer, before anything is sent; or none, for a relay on the same host or network, which then cannot sign in unless it is on localhost, 127.0.0.1, or ::1 */
+  security: "tls" | "starttls" | "none";
+  /** The username that signs in to the server, with PLAIN or LOGIN, with the password; without it, the server is not signed in to */
+  username?: string;
 }
 
 export interface SetupWorkspaceBody {
@@ -166,6 +214,11 @@ export interface UpdateWorkspaceBody {
   name?: string;
   /** The workspace's new slug, as for POST /api/v1/workspaces, with the same errors. A slug that the workspace has already is kept, as a reserved word that a later release added to the list is. */
   slug?: string;
+}
+
+export interface VerifyEmailBody {
+  /** The token of the link that verifies the email address: what follows token= in the fragment of the URL that the link opens */
+  token: string;
 }
 
 export interface VersionBody {
@@ -216,7 +269,7 @@ export interface Operations {
   /**
    * Change the account's password
    *
-   * Changes the signed-in account's password, if current_password is the account's, or the answer is 403 wrong_password. The new password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, or the answer is 422 weak_password. Changing it revokes every other session of the account, and gives the session of the request a new secret, in the Set-Cookie header, and a new CSRF token, in the body, so that the old ones are no longer valid. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Signing in, registering, changing a password, and completing first-run setup share a rate limit of 20 requests a minute for each IP address. Registering also has one of 10 a minute for each email address, and changing a password one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   * Changes the signed-in account's password, if current_password is the account's, or the answer is 403 wrong_password. The new password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, or the answer is 422 weak_password. Changing it revokes every other session of the account, stops the account's links that reset its password from working, and gives the session of the request a new secret, in the Set-Cookie header, and a new CSRF token, in the body, so that the old ones are no longer valid. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, and an instance admin's taking one as text share a rate limit of 20 requests a minute for each IP address. Registering and asking for a link that resets a password also have one of 10 a minute for each email address, and the requests of a signed-in user one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
    */
   changePassword: {
     input: {
@@ -233,7 +286,7 @@ export interface Operations {
   /**
    * Complete first-run setup
    *
-   * Completes the instance's first-run setup, once: creates the first owner's account, which is an instance admin, and the first workspace, which the owner owns, and records the signup policy. Until then, POST /api/v1/auth/register answers 403 setup_required, whatever the policy. The setup code, which the server writes to its log while setup is pending, must be the instance's, or the answer is 403 invalid_setup_code. A field that the request does not allow, or an email address that has an account, as one that storycreep create-user made, is answered with 422 validation_failed. Of two setups at once, one completes, and the other is answered with 404 not_found. The owner then signs in with POST /api/v1/auth/login. Once setup has completed, the answer is 404 not_found, for everyone, and stays so. Signing in, registering, changing a password, and completing first-run setup share a rate limit of 20 requests a minute for each IP address. Registering also has one of 10 a minute for each email address, and changing a password one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   * Completes the instance's first-run setup, once: creates the first owner's account, which is an instance admin, and the first workspace, which the owner owns, and records the signup policy and the SMTP server. Until then, POST /api/v1/auth/register answers 403 setup_required, whatever the policy. The setup code, which the server writes to its log while setup is pending, must be the instance's, or the answer is 403 invalid_setup_code. A field that the request does not allow, as an SMTP server's host that is not one, or a username without a password, or an email address that has an account, as one that storycreep create-user made, is answered with 422 validation_failed. Of two setups at once, one completes, and the other is answered with 404 not_found. The owner then signs in with POST /api/v1/auth/login. Once setup has completed, the answer is 404 not_found, for everyone, and stays so. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, and an instance admin's taking one as text share a rate limit of 20 requests a minute for each IP address. Registering and asking for a link that resets a password also have one of 10 a minute for each email address, and the requests of a signed-in user one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
    */
   completeSetup: {
     input: {
@@ -246,7 +299,7 @@ export interface Operations {
   /**
    * Create a workspace
    *
-   * Creates a workspace, whose owner the signed-in user becomes. A name or a default locale that its field does not allow is answered with 422 validation_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   * Creates a workspace, whose owner the signed-in user becomes. Where the instance always sends email, as hosted mode does, a user who has not verified their email address is answered with 403 email_unverified, whatever the request holds. A name or a default locale that its field does not allow is answered with 422 validation_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
    */
   createWorkspace: {
     input: {
@@ -265,6 +318,17 @@ export interface Operations {
     input: Record<string, never>;
     responses: {
       200: StatusBody;
+    };
+  };
+  /**
+   * Get what the instance offers
+   *
+   * Says whether the instance sends email, so that a page can say that email is not configured, and where the links that reset a password and verify an email address come from.
+   */
+  getInstance: {
+    input: Record<string, never>;
+    responses: {
+      200: InstanceBody;
     };
   };
   /**
@@ -309,7 +373,7 @@ export interface Operations {
   /**
    * Get what first-run setup asks for
    *
-   * Tells a setup screen that the instance's first-run setup is pending, and whether it can choose the signup policy. Once setup has completed, the answer is 404 not_found, for everyone, and stays so.
+   * Tells a setup screen that the instance's first-run setup is pending, and whether it can choose the signup policy and the SMTP server. Once setup has completed, the answer is 404 not_found, for everyone, and stays so.
    */
   getSetup: {
     input: Record<string, never>;
@@ -338,6 +402,40 @@ export interface Operations {
     };
     responses: {
       200: WorkspaceBody;
+    };
+  };
+  /**
+   * Take a link that resets a password
+   *
+   * Returns a link that resets the password of the active account that the email address belongs to, which lasts an hour, and is used once with POST /api/v1/auth/password-reset/confirm. It is for an instance that sends no email, whose links an instance admin gives out instead, to the account's user alone, because whoever holds a link can use it; an instance that sends email answers 403 email_configured. A user who is not an instance admin, such as a workspace's owner or admin, is answered with 403 instance_admin_required, whatever the request holds. An address that belongs to no active account is answered with 404 not_found. The audit log records the issue. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, and an instance admin's taking one as text share a rate limit of 20 requests a minute for each IP address. Registering and asking for a link that resets a password also have one of 10 a minute for each email address, and the requests of a signed-in user one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   */
+  issuePasswordResetLink: {
+    input: {
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: IssueLinkBody;
+    };
+    responses: {
+      201: LinkBody;
+    };
+  };
+  /**
+   * Take a link that verifies an email address
+   *
+   * Returns a link that verifies the email address of the active account that it belongs to, which lasts 24 hours, and is used once with POST /api/v1/auth/verify-email. It is for an instance that sends no email, whose links an instance admin gives out instead, to the account's user alone, because whoever holds a link can use it; an instance that sends email answers 403 email_configured. A user who is not an instance admin, such as a workspace's owner or admin, is answered with 403 instance_admin_required, whatever the request holds. An address that belongs to no active account is answered with 404 not_found. The audit log records the issue. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, and an instance admin's taking one as text share a rate limit of 20 requests a minute for each IP address. Registering and asking for a link that resets a password also have one of 10 a minute for each email address, and the requests of a signed-in user one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   */
+  issueVerificationLink: {
+    input: {
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: IssueLinkBody;
+    };
+    responses: {
+      201: LinkBody;
     };
   };
   /**
@@ -379,7 +477,7 @@ export interface Operations {
   /**
    * Sign in
    *
-   * Signs in with an account's email address and password, and starts a session, whose secret the Set-Cookie header gives the client, and whose CSRF token the body holds. The account's first sign-in also gives it its personal workspace, named after its display name, which it owns; GET /api/v1/workspaces lists it. An address of no account, a wrong password, and an account that cannot sign in, such as a suspended one, are all answered with 401 invalid_credentials, after the same work, so that the answer does not tell them apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another origin of the same site, is answered with 403 csrf_failed; browsers send that header only to https URLs and to loopback addresses, such as localhost. After 10 failed sign-ins in a row with an email address, whether or not it belongs to an account, the address is locked for a minute, and each further failure, once a lock ends, locks it for twice as long as the lock before, up to 15 minutes: while it is locked, every sign-in with it is answered with 429 rate_limited, whose details.reason is locked, even with the right password. A successful sign-in forgets the failures, and so do 24 hours without one. Signing in, registering, changing a password, and completing first-run setup share a rate limit of 20 requests a minute for each IP address. Registering also has one of 10 a minute for each email address, and changing a password one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   * Signs in with an account's email address and password, and starts a session, whose secret the Set-Cookie header gives the client, and whose CSRF token the body holds. The account's first sign-in also gives it its personal workspace, named after its display name, which it owns; GET /api/v1/workspaces lists it. Where the instance always sends email, as hosted mode does, that is the first sign-in once the account's email address is verified, or the verification itself. An address of no account, a wrong password, and an account that cannot sign in, such as a suspended one, are all answered with 401 invalid_credentials, after the same work, so that the answer does not tell them apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another origin of the same site, is answered with 403 csrf_failed; browsers send that header only to https URLs and to loopback addresses, such as localhost. After 10 failed sign-ins in a row with an email address, whether or not it belongs to an account, the address is locked for a minute, and each further failure, once a lock ends, locks it for twice as long as the lock before, up to 15 minutes: while it is locked, every sign-in with it is answered with 429 rate_limited, whose details.reason is locked, even with the right password. A successful sign-in forgets the failures, and so do 24 hours without one. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, and an instance admin's taking one as text share a rate limit of 20 requests a minute for each IP address. Registering and asking for a link that resets a password also have one of 10 a minute for each email address, and the requests of a signed-in user one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
    */
   login: {
     input: {
@@ -408,7 +506,7 @@ export interface Operations {
   /**
    * Register an account
    *
-   * Creates an account with an email address, a display name, and a password, if the instance's signup policy lets anyone register: the policy that STORYCREEP_SIGNUP sets, or else the one that first-run setup chose. Until setup has completed, the answer is 403 setup_required, whatever the policy. Under closed the answer is 403 signup_closed, and under invite 403 invite_required, because only an invitation creates an account then; each comes whatever the request holds. An email address or a display name that its field does not allow is answered with 422 validation_failed. The password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, compared without regard to case, or the answer is 422 weak_password. Otherwise the answer is 202 without a body, whether or not the address has an account already, which then stays as it was, so that the answer does not tell whether an address has an account. Signing in, registering, changing a password, and completing first-run setup share a rate limit of 20 requests a minute for each IP address. Registering also has one of 10 a minute for each email address, and changing a password one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   * Creates an account with an email address, a display name, and a password, if the instance's signup policy lets anyone register: the policy that STORYCREEP_SIGNUP sets, or else the one that first-run setup chose. Until setup has completed, the answer is 403 setup_required, whatever the policy. Under closed the answer is 403 signup_closed, and under invite 403 invite_required, because only an invitation creates an account then; each comes whatever the request holds. An email address or a display name that its field does not allow is answered with 422 validation_failed. The password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, compared without regard to case, or the answer is 422 weak_password. Otherwise the answer is 202 without a body, whether or not the address has an account already, which then stays as it was, so that the answer does not tell whether an address has an account. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, and an instance admin's taking one as text share a rate limit of 20 requests a minute for each IP address. Registering and asking for a link that resets a password also have one of 10 a minute for each email address, and the requests of a signed-in user one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
    */
   registerAccount: {
     input: {
@@ -416,6 +514,48 @@ export interface Operations {
     };
     responses: {
       202: undefined;
+    };
+  };
+  /**
+   * Ask for a link that verifies the account's email address
+   *
+   * Emails a link that verifies the signed-in account's email address, which lasts 24 hours, and is used once with POST /api/v1/auth/verify-email. An address that is verified already is emailed nothing. Registering emails one too. An instance that sends no email answers 403 email_not_configured, whatever the request holds, as GET /api/v1/instance says it will. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, and an instance admin's taking one as text share a rate limit of 20 requests a minute for each IP address. Registering and asking for a link that resets a password also have one of 10 a minute for each email address, and the requests of a signed-in user one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   */
+  requestEmailVerification: {
+    input: {
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      202: undefined;
+    };
+  };
+  /**
+   * Ask for a link that resets a password
+   *
+   * Emails a link that resets the password of the active account that the email address belongs to, which lasts an hour, and is used once with POST /api/v1/auth/password-reset/confirm. The answer is 202 without a body, as soon, whether or not the address belongs to an account, so that it does not tell whether it does; an address of no account is emailed nothing. An instance that sends no email answers 403 email_not_configured, whatever the request holds, as GET /api/v1/instance says it will. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, and an instance admin's taking one as text share a rate limit of 20 requests a minute for each IP address. Registering and asking for a link that resets a password also have one of 10 a minute for each email address, and the requests of a signed-in user one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   */
+  requestPasswordReset: {
+    input: {
+      body: PasswordResetBody;
+    };
+    responses: {
+      202: undefined;
+    };
+  };
+  /**
+   * Reset a password with a link
+   *
+   * Replaces the password of the account of a link that resets it, and uses the link, which works once. It signs the account out everywhere: every session of the account is revoked, and the user then signs in with the new password. The account's other reset links stop working too. A token that does not exist, of another kind of link, or of an account that can no longer use it, is answered with 400 token_invalid, a link that has been used with 400 token_used, and one that has expired with 400 token_expired. The new password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, or the answer is 422 weak_password, which leaves the link as it was. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, and an instance admin's taking one as text share a rate limit of 20 requests a minute for each IP address. Registering and asking for a link that resets a password also have one of 10 a minute for each email address, and the requests of a signed-in user one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   */
+  resetPassword: {
+    input: {
+      body: ResetPasswordBody;
+    };
+    responses: {
+      204: undefined;
     };
   };
   /**
@@ -475,6 +615,19 @@ export interface Operations {
       200: WorkspaceBody;
     };
   };
+  /**
+   * Verify an email address with a link
+   *
+   * Records that the email address of the account of a link that verifies it is verified, and uses the link, which works once, and only while the address is still the account's. Where the instance requires a verified address before a workspace can be created, as hosted mode does, it also gives the account its personal workspace, if it has had none. A token that does not exist, of another kind of link, or of an account that can no longer use it, is answered with 400 token_invalid, a link that has been used with 400 token_used, and one that has expired with 400 token_expired. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, and an instance admin's taking one as text share a rate limit of 20 requests a minute for each IP address. Registering and asking for a link that resets a password also have one of 10 a minute for each email address, and the requests of a signed-in user one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   */
+  verifyEmail: {
+    input: {
+      body: VerifyEmailBody;
+    };
+    responses: {
+      204: undefined;
+    };
+  };
 }
 
 /** The method and path of each operation. */
@@ -483,18 +636,25 @@ export const routes = {
   completeSetup: { method: "POST", path: "/api/v1/setup" },
   createWorkspace: { method: "POST", path: "/api/v1/workspaces" },
   getHealth: { method: "GET", path: "/healthz" },
+  getInstance: { method: "GET", path: "/api/v1/instance" },
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
   getReadiness: { method: "GET", path: "/readyz" },
   getSession: { method: "GET", path: "/api/v1/auth/session" },
   getSetup: { method: "GET", path: "/api/v1/setup" },
   getVersion: { method: "GET", path: "/version" },
   getWorkspace: { method: "GET", path: "/api/v1/workspaces/{workspace_id}" },
+  issuePasswordResetLink: { method: "POST", path: "/api/v1/admin/password-reset-links" },
+  issueVerificationLink: { method: "POST", path: "/api/v1/admin/verification-links" },
   listSessions: { method: "GET", path: "/api/v1/auth/sessions" },
   listWorkspaces: { method: "GET", path: "/api/v1/workspaces" },
   login: { method: "POST", path: "/api/v1/auth/login" },
   logout: { method: "POST", path: "/api/v1/auth/logout" },
   registerAccount: { method: "POST", path: "/api/v1/auth/register" },
+  requestEmailVerification: { method: "POST", path: "/api/v1/auth/email-verification" },
+  requestPasswordReset: { method: "POST", path: "/api/v1/auth/password-reset" },
+  resetPassword: { method: "POST", path: "/api/v1/auth/password-reset/confirm" },
   revokeOtherSessions: { method: "DELETE", path: "/api/v1/auth/sessions" },
   revokeSession: { method: "DELETE", path: "/api/v1/auth/sessions/{session_id}" },
   updateWorkspace: { method: "PATCH", path: "/api/v1/workspaces/{workspace_id}" },
+  verifyEmail: { method: "POST", path: "/api/v1/auth/verify-email" },
 } as const satisfies Record<keyof Operations, { method: string; path: string }>;
