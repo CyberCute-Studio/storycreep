@@ -281,6 +281,22 @@ func Register[I, O any](m *Mux, c Capability, op huma.Operation, handler func(co
 	})
 }
 
+// Guard returns middleware for an operation, for its huma.Operation's
+// Middlewares, that answers a request with the error that check returns, as
+// Register answers a handler's error, before the operation reads the
+// request's parameters or body, so that it refuses the request whatever they
+// hold. If check returns nil, the operation goes on.
+func Guard(check func(context.Context) error) func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		if err := check(ctx.Context()); err != nil {
+			r, w := humachi.Unwrap(ctx)
+			WriteError(w, r, err)
+			return
+		}
+		next(ctx)
+	}
+}
+
 // Routes returns every route registered, with the capability it requires.
 func (m *Mux) Routes() map[Route]Capability {
 	return maps.Clone(m.routes)

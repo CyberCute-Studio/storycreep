@@ -9,6 +9,7 @@
   "error.invalid_id.unknown_prefix": "The identifier's type prefix is unknown.",
   "error.invalid_id.wrong_prefix": "The identifier's prefix {prefix}_ is for type {got}, not {expected}.",
   "error.invalid_request": "The request is malformed.",
+  "error.invite_required": "Registration on this server needs an invitation.",
   "error.method_not_allowed": "The method is not allowed for this resource.",
   "error.not_found": "The resource does not exist.",
   "error.not_ready": "The server is not ready.",
@@ -18,7 +19,11 @@
   "error.not_ready.stopping": "The server is stopping.",
   "error.request_timeout": "The request body did not arrive in time.",
   "error.request_too_large": "The request body is too large.",
+  "error.signup_closed": "Registration is closed on this server.",
   "error.unauthenticated": "Authentication is required.",
   "error.unsupported_media_type": "The request body is not in a supported format.",
-  "error.validation_failed": "The request is invalid."
+  "error.validation_failed": "The request is invalid.",
+  "error.weak_password": "The password is too weak.",
+  "error.weak_password.common": "The password is one of the most common passwords.",
+  "error.weak_password.too_short": "The password must have at least {min} characters."
 }

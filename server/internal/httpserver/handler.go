@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/version"
@@ -47,6 +48,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		},
 	})
 	s.registerOperational(s.main)
+	registerAccounts(s.main, account.New(readyDB{s.ready}, cfg.Capabilities.Signup))
 	registerDocument(s.main)
 	registerPages(s.main, cfg.Capabilities.PublicSite)
 

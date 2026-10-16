@@ -41,6 +41,33 @@
         ],
         "type": "object"
       },
+      "RegisterBody": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "description": "The name that other people see, of 1 to 100 characters, without control characters. White space around it is removed.",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "email": {
+            "description": "The account's email address, which signs in: an address alone, as jo@example.com, of at most 254 bytes. Addresses compare without regard to case.",
+            "format": "email",
+            "maxLength": 254,
+            "type": "string"
+          },
+          "password": {
+            "description": "The password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password.",
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "display_name",
+          "password"
+        ],
+        "type": "object"
+      },
       "StatusBody": {
         "additionalProperties": false,
         "properties": {
@@ -92,6 +119,49 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/auth/register": {
+      "post": {
+        "description": "Creates an account with an email address, a display name, and a password, if the instance's signup policy, STORYCREEP_SIGNUP, lets anyone register. Under closed the answer is 403 signup_closed, and under invite 403 invite_required, because only an invitation creates an account then; either comes whatever the request holds. The password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, compared without regard to case, or the answer is 422 weak_password. Otherwise the answer is 202 without a body, whether or not the address has an account already, which then stays as it was, so that the answer does not tell whether an address has an account.",
+        "operationId": "registerAccount",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Register an account",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
     "/api/v1/openapi.json": {
       "get": {
         "description": "The OpenAPI 3.1 document of the server's operations, this one included. It is the same for every server of a release, and is committed to the repository as schema/api/v1/openapi.json.",
