@@ -64,6 +64,7 @@ services:
       STORYCREEP_ADMIN_ADDR: ":9090"
       STORYCREEP_DATABASE_URL: postgres://storycreep@db:5432/storycreep
       STORYCREEP_DATABASE_ADMIN_URL: postgres://postgres@db:5432/storycreep
+      STORYCREEP_DATABASE_MAINTENANCE_URL: postgres://storycreep_maintainer@db:5432/storycreep
       PGPASSWORD: ${STORYCREEP_DEV_DB_PASSWORD:-storycreep-dev}
       STORYCREEP_PUBLIC_URL: http://localhost:${STORYCREEP_DEV_PORT:-8080}
       STORYCREEP_LOG_LEVEL: debug

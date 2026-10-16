@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -124,6 +125,41 @@ func TestMigrationFiles(t *testing.T) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
 			t.Errorf("migrations/%s: is not embedded; the directory holds only the migrations, as .sql files", e.Name())
 		}
+	}
+}
+
+// contextBootstrapMigration is the migration that declares the context
+// bootstrap's SECURITY DEFINER functions (PRD §5.4).
+const contextBootstrapMigration = "00005_context_bootstrap.sql"
+
+// TestSecurityDefinerInOneMigration checks that only one migration declares
+// SECURITY DEFINER functions (PRD §5.4): the functions that let a request past
+// row-level security are all in one file, where a review sees them together.
+// Comments do not count.
+func TestSecurityDefinerInOneMigration(t *testing.T) {
+	fsys := Migrations()
+	names, err := fs.Glob(fsys, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definer := regexp.MustCompile(`(?i)\bsecurity\s+definer\b`)
+	var declaring []string
+	for _, name := range names {
+		b, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var code strings.Builder
+		for line := range strings.Lines(string(b)) {
+			line, _, _ = strings.Cut(line, "--")
+			code.WriteString(line + "\n")
+		}
+		if definer.MatchString(code.String()) {
+			declaring = append(declaring, name)
+		}
+	}
+	if want := []string{contextBootstrapMigration}; !slices.Equal(declaring, want) {
+		t.Errorf("SECURITY DEFINER is declared in %v, want only in %v", declaring, want)
 	}
 }
 

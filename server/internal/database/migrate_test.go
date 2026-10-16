@@ -506,6 +506,22 @@ func TestMigrateNeedsTheAdminLogin(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `acts as the role "storycreep_definer", which is reserved`) {
 		t.Errorf("with the superuser acting as a server role: %v, want a refusal naming the role", err)
 	}
+	// The application login must not be the admin login, nor the superuser
+	// that it acts as, which provision would refuse only once the migrations
+	// were applied.
+	_, err = database.Migrate(ctx, d.AdminURL, d.AdminURL, database.MigrateOptions{})
+	if err == nil || !strings.Contains(err.Error(), "as STORYCREEP_DATABASE_ADMIN_URL does") {
+		t.Errorf("with the admin login as the application login: %v, want a refusal", err)
+	}
+	other := d.NewLogin(t, "SUPERUSER")
+	asOther, err := config.ParseDatabaseURL(d.AdminURL.Reveal() + "&role=" + other.User())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = database.Migrate(ctx, asOther, other, database.MigrateOptions{})
+	if err == nil || !strings.Contains(err.Error(), "the role that the login in STORYCREEP_DATABASE_ADMIN_URL acts as") {
+		t.Errorf("with the role that the admin login acts as as the application login: %v, want a refusal", err)
+	}
 	var exists bool
 	if err := d.Admin(t).QueryRow(ctx, "SELECT to_regclass('goose_db_version') IS NOT NULL").Scan(&exists); err != nil {
 		t.Fatal(err)
@@ -671,7 +687,8 @@ func TestRoleMigrationCorrectsRoles(t *testing.T) {
 // TestMigrateWithoutTheServerRoles checks that migrating a database that has
 // applied migrations, on a database server that lacks the roles the first
 // migration creates, fails before it changes anything, and says how to
-// recover. A dump of the database restored into another server is such a
+// recover, and that Start without auto-migrate refuses the database too. A
+// dump of the database restored into another server is such a
 // database: roles belong to the server, so the dump has none. It renames a
 // role that every database of the test server shares, so it does not run in
 // parallel.
@@ -703,6 +720,14 @@ func TestMigrateWithoutTheServerRoles(t *testing.T) {
 	if applied || created {
 		t.Errorf("the refused run applied the newer migration: %v, or created the login: %v", applied, created)
 	}
+
+	// A server that does not apply migrations itself refuses the database
+	// too, rather than serving it without the privileges that the
+	// migrations gave the roles.
+	_, err = database.Start(ctx, &config.Config{DatabaseURL: d.AppURL}, database.StartOptions{})
+	if err == nil || !strings.Contains(err.Error(), "lacks roles that the first migration creates (storycreep_app)") {
+		t.Errorf("Start returned %v, want a refusal that names the missing role", err)
+	}
 }
 
 // checkRoles checks the attributes of the server's roles.
@@ -710,7 +735,8 @@ func checkRoles(t *testing.T, conn *pgx.Conn) {
 	t.Helper()
 	rows, err := conn.Query(context.Background(), `
 		SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
-		FROM pg_roles WHERE rolname LIKE 'storycreep\_%' AND rolname <> $1 ORDER BY rolname`, dbtest.AppLogin)
+		FROM pg_roles WHERE rolname LIKE 'storycreep\_%' AND rolname <> ALL ($1::name[]) ORDER BY rolname`,
+		[]string{dbtest.AppLogin, dbtest.MaintenanceLogin})
 	if err != nil {
 		t.Fatal(err)
 	}

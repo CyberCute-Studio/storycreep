@@ -64,6 +64,10 @@ const DefaultImage = "postgres:17-alpine"
 // provisions, and that every Database's AppURL connects as.
 const AppLogin = "storycreep_test_app"
 
+// MaintenanceLogin is the maintenance login that the template's migration
+// provisions, and that every Database's MaintenanceURL connects as.
+const MaintenanceLogin = "storycreep_test_maintenance"
+
 const (
 	adminLogin = "postgres"
 	template   = "storycreep_template"
@@ -77,6 +81,8 @@ type Database struct {
 	AdminURL config.DatabaseURL
 	// AppURL connects to it as AppLogin.
 	AppURL config.DatabaseURL
+	// MaintenanceURL connects to it as MaintenanceLogin.
+	MaintenanceURL config.DatabaseURL
 
 	srv *server
 }
@@ -86,7 +92,7 @@ type Database struct {
 // that directory. It is dropped when the test ends. CREATE DATABASE does not
 // copy the template's privileges on the database itself, so any login can
 // connect to it until it is migrated again, which restricts CONNECT to the
-// application login.
+// logins it provisions.
 func New(t testing.TB) *Database {
 	t.Helper()
 	s := start(t)
@@ -94,9 +100,9 @@ func New(t testing.TB) *Database {
 }
 
 // Empty returns a new database without migrations, for tests of migrating
-// itself. It is dropped when the test ends. AppURL names AppLogin, which
-// exists already, because the login belongs to the server rather than to
-// the database.
+// itself. It is dropped when the test ends. AppURL names AppLogin, and
+// MaintenanceURL MaintenanceLogin, which exist already, because logins belong
+// to the server rather than to the database.
 func Empty(t testing.TB) *Database {
 	t.Helper()
 	s := start(t)
@@ -218,10 +224,11 @@ func (d *Database) FreshLogin(t testing.TB) string {
 
 // server is the PostgreSQL server of the test binary.
 type server struct {
-	container     *postgres.PostgresContainer
-	host, port    string
-	adminPassword string
-	appPassword   string
+	container           *postgres.PostgresContainer
+	host, port          string
+	adminPassword       string
+	appPassword         string
+	maintenancePassword string
 	// admin is a pool of the superuser on the postgres database, for creating
 	// and dropping databases and roles.
 	admin *pgxpool.Pool
@@ -253,7 +260,7 @@ func start(t testing.TB) *server {
 }
 
 func startServer(ctx context.Context) (_ *server, err error) {
-	s := &server{adminPassword: rand.Text(), appPassword: rand.Text()}
+	s := &server{adminPassword: rand.Text(), appPassword: rand.Text(), maintenancePassword: rand.Text()}
 	s.container, err = postgres.Run(ctx, Image(),
 		postgres.WithUsername(adminLogin),
 		postgres.WithPassword(s.adminPassword),
@@ -321,6 +328,10 @@ func (s *server) buildTemplate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	maint, err := s.parseURL(MaintenanceLogin, s.maintenancePassword, template)
+	if err != nil {
+		return err
+	}
 	if seed := os.Getenv(UpgradeFromVariable); seed != "" {
 		// go test runs each package's tests in the package's directory, so
 		// a relative path would name another directory in each package.
@@ -331,7 +342,7 @@ func (s *server) buildTemplate(ctx context.Context) error {
 			return fmt.Errorf("migrate with the seed migrations in %s: %w", seed, err)
 		}
 	}
-	if _, err := database.Migrate(ctx, admin, app, database.MigrateOptions{}); err != nil {
+	if _, err := database.Migrate(ctx, admin, app, database.MigrateOptions{Maintenance: maint}); err != nil {
 		return err
 	}
 	// Copying the template fails while anything is connected to it.
@@ -372,10 +383,11 @@ func (s *server) create(t testing.TB, from string) *Database {
 		}
 	})
 	return &Database{
-		Name:     name,
-		AdminURL: s.url(t, adminLogin, s.adminPassword, name),
-		AppURL:   s.url(t, AppLogin, s.appPassword, name),
-		srv:      s,
+		Name:           name,
+		AdminURL:       s.url(t, adminLogin, s.adminPassword, name),
+		AppURL:         s.url(t, AppLogin, s.appPassword, name),
+		MaintenanceURL: s.url(t, MaintenanceLogin, s.maintenancePassword, name),
+		srv:            s,
 	}
 }
 

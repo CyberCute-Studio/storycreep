@@ -260,8 +260,10 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 			`it is a member of "postgres", which is a superuser`},
 		{"member of maintenance", func(r, _ string) string { return "GRANT storycreep_maintenance TO " + r },
 			`it is a member of "storycreep_maintenance", which has BYPASSRLS`},
+		// storycreep_definer owns the functions of the context bootstrap,
+		// which read every workspace's tokens, invites, and memberships.
 		{"member of definer", func(r, _ string) string { return "GRANT storycreep_definer TO " + r },
-			`it is a member of "storycreep_definer", which is reserved`},
+			`it is a member of "storycreep_definer", which owns objects in the database`},
 		// Each of these reaches the superuser through the server's files or
 		// programs, such as by running psql there.
 		{"member of pg_execute_server_program", func(r, _ string) string { return "GRANT pg_execute_server_program TO " + r },
@@ -270,6 +272,11 @@ func TestProvisionRefusesUnsafeLogins(t *testing.T) {
 			`it is a member of "pg_read_server_files", which gives access`},
 		{"member of pg_write_server_files", func(r, _ string) string { return "GRANT pg_write_server_files TO " + r },
 			`it is a member of "pg_write_server_files", which gives access`},
+		// Row-level security holds this one, but it could delete a workspace
+		// or a user, whose cascades reach every workspace's rows, and change
+		// the audit log, which the migrations' grants forbid.
+		{"member of pg_write_all_data", func(r, _ string) string { return "GRANT pg_write_all_data TO " + r },
+			`it is a member of "pg_write_all_data", which may change the rows of every table`},
 		{"table owner", func(r, n string) string {
 			return "CREATE TABLE owned_" + n + " (x int); ALTER TABLE owned_" + n + " OWNER TO " + r
 		}, "it owns objects in the database"},
@@ -582,8 +589,9 @@ func TestProvisionRefusesReservedRoles(t *testing.T) {
 	d := dbtest.Empty(t)
 	for _, login := range []string{"storycreep_app", "storycreep_maintenance", "storycreep_definer", "pg_monitor"} {
 		_, err := database.Migrate(ctx, d.AdminURL, d.URL(t, login, "pw"), database.MigrateOptions{})
-		if err == nil || !strings.Contains(err.Error(), "reserved") {
-			t.Errorf("%s: Migrate returned %v, want a refusal", login, err)
+		if err == nil || !strings.Contains(err.Error(), "reserved") ||
+			!strings.HasSuffix(err.Error(), "name a login of its own in it, such as storycreep") {
+			t.Errorf("%s: Migrate returned %v, want a refusal that suggests the application login's name", login, err)
 		}
 	}
 	var exists bool
@@ -592,5 +600,252 @@ func TestProvisionRefusesReservedRoles(t *testing.T) {
 	}
 	if exists {
 		t.Errorf("a refused run applied migrations")
+	}
+}
+
+// TestProvisionMaintenanceLogin checks that migrating with a maintenance URL
+// creates the maintenance login with its password, grants it
+// storycreep_maintenance and nothing else of the server's roles, and CONNECT
+// on its database, and updates the password when the URL's changes.
+func TestProvisionMaintenanceLogin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	login := d.FreshLogin(t)
+	maint := d.URL(t, login, "first-password")
+
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Maintenance: maint}); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{"storycreep_app", "storycreep_definer", "storycreep_maintenance"} {
+		if got, want := isMember(t, admin, login, role), role == "storycreep_maintenance"; got != want {
+			t.Errorf("the maintenance login is a member of %s: %v, want %v", role, got, want)
+		}
+	}
+	if stored := storedPassword(t, admin, login); !strings.HasPrefix(stored, "SCRAM-SHA-256$") {
+		t.Errorf("the stored password is %q, want a SCRAM verifier", stored)
+	}
+	var connects, publicConnects bool
+	if err := admin.QueryRow(ctx, "SELECT has_database_privilege($1::name, current_database(), 'CONNECT'), "+
+		"has_database_privilege('public', current_database(), 'CONNECT')", login).Scan(&connects, &publicConnects); err != nil {
+		t.Fatal(err)
+	}
+	if !connects || publicConnects {
+		t.Errorf("the maintenance login can connect: %v, and PUBLIC: %v; want only the login", connects, publicConnects)
+	}
+
+	second := d.URL(t, login, "second-password")
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Maintenance: second}); err != nil {
+		t.Fatal(err)
+	}
+	if !canConnect(t, second) || canConnect(t, maint) {
+		t.Errorf("after migrating with a new password, the login does not log in with it, or still with the old one")
+	}
+}
+
+// TestProvisionRefusesMaintenanceLogins checks that migrating refuses a
+// maintenance login that is the application login or the admin login, has
+// the name of one of the server's roles, or has more privileges than
+// storycreep_maintenance gives it, and leaves it as it was.
+func TestProvisionRefusesMaintenanceLogins(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	superuser := d.NewLogin(t, "SUPERUSER")
+	member, writer := d.NewLogin(t, ""), d.NewLogin(t, "")
+	if _, err := admin.Exec(ctx, "GRANT storycreep_app TO "+pgx.Identifier{member.User()}.Sanitize()+
+		"; GRANT pg_write_all_data TO "+pgx.Identifier{writer.User()}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name   string
+		maint  config.DatabaseURL
+		unsafe bool
+		want   string
+	}{
+		{"the application login", d.AppURL, false, "as STORYCREEP_DATABASE_URL does"},
+		{"the admin login", d.AdminURL, false, "as STORYCREEP_DATABASE_ADMIN_URL does"},
+		// The suggestion is the maintenance login's name in the deployment
+		// files, not the application login's, which the URL may not name.
+		{"a reserved name", d.URL(t, "storycreep_maintenance", "pw"), false,
+			"reserved for the server's own use; name a login of its own in it, such as storycreep_maintainer"},
+		{"a superuser", superuser, true, "it is a superuser"},
+		{"a member of storycreep_app", member, true,
+			`it is a member of "storycreep_app", which is reserved for the server's other work`},
+		{"a member of pg_write_all_data", writer, true,
+			`it is a member of "pg_write_all_data", which may change the rows of every table`},
+	} {
+		_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Maintenance: tt.maint})
+		var uerr *database.UnsafeLoginError
+		if err == nil || errors.As(err, &uerr) != tt.unsafe || !strings.Contains(err.Error(), tt.want) ||
+			!strings.Contains(err.Error(), "STORYCREEP_DATABASE_MAINTENANCE_URL") {
+			t.Errorf("%s: Migrate returned %v, want a refusal of STORYCREEP_DATABASE_MAINTENANCE_URL saying %q",
+				tt.name, err, tt.want)
+		}
+		if tt.unsafe && isMember(t, admin, tt.maint.User(), "storycreep_maintenance") {
+			t.Errorf("%s: the refused login was granted storycreep_maintenance", tt.name)
+		}
+	}
+}
+
+// TestProvisionChecksTheMaintenanceRole checks that the maintenance login's
+// check lets through the BYPASSRLS of storycreep_maintenance, which the login
+// acts as, but not another attribute that the role should not have, such as
+// CREATEROLE, which nothing else checks once the first migration has run. It
+// changes a role that every database of the test server shares, so it does
+// not run in parallel.
+func TestProvisionChecksTheMaintenanceRole(t *testing.T) {
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	maint := d.URL(t, d.FreshLogin(t), "pw")
+	if _, err := admin.Exec(ctx, "ALTER ROLE storycreep_maintenance CREATEROLE"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(ctx, "ALTER ROLE storycreep_maintenance NOCREATEROLE"); err != nil {
+			t.Error(err)
+		}
+	})
+
+	_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Maintenance: maint})
+	var uerr *database.UnsafeLoginError
+	if !errors.As(err, &uerr) || uerr.Key != "STORYCREEP_DATABASE_MAINTENANCE_URL" ||
+		len(uerr.Reasons) != 1 || uerr.Reasons[0] != `it is a member of "storycreep_maintenance", which has CREATEROLE` {
+		t.Errorf("Migrate returned %v, want a refusal of the maintenance login for storycreep_maintenance's "+
+			"CREATEROLE alone", err)
+	}
+}
+
+// TestProvisionChecksTheLoginsTogether checks that migrating checks each login
+// once both have their roles, so that it refuses, and leaves as they were, an
+// application login that is a member of the maintenance login, which granting
+// storycreep_maintenance to the maintenance login would make a member of that
+// role too.
+func TestProvisionChecksTheLoginsTogether(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	app, maint := d.NewLogin(t, ""), d.NewLogin(t, "")
+	if _, err := admin.Exec(ctx, "GRANT "+pgx.Identifier{maint.User()}.Sanitize()+" TO "+
+		pgx.Identifier{app.User()}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
+	_, err := database.Migrate(ctx, d.AdminURL, app, database.MigrateOptions{Maintenance: maint})
+	var uerr *database.UnsafeLoginError
+	if !errors.As(err, &uerr) || uerr.Key != "STORYCREEP_DATABASE_URL" ||
+		!strings.Contains(err.Error(), `it is a member of "storycreep_maintenance", which has BYPASSRLS`) {
+		t.Errorf("Migrate returned %v, want a refusal of the application login, which reaches storycreep_maintenance", err)
+	}
+	if isMember(t, admin, maint.User(), "storycreep_maintenance") || isMember(t, admin, app.User(), "storycreep_app") {
+		t.Errorf("the refused run granted the logins their roles")
+	}
+}
+
+// TestProvisionLetsTheMaintenanceLoginSetRole checks that migrating corrects a
+// maintenance login that is a member of storycreep_maintenance through a
+// grant without PostgreSQL 16's SET option, which the login needs to act as
+// the role.
+func TestProvisionLetsTheMaintenanceLoginSetRole(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	var version int
+	if err := admin.QueryRow(ctx, "SELECT current_setting('server_version_num')::int").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version < 160000 {
+		t.Skip("PostgreSQL 15 lets every member of a role SET ROLE to it")
+	}
+	maint := d.NewLogin(t, "")
+	if _, err := admin.Exec(ctx, "GRANT storycreep_maintenance TO "+pgx.Identifier{maint.User()}.Sanitize()+
+		" WITH INHERIT TRUE, SET FALSE"); err != nil {
+		t.Fatal(err)
+	}
+	// Migrating fails unless the login can act as the role.
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Maintenance: maint}); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+}
+
+// TestSetMaintenanceRoleErrors checks that SetMaintenanceRole blames a missing
+// grant only when PostgreSQL refuses the role, and not when the statement
+// fails for another reason, such as an ended context.
+func TestSetMaintenanceRoleErrors(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := dbtest.New(t).Open(t)
+	ended, cancel := context.WithCancel(ctx)
+	cancel()
+	for _, tt := range []struct {
+		name   string
+		ctx    context.Context
+		blames bool
+	}{
+		{"the application login", ctx, true},
+		{"an ended context", ended, false},
+	} {
+		err := pgx.BeginFunc(ctx, db.Pool(), func(tx pgx.Tx) error {
+			return database.SetMaintenanceRole(tt.ctx, tx)
+		})
+		blames := err != nil && strings.Contains(err.Error(), "which storycreep migrate grants it")
+		if err == nil || blames != tt.blames || (!tt.blames && !errors.Is(err, context.Canceled)) {
+			t.Errorf("%s: SetMaintenanceRole returned %v; blames the grant: %v, want %v", tt.name, err, blames, tt.blames)
+		}
+	}
+}
+
+// TestProvisionMaintenanceOfAnotherDatabase checks that migrating fails when
+// the maintenance URL reaches a database other than the one migrated, which
+// has not applied the migrations.
+func TestProvisionMaintenanceOfAnotherDatabase(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, other := dbtest.New(t), dbtest.Empty(t)
+	_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Maintenance: other.MaintenanceURL})
+	if err == nil || !strings.Contains(err.Error(), "STORYCREEP_DATABASE_MAINTENANCE_URL connects to still has pending") {
+		t.Errorf("Migrate returned %v, want a refusal of the unmigrated database", err)
+	}
+}
+
+// TestProvisionRestrictsMaintenanceConnect checks that the maintenance login
+// of one Storycreep database cannot connect to another on the same server,
+// also when CONNECT was granted to storycreep_maintenance, a role of the
+// whole server that both maintenance logins are members of, which migrating
+// revokes again.
+func TestProvisionRestrictsMaintenanceConnect(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	a, b := dbtest.New(t), dbtest.New(t)
+	loginA, loginB := a.FreshLogin(t), b.FreshLogin(t)
+	maintA, maintB := a.URL(t, loginA, "a-password"), b.URL(t, loginB, "b-password")
+	for _, tt := range []struct {
+		d     *dbtest.Database
+		maint config.DatabaseURL
+	}{{a, maintA}, {b, maintB}} {
+		if _, err := database.Migrate(ctx, tt.d.AdminURL, tt.d.AppURL, database.MigrateOptions{Maintenance: tt.maint}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	intruder := a.URL(t, loginB, "b-password")
+	if !canConnect(t, maintA) || canConnect(t, intruder) {
+		t.Fatalf("the maintenance login cannot connect to its database, or the other database's can")
+	}
+	if _, err := a.Admin(t).Exec(ctx, "GRANT CONNECT ON DATABASE "+pgx.Identifier{a.Name}.Sanitize()+
+		" TO storycreep_maintenance"); err != nil {
+		t.Fatal(err)
+	}
+	if !canConnect(t, intruder) {
+		t.Fatalf("with CONNECT granted to storycreep_maintenance, the other database's maintenance login cannot connect")
+	}
+	if _, err := database.Migrate(ctx, a.AdminURL, a.AppURL, database.MigrateOptions{Maintenance: maintA}); err != nil {
+		t.Fatal(err)
+	}
+	if !canConnect(t, maintA) || canConnect(t, intruder) {
+		t.Errorf("after migrating, the maintenance login cannot connect, or the other database's still can")
 	}
 }

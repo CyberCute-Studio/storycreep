@@ -1,0 +1,413 @@
+// Package isolationtest is the cross-tenant isolation harness (PRD
+// NFR-SEC-01, §5.4). It seeds two workspaces, A and B, each with rows of its
+// own in every tenant table, and runs repository operations in a transaction
+// of workspace A, pointed at workspace B's rows, as a repository with a
+// broken filter would be: one that filters by the wrong workspace, or by
+// none. Row-level security must deny them all the same, so the harness fails
+// the test if such an operation returns, changes, or adds a row of B.
+//
+// It also runs each operation on A's own rows first, in a transaction that it
+// rolls back, and fails the test unless the operation works there, so that
+// an operation that fails on every workspace's rows, such as one the
+// application login lacks a privilege for, does not pass for one that row-
+// level security holds.
+//
+// Tables lists the tenant tables. A migration that adds one adds it there,
+// with how to add a row, and the schema test in package database fails until
+// it does (FR-TEN-01 AC1). Fixture.CheckTables tries reads, updates, deletes,
+// and inserts of every table from the wrong workspace, and moves of a
+// workspace's rows into another, and Fixture.Check tries a repository's own
+// operations.
+package isolationtest
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"slices"
+	"testing"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+)
+
+// Querier runs statements: the superuser's connection, or a transaction of
+// the application login.
+type Querier interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// Table is a tenant table: one whose rows belong to a workspace, and that
+// row-level security protects.
+type Table struct {
+	Name string
+	// Insert prepares a new row of the workspace w. It first adds, through
+	// admin, the superuser's connection, the rows of other tables that the
+	// new row needs, and then returns the statement that adds the row. The
+	// statement goes through the application login's transaction when the
+	// harness tries it, and through admin when the fixture seeds w, and it
+	// must add a row that conflicts with none that an earlier call added.
+	Insert func(ctx context.Context, admin Querier, w *Workspace) (Statement, error)
+}
+
+// Statement adds a row.
+type Statement struct {
+	// ID is the new row's ID.
+	ID   ids.UUID
+	SQL  string
+	Args []any
+}
+
+// Tables are the tenant tables, in an order in which each table's rows need
+// only rows of the tables before it.
+var Tables = []Table{
+	{"project", func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		id := ids.New()
+		return Statement{id, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", []any{id, w.ID}}, nil
+	}},
+	{"membership", func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A user is a member of a workspace once.
+		user, err := NewUser(ctx, admin)
+		if err != nil {
+			return Statement{}, err
+		}
+		id := ids.New()
+		return Statement{id, "INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'editor')",
+			[]any{id, w.ID, user}}, nil
+	}},
+	{"project_grant", func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A membership has one grant per project.
+		project := ids.New()
+		if _, err := admin.Exec(ctx, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", project, w.ID); err != nil {
+			return Statement{}, fmt.Errorf("add a project: %w", err)
+		}
+		id := ids.New()
+		return Statement{id, "INSERT INTO project_grant (id, workspace_id, membership_id, project_id, role) " +
+			"VALUES ($1, $2, $3, $4, 'viewer')", []any{id, w.ID, w.Rows["membership"], project}}, nil
+	}},
+	{"invite", func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		id := ids.New()
+		return Statement{id, "INSERT INTO invite (id, workspace_id, role, token_hash, expires_at) " +
+			"VALUES ($1, $2, 'viewer', $3, now() + interval '14 days')", []any{id, w.ID, TokenHash()}}, nil
+	}},
+	{"api_token", func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		id := ids.New()
+		return Statement{id, "INSERT INTO api_token (id, workspace_id, user_id, project_id, name, token_hash, scopes) " +
+			"VALUES ($1, $2, $3, $4, 'isolation', $5, ARRAY['project:read'])",
+			[]any{id, w.ID, w.UserID, w.Rows["project"], TokenHash()}}, nil
+	}},
+	{"audit_entry", func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		id := ids.New()
+		return Statement{id, "INSERT INTO audit_entry (id, workspace_id, actor_user_id, action, result) " +
+			"VALUES ($1, $2, $3, 'isolation.test', 'success')", []any{id, w.ID, w.UserID}}, nil
+	}},
+}
+
+// TokenHash returns a random 32-byte value, as the SHA-256 hash of a secret
+// is.
+func TokenHash() []byte {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return b
+}
+
+// NewUser adds a user through q, and returns its ID.
+func NewUser(ctx context.Context, q Querier) (ids.UUID, error) {
+	id := ids.New()
+	if _, err := q.Exec(ctx, `INSERT INTO "user" (id, email, display_name) VALUES ($1, $2, 'Isolation')`,
+		id, id.String()+"@example.com"); err != nil {
+		return ids.UUID{}, fmt.Errorf("add a user: %w", err)
+	}
+	return id, nil
+}
+
+// Workspace is one of the fixture's workspaces.
+type Workspace struct {
+	ID ids.UUID
+	// UserID is a user that the fixture added with the workspace, which the
+	// harness's transactions act for, and which owns its API token.
+	UserID ids.UUID
+	// Rows hold the ID of the row that the fixture added to each table, by the
+	// table's name.
+	Rows map[string]ids.UUID
+}
+
+// Scope is the scope of a request transaction of the workspace.
+func (w *Workspace) Scope() database.Scope {
+	return database.Scope{WorkspaceID: w.ID, UserID: w.UserID}
+}
+
+// Fixture is two workspaces, A and B, with a row of each of its tables.
+type Fixture struct {
+	A, B *Workspace
+	// DB is the application login's pool.
+	DB *database.DB
+
+	admin  *pgx.Conn
+	tables []Table
+}
+
+// New seeds the database d with the workspaces A and B, each with a row in
+// every table of tables, which come in an order in which each table's rows
+// need only rows of the tables before it.
+func New(t testing.TB, d *dbtest.Database, tables []Table) *Fixture {
+	t.Helper()
+	ctx := context.Background()
+	f := &Fixture{DB: d.Open(t), admin: d.Admin(t), tables: tables}
+	for _, w := range []**Workspace{&f.A, &f.B} {
+		ws, err := f.seed(ctx)
+		if err != nil {
+			t.Fatalf("seed a workspace: %v", err)
+		}
+		*w = ws
+	}
+	return f
+}
+
+// Admin is the superuser's connection, which row-level security does not
+// hold.
+func (f *Fixture) Admin() *pgx.Conn {
+	return f.admin
+}
+
+// seed adds a workspace with a user and a row of each of the fixture's
+// tables.
+func (f *Fixture) seed(ctx context.Context) (*Workspace, error) {
+	user, err := NewUser(ctx, f.admin)
+	if err != nil {
+		return nil, err
+	}
+	w := &Workspace{ID: ids.New(), UserID: user, Rows: map[string]ids.UUID{}}
+	if _, err := f.admin.Exec(ctx, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Isolation', $2, 'unlimited')",
+		w.ID, "isolation-"+w.ID.String()); err != nil {
+		return nil, fmt.Errorf("add a workspace: %w", err)
+	}
+	for _, table := range f.tables {
+		s, err := table.Insert(ctx, f.admin, w)
+		if err == nil {
+			_, err = f.admin.Exec(ctx, s.SQL, s.Args...)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("add a row to %s: %w", table.Name, err)
+		}
+		w.Rows[table.Name] = s.ID
+	}
+	return w, nil
+}
+
+// Op is a repository operation that the harness tries.
+type Op struct {
+	Name string
+	// Run runs the operation in tx on the rows of the workspace target, as
+	// a repository called with target's ID, or the ID of one of its rows,
+	// would, and returns the IDs of the rows that it read, changed, or added.
+	// If it succeeds on another workspace's rows, its transaction commits, so
+	// that the harness sees what it changed; it must touch no row but
+	// target's.
+	Run func(ctx context.Context, tx pgx.Tx, target *Workspace) ([]ids.UUID, error)
+	// Denied says that row-level security must refuse the operation on
+	// another workspace's rows with an error, rather than find none of them,
+	// as it refuses an insert.
+	Denied bool
+}
+
+// Check tries op on workspace A's rows, where it must work, and then on
+// workspace B's, from a transaction of A, where row-level security must keep
+// it from reading, changing, or adding any of B's rows.
+func (f *Fixture) Check(t testing.TB, op Op) {
+	t.Helper()
+	f.check(t, op, nil, false)
+}
+
+// errRollback rolls back the transaction that tries an operation on the
+// workspace's own rows.
+var errRollback = errors.New("rolled back")
+
+// check is Check. prepare, if set, is called with the target before its
+// rows are read for comparison, to add the rows that the operation needs.
+// refused says that the application login lacks the privilege for the
+// operation, so that it must fail on every workspace's rows.
+func (f *Fixture) check(t testing.TB, op Op, prepare func(target *Workspace) error, refused bool) {
+	t.Helper()
+	ctx := context.Background()
+
+	if prepare != nil {
+		if err := prepare(f.A); err != nil {
+			t.Fatalf("%s: %v", op.Name, err)
+		}
+	}
+	var own []ids.UUID
+	err := f.DB.InTx(ctx, f.A.Scope(), func(tx pgx.Tx) error {
+		var err error
+		if own, err = op.Run(ctx, tx, f.A); err == nil {
+			err = errRollback
+		}
+		return err
+	})
+	switch {
+	case refused:
+		if !isDenied(err) {
+			t.Errorf("%s: on its own workspace's rows: %v, want the application login's privileges to refuse it",
+				op.Name, err)
+		}
+	case !errors.Is(err, errRollback):
+		t.Errorf("%s: fails on its own workspace's rows: %v", op.Name, err)
+	case len(own) == 0:
+		t.Errorf("%s: finds none of its own workspace's rows, so it shows nothing about another's", op.Name)
+	}
+
+	if prepare != nil {
+		if err := prepare(f.B); err != nil {
+			t.Fatalf("%s: %v", op.Name, err)
+		}
+	}
+	before, rows := f.snapshot(t, f.B)
+	var got []ids.UUID
+	err = f.DB.InTx(ctx, f.A.Scope(), func(tx pgx.Tx) error {
+		var err error
+		got, err = op.Run(ctx, tx, f.B)
+		return err
+	})
+	if leaked := slices.DeleteFunc(slices.Clone(got), func(id ids.UUID) bool { return !slices.Contains(rows, id) }); len(leaked) > 0 {
+		t.Errorf("%s: from another workspace's transaction, reaches %d of the workspace's rows", op.Name, len(leaked))
+	}
+	if (op.Denied || refused) && !isDenied(err) {
+		t.Errorf("%s: from another workspace's transaction: %v, want row-level security to refuse it", op.Name, err)
+	}
+	if after, _ := f.snapshot(t, f.B); after != before {
+		t.Errorf("%s: from another workspace's transaction, changes the workspace's rows", op.Name)
+	}
+}
+
+// isDenied reports whether err is PostgreSQL's refusal for want of a
+// privilege, which is also how row-level security refuses a row.
+func isDenied(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42501"
+}
+
+// snapshot returns, as the superuser, a digest of every row of w in the
+// fixture's tables, and their IDs.
+func (f *Fixture) snapshot(t testing.TB, w *Workspace) (string, []ids.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	var digest string
+	var all []ids.UUID
+	for _, table := range f.tables {
+		ident := pgx.Identifier{table.Name}.Sanitize()
+		var d string
+		if err := f.admin.QueryRow(ctx, "SELECT coalesce(md5(string_agg(t::text, ',' ORDER BY t::text)), '') FROM "+
+			ident+" t WHERE workspace_id = $1", w.ID).Scan(&d); err != nil {
+			t.Fatalf("read %s: %v", table.Name, err)
+		}
+		rows, err := f.admin.Query(ctx, "SELECT id FROM "+ident+" WHERE workspace_id = $1", w.ID)
+		var got []ids.UUID
+		if err == nil {
+			got, err = pgx.CollectRows(rows, pgx.RowTo[ids.UUID])
+		}
+		if err != nil {
+			t.Fatalf("read %s: %v", table.Name, err)
+		}
+		digest += table.Name + ":" + d + ";"
+		all = append(all, got...)
+	}
+	return digest, all
+}
+
+// CheckTables tries, on every table of the fixture, what a repository with a
+// broken filter would do: read the rows of another workspace's ID, and read
+// without a filter, update, delete, and add rows of another workspace's ID,
+// and move rows of its own workspace into another by changing their
+// workspace_id. Operations that the application login has no privilege for
+// must fail on its own workspace's rows too.
+func (f *Fixture) CheckTables(t testing.TB) {
+	t.Helper()
+	for _, table := range f.tables {
+		ident := pgx.Identifier{table.Name}.Sanitize()
+		can := f.privileges(t, table.Name)
+		query := func(sql string, filtered bool) func(context.Context, pgx.Tx, *Workspace) ([]ids.UUID, error) {
+			return func(ctx context.Context, tx pgx.Tx, target *Workspace) ([]ids.UUID, error) {
+				var args []any
+				if filtered {
+					args = append(args, target.ID)
+				}
+				rows, err := tx.Query(ctx, sql, args...)
+				if err != nil {
+					return nil, err
+				}
+				return pgx.CollectRows(rows, pgx.RowTo[ids.UUID])
+			}
+		}
+		for _, c := range []struct {
+			op        Op
+			privilege string
+		}{
+			{Op{Name: table.Name + ": read by workspace",
+				Run: query("SELECT id FROM "+ident+" WHERE workspace_id = $1", true)}, "SELECT"},
+			{Op{Name: table.Name + ": read without a filter",
+				Run: query("SELECT id FROM "+ident, false)}, "SELECT"},
+			{Op{Name: table.Name + ": update by workspace",
+				Run: query("UPDATE "+ident+" SET workspace_id = workspace_id WHERE workspace_id = $1 RETURNING id", true)},
+				"UPDATE"},
+			{Op{Name: table.Name + ": delete by workspace",
+				Run: query("DELETE FROM "+ident+" WHERE workspace_id = $1 RETURNING id", true)}, "DELETE"},
+			// Unlike the others, this operation changes the rows that the
+			// transaction sees, A's, rather than the target's: it moves them
+			// into the target, which adds rows to the target as surely as an
+			// insert does, so the policy's check of new rows must refuse it in
+			// the same way. The update above, which keeps workspace_id, never
+			// reaches that check. The statement reads no column, as a WHERE
+			// or RETURNING clause would, which would hold the new rows to the
+			// table's SELECT policies too, so that the check of new rows is
+			// all that refuses it. On A's own rows, it moves them nowhere.
+			{Op{Name: table.Name + ": move into a workspace", Denied: true,
+				Run: func(ctx context.Context, tx pgx.Tx, target *Workspace) ([]ids.UUID, error) {
+					moved, err := query("SELECT id FROM "+ident, false)(ctx, tx, target)
+					if err == nil {
+						_, err = tx.Exec(ctx, "UPDATE "+ident+" SET workspace_id = $1", target.ID)
+					}
+					return moved, err
+				}}, "UPDATE"},
+		} {
+			f.check(t, c.op, nil, !can[c.privilege])
+		}
+
+		// The statement is prepared before the harness reads the target's
+		// rows, so that the rows it adds through the superuser's connection
+		// do not count as rows that the operation added.
+		var s Statement
+		prepare := func(w *Workspace) error {
+			var err error
+			s, err = table.Insert(context.Background(), f.admin, w)
+			return err
+		}
+		insert := Op{Name: table.Name + ": insert", Denied: true,
+			Run: func(ctx context.Context, tx pgx.Tx, _ *Workspace) ([]ids.UUID, error) {
+				_, err := tx.Exec(ctx, s.SQL, s.Args...)
+				return []ids.UUID{s.ID}, err
+			}}
+		f.check(t, insert, prepare, !can["INSERT"])
+	}
+}
+
+// privileges returns which of SELECT, INSERT, UPDATE, and DELETE the
+// application's role has on the table.
+func (f *Fixture) privileges(t testing.TB, table string) map[string]bool {
+	t.Helper()
+	can := map[string]bool{}
+	for _, p := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
+		var ok bool
+		if err := f.admin.QueryRow(context.Background(), "SELECT has_table_privilege('storycreep_app', $1::regclass, $2)",
+			pgx.Identifier{table}.Sanitize(), p).Scan(&ok); err != nil {
+			t.Fatalf("read the privileges on %s: %v", table, err)
+		}
+		can[p] = ok
+	}
+	return can
+}

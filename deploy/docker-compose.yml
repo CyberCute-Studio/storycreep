@@ -45,12 +45,13 @@ services:
     # value counts as unset, so the server's default applies.
     environment:
       STORYCREEP_HTTP_ADDR: ":8080"
-      # The server's own login, which migrating creates, and the superuser
-      # that applies the migrations at startup. Neither URL has a password:
-      # PGPASSWORD supplies POSTGRES_PASSWORD to both, so it needs no
-      # escaping in a URL.
+      # The server's own login and the maintenance jobs' login, which
+      # migrating creates, and the superuser that applies the migrations at
+      # startup. None of the URLs has a password: PGPASSWORD supplies
+      # POSTGRES_PASSWORD to all three, so it needs no escaping in a URL.
       STORYCREEP_DATABASE_URL: postgres://storycreep@db:5432/storycreep
       STORYCREEP_DATABASE_ADMIN_URL: postgres://postgres@db:5432/storycreep
+      STORYCREEP_DATABASE_MAINTENANCE_URL: postgres://storycreep_maintainer@db:5432/storycreep
       PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env next to docker-compose.yml}
       STORYCREEP_PUBLIC_URL: ${STORYCREEP_PUBLIC_URL:-http://localhost:7777}
       STORYCREEP_MODE: ${STORYCREEP_MODE:-self-hosted}

@@ -3,12 +3,16 @@
 // roles and the application's login, the application's connection pool, and
 // the request transaction that sets the row-level security context.
 //
-// Two logins are involved. The admin login, a superuser from
+// Three logins are involved. The admin login, a superuser from
 // STORYCREEP_DATABASE_ADMIN_URL, applies the migrations and owns every table.
-// The application login, from STORYCREEP_DATABASE_URL, does everything else.
-// It is an ordinary role, granted storycreep_app, that row-level security
-// applies to: Migrate provisions it, and Open refuses a login that row-level
-// security would not hold.
+// The application login, from STORYCREEP_DATABASE_URL, does everything else
+// but the maintenance jobs. It is an ordinary role, granted storycreep_app,
+// that row-level security applies to: Migrate provisions it, and Open refuses
+// a login that row-level security would not hold. The maintenance login, from
+// STORYCREEP_DATABASE_MAINTENANCE_URL, is the maintenance jobs' (package
+// maintenance): an ordinary role, granted storycreep_maintenance, which it
+// acts as to bypass row-level security. Migrate provisions it too when the
+// URL is set.
 package database
 
 //go:generate go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
@@ -22,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
@@ -33,6 +38,11 @@ import (
 // pg_stat_activity, unless the URL sets application_name, or PGAPPNAME or a
 // service file does.
 const applicationName = "storycreep"
+
+// MaintenanceApplicationName is what the maintenance login's connections
+// report in the same way: those of the maintenance path's pool (package
+// maintenance), and the one that migrating checks the login on.
+const MaintenanceApplicationName = "storycreep-maintenance"
 
 // errNoURL is returned by Open and Migrate when STORYCREEP_DATABASE_URL is not
 // set.
@@ -72,10 +82,11 @@ func checkServerVersion(num int, version string) error {
 // (checkServerVersion), and checks that row-level security holds the login:
 // the login must not be a superuser, have BYPASSRLS, CREATEROLE, or
 // REPLICATION, own the database or objects in it, or be a member of a role
-// that does, of one of the server's privileged roles, or of one of
-// PostgreSQL's roles that give access to the database server's files and
-// programs, directly or through other roles. If it is, the error is an
-// *UnsafeLoginError.
+// that does, of one of the server's privileged roles, of one of PostgreSQL's
+// roles that give access to the database server's files and programs, or of
+// pg_write_all_data, which may change the rows of every table past the
+// migrations' grants, directly or through other roles. If it is, the error is
+// an *UnsafeLoginError.
 func Open(ctx context.Context, app config.DatabaseURL) (*DB, error) {
 	return OpenWith(ctx, app, nil)
 }
@@ -89,7 +100,7 @@ func OpenWith(ctx context.Context, app config.DatabaseURL, configure func(*pgxpo
 		return nil, errNoURL
 	}
 	cfg := app.PoolConfig()
-	setApplicationName(cfg.ConnConfig)
+	setApplicationName(cfg.ConnConfig, applicationName)
 	if configure != nil {
 		configure(cfg)
 	}
@@ -112,7 +123,7 @@ func OpenWith(ctx context.Context, app config.DatabaseURL, configure func(*pgxpo
 		pool.Close()
 		return nil, err
 	}
-	if err := checkLogin(ctx, pool, login); err != nil {
+	if err := checkLogin(ctx, pool, appLoginRules, login); err != nil {
 		pool.Close()
 		return nil, err
 	}
@@ -138,11 +149,11 @@ func (db *DB) Pool() *pgxpool.Pool {
 	return db.pool
 }
 
-// setApplicationName names the connections, unless the URL, PGAPPNAME, or a
-// service file already does.
-func setApplicationName(c *pgx.ConnConfig) {
+// setApplicationName names the connections name, unless the URL, PGAPPNAME,
+// or a service file already does.
+func setApplicationName(c *pgx.ConnConfig, name string) {
 	if _, ok := c.RuntimeParams["application_name"]; !ok {
-		c.RuntimeParams["application_name"] = applicationName
+		c.RuntimeParams["application_name"] = name
 	}
 }
 
@@ -223,15 +234,17 @@ type StartOptions struct {
 // AutoMigrate, it applies the pending migrations under the migration lock,
 // which makes instances that start together safe, and logs that it waits if
 // another session holds the lock. It provisions the application login, and
-// returns the application login's pool that Migrate opened to check that the
-// migrations reached the database the login connects to.
+// the maintenance login if the configuration has one, and returns the
+// application login's pool that Migrate opened to check that the migrations
+// reached the database the login connects to.
 // Without AutoMigrate, it opens the application login's pool, and a pending
 // migration is logged as a warning and is for "storycreep migrate" to apply,
 // while the server reports that it is not ready. It refuses a database that
-// migrating has set up but that PUBLIC or storycreep_app can connect to again,
-// as after a dump is restored into a new database, because nothing else
-// would revoke that CONNECT until "storycreep migrate" runs
-// (checkConnectRestricted).
+// migrating has set up but whose server lacks the server's roles, as after a
+// dump of it is restored into another server (checkServerRoles), or that
+// PUBLIC or one of the server's roles can connect to again, as after a dump is
+// restored into a new database, because nothing else would revoke that
+// CONNECT until "storycreep migrate" runs (checkConnectRestricted).
 func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, error) {
 	log := opts.Log
 	if log == nil {
@@ -239,7 +252,8 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 	}
 	if opts.AutoMigrate {
 		res, db, err := migrate(ctx, cfg.DatabaseAdminURL, cfg.DatabaseURL, MigrateOptions{
-			Migrations: opts.Migrations,
+			Migrations:  opts.Migrations,
+			Maintenance: cfg.DatabaseMaintenanceURL,
 			Waiting: func() {
 				log.InfoContext(ctx, "waiting for the database migration lock, which another session holds")
 			},
@@ -267,8 +281,11 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 		p, err = db.pendingIn(ctx, ms)
 	}
 	// A database that has applied a migration was set up by migrating, which
-	// restricted who can connect to it. One that has applied none has no data
-	// yet.
+	// created the server's roles and restricted who can connect to it. One
+	// that has applied none has no data yet.
+	if err == nil && len(p) < len(ms.versions) {
+		err = checkServerRoles(ctx, db.pool)
+	}
 	if err == nil && len(p) < len(ms.versions) {
 		err = checkConnectRestricted(ctx, db.pool)
 	}
@@ -283,22 +300,80 @@ func Start(ctx context.Context, cfg *config.Config, opts StartOptions) (*DB, err
 	return db, nil
 }
 
-// UnsafeLoginError reports a login that row-level security would not hold,
-// so the server refuses to use it as the application login.
+// The configuration keys of the URLs of the server's logins, which messages
+// name.
+const (
+	appURLKey         = "STORYCREEP_DATABASE_URL"
+	adminURLKey       = "STORYCREEP_DATABASE_ADMIN_URL"
+	maintenanceURLKey = "STORYCREEP_DATABASE_MAINTENANCE_URL"
+)
+
+// UnsafeLoginError reports a login that is something its rules forbid
+// (checkLogin): an application login that row-level security would not hold,
+// or a maintenance login that could do more than bypass row-level security
+// as storycreep_maintenance, so the server refuses to use it.
 type UnsafeLoginError struct {
+	// Key is the configuration key of the URL that names the login.
+	Key   string
 	Login string
 	// Reasons say why, one per role whose privileges the login has.
 	Reasons []string
+
+	want string
 }
 
 func (e *UnsafeLoginError) Error() string {
-	return fmt.Sprintf("the login %q in STORYCREEP_DATABASE_URL must be an ordinary role that row-level security "+
-		"applies to, but %s", e.Login, strings.Join(e.Reasons, "; "))
+	return fmt.Sprintf("the login %q in %s must be %s, but %s", e.Login, e.Key, e.want, strings.Join(e.Reasons, "; "))
 }
 
 // privilegedRoles are the roles the migrations create for the server's
 // privileged work. The application login must not have them (checkLogin).
-var privilegedRoles = []string{"storycreep_definer", "storycreep_maintenance"}
+var privilegedRoles = []string{definerRole, MaintenanceRole}
+
+// loginRules say what one of the server's logins must not be (checkLogin), or
+// be named (checkLoginName).
+type loginRules struct {
+	// key is the configuration key of the URL that names the login.
+	key string
+	// example is a name that the login could have, which the deployment
+	// files give it, for checkLoginName to suggest.
+	example string
+	// want says what the login must be, for UnsafeLoginError.
+	want string
+	// forbidden are the server's roles that the login must not have.
+	forbidden []string
+	// allowed is the role of the server that the login acts as to bypass
+	// row-level security, whose BYPASSRLS does not count against it, or ""
+	// for none. Its other attributes, and what it owns, count as any role's
+	// do.
+	allowed string
+}
+
+// appLoginRules are the application login's: row-level security must hold
+// it, so it must not have the server's privileged roles.
+var appLoginRules = &loginRules{
+	key:       appURLKey,
+	example:   "storycreep",
+	want:      "an ordinary role that row-level security applies to",
+	forbidden: privilegedRoles,
+}
+
+// maintenanceLoginRules are the maintenance login's. It acts as
+// storycreep_maintenance, which bypasses row-level security, but it must
+// have no other privileges than that role's: not the attributes or roles that
+// would make the application login unsafe, nor the application's role or the
+// context bootstrap's, and it must not bypass row-level security itself,
+// because storycreep_maintenance is to be the only role that does (PRD §5.4).
+// Only that role's BYPASSRLS is let through: the first migration gives it
+// nothing else, but nothing checks the role again afterwards, and if it had
+// been given CREATEROLE or SUPERUSER since, the login would act with it.
+var maintenanceLoginRules = &loginRules{
+	key:       maintenanceURLKey,
+	example:   "storycreep_maintainer",
+	want:      "an ordinary role that bypasses row-level security only by acting as " + MaintenanceRole,
+	forbidden: []string{appRole, definerRole},
+	allowed:   MaintenanceRole,
+}
 
 // serverAccessRoles are PostgreSQL's predefined roles that read or write
 // files on the database server, or run programs there, as the operating
@@ -307,17 +382,31 @@ var privilegedRoles = []string{"storycreep_definer", "storycreep_maintenance"}
 // (checkLogin).
 var serverAccessRoles = []string{"pg_execute_server_program", "pg_read_server_files", "pg_write_server_files"}
 
+// writeAllDataRoles are PostgreSQL's predefined roles that may add, change,
+// and delete the rows of every table, as if granted INSERT, UPDATE, and DELETE
+// on it. Row-level security still holds them, but what the server's logins
+// may do rests on the migrations' grants too: the application may delete
+// neither a user nor a workspace, whose cascades reach every workspace's rows
+// past row-level security, and may neither change nor delete an audit entry
+// (FR-TEN-07 AC1), and the maintenance login may do only what
+// storycreep_maintenance is granted. So neither login may have them
+// (checkLogin).
+var writeAllDataRoles = []string{"pg_write_all_data"}
+
 // unsafeRolesQuery lists the roles whose privileges the login $1 has, itself
-// included, that row-level security would not hold: a superuser, a role with
-// BYPASSRLS, a role with CREATEROLE (which on PostgreSQL 15 can grant itself
-// any role that is not a superuser, such as storycreep_maintenance), a role
-// with REPLICATION (which can stream a copy of the whole cluster), a role
-// that owns the current database or objects in it, the privileged roles $2,
-// and the server access roles $3. An owner can switch row-level security
-// off, the owner of the database can drop it, the owner of a schema can drop
-// what is in it, and the owner of a type, a collation, an operator class, or
-// an extension can drop with CASCADE the columns and indexes that use it, in
-// tables it does not own.
+// included, that row-level security would not hold, or that would let the
+// login past the migrations' grants: a superuser, a role with BYPASSRLS, a
+// role with CREATEROLE (which on PostgreSQL 15 can grant itself any role that
+// is not a superuser, such as storycreep_maintenance), a role with
+// REPLICATION (which can stream a copy of the whole cluster), a role that
+// owns the current database or objects in it, the server's roles $2 that the
+// login must not have, the server access roles $3, and the roles $5 that may
+// change every table's rows. The BYPASSRLS of the role $4, which the login may
+// act as, does not count, if $4 is not empty, but the role's other attributes
+// do. An owner can switch row-level security off, the owner of the database
+// can drop it, the owner of a schema can drop what is in it, and the owner of
+// a type, a collation, an operator class, or an extension can drop with
+// CASCADE the columns and indexes that use it, in tables it does not own.
 //
 // PostgreSQL records each object's owner in pg_shdepend, except where the
 // owner is one of the roles that initdb created, whose OIDs are below 16384,
@@ -337,8 +426,8 @@ var serverAccessRoles = []string{"pg_execute_server_program", "pg_read_server_fi
 // mappings, which PostgreSQL records as owned by the role they map but which
 // only hold how it logs in to a foreign server.
 const unsafeRolesQuery = `
-SELECT r.rolname, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolreplication, r.owns_database, r.owns,
-	r.rolname = ANY ($3::name[]) AS server_access
+SELECT r.rolname, r.rolsuper, r.rolbypassrls AND r.rolname <> $4::name AS bypass, r.rolcreaterole, r.rolreplication,
+	r.owns_database, r.owns, r.rolname = ANY ($3::name[]) AS server_access, r.rolname = ANY ($5::name[]) AS writes_all
 FROM (
 	SELECT rolname, oid, rolsuper, rolbypassrls, rolcreaterole, rolreplication,
 		EXISTS (SELECT FROM pg_database WHERE datname = current_database() AND datdba = pg_roles.oid)
@@ -385,14 +474,16 @@ FROM (
 ) r
 WHERE pg_has_role($1::name, r.oid, 'MEMBER')
 	AND r.rolname <> 'pg_database_owner'
-	AND (r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR r.rolreplication OR r.owns_database OR r.owns
-		OR r.rolname = ANY ($2::name[]) OR r.rolname = ANY ($3::name[]))
+	AND (r.rolsuper OR (r.rolbypassrls AND r.rolname <> $4::name) OR r.rolcreaterole OR r.rolreplication
+		OR r.owns_database OR r.owns OR r.rolname = ANY ($2::name[]) OR r.rolname = ANY ($3::name[])
+		OR r.rolname = ANY ($5::name[]))
 ORDER BY r.rolname <> $1::name, r.rolname`
 
-// checkLogin returns an *UnsafeLoginError if row-level security would not
-// hold the login.
-func checkLogin(ctx context.Context, q querier, login string) error {
-	rows, err := q.Query(ctx, unsafeRolesQuery, login, privilegedRoles, serverAccessRoles)
+// checkLogin returns an *UnsafeLoginError if the login is something that
+// rules forbid.
+func checkLogin(ctx context.Context, q querier, rules *loginRules, login string) error {
+	rows, err := q.Query(ctx, unsafeRolesQuery, login, rules.forbidden, serverAccessRoles, rules.allowed,
+		writeAllDataRoles)
 	if err != nil {
 		return fmt.Errorf("check the login %q: %w", login, err)
 	}
@@ -400,9 +491,9 @@ func checkLogin(ctx context.Context, q querier, login string) error {
 	var reasons []string
 	for rows.Next() {
 		var role string
-		var super, bypass, createRole, replication, ownsDatabase, owns, serverAccess bool
+		var super, bypass, createRole, replication, ownsDatabase, owns, serverAccess, writesAll bool
 		if err := rows.Scan(&role, &super, &bypass, &createRole, &replication, &ownsDatabase, &owns,
-			&serverAccess); err != nil {
+			&serverAccess, &writesAll); err != nil {
 			return fmt.Errorf("check the login %q: %w", login, err)
 		}
 		var what []string
@@ -429,9 +520,12 @@ func checkLogin(ctx context.Context, q querier, login string) error {
 			if serverAccess {
 				what = append(what, "gives access to the database server's files and programs")
 			}
+			if writesAll {
+				what = append(what, "may change the rows of every table, past what the migrations grant")
+			}
 		}
 		if len(what) == 0 {
-			what = append(what, "is reserved for the server's privileged work")
+			what = append(what, "is reserved for the server's other work")
 		}
 		desc := strings.Join(what, " and ")
 		if role == login {
@@ -450,7 +544,37 @@ func checkLogin(ctx context.Context, q querier, login string) error {
 		return fmt.Errorf("check the login %q: %w", login, err)
 	}
 	if len(reasons) > 0 {
-		return &UnsafeLoginError{Login: login, Reasons: reasons}
+		return &UnsafeLoginError{Key: rules.key, Login: login, Reasons: reasons, want: rules.want}
+	}
+	return nil
+}
+
+// CheckMaintenanceLogin returns an *UnsafeLoginError if the session user of
+// tx, a transaction of the maintenance login, could do more than bypass
+// row-level security as storycreep_maintenance (maintenanceLoginRules).
+func CheckMaintenanceLogin(ctx context.Context, tx pgx.Tx) error {
+	var login string
+	if err := tx.QueryRow(ctx, "SELECT session_user").Scan(&login); err != nil {
+		return fmt.Errorf("check the login in %s: %w", maintenanceURLKey, err)
+	}
+	return checkLogin(ctx, tx, maintenanceLoginRules, login)
+}
+
+// SetMaintenanceRole makes tx, a transaction of the maintenance login, act as
+// storycreep_maintenance until it ends, as SET LOCAL ROLE does, so that it
+// bypasses row-level security (PRD §5.4). It returns an error if the login
+// cannot, because migrating has not granted it the role, or if the statement
+// fails otherwise, as when ctx ends.
+func SetMaintenanceRole(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, "SET LOCAL ROLE "+pgx.Identifier{MaintenanceRole}.Sanitize())
+	var pgErr *pgconn.PgError
+	switch {
+	// insufficient_privilege: the login may not SET ROLE to the role.
+	case errors.As(err, &pgErr) && pgErr.Code == "42501":
+		return fmt.Errorf("the login in %s cannot act as %s, which storycreep migrate grants it when %s is "+
+			"set: %w", maintenanceURLKey, MaintenanceRole, maintenanceURLKey, err)
+	case err != nil:
+		return fmt.Errorf("act as %s: %w", MaintenanceRole, err)
 	}
 	return nil
 }
