@@ -315,11 +315,9 @@ func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decisio
 		}
 		// Every request of a key counts in the key's one row, so the requests
 		// of a key wait for each other's commits. The commit need not wait for
-		// the disk: a crash of the database would lose only a few requests'
-		// counts, and a limit lets a few more requests through then.
-		if err := q.CommitWithoutFlush(ctx); err != nil {
-			return fmt.Errorf("ratelimit: commit without waiting for the disk: %w", err)
-		}
+		// the disk, which TakeRateLimit tells it in the same statement: a crash
+		// of the database would lose only a few requests' counts, and a limit
+		// lets a few more requests through then.
 		var err error
 		rows, err = q.TakeRateLimit(ctx, queries.TakeRateLimitParams{Bucket: string(bucket),
 			Period: database.Interval(rate.Period), Keys: hashes})

@@ -17,6 +17,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 )
 
 // clients numbers the client addresses that the tests forward.
@@ -91,24 +92,15 @@ func headerInt(res response, name string) int {
 // on a slow runner.
 const windowNeed = 20 * time.Second
 
-// awaitWindow waits, if the window of a minute that the rate limits count in
-// now ends within need, by the database's clock, which they count with, until
-// the next one starts, so that the requests that the test makes within need
-// all count in one window. It reads the database's clock rather than the
-// RateLimit-Reset of a request, which would count in the window that the
-// test then leaves.
+// awaitWindow waits, if the window of the auth bucket that the rate limits
+// count in now ends within need, by the database's clock, which they count
+// with, until the next one starts (dbtest's AwaitWindow), so that the
+// requests that the test makes within need all count in one window. It reads
+// the database's clock rather than the RateLimit-Reset of a request, which
+// would count in the window that the test then leaves.
 func awaitWindow(t *testing.T, d *dbtest.Database, need time.Duration) {
 	t.Helper()
-	var left float64
-	if err := d.Admin(t).QueryRow(context.Background(), `SELECT extract(epoch FROM date_bin(interval '1 minute',
-		now(), timestamptz '1970-01-01 00:00:00+00') + interval '1 minute' - now())`).Scan(&left); err != nil {
-		t.Fatal(err)
-	}
-	if wait := time.Duration(left * float64(time.Second)); wait < need {
-		// A moment more, so that the next window has started by the time the
-		// test's first request reaches the database.
-		time.Sleep(wait + 100*time.Millisecond)
-	}
+	d.AwaitWindow(t, ratelimit.DefaultPolicy().Rates[ratelimit.Auth].Period, need)
 }
 
 // TestAuthRateLimit runs two servers on one database, and checks that the

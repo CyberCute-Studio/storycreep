@@ -269,15 +269,18 @@ func TestRegisterRefusedByPolicy(t *testing.T) {
 // holds the hash, its salt, or its key, in its body or its headers. Each
 // request is made with a new session of the account, and its CSRF token, so
 // that a route that needs a signed-in user answers as it does for one, and
-// with the metrics token. A route that later items add is requested too, so
-// an item that adds a route that answers only with other credentials, or
-// with a body of its own, requests it so here.
+// with the metrics token. Each sign-in, and the request made with its
+// session, comes from a client address of its own, which a trusted proxy
+// forwards, so that the sign-ins, one for each route, do not use up the rate
+// limit of one address, however many routes there are. A route that later
+// items add is requested too, so an item that adds a route that answers only
+// with other credentials, or with a body of its own, requests it so here.
 //
 // Verifies: FR-AUTH-01/AC4
 func TestNoEndpointReturnsPasswordHash(t *testing.T) {
 	t.Parallel()
 	s, d := readyServer(t, map[string]string{"STORYCREEP_SIGNUP": "open",
-		"STORYCREEP_METRICS_TOKEN": testMetricsToken})
+		"STORYCREEP_METRICS_TOKEN": testMetricsToken, "STORYCREEP_TRUSTED_PROXIES": "192.0.2.1"})
 	body := registration(t, "jo@example.com", "Jo", "correct horse battery staple")
 	if res := send(s.main, http.MethodPost, registerPath, body, "", nil); res.status != http.StatusAccepted {
 		t.Fatalf("register: %d %s", res.status, res.body)
@@ -327,9 +330,11 @@ func TestNoEndpointReturnsPasswordHash(t *testing.T) {
 					reqBody = b
 				}
 			}
-			header := signIn(t, s.main, "jo@example.com").header(true)
+			client := newClient()
+			header := signedInFrom(t, send(s.main, http.MethodPost, loginPath, credentials(t, "jo@example.com",
+				testPassword), "", client)).header(true)
 			header.Set("Authorization", "Bearer "+testMetricsToken)
-			res := send(m, r.Method, path, reqBody, "", header)
+			res := send(m, r.Method, path, reqBody, "", with(header, client))
 			requested++
 			for what, v := range secrets {
 				if bytes.Contains(res.body, []byte(v)) {

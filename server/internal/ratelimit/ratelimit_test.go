@@ -14,6 +14,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
@@ -30,18 +31,33 @@ func testPolicy() Policy {
 	return p
 }
 
-// setup returns a Limiter with testPolicy on a new database, the database's
-// pool, and a connection to it as the superuser. It waits for the next hour
-// if the current one ends within a minute, so that no window of the test
-// policy ends during the test.
+// newDatabase returns a new database, once the hour that the test policy's
+// windows count in, by the database's clock, which they count with, has a
+// minute left at least, so that no window of the test policy ends during the
+// test. It waits for the next hour otherwise.
+func newDatabase(t *testing.T) *dbtest.Database {
+	t.Helper()
+	d := dbtest.New(t)
+	d.AwaitWindow(t, time.Hour, time.Minute)
+	return d
+}
+
+// setup returns a Limiter with testPolicy on a new database (newDatabase),
+// the database's pool, and a connection to it as the superuser.
 func setup(t *testing.T) (*Limiter, *database.DB, *pgx.Conn) {
 	t.Helper()
-	if left := time.Until(time.Now().Truncate(time.Hour).Add(time.Hour)); left < time.Minute {
-		time.Sleep(left + time.Second)
-	}
-	d := dbtest.New(t)
+	d := newDatabase(t)
 	db := d.Open(t)
 	return New(db, testPolicy()), db, d.Admin(t)
+}
+
+// twoServers returns two Limiters with testPolicy on a new database
+// (newDatabase), each on a pool of its own, as two servers of an instance
+// count, and a connection to the database as the superuser.
+func twoServers(t *testing.T) (*Limiter, *Limiter, *pgx.Conn) {
+	t.Helper()
+	d := newDatabase(t)
+	return New(d.Open(t), testPolicy()), New(d.Open(t), testPolicy()), d.Admin(t)
 }
 
 // exec runs sql as the superuser.
@@ -126,9 +142,8 @@ func TestPolicyCheck(t *testing.T) {
 // Verifies: FR-API-04/AC3, FR-AUTH-05/AC2, NFR-SEC-06
 func TestTake(t *testing.T) {
 	t.Parallel()
-	l, db, _ := setup(t)
-	// A second server of the instance, on its own pool.
-	other := New(db, testPolicy())
+	// other is a second server of the instance, on its own pool.
+	l, other, _ := twoServers(t)
 	ctx := context.Background()
 	ip := ClientIP(netip.MustParseAddr("203.0.113.7"))
 	jo, mo := UserID(ids.New()), UserID(ids.New())
@@ -242,8 +257,7 @@ func concurrently(t *testing.T, n int, first, second *Limiter, try func(*Limiter
 // Verifies: FR-AUTH-05/AC2, NFR-SEC-06
 func TestTakeConcurrent(t *testing.T) {
 	t.Parallel()
-	l, db, _ := setup(t)
-	other := New(db, testPolicy())
+	l, other, _ := twoServers(t)
 	ip, jo := ClientIP(netip.MustParseAddr("203.0.113.7")), UserID(ids.New())
 	const requests = 12
 	allowed, refused := concurrently(t, requests, l, other, func(s *Limiter, i int) error {
@@ -307,6 +321,32 @@ func TestTakeHoldsNoAddress(t *testing.T) {
 	}
 }
 
+// TestTakeCommitsWithoutFlush checks that the statement that counts a
+// request also makes its transaction commit without waiting for the disk,
+// so that it costs no round trip of its own. The test's database server
+// waits for no commit at all, so the transaction asks it to wait first.
+func TestTakeCommitsWithoutFlush(t *testing.T) {
+	t.Parallel()
+	_, db, _ := setup(t)
+	ctx := context.Background()
+	var setting string
+	if err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SET LOCAL synchronous_commit = on"); err != nil {
+			return err
+		}
+		if _, err := queries.New(tx).TakeRateLimit(ctx, queries.TakeRateLimitParams{Bucket: string(Read),
+			Period: database.Interval(time.Hour), Keys: [][]byte{make([]byte, 32)}}); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, "SELECT current_setting('synchronous_commit')").Scan(&setting)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if setting != "off" {
+		t.Errorf("synchronous_commit is %s once a request is counted, want off", setting)
+	}
+}
+
 // failLogins begins n sign-in attempts with email, none of which succeeds,
 // and fails the test if one is refused.
 func failLogins(t *testing.T, l *Limiter, email string, n int) {
@@ -338,8 +378,7 @@ func lockedFor(t *testing.T, admin *pgx.Conn) time.Duration {
 // Verifies: FR-AUTH-05/AC1, FR-AUTH-05/AC2
 func TestLockout(t *testing.T) {
 	t.Parallel()
-	l, db, admin := setup(t)
-	other := New(db, testPolicy())
+	l, other, admin := twoServers(t)
 	failLogins(t, l, "jo@example.com", 5)
 	failLogins(t, other, "Jo@Example.com", 4)
 	if lockedFor(t, admin) != 0 {
@@ -371,8 +410,7 @@ func TestLockout(t *testing.T) {
 // Verifies: FR-AUTH-05/AC1, FR-AUTH-05/AC2
 func TestLockoutConcurrent(t *testing.T) {
 	t.Parallel()
-	l, db, admin := setup(t)
-	other := New(db, testPolicy())
+	l, other, admin := twoServers(t)
 	const attempts = 16
 	begun, refused := concurrently(t, attempts, l, other, func(s *Limiter, _ int) error {
 		_, err := s.BeginLogin(context.Background(), "jo@example.com")

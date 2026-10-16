@@ -70,21 +70,6 @@ func (q *Queries) ClearLoginAttempts(ctx context.Context, key []byte) error {
 	return err
 }
 
-const commitWithoutFlush = `-- name: CommitWithoutFlush :exec
-SELECT set_config('synchronous_commit', 'off', true)
-`
-
-// CommitWithoutFlush makes the transaction that it runs in commit without
-// waiting for its commit to be flushed to disk (synchronous_commit off), so
-// that the transaction holds the locks of its rows no longer than it runs. A
-// crash of the database may then lose the last few hundred milliseconds of
-// such commits, which for a rate limit's counters is a few requests that go
-// uncounted.
-func (q *Queries) CommitWithoutFlush(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, commitWithoutFlush)
-	return err
-}
-
 const deleteEndedRateLimits = `-- name: DeleteEndedRateLimits :execrows
 DELETE FROM rate_limit WHERE (bucket, key) IN (
     SELECT e.bucket, e.key FROM rate_limit e WHERE e.window_end <= now()
@@ -181,6 +166,9 @@ func (q *Queries) RateLimitKey(ctx context.Context) ([]byte, error) {
 }
 
 const takeRateLimit = `-- name: TakeRateLimit :many
+WITH no_flush AS (
+    SELECT set_config('synchronous_commit', 'off', true)
+)
 INSERT INTO rate_limit AS r (bucket, key, window_start, window_end, hits)
 SELECT
     $1::text,
@@ -188,7 +176,7 @@ SELECT
     date_bin($2::interval, now(), timestamptz '1970-01-01 00:00:00+00'),
     date_bin($2::interval, now(), timestamptz '1970-01-01 00:00:00+00') + $2::interval,
     1
-FROM unnest($3::bytea[]) WITH ORDINALITY AS k(key, n)
+FROM no_flush, unnest($3::bytea[]) WITH ORDINALITY AS k(key, n)
 ORDER BY k.n
 ON CONFLICT (bucket, key) DO UPDATE SET
     hits = CASE WHEN r.window_start < excluded.window_start THEN 1 ELSE r.hits + 1 END,
@@ -215,7 +203,16 @@ type TakeRateLimitRow struct {
 // window has ended since its last hit starts the count of its new window. It
 // returns each key's hits in the window, and when the window ends. The keys
 // are taken in the order given, which the caller sorts, so that two requests
-// that share keys lock their rows in the same order and cannot deadlock.
+// that share keys lock their rows in the same order and cannot deadlock. It
+// also makes the transaction that it runs in commit without waiting for its
+// commit to be flushed to disk (synchronous_commit off), so that the
+// transaction holds the locks of its rows no longer than it runs. A crash of
+// the database may then lose the last few hundred milliseconds of such
+// commits, which for a rate limit's counters is a few requests that go
+// uncounted. It changes the setting in no_flush, whose one row the insert
+// reads, so that a request spends no round trip on it: set_config is
+// volatile, so PostgreSQL does not fold no_flush away, and runs it once the
+// insert reads it, before the commit, which reads the setting.
 func (q *Queries) TakeRateLimit(ctx context.Context, arg TakeRateLimitParams) ([]TakeRateLimitRow, error) {
 	rows, err := q.db.Query(ctx, takeRateLimit, arg.Bucket, arg.Period, arg.Keys)
 	if err != nil {
