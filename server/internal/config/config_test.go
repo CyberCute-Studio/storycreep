@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/text/language"
 
@@ -114,6 +115,8 @@ func TestDefaults(t *testing.T) {
 		{"STORYCREEP_PUBLIC_URL", testURL, SourceEnvironment},
 		{"STORYCREEP_PUBLIC_SITE", "off", SourceDefault},
 		{"STORYCREEP_SIGNUP", "closed", SourceDefault},
+		{"STORYCREEP_SESSION_IDLE_TIMEOUT", "720h", SourceDefault},
+		{"STORYCREEP_SESSION_LIFETIME", "2160h", SourceDefault},
 		{"STORYCREEP_DEFAULT_LOCALE", "en", SourceDefault},
 		{"STORYCREEP_DATABASE_URL", testDatabaseShown, SourceEnvironment},
 		{"STORYCREEP_DATABASE_ADMIN_URL", "", SourceUnset},
@@ -402,6 +405,32 @@ func TestLogLevels(t *testing.T) {
 		c := mustLoad(t, withRequired(map[string]string{"STORYCREEP_LOG_LEVEL": v}))
 		if c.LogLevel != want {
 			t.Errorf("STORYCREEP_LOG_LEVEL=%s gives %v, want %v", v, c.LogLevel, want)
+		}
+	}
+}
+
+// TestSessionDurations checks the session keys: their defaults, 30 and 90
+// days (PRD FR-AUTH-02), durations within their bounds, and the refusal of
+// anything else.
+func TestSessionDurations(t *testing.T) {
+	c := mustLoad(t, withRequired(nil))
+	if c.SessionIdleTimeout != 30*24*time.Hour || c.SessionLifetime != 90*24*time.Hour {
+		t.Errorf("the defaults are %v and %v, want 30 and 90 days", c.SessionIdleTimeout, c.SessionLifetime)
+	}
+	for v, want := range map[string]time.Duration{"5m": 5 * time.Minute, "1h30m": 90 * time.Minute,
+		"8760h": 365 * 24 * time.Hour} {
+		c := mustLoad(t, withRequired(map[string]string{"STORYCREEP_SESSION_IDLE_TIMEOUT": v,
+			"STORYCREEP_SESSION_LIFETIME": v}))
+		if c.SessionIdleTimeout != want || c.SessionLifetime != want {
+			t.Errorf("%s gives %v and %v, want %v", v, c.SessionIdleTimeout, c.SessionLifetime, want)
+		}
+	}
+	for _, key := range []string{"STORYCREEP_SESSION_IDLE_TIMEOUT", "STORYCREEP_SESSION_LIFETIME"} {
+		for _, v := range []string{"30d", "720", "4m59s", "8761h", "-720h", "0"} {
+			problems := loadProblems(t, Options{Env: MapEnvironment(withRequired(map[string]string{key: v}))})
+			if len(problems) != 1 || problems[0].Key != key {
+				t.Errorf("%s=%s: problems %v, want one for the key", key, v, problems)
+			}
 		}
 	}
 }

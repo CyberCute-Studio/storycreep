@@ -41,6 +41,39 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const lockPasswordHash = `-- name: LockPasswordHash :one
+SELECT password_hash FROM "user" WHERE id = $1 AND status = 'active' FOR SHARE
+`
+
+// LockPasswordHash returns the hash of an active account's password, and
+// locks the account's row against changes until the transaction ends. A
+// change of the password, which updates the row, then waits for the
+// transaction, or the transaction for the change, and sees what the change
+// did. Signing in starts a session in such a transaction, and only while the
+// hash is still the one that it checked the password against, so that the
+// revocation of the other sessions that changing the password does sees
+// every session that the old password started (PRD FR-AUTH-02 AC4).
+func (q *Queries) LockPasswordHash(ctx context.Context, id pgtype.UUID) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, lockPasswordHash, id)
+	var password_hash pgtype.Text
+	err := row.Scan(&password_hash)
+	return password_hash, err
+}
+
+const lockUser = `-- name: LockUser :exec
+SELECT id FROM "user" WHERE id = $1 FOR SHARE
+`
+
+// LockUser locks an account's row against changes until the transaction
+// ends, as LockPasswordHash does, whatever the account's status. Revoking
+// the account's other sessions takes this lock first, so that it and a
+// change of the password, which revokes them too, run one after the other,
+// and cannot deadlock over the sessions' rows (FR-AUTH-02).
+func (q *Queries) LockUser(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, lockUser, id)
+	return err
+}
+
 const updatePasswordHash = `-- name: UpdatePasswordHash :execrows
 UPDATE "user" SET password_hash = $1, updated_at = now()
 WHERE id = $2 AND password_hash = $3
@@ -52,10 +85,12 @@ type UpdatePasswordHashParams struct {
 	OldHash pgtype.Text
 }
 
-// UpdatePasswordHash replaces the hash of an account's password with one of
-// the same password, made with the current parameters (PRD NFR-SEC-03), if
-// the hash is still old_hash, so that a password that changed in the
-// meantime is not changed back.
+// UpdatePasswordHash replaces the hash of an account's password with
+// new_hash, if the hash is still old_hash, which the caller checked a
+// password against, so that a password that changed in the meantime is not
+// changed back. Signing in uses it to hash the same password again with the
+// current parameters (PRD NFR-SEC-03), and changing the password to store
+// the new one.
 func (q *Queries) UpdatePasswordHash(ctx context.Context, arg UpdatePasswordHashParams) (int64, error) {
 	result, err := q.db.Exec(ctx, updatePasswordHash, arg.NewHash, arg.ID, arg.OldHash)
 	if err != nil {
@@ -81,4 +116,17 @@ func (q *Queries) UserCredentials(ctx context.Context, email string) (UserCreden
 	var i UserCredentialsRow
 	err := row.Scan(&i.ID, &i.PasswordHash, &i.Status)
 	return i, err
+}
+
+const userPasswordHash = `-- name: UserPasswordHash :one
+SELECT password_hash FROM "user" WHERE id = $1 AND status = 'active'
+`
+
+// UserPasswordHash returns the hash of an active account's password, which
+// changing the password checks the current password against.
+func (q *Queries) UserPasswordHash(ctx context.Context, id pgtype.UUID) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, userPasswordHash, id)
+	var password_hash pgtype.Text
+	err := row.Scan(&password_hash)
+	return password_hash, err
 }

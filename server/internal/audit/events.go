@@ -14,8 +14,19 @@ const (
 	// signs in to all of its workspaces at once. Its subject is the account
 	// that the address belongs to, if any, and a failed attempt for an
 	// address that belongs to no account records the address as its keyed
-	// hash instead (Entry.AttemptedEmail).
+	// hash instead (Entry.AttemptedEmail). A successful one names the
+	// session that it started in its metadata's session_id.
 	ActionLogin Action = "auth.login"
+	// ActionSessionRevoke is the end of a session before its time
+	// (FR-AUTH-02): its user signed out of it, revoked it, or changed the
+	// account's password, which revokes the account's other sessions. Its
+	// metadata's reason says which: sign_out, revoked, or password_changed.
+	// It belongs to no workspace, as a login does.
+	ActionSessionRevoke Action = "auth.session_revoke"
+	// ActionPasswordChange is an attempt by a signed-in user to change the
+	// account's password, which fails when the current password given is
+	// not the account's. It belongs to no workspace.
+	ActionPasswordChange Action = "auth.password_change"
 )
 
 // Result is how an event ended.
@@ -57,7 +68,10 @@ type eventSpec struct {
 
 // events is the registry of event types.
 var events = []eventSpec{
-	{action: ActionLogin, subject: "user", results: []Result{ResultSuccess, ResultFailure}, attemptedEmail: true},
+	{action: ActionLogin, subject: "user", results: []Result{ResultSuccess, ResultFailure},
+		metadata: []string{"session_id"}, attemptedEmail: true},
+	{action: ActionSessionRevoke, subject: "session", results: []Result{ResultSuccess}, metadata: []string{"reason"}},
+	{action: ActionPasswordChange, subject: "user", results: []Result{ResultSuccess, ResultFailure}},
 }
 
 // lookup returns the registration of a, and false if a is not registered.

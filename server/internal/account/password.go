@@ -30,7 +30,7 @@ type params struct {
 // currentParams are the parameters that passwords are hashed with (PRD
 // NFR-SEC-03): the second of the settings that RFC 9106 §4 recommends, for
 // a server that cannot spare 2 GiB per hash. A hash made with others is
-// replaced at the account's next sign-in (Service.Authenticate).
+// replaced at the account's next sign-in (Service.Login).
 var currentParams = params{memory: 64 * 1024, time: 3, threads: 4, saltLen: 16, keyLen: 32}
 
 // Bounds of the parameters that parseHash accepts, so that a stored hash that

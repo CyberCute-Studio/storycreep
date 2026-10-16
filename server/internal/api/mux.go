@@ -76,6 +76,8 @@ type Mux struct {
 	routes map[Route]Capability
 	// pages are the patterns that HandlePage registered.
 	pages map[string]bool
+	// authenticate is MuxOptions.Authenticate.
+	authenticate Authenticator
 }
 
 // MuxOptions configure NewMux.
@@ -92,7 +94,19 @@ type MuxOptions struct {
 	// (PRD FR-I18N-02).
 	Locales       *i18n.Bundle
 	DefaultLocale language.Tag
+	// Authenticate finds the caller of each operation whose capability
+	// needs an authenticated caller (Capability.Authenticated). Register
+	// panics on such an operation if it is nil.
+	Authenticate Authenticator
 }
+
+// Authenticator finds who makes a request of an operation whose capability
+// needs an authenticated caller, before the operation reads the request's
+// parameters or body, as Guard checks. It returns the context that the
+// operation runs with, which says who the caller is, or the error that the
+// request is answered with, as Register answers a handler's error, such as
+// unauthenticated for a request without credentials.
+type Authenticator func(ctx huma.Context) (context.Context, error)
 
 // NewMux returns a Mux without routes.
 func NewMux(opts MuxOptions) *Mux {
@@ -104,7 +118,8 @@ func NewMux(opts MuxOptions) *Mux {
 	if locales == nil {
 		locales = i18n.Default()
 	}
-	m := &Mux{router: chi.NewRouter(), routes: map[Route]Capability{}, pages: map[string]bool{}}
+	m := &Mux{router: chi.NewRouter(), routes: map[Route]Capability{}, pages: map[string]bool{},
+		authenticate: opts.Authenticate}
 	m.router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			next.ServeHTTP(w, r.WithContext(withLogger(r.Context(), log)))
@@ -214,8 +229,13 @@ func (m *Mux) declare(method, pattern string, c Capability) {
 // writes Prometheus's text format, for the route, which requires c. It
 // writes its own errors, with WriteError. It must limit how much it reads of
 // the request body itself; the body must arrive within a minute, as for
-// Register, unless the handler sets another read deadline.
+// Register, unless the handler sets another read deadline. It panics if c
+// needs an authenticated caller, whom only Register finds.
 func (m *Mux) Handle(c Capability, method, pattern string, h http.Handler) {
+	if c.Authenticated() {
+		panic(fmt.Sprintf("api: %s %s requires %s, which needs an authenticated caller; register it with Register",
+			method, pattern, c))
+	}
 	m.declare(method, pattern, c)
 	m.router.Method(method, pattern, h)
 }
@@ -243,7 +263,20 @@ func (m *Mux) IsPage(r Route) bool {
 // op.BodyReadTimeout says otherwise. An error that handler returns is
 // answered in the envelope, as Error describes, and the operation's default
 // response in the OpenAPI document is the envelope, unless op sets one.
+//
+// If c needs an authenticated caller, the Mux's Authenticator runs before
+// the operation's own middleware, and handler runs with the context that it
+// returns. A route therefore cannot declare such a capability and forget to
+// authenticate its caller. Register panics if the Mux has no Authenticator
+// then.
 func Register[I, O any](m *Mux, c Capability, op huma.Operation, handler func(context.Context, *I) (*O, error)) {
+	if c.Authenticated() {
+		if m.authenticate == nil {
+			panic(fmt.Sprintf("api: %s %s requires %s, which needs an authenticated caller, and the Mux has no "+
+				"Authenticator", op.Method, op.Path, c))
+		}
+		op.Middlewares = append(huma.Middlewares{authenticateWith(m.authenticate)}, op.Middlewares...)
+	}
 	m.declare(op.Method, op.Path, c)
 	// huma documents the envelope as the default response only for an
 	// operation that documents no other response than its success, so an
@@ -294,6 +327,21 @@ func Guard(check func(context.Context) error) func(huma.Context, func(huma.Conte
 			return
 		}
 		next(ctx)
+	}
+}
+
+// authenticateWith returns middleware for an operation that runs it with the
+// context that authenticate returns, or answers the request with its error,
+// as Guard does.
+func authenticateWith(authenticate Authenticator) func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		authenticated, err := authenticate(ctx)
+		if err != nil {
+			r, w := humachi.Unwrap(ctx)
+			WriteError(w, r, err)
+			return
+		}
+		next(huma.WithContext(ctx, authenticated))
 	}
 }
 

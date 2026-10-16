@@ -257,9 +257,12 @@ func TestRegisterRefusedByPolicy(t *testing.T) {
 // TestNoEndpointReturnsPasswordHash registers an account, checks that its
 // password's hash is an argon2id hash, and then requests every route of both
 // listeners, the registration's again included, and checks that no answer
-// holds the hash, its salt, or its key, in its body or its headers. A route
-// that later items add is requested too, without credentials, so an item
-// that adds a route that answers only with them requests it with them here.
+// holds the hash, its salt, or its key, in its body or its headers. Each
+// request is made with a new session of the account, and its CSRF token, so
+// that a route that needs a signed-in user answers as it does for one, and
+// with the metrics token. A route that later items add is requested too, so
+// an item that adds a route that answers only with other credentials, or
+// with a body of its own, requests it so here.
 //
 // Verifies: FR-AUTH-01/AC4
 func TestNoEndpointReturnsPasswordHash(t *testing.T) {
@@ -290,6 +293,13 @@ func TestNoEndpointReturnsPasswordHash(t *testing.T) {
 		secrets["the raw "+name] = string(raw)
 	}
 
+	// The bodies of the routes that take another body than a registration's,
+	// so that they answer as they do when they succeed, or, for a password
+	// change, as they do without changing the hash.
+	bodies := map[string][]byte{
+		loginPath:    credentials(t, "jo@example.com", "correct horse battery staple"),
+		passwordPath: passwordChange(t, "not the password at all", "a brand new passphrase"),
+	}
 	requested := 0
 	for name, m := range map[string]*api.Mux{"main": s.main, "admin": s.admin} {
 		var routes []api.Route
@@ -304,10 +314,13 @@ func TestNoEndpointReturnsPasswordHash(t *testing.T) {
 			var reqBody []byte
 			if r.Method != http.MethodGet {
 				reqBody = body
+				if b, ok := bodies[r.Pattern]; ok {
+					reqBody = b
+				}
 			}
-			res := send(m, r.Method, path, reqBody, "", http.Header{
-				"Authorization": {"Bearer " + testMetricsToken},
-			})
+			header := signIn(t, s.main, "jo@example.com").header(true)
+			header.Set("Authorization", "Bearer "+testMetricsToken)
+			res := send(m, r.Method, path, reqBody, "", header)
 			requested++
 			for what, v := range secrets {
 				if bytes.Contains(res.body, []byte(v)) {

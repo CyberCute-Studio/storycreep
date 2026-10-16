@@ -55,15 +55,16 @@ func TestServe(t *testing.T) {
 		admin bool
 		args  []string
 		// ready is the status of /readyz once the log has the message
-		// started.
+		// started, which the test waits for before it stops the server.
 		ready   int
 		started string
-		// workers is what the log says about the job workers, if anything.
-		// The server has no kinds of job yet, so they never start.
-		workers string
+		// logged is another message that the log has by the time the server
+		// stops, if any.
+		logged string
 	}{
-		{"auto-migrate", true, nil, http.StatusOK, "ready",
-			"the job workers do not start, because no kinds of job are registered"},
+		// The workers start once the server is ready, so the test waits for
+		// them, and the log says first that the server is ready.
+		{"auto-migrate", true, nil, http.StatusOK, "the job workers started", "ready"},
 		{"no-auto-migrate", false, []string{"--no-auto-migrate"}, http.StatusServiceUnavailable,
 			"the database has pending migrations; run storycreep migrate to apply them", ""},
 		{"no-inline-workers", true, []string{"--no-inline-workers"}, http.StatusOK, "ready",
@@ -106,8 +107,8 @@ func TestServe(t *testing.T) {
 				t.Fatal("serve did not stop")
 			}
 			wants := []string{`"msg":"listening"`, `"msg":"stopped"`}
-			if tt.workers != "" {
-				wants = append(wants, `"msg":"`+tt.workers+`"`)
+			if tt.logged != "" {
+				wants = append(wants, `"msg":"`+tt.logged+`"`)
 			}
 			for _, want := range wants {
 				if !strings.Contains(stderr.String(), want) {
@@ -115,6 +116,31 @@ func TestServe(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestServeRefusesPlainHTTPInHostedMode checks that serve does not start in
+// hosted mode with an http public URL, which would send session cookies
+// without Secure, names the key and the rule, and listens on nothing.
+//
+// Verifies: FR-AUTH-02/AC7
+func TestServeRefusesPlainHTTPInHostedMode(t *testing.T) {
+	addr := freeAddr(t)
+	env := map[string]string{"STORYCREEP_MODE": "hosted", "STORYCREEP_PUBLIC_URL": "http://storycreep.example.com",
+		"STORYCREEP_DATABASE_URL": testDatabaseURL, "STORYCREEP_HTTP_ADDR": addr, "STORYCREEP_ADMIN_ADDR": "off",
+		"STORYCREEP_METRICS_TOKEN": "test-metrics-token-0123456789"}
+	code, stdout, stderr := run(t, env, "serve", "--no-auto-migrate")
+	if code != ExitFailure || stdout != "" || !strings.Contains(stderr, "\n  STORYCREEP_PUBLIC_URL (") ||
+		!strings.Contains(stderr, "hosted mode requires an https URL") {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	if conn, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
+		conn.Close()
+		t.Errorf("something listens on %s", addr)
+	}
+	env["STORYCREEP_PUBLIC_URL"] = "https://storycreep.example.com"
+	if code, _, stderr := run(t, env, "validate-config"); code != ExitOK {
+		t.Errorf("with an https URL: exit %d, stderr %q", code, stderr)
 	}
 }
 

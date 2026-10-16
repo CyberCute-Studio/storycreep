@@ -17,6 +17,26 @@ export interface ErrorEnvelope {
   error: ErrorBody;
 }
 
+export interface LoginBody {
+  /** The account's email address, in any case */
+  email: string;
+  /** The account's password */
+  password: string;
+}
+
+export interface PageSessionBody {
+  items: Array<SessionBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
+export interface PasswordBody {
+  /** The account's password */
+  current_password: string;
+  /** The new password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password */
+  new_password: string;
+}
+
 export interface RegisterBody {
   /** The name that other people see, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls and line separators among them. White space around it is removed. */
   display_name: string;
@@ -24,6 +44,39 @@ export interface RegisterBody {
   email: string;
   /** The password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password. */
   password: string;
+}
+
+export interface RevokedBody {
+  /** How many sessions were revoked */
+  revoked: number;
+}
+
+export interface SessionBody {
+  /** When its user signed in */
+  created_at: string;
+  /** Whether it is the session of the request */
+  current: boolean;
+  /** When it ends at the latest, however often it is used: STORYCREEP_SESSION_LIFETIME after its user signed in, or the lifetime in force when its user signed in, if that was shorter */
+  expires_at: string;
+  /** The session's ID */
+  id: string;
+  /** When it ends unless it is used before: STORYCREEP_SESSION_IDLE_TIMEOUT after its last use, or at expires_at if that is sooner */
+  idle_expires_at: string;
+  /** The IP address that its user signed in from, as the server saw it; behind a reverse proxy, the proxy's */
+  ip?: string;
+  /** When it was last used, to the minute */
+  last_seen_at: string;
+  /** The User-Agent header of the client that its user signed in with */
+  user_agent?: string;
+}
+
+export interface SignedInBody {
+  /** The session's CSRF token: every request made with the session that changes something, with a method other than GET, HEAD, or OPTIONS, sends it in its X-CSRF-Token header, or is answered with 403 csrf_failed. It stays the same for as long as the session does, until changing the password gives the session a new one. */
+  csrf_token: string;
+  /** The session */
+  session: SessionBody;
+  /** The ID of the account that is signed in */
+  user_id: string;
 }
 
 export interface StatusBody {
@@ -44,6 +97,23 @@ export interface VersionBody {
 
 /** The API's operations, by operation ID: what each takes, and what it answers with each status that is not an error's. */
 export interface Operations {
+  /**
+   * Change the account's password
+   *
+   * Changes the signed-in account's password, if current_password is the account's, or the answer is 403 wrong_password. The new password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, or the answer is 422 weak_password. Changing it revokes every other session of the account, and gives the session of the request a new secret, in the Set-Cookie header, and a new CSRF token, in the body, so that the old ones are no longer valid. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  changePassword: {
+    input: {
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: PasswordBody;
+    };
+    responses: {
+      200: SignedInBody;
+    };
+  };
   /** Report that the process is alive */
   getHealth: {
     input: Record<string, never>;
@@ -79,11 +149,69 @@ export interface Operations {
       200: StatusBody;
     };
   };
+  /**
+   * Get the session of the request
+   *
+   * Returns the signed-in account's ID, the session of the request, and its CSRF token, which a page that the browser loads again reads here. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
+   */
+  getSession: {
+    input: Record<string, never>;
+    responses: {
+      200: SignedInBody;
+    };
+  };
   /** Describe the server's build */
   getVersion: {
     input: Record<string, never>;
     responses: {
       200: VersionBody;
+    };
+  };
+  /**
+   * List the account's sessions
+   *
+   * Lists the signed-in account's active sessions, newest first, each with the IP address and user agent that it started with, and when it was last used. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
+   */
+  listSessions: {
+    input: {
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageSessionBody;
+    };
+  };
+  /**
+   * Sign in
+   *
+   * Signs in with an account's email address and password, and starts a session, whose secret the Set-Cookie header gives the client, and whose CSRF token the body holds. An address of no account, a wrong password, and an account that cannot sign in, such as a suspended one, are all answered with 401 invalid_credentials, after the same work, so that the answer does not tell them apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another origin of the same site, is answered with 403 csrf_failed; browsers send that header only to https URLs and to loopback addresses, such as localhost.
+   */
+  login: {
+    input: {
+      body: LoginBody;
+    };
+    responses: {
+      200: SignedInBody;
+    };
+  };
+  /**
+   * Sign out
+   *
+   * Ends the session of the request: deletes it, so that its secret is no longer valid on any server, and clears its cookie. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  logout: {
+    input: {
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      204: undefined;
     };
   };
   /**
@@ -99,13 +227,56 @@ export interface Operations {
       202: undefined;
     };
   };
+  /**
+   * Revoke the account's other sessions
+   *
+   * Revokes every active session of the signed-in account but the session of the request, which signs the account out everywhere else. POST /api/v1/auth/logout ends the session of the request. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  revokeOtherSessions: {
+    input: {
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      200: RevokedBody;
+    };
+  };
+  /**
+   * Revoke a session
+   *
+   * Revokes one of the signed-in account's active sessions, which is then no longer valid on any server. Revoking the session of the request signs it out, and the answer clears its cookie. A session that is not an active session of the account is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  revokeSession: {
+    input: {
+      path: {
+        /** The session's ID */
+        session_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      204: undefined;
+    };
+  };
 }
 
 /** The method and path of each operation. */
 export const routes = {
+  changePassword: { method: "POST", path: "/api/v1/auth/password" },
   getHealth: { method: "GET", path: "/healthz" },
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
   getReadiness: { method: "GET", path: "/readyz" },
+  getSession: { method: "GET", path: "/api/v1/auth/session" },
   getVersion: { method: "GET", path: "/version" },
+  listSessions: { method: "GET", path: "/api/v1/auth/sessions" },
+  login: { method: "POST", path: "/api/v1/auth/login" },
+  logout: { method: "POST", path: "/api/v1/auth/logout" },
   registerAccount: { method: "POST", path: "/api/v1/auth/register" },
+  revokeOtherSessions: { method: "DELETE", path: "/api/v1/auth/sessions" },
+  revokeSession: { method: "DELETE", path: "/api/v1/auth/sessions/{session_id}" },
 } as const satisfies Record<keyof Operations, { method: string; path: string }>;

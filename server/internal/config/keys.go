@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"golang.org/x/text/language"
 
@@ -128,6 +129,33 @@ var keys = []key{
 		},
 		capability:      "Signup",
 		capabilityLimit: "self-hosted only",
+	},
+	{
+		name: "STORYCREEP_SESSION_IDLE_TIMEOUT",
+		doc: "How long a session lasts without being used before it ends, and its user must sign in again " +
+			"(PRD FR-AUTH-02). A request made with the session counts as using it, although the server records " +
+			"the use at most once a minute. A change applies to the sessions that exist already, too.",
+		valuesDoc: sessionDurationDoc,
+		def:       constant("720h"),
+		parse: func(c *Config, v string) error {
+			d, err := parseSessionDuration(v)
+			c.SessionIdleTimeout = d
+			return err
+		},
+	},
+	{
+		name: "STORYCREEP_SESSION_LIFETIME",
+		doc: "How long a session lasts at most, from when its user signed in, however often it is used (PRD " +
+			"FR-AUTH-02). The session's cookie expires then too. A shorter value applies to the sessions that exist " +
+			"already, too, but a longer one only to those that start after the change, whose cookies are made " +
+			"to last that long.",
+		valuesDoc: sessionDurationDoc,
+		def:       constant("2160h"),
+		parse: func(c *Config, v string) error {
+			d, err := parseSessionDuration(v)
+			c.SessionLifetime = d
+			return err
+		},
 	},
 	{
 		name: "STORYCREEP_DEFAULT_LOCALE",
@@ -365,6 +393,28 @@ var keys = []key{
 			return c.LogLevel.UnmarshalText([]byte(v))
 		},
 	},
+}
+
+// The bounds of a session's idle timeout and lifetime.
+const (
+	minSessionDuration = 5 * time.Minute
+	maxSessionDuration = 365 * 24 * time.Hour
+)
+
+// sessionDurationDoc describes the values of the session keys.
+const sessionDurationDoc = "A duration from `5m` to `8760h` (a year), in hours, minutes, and seconds, such as `720h` or " +
+	"`1h30m`"
+
+// parseSessionDuration parses the value of a session key.
+func parseSessionDuration(v string) (time.Duration, error) {
+	d, err := time.ParseDuration(v)
+	switch {
+	case err != nil:
+		return 0, errors.New("not a duration, such as 720h for 30 days")
+	case d < minSessionDuration || d > maxSessionDuration:
+		return 0, errors.New("must be from 5m to 8760h")
+	}
+	return d, nil
 }
 
 // localeNames lists the locales that the server has a catalog for, each

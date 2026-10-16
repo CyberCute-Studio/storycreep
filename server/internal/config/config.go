@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"golang.org/x/text/language"
 
@@ -54,6 +55,9 @@ type Config struct {
 	LogLevel slog.Level
 	// DefaultLocale is the instance's default locale, which has a catalog.
 	DefaultLocale language.Tag
+	// SessionIdleTimeout is how long a session lasts unused, and
+	// SessionLifetime how long it lasts at most (PRD FR-AUTH-02).
+	SessionIdleTimeout, SessionLifetime time.Duration
 	// Capabilities are the mode-dependent behaviours.
 	Capabilities Capabilities
 

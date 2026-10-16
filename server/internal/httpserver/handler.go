@@ -27,6 +27,8 @@ type server struct {
 	// is nil if there are no metrics to serve, and metricsOff says why.
 	main, admin *api.Mux
 	metricsOff  string
+	// accounts keeps the accounts and their sessions.
+	accounts *account.Service
 }
 
 func newServer(cfg *config.Config, log *slog.Logger) *server {
@@ -35,6 +37,12 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		ready:   &readiness{log: log},
 		metrics: newMetrics(),
 	}
+	s.accounts = account.New(readyDB{s.ready}, account.Options{
+		Signup:      cfg.Capabilities.Signup,
+		IdleTimeout: cfg.SessionIdleTimeout,
+		Lifetime:    cfg.SessionLifetime,
+	})
+	cookie := newSessionCookie(cfg.PublicURL)
 	s.main = api.NewMux(api.MuxOptions{
 		Log:           log,
 		DefaultLocale: cfg.DefaultLocale,
@@ -44,11 +52,15 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 			s.recoverPanics,
 			securityHeaders(cfg.PublicURL.HTTPS()),
 			noindexApp,
+			refuseCrossSite,
 			s.ready.gate,
+			withClient,
 		},
+		Authenticate: authenticator(s.accounts, cookie),
 	})
 	s.registerOperational(s.main)
-	registerAccounts(s.main, account.New(readyDB{s.ready}, cfg.Capabilities.Signup))
+	registerAccounts(s.main, s.accounts)
+	registerSessions(s.main, s.accounts, cookie)
 	registerDocument(s.main)
 	registerPages(s.main, cfg.Capabilities.PublicSite)
 

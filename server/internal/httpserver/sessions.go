@@ -1,0 +1,540 @@
+package httpserver
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"net/http"
+	"net/netip"
+	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humachi"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/account"
+	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
+)
+
+// Sessions on the wire (PRD FR-AUTH-02, NFR-SEC-04). Signing in sets a
+// cookie that holds the session's secret, HttpOnly, so that no script reads
+// it, and SameSite=Lax, so that a browser does not send it with a request
+// that another site makes, other than following a link. Its name and whether
+// it is Secure follow STORYCREEP_PUBLIC_URL, not the scheme of the request,
+// which a proxy that terminates TLS forwards as plain HTTP: with an https
+// URL it is __Host-sc_session, Secure, for the whole host and nothing else,
+// and with an http URL, which only self-hosted mode allows, sc_session,
+// which a browser then sends over plain HTTP.
+//
+// A request made with the cookie that changes something, with a method other
+// than GET, HEAD, or OPTIONS, also needs the session's CSRF token in its
+// X-CSRF-Token header (AC5). The token is an HMAC of the session's secret,
+// which a page of another site can neither read nor compute: signing in and
+// GET /api/v1/auth/session return it, and only to the page of the session.
+// The server keeps nothing for it, and it changes when the session's secret
+// does. A browser also tells the server where a request comes from, in its
+// Sec-Fetch-Site header, and the server refuses every such request that
+// comes from another site, or from another origin of the same site, signing
+// in included (refuseCrossSite). Browsers
+// send that header only to an https URL or to a loopback address such as
+// localhost, so with a plain-HTTP public URL of another host, such as a LAN
+// address, the CSRF token alone protects the requests made with a session,
+// and nothing stops another site from signing a browser in.
+
+// The names of the session cookie: with an https public URL, and with an
+// http one.
+const (
+	secureCookieName = "__Host-sc_session"
+	plainCookieName  = "sc_session"
+)
+
+// csrfHeader is the header of a request's CSRF token.
+const csrfHeader = "X-CSRF-Token"
+
+// csrfLabel is what the CSRF token is the HMAC of, with the session's
+// secret as the key, so that the token is no other value derived from the
+// secret, such as the hash that the database holds.
+const csrfLabel = "storycreep session csrf token"
+
+// sessionCookie is the session cookie of the public URL.
+type sessionCookie struct {
+	name   string
+	secure bool
+}
+
+func newSessionCookie(u config.PublicURL) sessionCookie {
+	if u.HTTPS() {
+		return sessionCookie{name: secureCookieName, secure: true}
+	}
+	return sessionCookie{name: plainCookieName}
+}
+
+// set returns the Set-Cookie header that gives the client the session's
+// secret, until the session ends at the latest.
+func (c sessionCookie) set(issued account.Issued) string {
+	return c.cookie(issued.Secret.Reveal(), issued.EndsAt).String()
+}
+
+// clear returns the Set-Cookie header that removes the cookie.
+func (c sessionCookie) clear() string {
+	return c.cookie("", time.Time{}).String()
+}
+
+// cookie returns the cookie with value, which expires at expires, or is
+// removed if expires is zero.
+func (c sessionCookie) cookie(value string, expires time.Time) *http.Cookie {
+	ck := &http.Cookie{Name: c.name, Value: value, Path: "/", Secure: c.secure, HttpOnly: true,
+		SameSite: http.SameSiteLaxMode}
+	if expires.IsZero() {
+		ck.MaxAge = -1
+		return ck
+	}
+	ck.Expires = expires.UTC()
+	ck.MaxAge = max(1, int(time.Until(expires)/time.Second))
+	return ck
+}
+
+// read returns the secret in r's cookie, and false if it has none.
+func (c sessionCookie) read(r *http.Request) (secret.Value, bool) {
+	ck, err := r.Cookie(c.name)
+	if err != nil || ck.Value == "" {
+		return secret.Value{}, false
+	}
+	return secret.New(ck.Value), true
+}
+
+// csrfToken returns the CSRF token of the session whose secret is s.
+func csrfToken(s secret.Value) string {
+	mac := hmac.New(sha256.New, []byte(s.Reveal()))
+	mac.Write([]byte(csrfLabel))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// validCSRF reports whether token is the CSRF token of the session whose
+// secret is s, in a time that does not depend on how much of it matches.
+func validCSRF(token string, s secret.Value) bool {
+	return hmac.Equal([]byte(token), []byte(csrfToken(s)))
+}
+
+// safeMethod reports whether a request with method changes nothing, so that
+// it needs no CSRF token.
+func safeMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
+}
+
+// refuseCrossSite answers with csrf_failed a request that changes something,
+// as safeMethod tells, and that a browser says comes from another site, or
+// from another origin of the same site, in its Sec-Fetch-Site header,
+// whatever credentials it has. The tool's own pages make their requests from
+// its origin, and nothing else that runs in a browser has a reason to change
+// anything, so this stops another site from making a browser sign in to an
+// account of its choosing, which no session's CSRF token protects, as well as
+// from acting with a session. A request without the header goes on, and the
+// CSRF token of its session protects it: one from a program, from an older
+// browser, or to a plain-HTTP URL whose host is not a loopback address, to
+// which browsers do not send the header.
+func refuseCrossSite(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if site := r.Header.Get("Sec-Fetch-Site"); !safeMethod(r.Method) && (site == "cross-site" ||
+			site == "same-site") {
+			api.WriteError(w, r, api.NewError(api.CodeCSRFFailed))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+type clientKey struct{}
+
+// withClient gives each request's context the client that the sessions and
+// the audit log record: the address that the connection comes from, which
+// behind a reverse proxy is the proxy's, and its User-Agent header.
+func withClient(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c := account.Client{UserAgent: r.Header.Get("User-Agent")}
+		if ap, err := netip.ParseAddrPort(r.RemoteAddr); err == nil {
+			c.IP = ap.Addr().Unmap()
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientKey{}, c)))
+	})
+}
+
+// clientFrom returns the client of a request's context.
+func clientFrom(ctx context.Context) account.Client {
+	c, _ := ctx.Value(clientKey{}).(account.Client)
+	return c
+}
+
+type currentKey struct{}
+
+// current is the session that a request is made with, and its secret.
+type current struct {
+	session account.Session
+	secret  secret.Value
+}
+
+// currentFrom returns the session of a request's context, which the
+// authenticator put there, or unauthenticated if it has none, which only a
+// route that does not need a session could have.
+func currentFrom(ctx context.Context) (current, error) {
+	c, ok := ctx.Value(currentKey{}).(current)
+	if !ok {
+		return current{}, api.NewError(api.CodeUnauthenticated)
+	}
+	return c, nil
+}
+
+// authenticator returns the Authenticator of the API (api.MuxOptions): it
+// finds the session that a request's cookie holds the secret of, and, for a
+// request that changes something, checks its CSRF token first, so that a
+// request without one is refused before the database is asked. A request
+// without the cookie, or with one of a session that has ended, is answered
+// with unauthenticated, and the answer clears the cookie in the second case.
+func authenticator(accounts *account.Service, cookie sessionCookie) api.Authenticator {
+	return func(hctx huma.Context) (context.Context, error) {
+		r, _ := humachi.Unwrap(hctx)
+		ctx := hctx.Context()
+		value, ok := cookie.read(r)
+		if !ok {
+			return nil, api.NewError(api.CodeUnauthenticated)
+		}
+		if !safeMethod(r.Method) && !validCSRF(r.Header.Get(csrfHeader), value) {
+			return nil, api.NewError(api.CodeCSRFFailed)
+		}
+		session, err := accounts.Session(ctx, value)
+		if errors.Is(err, account.ErrNoSession) {
+			return nil, signedOut(cookie)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return context.WithValue(ctx, currentKey{}, current{session: session, secret: value}), nil
+	}
+}
+
+// signedOut returns unauthenticated, with the header that clears the
+// cookie of a session that has ended.
+func signedOut(cookie sessionCookie) error {
+	return huma.ErrorWithHeaders(api.NewError(api.CodeUnauthenticated), http.Header{"Set-Cookie": {cookie.clear()}})
+}
+
+// sessionBody is a session, as the API shows it.
+type sessionBody struct {
+	ID            string    `json:"id" doc:"The session's ID"`
+	CreatedAt     time.Time `json:"created_at" doc:"When its user signed in"`
+	LastSeenAt    time.Time `json:"last_seen_at" doc:"When it was last used, to the minute"`
+	ExpiresAt     time.Time `json:"expires_at" doc:"When it ends at the latest, however often it is used: STORYCREEP_SESSION_LIFETIME after its user signed in, or the lifetime in force when its user signed in, if that was shorter"`
+	IdleExpiresAt time.Time `json:"idle_expires_at" doc:"When it ends unless it is used before: STORYCREEP_SESSION_IDLE_TIMEOUT after its last use, or at expires_at if that is sooner"`
+	IP            string    `json:"ip,omitempty" doc:"The IP address that its user signed in from, as the server saw it; behind a reverse proxy, the proxy's"`
+	UserAgent     string    `json:"user_agent,omitempty" doc:"The User-Agent header of the client that its user signed in with"`
+	Current       bool      `json:"current" doc:"Whether it is the session of the request"`
+}
+
+// newSessionBody returns s as the API shows it to a request made with the
+// session currentID.
+func newSessionBody(s account.Session, currentID ids.UUID) sessionBody {
+	b := sessionBody{
+		ID:            ids.Encode(ids.Session, s.ID),
+		CreatedAt:     s.CreatedAt,
+		LastSeenAt:    s.LastSeenAt,
+		ExpiresAt:     s.EndsAt,
+		IdleExpiresAt: s.IdleEndsAt,
+		UserAgent:     s.UserAgent,
+		Current:       s.ID == currentID,
+	}
+	if s.IP.IsValid() {
+		b.IP = s.IP.String()
+	}
+	return b
+}
+
+// signedInBody is the session that a request is made with, or that signing
+// in started.
+type signedInBody struct {
+	UserID    string      `json:"user_id" doc:"The ID of the account that is signed in"`
+	Session   sessionBody `json:"session" doc:"The session"`
+	CSRFToken string      `json:"csrf_token" doc:"The session's CSRF token: every request made with the session that changes something, with a method other than GET, HEAD, or OPTIONS, sends it in its X-CSRF-Token header, or is answered with 403 csrf_failed. It stays the same for as long as the session does, until changing the password gives the session a new one."`
+}
+
+func newSignedInBody(s account.Session, value secret.Value) signedInBody {
+	return signedInBody{UserID: ids.Encode(ids.User, s.UserID), Session: newSessionBody(s, s.ID),
+		CSRFToken: csrfToken(value)}
+}
+
+// signedInOutput answers a request that starts a session or gives it a new
+// secret.
+type signedInOutput struct {
+	SetCookie string `header:"Set-Cookie" doc:"The session cookie, which holds the session's secret: __Host-sc_session, Secure, when STORYCREEP_PUBLIC_URL is https, and sc_session otherwise, in either case HttpOnly, SameSite=Lax, for the path /, and expiring when the session ends at the latest"`
+	Body      signedInBody
+}
+
+type sessionOutput struct {
+	Body signedInBody
+}
+
+// clearedOutput is an answer of 204 that may clear the session cookie.
+type clearedOutput struct {
+	SetCookie string `header:"Set-Cookie" doc:"Clears the session cookie, when the session of the request has ended"`
+}
+
+// CSRFInput is the CSRF token of a request that changes something. Its
+// name is exported so that huma reads it where it is embedded.
+type CSRFInput struct {
+	CSRFToken string `header:"X-CSRF-Token" required:"true" doc:"The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed"`
+}
+
+// loginBody is the body of POST /api/v1/auth/login.
+type loginBody struct {
+	Email    string `json:"email" maxLength:"254" doc:"The account's email address, in any case"`
+	Password string `json:"password" maxLength:"256" doc:"The account's password"`
+}
+
+type loginInput struct {
+	Body loginBody
+}
+
+type sessionsInput struct {
+	api.PageParams
+}
+
+// sessionKey is the key that the list of sessions is paged by.
+type sessionKey struct {
+	ID string `json:"id"`
+}
+
+type sessionsOutput struct {
+	Body api.Page[sessionBody]
+}
+
+type revokeSessionInput struct {
+	CSRFInput
+	SessionID string `path:"session_id" doc:"The session's ID"`
+}
+
+// revokedBody is the body of DELETE /api/v1/auth/sessions.
+type revokedBody struct {
+	Revoked int `json:"revoked" doc:"How many sessions were revoked"`
+}
+
+type revokedOutput struct {
+	Body revokedBody
+}
+
+// passwordBody is the body of POST /api/v1/auth/password.
+type passwordBody struct {
+	CurrentPassword string `json:"current_password" maxLength:"256" doc:"The account's password"`
+	NewPassword     string `json:"new_password" maxLength:"256" doc:"The new password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password"`
+}
+
+type passwordInput struct {
+	CSRFInput
+	Body passwordBody
+}
+
+// sessionAuthDoc says, in an operation's description, what the operation
+// needs of a request.
+const sessionAuthDoc = " It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the " +
+	"answer is 401 unauthenticated."
+
+// csrfDoc says what an operation that changes something needs of a request
+// besides.
+const csrfDoc = sessionAuthDoc + " It changes something, so it also needs the session's CSRF token in the " +
+	"X-CSRF-Token header, or the answer is 403 csrf_failed."
+
+// registerSessions registers the routes of signing in and of the sessions
+// (PRD FR-AUTH-02).
+func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCookie) {
+	api.Register(m, api.Public, huma.Operation{
+		OperationID: "login",
+		Method:      http.MethodPost,
+		Path:        "/api/v1/auth/login",
+		Summary:     "Sign in",
+		Description: "Signs in with an account's email address and password, and starts a session, whose secret " +
+			"the Set-Cookie header gives the client, and whose CSRF token the body holds. An address of no " +
+			"account, a wrong password, and an account that cannot sign in, such as a suspended one, are all " +
+			"answered with 401 invalid_credentials, after the same work, so that the answer does not tell them " +
+			"apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another " +
+			"origin of the same site, is answered with 403 csrf_failed; browsers send that header only to https " +
+			"URLs and to loopback addresses, such as localhost.",
+		Tags: []string{"Authentication"},
+	}, func(ctx context.Context, in *loginInput) (*signedInOutput, error) {
+		issued, err := accounts.Login(ctx, in.Body.Email, secret.New(in.Body.Password), clientFrom(ctx))
+		if errors.Is(err, account.ErrInvalidCredentials) {
+			return nil, api.NewError(api.CodeInvalidCredentials)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &signedInOutput{SetCookie: cookie.set(issued), Body: newSignedInBody(issued.Session, issued.Secret)}, nil
+	})
+
+	api.Register(m, api.OwnAccount, huma.Operation{
+		OperationID: "getSession",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/auth/session",
+		Summary:     "Get the session of the request",
+		Description: "Returns the signed-in account's ID, the session of the request, and its CSRF token, which a " +
+			"page that the browser loads again reads here." + sessionAuthDoc,
+		Tags: []string{"Authentication"},
+	}, func(ctx context.Context, _ *struct{}) (*sessionOutput, error) {
+		cur, err := currentFrom(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return &sessionOutput{Body: newSignedInBody(cur.session, cur.secret)}, nil
+	})
+
+	api.Register(m, api.OwnAccount, huma.Operation{
+		OperationID: "logout",
+		Method:      http.MethodPost,
+		Path:        "/api/v1/auth/logout",
+		Summary:     "Sign out",
+		Description: "Ends the session of the request: deletes it, so that its secret is no longer valid on any " +
+			"server, and clears its cookie." + csrfDoc,
+		Tags:          []string{"Authentication"},
+		DefaultStatus: http.StatusNoContent,
+	}, func(ctx context.Context, _ *CSRFInput) (*clearedOutput, error) {
+		cur, err := currentFrom(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err := accounts.Logout(ctx, cur.session, clientFrom(ctx)); err != nil {
+			return nil, err
+		}
+		return &clearedOutput{SetCookie: cookie.clear()}, nil
+	})
+
+	api.Register(m, api.OwnAccount, huma.Operation{
+		OperationID: "listSessions",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/auth/sessions",
+		Summary:     "List the account's sessions",
+		Description: "Lists the signed-in account's active sessions, newest first, each with the IP address and " +
+			"user agent that it started with, and when it was last used." + sessionAuthDoc,
+		Tags: []string{"Authentication"},
+	}, func(ctx context.Context, in *sessionsInput) (*sessionsOutput, error) {
+		cur, err := currentFrom(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var before ids.UUID
+		if in.Cursor != "" {
+			key, err := api.DecodeCursor[sessionKey](in.Cursor)
+			if err != nil {
+				return nil, err
+			}
+			if before, err = ids.ParseUUID(key.ID); err != nil || before.String() != key.ID {
+				return nil, api.NewError(api.CodeInvalidCursor)
+			}
+		}
+		sessions, err := accounts.Sessions(ctx, cur.session.UserID, before, in.Fetch())
+		if err != nil {
+			return nil, err
+		}
+		page, err := api.NewPage(in.PageParams, sessions, func(s account.Session) sessionKey {
+			return sessionKey{ID: s.ID.String()}
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := &sessionsOutput{Body: api.Page[sessionBody]{Items: make([]sessionBody, len(page.Items)),
+			NextCursor: page.NextCursor}}
+		for i, s := range page.Items {
+			out.Body.Items[i] = newSessionBody(s, cur.session.ID)
+		}
+		return out, nil
+	})
+
+	api.Register(m, api.OwnAccount, huma.Operation{
+		OperationID: "revokeSession",
+		Method:      http.MethodDelete,
+		Path:        "/api/v1/auth/sessions/{session_id}",
+		Summary:     "Revoke a session",
+		Description: "Revokes one of the signed-in account's active sessions, which is then no longer valid on " +
+			"any server. Revoking the session of the request signs it out, and the answer clears its cookie. A " +
+			"session that is not an active session of the account is answered with 404 not_found." + csrfDoc,
+		Tags:          []string{"Authentication"},
+		DefaultStatus: http.StatusNoContent,
+	}, func(ctx context.Context, in *revokeSessionInput) (*clearedOutput, error) {
+		cur, err := currentFrom(ctx)
+		if err != nil {
+			return nil, err
+		}
+		id, err := ids.Decode(ids.Session, in.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		err = accounts.RevokeSession(ctx, cur.session.UserID, id, clientFrom(ctx))
+		if errors.Is(err, account.ErrSessionNotFound) {
+			return nil, api.NewError(api.CodeNotFound)
+		}
+		if err != nil {
+			return nil, err
+		}
+		out := &clearedOutput{}
+		if id == cur.session.ID {
+			out.SetCookie = cookie.clear()
+		}
+		return out, nil
+	})
+
+	api.Register(m, api.OwnAccount, huma.Operation{
+		OperationID: "revokeOtherSessions",
+		Method:      http.MethodDelete,
+		Path:        "/api/v1/auth/sessions",
+		Summary:     "Revoke the account's other sessions",
+		Description: "Revokes every active session of the signed-in account but the session of the request, which " +
+			"signs the account out everywhere else. POST /api/v1/auth/logout ends the session of the request." +
+			csrfDoc,
+		Tags: []string{"Authentication"},
+	}, func(ctx context.Context, _ *CSRFInput) (*revokedOutput, error) {
+		cur, err := currentFrom(ctx)
+		if err != nil {
+			return nil, err
+		}
+		n, err := accounts.RevokeOtherSessions(ctx, cur.session, clientFrom(ctx))
+		if err != nil {
+			return nil, err
+		}
+		return &revokedOutput{Body: revokedBody{Revoked: n}}, nil
+	})
+
+	api.Register(m, api.OwnAccount, huma.Operation{
+		OperationID: "changePassword",
+		Method:      http.MethodPost,
+		Path:        "/api/v1/auth/password",
+		Summary:     "Change the account's password",
+		Description: "Changes the signed-in account's password, if current_password is the account's, or the " +
+			"answer is 403 wrong_password. The new password must have at least 12 characters, counted as Unicode " +
+			"code points once it is in NFKC, and must not be one of the 10,000 most common passwords, or the " +
+			"answer is 422 weak_password. Changing it revokes every other session of the account, and gives the " +
+			"session of the request a new secret, in the Set-Cookie header, and a new CSRF token, in the body, " +
+			"so that the old ones are no longer valid." + csrfDoc,
+		Tags: []string{"Authentication"},
+	}, func(ctx context.Context, in *passwordInput) (*signedInOutput, error) {
+		cur, err := currentFrom(ctx)
+		if err != nil {
+			return nil, err
+		}
+		issued, err := accounts.ChangePassword(ctx, cur.session, secret.New(in.Body.CurrentPassword),
+			secret.New(in.Body.NewPassword), clientFrom(ctx))
+		var weak *account.PasswordError
+		switch {
+		case errors.Is(err, account.ErrWrongPassword):
+			return nil, &api.Error{Code: api.CodeWrongPassword, Details: map[string]any{
+				"errors": []api.Problem{{Location: "body.current_password", Message: "is not the account's password"}},
+			}}
+		case errors.Is(err, account.ErrNoSession):
+			return nil, signedOut(cookie)
+		case errors.As(err, &weak):
+			return nil, weakPasswordError(weak, "body.new_password")
+		case err != nil:
+			return nil, err
+		}
+		return &signedInOutput{SetCookie: cookie.set(issued), Body: newSignedInBody(issued.Session, issued.Secret)}, nil
+	})
+}

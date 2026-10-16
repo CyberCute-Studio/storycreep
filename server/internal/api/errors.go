@@ -29,6 +29,9 @@ const (
 	CodeInvalidID            Code = "invalid_id"
 	CodeInvalidCursor        Code = "invalid_cursor"
 	CodeUnauthenticated      Code = "unauthenticated"
+	CodeInvalidCredentials   Code = "invalid_credentials"
+	CodeCSRFFailed           Code = "csrf_failed"
+	CodeWrongPassword        Code = "wrong_password"
 	CodeSignupClosed         Code = "signup_closed"
 	CodeInviteRequired       Code = "invite_required"
 	CodeNotFound             Code = "not_found"
@@ -66,9 +69,29 @@ var codes = []codeSpec{
 	{CodeInvalidCursor, http.StatusBadRequest, i18n.K("error.invalid_cursor"),
 		"The `cursor` query parameter is not a cursor that the same list returned as `next_cursor`."},
 	{CodeUnauthenticated, http.StatusUnauthorized, i18n.K("error.unauthenticated"),
-		"The request has no credentials, or credentials that are wrong, such as a bearer token for " +
-			"`/metrics` that is not `STORYCREEP_METRICS_TOKEN`. The `WWW-Authenticate` header says which " +
-			"scheme the route takes."},
+		"The request has no credentials, or credentials that are wrong. A route that needs a signed-in user " +
+			"answers with it to a request without the session cookie that `POST /api/v1/auth/login` sets, or " +
+			"with the cookie of a session that has ended: signed out, revoked, unused for " +
+			"`STORYCREEP_SESSION_IDLE_TIMEOUT`, past `STORYCREEP_SESSION_LIFETIME`, or of an account that can no " +
+			"longer sign in. The answer then clears the cookie. `/metrics` answers with it to a request without " +
+			"`STORYCREEP_METRICS_TOKEN` as its bearer token, and its `WWW-Authenticate` header names the scheme."},
+	{CodeInvalidCredentials, http.StatusUnauthorized, i18n.K("error.invalid_credentials"),
+		"`POST /api/v1/auth/login` was given an email address that belongs to no account, a password that is " +
+			"not the account's, or the address of an account that cannot sign in, such as a suspended one. The " +
+			"answer is the same for each, so that it does not tell whether an address has an account " +
+			"(PRD FR-AUTH-01)."},
+	{CodeCSRFFailed, http.StatusForbidden, i18n.K("error.csrf_failed"),
+		"The request changes something, with a method other than `GET`, `HEAD`, or `OPTIONS` (PRD FR-AUTH-02 " +
+			"AC5). Either it was made to a route that needs a signed-in user with the session cookie but without " +
+			"the session's CSRF token, which `POST /api/v1/auth/login` and `GET /api/v1/auth/session` return as " +
+			"`csrf_token`, in its `X-CSRF-Token` header, or a browser sent it, to any route, signing in included, " +
+			"from another site or from another origin of the same site, as its `Sec-Fetch-Site` header says, " +
+			"whatever its credentials. Browsers send that header only to `https` URLs and to loopback addresses, " +
+			"such as `localhost`, so with a plain-HTTP `STORYCREEP_PUBLIC_URL` of another host only the CSRF " +
+			"token is checked, on the routes that need a signed-in user."},
+	{CodeWrongPassword, http.StatusForbidden, i18n.K("error.wrong_password"),
+		"`POST /api/v1/auth/password` was given a current password that is not the account's, so the " +
+			"password stays as it was."},
 	{CodeSignupClosed, http.StatusForbidden, i18n.K("error.signup_closed"),
 		"The instance's signup policy, `STORYCREEP_SIGNUP`, is `closed`, so `POST /api/v1/auth/register` " +
 			"creates no account, whatever the request holds (PRD FR-AUTH-01 AC3)."},

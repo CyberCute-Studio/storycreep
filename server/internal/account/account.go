@@ -1,5 +1,5 @@
-// Package account creates accounts and checks their passwords (PRD
-// FR-AUTH-01, NFR-SEC-03).
+// Package account creates accounts, checks their passwords, and signs them
+// in with sessions (PRD FR-AUTH-01, FR-AUTH-02, NFR-SEC-03, NFR-SEC-04).
 //
 // An account is registered with an email address, a display name, and a
 // password, when the instance's signup policy (STORYCREEP_SIGNUP, the Signup
@@ -17,8 +17,11 @@
 // a 32-byte key, and these parameters (RFC 9106 §4, the second recommended
 // setting): memory 64 MiB (m=65536), 3 passes (t=3), and parallelism 4
 // (p=4). A hash records its parameters, in the PHC string format, so that
-// when a release changes them, Authenticate replaces a hash made with the old
+// when a release changes them, signing in replaces a hash made with the old
 // ones at the account's next sign-in, once the password has matched it.
+//
+// Signing in starts a session (session.go), which the server finds by its
+// secret, on every request made with it.
 package account
 
 import (
@@ -27,6 +30,7 @@ import (
 	"fmt"
 	"net/mail"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -63,8 +67,8 @@ var (
 	ErrInviteRequired = errors.New("account: signup needs an invitation")
 )
 
-// ErrInvalidCredentials is returned by Authenticate when the address belongs
-// to no active account, or the password is not the account's.
+// ErrInvalidCredentials is returned by Login when the address belongs to no
+// active account, or the password is not the account's.
 var ErrInvalidCredentials = errors.New("account: the email address or the password is wrong")
 
 // DB runs a transaction of the application login, as *database.DB does.
@@ -72,24 +76,43 @@ type DB interface {
 	InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
 }
 
-// Service creates accounts and checks their passwords.
+// Options configure a Service.
+type Options struct {
+	// Signup is the signup policy.
+	Signup config.SignupPolicy
+	// IdleTimeout is how long a session lasts unused, and Lifetime how long
+	// it lasts at most. Both must be positive.
+	IdleTimeout, Lifetime time.Duration
+}
+
+// Service creates accounts, checks their passwords, and keeps their
+// sessions.
 type Service struct {
 	db     DB
 	signup config.SignupPolicy
-	hasher *Hasher
+	// idle and lifetime are the sessions' idle timeout and lifetime.
+	idle, lifetime time.Duration
+	hasher         *Hasher
 	// decoy is a hash with the current parameters that no password matches
-	// (Hasher.decoy), which Authenticate checks a password against when the
+	// (Hasher.decoy), which signing in checks a password against when the
 	// address has no account, so that it takes as long as when it has one.
 	decoy string
 }
 
-// New returns a Service that keeps accounts in db, under the signup policy.
-func New(db DB, signup config.SignupPolicy) *Service {
-	return newService(db, signup, NewHasher())
+// New returns a Service that keeps accounts in db, with opts. It panics if
+// a session's idle timeout or lifetime is not positive, which is a mistake
+// in the code that calls it.
+func New(db DB, opts Options) *Service {
+	return newService(db, opts, NewHasher())
 }
 
-func newService(db DB, signup config.SignupPolicy, h *Hasher) *Service {
-	return &Service{db: db, signup: signup, hasher: h, decoy: h.decoy()}
+func newService(db DB, opts Options, h *Hasher) *Service {
+	if opts.IdleTimeout <= 0 || opts.Lifetime <= 0 {
+		panic(fmt.Sprintf("account: the sessions' idle timeout %v and lifetime %v must be positive", opts.IdleTimeout,
+			opts.Lifetime))
+	}
+	return &Service{db: db, signup: opts.Signup, idle: opts.IdleTimeout, lifetime: opts.Lifetime, hasher: h,
+		decoy: h.decoy()}
 }
 
 // CheckSignup returns ErrSignupClosed or ErrInviteRequired unless the signup
@@ -281,67 +304,87 @@ func isControl(r rune) bool {
 	return unicode.IsControl(r) || unicode.In(r, unicode.Bidi_Control, unicode.Zl, unicode.Zp)
 }
 
-// Authenticate returns the ID of the active account that the email address
-// belongs to, if password is its password, and ErrInvalidCredentials if the
-// address belongs to no account, to one that is not active, as a suspended
-// one or one whose deletion is pending (FR-GDPR-02), or to one without a
-// password, or if the password is another. It takes as long whichever of
-// these it is, because it checks the password against a decoy hash, with the
-// current parameters, when it has no hash to check it against. The exception
-// is an account whose hash was made with other parameters, against which a
-// wrong password takes as long as those parameters take: after a release
-// changes them, the time of a failed sign-in tells such an account from an
-// address without one, until the account's next sign-in replaces its hash.
-// The address is looked up in its canonical form (canonicalEmail).
+// authenticate checks a sign-in, for Login. It returns as id the ID of the
+// active account that the email address belongs to, if password is its
+// password, and ErrInvalidCredentials if the address belongs to no account,
+// to one that is not active, as a suspended one or one whose deletion is
+// pending (FR-GDPR-02), or to one without a password, or if the password is
+// another. It takes as long whichever of these it is, because it checks the
+// password against a decoy hash, with the current parameters, when it has no
+// hash to check it against. The exception is an account whose hash was made
+// with other parameters, against which a wrong password takes as long as
+// those parameters take: after a release changes them, the time of a failed
+// sign-in tells such an account from an address without one, until the
+// account's next sign-in replaces its hash. The address is looked up in its
+// canonical form (canonicalEmail), and one that registration would refuse
+// (checkEmail), which no account has, such as one with a NUL character, is
+// not looked up at all.
 //
 // When the password matches a hash made with other parameters than the
-// current ones, Authenticate hashes the password again and replaces the
+// current ones, authenticate hashes the password again and replaces the
 // account's hash (NFR-SEC-03), unless the account's password changed in the
-// meantime. The sign-in of plan item 14 calls it.
-func (s *Service) Authenticate(ctx context.Context, email string, password secret.Value) (ids.UUID, error) {
+// meantime.
+//
+// It also returns as account the ID of the account that the address belongs
+// to, if one does, whether or not it signs in, which the audit log names as
+// the subject of a failed sign-in, and, when it signs in, the hash that the
+// account holds now, as far as it knows: the one that the password matched,
+// or the one that replaced it. Login starts a session only while the account
+// still holds that hash (startSession).
+func (s *Service) authenticate(ctx context.Context, email string, password secret.Value) (id, account ids.UUID,
+	hash string, err error) {
 	var found bool
 	var row queries.UserCredentialsRow
-	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-		var err error
-		row, err = queries.New(tx).UserCredentials(ctx, canonicalEmail(email))
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
+	if email = canonicalEmail(email); checkEmail(email) == "" {
+		err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+			var err error
+			row, err = queries.New(tx).UserCredentials(ctx, email)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			found = err == nil
+			return err
+		})
+		if err != nil {
+			return ids.UUID{}, ids.UUID{}, "", fmt.Errorf("account: read the account: %w", err)
 		}
-		found = err == nil
-		return err
-	})
-	if err != nil {
-		return ids.UUID{}, fmt.Errorf("account: read the account: %w", err)
+	}
+	if found {
+		account = row.ID.Bytes
 	}
 	if !found || !row.PasswordHash.Valid || row.Status != "active" {
 		if _, _, err := s.hasher.Verify(ctx, s.decoy, password); err != nil {
-			return ids.UUID{}, err
+			return ids.UUID{}, ids.UUID{}, "", err
 		}
-		return ids.UUID{}, ErrInvalidCredentials
+		return ids.UUID{}, account, "", ErrInvalidCredentials
 	}
-	match, rehash, err := s.hasher.Verify(ctx, row.PasswordHash.String, password)
+	hash = row.PasswordHash.String
+	match, rehash, err := s.hasher.Verify(ctx, hash, password)
 	switch {
 	case err != nil:
-		return ids.UUID{}, err
+		return ids.UUID{}, ids.UUID{}, "", err
 	case !match:
-		return ids.UUID{}, ErrInvalidCredentials
+		return ids.UUID{}, account, "", ErrInvalidCredentials
 	case rehash:
-		if err := s.rehash(ctx, row.ID, row.PasswordHash.String, password); err != nil {
-			return ids.UUID{}, err
+		if hash, err = s.rehash(ctx, row.ID, hash, password); err != nil {
+			return ids.UUID{}, ids.UUID{}, "", err
 		}
 	}
-	return row.ID.Bytes, nil
+	return account, account, hash, nil
 }
 
 // rehash replaces old, the hash of the account id's password, with a hash of
-// password with the current parameters, unless the hash is no longer old.
-func (s *Service) rehash(ctx context.Context, id pgtype.UUID, old string, password secret.Value) error {
+// password with the current parameters, unless the hash is no longer old. It
+// returns the hash that it stored, or old if it stored none.
+func (s *Service) rehash(ctx context.Context, id pgtype.UUID, old string, password secret.Value) (string, error) {
 	hash, err := s.hasher.Hash(ctx, password)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-		_, err := queries.New(tx).UpdatePasswordHash(ctx, queries.UpdatePasswordHashParams{
+	var n int64
+	err = s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		var err error
+		n, err = queries.New(tx).UpdatePasswordHash(ctx, queries.UpdatePasswordHashParams{
 			NewHash: pgtype.Text{String: hash, Valid: true},
 			ID:      id,
 			OldHash: pgtype.Text{String: old, Valid: true},
@@ -351,4 +394,11 @@ func (s *Service) rehash(ctx context.Context, id pgtype.UUID, old string, passwo
 		}
 		return nil
 	})
+	switch {
+	case err != nil:
+		return "", err
+	case n == 0:
+		return old, nil
+	}
+	return hash, nil
 }

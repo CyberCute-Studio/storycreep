@@ -104,17 +104,23 @@ func accountError(err error) error {
 		}
 		return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
 	case errors.As(err, &weak):
-		msg := i18n.Message{Key: i18n.K("error.weak_password.common")}
-		problem := "is one of the most common passwords"
-		if weak.Reason == account.PasswordTooShort {
-			msg = i18n.Message{Key: i18n.K("error.weak_password.too_short"),
-				Args: i18n.Args{"min": account.MinPasswordLength}}
-			problem = fmt.Sprintf("has fewer than %d characters", account.MinPasswordLength)
-		}
-		return &api.Error{Code: api.CodeWeakPassword, Message: msg, Details: map[string]any{
-			"reason": weak.Reason,
-			"errors": []api.Problem{{Location: "body.password", Message: problem}},
-		}}
+		return weakPasswordError(weak, "body.password")
 	}
 	return err
+}
+
+// weakPasswordError returns the error that the API answers weak with, for
+// the password at location, such as body.password.
+func weakPasswordError(weak *account.PasswordError, location string) *api.Error {
+	msg := i18n.Message{Key: i18n.K("error.weak_password.common")}
+	problem := "is one of the most common passwords"
+	if weak.Reason == account.PasswordTooShort {
+		msg = i18n.Message{Key: i18n.K("error.weak_password.too_short"),
+			Args: i18n.Args{"min": account.MinPasswordLength}}
+		problem = fmt.Sprintf("has fewer than %d characters", account.MinPasswordLength)
+	}
+	return &api.Error{Code: api.CodeWeakPassword, Message: msg, Details: map[string]any{
+		"reason": weak.Reason,
+		"errors": []api.Problem{{Location: location, Message: problem}},
+	}}
 }

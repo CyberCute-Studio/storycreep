@@ -204,7 +204,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-AUTH-01 AC1–AC4 pass.
 
 ### 14. Sessions and CSRF
-**Status:** todo · **Depends on:** 8, 13
+**Status:** done ([#16](https://github.com/CyberCute-Studio/storycreep/pull/16)) · **Depends on:** 8, 13
 **PRD:** FR-AUTH-02 (AC1–AC5, AC7), NFR-SEC-04
 - Opaque, hashed sessions of at least 128 bits. The cookie name and `Secure` flag are derived from `STORYCREEP_PUBLIC_URL`. Validity is never cached.
 - Idle and absolute lifetimes. Session list and revocation. A password change revokes other sessions. Rotation on privilege change.
