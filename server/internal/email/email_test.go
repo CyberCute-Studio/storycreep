@@ -181,6 +181,73 @@ func TestHeaderInjection(t *testing.T) {
 	}
 }
 
+// TestInternationalAddresses checks that an address outside ASCII, which
+// registration takes, goes as it is to a server that offers SMTPUTF8, and
+// with its domain in its xn-- form to one that does not, in the envelope and
+// in the header alike, and that one whose local part is outside ASCII is
+// refused before it is sent to such a server, with an error that names
+// SMTPUTF8.
+func TestInternationalAddresses(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		ascii     bool
+		address   string
+		want, err string
+	}{
+		{"an IDN domain with SMTPUTF8", false, "jo@bücher.example", "jo@bücher.example", ""},
+		{"a local part with SMTPUTF8", false, "žofie@bücher.example", "žofie@bücher.example", ""},
+		{"an IDN domain without SMTPUTF8", true, "jo@bücher.example", "jo@xn--bcher-kva.example", ""},
+		{"a local part without SMTPUTF8", true, "žofie@example.com", "", "offers no SMTPUTF8"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			server := emailtest.Start(t, emailtest.Options{ASCII: c.ascii})
+			settings := server.Settings(config.SMTPNone, testFrom)
+			s := email.New(nil, email.Options{SMTP: &settings, Timeout: 10 * time.Second})
+			err := s.Send(context.Background(), email.Message{To: mail.Address{Name: "Jo", Address: c.address},
+				Subject: "Hello", Body: "Hello\n"})
+			if c.err != "" {
+				if err == nil || !strings.Contains(err.Error(), c.err) || strings.Contains(err.Error(), c.address) {
+					t.Errorf("error %v, want one that says %q without the address", err, c.err)
+				}
+				if n := len(server.Messages()); n != 0 {
+					t.Errorf("%v was sent %d emails", server, n)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := server.Messages()[0]
+			to, err := m.Header(t).AddressList("To")
+			if len(m.To) != 1 || m.To[0] != c.want || err != nil || len(to) != 1 || to[0].Address != c.want {
+				t.Errorf("sent to %q, with the To header %q (%v), want %q", m.To, m.Header(t).Get("To"), err, c.want)
+			}
+		})
+	}
+}
+
+// TestHelloName checks the name that the client gives itself in its EHLO:
+// the public URL's host name, or an IP address's address literal, which RFC
+// 5321 requires in place of a bare address.
+func TestHelloName(t *testing.T) {
+	for hostname, want := range map[string]string{
+		"storycreep.example.com": "storycreep.example.com",
+		"192.168.1.20":           "[192.168.1.20]",
+		"2001:db8::1":            "[IPv6:2001:db8::1]",
+		"":                       "localhost",
+	} {
+		server := emailtest.Start(t, emailtest.Options{})
+		settings := server.Settings(config.SMTPNone, testFrom)
+		s := email.New(nil, email.Options{SMTP: &settings, Hostname: hostname, Timeout: 10 * time.Second})
+		if err := s.Send(context.Background(), message); err != nil {
+			t.Fatal(err)
+		}
+		if got := server.Messages()[0].Hello; got != want {
+			t.Errorf("the host name %q greets as %q, want %q", hostname, got, want)
+		}
+	}
+}
+
 // TestUntrustedCertificate checks that the client refuses a server whose
 // certificate it does not trust, and sends it nothing.
 func TestUntrustedCertificate(t *testing.T) {

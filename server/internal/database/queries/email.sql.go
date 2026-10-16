@@ -45,9 +45,10 @@ const deleteUnclaimedToken = `-- name: DeleteUnclaimedToken :exec
 DELETE FROM email_token WHERE id = $1 AND user_id IS NULL
 `
 
-// DeleteUnclaimedToken deletes the token of a request to reset the password
-// of an address that belongs to no active account, which the email job
-// sends no email for.
+// DeleteUnclaimedToken deletes a token without an account, which the email
+// job sends no email for: that of a request to reset the password of an
+// address that belongs to no active account, or of a registration of an
+// address that has an account already.
 func (q *Queries) DeleteUnclaimedToken(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteUnclaimedToken, id)
 	return err
@@ -74,9 +75,9 @@ type InsertEmailTokenParams struct {
 // (package account, PRD FR-AUTH-03). The email_token table spans workspaces
 // and has no row-level security. A token is used once, while it has not
 // expired, and only by an account that is still active.
-// InsertEmailToken adds a token of an account, which expires after lifetime,
-// with the SHA-256 hash of its secret, or with none, which the job that
-// emails its link adds.
+// InsertEmailToken adds a token that expires after lifetime, of an account,
+// or of none, which the job that emails its link deletes, with the SHA-256
+// hash of its secret, or with none, which that job adds.
 func (q *Queries) InsertEmailToken(ctx context.Context, arg InsertEmailTokenParams) (pgtype.Timestamptz, error) {
 	row := q.db.QueryRow(ctx, insertEmailToken,
 		arg.ID,

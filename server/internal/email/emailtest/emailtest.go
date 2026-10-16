@@ -27,6 +27,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
@@ -44,6 +45,9 @@ type Options struct {
 	// Password.
 	Mechanisms         []string
 	Username, Password string
+	// ASCII makes the server offer no SMTPUTF8, so that it refuses an
+	// address outside ASCII in MAIL or RCPT, as such a server does.
+	ASCII bool
 }
 
 // Message is an email that the server was sent.
@@ -57,6 +61,8 @@ type Message struct {
 	// to send it, if anyone did.
 	TLS      bool
 	Username string
+	// Hello is the name that the client gave itself in its last EHLO.
+	Hello string
 }
 
 // Header returns the email's header.
@@ -208,6 +214,7 @@ func (s *Server) serve(conn net.Conn) {
 	reply := func(code int, msg string) { _ = tp.PrintfLine("%d %s", code, msg) }
 	_, overTLS := conn.(*tls.Conn)
 	var current Message
+	var hello string
 	reply(220, "emailtest ESMTP")
 	for {
 		line, err := tp.ReadLine()
@@ -217,6 +224,7 @@ func (s *Server) serve(conn net.Conn) {
 		verb, arg, _ := strings.Cut(line, " ")
 		switch strings.ToUpper(verb) {
 		case "EHLO", "HELO":
+			hello = arg
 			lines := []string{"emailtest"}
 			if s.opts.StartTLS && !overTLS {
 				lines = append(lines, "STARTTLS")
@@ -224,7 +232,10 @@ func (s *Server) serve(conn net.Conn) {
 			if len(s.opts.Mechanisms) > 0 {
 				lines = append(lines, "AUTH "+strings.Join(s.opts.Mechanisms, " "))
 			}
-			lines = append(lines, "8BITMIME", "SMTPUTF8")
+			lines = append(lines, "8BITMIME")
+			if !s.opts.ASCII {
+				lines = append(lines, "SMTPUTF8")
+			}
 			for i, l := range lines {
 				sep := "-"
 				if i == len(lines)-1 {
@@ -253,13 +264,20 @@ func (s *Server) serve(conn net.Conn) {
 			current.Username = user
 			reply(235, "authenticated")
 		case "MAIL":
-			if len(s.opts.Mechanisms) > 0 && current.Username == "" {
+			switch {
+			case len(s.opts.Mechanisms) > 0 && current.Username == "":
 				reply(530, "authentication required")
+			case s.opts.ASCII && !ascii(arg):
+				reply(553, "an address outside ASCII needs SMTPUTF8")
+			default:
+				current.From = address(arg)
+				reply(250, "ok")
+			}
+		case "RCPT":
+			if s.opts.ASCII && !ascii(arg) {
+				reply(553, "an address outside ASCII needs SMTPUTF8")
 				continue
 			}
-			current.From = address(arg)
-			reply(250, "ok")
-		case "RCPT":
 			current.To = append(current.To, address(arg))
 			reply(250, "ok")
 		case "DATA":
@@ -268,7 +286,7 @@ func (s *Server) serve(conn net.Conn) {
 			if err != nil {
 				return
 			}
-			current.Data, current.TLS = data, overTLS
+			current.Data, current.TLS, current.Hello = data, overTLS, hello
 			s.receive(current)
 			current = Message{Username: current.Username}
 			reply(250, "queued")
@@ -336,6 +354,11 @@ func (s *Server) auth(tp *textproto.Conn, arg string) (string, bool) {
 		}
 	}
 	return user, user == s.opts.Username && password == s.opts.Password
+}
+
+// ascii reports whether s is ASCII.
+func ascii(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool { return r >= utf8.RuneSelf }) < 0
 }
 
 // address returns the address of a MAIL FROM: or RCPT TO: argument.

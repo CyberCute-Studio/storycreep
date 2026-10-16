@@ -115,7 +115,8 @@ func (m *mailer) sendAll(t *testing.T) []emailtest.Message {
 // TestRegisterEmailsVerification checks that registering on an instance that
 // sends email emails the new account a link that verifies its address, once,
 // which works for 24 hours, and that registering an address that has an
-// account emails nothing.
+// account emails nothing, after it has done the same work: it adds a token
+// without the account, and a job, which deletes the token (FR-AUTH-01 AC1).
 func TestRegisterEmailsVerification(t *testing.T) {
 	t.Parallel()
 	m := withEmail(t, true)
@@ -149,12 +150,20 @@ func TestRegisterEmailsVerification(t *testing.T) {
 		t.Errorf("%d audit entries of the verification, want 1", n)
 	}
 
+	before := count(t, m.admin, "SELECT count(*) FROM email_token")
 	if err := m.Register(ctx, Registration{Email: "JO@example.com", DisplayName: "Mallory",
 		Password: secret.New(testPassword)}); err != nil {
 		t.Fatal(err)
 	}
-	if jobs := m.queue.take(t); len(jobs) != 0 {
-		t.Errorf("registering an address that has an account enqueued %d emails", len(jobs))
+	if n := count(t, m.admin, "SELECT count(*) FROM email_token WHERE user_id IS NULL"); n != 1 ||
+		count(t, m.admin, "SELECT count(*) FROM email_token") != before+1 {
+		t.Errorf("registering an address that has an account added %d tokens without an account, want 1", n)
+	}
+	if sent := m.sendAll(t); len(sent) != 0 {
+		t.Errorf("registering an address that has an account sent %d emails", len(sent))
+	}
+	if n := count(t, m.admin, "SELECT count(*) FROM email_token WHERE user_id IS NULL"); n != 0 {
+		t.Errorf("the job left %d tokens without an account", n)
 	}
 	// Asking again for a verified address sends nothing either.
 	if err := m.RequestVerification(ctx, id); err != nil {
@@ -162,6 +171,35 @@ func TestRegisterEmailsVerification(t *testing.T) {
 	}
 	if jobs := m.queue.take(t); len(jobs) != 0 {
 		t.Errorf("asking to verify a verified address enqueued %d emails", len(jobs))
+	}
+}
+
+// TestVerifyEmailVerifiedAlready checks that a second link of an address,
+// which the first verified, is used without another entry in the audit log,
+// because it verifies nothing.
+func TestVerifyEmailVerifiedAlready(t *testing.T) {
+	t.Parallel()
+	m := withEmail(t, true)
+	ctx := context.Background()
+	jo := register(t, m.Service, m.admin, "jo@example.com")
+	if err := m.RequestVerification(ctx, jo); err != nil {
+		t.Fatal(err)
+	}
+	sent := m.sendAll(t)
+	if len(sent) != 2 {
+		t.Fatalf("sent %d emails, want 2", len(sent))
+	}
+	for _, msg := range sent {
+		if err := m.VerifyEmail(ctx, secret.New(msg.Token(t)), testClient); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := m.VerifyEmail(ctx, secret.New(sent[1].Token(t)), testClient); !errors.Is(err, ErrTokenUsed) {
+		t.Errorf("the second link again: %v, want ErrTokenUsed", err)
+	}
+	if n := count(t, m.admin, `SELECT count(*) FROM audit_entry WHERE action = 'auth.email_verify'
+		AND subject_id = $1`, jo); n != 1 {
+		t.Errorf("%d audit entries of the verification, want 1", n)
 	}
 }
 

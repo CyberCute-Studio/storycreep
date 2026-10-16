@@ -70,21 +70,11 @@ WHERE s.id = @id
 
 -- name: RevokeOtherSessions :many
 -- RevokeOtherSessions revokes every active session of a user but the one
--- to keep, and returns their IDs.
+-- to keep, or every one if keep is null, as resetting the password does,
+-- and returns their IDs.
 UPDATE session s SET revoked_at = now(), updated_at = now()
 WHERE s.user_id = @user_id
-    AND s.id <> @keep
-    AND s.revoked_at IS NULL
-    AND s.expires_at > now()
-    AND s.created_at + @lifetime::interval > now()
-    AND s.last_seen_at + @idle::interval > now()
-RETURNING s.id;
-
--- name: RevokeUserSessions :many
--- RevokeUserSessions revokes every active session of a user, as resetting
--- the password does, and returns their IDs.
-UPDATE session s SET revoked_at = now(), updated_at = now()
-WHERE s.user_id = @user_id
+    AND s.id IS DISTINCT FROM @keep
     AND s.revoked_at IS NULL
     AND s.expires_at > now()
     AND s.created_at + @lifetime::interval > now()

@@ -9,13 +9,17 @@
 // Hosted mode always has one (the EmailRequired capability), which its
 // configuration requires.
 //
-// Email is plain text in UTF-8, with quoted-printable lines. The connection
-// is protected as the settings say: with TLS from the start, with STARTTLS,
-// which a server that does not offer it is refused for, or not at all, for a
-// relay on the same host or network, which then cannot sign in unless its
-// host is localhost, 127.0.0.1, or ::1 (config.SMTPLoopback). A server's
-// certificate must be valid for its host name. Signing in uses PLAIN, or
-// LOGIN where the server offers only that.
+// Email is plain text in UTF-8, with quoted-printable lines. An address
+// outside ASCII, which registration takes, goes as it is to a server that
+// offers SMTPUTF8, and to any other with its domain in its ASCII form, the
+// xn-- labels of IDNA; a local part outside ASCII has no such form, so only a
+// server that offers SMTPUTF8 delivers to it. The connection is protected as
+// the settings say: with TLS from the start, with STARTTLS, which a server
+// that does not offer it is refused for, or not at all, for a relay on the
+// same host or network, which then cannot sign in unless its host is
+// localhost, 127.0.0.1, or ::1 (config.SMTPLoopback). A server's certificate
+// must be valid for its host name. Signing in uses PLAIN, or LOGIN where the
+// server offers only that.
 //
 // Sending takes time and can fail, so it is the work of a job (package jobs),
 // which is attempted again when it fails, and never of a request, whose
@@ -52,7 +56,8 @@ type Options struct {
 	// the one that first-run setup chose, or nil if it sets none.
 	SMTP *config.SMTP
 	// Hostname is the name that the server gives itself to the SMTP server,
-	// in its EHLO: the host of STORYCREEP_PUBLIC_URL.
+	// in its EHLO: the host of STORYCREEP_PUBLIC_URL, which an IP address's
+	// address literal stands for (helloName).
 	Hostname string
 	// RootCAs, if set, are the certificates that an SMTP server's must chain
 	// to, instead of the system's. Tests set it.

@@ -4,9 +4,9 @@
 -- expired, and only by an account that is still active.
 
 -- name: InsertEmailToken :one
--- InsertEmailToken adds a token of an account, which expires after lifetime,
--- with the SHA-256 hash of its secret, or with none, which the job that
--- emails its link adds.
+-- InsertEmailToken adds a token that expires after lifetime, of an account,
+-- or of none, which the job that emails its link deletes, with the SHA-256
+-- hash of its secret, or with none, which that job adds.
 INSERT INTO email_token (id, kind, user_id, email, locale, token_hash, expires_at)
 VALUES (@id, @kind, @user_id, @email, @locale, @token_hash, now() + @lifetime::interval)
 RETURNING expires_at;
@@ -44,9 +44,10 @@ FOR UPDATE OF t;
 UPDATE email_token SET token_hash = @token_hash, updated_at = now() WHERE id = @id;
 
 -- name: DeleteUnclaimedToken :exec
--- DeleteUnclaimedToken deletes the token of a request to reset the password
--- of an address that belongs to no active account, which the email job
--- sends no email for.
+-- DeleteUnclaimedToken deletes a token without an account, which the email
+-- job sends no email for: that of a request to reset the password of an
+-- address that belongs to no active account, or of a registration of an
+-- address that has an account already.
 DELETE FROM email_token WHERE id = @id AND user_id IS NULL;
 
 -- name: LockEmailToken :one

@@ -431,7 +431,8 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, current Session, clie
 	return n, err
 }
 
-// revokeOthers revokes the account's other sessions in tx, for reason.
+// revokeOthers revokes the account's other sessions in tx, for reason, and
+// every one of them if current has no ID, as resetting the password does.
 func (s *Service) revokeOthers(ctx context.Context, tx pgx.Tx, current Session, reason string, client Client) (int,
 	error) {
 	revoked, err := queries.New(tx).RevokeOtherSessions(ctx, queries.RevokeOtherSessionsParams{

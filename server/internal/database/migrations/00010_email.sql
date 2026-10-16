@@ -45,7 +45,8 @@ GRANT UPDATE (smtp_host, smtp_port, smtp_security, smtp_username, smtp_password,
 -- A request to reset the password of an address that belongs to no active
 -- account adds a row too, without an account, which the email job deletes,
 -- so that the request does the same work whether or not the address has an
--- account (AC3).
+-- account (AC3), and so does a registration of an address that has an
+-- account already, which adds no account (FR-AUTH-01 AC1).
 CREATE TABLE email_token (
 	id uuid PRIMARY KEY,
 	kind text NOT NULL CHECK (kind IN ('email_verification', 'password_reset')),
@@ -61,11 +62,10 @@ CREATE TABLE email_token (
 	used_at timestamptz,
 	created_at timestamptz NOT NULL DEFAULT now(),
 	updated_at timestamptz NOT NULL DEFAULT now(),
-	CHECK (kind = 'password_reset' OR user_id IS NOT NULL),
 	CHECK (kind <> 'email_verification' OR email IS NOT NULL)
 );
 CREATE INDEX email_token_user_id ON email_token (user_id);
 CREATE INDEX email_token_expires_at ON email_token (expires_at);
 
+-- No maintenance job reads the tokens, so storycreep_maintenance may not.
 GRANT SELECT, INSERT, UPDATE, DELETE ON email_token TO storycreep_app;
-GRANT SELECT ON email_token TO storycreep_maintenance;

@@ -36,8 +36,9 @@ import (
 // the link's secret when it sends it, so that neither the request nor the
 // job's arguments hold the secret, and a request does not wait for the SMTP
 // server. A request to reset a password does the same work whether or not
-// the address belongs to an account (AC3): it adds a token either way, which
-// the job deletes when it has no account.
+// the address belongs to an account (AC3), and so does registering
+// (FR-AUTH-01 AC1): each adds a token either way, which the job deletes when
+// it has no account.
 //
 // An instance that sends no email says so, refuses those requests with
 // ErrEmailNotConfigured, the same for every address, and never reaches the
@@ -165,9 +166,10 @@ func (s *Service) EmailConfigured(ctx context.Context) (bool, error) {
 	return s.email.Configured(ctx)
 }
 
-// enqueueLink adds a token of kind for the account userID, for its address
-// address, if it has one, with the request's locale, without a secret, and
-// the job that emails its link, in tx.
+// enqueueLink adds a token of kind for the account userID, or for none if it
+// is zero, which the job deletes, for the address address, if there is one,
+// with the request's locale, without a secret, and the job that emails its
+// link, in tx.
 func (s *Service) enqueueLink(ctx context.Context, tx pgx.Tx, kind LinkKind, userID ids.UUID, address string) error {
 	id := ids.New()
 	_, err := queries.New(tx).InsertEmailToken(ctx, queries.InsertEmailTokenParams{
@@ -265,8 +267,9 @@ func (s *Service) RequestVerification(ctx context.Context, userID ids.UUID) erro
 // to the account's address, in the account's preferred locale, or else the
 // request's. A token that has been used, has expired, or whose account is no
 // longer active, or no longer has the address that it verifies, or has
-// verified it since, is sent no email, and a token of a reset requested for
-// an address of no account is deleted. An instance that no longer sends email
+// verified it since, is sent no email, and a token without an account, of a
+// reset requested for an address of no account or of a registration of an
+// address that has one, is deleted. An instance that no longer sends email
 // sends none either. An attempt that fails to send the email is made again
 // later, with a new secret, which replaces the one that the failed attempt
 // may have sent, so that only the latest email's link works.
@@ -362,8 +365,11 @@ func tokenState(ctx context.Context, tx pgx.Tx, value secret.Value, kind LinkKin
 // VerifyEmail uses the link whose secret is value to verify the email
 // address of its account, which client asks for, and records that in the
 // audit log. It returns ErrTokenInvalid, ErrTokenUsed, or ErrTokenExpired
-// for a link that cannot verify it (tokenState). Once it has verified the
-// address, it calls Options.Verified.
+// for a link that cannot verify it (tokenState), or whose account stopped
+// being active, or changed its address, since tokenState read it, which
+// locks the token but not the account. A link of an address that another
+// link verified meanwhile is used, but records nothing, because nothing
+// changes. Once the address is verified, it calls Options.Verified.
 func (s *Service) VerifyEmail(ctx context.Context, value secret.Value, client Client) error {
 	var userID ids.UUID
 	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
@@ -373,11 +379,23 @@ func (s *Service) VerifyEmail(ctx context.Context, value secret.Value, client Cl
 		}
 		userID = row.UserID.Bytes
 		q := queries.New(tx)
-		if _, err := q.VerifyEmail(ctx, queries.VerifyEmailParams{ID: row.UserID, Email: row.Email.String}); err != nil {
+		n, err := q.VerifyEmail(ctx, queries.VerifyEmailParams{ID: row.UserID, Email: row.Email.String})
+		if err != nil {
 			return fmt.Errorf("account: verify the email address: %w", err)
+		}
+		if n == 0 {
+			// The account stopped being active, or changed its address,
+			// which tokenState finds when it reads the account again, or else
+			// it has verified the address already.
+			if _, err := tokenState(ctx, tx, value, LinkVerification); err != nil {
+				return err
+			}
 		}
 		if err := q.UseEmailToken(ctx, row.ID); err != nil {
 			return fmt.Errorf("account: use the link's token: %w", err)
+		}
+		if n == 0 {
+			return nil
 		}
 		return audit.Record(ctx, tx, audit.Entry{Action: audit.ActionEmailVerify, ActorUserID: userID,
 			SubjectID: userID, Result: audit.ResultSuccess, IP: client.IP, UserAgent: client.UserAgent})
@@ -442,15 +460,9 @@ func (s *Service) ResetPassword(ctx context.Context, value, password secret.Valu
 		if err := q.DeleteResetTokens(ctx, row.UserID); err != nil {
 			return fmt.Errorf("account: delete the other reset links: %w", err)
 		}
-		revoked, err := q.RevokeUserSessions(ctx, queries.RevokeUserSessionsParams{UserID: row.UserID,
-			Lifetime: database.Interval(s.lifetime), Idle: database.Interval(s.idle)})
-		if err != nil {
-			return fmt.Errorf("account: revoke the sessions: %w", err)
-		}
-		for _, id := range revoked {
-			if err := recordRevocation(ctx, tx, userID, id.Bytes, revokedByPasswordReset, client); err != nil {
-				return err
-			}
+		// A Session without an ID keeps none of the account's sessions.
+		if _, err := s.revokeOthers(ctx, tx, Session{UserID: userID}, revokedByPasswordReset, client); err != nil {
+			return err
 		}
 		return audit.Record(ctx, tx, audit.Entry{Action: audit.ActionPasswordReset, ActorUserID: userID,
 			SubjectID: userID, Result: audit.ResultSuccess, IP: client.IP, UserAgent: client.UserAgent})

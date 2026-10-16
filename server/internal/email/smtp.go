@@ -6,10 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
+	"net/netip"
 	"net/smtp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 )
@@ -22,16 +27,13 @@ func (s *Service) deliver(ctx context.Context, settings config.SMTP, msg Message
 	if problem != "" {
 		return fmt.Errorf("email: the address that email comes from %s", problem)
 	}
-	data, err := compose(from, msg, time.Now())
-	if err != nil {
-		return fmt.Errorf("email: compose the email: %w", err)
-	}
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	addr := net.JoinHostPort(settings.Host, strconv.Itoa(settings.Port))
 	tlsConfig := &tls.Config{ServerName: settings.Host, MinVersion: tls.VersionTLS12, RootCAs: s.rootCAs}
 	dialer := &net.Dialer{}
 	var conn net.Conn
+	var err error
 	if settings.Security == config.SMTPTLS {
 		conn, err = (&tls.Dialer{NetDialer: dialer, Config: tlsConfig}).DialContext(ctx, "tcp", addr)
 	} else {
@@ -75,10 +77,28 @@ func (s *Service) deliver(ctx context.Context, settings config.SMTP, msg Message
 			return fmt.Errorf("email: sign in to the SMTP server %s as %s: %w", addr, settings.Username, err)
 		}
 	}
-	if err := c.Mail(from.Address); err != nil {
+	// An address outside ASCII goes as it is only to a server that offers
+	// SMTPUTF8, which net/smtp then asks for in MAIL, and the header names
+	// the addresses as the envelope does.
+	smtpUTF8, _ := c.Extension("SMTPUTF8")
+	sender, err := envelopeAddress(from.Address, smtpUTF8)
+	if err != nil {
+		return fmt.Errorf("email: the SMTP server %s offers no SMTPUTF8, and the address that email comes from %w",
+			addr, err)
+	}
+	recipient, err := envelopeAddress(msg.To.Address, smtpUTF8)
+	if err != nil {
+		return fmt.Errorf("email: the SMTP server %s offers no SMTPUTF8, and the recipient's address %w", addr, err)
+	}
+	msg.To.Address = recipient
+	data, err := compose(&mail.Address{Name: from.Name, Address: sender}, msg, time.Now())
+	if err != nil {
+		return fmt.Errorf("email: compose the email: %w", err)
+	}
+	if err := c.Mail(sender); err != nil {
 		return fmt.Errorf("email: the SMTP server %s refuses the sender: %w", addr, err)
 	}
-	if err := c.Rcpt(msg.To.Address); err != nil {
+	if err := c.Rcpt(recipient); err != nil {
 		return fmt.Errorf("email: the SMTP server %s refuses the recipient: %w", addr, err)
 	}
 	w, err := c.Data()
@@ -97,12 +117,47 @@ func (s *Service) deliver(ctx context.Context, settings config.SMTP, msg Message
 	return nil
 }
 
-// helloName returns the name that the client gives itself in its EHLO.
+// helloName returns the name that the client gives itself in its EHLO: the
+// host name, or, for an IP address, its address literal, as [192.0.2.1] or
+// [IPv6:2001:db8::1], which RFC 5321 §4.1.3 requires in place of a bare
+// address.
 func (s *Service) helloName() string {
 	if s.hostname == "" {
 		return "localhost"
 	}
+	if ip, err := netip.ParseAddr(s.hostname); err == nil {
+		if ip.Is6() {
+			return "[IPv6:" + ip.String() + "]"
+		}
+		return "[" + ip.String() + "]"
+	}
 	return s.hostname
+}
+
+// envelopeAddress returns address as an SMTP server takes it: as it is, if it
+// is ASCII or the server offers SMTPUTF8 (RFC 6531), and else with its domain
+// in its ASCII form, the xn-- labels of IDNA, which every server takes, as
+// registration takes domains outside ASCII (package account). A local part
+// outside ASCII has no such form, so it needs SMTPUTF8. The error does not
+// quote the address, which a job keeps its errors with.
+func envelopeAddress(address string, smtpUTF8 bool) (string, error) {
+	if smtpUTF8 || isASCII(address) {
+		return address, nil
+	}
+	at := strings.LastIndexByte(address, '@')
+	if at < 0 || !isASCII(address[:at]) {
+		return "", errors.New("has a local part outside ASCII, which only SMTPUTF8 carries")
+	}
+	domain, err := idna.Lookup.ToASCII(address[at+1:])
+	if err != nil {
+		return "", errors.New("has a domain outside ASCII that has no ASCII form")
+	}
+	return address[:at+1] + domain, nil
+}
+
+// isASCII reports whether s is ASCII.
+func isASCII(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool { return r >= utf8.RuneSelf }) < 0
 }
 
 // authFor returns the mechanism that signs in to the server of c with

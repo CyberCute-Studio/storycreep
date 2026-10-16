@@ -156,7 +156,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (I
 const revokeOtherSessions = `-- name: RevokeOtherSessions :many
 UPDATE session s SET revoked_at = now(), updated_at = now()
 WHERE s.user_id = $1
-    AND s.id <> $2
+    AND s.id IS DISTINCT FROM $2
     AND s.revoked_at IS NULL
     AND s.expires_at > now()
     AND s.created_at + $3::interval > now()
@@ -172,7 +172,8 @@ type RevokeOtherSessionsParams struct {
 }
 
 // RevokeOtherSessions revokes every active session of a user but the one
-// to keep, and returns their IDs.
+// to keep, or every one if keep is null, as resetting the password does,
+// and returns their IDs.
 func (q *Queries) RevokeOtherSessions(ctx context.Context, arg RevokeOtherSessionsParams) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, revokeOtherSessions,
 		arg.UserID,
@@ -227,44 +228,6 @@ func (q *Queries) RevokeSession(ctx context.Context, arg RevokeSessionParams) (i
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const revokeUserSessions = `-- name: RevokeUserSessions :many
-UPDATE session s SET revoked_at = now(), updated_at = now()
-WHERE s.user_id = $1
-    AND s.revoked_at IS NULL
-    AND s.expires_at > now()
-    AND s.created_at + $2::interval > now()
-    AND s.last_seen_at + $3::interval > now()
-RETURNING s.id
-`
-
-type RevokeUserSessionsParams struct {
-	UserID   pgtype.UUID
-	Lifetime pgtype.Interval
-	Idle     pgtype.Interval
-}
-
-// RevokeUserSessions revokes every active session of a user, as resetting
-// the password does, and returns their IDs.
-func (q *Queries) RevokeUserSessions(ctx context.Context, arg RevokeUserSessionsParams) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, revokeUserSessions, arg.UserID, arg.Lifetime, arg.Idle)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []pgtype.UUID
-	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const rotateSession = `-- name: RotateSession :execrows

@@ -223,12 +223,14 @@ type Registration struct {
 // and as late (FR-AUTH-01 AC1). On an instance that sends email, a new
 // account is emailed a link that verifies its address (FR-AUTH-03), by a
 // job that the transaction that adds the account enqueues, so that the
-// answer does not wait for the email. It returns the error of CheckSignup
-// unless the policy lets anyone register, input.FieldErrors if the email
-// address or the display name is not valid, a *ratelimit.LimitError if the
-// address has been registered too often lately (FR-AUTH-05), whether or not
-// it has an account, and a *PasswordError if the password breaks the
-// policy, in that order, and adds nothing then.
+// answer does not wait for the email; an address that has an account gets
+// the token and the job too, without the account, which the job deletes, as
+// RequestPasswordReset does. It returns the error of CheckSignup unless the
+// policy lets anyone register, input.FieldErrors if the email address or the
+// display name is not valid, a *ratelimit.LimitError if the address has been
+// registered too often lately (FR-AUTH-05), whether or not it has an
+// account, and a *PasswordError if the password breaks the policy, in that
+// order, and adds nothing then.
 func (s *Service) Register(ctx context.Context, r Registration) error {
 	if err := s.CheckSignup(ctx); err != nil {
 		return err
@@ -262,8 +264,14 @@ func (s *Service) Register(ctx context.Context, r Registration) error {
 		switch {
 		case err != nil:
 			return fmt.Errorf("account: add the account: %w", err)
-		case n == 0 || !verify:
+		case !verify:
 			return nil
+		case n == 0:
+			// The address has an account, which is emailed nothing, but the
+			// token and the job are added all the same, without the account,
+			// and the job deletes the token, so that the work does not tell
+			// whether the address has one.
+			id = ids.UUID{}
 		}
 		return s.enqueueLink(ctx, tx, LinkVerification, id, email)
 	})
