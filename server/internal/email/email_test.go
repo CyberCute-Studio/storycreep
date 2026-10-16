@@ -251,14 +251,20 @@ func TestInternationalAddresses(t *testing.T) {
 }
 
 // TestHelloName checks the name that the client gives itself in its EHLO:
-// the public URL's host name, or an IP address's address literal, which RFC
-// 5321 requires in place of a bare address.
+// the public URL's host name, without the trailing dot that the URL may have,
+// or an IP address's address literal, which RFC 5321 requires in place of a
+// bare address, and the address literal of the connection's own address for
+// a host name that is not a domain that RFC 5321 takes, as one with an
+// underscore, which the URL may have too, or for none.
 func TestHelloName(t *testing.T) {
 	for hostname, want := range map[string]string{
-		"storycreep.example.com": "storycreep.example.com",
-		"192.168.1.20":           "[192.168.1.20]",
-		"2001:db8::1":            "[IPv6:2001:db8::1]",
-		"":                       "localhost",
+		"storycreep.example.com":  "storycreep.example.com",
+		"storycreep.example.com.": "storycreep.example.com",
+		"192.168.1.20":            "[192.168.1.20]",
+		"2001:db8::1":             "[IPv6:2001:db8::1]",
+		"story_creep.example.com": "[127.0.0.1]",
+		"-storycreep.example.com": "[127.0.0.1]",
+		"":                        "[127.0.0.1]",
 	} {
 		server := emailtest.Start(t, emailtest.Options{})
 		settings := server.Settings(config.SMTPNone, testFrom)

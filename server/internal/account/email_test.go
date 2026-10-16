@@ -118,7 +118,9 @@ func (m *mailer) sendAll(t *testing.T) []emailtest.Message {
 // chose, which the address's owner may not have, and that registering an
 // address that has an account emails nothing, after it has done the same
 // work: it adds a token without the account, and a job, which deletes the
-// token (FR-AUTH-01 AC1).
+// token.
+//
+// Verifies: FR-AUTH-01/AC1
 func TestRegisterEmailsVerification(t *testing.T) {
 	t.Parallel()
 	m := withEmail(t, true)
@@ -220,7 +222,9 @@ func TestVerifyEmailVerifiedAlready(t *testing.T) {
 // password of an address that belongs to no account does the same work as
 // one for an address that does, adding one token and one job, and that the
 // job deletes its token, and sends nothing, while the other's emails the
-// link (FR-AUTH-03 AC3).
+// link.
+//
+// Verifies: FR-AUTH-03/AC3
 func TestPasswordResetRequestSameWork(t *testing.T) {
 	t.Parallel()
 	m := withEmail(t, true)
@@ -258,7 +262,9 @@ func TestPasswordResetRequestSameWork(t *testing.T) {
 // TestResetPassword checks that a reset link replaces the password, once,
 // signs the account out everywhere, and stops the account's other reset
 // links from working, and that a password that breaks the policy leaves the
-// link as it was (FR-AUTH-03 AC2, AC4).
+// link as it was.
+//
+// Verifies: FR-AUTH-03/AC2, FR-AUTH-03/AC4
 func TestResetPassword(t *testing.T) {
 	t.Parallel()
 	m := withEmail(t, true)
@@ -311,7 +317,9 @@ func TestResetPassword(t *testing.T) {
 }
 
 // TestChangePasswordInvalidatesResetLinks checks that changing the password
-// stops the account's reset links from working (FR-AUTH-03 AC4).
+// stops the account's reset links from working.
+//
+// Verifies: FR-AUTH-03/AC4
 func TestChangePasswordInvalidatesResetLinks(t *testing.T) {
 	t.Parallel()
 	m := withEmail(t, true)
@@ -501,7 +509,9 @@ func TestSendLinkLate(t *testing.T) {
 
 // TestNoEmail checks an instance that sends no email: it refuses to email
 // links, registering enqueues nothing, and an instance admin, but no one
-// else, takes the links as text, which work (FR-AUTH-03 AC1).
+// else, takes the links as text, which work.
+//
+// Verifies: FR-AUTH-03/AC1
 func TestNoEmail(t *testing.T) {
 	t.Parallel()
 	m := withEmail(t, false)

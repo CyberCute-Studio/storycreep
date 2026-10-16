@@ -385,7 +385,8 @@ func tokenState(ctx context.Context, tx pgx.Tx, value secret.Value, kind LinkKin
 // being active, or changed its address, since tokenState read it, which
 // locks the token but not the account. A link of an address that another
 // link verified meanwhile is used, but records nothing, because nothing
-// changes. Once the address is verified, it calls Options.Verified.
+// changes. Once the address is verified, it calls Options.Verified, and
+// returns its error, although the address stays verified, and the link used.
 func (s *Service) VerifyEmail(ctx context.Context, value secret.Value, client Client) error {
 	var userID ids.UUID
 	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {

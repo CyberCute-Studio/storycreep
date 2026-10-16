@@ -54,8 +54,9 @@ type RateLimitOutput struct {
 const authLimitDoc = " Signing in, registering, changing a password, completing first-run setup, asking for a link " +
 	"that resets a password or verifies an email address, using one, and an instance admin's taking one as text " +
 	"share a rate limit of 20 requests a minute for each IP address. Registering and asking for a link that resets " +
-	"a password also have one of 10 a minute for each email address, and the requests of a signed-in user one of " +
-	"10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the " +
+	"a password also have one of 10 a minute for each email address, and changing a password, asking for a link " +
+	"that verifies the signed-in account's email address, and an instance admin's taking a link as text one of 10 " +
+	"a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the " +
 	"account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, " +
 	"whose RateLimit headers report the limit that it is over, that of the email address included, and whose " +
 	"Retry-After header says how many seconds to wait."

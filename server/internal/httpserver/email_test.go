@@ -503,3 +503,41 @@ func TestHostedVerificationRequired(t *testing.T) {
 		t.Errorf("create a workspace once verified: %d %s, want 201", res.status, res.body)
 	}
 }
+
+// TestVerificationOutlivesWorkspaceFailure checks, in hosted mode, that a
+// verification whose personal workspace cannot be created is answered as
+// made, because the address is verified and the link used, and that the
+// account's next sign-in creates the workspace.
+func TestVerificationOutlivesWorkspaceFailure(t *testing.T) {
+	t.Parallel()
+	server := emailtest.Start(t, emailtest.Options{})
+	env := smtpEnv(server)
+	env["STORYCREEP_MODE"], env["STORYCREEP_PUBLIC_URL"] = "hosted", "https://storycreep.example.com"
+	s, d := readyServer(t, env)
+	startWorkers(t, s, d)
+	newAccount(t, s.main, "jo@example.com")
+	sent := server.Wait(t, 1, 30*time.Second)
+	ctx := context.Background()
+	refuse := `CREATE FUNCTION refuse_workspace() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'no workspace'; END $$;
+		CREATE TRIGGER refuse_workspace BEFORE INSERT ON workspace FOR EACH ROW EXECUTE FUNCTION refuse_workspace()`
+	if _, err := d.Admin(t).Exec(ctx, refuse); err != nil {
+		t.Fatal(err)
+	}
+	if res := send(s.main, http.MethodPost, verifyEmailPath, tokenBody(t, sent[0].Token(t), ""), "", nil); res.status !=
+		http.StatusNoContent {
+		t.Fatalf("verify while no workspace can be created: %d %s, want 204", res.status, res.body)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM "user" WHERE email_verified_at IS NOT NULL
+		AND personal_workspace_created_at IS NULL`); n != 1 {
+		t.Errorf("%d verified accounts without a personal workspace, want 1", n)
+	}
+	if _, err := d.Admin(t).Exec(ctx, "DROP TRIGGER refuse_workspace ON workspace"); err != nil {
+		t.Fatal(err)
+	}
+	signIn(t, s.main, "jo@example.com")
+	if n := countRows(t, d, `SELECT count(*) FROM audit_entry WHERE action = 'workspace.create'
+		AND metadata->>'personal' = 'true'`); n != 1 {
+		t.Errorf("the sign-in after the verification created %d personal workspaces, want 1", n)
+	}
+}

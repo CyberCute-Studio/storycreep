@@ -222,7 +222,9 @@ func registerEmail(m *api.Mux, accounts *account.Service, limits *ratelimit.Limi
 		Description: "Records that the email address of the account of a link that verifies it is verified, and " +
 			"uses the link, which works once, and only while the address is still the account's. Where the " +
 			"instance requires a verified address before a workspace can be created, as hosted mode does, it " +
-			"also gives the account its personal workspace, if it has had none." + tokenErrorsDoc + authLimitDoc,
+			"also gives the account its personal workspace, if it has had none; should that fail, the answer is " +
+			"still 204, because the address is verified, and the account's next sign-in gives the workspace." +
+			tokenErrorsDoc + authLimitDoc,
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusNoContent,
 		Middlewares:   huma.Middlewares{rateLimit(limits, ratelimit.Auth)},

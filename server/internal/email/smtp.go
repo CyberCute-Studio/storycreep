@@ -59,7 +59,7 @@ func (s *Service) Deliver(ctx context.Context, settings config.SMTP, msg Message
 		return fmt.Errorf("email: greet the SMTP server %s: %w", addr, err)
 	}
 	defer c.Close()
-	if err := c.Hello(s.helloName()); err != nil {
+	if err := c.Hello(s.helloName(conn.LocalAddr())); err != nil {
 		return fmt.Errorf("email: greet the SMTP server %s: %w", addr, err)
 	}
 	if settings.Security == config.SMTPStartTLS {
@@ -140,21 +140,58 @@ func replyError(err error) error {
 	return &textproto.Error{Code: reply.Code, Msg: strings.Join(words, " ")}
 }
 
-// helloName returns the name that the client gives itself in its EHLO: the
-// host name, or, for an IP address, its address literal, as [192.0.2.1] or
-// [IPv6:2001:db8::1], which RFC 5321 §4.1.3 requires in place of a bare
-// address.
-func (s *Service) helloName() string {
-	if s.hostname == "" {
-		return "localhost"
+// helloName returns the name that the client gives itself in its EHLO, on a
+// connection whose own address is local: the host name, without the trailing
+// dot that a public URL may end with, or, for an IP address, its address
+// literal, as [192.0.2.1] or [IPv6:2001:db8::1], which RFC 5321 §4.1.3
+// requires in place of a bare address. A host name that is not a domain as
+// RFC 5321 writes one, as one with an underscore, which a public URL may
+// have, or no host name at all, gives way to the address literal of local,
+// which §4.1.4 has a client send when it has no domain, so that a server that
+// checks the name does not refuse the greeting.
+func (s *Service) helloName(local net.Addr) string {
+	name := strings.TrimSuffix(s.hostname, ".")
+	if ip, err := netip.ParseAddr(name); err == nil {
+		return addressLiteral(ip)
 	}
-	if ip, err := netip.ParseAddr(s.hostname); err == nil {
-		if ip.Is6() {
-			return "[IPv6:" + ip.String() + "]"
+	if isDomain(name) {
+		return name
+	}
+	if a, ok := local.(*net.TCPAddr); ok {
+		if ip, ok := netip.AddrFromSlice(a.IP); ok {
+			return addressLiteral(ip.Unmap())
 		}
-		return "[" + ip.String() + "]"
 	}
-	return s.hostname
+	return "localhost"
+}
+
+// addressLiteral returns ip as RFC 5321 §4.1.3 writes it in place of a
+// domain, without a zone.
+func addressLiteral(ip netip.Addr) string {
+	if ip.Is6() {
+		return "[IPv6:" + ip.WithZone("").String() + "]"
+	}
+	return "[" + ip.String() + "]"
+}
+
+// isDomain reports whether name is a domain as RFC 5321 §4.1.2 writes one:
+// labels of ASCII letters, digits, and hyphens, each starting and ending with
+// a letter or a digit, joined by dots.
+func isDomain(name string) bool {
+	if name == "" {
+		return false
+	}
+	for label := range strings.SplitSeq(name, ".") {
+		if label == "" || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // envelopeAddress returns address as an SMTP server takes it: as it is, if it

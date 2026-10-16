@@ -130,6 +130,9 @@ type Options struct {
 	// email address of the account userID, which client asks for, in no
 	// transaction. The server gives the account its personal workspace
 	// there, where a workspace needs a verified address (FR-AUTH-03).
+	// VerifyEmail returns its error, although the address stays verified and
+	// the link used, so a callback whose failure the account's next sign-in
+	// mends, as the server's does, logs the failure rather than return it.
 	Verified func(ctx context.Context, userID ids.UUID, client Client) error
 }
 

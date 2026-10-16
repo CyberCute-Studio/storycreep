@@ -80,12 +80,20 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		PublicURL:     cfg.PublicURL,
 		// Where a workspace needs a verified address, the verification gives
 		// the account the personal workspace that its first sign-in could
-		// not.
+		// not. The address is verified, and the link used, by then, so a
+		// failure to give the workspace is logged rather than answered, which
+		// would tell the user that the link failed when a second use of it
+		// can only be refused, and the account's next sign-in gives the
+		// workspace instead.
 		Verified: func(ctx context.Context, userID ids.UUID, client account.Client) error {
 			if !cfg.Capabilities.EmailRequired {
 				return nil
 			}
-			return s.workspaces.EnsurePersonal(ctx, userID, client)
+			if err := s.workspaces.EnsurePersonal(ctx, userID, client); err != nil {
+				s.log.ErrorContext(ctx, "the verified account's personal workspace could not be created, so its "+
+					"next sign-in creates it", "error", err)
+			}
+			return nil
 		},
 	})
 	s.setups = setup.New(readyDB{s.ready}, setup.Options{

@@ -56,8 +56,9 @@ type Options struct {
 	// the one that first-run setup chose, or nil if it sets none.
 	SMTP *config.SMTP
 	// Hostname is the name that the server gives itself to the SMTP server,
-	// in its EHLO: the host of STORYCREEP_PUBLIC_URL, which an IP address's
-	// address literal stands for (helloName).
+	// in its EHLO: the host of STORYCREEP_PUBLIC_URL, for which an address
+	// literal stands where it is an IP address, or not a domain that SMTP
+	// takes (helloName).
 	Hostname string
 	// RootCAs, if set, are the certificates that an SMTP server's must chain
 	// to, instead of the system's. Tests set it.
