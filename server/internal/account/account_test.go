@@ -188,6 +188,22 @@ func TestRegisterRefuses(t *testing.T) {
 			Password: good}, []string{"display_name"}, ""},
 		{"a control character", Registration{Email: "jo@example.com", DisplayName: "Jo\nDoe", Password: good},
 			[]string{"display_name"}, ""},
+		{"a bidirectional override", Registration{Email: "jo@example.com", DisplayName: "‮nimdA",
+			Password: good}, []string{"display_name"}, ""},
+		{"a bidirectional isolate", Registration{Email: "jo@example.com", DisplayName: "Jo⁧Doe",
+			Password: good}, []string{"display_name"}, ""},
+		{"a line separator", Registration{Email: "jo@example.com", DisplayName: "Jo Doe", Password: good},
+			[]string{"display_name"}, ""},
+		{"a display name that is not printed", Registration{Email: "jo@example.com", DisplayName: "​​",
+			Password: good}, []string{"display_name"}, ""},
+		{"a zero width space in the address", Registration{Email: "jo​@example.com", DisplayName: "Jo",
+			Password: good}, []string{"email"}, ""},
+		{"a control character in the address", Registration{Email: "jo\u0085x@example.com", DisplayName: "Jo",
+			Password: good}, []string{"email"}, ""},
+		{"a no-break space in the address", Registration{Email: "jo x@example.com", DisplayName: "Jo",
+			Password: good}, []string{"email"}, ""},
+		{"a bidirectional override in the address", Registration{Email: "jo@exa‮mple.com", DisplayName: "Jo",
+			Password: good}, []string{"email"}, ""},
 		{"both fields", Registration{Email: "jo", DisplayName: "", Password: secret.New("short")},
 			[]string{"email", "display_name"}, ""},
 		{"a short password", Registration{Email: "jo@example.com", DisplayName: "Jo", Password: secret.New("short")},
@@ -219,6 +235,24 @@ func TestRegisterRefuses(t *testing.T) {
 	}
 	if got := accounts(t, admin); len(got) != 1 {
 		t.Errorf("%d accounts, want only the last one", len(got))
+	}
+}
+
+// TestFieldsOutsideASCII checks that the checks of a registration's fields
+// take addresses and names outside ASCII, with the format characters that
+// names need, as the joiner in an emoji family and the non-joiner of Persian.
+func TestFieldsOutsideASCII(t *testing.T) {
+	t.Parallel()
+	for _, email := range []string{"žofie@example.com", "jo@bücher.example", "用户@例子.广告"} {
+		if msg := checkEmail(email); msg != "" {
+			t.Errorf("the address %q %s", email, msg)
+		}
+	}
+	for _, name := range []string{"Žofie Nováková", "\U0001F468‍\U0001F469‍\U0001F467 Doe",
+		"می‌خواهم", "יוסף Jo", "Jó"} {
+		if msg := checkDisplayName(name); msg != "" {
+			t.Errorf("the display name %q %s", name, msg)
+		}
 	}
 }
 

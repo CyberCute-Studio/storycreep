@@ -27,7 +27,6 @@ import (
 	"fmt"
 	"net/mail"
 	"strings"
-	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -77,10 +76,10 @@ type Service struct {
 	db     DB
 	signup config.SignupPolicy
 	hasher *Hasher
-	// decoy returns a hash with the current parameters of a password that
-	// nobody has, which Authenticate checks a password against when the
+	// decoy is a hash with the current parameters that no password matches
+	// (Hasher.decoy), which Authenticate checks a password against when the
 	// address has no account, so that it takes as long as when it has one.
-	decoy func() (string, error)
+	decoy string
 }
 
 // New returns a Service that keeps accounts in db, under the signup policy.
@@ -89,11 +88,7 @@ func New(db DB, signup config.SignupPolicy) *Service {
 }
 
 func newService(db DB, signup config.SignupPolicy, h *Hasher) *Service {
-	s := &Service{db: db, signup: signup, hasher: h}
-	s.decoy = sync.OnceValues(func() (string, error) {
-		return h.Hash(context.Background(), secret.New(ids.New().String()))
-	})
-	return s
+	return &Service{db: db, signup: signup, hasher: h, decoy: h.decoy()}
 }
 
 // CheckSignup returns ErrSignupClosed or ErrInviteRequired unless the signup
@@ -195,13 +190,18 @@ func (r Registration) fields() (email, name string, err error) {
 // checkEmail says what is wrong with an email address, or returns "". It
 // takes an address alone, as in jo@example.com, without a name or angle
 // brackets, and without a quoted local part or a comment, which mail
-// delivery and people rarely handle.
+// delivery and people rarely handle. Nor does it take a space or a character
+// that is not printed, which net/mail accepts outside ASCII, such as U+200B
+// ZERO WIDTH SPACE or U+202E, which reverses the text after it, so that no
+// address looks like another account's.
 func checkEmail(email string) string {
 	switch {
 	case email == "":
 		return "is empty"
 	case len(email) > MaxEmailLength:
 		return fmt.Sprintf("is longer than %d bytes", MaxEmailLength)
+	case strings.IndexFunc(email, func(r rune) bool { return !printed(r) }) >= 0:
+		return "contains a space or a character that is not printed"
 	}
 	if a, err := mail.ParseAddress(email); err != nil || a.Name != "" || a.Address != email {
 		return "is not an email address"
@@ -209,17 +209,37 @@ func checkEmail(email string) string {
 	return ""
 }
 
-// checkDisplayName says what is wrong with a display name, or returns "".
+// checkDisplayName says what is wrong with a display name, or returns "". A
+// display name has a character that is printed, so that it is not blank, and
+// no control character (isControl), so that it cannot change how the text
+// around it is shown.
 func checkDisplayName(name string) string {
 	switch n := utf8.RuneCountInString(name); {
-	case n == 0:
+	case n == 0 || strings.IndexFunc(name, printed) < 0:
 		return "is empty"
 	case n > MaxDisplayNameLength:
 		return fmt.Sprintf("is longer than %d characters", MaxDisplayNameLength)
-	case strings.IndexFunc(name, unicode.IsControl) >= 0:
+	case strings.IndexFunc(name, isControl) >= 0:
 		return "contains a control character"
 	}
 	return ""
+}
+
+// printed reports whether r is printed: a letter, a mark, a number,
+// punctuation, or a symbol, rather than a space, a control character, or a
+// format character, such as U+200B ZERO WIDTH SPACE, which shows nothing.
+func printed(r rune) bool {
+	return unicode.IsGraphic(r) && !unicode.IsSpace(r)
+}
+
+// isControl reports whether r is a control character of a display name: one
+// of category Cc, a bidirectional control, such as U+202E, which reverses
+// the text after it, or a line or paragraph separator. Other format
+// characters are allowed, because names need some of them, as U+200D ZERO
+// WIDTH JOINER joins the emoji of a family, and U+200C ZERO WIDTH NON-JOINER
+// writes Persian.
+func isControl(r rune) bool {
+	return unicode.IsControl(r) || unicode.In(r, unicode.Bidi_Control, unicode.Zl, unicode.Zp)
 }
 
 // Authenticate returns the ID of the active account that the email address
@@ -250,11 +270,7 @@ func (s *Service) Authenticate(ctx context.Context, email string, password secre
 		return ids.UUID{}, fmt.Errorf("account: read the account: %w", err)
 	}
 	if !found || !row.PasswordHash.Valid || row.Status != "active" {
-		decoy, err := s.decoy()
-		if err != nil {
-			return ids.UUID{}, err
-		}
-		if _, _, err := s.hasher.Verify(ctx, decoy, password); err != nil {
+		if _, _, err := s.hasher.Verify(ctx, s.decoy, password); err != nil {
 			return ids.UUID{}, err
 		}
 		return ids.UUID{}, ErrInvalidCredentials

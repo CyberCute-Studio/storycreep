@@ -57,6 +57,27 @@ func TestHash(t *testing.T) {
 	}
 }
 
+// TestDecoy checks that a decoy is a hash with the Hasher's parameters, so
+// that checking a password against it takes as long as against a hash that
+// Hash made, that each decoy is another, and that a password does not match
+// it.
+func TestDecoy(t *testing.T) {
+	t.Parallel()
+	h := newHasher(cheapParams, 1)
+	decoy := h.decoy()
+	if p, _, _, err := parseHash(decoy); err != nil || p != cheapParams {
+		t.Fatalf("the decoy %q has the parameters %+v, error %v; want %+v", decoy, p, err, cheapParams)
+	}
+	if h.decoy() == decoy {
+		t.Errorf("two decoys are the same: %q", decoy)
+	}
+	for _, password := range []string{"", "correct horse battery staple"} {
+		if match, _, err := h.Verify(context.Background(), decoy, secret.New(password)); err != nil || match {
+			t.Errorf("%q against the decoy: match %t, error %v", password, match, err)
+		}
+	}
+}
+
 // TestVerifyNormalizes checks that a password matches its hash however its
 // characters are composed or which width they have, as NFKC makes them the
 // same.

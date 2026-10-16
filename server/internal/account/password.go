@@ -106,6 +106,17 @@ func (h *Hasher) Hash(ctx context.Context, password secret.Value) (string, error
 	return encodeHash(h.params, salt, key), nil
 }
 
+// decoy returns a hash with the Hasher's parameters and a random salt and
+// key, which takes as long to check a password against as a hash that Hash
+// made, but which a password matches only by a chance of one in 2^256. It
+// hashes nothing, so it costs nothing to make.
+func (h *Hasher) decoy() string {
+	salt, key := make([]byte, h.params.saltLen), make([]byte, h.params.keyLen)
+	_, _ = rand.Read(salt)
+	_, _ = rand.Read(key)
+	return encodeHash(h.params, salt, key)
+}
+
 // Verify reports whether password matches encoded, a hash that Hash
 // returned, and, if it does, whether the hash was made with other
 // parameters than the Hasher's, so that it should be made again. It returns

@@ -33,9 +33,9 @@ func (d readyDB) InTx(ctx context.Context, scope database.Scope, fn func(pgx.Tx)
 
 // registerBody is the body of POST /api/v1/auth/register.
 type registerBody struct {
-	Email string `json:"email" format:"email" maxLength:"254" doc:"The account's email address, which signs in: an address alone, as jo@example.com, of at most 254 bytes. Addresses compare without regard to case."`
+	Email string `json:"email" format:"email" maxLength:"254" doc:"The account's email address, which signs in: an address alone, as jo@example.com, of at most 254 bytes, without spaces or characters that are not printed. Addresses compare without regard to case."`
 	// The limits are the account package's.
-	DisplayName string `json:"display_name" maxLength:"100" doc:"The name that other people see, of 1 to 100 characters, without control characters. White space around it is removed."`
+	DisplayName string `json:"display_name" maxLength:"100" doc:"The name that other people see, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls and line separators among them. White space around it is removed."`
 	Password    string `json:"password" maxLength:"256" doc:"The password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password."`
 }
 
@@ -56,11 +56,12 @@ func registerAccounts(m *api.Mux, accounts *account.Service) {
 		Description: "Creates an account with an email address, a display name, and a password, if the instance's " +
 			"signup policy, STORYCREEP_SIGNUP, lets anyone register. Under closed the answer is 403 signup_closed, " +
 			"and under invite 403 invite_required, because only an invitation creates an account then; either " +
-			"comes whatever the request holds. The password must have at least 12 characters, counted as Unicode " +
-			"code points once it is in NFKC, and must not be one of the 10,000 most common passwords, compared " +
-			"without regard to case, or the answer is 422 weak_password. Otherwise the answer is 202 without a " +
-			"body, whether or not the address has an account already, which then stays as it was, so that the " +
-			"answer does not tell whether an address has an account.",
+			"comes whatever the request holds. An email address or a display name that its field does not allow " +
+			"is answered with 422 validation_failed. The password must have at least 12 characters, counted as " +
+			"Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, " +
+			"compared without regard to case, or the answer is 422 weak_password. Otherwise the answer is 202 " +
+			"without a body, whether or not the address has an account already, which then stays as it was, so " +
+			"that the answer does not tell whether an address has an account.",
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusAccepted,
 		// The policy is checked before the body is read, so that a
