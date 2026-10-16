@@ -86,8 +86,8 @@ type Options struct {
 	// --no-inline-workers is given.
 	InlineWorkers bool
 	// Jobs holds the kinds of job that the server enqueues and runs. Nil
-	// means the server's own, which are none yet: the plan items that add
-	// jobs register them here.
+	// means the server's own: the session cleanup (package account). The
+	// plan items that add jobs register them in serverJobs.
 	Jobs *jobs.Registry
 }
 
@@ -212,8 +212,12 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 
 	// The queue enqueues jobs from the start, and its workers start once the
 	// server is ready, when River's tables exist.
+	registry := opts.Jobs
+	if registry == nil {
+		registry = s.serverJobs()
+	}
 	queue, err = jobs.Open(ctx, db, cfg.DatabaseURL, jobs.Options{
-		Registry: opts.Jobs,
+		Registry: registry,
 		Work:     opts.InlineWorkers,
 		Log:      log,
 	})
@@ -291,6 +295,13 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 		log.ErrorContext(ctx, "the job workers could not start, so the server stops", "error", err)
 		return err
 	}
+}
+
+// serverJobs returns the registry of the server's own jobs.
+func (s *server) serverJobs() *jobs.Registry {
+	r := jobs.NewRegistry()
+	s.accounts.RegisterJobs(r)
+	return r
 }
 
 func closeListeners(ls ...net.Listener) {

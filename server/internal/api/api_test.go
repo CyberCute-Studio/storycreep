@@ -453,6 +453,84 @@ func TestGuard(t *testing.T) {
 	}
 }
 
+type callerKey struct{}
+
+// TestAuthenticate checks that an operation whose capability needs an
+// authenticated caller runs the Mux's Authenticator before its own
+// middleware, and before it reads the request's body, so that a refusal
+// comes whatever the body holds, and that the operation runs with the
+// context that the Authenticator returns. A public operation does not run
+// it, and a route that needs a caller cannot be registered where nothing
+// finds one.
+func TestAuthenticate(t *testing.T) {
+	var refuse error
+	authenticated := 0
+	m, _ := testMux(t)
+	m.authenticate = func(ctx huma.Context) (context.Context, error) {
+		authenticated++
+		if refuse != nil {
+			return nil, refuse
+		}
+		return context.WithValue(ctx.Context(), callerKey{}, "jo"), nil
+	}
+	var order []string
+	caller := ""
+	Register(m, OwnAccount, huma.Operation{
+		OperationID:  "createOwnItem",
+		Method:       http.MethodPost,
+		Path:         "/own/items",
+		MaxBodyBytes: 64,
+		Middlewares: huma.Middlewares{func(ctx huma.Context, next func(huma.Context)) {
+			order = append(order, "own middleware")
+			next(ctx)
+		}},
+	}, func(ctx context.Context, in *itemInput) (*itemOutput, error) {
+		caller, _ = ctx.Value(callerKey{}).(string)
+		return &itemOutput{Body: in.Body}, nil
+	})
+	Register(m, Public, huma.Operation{OperationID: "createItem", Method: http.MethodPost, Path: "/items"},
+		func(_ context.Context, in *itemInput) (*itemOutput, error) { return &itemOutput{Body: in.Body}, nil })
+
+	refuse = huma.ErrorWithHeaders(NewError(CodeUnauthenticated), http.Header{"Set-Cookie": {"a=; Max-Age=0"}})
+	for _, body := range []string{`{"name":"a"}`, ``, `{"name":`, `{"colour":"red"}`, strings.Repeat(" ", 65)} {
+		res := serve(m, http.MethodPost, "/own/items", "application/json", []byte(body))
+		if b := res.envelope(t); b.Code != CodeUnauthenticated || res.header.Get("Set-Cookie") != "a=; Max-Age=0" {
+			t.Errorf("%q: %d %s, Set-Cookie %q", body, res.status, res.body, res.header.Get("Set-Cookie"))
+		}
+	}
+	if caller != "" || len(order) != 0 {
+		t.Errorf("a refused request reached the operation (%q) or its middleware (%v)", caller, order)
+	}
+
+	refuse = nil
+	if res := serve(m, http.MethodPost, "/own/items", "application/json", []byte(`{"name":"a"}`)); res.status !=
+		http.StatusOK || caller != "jo" || len(order) != 1 {
+		t.Errorf("an authenticated request: %d %s, caller %q, middleware %v", res.status, res.body, caller, order)
+	}
+	before := authenticated
+	if res := serve(m, http.MethodPost, "/items", "application/json", []byte(`{"name":"a"}`)); res.status !=
+		http.StatusOK || authenticated != before {
+		t.Errorf("a public operation: %d, and it ran the Authenticator", res.status)
+	}
+
+	for name, register := range map[string]func(){
+		"an operation without an Authenticator": func() {
+			Register(NewMux(MuxOptions{}), OwnAccount, huma.Operation{OperationID: "x", Method: http.MethodGet,
+				Path: "/x"}, func(context.Context, *struct{}) (*itemOutput, error) { return nil, nil })
+		},
+		"a handler": func() { m.Handle(OwnAccount, http.MethodGet, "/own", http.NotFoundHandler()) },
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("registering %s that needs an authenticated caller did not panic", name)
+				}
+			}()
+			register()
+		}()
+	}
+}
+
 // TestRoutingErrors checks the answers to a path no route matches and to a
 // method no route at the path takes.
 func TestRoutingErrors(t *testing.T) {

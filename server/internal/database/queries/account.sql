@@ -19,3 +19,8 @@ SELECT id, password_hash, status FROM "user" WHERE email = @email;
 -- meantime is not changed back.
 UPDATE "user" SET password_hash = @new_hash, updated_at = now()
 WHERE id = @id AND password_hash = @old_hash;
+
+-- name: UserPasswordHash :one
+-- UserPasswordHash returns the hash of an active account's password, which
+-- changing the password checks the current password against.
+SELECT password_hash FROM "user" WHERE id = @id AND status = 'active';

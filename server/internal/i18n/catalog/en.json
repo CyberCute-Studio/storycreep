@@ -1,5 +1,7 @@
 {
+  "error.csrf_failed": "The request lacks the session's CSRF token, or came from another site.",
   "error.internal_error": "An internal error occurred.",
+  "error.invalid_credentials": "The email address or the password is wrong.",
   "error.invalid_cursor": "The pagination cursor is invalid.",
   "error.invalid_id": "An identifier is invalid.",
   "error.invalid_id.character": "The identifier contains a character outside Crockford base32.",
@@ -25,5 +27,6 @@
   "error.validation_failed": "The request is invalid.",
   "error.weak_password": "The password is too weak.",
   "error.weak_password.common": "The password is one of the most common passwords.",
-  "error.weak_password.too_short": "The password must have at least {min} characters."
+  "error.weak_password.too_short": "The password must have at least {min} characters.",
+  "error.wrong_password": "The current password is wrong."
 }

@@ -82,3 +82,16 @@ func (q *Queries) UserCredentials(ctx context.Context, email string) (UserCreden
 	err := row.Scan(&i.ID, &i.PasswordHash, &i.Status)
 	return i, err
 }
+
+const userPasswordHash = `-- name: UserPasswordHash :one
+SELECT password_hash FROM "user" WHERE id = $1 AND status = 'active'
+`
+
+// UserPasswordHash returns the hash of an active account's password, which
+// changing the password checks the current password against.
+func (q *Queries) UserPasswordHash(ctx context.Context, id pgtype.UUID) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, userPasswordHash, id)
+	var password_hash pgtype.Text
+	err := row.Scan(&password_hash)
+	return password_hash, err
+}

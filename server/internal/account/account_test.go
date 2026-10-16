@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -53,12 +54,18 @@ func accounts(t *testing.T, admin *pgx.Conn) []stored {
 	return got
 }
 
+// The sessions' idle timeout and lifetime in the tests, the defaults.
+const (
+	testIdle     = 30 * 24 * time.Hour
+	testLifetime = 90 * 24 * time.Hour
+)
+
 // setup returns a Service under the signup policy, on a new database, and a
 // connection to the database as the superuser.
 func setup(t *testing.T, signup config.SignupPolicy) (*Service, *pgx.Conn) {
 	t.Helper()
 	d := dbtest.New(t)
-	return New(d.Open(t), signup), d.Admin(t)
+	return New(d.Open(t), Options{Signup: signup, IdleTimeout: testIdle, Lifetime: testLifetime}), d.Admin(t)
 }
 
 // TestRegister checks the account that a registration creates: its address
@@ -162,7 +169,7 @@ func TestRegisterPolicy(t *testing.T) {
 		{config.SignupInvite, ErrInviteRequired},
 		{"", ErrSignupClosed},
 	} {
-		s := New(db, c.signup)
+		s := New(db, Options{Signup: c.signup, IdleTimeout: testIdle, Lifetime: testLifetime})
 		if err := s.CheckSignup(context.Background()); !errors.Is(err, c.want) {
 			t.Errorf("%q: CheckSignup = %v, want %v", c.signup, err, c.want)
 		}
@@ -175,7 +182,7 @@ func TestRegisterPolicy(t *testing.T) {
 			}
 		}
 	}
-	if err := New(db, config.SignupOpen).CheckSignup(context.Background()); err != nil {
+	if err := New(db, Options{Signup: config.SignupOpen, IdleTimeout: testIdle, Lifetime: testLifetime}).CheckSignup(context.Background()); err != nil {
 		t.Errorf("open: CheckSignup = %v", err)
 	}
 	if got := accounts(t, admin); len(got) != 0 {
