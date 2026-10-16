@@ -322,17 +322,21 @@ func isControl(r rune) bool {
 // When the password matches a hash made with other parameters than the
 // current ones, Authenticate hashes the password again and replaces the
 // account's hash (NFR-SEC-03), unless the account's password changed in the
-// meantime. Login calls it.
+// meantime. Login checks the password as it does (authenticate), and does
+// not call it.
 func (s *Service) Authenticate(ctx context.Context, email string, password secret.Value) (ids.UUID, error) {
-	id, _, err := s.authenticate(ctx, email, password)
+	id, _, _, err := s.authenticate(ctx, email, password)
 	return id, err
 }
 
 // authenticate is Authenticate, and also returns the ID of the account that
 // the address belongs to, if one does, whether or not it signs in, which the
-// audit log names as the subject of a failed sign-in.
+// audit log names as the subject of a failed sign-in, and, when it signs in,
+// the hash that the account holds now, as far as it knows: the one that the
+// password matched, or the one that replaced it. Login starts a session only
+// while the account still holds that hash (startSession).
 func (s *Service) authenticate(ctx context.Context, email string, password secret.Value) (id, account ids.UUID,
-	err error) {
+	hash string, err error) {
 	var found bool
 	var row queries.UserCredentialsRow
 	if email = canonicalEmail(email); checkEmail(email) == "" {
@@ -346,7 +350,7 @@ func (s *Service) authenticate(ctx context.Context, email string, password secre
 			return err
 		})
 		if err != nil {
-			return ids.UUID{}, ids.UUID{}, fmt.Errorf("account: read the account: %w", err)
+			return ids.UUID{}, ids.UUID{}, "", fmt.Errorf("account: read the account: %w", err)
 		}
 	}
 	if found {
@@ -354,33 +358,37 @@ func (s *Service) authenticate(ctx context.Context, email string, password secre
 	}
 	if !found || !row.PasswordHash.Valid || row.Status != "active" {
 		if _, _, err := s.hasher.Verify(ctx, s.decoy, password); err != nil {
-			return ids.UUID{}, ids.UUID{}, err
+			return ids.UUID{}, ids.UUID{}, "", err
 		}
-		return ids.UUID{}, account, ErrInvalidCredentials
+		return ids.UUID{}, account, "", ErrInvalidCredentials
 	}
-	match, rehash, err := s.hasher.Verify(ctx, row.PasswordHash.String, password)
+	hash = row.PasswordHash.String
+	match, rehash, err := s.hasher.Verify(ctx, hash, password)
 	switch {
 	case err != nil:
-		return ids.UUID{}, ids.UUID{}, err
+		return ids.UUID{}, ids.UUID{}, "", err
 	case !match:
-		return ids.UUID{}, account, ErrInvalidCredentials
+		return ids.UUID{}, account, "", ErrInvalidCredentials
 	case rehash:
-		if err := s.rehash(ctx, row.ID, row.PasswordHash.String, password); err != nil {
-			return ids.UUID{}, ids.UUID{}, err
+		if hash, err = s.rehash(ctx, row.ID, hash, password); err != nil {
+			return ids.UUID{}, ids.UUID{}, "", err
 		}
 	}
-	return account, account, nil
+	return account, account, hash, nil
 }
 
 // rehash replaces old, the hash of the account id's password, with a hash of
-// password with the current parameters, unless the hash is no longer old.
-func (s *Service) rehash(ctx context.Context, id pgtype.UUID, old string, password secret.Value) error {
+// password with the current parameters, unless the hash is no longer old. It
+// returns the hash that it stored, or old if it stored none.
+func (s *Service) rehash(ctx context.Context, id pgtype.UUID, old string, password secret.Value) (string, error) {
 	hash, err := s.hasher.Hash(ctx, password)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-		_, err := queries.New(tx).UpdatePasswordHash(ctx, queries.UpdatePasswordHashParams{
+	var n int64
+	err = s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		var err error
+		n, err = queries.New(tx).UpdatePasswordHash(ctx, queries.UpdatePasswordHashParams{
 			NewHash: pgtype.Text{String: hash, Valid: true},
 			ID:      id,
 			OldHash: pgtype.Text{String: old, Valid: true},
@@ -390,4 +398,11 @@ func (s *Service) rehash(ctx context.Context, id pgtype.UUID, old string, passwo
 		}
 		return nil
 	})
+	switch {
+	case err != nil:
+		return "", err
+	case n == 0:
+		return old, nil
+	}
+	return hash, nil
 }

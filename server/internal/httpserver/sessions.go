@@ -38,7 +38,11 @@ import (
 // The server keeps nothing for it, and it changes when the session's secret
 // does. A browser also tells the server where a request comes from, in its
 // Sec-Fetch-Site header, and the server refuses every such request that
-// comes from another site, signing in included (refuseCrossSite).
+// comes from another site, signing in included (refuseCrossSite). Browsers
+// send that header only to an https URL or to a loopback address such as
+// localhost, so with a plain-HTTP public URL of another host, such as a LAN
+// address, the CSRF token alone protects the requests made with a session,
+// and nothing stops another site from signing a browser in.
 
 // The names of the session cookie: with an https public URL, and with an
 // http one.
@@ -128,9 +132,10 @@ func safeMethod(method string) bool {
 // its origin, and nothing else that runs in a browser has a reason to change
 // anything, so this stops another site from making a browser sign in to an
 // account of its choosing, which no session's CSRF token protects, as well as
-// from acting with a session. A request without the header, from a program
-// or an older browser, goes on, and the CSRF token of its session protects
-// it.
+// from acting with a session. A request without the header goes on, and the
+// CSRF token of its session protects it: one from a program, from an older
+// browser, or to a plain-HTTP URL whose host is not a loopback address, to
+// which browsers do not send the header.
 func refuseCrossSite(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if site := r.Header.Get("Sec-Fetch-Site"); !safeMethod(r.Method) && (site == "cross-site" ||
@@ -221,7 +226,7 @@ type sessionBody struct {
 	ID            string    `json:"id" doc:"The session's ID"`
 	CreatedAt     time.Time `json:"created_at" doc:"When its user signed in"`
 	LastSeenAt    time.Time `json:"last_seen_at" doc:"When it was last used, to the minute"`
-	ExpiresAt     time.Time `json:"expires_at" doc:"When it ends at the latest, however often it is used: STORYCREEP_SESSION_LIFETIME after its user signed in"`
+	ExpiresAt     time.Time `json:"expires_at" doc:"When it ends at the latest, however often it is used: STORYCREEP_SESSION_LIFETIME after its user signed in, or the lifetime in force when its user signed in, if that was shorter"`
 	IdleExpiresAt time.Time `json:"idle_expires_at" doc:"When it ends unless it is used before: STORYCREEP_SESSION_IDLE_TIMEOUT after its last use, or at expires_at if that is sooner"`
 	IP            string    `json:"ip,omitempty" doc:"The IP address that its user signed in from, as the server saw it; behind a reverse proxy, the proxy's"`
 	UserAgent     string    `json:"user_agent,omitempty" doc:"The User-Agent header of the client that its user signed in with"`
@@ -351,7 +356,9 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 			"the Set-Cookie header gives the client, and whose CSRF token the body holds. An address of no " +
 			"account, a wrong password, and an account that cannot sign in, such as a suspended one, are all " +
 			"answered with 401 invalid_credentials, after the same work, so that the answer does not tell them " +
-			"apart. A browser's request from another site is answered with 403 csrf_failed.",
+			"apart. A request that a browser's Sec-Fetch-Site header says comes from another site is answered " +
+			"with 403 csrf_failed; browsers send that header only to https URLs and to loopback addresses, such as " +
+			"localhost.",
 		Tags: []string{"Authentication"},
 	}, func(ctx context.Context, in *loginInput) (*signedInOutput, error) {
 		issued, err := accounts.Login(ctx, in.Body.Email, secret.New(in.Body.Password), clientFrom(ctx))

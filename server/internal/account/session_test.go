@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
@@ -383,6 +384,120 @@ func TestChangePassword(t *testing.T) {
 	}
 	if _, err := s.Authenticate(ctx, "jo@example.com", replacement); err != nil {
 		t.Errorf("the change from an ended session changed the password: %v", err)
+	}
+}
+
+// TestLoginRacesPasswordChange checks that a sign-in that checked the old
+// password before the password changed starts no session afterwards, which
+// the change's revocation of the other sessions would have missed, nor one
+// for an account that stopped being active meanwhile, and that it starts
+// one while the account still holds the hash that it checked.
+//
+// Verifies: FR-AUTH-02/AC4
+func TestLoginRacesPasswordChange(t *testing.T) {
+	t.Parallel()
+	s, admin := setup(t, config.SignupOpen)
+	id := register(t, s, admin, "jo@example.com")
+	ctx := context.Background()
+	check := func() string {
+		t.Helper()
+		got, _, hash, err := s.authenticate(ctx, "jo@example.com", secret.New(testPassword))
+		if err != nil || got != id || hash == "" {
+			t.Fatalf("authenticate = %v, %q, %v; want the account and its hash", got, hash, err)
+		}
+		return hash
+	}
+
+	if _, err := s.startSession(ctx, id, check(), testClient); err != nil {
+		t.Errorf("a sign-in whose hash the account still holds: %v", err)
+	}
+	stale := check()
+	changer := login(t, s, "jo@example.com")
+	if _, err := s.ChangePassword(ctx, changer.Session, secret.New(testPassword), secret.New("a brand new passphrase"),
+		testClient); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.startSession(ctx, id, stale, testClient); !errors.Is(err, errCredentialsChanged) {
+		t.Errorf("a sign-in that checked the old password: %v, want errCredentialsChanged", err)
+	}
+	if n := count(t, admin, `SELECT count(*) FROM session WHERE revoked_at IS NULL`); n != 1 {
+		t.Errorf("%d active sessions, want only the one that changed the password", n)
+	}
+
+	other := register(t, s, admin, "mo@example.com")
+	_, _, hash, err := s.authenticate(ctx, "mo@example.com", secret.New(testPassword))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec(t, admin, `UPDATE "user" SET status = 'suspended' WHERE id = $1`, other)
+	if _, err := s.startSession(ctx, other, hash, testClient); !errors.Is(err, errCredentialsChanged) {
+		t.Errorf("a sign-in of an account suspended meanwhile: %v, want errCredentialsChanged", err)
+	}
+	if n := count(t, admin, `SELECT count(*) FROM session WHERE user_id = $1`, other); n != 0 {
+		t.Errorf("the suspended account has %d sessions, want none", n)
+	}
+}
+
+// TestPasswordChangeWaitsForSignIn checks that a password change that comes
+// while a sign-in's transaction holds the lock on the account
+// (startSession) waits for that transaction, and then revokes the session
+// that it started with the others.
+//
+// Verifies: FR-AUTH-02/AC4
+func TestPasswordChangeWaitsForSignIn(t *testing.T) {
+	t.Parallel()
+	s, admin := setup(t, config.SignupOpen)
+	id := register(t, s, admin, "jo@example.com")
+	changer := login(t, s, "jo@example.com")
+	ctx := context.Background()
+
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := queries.New(tx).LockPasswordHash(ctx, nullUUID(id)); err != nil {
+		t.Fatal(err)
+	}
+	changed := make(chan error, 1)
+	go func() {
+		_, err := s.ChangePassword(ctx, changer.Session, secret.New(testPassword),
+			secret.New("a brand new passphrase"), testClient)
+		changed <- err
+	}()
+	// The change has checked the current password, hashed the new one, and
+	// waits for the lock once a transaction waits for this one.
+	const waiters = `SELECT count(*) FROM pg_locks WHERE NOT granted AND locktype = 'transactionid'
+		AND transactionid::text = pg_current_xact_id()::text`
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(20 * time.Millisecond) {
+		var waiting int
+		if err := tx.QueryRow(ctx, waiters).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting > 0 {
+			break
+		}
+		select {
+		case err := <-changed:
+			t.Fatalf("the change did not wait for the sign-in's lock: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the change never waits for the sign-in's lock")
+		}
+	}
+	issued, err := s.insertSession(ctx, tx, id, testClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-changed; err != nil {
+		t.Fatalf("the change: %v", err)
+	}
+	if _, err := s.Session(ctx, issued.Secret); !errors.Is(err, ErrNoSession) {
+		t.Errorf("the session that the sign-in started while the password changed: %v, want ErrNoSession", err)
 	}
 }
 

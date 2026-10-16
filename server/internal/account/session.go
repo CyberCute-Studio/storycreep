@@ -8,9 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -35,8 +33,10 @@ import (
 // out, which deletes it (AC2), when it is revoked, when it has not been used
 // for the idle timeout, or when the lifetime has passed since its user signed
 // in, however often it is used. Changing the account's password revokes its
-// other sessions (AC4), and gives the session that changed it a new secret,
-// as a change of what a session may do should (NFR-SEC-04).
+// other sessions (AC4), and a sign-in that checked the old password starts
+// none afterwards (startSession). The change also gives the session that
+// made it a new secret, as a change of what a session may do should
+// (NFR-SEC-04).
 //
 // Each session records the client that started it, its IP address and user
 // agent, so that its user can tell their sessions apart, and when it was last
@@ -48,7 +48,8 @@ import (
 const sessionSecretBytes = 32
 
 // maxUserAgentBytes bounds the user agent that a session keeps, as the audit
-// log bounds its own. A longer one is cut at a character's boundary.
+// log bounds its own. A longer one is cut at a character's boundary
+// (audit.ClientText).
 const maxUserAgentBytes = 512
 
 // cleanupBatch is how many ended sessions the session cleanup job deletes in
@@ -132,31 +133,82 @@ func secretHash(s secret.Value) ([]byte, bool) {
 
 // Login signs an account in, as Authenticate checks its address and
 // password, and starts a session for it, with client, and the audit entry of
-// the login, in one transaction. A failed sign-in returns
+// the login, in one transaction (startSession). A failed sign-in returns
 // ErrInvalidCredentials, and is recorded in the audit log, in a transaction
 // of its own, with the account that the address belongs to, if any, and the
 // address's keyed hash otherwise (FR-TEN-07).
+//
+// If the account's password changes, or the account stops being active,
+// between the check of the password and the start of the session, Login
+// checks the password again, against what the account holds then, at most
+// loginAttempts times in all, so that a sign-in with the old password does
+// not outlive the change, and one with the password that the account holds
+// still signs in, as after another sign-in hashed it again (NFR-SEC-03).
 func (s *Service) Login(ctx context.Context, email string, password secret.Value, client Client) (Issued, error) {
-	id, account, err := s.authenticate(ctx, email, password)
-	if errors.Is(err, ErrInvalidCredentials) {
-		entry := audit.Entry{Action: audit.ActionLogin, SubjectID: account, Result: audit.ResultFailure,
-			IP: client.IP, UserAgent: client.UserAgent}
-		if account == (ids.UUID{}) {
-			entry.AttemptedEmail = canonicalEmail(email)
+	for attempt := 1; ; attempt++ {
+		id, account, hash, err := s.authenticate(ctx, email, password)
+		if errors.Is(err, ErrInvalidCredentials) {
+			return Issued{}, s.loginFailed(ctx, email, account, client)
 		}
-		if err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-			return audit.Record(ctx, tx, entry)
-		}); err != nil {
+		if err != nil {
 			return Issued{}, err
 		}
-		return Issued{}, ErrInvalidCredentials
+		issued, err := s.startSession(ctx, id, hash, client)
+		switch {
+		case !errors.Is(err, errCredentialsChanged):
+			return issued, err
+		case attempt == loginAttempts:
+			return Issued{}, s.loginFailed(ctx, email, id, client)
+		}
 	}
-	if err != nil {
-		return Issued{}, err
+}
+
+// loginAttempts is how many times Login checks a password at most, when the
+// account's password changes after each check (startSession).
+const loginAttempts = 2
+
+// errCredentialsChanged is returned by startSession when the account's
+// password, or whether it can sign in, changed since the sign-in checked it.
+var errCredentialsChanged = errors.New("account: the account changed since its password was checked")
+
+// loginFailed records a failed sign-in with email, whose address belongs to
+// the account account, or to none if it is zero, and returns
+// ErrInvalidCredentials, or the error that recording it failed with.
+func (s *Service) loginFailed(ctx context.Context, email string, account ids.UUID, client Client) error {
+	entry := audit.Entry{Action: audit.ActionLogin, SubjectID: account, Result: audit.ResultFailure,
+		IP: client.IP, UserAgent: client.UserAgent}
+	if account == (ids.UUID{}) {
+		entry.AttemptedEmail = canonicalEmail(email)
 	}
+	if err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		return audit.Record(ctx, tx, entry)
+	}); err != nil {
+		return err
+	}
+	return ErrInvalidCredentials
+}
+
+// startSession starts a session of the account id, whose password a sign-in
+// checked against hash, with client, and records the login, in one
+// transaction. That transaction first locks the account's row
+// (LockPasswordHash), and returns errCredentialsChanged, starting nothing,
+// unless the account is still active and holds hash. A change of the
+// password that committed after the check, and so revoked the account's
+// other sessions without this one, is seen then; one that comes later waits
+// for the lock, and then revokes this session with the others (FR-AUTH-02
+// AC4).
+func (s *Service) startSession(ctx context.Context, id ids.UUID, hash string, client Client) (Issued, error) {
 	var issued Issued
-	err = s.db.InTx(ctx, database.Scope{UserID: id}, func(tx pgx.Tx) error {
-		var err error
+	err := s.db.InTx(ctx, database.Scope{UserID: id}, func(tx pgx.Tx) error {
+		held, err := queries.New(tx).LockPasswordHash(ctx, nullUUID(id))
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return errCredentialsChanged
+		case err != nil:
+			return fmt.Errorf("account: lock the account: %w", err)
+		case !held.Valid || held.String != hash:
+			return errCredentialsChanged
+		}
 		if issued, err = s.insertSession(ctx, tx, id, client); err != nil {
 			return err
 		}
@@ -174,7 +226,7 @@ func (s *Service) Login(ctx context.Context, email string, password secret.Value
 func (s *Service) insertSession(ctx context.Context, tx pgx.Tx, id ids.UUID, client Client) (Issued, error) {
 	value, hash := newSecret()
 	session := Session{ID: ids.New(), UserID: id, IP: client.IP.WithZone(""),
-		UserAgent: clientText(client.UserAgent, maxUserAgentBytes)}
+		UserAgent: audit.ClientText(client.UserAgent, maxUserAgentBytes)}
 	var ip *netip.Addr
 	if session.IP.IsValid() {
 		ip = &session.IP
@@ -512,19 +564,4 @@ func addr(ip *netip.Addr) netip.Addr {
 		return netip.Addr{}
 	}
 	return *ip
-}
-
-// clientText returns s, which a client chose, as a text column can hold it:
-// valid UTF-8, without NUL characters, and at most limit bytes, cut at a
-// character's boundary, as package audit keeps a client's text.
-func clientText(s string, limit int) string {
-	s = strings.ReplaceAll(strings.ToValidUTF8(s, string(utf8.RuneError)), "\x00", "")
-	if len(s) <= limit {
-		return s
-	}
-	cut := limit
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
 }

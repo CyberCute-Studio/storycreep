@@ -85,7 +85,8 @@ var codes = []codeSpec{
 			"has the session cookie but not the session's CSRF token, which `POST /api/v1/auth/login` and " +
 			"`GET /api/v1/auth/session` return as `csrf_token`, in its `X-CSRF-Token` header, or a browser sent " +
 			"it from another site, as its `Sec-Fetch-Site` header says, whatever its credentials (PRD FR-AUTH-02 " +
-			"AC5)."},
+			"AC5). Browsers send that header only to `https` URLs and to loopback addresses, such as `localhost`, " +
+			"so with a plain-HTTP `STORYCREEP_PUBLIC_URL` of another host only the CSRF token is checked."},
 	{CodeWrongPassword, http.StatusForbidden, i18n.K("error.wrong_password"),
 		"`POST /api/v1/auth/password` was given a current password that is not the account's, so the " +
 			"password stays as it was."},

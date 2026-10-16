@@ -13,10 +13,12 @@ ON CONFLICT (email) DO NOTHING;
 SELECT id, password_hash, status FROM "user" WHERE email = @email;
 
 -- name: UpdatePasswordHash :execrows
--- UpdatePasswordHash replaces the hash of an account's password with one of
--- the same password, made with the current parameters (PRD NFR-SEC-03), if
--- the hash is still old_hash, so that a password that changed in the
--- meantime is not changed back.
+-- UpdatePasswordHash replaces the hash of an account's password with
+-- new_hash, if the hash is still old_hash, which the caller checked a
+-- password against, so that a password that changed in the meantime is not
+-- changed back. Signing in uses it to hash the same password again with the
+-- current parameters (PRD NFR-SEC-03), and changing the password to store
+-- the new one.
 UPDATE "user" SET password_hash = @new_hash, updated_at = now()
 WHERE id = @id AND password_hash = @old_hash;
 
@@ -24,3 +26,14 @@ WHERE id = @id AND password_hash = @old_hash;
 -- UserPasswordHash returns the hash of an active account's password, which
 -- changing the password checks the current password against.
 SELECT password_hash FROM "user" WHERE id = @id AND status = 'active';
+
+-- name: LockPasswordHash :one
+-- LockPasswordHash returns the hash of an active account's password, and
+-- locks the account's row against changes until the transaction ends. A
+-- change of the password, which updates the row, then waits for the
+-- transaction, or the transaction for the change, and sees what the change
+-- did. Signing in starts a session in such a transaction, and only while the
+-- hash is still the one that it checked the password against, so that the
+-- revocation of the other sessions that changing the password does sees
+-- every session that the old password started (PRD FR-AUTH-02 AC4).
+SELECT password_hash FROM "user" WHERE id = @id AND status = 'active' FOR SHARE;

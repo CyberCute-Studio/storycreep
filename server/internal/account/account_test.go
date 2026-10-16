@@ -182,7 +182,8 @@ func TestRegisterPolicy(t *testing.T) {
 			}
 		}
 	}
-	if err := New(db, Options{Signup: config.SignupOpen, IdleTimeout: testIdle, Lifetime: testLifetime}).CheckSignup(context.Background()); err != nil {
+	open := New(db, Options{Signup: config.SignupOpen, IdleTimeout: testIdle, Lifetime: testLifetime})
+	if err := open.CheckSignup(context.Background()); err != nil {
 		t.Errorf("open: CheckSignup = %v", err)
 	}
 	if got := accounts(t, admin); len(got) != 0 {
@@ -430,9 +431,12 @@ func TestRehashKeepsANewerPassword(t *testing.T) {
 	if _, err := admin.Exec(ctx, `UPDATE "user" SET password_hash = 'newer' WHERE id = $1`, id); err != nil {
 		t.Fatal(err)
 	}
-	err := s.rehash(ctx, pgtype.UUID{Bytes: id, Valid: true}, "old", secret.New("correct horse battery staple"))
+	stored, err := s.rehash(ctx, pgtype.UUID{Bytes: id, Valid: true}, "old", secret.New("correct horse battery staple"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if stored != "old" {
+		t.Errorf("rehash says it stored %q, want old, as it stored nothing", stored)
 	}
 	if got := passwordHash(t, admin, id); got != "newer" {
 		t.Errorf("the hash is %q, want the newer one", got)

@@ -56,7 +56,7 @@ export interface SessionBody {
   created_at: string;
   /** Whether it is the session of the request */
   current: boolean;
-  /** When it ends at the latest, however often it is used: STORYCREEP_SESSION_LIFETIME after its user signed in */
+  /** When it ends at the latest, however often it is used: STORYCREEP_SESSION_LIFETIME after its user signed in, or the lifetime in force when its user signed in, if that was shorter */
   expires_at: string;
   /** The session's ID */
   id: string;
@@ -188,7 +188,7 @@ export interface Operations {
   /**
    * Sign in
    *
-   * Signs in with an account's email address and password, and starts a session, whose secret the Set-Cookie header gives the client, and whose CSRF token the body holds. An address of no account, a wrong password, and an account that cannot sign in, such as a suspended one, are all answered with 401 invalid_credentials, after the same work, so that the answer does not tell them apart. A browser's request from another site is answered with 403 csrf_failed.
+   * Signs in with an account's email address and password, and starts a session, whose secret the Set-Cookie header gives the client, and whose CSRF token the body holds. An address of no account, a wrong password, and an account that cannot sign in, such as a suspended one, are all answered with 401 invalid_credentials, after the same work, so that the answer does not tell them apart. A request that a browser's Sec-Fetch-Site header says comes from another site is answered with 403 csrf_failed; browsers send that header only to https URLs and to loopback addresses, such as localhost.
    */
   login: {
     input: {

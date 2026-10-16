@@ -103,17 +103,25 @@ func Record(ctx context.Context, tx pgx.Tx, e Entry) error {
 	}
 	q := queries.New(tx)
 	metadata := maps.Clone(e.Metadata)
-	if e.AttemptedEmail != "" {
-		in, err := q.AuditEmailHashInput(ctx, text(e.AttemptedEmail, 0))
+	// A failure of an event that records attempted addresses hashes one
+	// whether or not the entry keeps the hash, so that a failed login that
+	// names the account that the address belongs to does the same work as
+	// one for an address that belongs to none, and its time does not tell
+	// whether the address has an account (PRD FR-AUTH-01).
+	if e.AttemptedEmail != "" || s.attemptedEmail && e.Result == ResultFailure {
+		in, err := q.AuditEmailHashInput(ctx, ClientText(e.AttemptedEmail, 0))
 		if err != nil {
 			return fmt.Errorf("audit: read the key of the email hash: %w", err)
 		}
 		mac := hmac.New(sha256.New, in.Key)
 		mac.Write([]byte(in.Email))
-		if metadata == nil {
-			metadata = map[string]any{}
+		sum := hex.EncodeToString(mac.Sum(nil))
+		if e.AttemptedEmail != "" {
+			if metadata == nil {
+				metadata = map[string]any{}
+			}
+			metadata[emailHashKey] = sum
 		}
-		metadata[emailHashKey] = hex.EncodeToString(mac.Sum(nil))
 	}
 	encoded := []byte("{}")
 	if len(metadata) > 0 {
@@ -142,8 +150,8 @@ func Record(ctx context.Context, tx pgx.Tx, e Entry) error {
 		SubjectID:    nullUUID(e.SubjectID),
 		Result:       string(e.Result),
 		Ip:           ip,
-		UserAgent:    nullText(text(e.UserAgent, maxUserAgentBytes)),
-		RequestID:    nullText(text(logging.RequestID(ctx), 0)),
+		UserAgent:    nullText(ClientText(e.UserAgent, maxUserAgentBytes)),
+		RequestID:    nullText(ClientText(logging.RequestID(ctx), 0)),
 		Metadata:     encoded,
 	})
 	if err != nil {
@@ -189,12 +197,14 @@ func check(e Entry) (eventSpec, error) {
 	return s, nil
 }
 
-// text returns s as a text column can hold it, so that a client's text
-// cannot make the entry, and the change that it records, fail: as valid
-// UTF-8, with U+FFFD in place of each run of bytes that is not, and without
-// NUL characters, both of which PostgreSQL refuses. If limit is not zero, it
-// is cut to at most limit bytes, at a character's boundary.
-func text(s string, limit int) string {
+// ClientText returns s, text that a client chose, as a text column can hold
+// it, so that a client's text cannot make the entry, and the change that it
+// records, fail: as valid UTF-8, with U+FFFD in place of each run of bytes
+// that is not, and without NUL characters, both of which PostgreSQL refuses.
+// If limit is not zero, it is cut to at most limit bytes, at a character's
+// boundary. Other packages that store a client's text, such as the user
+// agent of a session, keep it the same way.
+func ClientText(s string, limit int) string {
 	s = strings.ReplaceAll(strings.ToValidUTF8(s, string(utf8.RuneError)), "\x00", "")
 	if limit == 0 || len(s) <= limit {
 		return s

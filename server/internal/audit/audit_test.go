@@ -171,7 +171,7 @@ func TestRecord(t *testing.T) {
 		t.Fatalf("%d login entries about the user, want 1", len(got))
 	}
 	e = got[0]
-	if want := text(agent, maxUserAgentBytes); e.userAgent.String != want || len(want) > maxUserAgentBytes {
+	if want := ClientText(agent, maxUserAgentBytes); e.userAgent.String != want || len(want) > maxUserAgentBytes {
 		t.Errorf("the user agent is %q, want %q", e.userAgent.String, want)
 	}
 	if e.ip == nil || *e.ip != netip.MustParseAddr("fe80::1") {
@@ -626,8 +626,8 @@ func TestText(t *testing.T) {
 		{"abcé", 5, "abcé"},
 		{"", 4, ""},
 	} {
-		if got := text(c.in, c.limit); got != c.want {
-			t.Errorf("text(%q, %d) = %q, want %q", c.in, c.limit, got, c.want)
+		if got := ClientText(c.in, c.limit); got != c.want {
+			t.Errorf("ClientText(%q, %d) = %q, want %q", c.in, c.limit, got, c.want)
 		}
 	}
 }
