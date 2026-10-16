@@ -10,7 +10,7 @@ type Capability string
 
 const (
 	// Public routes need no credentials: the health and version endpoints,
-	// and, later, signing in.
+	// registering an account, and, later, signing in.
 	Public Capability = "public"
 	// ScrapeMetrics is reading /metrics. Whether it needs a credential
 	// depends on the MetricsEndpoint capability of the configuration.

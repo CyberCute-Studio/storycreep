@@ -408,6 +408,51 @@ func TestHandlerErrors(t *testing.T) {
 	}
 }
 
+// TestGuard checks that an operation's Guard answers with its check's error,
+// in the envelope and with the error's headers, before the operation reads
+// the request's body, so whatever the body holds, and that the request goes
+// on to the operation when the check returns nil.
+func TestGuard(t *testing.T) {
+	m, _ := testMux(t)
+	var refuse error
+	ran := false
+	Register(m, Public, huma.Operation{
+		OperationID:  "createItem",
+		Method:       http.MethodPost,
+		Path:         "/items",
+		MaxBodyBytes: 64,
+		Middlewares:  huma.Middlewares{Guard(func(context.Context) error { return refuse })},
+	}, func(_ context.Context, in *itemInput) (*itemOutput, error) {
+		ran = true
+		return &itemOutput{Body: in.Body}, nil
+	})
+
+	refuse = huma.ErrorWithHeaders(NewError(CodeUnauthenticated), http.Header{"WWW-Authenticate": {"Bearer"}})
+	for _, c := range []struct{ name, contentType, body string }{
+		{"a valid body", "application/json", `{"name":"a"}`},
+		{"no body", "application/json", ""},
+		{"malformed JSON", "application/json", `{"name":`},
+		{"an unknown field", "application/json", `{"colour":"red"}`},
+		{"a body too large", "application/json", strings.Repeat(" ", 65)},
+		{"another media type", "text/plain", `{"name":"a"}`},
+	} {
+		res := serve(m, http.MethodPost, "/items", c.contentType, []byte(c.body))
+		if b := res.envelope(t); b.Code != CodeUnauthenticated || res.header.Get("WWW-Authenticate") != "Bearer" {
+			t.Errorf("%s: %d %s, WWW-Authenticate %q", c.name, res.status, res.body,
+				res.header.Get("WWW-Authenticate"))
+		}
+	}
+	if ran {
+		t.Error("the operation ran although its guard refused the request")
+	}
+
+	refuse = nil
+	if res := serve(m, http.MethodPost, "/items", "application/json", []byte(`{"name":"a"}`)); res.status !=
+		http.StatusOK || !ran {
+		t.Errorf("a request that the guard lets through: %d %s, the operation ran: %t", res.status, res.body, ran)
+	}
+}
+
 // TestRoutingErrors checks the answers to a path no route matches and to a
 // method no route at the path takes.
 func TestRoutingErrors(t *testing.T) {

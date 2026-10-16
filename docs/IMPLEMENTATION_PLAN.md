@@ -195,7 +195,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-TEN-07 AC1 and AC3 pass.
 
 ### 13. Accounts and password policy
-**Status:** todo · **Depends on:** 6, 10, 12
+**Status:** done ([#15](https://github.com/CyberCute-Studio/storycreep/pull/15)) · **Depends on:** 6, 10, 12
 **PRD:** FR-AUTH-01, NFR-SEC-03
 - `POST /api/v1/auth/register` under the signup policy: `closed` (self-hosted default), `invite`, or `open`; always `open` in hosted mode. Item 17 adds the guard that refuses registration until first-run setup completes.
 - argon2id with documented parameters, rehashed at next login when parameters change. Minimum 12 characters, checked against a bundled list of the 10k most common passwords.

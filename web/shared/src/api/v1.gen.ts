@@ -17,6 +17,15 @@ export interface ErrorEnvelope {
   error: ErrorBody;
 }
 
+export interface RegisterBody {
+  /** The name that other people see, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls and line separators among them. White space around it is removed. */
+  display_name: string;
+  /** The account's email address, which signs in: an address alone, as jo@example.com, of at most 254 bytes, without spaces or characters that are not printed. Addresses compare without regard to case or to how their characters are composed. */
+  email: string;
+  /** The password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password. */
+  password: string;
+}
+
 export interface StatusBody {
   /** ok for /healthz, and ready for /readyz */
   status: "ok" | "ready";
@@ -77,6 +86,19 @@ export interface Operations {
       200: VersionBody;
     };
   };
+  /**
+   * Register an account
+   *
+   * Creates an account with an email address, a display name, and a password, if the instance's signup policy, STORYCREEP_SIGNUP, lets anyone register. Under closed the answer is 403 signup_closed, and under invite 403 invite_required, because only an invitation creates an account then; either comes whatever the request holds. An email address or a display name that its field does not allow is answered with 422 validation_failed. The password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, compared without regard to case, or the answer is 422 weak_password. Otherwise the answer is 202 without a body, whether or not the address has an account already, which then stays as it was, so that the answer does not tell whether an address has an account.
+   */
+  registerAccount: {
+    input: {
+      body: RegisterBody;
+    };
+    responses: {
+      202: undefined;
+    };
+  };
 }
 
 /** The method and path of each operation. */
@@ -85,4 +107,5 @@ export const routes = {
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
   getReadiness: { method: "GET", path: "/readyz" },
   getVersion: { method: "GET", path: "/version" },
+  registerAccount: { method: "POST", path: "/api/v1/auth/register" },
 } as const satisfies Record<keyof Operations, { method: string; path: string }>;

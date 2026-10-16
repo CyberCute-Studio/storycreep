@@ -29,12 +29,15 @@ const (
 	CodeInvalidID            Code = "invalid_id"
 	CodeInvalidCursor        Code = "invalid_cursor"
 	CodeUnauthenticated      Code = "unauthenticated"
+	CodeSignupClosed         Code = "signup_closed"
+	CodeInviteRequired       Code = "invite_required"
 	CodeNotFound             Code = "not_found"
 	CodeMethodNotAllowed     Code = "method_not_allowed"
 	CodeRequestTimeout       Code = "request_timeout"
 	CodeRequestTooLarge      Code = "request_too_large"
 	CodeUnsupportedMediaType Code = "unsupported_media_type"
 	CodeValidationFailed     Code = "validation_failed"
+	CodeWeakPassword         Code = "weak_password"
 	CodeInternal             Code = "internal_error"
 	CodeNotReady             Code = "not_ready"
 )
@@ -66,6 +69,12 @@ var codes = []codeSpec{
 		"The request has no credentials, or credentials that are wrong, such as a bearer token for " +
 			"`/metrics` that is not `STORYCREEP_METRICS_TOKEN`. The `WWW-Authenticate` header says which " +
 			"scheme the route takes."},
+	{CodeSignupClosed, http.StatusForbidden, i18n.K("error.signup_closed"),
+		"The instance's signup policy, `STORYCREEP_SIGNUP`, is `closed`, so `POST /api/v1/auth/register` " +
+			"creates no account, whatever the request holds (PRD FR-AUTH-01 AC3)."},
+	{CodeInviteRequired, http.StatusForbidden, i18n.K("error.invite_required"),
+		"The instance's signup policy, `STORYCREEP_SIGNUP`, is `invite`, so only an invitation creates an " +
+			"account, and `POST /api/v1/auth/register` creates none, whatever the request holds."},
 	{CodeNotFound, http.StatusNotFound, i18n.K("error.not_found"),
 		"No route matches the path, or the resource it names does not exist."},
 	{CodeMethodNotAllowed, http.StatusMethodNotAllowed, i18n.K("error.method_not_allowed"),
@@ -81,8 +90,14 @@ var codes = []codeSpec{
 	{CodeValidationFailed, http.StatusUnprocessableEntity, i18n.K("error.validation_failed"),
 		"A parameter or the body does not match the route's schema: a field that the schema does not have, " +
 			"which is never ignored (PRD FR-API-01 AC2), a missing field, a value of the wrong type, or one out of " +
-			"range. `details.errors` lists each problem with its `location`, such as `body.name` or `query.limit`, " +
-			"and a `message`."},
+			"range; or a field's value is not one that the route takes, such as a registration's email address " +
+			"that is not one. `details.errors` lists each problem with its `location`, such as `body.name` or " +
+			"`query.limit`, and a `message`."},
+	{CodeWeakPassword, http.StatusUnprocessableEntity, i18n.K("error.weak_password"),
+		"The password breaks the password policy (PRD FR-AUTH-01 AC2). `details.reason` says how: `too_short`, " +
+			"with fewer than 12 characters, counted as Unicode code points once the password is in NFKC, or " +
+			"`common`, one of the 10,000 most common passwords, compared without regard to case. " +
+			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeInternal, http.StatusInternalServerError, i18n.K("error.internal_error"),
 		"The server failed. Its log has the cause, under the envelope's `request_id`."},
 	{CodeNotReady, http.StatusServiceUnavailable, i18n.K("error.not_ready"),
