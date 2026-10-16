@@ -126,12 +126,14 @@ func (s *Service) Deliver(ctx context.Context, settings config.SMTP, msg Message
 // Permanent reports whether err, an error of Deliver, says that the email
 // cannot be delivered, however often it is sent again: the server refuses the
 // recipient because its mailbox does not exist or takes no email
-// (mailboxRefused), or the recipient's address has a local part outside
-// ASCII, and the server offers no SMTPUTF8. A full mailbox is not one, since
-// it may empty. Nor is a refusal of the sender, of the sign-in, of a relay,
-// or of the email itself, which the settings cause, and which the operator
-// can mend while a job still has attempts left, even where the server gives
-// it only in its reply to RCPT, as Postfix does by default.
+// (mailboxRefused), or the server offers no SMTPUTF8, and the recipient's
+// address has a local part outside ASCII, or a domain outside ASCII that has
+// no ASCII form (envelopeAddress). A full mailbox is not one, since it may
+// empty. Nor is a refusal of the sender, of the sign-in, of a relay, or of the
+// email itself, which the settings cause, and which the operator can mend
+// while a job still has attempts left, even where the server gives it only in
+// its reply to RCPT, as Postfix does by default, or gives it there in a reply
+// that does not say which it is, as Exim and qmail do.
 func Permanent(err error) bool {
 	var p permanentError
 	return errors.As(err, &p)
@@ -155,27 +157,23 @@ func recipientRefused(err error) error {
 }
 
 // mailboxRefused reports whether reply, the server's refusal of RCPT, says
-// that the recipient's mailbox does not exist or takes no email, for good. A
-// reply that starts with an enhanced status code (RFC 3463) says so with 5.1.1
-// to 5.1.4, 5.1.6, or 5.1.10, a destination address that does not exist, is
-// not valid, is ambiguous, has moved, or has a domain that takes no email, and
-// with 5.2.1, a mailbox that is disabled. Its
-// other codes are about something else, such as 5.2.2, a full mailbox, or
-// 5.7.1, a refusal by policy, as of a relay or of the sender, which a server
-// may give only in its reply to RCPT, although it took MAIL. A reply without
-// one says so with 550, 551, or 553, a mailbox that is unavailable, not
-// local, or whose name is not allowed (RFC 5321 §4.2.3), but not with 552,
-// which RFC 5321 §4.5.3.1.10 has a client take, from RCPT, for a full mailbox,
-// nor with 554.
+// that the recipient's mailbox does not exist or takes no email, for good,
+// which only a reply of 5xx that starts with an enhanced status code (RFC
+// 3463) can say: with 5.1.1 to 5.1.4, 5.1.6, or 5.1.10, a destination address
+// that does not exist, is not valid, is ambiguous, has moved, or has a domain
+// that takes no email, and with 5.2.1, a mailbox that is disabled. Its other
+// codes are about something else, such as 5.2.2, a full mailbox, or 5.7.1, a
+// refusal by policy, as of a relay or of the sender, which a server may give
+// only in its reply to RCPT, although it took MAIL. A reply without one does
+// not say which it is: a server that writes no enhanced status codes, as Exim
+// and qmail by default, refuses a relay or a sender at RCPT with the 550 or
+// 553 that it refuses a mailbox that does not exist with, as in 550 relay not
+// permitted, so it is not permanent, and the email is sent again, as after
+// any other failure.
 func mailboxRefused(reply *textproto.Error) bool {
-	if reply.Code < 500 || reply.Code > 599 {
-		return false
-	}
 	class, subject, detail, ok := enhancedStatus(reply.Msg)
 	switch {
-	case !ok:
-		return reply.Code == 550 || reply.Code == 551 || reply.Code == 553
-	case class != 5:
+	case !ok || reply.Code < 500 || reply.Code > 599 || class != 5:
 		return false
 	case subject == 1:
 		return detail >= 1 && detail <= 4 || detail == 6 || detail == 10

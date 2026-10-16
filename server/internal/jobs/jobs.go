@@ -9,12 +9,13 @@
 // instances run workers, each job runs on one of them (AC2). A job whose work
 // returns an error is attempted again after a wait that doubles with each
 // failure (backoff), until it has had its attempts, 25 unless it says
-// otherwise. Then it is discarded, which is the dead-letter state: it is not
-// attempted again, and it stays in the database for 7 days with the error of
-// each attempt (AC3). Work that meets a failure that no attempt would mend
-// ends its job at once instead (Cancel). The server runs the workers in its
-// own process, unless it is told not to, so that a deployment can run them on
-// instances of their own (AC4).
+// otherwise. Then it is discarded: it is not attempted again, and it stays in
+// the database for 7 days with the error of each attempt. Work that meets a
+// failure that no attempt would mend ends its job at once instead, which is
+// then cancelled (Cancel), and stays as long, with its error. Discarded and
+// cancelled are the dead-letter states (AC3). The server runs the workers in
+// its own process, unless it is told not to, so that a deployment can run
+// them on instances of their own (AC4).
 //
 // Delivery is at least once. An instance that stops without finishing a job,
 // as when its process is killed, leaves the job running in the database, and
@@ -72,6 +73,12 @@ const startTimeout = 10 * time.Second
 // hardStopTimeout is how long Stop waits for the jobs to return once it has
 // cancelled them.
 const hardStopTimeout = 5 * time.Second
+
+// deadLetterRetention is how long River keeps a job in a dead-letter state,
+// discarded or cancelled, with its errors, before it deletes it. It is
+// River's default for a discarded job, while River's default for a cancelled
+// one is a day.
+const deadLetterRetention = 7 * 24 * time.Hour
 
 // Args are the arguments of a kind of job. They are stored in the job's row
 // as JSON, so they are a struct whose exported fields encoding/json encodes,
@@ -137,13 +144,13 @@ func Register[T Args](r *Registry, work func(ctx context.Context, job *Job[T]) e
 
 // Cancel returns err as the error of work that ends its job: work that
 // returns it, or an error that wraps it, fails its attempt, and the job is
-// cancelled rather than attempted again, however many attempts it has left,
-// and keeps err with the errors of its attempts. River keeps a cancelled job,
-// with its errors, for a day, not for the 7 days that it keeps a discarded
-// one, and the storycreep_jobs gauge does not count it, while
-// storycreep_job_attempts_total counts its attempt as cancelled. It is for a
-// failure that no attempt would mend, such as an email to an address that
-// the SMTP server refuses for good.
+// cancelled rather than attempted again, however many attempts it has left.
+// A cancelled job is in the dead-letter state, as a discarded one is
+// (FR-JOBS-01 AC3): it stays in the database for 7 days (deadLetterRetention)
+// with the errors of its attempts, err the last of them, and the
+// storycreep_jobs gauge counts it, while storycreep_job_attempts_total counts
+// its attempt as cancelled. It is for a failure that no attempt would mend,
+// such as an email to an address that the SMTP server refuses for good.
 func Cancel(err error) error {
 	return cancelError{err}
 }
@@ -308,7 +315,11 @@ func Open(ctx context.Context, db *database.DB, app config.DatabaseURL, opts Opt
 		// but River logs the time of its next run, which would be past the
 		// year 9999 that the JSON log can encode.
 		ReindexerIndexNames: []string{},
-		TestOnly:            opts.testOnly,
+		// A cancelled job is in the dead-letter state too (Cancel), so it is
+		// kept as long as a discarded one.
+		CancelledJobRetentionPeriod: deadLetterRetention,
+		DiscardedJobRetentionPeriod: deadLetterRetention,
+		TestOnly:                    opts.testOnly,
 	}
 	pool := db.Pool()
 	if q.runsJobs() {

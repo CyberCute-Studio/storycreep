@@ -52,19 +52,6 @@ func (q *Queries) CountOwners(ctx context.Context, workspaceID pgtype.UUID) (int
 	return count, err
 }
 
-const emailVerified = `-- name: EmailVerified :one
-SELECT (email_verified_at IS NOT NULL)::boolean FROM "user" WHERE id = $1 AND status = 'active'
-`
-
-// EmailVerified returns whether the active account has verified its email
-// address, and no row if the account is not active.
-func (q *Queries) EmailVerified(ctx context.Context, id pgtype.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, emailVerified, id)
-	var column_1 bool
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const insertMembership = `-- name: InsertMembership :exec
 INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, $4)
 `

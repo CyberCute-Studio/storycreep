@@ -37,6 +37,12 @@ type failArgs struct{}
 
 func (failArgs) Kind() string { return "test_fail" }
 
+// cancelArgs are the arguments of a test job whose worker ends it with an
+// error of Cancel.
+type cancelArgs struct{}
+
+func (cancelArgs) Kind() string { return "test_cancel" }
+
 // testRetry is a retry policy whose waits are short enough for a test.
 var testRetry = backoff{first: 100 * time.Millisecond, max: time.Second}
 

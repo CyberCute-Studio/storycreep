@@ -29,11 +29,6 @@ WHERE id = @id AND personal_workspace_created_at IS NULL AND status = 'active'
     AND (email_verified_at IS NOT NULL OR NOT @require_verified::boolean)
 RETURNING display_name;
 
--- name: EmailVerified :one
--- EmailVerified returns whether the active account has verified its email
--- address, and no row if the account is not active.
-SELECT (email_verified_at IS NOT NULL)::boolean FROM "user" WHERE id = @id AND status = 'active';
-
 -- name: InstanceAdmin :one
 -- InstanceAdmin returns whether the active account is an instance admin, and
 -- no row if the account is not active.

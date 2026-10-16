@@ -48,33 +48,39 @@ func gather(t *testing.T, reg *prometheus.Registry) map[string]float64 {
 
 // TestMetrics checks the queue's metrics: the attempts that the workers
 // finished, by kind and outcome, how long they took, and the jobs in the
-// database, by queue and state.
+// database, by queue and state, the dead-letter states, discarded and
+// cancelled, included.
 func TestMetrics(t *testing.T) {
 	t.Parallel()
 	d := dbtest.New(t)
 	reg := NewRegistry()
 	Register(reg, func(context.Context, *Job[recordArgs]) error { return nil })
 	Register(reg, func(context.Context, *Job[failArgs]) error { return errors.New("fails") })
+	Register(reg, func(context.Context, *Job[cancelArgs]) error { return Cancel(errors.New("never works")) })
 	q, db := open(t, d, reg, true)
 	metrics := prometheus.NewRegistry()
 	metrics.MustRegister(q.Collector())
 
 	done := enqueue(t, q, db, recordArgs{}, nil)
 	failed := enqueue(t, q, db, failArgs{}, &EnqueueOptions{MaxAttempts: 2})
+	cancelled := enqueue(t, q, db, cancelArgs{}, nil)
 	enqueue(t, q, db, recordArgs{N: 1}, &EnqueueOptions{At: time.Now().Add(time.Hour)})
 	waitForState(t, q, done.ID, rivertype.JobStateCompleted)
 	waitForState(t, q, failed.ID, rivertype.JobStateDiscarded)
+	waitForState(t, q, cancelled.ID, rivertype.JobStateCancelled)
 
 	want := map[string]float64{
 		`storycreep_job_attempts_total{kind="test_record",outcome="completed"}`: 1,
 		`storycreep_job_attempts_total{kind="test_fail",outcome="failed"}`:      1,
 		`storycreep_job_attempts_total{kind="test_fail",outcome="discarded"}`:   1,
+		`storycreep_job_attempts_total{kind="test_cancel",outcome="cancelled"}`: 1,
 		`storycreep_job_duration_seconds{kind="test_record"}`:                   1,
 		`storycreep_job_duration_seconds{kind="test_fail"}`:                     2,
 		`storycreep_jobs{queue="default",state="available"}`:                    0,
 		`storycreep_jobs{queue="default",state="running"}`:                      0,
 		`storycreep_jobs{queue="default",state="scheduled"}`:                    1,
 		`storycreep_jobs{queue="default",state="discarded"}`:                    1,
+		`storycreep_jobs{queue="default",state="cancelled"}`:                    1,
 	}
 	// The workers report the attempts after the jobs' rows change.
 	for deadline := time.Now().Add(time.Minute); ; time.Sleep(20 * time.Millisecond) {

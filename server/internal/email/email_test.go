@@ -146,10 +146,11 @@ func TestSendWithURLCredentials(t *testing.T) {
 // server refuses the sender or the recipient, with an error that holds
 // neither the password nor the address that the server's reply quotes, which
 // a job keeps, and that it sends nothing to any of them. Only a recipient
-// whose mailbox does not exist or takes no email is a permanent failure,
-// which no attempt would mend: not a full mailbox, nor a refusal of a relay
-// or of the sender that the server gives in its reply to RCPT, which the
-// settings cause.
+// whose mailbox does not exist or takes no email, as the reply's enhanced
+// status code says, is a permanent failure, which no attempt would mend: not
+// a full mailbox, nor a refusal of a relay or of the sender that the server
+// gives in its reply to RCPT, which the settings cause, nor a reply without
+// an enhanced status code, which cannot tell them apart.
 func TestSendRefusals(t *testing.T) {
 	for _, c := range []struct {
 		name      string
@@ -172,8 +173,17 @@ func TestSendRefusals(t *testing.T) {
 			`refuses the recipient: 550 "5.1.1 [address] Recipient address rejected`, true},
 		{"a disabled mailbox", emailtest.Options{RefuseRecipients: "550 5.2.1 %s: Mailbox disabled"},
 			config.SMTPNone, nil, `refuses the recipient: 550 "5.2.1 [address] Mailbox disabled`, true},
+		{"a domain that takes no email", emailtest.Options{RefuseRecipients: "550 5.1.10 %s: Null MX"},
+			config.SMTPNone, nil, `refuses the recipient: 550 "5.1.10 [address] Null MX`, true},
 		{"a refusal without an enhanced code", emailtest.Options{RefuseRecipients: "550 %s: User unknown"},
-			config.SMTPNone, nil, `refuses the recipient: 550 "[address] User unknown`, true},
+			config.SMTPNone, nil, `refuses the recipient: 550 "[address] User unknown`, false},
+		{"a relay refused without an enhanced code", emailtest.Options{RefuseRecipients: "550 relay not permitted"},
+			config.SMTPNone, nil, `refuses the recipient: 550 "relay not permitted`, false},
+		{"a relay refused with 553 without an enhanced code", emailtest.Options{
+			RefuseRecipients: "553 sorry, that domain isn't in my list of allowed rcpthosts (#5.7.1)"},
+			config.SMTPNone, nil, `refuses the recipient: 553 "sorry, that domain`, false},
+		{"an enhanced code of another class", emailtest.Options{RefuseRecipients: "550 4.1.1 %s: Try again"},
+			config.SMTPNone, nil, `refuses the recipient: 550 "4.1.1 [address] Try again`, false},
 		{"a full mailbox", emailtest.Options{RefuseRecipients: "552 5.2.2 %s: Mailbox full"}, config.SMTPNone, nil,
 			`refuses the recipient: 552 "5.2.2 [address] Mailbox full`, false},
 		{"a full mailbox with 550", emailtest.Options{RefuseRecipients: "550 5.2.2 %s: Mailbox full"},

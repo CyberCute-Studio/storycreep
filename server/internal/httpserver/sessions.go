@@ -500,7 +500,12 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			return nil, err
 		}
 		n, err := accounts.RevokeOtherSessions(ctx, cur.session, clientFrom(ctx))
-		if err != nil {
+		switch {
+		case errors.Is(err, account.ErrNoSession):
+			// The request has no session to keep, as one made without a
+			// session cookie.
+			return nil, api.NewError(api.CodeUnauthenticated)
+		case err != nil:
 			return nil, err
 		}
 		return &revokedOutput{Body: revokedBody{Revoked: n}}, nil

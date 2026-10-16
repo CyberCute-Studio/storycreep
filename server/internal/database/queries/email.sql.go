@@ -314,7 +314,9 @@ type UserEmailRow struct {
 }
 
 // UserEmail returns the address of an active account, and whether it is
-// verified.
+// verified, or no row if the account is not active. The links read it, and so
+// does creating a workspace where a verified address is required (package
+// workspace).
 func (q *Queries) UserEmail(ctx context.Context, id pgtype.UUID) (UserEmailRow, error) {
 	row := q.db.QueryRow(ctx, userEmail, id)
 	var i UserEmailRow

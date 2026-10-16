@@ -128,7 +128,9 @@ UPDATE "user" SET password_hash = @password_hash, updated_at = now() WHERE id = 
 
 -- name: UserEmail :one
 -- UserEmail returns the address of an active account, and whether it is
--- verified.
+-- verified, or no row if the account is not active. The links read it, and so
+-- does creating a workspace where a verified address is required (package
+-- workspace).
 SELECT email, (email_verified_at IS NOT NULL)::boolean AS verified FROM "user" WHERE id = @id AND status = 'active';
 
 -- name: DeleteExpiredEmailTokens :execrows

@@ -275,11 +275,11 @@ func (s *Service) CheckVerified(ctx context.Context, userID ids.UUID) error {
 	}
 	var verified bool
 	err := s.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
-		var err error
-		verified, err = queries.New(tx).EmailVerified(ctx, nullUUID(userID))
+		row, err := queries.New(tx).UserEmail(ctx, nullUUID(userID))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
+		verified = row.Verified
 		return err
 	})
 	switch {

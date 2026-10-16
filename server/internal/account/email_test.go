@@ -625,16 +625,25 @@ func TestSendLinkLate(t *testing.T) {
 	ctx := context.Background()
 	jo := register(t, m.Service, m.admin, "jo@example.com")
 	m.queue.take(t)
-	for _, late := range []string{"50 minutes", "61 minutes"} {
+	// The request of 61 minutes ago comes first, so that only its age, and
+	// not the email of the other within ResendInterval, can keep it from
+	// being sent.
+	for _, c := range []struct {
+		late string
+		want int
+	}{{"61 minutes", 0}, {"50 minutes", 1}} {
 		if err := m.RequestPasswordReset(ctx, "jo@example.com"); err != nil {
 			t.Fatal(err)
 		}
 		for _, id := range m.queue.take(t) {
 			exec(t, m.admin, `UPDATE email_token SET created_at = created_at - $1::interval,
-				expires_at = expires_at - $1::interval WHERE id = $2`, late, id)
+				expires_at = expires_at - $1::interval WHERE id = $2`, c.late, id)
 			if err := m.sendLink(ctx, m.db, id); err != nil {
 				t.Fatal(err)
 			}
+		}
+		if n := len(m.server.Messages()); n != c.want {
+			t.Fatalf("after the job of the request of %s ago, %d emails had been sent, want %d", c.late, n, c.want)
 		}
 	}
 	sent := m.server.Messages()
