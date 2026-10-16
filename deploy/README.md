@@ -16,7 +16,7 @@ The server is configured with `STORYCREEP_*` environment variables and an option
    docker compose up -d
    ```
 
-4. Open <http://localhost:7777>, and complete first-run setup (see [First-run setup](#first-run-setup)).
+4. Complete first-run setup, as [First-run setup](#first-run-setup) says, and open <http://localhost:7777>.
 
 On its first start, the server applies the database migrations, and creates its own database logins with the same password: `storycreep`, which it serves requests as, and `storycreep_maintainer`, which its maintenance jobs, such as hard deletion, connect as. `docker compose ps` shows both services as `healthy` once the server is ready to serve.
 
@@ -49,6 +49,25 @@ Completing setup asks for a setup code, so that whoever reaches a new instance f
 ```sh
 docker compose logs app | grep setup_code
 ```
+
+The web interface has no setup screen yet, so complete setup through the API, from the machine that runs the server. Write the request to a file, `setup.json`, with the code, the owner's account, the first workspace's name, and, if you like, who can register:
+
+```json
+{
+  "setup_code": "7K2M-Q9XD-4RTB-H8VW",
+  "owner": {"email": "jo@example.com", "display_name": "Jo Novak", "password": "at least 12 characters"},
+  "workspace": {"name": "Harbour Studio"},
+  "signup_policy": "closed"
+}
+```
+
+and send it:
+
+```sh
+curl -H 'Content-Type: application/json' --data-binary @setup.json http://localhost:7777/api/v1/setup
+```
+
+The answer is `201`, with the owner's account ID and the workspace, or an error that names what to change. Then delete `setup.json`, which holds the password. The API's OpenAPI document, at `/api/v1/openapi.json`, describes `POST /api/v1/setup` in full.
 
 To complete setup without anyone visiting the instance, set `STORYCREEP_SETUP_OWNER_EMAIL`, `STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, and `STORYCREEP_SETUP_WORKSPACE_NAME` in `.env` before the first start, and optionally `STORYCREEP_SETUP_WORKSPACE_SLUG` and `STORYCREEP_SETUP_SIGNUP`. The server then completes setup itself, as the setup API would, and needs no code. A value that setup refuses, such as a password of fewer than 12 characters, stops the server, and its log names the setting. Once setup has completed, the server ignores these settings, so remove them from `.env`, the password above all, and run `docker compose up -d` again.
 

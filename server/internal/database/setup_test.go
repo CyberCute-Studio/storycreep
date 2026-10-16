@@ -88,7 +88,8 @@ func TestSetupMigration(t *testing.T) {
 
 // TestInstancePrivileges checks that the application may read the instance's
 // row and complete setup in it, but may neither add a row nor delete the
-// one, so that setup never looks pending again once it has completed.
+// one, and that nobody can clear setup_completed_at, so that setup never
+// looks pending again once it has completed.
 func TestInstancePrivileges(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -122,6 +123,26 @@ func TestInstancePrivileges(t *testing.T) {
 	}
 	if !setupCompleted(t, d.Admin(t)) {
 		t.Error("setup is pending after the application completed it")
+	}
+	// Once setup has completed, nobody makes it pending again, not even the
+	// superuser, while the application still changes the signup policy.
+	reopen := "UPDATE instance SET setup_completed_at = NULL"
+	err = db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, reopen)
+		return err
+	})
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+		t.Errorf("the application clears setup_completed_at: %v, want permission denied", err)
+	}
+	if _, err := d.Admin(t).Exec(ctx, reopen); !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+		t.Errorf("the superuser clears setup_completed_at: %v, want permission denied", err)
+	}
+	if err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, "UPDATE instance SET signup_policy = 'invite', updated_at = now()")
+		return err
+	}); err != nil || !setupCompleted(t, d.Admin(t)) {
+		t.Errorf("changing the signup policy once setup has completed: %v", err)
 	}
 	var key int
 	if err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {

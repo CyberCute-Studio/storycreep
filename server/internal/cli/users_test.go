@@ -134,6 +134,12 @@ func TestCreateUserFailures(t *testing.T) {
 			"the password is one of the most common passwords"},
 		{"a long password", strings.Repeat("x", 257), []string{"jo@example.com", "Jo"}, ExitFailure,
 			"the password has more than 256 characters"},
+		// Standard input is read up to a limit, which cuts a character of
+		// four bytes in two here.
+		{"a long password of wide characters", strings.Repeat("\U0001F600", 300), []string{"jo@example.com", "Jo"},
+			ExitFailure, "the password has more than 256 characters"},
+		{"a password that is not UTF-8", "\xff\xfe" + testPassword, []string{"jo@example.com", "Jo"}, ExitFailure,
+			"the password is not UTF-8 text"},
 		{"fields", testPassword, []string{"jo", " "}, ExitFailure,
 			"the email address is not an email address; the display name is empty"},
 		{"an address that has an account", testPassword, []string{"TAKEN@example.com", "Jo"}, ExitFailure,
@@ -182,8 +188,9 @@ func TestUserCommandsNeedMigrations(t *testing.T) {
 
 // TestGrantRole checks that grant-role makes an account a member of a
 // workspace with a role, changes the role, keeps the workspace's last
-// owner, and makes an account an instance admin and no longer one, and that
-// the audit log records each change.
+// owner, and makes an account an instance admin and no longer one, that it
+// refuses an account that is not active, but to revoke instance admin from
+// it, and that the audit log records each change.
 //
 // Verifies: FR-ADMIN-06/AC1, FR-TEN-07/AC2
 func TestGrantRole(t *testing.T) {
@@ -246,8 +253,10 @@ func TestGrantRole(t *testing.T) {
 				c.want)
 		}
 	}
+	// A suspended instance admin keeps the role until it is revoked, which
+	// needs no active account.
 	if _, err := d.Admin(t).Exec(context.Background(),
-		`UPDATE "user" SET status = 'suspended' WHERE email = 'owner@example.com'`); err != nil {
+		`UPDATE "user" SET status = 'suspended', is_instance_admin = true WHERE email = 'owner@example.com'`); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"owner@example.com", "viewer", "harbour"}, {"owner@example.com", "instance-admin"}} {
@@ -255,6 +264,10 @@ func TestGrantRole(t *testing.T) {
 		if code != ExitFailure || !strings.Contains(stderr, "belongs to an account that is not active") {
 			t.Errorf("%q of a suspended account: exit %d, stderr %q", args, code, stderr)
 		}
+	}
+	code, stdout, stderr := runWithInput(t, env, "", "grant-role", "--revoke", "owner@example.com", "instance-admin")
+	if code != ExitOK || stdout != "owner@example.com is no longer an instance admin.\n" {
+		t.Errorf("--revoke of a suspended instance admin: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 
 	members := query(t, d, `SELECT format('%s %s', u.email, m.role) FROM membership m JOIN "user" u ON u.id = m.user_id
@@ -270,6 +283,7 @@ func TestGrantRole(t *testing.T) {
 		`membership.role_change owner@example.com success {"role": "admin", "previous_role": "owner"} actor=`,
 		`instance.admin_grant jo@example.com success {} actor=`,
 		`instance.admin_revoke jo@example.com success {} actor=`,
+		`instance.admin_revoke owner@example.com success {} actor=`,
 	}
 	if got := auditOf(t, d); !slices.Equal(got, want) {
 		t.Errorf("the audit log holds\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

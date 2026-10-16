@@ -316,7 +316,8 @@ func unattended() *config.UnattendedSetup {
 
 // TestUnattended checks that unattended setup completes setup without a
 // code, once, and that it names the key of each value that it refuses, and
-// then changes nothing.
+// then changes nothing, and that CheckUnattended refuses the same values,
+// without the database.
 func TestUnattended(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -352,6 +353,13 @@ func TestUnattended(t *testing.T) {
 		if err != nil && strings.Contains(err.Error(), testPassword) {
 			t.Errorf("%s: the error shows a password: %v", c.name, err)
 		}
+		// validate-config checks the values as unattended setup does.
+		if cerr := CheckUnattended(u, language.English); err == nil || cerr == nil || cerr.Error() != err.Error() {
+			t.Errorf("%s: CheckUnattended = %v, want %v", c.name, cerr, err)
+		}
+	}
+	if err := CheckUnattended(unattended(), language.English); err != nil {
+		t.Errorf("CheckUnattended of a valid configuration = %v", err)
 	}
 	if n := count(t, d, `SELECT count(*) FROM "user"`); n != 0 {
 		t.Fatalf("%d accounts after the refused setups", n)

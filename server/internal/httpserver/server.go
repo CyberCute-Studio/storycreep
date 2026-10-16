@@ -342,6 +342,10 @@ const (
 // setup refuses a value of the keys. Without them, it logs the setup code,
 // which completing setup through the API asks for, while setup is pending,
 // at every start, so that the operator finds it in the log of the latest.
+// It writes that record as a warning whatever STORYCREEP_LOG_LEVEL is,
+// because without the code, setup cannot complete through the API: a level
+// of error, which drops the other warnings, would otherwise leave the
+// operator nowhere to read it.
 func (s *server) setupStep(ctx context.Context) error {
 	if s.unattended != nil {
 		done, err := s.setups.Unattended(ctx, s.unattended)
@@ -363,7 +367,12 @@ func (s *server) setupStep(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.log.WarnContext(ctx, setupPendingMessage, "setup_code", code)
+	// The handler writes a record that it is given whatever its level, which
+	// only the logger checks, as WarnContext would.
+	r := slog.NewRecord(time.Now(), slog.LevelWarn, setupPendingMessage, 0)
+	r.AddAttrs(slog.String("setup_code", code))
+	// As the logger does, the server goes on if the log cannot be written.
+	_ = s.log.Handler().Handle(ctx, r)
 	return nil
 }
 

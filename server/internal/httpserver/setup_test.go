@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/logging"
 	"github.com/CyberCute-Studio/storycreep/server/internal/setup"
 )
 
@@ -418,6 +420,30 @@ func TestSetupStep(t *testing.T) {
 	}
 	if strings.Contains(refused.log.String(), `"short"`) {
 		t.Errorf("the log shows the password:\n%s", refused.log)
+	}
+}
+
+// TestSetupCodeWhateverTheLogLevel checks that the setup step gives the setup
+// code even when STORYCREEP_LOG_LEVEL drops warnings, because without it
+// setup cannot complete through the API, while the level still drops the
+// other warnings.
+func TestSetupCodeWhateverTheLogLevel(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	var logged logBuffer
+	s := newServer(loadConfig(t, map[string]string{"STORYCREEP_LOG_LEVEL": "error"}),
+		logging.New(&logged, slog.LevelError))
+	s.ready.db.Store(d.Open(t))
+	if err := s.setupStep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rs := logged.records(t, setupPendingMessage)
+	if len(rs) != 1 || rs[0]["level"] != "WARN" || rs[0]["setup_code"] != setupCode(t, s) {
+		t.Errorf("the log does not give the setup code:\n%s", logged.String())
+	}
+	s.log.WarnContext(context.Background(), "another warning")
+	if rs := logged.records(t, "another warning"); len(rs) != 0 {
+		t.Errorf("the level does not drop other warnings:\n%s", logged.String())
 	}
 }
 

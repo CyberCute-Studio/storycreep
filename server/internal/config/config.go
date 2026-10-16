@@ -78,7 +78,8 @@ type Config struct {
 // UnattendedSetup is what unattended first-run setup completes setup with
 // (PRD FR-ADMIN-02), as the configuration holds it. The configuration checks
 // only that the keys it needs are set; package setup checks the values, as
-// the setup API checks them.
+// the setup API checks them, when the server starts, and for storycreep
+// validate-config (setup.CheckUnattended).
 type UnattendedSetup struct {
 	// OwnerEmail, OwnerName, and OwnerPassword are the first owner's email
 	// address, display name, and password.

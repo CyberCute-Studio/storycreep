@@ -14,13 +14,15 @@ ON CONFLICT (email) DO NOTHING;
 -- name: UserByEmail :one
 -- UserByEmail returns the account that an address belongs to, whatever its
 -- status, for the commands of the operator (package cli).
-SELECT id, status, is_instance_admin FROM "user" WHERE email = @email;
+SELECT id, status FROM "user" WHERE email = @email;
 
 -- name: SetInstanceAdmin :execrows
--- SetInstanceAdmin makes an active account an instance admin, or no longer
--- one, and reports no row if it is not active or was so already.
+-- SetInstanceAdmin makes an active account an instance admin, or an account
+-- of any status no longer one, and reports no row if it was so already, or
+-- is not active and is to become one.
 UPDATE "user" SET is_instance_admin = @is_instance_admin, updated_at = now()
-WHERE id = @id AND status = 'active' AND is_instance_admin <> @is_instance_admin;
+WHERE id = @id AND (status = 'active' OR NOT @is_instance_admin::boolean)
+    AND is_instance_admin <> @is_instance_admin;
 
 -- name: UserCredentials :one
 -- UserCredentials returns what signing in checks of the account that the

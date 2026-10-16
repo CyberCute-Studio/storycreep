@@ -76,7 +76,7 @@ const setupDoc = " Once setup has completed, the answer is 404 not_found, for ev
 // registerSetup registers the routes of first-run setup (PRD FR-ADMIN-02).
 func registerSetup(m *api.Mux, setups *setup.Service, limits *ratelimit.Limiter) {
 	// pending answers 404 once setup has completed, before the operation
-	// reads the request.
+	// reads the request's body.
 	pending := api.Guard(func(ctx context.Context) error {
 		st, err := setups.Status(ctx)
 		switch {
@@ -88,6 +88,9 @@ func registerSetup(m *api.Mux, setups *setup.Service, limits *ratelimit.Limiter)
 		return nil
 	})
 
+	// Reading setup takes no parameters or body, so the operation answers 404
+	// itself, without the pending guard, which would read the instance's
+	// setup a second time.
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "getSetup",
 		Method:      http.MethodGet,
@@ -95,8 +98,7 @@ func registerSetup(m *api.Mux, setups *setup.Service, limits *ratelimit.Limiter)
 		Summary:     "Get what first-run setup asks for",
 		Description: "Tells a setup screen that the instance's first-run setup is pending, and whether it can " +
 			"choose the signup policy." + setupDoc,
-		Tags:        []string{"Setup"},
-		Middlewares: huma.Middlewares{pending},
+		Tags: []string{"Setup"},
 	}, func(ctx context.Context, _ *struct{}) (*setupOutput, error) {
 		st, err := setups.Status(ctx)
 		if err != nil {

@@ -84,7 +84,8 @@ func (q *Queries) LockUser(ctx context.Context, id pgtype.UUID) error {
 
 const setInstanceAdmin = `-- name: SetInstanceAdmin :execrows
 UPDATE "user" SET is_instance_admin = $1, updated_at = now()
-WHERE id = $2 AND status = 'active' AND is_instance_admin <> $1
+WHERE id = $2 AND (status = 'active' OR NOT $1::boolean)
+    AND is_instance_admin <> $1
 `
 
 type SetInstanceAdminParams struct {
@@ -92,8 +93,9 @@ type SetInstanceAdminParams struct {
 	ID              pgtype.UUID
 }
 
-// SetInstanceAdmin makes an active account an instance admin, or no longer
-// one, and reports no row if it is not active or was so already.
+// SetInstanceAdmin makes an active account an instance admin, or an account
+// of any status no longer one, and reports no row if it was so already, or
+// is not active and is to become one.
 func (q *Queries) SetInstanceAdmin(ctx context.Context, arg SetInstanceAdminParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setInstanceAdmin, arg.IsInstanceAdmin, arg.ID)
 	if err != nil {
@@ -128,13 +130,12 @@ func (q *Queries) UpdatePasswordHash(ctx context.Context, arg UpdatePasswordHash
 }
 
 const userByEmail = `-- name: UserByEmail :one
-SELECT id, status, is_instance_admin FROM "user" WHERE email = $1
+SELECT id, status FROM "user" WHERE email = $1
 `
 
 type UserByEmailRow struct {
-	ID              pgtype.UUID
-	Status          string
-	IsInstanceAdmin bool
+	ID     pgtype.UUID
+	Status string
 }
 
 // UserByEmail returns the account that an address belongs to, whatever its
@@ -142,7 +143,7 @@ type UserByEmailRow struct {
 func (q *Queries) UserByEmail(ctx context.Context, email string) (UserByEmailRow, error) {
 	row := q.db.QueryRow(ctx, userByEmail, email)
 	var i UserByEmailRow
-	err := row.Scan(&i.ID, &i.Status, &i.IsInstanceAdmin)
+	err := row.Scan(&i.ID, &i.Status)
 	return i, err
 }
 

@@ -71,6 +71,16 @@ func Find(ctx context.Context, db DB, email string) (ids.UUID, error) {
 // find returns the active account that the email address belongs to, as
 // Find does.
 func find(ctx context.Context, tx pgx.Tx, email string) (queries.UserByEmailRow, error) {
+	row, err := lookup(ctx, tx, email)
+	if err == nil && row.Status != "active" {
+		return row, ErrNotActive
+	}
+	return row, err
+}
+
+// lookup returns the account that the email address belongs to, whatever
+// its status, or ErrNoAccount if it belongs to none.
+func lookup(ctx context.Context, tx pgx.Tx, email string) (queries.UserByEmailRow, error) {
 	email = canonicalEmail(email)
 	if checkEmail(email) != "" {
 		// No account has an address that registration would refuse.
@@ -82,21 +92,26 @@ func find(ctx context.Context, tx pgx.Tx, email string) (queries.UserByEmailRow,
 		return row, ErrNoAccount
 	case err != nil:
 		return row, fmt.Errorf("account: read the account: %w", err)
-	case row.Status != "active":
-		return row, ErrNotActive
 	}
 	return row, nil
 }
 
 // SetInstanceAdmin makes the active account that the email address belongs
-// to an instance admin, if admin is set, or no longer one, for storycreep
-// grant-role, and records that in the audit log. It reports whether that
-// changed the account, which it does not if the account was so already, and
-// returns the errors of Find.
+// to an instance admin, if admin is set, or the account no longer one,
+// whatever its status, for storycreep grant-role, and records that in the
+// audit log. Revoking does not need an active account, so that the operator
+// can take the role from a suspended account, which would otherwise get it
+// back with its status. It reports whether that changed the account, which
+// it does not if the account was so already, and returns the errors of
+// Find, but ErrNotActive only to make an account an instance admin.
 func SetInstanceAdmin(ctx context.Context, db DB, email string, admin bool) (bool, error) {
 	changed := false
 	err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-		row, err := find(ctx, tx, email)
+		look := lookup
+		if admin {
+			look = find
+		}
+		row, err := look(ctx, tx, email)
 		if err != nil {
 			return err
 		}

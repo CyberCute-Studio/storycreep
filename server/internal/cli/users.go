@@ -95,20 +95,24 @@ func readPassword(inv *invocation, email string) (secret.Value, error) {
 			fmt.Fprintf(inv.stderr, "The password of %s, which is shown as you type it: ", email)
 		}
 	}
-	// A character has at most 4 bytes in UTF-8, and the line break 2.
-	r := bufio.NewReader(io.LimitReader(inv.stdin, 4*account.MaxPasswordLength+3))
+	// A character has at most 4 bytes in UTF-8, and the line break 2, so a
+	// first line that fills the limit without its line break is too long,
+	// even when the limit cuts a character in two.
+	const limit = 4*account.MaxPasswordLength + 3
+	r := bufio.NewReader(io.LimitReader(inv.stdin, limit))
 	line, err := r.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return secret.Value{}, fmt.Errorf("read the password from standard input: %w", err)
 	}
+	tooLong := len(line) == limit && !strings.HasSuffix(line, "\n")
 	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 	switch {
 	case line == "":
 		return secret.Value{}, errors.New("standard input holds no password; pipe the password in, as in " +
 			"'storycreep create-user jo@example.com \"Jo Novak\" < password.txt'")
-	case !utf8.ValidString(line):
+	case !tooLong && !utf8.ValidString(line):
 		return secret.Value{}, errors.New("the password is not UTF-8 text")
-	case utf8.RuneCountInString(line) > account.MaxPasswordLength:
+	case tooLong || utf8.RuneCountInString(line) > account.MaxPasswordLength:
 		return secret.Value{}, fmt.Errorf("the password has more than %d characters", account.MaxPasswordLength)
 	}
 	return secret.New(line), nil
@@ -127,10 +131,7 @@ func createUserError(err error) error {
 		}
 		return errors.New(strings.Join(msgs, "; "))
 	case errors.As(err, &weak):
-		if weak.Reason == account.PasswordTooShort {
-			return fmt.Errorf("the password has fewer than %d characters", account.MinPasswordLength)
-		}
-		return errors.New("the password is one of the most common passwords")
+		return errors.New("the password " + weak.Problem())
 	case errors.Is(err, account.ErrEmailTaken):
 		return errors.New("the email address has an account already")
 	}
@@ -166,8 +167,10 @@ and project. With --revoke, the account is no longer one. The audit log
 records the change.
 
 It fails if the address belongs to no account, or to one that is not active,
-as a suspended one, or if the workspace does not exist. An account that has
-the role already stays as it is.
+as a suspended one, or if the workspace does not exist. --revoke is the
+exception: it takes instance admin from an account whatever its status, so
+that a suspended account does not get it back when it is active again. An
+account that has the role already stays as it is.
 ` + databaseHelp,
 	loadsConfig: true,
 	flags: func(fs *flag.FlagSet) {

@@ -7,7 +7,8 @@
 -- The instance's own row, which spans workspaces and has no row-level
 -- security (§5.4). It always has exactly one row, which this migration adds:
 -- the application may read it and change its columns, but neither add nor
--- delete a row, so that setup never looks pending again once it completed.
+-- delete a row, and the trigger below refuses to clear setup_completed_at,
+-- so that setup never looks pending again once it completed.
 CREATE TABLE instance (
 	singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
 	-- When first-run setup completed, or null until it does. Until then,
@@ -21,6 +22,23 @@ CREATE TABLE instance (
 	updated_at timestamptz NOT NULL DEFAULT now()
 );
 GRANT SELECT, UPDATE (setup_completed_at, signup_policy, updated_at) ON instance TO storycreep_app;
+
+-- Completing setup sets setup_completed_at, which the application must be
+-- able to change, so the grant alone cannot keep setup completed: this
+-- trigger refuses to clear it again, for everyone, so that whoever holds the
+-- setup code, which never changes, cannot complete setup a second time.
+-- +goose StatementBegin
+CREATE FUNCTION instance_setup_stays_completed() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+	RAISE EXCEPTION 'first-run setup has completed, and stays completed'
+		USING ERRCODE = 'insufficient_privilege';
+END
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER setup_stays_completed BEFORE UPDATE OF setup_completed_at ON instance
+	FOR EACH ROW WHEN (OLD.setup_completed_at IS NOT NULL AND NEW.setup_completed_at IS NULL)
+	EXECUTE FUNCTION instance_setup_stays_completed();
 
 -- A database that has accounts already was in use before setup existed, and
 -- counts as set up, so that whoever reaches it first cannot make themselves

@@ -186,7 +186,8 @@ func TestInvalidConfigStopsCommands(t *testing.T) {
 }
 
 // TestFrame covers the parts of the frame that later commands use: their own
-// flags, positional arguments, and the exit status of a returned error.
+// flags, a flag written after the arguments, positional arguments, and the
+// exit status of a returned error.
 func TestFrame(t *testing.T) {
 	saved := commands
 	t.Cleanup(func() { commands = saved })
@@ -218,6 +219,10 @@ func TestFrame(t *testing.T) {
 	}{
 		{[]string{"greet", "--loud", "ada"}, ExitOK, ""},
 		{[]string{"greet"}, ExitUsage, "storycreep greet: expected one name\nRun 'storycreep greet --help' for usage.\n"},
+		{[]string{"greet", "ada", "--loud"}, ExitUsage, "storycreep greet: the flag --loud comes after the " +
+			"arguments; put the flags first\nRun 'storycreep greet --help' for usage.\n"},
+		{[]string{"greet", "ada", "-loud=true"}, ExitUsage, "storycreep greet: the flag -loud=true comes after the " +
+			"arguments; put the flags first\nRun 'storycreep greet --help' for usage.\n"},
 		{[]string{"greet", "nobody"}, ExitFailure, "storycreep greet: there is nobody to greet\n"},
 	}
 	for _, tt := range tests {
@@ -269,5 +274,53 @@ func TestValidateConfig(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "warning: STORYCREEP_SINGUP is set in the environment but is not a configuration key") {
 		t.Errorf("stderr should warn about the unknown variable: %q", stderr)
+	}
+}
+
+// TestValidateConfigUnattendedSetup checks that validate-config checks the
+// values of the STORYCREEP_SETUP_ keys as unattended first-run setup checks
+// them, so that it refuses a value that would stop the server, naming its
+// key and where the value came from, without showing a password.
+//
+// Verifies: FR-ADMIN-01/AC1
+func TestValidateConfigUnattendedSetup(t *testing.T) {
+	// unattended returns a valid configuration with unattended setup, with
+	// the values of change.
+	unattended := func(change map[string]string) map[string]string {
+		env := validEnv()
+		env["STORYCREEP_SETUP_OWNER_EMAIL"] = "jo@example.com"
+		env["STORYCREEP_SETUP_OWNER_NAME"] = "Jo Novak"
+		env["STORYCREEP_SETUP_OWNER_PASSWORD"] = "correct horse battery staple"
+		env["STORYCREEP_SETUP_WORKSPACE_NAME"] = "Harbour Studio"
+		for k, v := range change {
+			env[k] = v
+		}
+		return env
+	}
+	for _, c := range []struct {
+		change map[string]string
+		want   string
+	}{
+		{map[string]string{"STORYCREEP_SETUP_OWNER_EMAIL": "jo"},
+			"\n  STORYCREEP_SETUP_OWNER_EMAIL (environment): is not an email address\n"},
+		{map[string]string{"STORYCREEP_SETUP_OWNER_PASSWORD": "short-pw"},
+			"\n  STORYCREEP_SETUP_OWNER_PASSWORD (environment): has fewer than 12 characters\n"},
+		{map[string]string{"STORYCREEP_SETUP_WORKSPACE_SLUG": "api"},
+			"\n  STORYCREEP_SETUP_WORKSPACE_SLUG (environment): the slug is a reserved word\n"},
+	} {
+		code, stdout, stderr := run(t, unattended(c.change), "validate-config")
+		if code != ExitFailure || stdout != "" ||
+			!strings.HasPrefix(stderr, "storycreep validate-config: the configuration is invalid:\n") ||
+			!strings.Contains(stderr, c.want) {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q; want %d and %q", c.change, code, stdout, stderr,
+				ExitFailure, c.want)
+		}
+		if strings.Contains(stderr, "short-pw") {
+			t.Errorf("%v: stderr shows the password: %q", c.change, stderr)
+		}
+	}
+	if code, stdout, stderr := run(t, unattended(nil), "validate-config"); code != ExitOK ||
+		!strings.HasPrefix(stdout, "The configuration is valid.\n") {
+		t.Errorf("a valid unattended setup: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }

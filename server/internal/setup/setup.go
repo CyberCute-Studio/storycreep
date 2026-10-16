@@ -389,16 +389,11 @@ func (s *Service) Unattended(ctx context.Context, u *config.UnattendedSetup) (bo
 	} else if err != nil {
 		return false, err
 	}
-	if utf8.RuneCountInString(u.OwnerPassword.Reveal()) > account.MaxPasswordLength {
-		return false, &ConfigError{Problems: []config.Problem{{Key: keyOwnerPassword,
-			Msg: fmt.Sprintf("is longer than %d characters", account.MaxPasswordLength)}}}
+	req, err := unattendedRequest(u)
+	if err != nil {
+		return false, err
 	}
-	_, err := s.complete(ctx, Request{
-		Owner:         account.Registration{Email: u.OwnerEmail, DisplayName: u.OwnerName, Password: u.OwnerPassword},
-		WorkspaceName: u.WorkspaceName,
-		WorkspaceSlug: u.WorkspaceSlug,
-		Signup:        u.Signup,
-	}, audit.Client{})
+	_, err = s.complete(ctx, req, audit.Client{})
 	if errors.Is(err, ErrCompleted) {
 		return false, nil
 	}
@@ -406,6 +401,42 @@ func (s *Service) Unattended(ctx context.Context, u *config.UnattendedSetup) (bo
 		return false, configError(err)
 	}
 	return true, nil
+}
+
+// CheckUnattended checks the values of u, the configuration's
+// STORYCREEP_SETUP_ keys, as Unattended checks them, but without the
+// database, for storycreep validate-config, with the instance's default
+// locale, locale, which the first workspace would have. It returns a
+// *ConfigError for a value that unattended setup would refuse. Only
+// Unattended finds that the owner's address has an account already, or that
+// another workspace has the slug, which the database holds.
+func CheckUnattended(u *config.UnattendedSetup, locale language.Tag) error {
+	req, err := unattendedRequest(u)
+	if err != nil {
+		return err
+	}
+	// Checking the request reads nothing from the database.
+	s := &Service{locale: locale, workspaces: workspace.New(nil, workspace.Options{})}
+	if _, err := s.check(context.Background(), req); err != nil {
+		return configError(err)
+	}
+	return nil
+}
+
+// unattendedRequest returns the request that unattended setup completes
+// setup with u, or a *ConfigError if the owner's password is longer than any
+// password may be, as the setup API's schema refuses it.
+func unattendedRequest(u *config.UnattendedSetup) (Request, error) {
+	if utf8.RuneCountInString(u.OwnerPassword.Reveal()) > account.MaxPasswordLength {
+		return Request{}, &ConfigError{Problems: []config.Problem{{Key: keyOwnerPassword,
+			Msg: fmt.Sprintf("is longer than %d characters", account.MaxPasswordLength)}}}
+	}
+	return Request{
+		Owner:         account.Registration{Email: u.OwnerEmail, DisplayName: u.OwnerName, Password: u.OwnerPassword},
+		WorkspaceName: u.WorkspaceName,
+		WorkspaceSlug: u.WorkspaceSlug,
+		Signup:        u.Signup,
+	}, nil
 }
 
 // configError returns err, an error of complete, as a *ConfigError that
@@ -425,11 +456,7 @@ func configError(err error) error {
 			problems = append(problems, config.Problem{Key: key, Msg: f.Message})
 		}
 	case errors.As(err, &weak):
-		msg := "is one of the most common passwords"
-		if weak.Reason == account.PasswordTooShort {
-			msg = fmt.Sprintf("has fewer than %d characters", account.MinPasswordLength)
-		}
-		problems = append(problems, config.Problem{Key: keyOwnerPassword, Msg: msg})
+		problems = append(problems, config.Problem{Key: keyOwnerPassword, Msg: weak.Problem()})
 	case errors.As(err, &slug):
 		problems = append(problems, config.Problem{Key: keyWorkspaceSlug, Msg: strings.TrimPrefix(slug.Error(),
 			"workspace: ")})

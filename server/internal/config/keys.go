@@ -127,8 +127,8 @@ var keys = []key{
 		doc: "Who can register an account: `closed` (no one), `invite` (people holding an invitation), or " +
 			"`open` (anyone). Not set, self-hosted mode uses the policy that first-run setup chose (PRD " +
 			"FR-ADMIN-02), or `closed` if setup chose none, which the `Signup` capability shows as `setup`; set, " +
-			"it overrides that choice for as long as it is set. Until setup has completed, nobody can register, whatever the policy. Hosted mode always uses " +
-			"`open`, and another value is an error there.",
+			"it overrides that choice for as long as it is set. Until setup has completed, nobody can register, " +
+			"whatever the policy. Hosted mode always uses `open`, and another value is an error there.",
 		values: []string{string(SignupClosed), string(SignupInvite), string(SignupOpen)},
 		// Without the key, the capability is the mode's: the policy that
 		// setup chose, or open in hosted mode.
@@ -171,8 +171,8 @@ var keys = []key{
 			"which is an instance admin, and the first workspace, which the owner owns and which is the owner's " +
 			"personal workspace, and records the signup policy of `STORYCREEP_SETUP_SIGNUP`. A value that the " +
 			"setup API would refuse, such as an address that is not one or a weak password, stops the server " +
-			"with an error that names its key. Once setup has completed, either way, the server ignores these " +
-			"keys.",
+			"with an error that names its key, and `storycreep validate-config` reports it too. Once setup has " +
+			"completed, either way, the server ignores these keys.",
 		valuesDoc:     "An email address",
 		example:       "jo@example.com",
 		group:         setupGroup,
@@ -529,8 +529,10 @@ var keys = []key{
 		capabilityLimit: "`protected` when set",
 	},
 	{
-		name:   "STORYCREEP_LOG_LEVEL",
-		doc:    "The lowest level that is logged.",
+		name: "STORYCREEP_LOG_LEVEL",
+		doc: "The lowest level that is logged. The record that gives the setup code, which the server writes " +
+			"as a warning at each start while first-run setup is pending (PRD FR-ADMIN-02), is logged whatever " +
+			"the level, because setup cannot complete through the API without the code.",
 		values: []string{"debug", "info", "warn", "error"},
 		def:    constant("info"),
 		// slog.Level reads the names in any case; values admits only these.

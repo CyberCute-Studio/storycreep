@@ -173,6 +173,16 @@ func (c *command) execute(ctx context.Context, args []string, stdin io.Reader, s
 		}
 		return usageFailure(stderr, c.name, err.Error())
 	}
+	// Parsing stops at the first argument, so a flag after the arguments
+	// would be taken for one of them, and the command would refuse it with a
+	// message that does not say why.
+	for _, a := range fs.Args() {
+		name, _, _ := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if strings.HasPrefix(a, "-") && name != "" && fs.Lookup(name) != nil {
+			return usageFailure(stderr, c.name, fmt.Sprintf("the flag %s comes after the arguments; put the flags "+
+				"first", a))
+		}
+	}
 	if c.args == "" && fs.NArg() > 0 {
 		return usageFailure(stderr, c.name, fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 	}
@@ -199,8 +209,16 @@ func (c *command) execute(ctx context.Context, args []string, stdin io.Reader, s
 
 	if err := c.run(ctx, inv); err != nil {
 		var uerr usageError
-		if errors.As(err, &uerr) {
+		var cerr *config.Error
+		switch {
+		case errors.As(err, &uerr):
 			return usageFailure(stderr, c.name, uerr.msg)
+		case errors.As(err, &cerr):
+			// A command that checks the configuration further, as
+			// validate-config does, reports what it refuses as the frame
+			// reports an invalid configuration.
+			printConfigError(stderr, c.name, err)
+			return ExitFailure
 		}
 		fmt.Fprintf(stderr, "storycreep %s: %v\n", c.name, err)
 		return ExitFailure

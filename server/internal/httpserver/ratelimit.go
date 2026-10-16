@@ -53,11 +53,10 @@ type RateLimitOutput struct {
 // limits, what its rate limit does.
 const authLimitDoc = " Signing in, registering, changing a password, and completing first-run setup share a rate " +
 	"limit of 20 requests a minute for each IP address. Registering also has one of 10 a minute for each email " +
-	"address, and changing a " +
-	"password one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP " +
-	"address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose " +
-	"details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email " +
-	"address included, and whose Retry-After header says how many seconds to wait."
+	"address, and changing a password one of 10 a minute for each account. The RateLimit headers say how much " +
+	"of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 " +
+	"rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that " +
+	"of the email address included, and whose Retry-After header says how many seconds to wait."
 
 // rateLimit returns middleware for an operation, for its huma.Operation's
 // Middlewares, that counts each request in bucket, for the client's IP
