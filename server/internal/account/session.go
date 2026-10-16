@@ -410,7 +410,9 @@ func (s *Service) RevokeSession(ctx context.Context, userID, id ids.UUID, client
 
 // RevokeOtherSessions revokes every active session of the account of
 // current but current itself, which client asks for, records each
-// revocation in the audit log, and returns how many it revoked.
+// revocation in the audit log, and returns how many it revoked. It returns
+// ErrNoSession, and revokes nothing, if current has no ID, which would keep
+// none of the sessions (revokeOthers).
 //
 // It first locks the account's row (LockUser), so that it and a change of
 // the password, which updates the row, run one after the other, in the order
@@ -419,6 +421,9 @@ func (s *Service) RevokeSession(ctx context.Context, userID, id ids.UUID, client
 // each could hold a session's row that the other waits for: a deadlock,
 // which PostgreSQL would end by failing one of them.
 func (s *Service) RevokeOtherSessions(ctx context.Context, current Session, client Client) (int, error) {
+	if current.ID == (ids.UUID{}) {
+		return 0, ErrNoSession
+	}
 	var n int
 	err := s.db.InTx(ctx, database.Scope{UserID: current.UserID}, func(tx pgx.Tx) error {
 		if err := queries.New(tx).LockUser(ctx, nullUUID(current.UserID)); err != nil {

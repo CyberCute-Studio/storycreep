@@ -49,12 +49,17 @@ type Options struct {
 	// ASCII makes the server offer no SMTPUTF8, so that it refuses an
 	// address outside ASCII in MAIL or RCPT, as such a server does.
 	ASCII bool
-	// RefuseRecipients, if it is not zero, is the code of the reply with
-	// which the server refuses every recipient: 550 for an address that does
-	// not exist, or 552 for a full mailbox. The reply quotes the address, as
-	// many servers' do.
-	RefuseRecipients int
+	// RefuseRecipients, if it is not empty, is the reply with which the
+	// server refuses every recipient, its code and its text, in which %s
+	// stands for the address in angle brackets, which many servers quote: as
+	// RefuseUnknown for an address that does not exist, or
+	// "552 5.2.2 %s: Mailbox full" for a full mailbox.
+	RefuseRecipients string
 }
+
+// RefuseUnknown is the RefuseRecipients of a server that refuses every
+// recipient as an address that does not exist, as Postfix words it.
+const RefuseUnknown = "550 5.1.1 %s: Recipient address rejected: User unknown"
 
 // Message is an email that the server was sent.
 type Message struct {
@@ -285,12 +290,11 @@ func (s *Server) serve(conn net.Conn) {
 				reply(553, "an address outside ASCII needs SMTPUTF8")
 				continue
 			}
-			if code := s.opts.RefuseRecipients; code != 0 {
-				text := "5.1.1 <" + address(arg) + ">: Recipient address rejected: User unknown"
-				if code == 552 {
-					text = "5.2.2 <" + address(arg) + ">: Mailbox full"
-				}
-				reply(code, text)
+			if s.opts.RefuseRecipients != "" {
+				refusal := strings.ReplaceAll(s.opts.RefuseRecipients, "%s", "<"+address(arg)+">")
+				code, text, _ := strings.Cut(refusal, " ")
+				n, _ := strconv.Atoi(code)
+				reply(n, text)
 				continue
 			}
 			current.To = append(current.To, address(arg))

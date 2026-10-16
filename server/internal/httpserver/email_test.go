@@ -477,7 +477,7 @@ func TestEmailedReset(t *testing.T) {
 // and keeps the error, which does not quote the address.
 func TestRefusedAddressEndsTheJob(t *testing.T) {
 	t.Parallel()
-	server := emailtest.Start(t, emailtest.Options{RefuseRecipients: 550})
+	server := emailtest.Start(t, emailtest.Options{RefuseRecipients: emailtest.RefuseUnknown})
 	env := smtpEnv(server)
 	env["STORYCREEP_SIGNUP"] = "open"
 	s, d := readyServer(t, env)

@@ -223,6 +223,43 @@ func TestVerifyEmailVerifiedAlready(t *testing.T) {
 	}
 }
 
+// TestVerifyEmailLocksTheAccountFirst checks that using a link that verifies
+// an address locks the account before the token, as the email job does, so
+// that the two never wait for each other: while another transaction holds the
+// account, the use waits for it without holding the token, which the job of
+// another of the account's links, holding the account, would wait for.
+func TestVerifyEmailLocksTheAccountFirst(t *testing.T) {
+	t.Parallel()
+	m := withEmail(t, true)
+	ctx := context.Background()
+	jo := register(t, m.Service, m.admin, "jo@example.com")
+	token := secret.New(m.sendAll(t)[0].Token(t))
+
+	tx, err := m.admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT id FROM "user" WHERE id = $1 FOR NO KEY UPDATE`, jo); err != nil {
+		t.Fatal(err)
+	}
+	verified := make(chan error, 1)
+	go func() { verified <- m.VerifyEmail(ctx, token, testClient) }()
+	dbtest.AwaitWaiter(t, tx, verified, "the verification")
+	if _, err := tx.Exec(ctx, "SELECT id FROM email_token WHERE user_id = $1 FOR UPDATE NOWAIT", jo); err != nil {
+		t.Fatalf("the verification holds the token while it waits for the account: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-verified; err != nil {
+		t.Fatalf("the verification: %v", err)
+	}
+	if !accounts(t, m.admin)[0].emailVerified {
+		t.Error("the address is not verified")
+	}
+}
+
 // TestPasswordResetRequestSameWork checks that a request to reset the
 // password of an address that belongs to no account does the same work as
 // one for an address that does, adding one token and one job, and that the

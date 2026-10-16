@@ -138,9 +138,12 @@ func Register[T Args](r *Registry, work func(ctx context.Context, job *Job[T]) e
 // Cancel returns err as the error of work that ends its job: work that
 // returns it, or an error that wraps it, fails its attempt, and the job is
 // cancelled rather than attempted again, however many attempts it has left,
-// and keeps err with the errors of its attempts. It is for a failure that no
-// attempt would mend, such as an email to an address that the SMTP server
-// refuses for good.
+// and keeps err with the errors of its attempts. River keeps a cancelled job,
+// with its errors, for a day, not for the 7 days that it keeps a discarded
+// one, and the storycreep_jobs gauge does not count it, while
+// storycreep_job_attempts_total counts its attempt as cancelled. It is for a
+// failure that no attempt would mend, such as an email to an address that
+// the SMTP server refuses for good.
 func Cancel(err error) error {
 	return cancelError{err}
 }

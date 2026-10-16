@@ -125,12 +125,13 @@ func (s *Service) Deliver(ctx context.Context, settings config.SMTP, msg Message
 
 // Permanent reports whether err, an error of Deliver, says that the email
 // cannot be delivered, however often it is sent again: the server refuses the
-// recipient with a permanent reply, of 5xx, or the recipient's address has a
-// local part outside ASCII, and the server offers no SMTPUTF8. A reply of 552
-// is not one, because RFC 5321 §4.5.3.1.10 has a client take it, from RCPT,
-// for a full mailbox, which may empty. Nor is a refusal of the sender, of the
-// sign-in, or of the email itself, which the settings cause, and which the
-// operator can mend while a job still has attempts left.
+// recipient because its mailbox does not exist or takes no email
+// (mailboxRefused), or the recipient's address has a local part outside
+// ASCII, and the server offers no SMTPUTF8. A full mailbox is not one, since
+// it may empty. Nor is a refusal of the sender, of the sign-in, of a relay,
+// or of the email itself, which the settings cause, and which the operator
+// can mend while a job still has attempts left, even where the server gives
+// it only in its reply to RCPT, as Postfix does by default.
 func Permanent(err error) bool {
 	var p permanentError
 	return errors.As(err, &p)
@@ -143,13 +144,65 @@ type permanentError struct{ error }
 func (e permanentError) Unwrap() error { return e.error }
 
 // recipientRefused returns err, the error of a refused RCPT, as a
-// permanentError if the server's reply is permanent (Permanent).
+// permanentError if the server's reply says that the recipient's mailbox
+// takes no email (mailboxRefused).
 func recipientRefused(err error) error {
 	var reply *textproto.Error
-	if errors.As(err, &reply) && reply.Code >= 500 && reply.Code != 552 {
+	if errors.As(err, &reply) && mailboxRefused(reply) {
 		return permanentError{err}
 	}
 	return err
+}
+
+// mailboxRefused reports whether reply, the server's refusal of RCPT, says
+// that the recipient's mailbox does not exist or takes no email, for good. A
+// reply that starts with an enhanced status code (RFC 3463) says so with 5.1.1
+// to 5.1.4, 5.1.6, or 5.1.10, a destination address that does not exist, is
+// not valid, is ambiguous, has moved, or has a domain that takes no email, and
+// with 5.2.1, a mailbox that is disabled. Its
+// other codes are about something else, such as 5.2.2, a full mailbox, or
+// 5.7.1, a refusal by policy, as of a relay or of the sender, which a server
+// may give only in its reply to RCPT, although it took MAIL. A reply without
+// one says so with 550, 551, or 553, a mailbox that is unavailable, not
+// local, or whose name is not allowed (RFC 5321 §4.2.3), but not with 552,
+// which RFC 5321 §4.5.3.1.10 has a client take, from RCPT, for a full mailbox,
+// nor with 554.
+func mailboxRefused(reply *textproto.Error) bool {
+	if reply.Code < 500 || reply.Code > 599 {
+		return false
+	}
+	class, subject, detail, ok := enhancedStatus(reply.Msg)
+	switch {
+	case !ok:
+		return reply.Code == 550 || reply.Code == 551 || reply.Code == 553
+	case class != 5:
+		return false
+	case subject == 1:
+		return detail >= 1 && detail <= 4 || detail == 6 || detail == 10
+	}
+	return subject == 2 && detail == 1
+}
+
+// enhancedStatus returns the enhanced status code (RFC 3463) that text, the
+// text of a server's reply, starts with, as 5.1.1, and false if it starts
+// with none.
+func enhancedStatus(text string) (class, subject, detail int, ok bool) {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return 0, 0, 0, false
+	}
+	parts := strings.Split(words[0], ".")
+	if len(parts) != 3 {
+		return 0, 0, 0, false
+	}
+	var n [3]int
+	for i, p := range parts {
+		if p == "" || len(p) > 3 || strings.IndexFunc(p, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+			return 0, 0, 0, false
+		}
+		n[i], _ = strconv.Atoi(p)
+	}
+	return n[0], n[1], n[2], true
 }
 
 // replyError returns err, an error that net/smtp returned for a command

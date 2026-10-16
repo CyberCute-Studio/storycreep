@@ -146,8 +146,10 @@ func TestSendWithURLCredentials(t *testing.T) {
 // server refuses the sender or the recipient, with an error that holds
 // neither the password nor the address that the server's reply quotes, which
 // a job keeps, and that it sends nothing to any of them. Only a recipient
-// refused for good, but for a full mailbox, is a permanent failure, which no
-// attempt would mend.
+// whose mailbox does not exist or takes no email is a permanent failure,
+// which no attempt would mend: not a full mailbox, nor a refusal of a relay
+// or of the sender that the server gives in its reply to RCPT, which the
+// settings cause.
 func TestSendRefusals(t *testing.T) {
 	for _, c := range []struct {
 		name      string
@@ -166,10 +168,24 @@ func TestSendRefusals(t *testing.T) {
 			"sign in", false},
 		{"a refused sender", emailtest.Options{Mechanisms: []string{"PLAIN"}}, config.SMTPNone, nil,
 			"refuses the sender: 530", false},
-		{"a refused recipient", emailtest.Options{RefuseRecipients: 550}, config.SMTPNone, nil,
+		{"a refused recipient", emailtest.Options{RefuseRecipients: emailtest.RefuseUnknown}, config.SMTPNone, nil,
 			`refuses the recipient: 550 "5.1.1 [address] Recipient address rejected`, true},
-		{"a full mailbox", emailtest.Options{RefuseRecipients: 552}, config.SMTPNone, nil,
+		{"a disabled mailbox", emailtest.Options{RefuseRecipients: "550 5.2.1 %s: Mailbox disabled"},
+			config.SMTPNone, nil, `refuses the recipient: 550 "5.2.1 [address] Mailbox disabled`, true},
+		{"a refusal without an enhanced code", emailtest.Options{RefuseRecipients: "550 %s: User unknown"},
+			config.SMTPNone, nil, `refuses the recipient: 550 "[address] User unknown`, true},
+		{"a full mailbox", emailtest.Options{RefuseRecipients: "552 5.2.2 %s: Mailbox full"}, config.SMTPNone, nil,
 			`refuses the recipient: 552 "5.2.2 [address] Mailbox full`, false},
+		{"a full mailbox with 550", emailtest.Options{RefuseRecipients: "550 5.2.2 %s: Mailbox full"},
+			config.SMTPNone, nil, `refuses the recipient: 550 "5.2.2 [address] Mailbox full`, false},
+		{"a relay refused at RCPT", emailtest.Options{RefuseRecipients: "554 5.7.1 %s: Relay access denied"},
+			config.SMTPNone, nil, `refuses the recipient: 554 "5.7.1 [address] Relay access denied`, false},
+		{"a sender refused at RCPT", emailtest.Options{
+			RefuseRecipients: "553 5.7.1 <noreply@example.com>: Sender address rejected: not owned by user"},
+			config.SMTPNone, nil, `refuses the recipient: 553 "5.7.1 [address] Sender address rejected`, false},
+		{"a refusal of 554 without an enhanced code", emailtest.Options{
+			RefuseRecipients: "554 %s: Relay access denied"}, config.SMTPNone, nil,
+			`refuses the recipient: 554 "[address] Relay access denied`, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			server := emailtest.Start(t, c.opts)

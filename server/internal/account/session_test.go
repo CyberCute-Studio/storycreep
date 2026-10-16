@@ -274,6 +274,12 @@ func TestSessionsAndRevocation(t *testing.T) {
 	if _, err := s.Session(ctx, sessions[0].Secret); !errors.Is(err, ErrNoSession) {
 		t.Errorf("a revoked session is still found: %v", err)
 	}
+	// A Session without an ID is no session, which would keep none of the
+	// account's.
+	if n, err := s.RevokeOtherSessions(ctx, Session{UserID: jo}, testClient); !errors.Is(err, ErrNoSession) ||
+		n != 0 {
+		t.Errorf("RevokeOtherSessions without a session = %d, %v; want ErrNoSession", n, err)
+	}
 	n, err := s.RevokeOtherSessions(ctx, sessions[2].Session, testClient)
 	if err != nil || n != 1 {
 		t.Errorf("RevokeOtherSessions = %d, %v; want 1", n, err)
