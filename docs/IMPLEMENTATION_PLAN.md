@@ -214,7 +214,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-AUTH-02 AC1–AC5 and AC7 pass. AC6 needs the UI and lands in item 54.
 
 ### 15. Rate limiting and brute-force protection
-**Status:** todo · **Depends on:** 14
+**Status:** done ([#18](https://github.com/CyberCute-Studio/storycreep/pull/18)) · **Depends on:** 14
 **PRD:** FR-AUTH-05, NFR-SEC-06, FR-API-04 (AC3)
 - PostgreSQL-backed counters. Buckets for auth, reads, writes, exports, and WebSocket connects, keyed by IP and user, with their limits (N23). Item 26 adds the token key to the same buckets, and item 27 attaches them to every route.
 - The client's IP address behind a reverse proxy, from the `X-Forwarded-For` header of a trusted proxy (N22).
