@@ -111,7 +111,8 @@ var codes = []codeSpec{
 			"it, or in its workspace, is none, as it is for a user who is not a member of the workspace, so that " +
 			"the answer does not tell that it exists (PRD §5.5, FR-TEN-04 AC6)."},
 	{CodeSlugTaken, http.StatusConflict, i18n.K("error.slug_taken"),
-		"Another workspace has the slug, which is unique on the instance (PRD FR-TEN-01 AC3)."},
+		"Another workspace has the slug, which is unique on the instance (PRD FR-TEN-01 AC3). `details.errors` " +
+			"names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeMethodNotAllowed, http.StatusMethodNotAllowed, i18n.K("error.method_not_allowed"),
 		"A route matches the path, but not the method. The `Allow` header lists the methods it takes."},
 	{CodeRequestTimeout, http.StatusRequestTimeout, i18n.K("error.request_timeout"),

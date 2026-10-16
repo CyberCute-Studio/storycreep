@@ -57,11 +57,6 @@ type workspacesInput struct {
 	api.PageParams
 }
 
-// workspaceKey is the key that the list of workspaces is paged by.
-type workspaceKey struct {
-	ID string `json:"id"`
-}
-
 type workspacesOutput struct {
 	Body api.Page[membershipBody]
 }
@@ -69,7 +64,7 @@ type workspacesOutput struct {
 // createWorkspaceBody is the body of POST /api/v1/workspaces.
 type createWorkspaceBody struct {
 	Name          string `json:"name" maxLength:"100" doc:"The workspace's name, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls and line separators among them. White space around it is removed."`
-	Slug          string `json:"slug,omitempty" maxLength:"64" doc:"The workspace's slug: groups of lowercase ASCII letters and digits joined by single hyphens, of at most 64 characters, and not a reserved word, or the answer is 422 slug_invalid; if another workspace has it, the answer is 409 slug_taken. Without it, the slug is derived from the name: its letters and digits in lowercase ASCII, without accents, with -2, -3, and so on added if another workspace has that already."`
+	Slug          string `json:"slug,omitempty" doc:"The workspace's slug: groups of lowercase ASCII letters and digits joined by single hyphens, of at most 64 characters, and not a reserved word, or the answer is 422 slug_invalid; if another workspace has it, the answer is 409 slug_taken. Without it, the slug is derived from the name: its letters and digits in lowercase ASCII, without accents, each run of other characters a hyphen, cut to 64 characters, or workspace if the name has none. If another workspace has that slug, or it is a reserved word, -2, -3, and so on up to -10 is added, and after that a random suffix of 8 lowercase letters and digits."`
 	DefaultLocale string `json:"default_locale,omitempty" maxLength:"64" doc:"The workspace's default locale, as a BCP 47 tag of a locale that the server has a catalog for. Without it, the locale of the request: the one that its Accept-Language prefers among those, or else STORYCREEP_DEFAULT_LOCALE."`
 }
 
@@ -92,7 +87,7 @@ type workspaceInput struct {
 // left out, stays as it is.
 type updateWorkspaceBody struct {
 	Name          *string `json:"name,omitempty" maxLength:"100" doc:"The workspace's new name, as for POST /api/v1/workspaces"`
-	Slug          *string `json:"slug,omitempty" maxLength:"64" doc:"The workspace's new slug, as for POST /api/v1/workspaces, with the same errors. A slug that the workspace has already is kept, as a reserved word that a later release added to the list is."`
+	Slug          *string `json:"slug,omitempty" doc:"The workspace's new slug, as for POST /api/v1/workspaces, with the same errors. A slug that the workspace has already is kept, as a reserved word that a later release added to the list is."`
 	DefaultLocale *string `json:"default_locale,omitempty" maxLength:"64" doc:"The workspace's new default locale, a BCP 47 tag of a locale that the server has a catalog for"`
 }
 
@@ -127,22 +122,16 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 		if err != nil {
 			return nil, err
 		}
-		var after ids.UUID
-		if in.Cursor != "" {
-			key, err := api.DecodeCursor[workspaceKey](in.Cursor)
-			if err != nil {
-				return nil, err
-			}
-			if after, err = ids.ParseUUID(key.ID); err != nil || after.String() != key.ID {
-				return nil, api.NewError(api.CodeInvalidCursor)
-			}
+		after, err := cursorID(in.Cursor)
+		if err != nil {
+			return nil, err
 		}
 		memberships, err := workspaces.List(ctx, cur.session.UserID, after, in.Fetch())
 		if err != nil {
 			return nil, err
 		}
-		page, err := api.NewPage(in.PageParams, memberships, func(m workspace.Membership) workspaceKey {
-			return workspaceKey{ID: m.Workspace.ID.String()}
+		page, err := api.NewPage(in.PageParams, memberships, func(m workspace.Membership) idKey {
+			return idKey{ID: m.Workspace.ID.String()}
 		})
 		if err != nil {
 			return nil, err
@@ -209,9 +198,9 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 		Path:        "/api/v1/workspaces/{workspace_id}",
 		Summary:     "Change a workspace's settings",
 		Description: "Changes a workspace's name, slug, or default locale; a field that the body leaves out, or " +
-			"sets to null, stays as it is. Only an owner or an admin of the workspace may, and anyone else with a role in it is " +
-			"answered with 403 insufficient_role." + notFoundDoc + " A name or a default locale that its field " +
-			"does not allow is answered with 422 validation_failed." + csrfDoc,
+			"sets to null, stays as it is. Only an owner or an admin of the workspace may, and anyone else with a " +
+			"role in it is answered with 403 insufficient_role." + notFoundDoc + " A name or a default locale that " +
+			"its field does not allow is answered with 422 validation_failed." + csrfDoc,
 		Tags: []string{"Workspaces"},
 	}, func(ctx context.Context, in *updateWorkspaceInput) (*workspaceOutput, error) {
 		cur, err := currentFrom(ctx)

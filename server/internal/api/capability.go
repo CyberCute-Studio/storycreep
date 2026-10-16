@@ -18,7 +18,7 @@ const (
 	// caller, whom the Mux's Authenticator finds.
 	OwnAccount Capability = "account.own"
 	// CreateWorkspace is creating a workspace, which any signed-in user may
-	// do, and becomes its owner of (PRD FR-TEN-01).
+	// do, becoming its owner (PRD FR-TEN-01).
 	CreateWorkspace Capability = "workspace.create"
 	// ReadWorkspace is reading a workspace, which needs a role in it other
 	// than none (§5.5).

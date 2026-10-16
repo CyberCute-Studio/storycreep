@@ -123,7 +123,7 @@ func (q *Queries) LockMembershipRole(ctx context.Context, arg LockMembershipRole
 
 const lockWorkspace = `-- name: LockWorkspace :one
 SELECT id, name, slug, settings, created_at, updated_at FROM workspace WHERE id = $1 AND status = 'active'
-FOR UPDATE
+FOR NO KEY UPDATE
 `
 
 type LockWorkspaceRow struct {
@@ -137,7 +137,10 @@ type LockWorkspaceRow struct {
 
 // LockWorkspace returns a workspace, and locks its row against changes until
 // the transaction ends, so that the transaction can change it from what it
-// read.
+// read. The lock is FOR NO KEY UPDATE, which lets the foreign keys of the
+// workspace's other rows check the workspace meanwhile, so that adding a
+// member or a project to it waits only for a change of the slug, whose
+// unique index makes PostgreSQL lock the row FOR UPDATE.
 func (q *Queries) LockWorkspace(ctx context.Context, id pgtype.UUID) (LockWorkspaceRow, error) {
 	row := q.db.QueryRow(ctx, lockWorkspace, id)
 	var i LockWorkspaceRow

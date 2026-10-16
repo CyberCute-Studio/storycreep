@@ -156,7 +156,7 @@ func TestPersonalWorkspace(t *testing.T) {
 // creates it its owner, in the database and in the audit log, and that the
 // workspace is theirs to read.
 //
-// Verifies: FR-TEN-01/AC2
+// Verifies: FR-TEN-01/AC2, FR-TEN-07/AC2
 func TestCreateWorkspace(t *testing.T) {
 	t.Parallel()
 	s, d := readyServer(t, openSignup)
@@ -245,7 +245,7 @@ func TestWorkspaceSlugs(t *testing.T) {
 		{"team-", api.CodeSlugInvalid, "format"},
 		{"tým", api.CodeSlugInvalid, "format"},
 		{"my team", api.CodeSlugInvalid, "format"},
-		{strings.Repeat("a", 65), api.CodeValidationFailed, ""},
+		{strings.Repeat("a", 65), api.CodeSlugInvalid, "format"},
 	} {
 		for _, r := range []struct {
 			method, path string

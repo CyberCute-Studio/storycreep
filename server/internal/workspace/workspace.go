@@ -470,7 +470,9 @@ func (s *Service) Get(ctx context.Context, userID, id ids.UUID) (Workspace, role
 
 // resolve returns the role that the user userID acts with in the workspace
 // of q's transaction, whose membership's role a query returned as member,
-// with err, or ErrNotFound if it is none.
+// with err, or ErrNotFound if it is none. It reads whether the user is an
+// instance admin only if the policy lets an instance admin act as owner,
+// because otherwise the answer changes nothing.
 func (s *Service) resolve(ctx context.Context, q *queries.Queries, userID ids.UUID, member string, err error) (
 	role.Role, error) {
 	switch {
@@ -479,13 +481,16 @@ func (s *Service) resolve(ctx context.Context, q *queries.Queries, userID ids.UU
 	case err != nil:
 		return "", fmt.Errorf("workspace: read the membership: %w", err)
 	}
-	admin, err := q.InstanceAdmin(ctx, nullUUID(userID))
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		// The account is no longer active.
-		return "", ErrNotFound
-	case err != nil:
-		return "", fmt.Errorf("workspace: read the account: %w", err)
+	admin := false
+	if s.policy.InstanceAdminAccess {
+		admin, err = q.InstanceAdmin(ctx, nullUUID(userID))
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			// The account is no longer active.
+			return "", ErrNotFound
+		case err != nil:
+			return "", fmt.Errorf("workspace: read the account: %w", err)
+		}
 	}
 	r := s.policy.Workspace(admin, role.Role(member))
 	if r == role.None {
