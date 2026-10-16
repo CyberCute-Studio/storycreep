@@ -320,3 +320,43 @@ func TestIsolation(t *testing.T) {
 		},
 	})
 }
+
+// TestGrantKeepsAnOwner checks that Grant refuses to change the role of a
+// workspace's last owner whose account is active, as an owner whose
+// account's deletion is pending does not count, and changes it once another
+// active owner exists.
+func TestGrantKeepsAnOwner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, d := newService(t, role.Policy{})
+	owner, leaving, other := addUser(t, d, "Owner"), addUser(t, d, "Leaving"), addUser(t, d, "Other")
+	w, err := s.Create(ctx, owner, Settings{Name: "Harbour"}, audit.Client{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prev, err := s.Grant(ctx, w.ID, leaving, role.Owner); err != nil || prev != role.None {
+		t.Fatalf("Grant a new owner = %s, %v", prev, err)
+	}
+	if _, err := d.Admin(t).Exec(ctx, `UPDATE "user" SET status = 'pending_deletion' WHERE id = $1`,
+		leaving); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Grant(ctx, w.ID, owner, role.Admin); !errors.Is(err, ErrLastOwner) {
+		t.Errorf("demote the last active owner: %v, want ErrLastOwner", err)
+	}
+	if _, err := s.Grant(ctx, w.ID, other, role.Owner); err != nil {
+		t.Fatal(err)
+	}
+	if prev, err := s.Grant(ctx, w.ID, owner, role.Admin); err != nil || prev != role.Owner {
+		t.Errorf("demote an owner of two = %s, %v", prev, err)
+	}
+	if _, err := s.Grant(ctx, ids.New(), other, role.Viewer); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Grant in no workspace: %v, want ErrNotFound", err)
+	}
+	if id, err := s.BySlug(ctx, w.Slug); err != nil || id != w.ID {
+		t.Errorf("BySlug(%s) = %s, %v", w.Slug, id, err)
+	}
+	if _, err := s.BySlug(ctx, "nowhere"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("BySlug of no workspace: %v", err)
+	}
+}

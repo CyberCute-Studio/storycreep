@@ -51,7 +51,15 @@ type key struct {
 	// it changes one, and capabilityLimit says when it can, such as
 	// "self-hosted only". The reference's capability table shows both.
 	capability, capabilityLimit string
+	// group names the keys that configure one thing together, such as
+	// unattended setup. If any key of a group is set, every key of the group
+	// that is groupRequired must be set too.
+	group         string
+	groupRequired bool
 }
+
+// setupGroup is the group of the keys of unattended first-run setup.
+const setupGroup = "STORYCREEP_SETUP_"
 
 func constant(v string) func(mode) string {
 	return func(mode) string { return v }
@@ -117,9 +125,13 @@ var keys = []key{
 	{
 		name: "STORYCREEP_SIGNUP",
 		doc: "Who can register an account: `closed` (no one), `invite` (people holding an invitation), or " +
-			"`open` (anyone). Hosted mode always uses `open`, and another value is an error there.",
+			"`open` (anyone). Not set, self-hosted mode uses the policy that first-run setup chose (PRD " +
+			"FR-ADMIN-02), or `closed` if setup chose none, which the `Signup` capability shows as `setup`; set, " +
+			"it overrides that choice for as long as it is set. Until setup has completed, nobody can register, whatever the policy. Hosted mode always uses " +
+			"`open`, and another value is an error there.",
 		values: []string{string(SignupClosed), string(SignupInvite), string(SignupOpen)},
-		def:    func(m mode) string { return string(modeCapabilities(m).Signup) },
+		// Without the key, the capability is the mode's: the policy that
+		// setup chose, or open in hosted mode.
 		parse: func(c *Config, v string) error {
 			if c.mode == modeHosted && SignupPolicy(v) != SignupOpen {
 				return errors.New("hosted mode always uses open signup; remove the setting or set it to open")
@@ -148,6 +160,90 @@ var keys = []key{
 		},
 		capability:      "InstanceAdminAccess",
 		capabilityLimit: "self-hosted only",
+	},
+	{
+		name: "STORYCREEP_SETUP_OWNER_EMAIL",
+		doc: "The email address of the first owner, for unattended first-run setup (PRD FR-ADMIN-02). With " +
+			"`STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, and `STORYCREEP_SETUP_WORKSPACE_NAME`, " +
+			"which it needs, it makes the server complete first-run setup itself when it starts on a database " +
+			"whose setup is pending, instead of waiting for someone to complete it with the setup code that it " +
+			"logs. Unattended setup makes the same changes as the setup API: it creates the owner's account, " +
+			"which is an instance admin, and the first workspace, which the owner owns and which is the owner's " +
+			"personal workspace, and records the signup policy of `STORYCREEP_SETUP_SIGNUP`. A value that the " +
+			"setup API would refuse, such as an address that is not one or a weak password, stops the server " +
+			"with an error that names its key. Once setup has completed, either way, the server ignores these " +
+			"keys.",
+		valuesDoc:     "An email address",
+		example:       "jo@example.com",
+		group:         setupGroup,
+		groupRequired: true,
+		parse: func(c *Config, v string) error {
+			c.unattendedSetup().OwnerEmail = v
+			return nil
+		},
+	},
+	{
+		name: "STORYCREEP_SETUP_OWNER_NAME",
+		doc: "The display name of the first owner, for unattended first-run setup, which other people see: 1 to " +
+			"100 characters, not all of them blank, and without control characters.",
+		valuesDoc:     "A display name",
+		example:       "Jo Novak",
+		group:         setupGroup,
+		groupRequired: true,
+		parse: func(c *Config, v string) error {
+			c.unattendedSetup().OwnerName = v
+			return nil
+		},
+	},
+	{
+		name: "STORYCREEP_SETUP_OWNER_PASSWORD",
+		doc: "The password of the first owner, for unattended first-run setup: at least 12 characters, and not " +
+			"one of the 10,000 most common passwords. The server reads it only while setup is pending, so remove " +
+			"it from the configuration once setup has completed.",
+		valuesDoc:     "A password",
+		secret:        true,
+		group:         setupGroup,
+		groupRequired: true,
+		parse: func(c *Config, v string) error {
+			c.unattendedSetup().OwnerPassword = secret.New(v)
+			return nil
+		},
+	},
+	{
+		name: "STORYCREEP_SETUP_WORKSPACE_NAME",
+		doc: "The name of the first workspace, for unattended first-run setup: 1 to 100 characters, not all of " +
+			"them blank, and without control characters. Its default locale is `STORYCREEP_DEFAULT_LOCALE`.",
+		valuesDoc:     "A workspace name",
+		example:       "Harbour Studio",
+		group:         setupGroup,
+		groupRequired: true,
+		parse: func(c *Config, v string) error {
+			c.unattendedSetup().WorkspaceName = v
+			return nil
+		},
+	},
+	{
+		name: "STORYCREEP_SETUP_WORKSPACE_SLUG",
+		doc: "The slug of the first workspace, for unattended first-run setup: groups of lowercase ASCII letters " +
+			"and digits joined by single hyphens, of at most 64 characters, and not a reserved word. Not set, it " +
+			"is derived from `STORYCREEP_SETUP_WORKSPACE_NAME`, as the setup API derives it.",
+		valuesDoc: "A slug, such as `harbour-studio`",
+		group:     setupGroup,
+		parse: func(c *Config, v string) error {
+			c.unattendedSetup().WorkspaceSlug = v
+			return nil
+		},
+	},
+	{
+		name: "STORYCREEP_SETUP_SIGNUP",
+		doc: "The signup policy that unattended first-run setup records, as the setup API's `signup_policy` " +
+			"does: `closed` if it is not set. `STORYCREEP_SIGNUP` overrides it for as long as that is set.",
+		values: []string{string(SignupClosed), string(SignupInvite), string(SignupOpen)},
+		group:  setupGroup,
+		parse: func(c *Config, v string) error {
+			c.unattendedSetup().Signup = SignupPolicy(v)
+			return nil
+		},
 	},
 	{
 		name: "STORYCREEP_SESSION_IDLE_TIMEOUT",

@@ -35,6 +35,8 @@ const (
 	CodeInsufficientRole     Code = "insufficient_role"
 	CodeSignupClosed         Code = "signup_closed"
 	CodeInviteRequired       Code = "invite_required"
+	CodeSetupRequired        Code = "setup_required"
+	CodeInvalidSetupCode     Code = "invalid_setup_code"
 	CodeNotFound             Code = "not_found"
 	CodeSlugTaken            Code = "slug_taken"
 	CodeMethodNotAllowed     Code = "method_not_allowed"
@@ -102,11 +104,19 @@ var codes = []codeSpec{
 			"who is not a member or is a `guest`, is answered with `not_found` instead, so that the answer does not " +
 			"tell that the workspace exists (PRD §5.5)."},
 	{CodeSignupClosed, http.StatusForbidden, i18n.K("error.signup_closed"),
-		"The instance's signup policy, `STORYCREEP_SIGNUP`, is `closed`, so `POST /api/v1/auth/register` " +
-			"creates no account, whatever the request holds (PRD FR-AUTH-01 AC3)."},
+		"The instance's signup policy is `closed`, so `POST /api/v1/auth/register` creates no account, " +
+			"whatever the request holds (PRD FR-AUTH-01 AC3). The policy is the one that `STORYCREEP_SIGNUP` " +
+			"sets, or else the one that first-run setup chose, or else `closed`."},
 	{CodeInviteRequired, http.StatusForbidden, i18n.K("error.invite_required"),
-		"The instance's signup policy, `STORYCREEP_SIGNUP`, is `invite`, so only an invitation creates an " +
-			"account, and `POST /api/v1/auth/register` creates none, whatever the request holds."},
+		"The instance's signup policy is `invite`, so only an invitation creates an account, and " +
+			"`POST /api/v1/auth/register` creates none, whatever the request holds."},
+	{CodeSetupRequired, http.StatusForbidden, i18n.K("error.setup_required"),
+		"The instance's first-run setup has not completed, so `POST /api/v1/auth/register` creates no " +
+			"account, whatever the signup policy and whatever the request holds, so that the first account is " +
+			"always the owner that setup creates (PRD FR-ADMIN-02 AC4). `POST /api/v1/setup` completes it."},
+	{CodeInvalidSetupCode, http.StatusForbidden, i18n.K("error.invalid_setup_code"),
+		"`POST /api/v1/setup` was given a setup code that is not the instance's, so setup stays pending. The " +
+			"server writes the code to its log while setup is pending (PRD FR-ADMIN-02)."},
 	{CodeNotFound, http.StatusNotFound, i18n.K("error.not_found"),
 		"No route matches the path, or the resource it names does not exist, or the signed-in user's role in " +
 			"it, or in its workspace, is none, as it is for a user who is not a member of the workspace, so that " +
@@ -152,7 +162,8 @@ var codes = []codeSpec{
 			"is locked, `POST /api/v1/auth/login` refuses every sign-in with it, even with the right password. Once " +
 			"the lock ends, the next sign-in is checked: one that succeeds forgets the failures, and one that fails " +
 			"locks the address again. The failures are forgotten a day after the last one. " +
-			"`details.bucket` is `auth` for signing in, registering, and changing a password."},
+			"`details.bucket` is `auth` for signing in, registering, changing a password, and completing first-run " +
+			"setup."},
 	{CodeInternal, http.StatusInternalServerError, i18n.K("error.internal_error"),
 		"The server failed. Its log has the cause, under the envelope's `request_id`."},
 	{CodeNotReady, http.StatusServiceUnavailable, i18n.K("error.not_ready"),

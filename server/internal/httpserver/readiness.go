@@ -94,9 +94,8 @@ func (r *readiness) notReady(ctx context.Context, pingDB bool) error {
 }
 
 // waitForMigrations checks every interval whether the database has applied
-// the pending migrations, and makes the server ready once it has. It returns
-// then, reporting whether it made the server ready, which it does not if the
-// server is stopping, or when ctx ends.
+// the pending migrations, and returns true once it has, or false when ctx
+// ends.
 func (r *readiness) waitForMigrations(ctx context.Context, db *database.DB, interval time.Duration) bool {
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -120,13 +119,20 @@ func (r *readiness) waitForMigrations(ctx context.Context, db *database.DB, inte
 					"applied, and tries again", "error", err)
 			}
 		case len(pending) == 0:
-			ready := r.phase.CompareAndSwap(int32(phaseMigrationsPending), int32(phaseReady))
-			if ready {
-				r.log.InfoContext(ctx, "ready, now that the pending migrations have been applied")
-			}
-			return ready
+			return true
 		}
 	}
+}
+
+// migrationsApplied makes a server whose migrations were pending ready, now
+// that they have been applied, and reports whether it did, which it does not
+// if the server is stopping.
+func (r *readiness) migrationsApplied(ctx context.Context) bool {
+	ready := r.phase.CompareAndSwap(int32(phaseMigrationsPending), int32(phaseReady))
+	if ready {
+		r.log.InfoContext(ctx, "ready, now that the pending migrations have been applied")
+	}
+	return ready
 }
 
 // isAPI reports whether path is the API's, which needs the database.

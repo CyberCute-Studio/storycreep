@@ -2,9 +2,11 @@
 // in with sessions (PRD FR-AUTH-01, FR-AUTH-02, NFR-SEC-03, NFR-SEC-04).
 //
 // An account is registered with an email address, a display name, and a
-// password, when the instance's signup policy (STORYCREEP_SIGNUP, the Signup
-// capability) lets anyone register: with closed, nobody can, and with invite,
-// only an invitation creates an account (FR-TEN-02). Registering an address
+// password, once first-run setup has completed (FR-ADMIN-02), when the
+// instance's signup policy lets anyone register: with closed, nobody can, and
+// with invite, only an invitation creates an account (FR-TEN-02). The policy
+// is the one that STORYCREEP_SIGNUP sets (the Signup capability), or else the
+// one that setup chose. Registering an address
 // that has an account already looks the same to the client as registering a
 // new one, and takes as long, and leaves the account as it was, so that it
 // does not tell whether the address has one (FR-AUTH-01 AC1).
@@ -19,6 +21,9 @@
 // (p=4). A hash records its parameters, in the PHC string format, so that
 // when a release changes them, signing in replaces a hash made with the old
 // ones at the account's next sign-in, once the password has matched it.
+//
+// The operator, and first-run setup, add accounts without the signup policy
+// (Prepare and Insert).
 //
 // Signing in starts a session (session.go), which the server finds by its
 // secret, on every request made with it.
@@ -64,6 +69,11 @@ const (
 // The errors of the signup policy, which Register returns before it looks at
 // the registration.
 var (
+	// ErrSetupRequired is the error of an instance whose first-run setup has
+	// not completed, on which nobody can register, whatever the policy, so
+	// that the first account is always the one that setup creates (PRD
+	// FR-ADMIN-02 AC4).
+	ErrSetupRequired = errors.New("account: first-run setup has not completed")
 	// ErrSignupClosed is the error of the closed policy, under which nobody
 	// can register.
 	ErrSignupClosed = errors.New("account: signup is closed")
@@ -76,6 +86,10 @@ var (
 // active account, or the password is not the account's.
 var ErrInvalidCredentials = errors.New("account: the email address or the password is wrong")
 
+// ErrEmailTaken is returned by Insert for an email address that has an
+// account already.
+var ErrEmailTaken = errors.New("account: the email address has an account already")
+
 // DB runs a transaction of the application login, as *database.DB does.
 type DB interface {
 	InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
@@ -83,7 +97,8 @@ type DB interface {
 
 // Options configure a Service.
 type Options struct {
-	// Signup is the signup policy.
+	// Signup is the Signup capability: a policy, or config.SignupSetup for
+	// the one that first-run setup chose.
 	Signup config.SignupPolicy
 	// IdleTimeout is how long a session lasts unused, and Lifetime how long
 	// it lasts at most. Both must be positive.
@@ -136,12 +151,33 @@ func newService(db DB, opts Options, h *Hasher) *Service {
 		limits: opts.Limits, authenticated: opts.Authenticated, hasher: h, decoy: h.decoy()}
 }
 
-// CheckSignup returns ErrSignupClosed or ErrInviteRequired unless the signup
-// policy lets anyone register. The API checks it before it reads a
-// registration, so that it refuses one whatever the registration holds
-// (FR-AUTH-01 AC3).
-func (s *Service) CheckSignup(context.Context) error {
-	switch s.signup {
+// Hasher returns the Hasher that the Service hashes passwords with, which
+// first-run setup shares, so that the hashes of the process are bounded
+// together.
+func (s *Service) Hasher() *Hasher {
+	return s.hasher
+}
+
+// CheckSignup returns ErrSetupRequired until first-run setup has completed,
+// and then ErrSignupClosed or ErrInviteRequired unless the signup policy lets
+// anyone register: the policy of the Signup capability, or the one that
+// setup chose (config.SignupPolicy.Resolve). The API checks it before it
+// reads a registration, so that it refuses one whatever the registration
+// holds (FR-AUTH-01 AC3, FR-ADMIN-02 AC4).
+func (s *Service) CheckSignup(ctx context.Context) error {
+	var row queries.InstanceSetupRow
+	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		var err error
+		row, err = queries.New(tx).InstanceSetup(ctx)
+		return err
+	})
+	switch {
+	case err != nil:
+		return fmt.Errorf("account: read the instance's setup: %w", err)
+	case !row.SetupCompleted:
+		return ErrSetupRequired
+	}
+	switch s.signup.Resolve(config.SignupPolicy(row.SignupPolicy.String)) {
 	case config.SignupOpen:
 		return nil
 	case config.SignupInvite:
@@ -196,6 +232,74 @@ func (s *Service) Register(ctx context.Context, r Registration) error {
 		}
 		return nil
 	})
+}
+
+// Account is an account to add with Insert, whose fields Prepare has
+// checked, and whose password it has hashed.
+type Account struct {
+	// ID is the account's new ID.
+	ID ids.UUID
+	// Email and DisplayName are as the account holds them.
+	Email, DisplayName string
+	// InstanceAdmin makes the account an instance admin.
+	InstanceAdmin bool
+	// PersonalWorkspace marks the account's personal workspace as given, as
+	// first-run setup does with the workspace that it creates, so that its
+	// first sign-in gives it none (FR-TEN-01).
+	PersonalWorkspace bool
+	hash              string
+}
+
+// CheckRegistration checks the registration r as Register does, but for the
+// signup policy and the rate limit, which apply only to people who register
+// themselves: it returns input.FieldErrors if the email address or the
+// display name is not valid, and then a *PasswordError if the password
+// breaks the policy.
+func CheckRegistration(r Registration) error {
+	if _, _, err := r.fields(); err != nil {
+		return err
+	}
+	return CheckPassword(r.Password)
+}
+
+// Prepare checks the registration r as CheckRegistration does, and returns
+// the account to add, with a new ID and its password hashed with h, for the
+// operator's storycreep create-user (FR-ADMIN-06) and first-run setup
+// (FR-ADMIN-02), which add accounts whatever the signup policy.
+func Prepare(ctx context.Context, h *Hasher, r Registration) (Account, error) {
+	email, name, err := r.fields()
+	if err != nil {
+		return Account{}, err
+	}
+	if err := CheckPassword(r.Password); err != nil {
+		return Account{}, err
+	}
+	hash, err := h.Hash(ctx, r.Password)
+	if err != nil {
+		return Account{}, err
+	}
+	return Account{ID: ids.New(), Email: email, DisplayName: name, hash: hash}, nil
+}
+
+// Insert adds the account a in tx, or returns ErrEmailTaken if its address
+// has an account already, as citext compares addresses, and adds nothing
+// then.
+func Insert(ctx context.Context, tx pgx.Tx, a Account) error {
+	n, err := queries.New(tx).InsertUser(ctx, queries.InsertUserParams{
+		ID:                pgtype.UUID{Bytes: a.ID, Valid: true},
+		Email:             a.Email,
+		PasswordHash:      pgtype.Text{String: a.hash, Valid: true},
+		DisplayName:       a.DisplayName,
+		IsInstanceAdmin:   a.InstanceAdmin,
+		PersonalWorkspace: a.PersonalWorkspace,
+	})
+	switch {
+	case err != nil:
+		return fmt.Errorf("account: add the account: %w", err)
+	case n == 0:
+		return ErrEmailTaken
+	}
+	return nil
 }
 
 // fields returns the registration's email address and display name as an

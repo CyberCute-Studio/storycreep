@@ -193,6 +193,7 @@ func TestSessionCookie(t *testing.T) {
 func TestRevocationReachesEveryServer(t *testing.T) {
 	t.Parallel()
 	d := dbtest.New(t)
+	d.MarkSetUp(t)
 	cfg := loadConfig(t, map[string]string{
 		"STORYCREEP_DATABASE_URL":       d.AppURL.Reveal(),
 		"STORYCREEP_DATABASE_ADMIN_URL": d.AdminURL.Reveal(),

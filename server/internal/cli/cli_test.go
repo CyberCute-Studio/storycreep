@@ -32,7 +32,7 @@ func TestMain(m *testing.M) {
 func run(t *testing.T, env map[string]string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code = Run(context.Background(), args, &out, &errOut, config.MapEnvironment(env))
+	code = Run(context.Background(), args, strings.NewReader(""), &out, &errOut, config.MapEnvironment(env))
 	return code, out.String(), errOut.String()
 }
 

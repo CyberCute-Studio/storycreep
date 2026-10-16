@@ -17,6 +17,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/setup"
 	"github.com/CyberCute-Studio/storycreep/server/internal/version"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
 )
@@ -34,6 +35,11 @@ type server struct {
 	accounts *account.Service
 	// workspaces keeps the workspaces.
 	workspaces *workspace.Service
+	// setups completes first-run setup.
+	setups *setup.Service
+	// unattended is the configuration's unattended first-run setup, or nil
+	// if it has none.
+	unattended *config.UnattendedSetup
 	// limits counts the requests of the rate limits.
 	limits *ratelimit.Limiter
 }
@@ -59,6 +65,13 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		// (FR-TEN-01).
 		Authenticated: s.workspaces.EnsurePersonal,
 	})
+	s.setups = setup.New(readyDB{s.ready}, setup.Options{
+		Signup:        cfg.Capabilities.Signup,
+		DefaultLocale: cfg.DefaultLocale,
+		Workspaces:    s.workspaces,
+		Hasher:        s.accounts.Hasher(),
+	})
+	s.unattended = cfg.Setup
 	cookie := newSessionCookie(cfg.PublicURL)
 	s.main = api.NewMux(api.MuxOptions{
 		Log:           log,
@@ -79,6 +92,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerAccounts(s.main, s.accounts, s.limits)
 	registerSessions(s.main, s.accounts, s.limits, cookie)
 	registerWorkspaces(s.main, s.workspaces)
+	registerSetup(s.main, s.setups, s.limits)
 	registerDocument(s.main)
 	registerPages(s.main, cfg.Capabilities.PublicSite)
 

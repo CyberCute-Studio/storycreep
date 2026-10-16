@@ -16,7 +16,7 @@ The server is configured with `STORYCREEP_*` environment variables and an option
    docker compose up -d
    ```
 
-4. Open <http://localhost:7777>.
+4. Open <http://localhost:7777>, and complete first-run setup (see [First-run setup](#first-run-setup)).
 
 On its first start, the server applies the database migrations, and creates its own database logins with the same password: `storycreep`, which it serves requests as, and `storycreep_maintainer`, which its maintenance jobs, such as hard deletion, connect as. `docker compose ps` shows both services as `healthy` once the server is ready to serve.
 
@@ -34,10 +34,23 @@ The compose file names its Compose project `storycreep`, and the containers and 
 | `STORYCREEP_PUBLISH` | `127.0.0.1:7777` | Where Docker publishes the server's HTTP port, as `[address:]port`. The default reaches it from this machine only. A port without an address, such as `8000`, publishes it on every network interface, as `0.0.0.0:8000` does, so to change only the port, keep the address, as in `127.0.0.1:8000`. Another port is another URL, so set `STORYCREEP_PUBLIC_URL` with it, as in `http://localhost:8000`. |
 | `STORYCREEP_PUBLIC_URL` | `http://localhost:7777` | The URL users open Storycreep at. |
 | `STORYCREEP_TRUSTED_PROXIES` | Not set | The addresses that a reverse proxy in front of the server connects from, whose `X-Forwarded-For` header the server believes. See [Behind a reverse proxy](#behind-a-reverse-proxy). |
-| `STORYCREEP_MODE`, `STORYCREEP_PUBLIC_SITE`, `STORYCREEP_SIGNUP`, `STORYCREEP_INSTANCE_ADMIN_ACCESS`, `STORYCREEP_SESSION_IDLE_TIMEOUT`, `STORYCREEP_SESSION_LIFETIME`, `STORYCREEP_DEFAULT_LOCALE`, `STORYCREEP_LOG_LEVEL`, `STORYCREEP_ADMIN_ADDR`, `STORYCREEP_METRICS_TOKEN` | The server's | The server keys of the same names, which [`docs/configuration.md`](../docs/configuration.md) describes, as it does `STORYCREEP_TRUSTED_PROXIES`. |
+| `STORYCREEP_SETUP_OWNER_EMAIL`, `STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, `STORYCREEP_SETUP_WORKSPACE_NAME`, `STORYCREEP_SETUP_WORKSPACE_SLUG`, `STORYCREEP_SETUP_SIGNUP` | Not set | Unattended first-run setup. See [First-run setup](#first-run-setup). |
+| `STORYCREEP_MODE`, `STORYCREEP_PUBLIC_SITE`, `STORYCREEP_SIGNUP`, `STORYCREEP_INSTANCE_ADMIN_ACCESS`, `STORYCREEP_SESSION_IDLE_TIMEOUT`, `STORYCREEP_SESSION_LIFETIME`, `STORYCREEP_DEFAULT_LOCALE`, `STORYCREEP_LOG_LEVEL`, `STORYCREEP_ADMIN_ADDR`, `STORYCREEP_METRICS_TOKEN` | The server's | The server keys of the same names, which [`docs/configuration.md`](../docs/configuration.md) describes, as it does `STORYCREEP_TRUSTED_PROXIES` and the `STORYCREEP_SETUP_` keys. |
 | `COMPOSE_PROJECT_NAME` | `storycreep` | The Compose project's name, which the containers' and volumes' names start with. Another name is another instance, with volumes of its own, so set it before the first start. |
 
 The compose file sets the database URLs itself. The three logins in them take their password from `POSTGRES_PASSWORD`, through `PGPASSWORD`, so that a password with characters such as `@` or `/` needs no escaping.
+
+### First-run setup
+
+A new instance has no accounts. Until its first-run setup has completed, nobody can register one, whatever `STORYCREEP_SIGNUP` says. Setup creates the first owner, who is an instance admin, and the first workspace, which is the owner's, and records who can register afterwards: nobody (`closed`, the default), people holding an invitation (`invite`), or anyone (`open`). `STORYCREEP_SIGNUP` overrides that choice for as long as it is set.
+
+Completing setup asks for a setup code, so that whoever reaches a new instance first cannot make themselves its administrator. While setup is pending, the server writes the code to its log at every start:
+
+```sh
+docker compose logs app | grep setup_code
+```
+
+To complete setup without anyone visiting the instance, set `STORYCREEP_SETUP_OWNER_EMAIL`, `STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, and `STORYCREEP_SETUP_WORKSPACE_NAME` in `.env` before the first start, and optionally `STORYCREEP_SETUP_WORKSPACE_SLUG` and `STORYCREEP_SETUP_SIGNUP`. The server then completes setup itself, as the setup API would, and needs no code. A value that setup refuses, such as a password of fewer than 12 characters, stops the server, and its log names the setting. Once setup has completed, the server ignores these settings, so remove them from `.env`, the password above all, and run `docker compose up -d` again.
 
 ### Behind a reverse proxy
 

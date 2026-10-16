@@ -2,9 +2,9 @@
 
 | Field | Value |
 | --- | --- |
-| Plan version | 1.12 |
+| Plan version | 1.13 |
 | Date | 2026-10-16 |
-| Source | [`PRD.md`](PRD.md) version 1.9 (2026-10-16) |
+| Source | [`PRD.md`](PRD.md) version 1.10 (2026-10-16) |
 | Scope | Phase 0 — MVP (§12.1), then Phase 1 — v1 (§12.2) |
 | Status | Living document |
 
@@ -234,18 +234,20 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 
 ### 17. First-run setup and user-admin CLI
 **Status:** todo · **Depends on:** 16
-**PRD:** FR-ADMIN-02, FR-ADMIN-06 (`create-user`, `grant-role`)
-- A one-time setup API: first owner, first workspace, signup policy, optional SMTP and storage settings. The same setup can run unattended from environment variables.
+**PRD:** FR-ADMIN-02 (all but the SMTP and storage steps), FR-ADMIN-06 (`create-user`, `grant-role`)
+- A one-time setup API: first owner, first workspace, signup policy. The same setup can run unattended from environment variables. The chosen policy is stored with the instance, and `STORYCREEP_SIGNUP` overrides it (N25). The SMTP and storage steps land with the settings they configure, in items 18 and 29 (N25).
+- Completing setup through the API needs a setup code, which the server logs while setup is pending (N25).
 - A transaction guard against creating two owners. The setup route returns 404 permanently once setup completes.
 - Until setup completes, `POST /api/v1/auth/register` (item 13) returns 403 `setup_required` under every signup policy, so a self-registered account can never disable setup.
-- Instance-admin flag on users.
+- Instance-admin flag on users: the setup owner is an instance admin, and `grant-role` grants and revokes it.
 
 **Done when:** FR-ADMIN-02 AC1–AC4 pass and both CLI commands work with `--help`.
 
 ### 18. Email delivery, verification, and password reset
 **Status:** todo · **Depends on:** 17
-**PRD:** FR-AUTH-03, FR-ADMIN-06 (`reset-password`)
+**PRD:** FR-AUTH-03, FR-ADMIN-02 (SMTP step), FR-ADMIN-06 (`reset-password`)
 - Optional SMTP mailer with templates from the catalog.
+- The SMTP step of first-run setup, through the setup API and unattended, with the settings that the mailer reads (N25).
 - Single-use, expiring tokens: 24 h for verification, 1 h for reset. Reset tokens are invalidated when the password changes by any route.
 - Without SMTP, links are surfaced through an API readable only by instance admins, and through `storycreep reset-password`. The "email not configured" banner flag.
 - Hosted mode requires verification before a workspace can be created.
@@ -351,7 +353,8 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 
 ### 29. Blob storage and asset uploads
 **Status:** todo · **Depends on:** 8, 23
-**PRD:** FR-ASSET-01 (AC1, AC2), FR-ASSET-02, NFR-SEC-10, ADR-009
+**PRD:** FR-ASSET-01 (AC1, AC2), FR-ASSET-02, FR-ADMIN-02 (storage step), NFR-SEC-10, ADR-009
+- The storage step of first-run setup, through the setup API and unattended, with the settings that the drivers read (N25).
 - A driver interface with local-disk and S3 drivers, and one shared test suite (S3 via MinIO in CI). Content-addressed keys `{workspaceId}/{sha256}.{ext}`. In the container image, the local driver's directory is `/var/lib/storycreep/assets`, where `deploy/docker-compose.yml` mounts the asset volume (N18).
 - Serving through access-checked local routes and signed S3 URLs. The access check runs before any read.
 - Upload pipeline: content sniffing, size limit, SVG sanitised or rejected, storage quota returns 413. `CSP: sandbox` and `nosniff` on served assets.
@@ -1453,7 +1456,7 @@ The PRs that implement each requirement are listed in order. The last one comple
 | FR-DATA-04 | 41, 78, 80, 83 | 83 |
 | FR-DATA-05 | 113 | 113 |
 | FR-ADMIN-01 | 3, 9, 108 | 108 |
-| FR-ADMIN-02 | 17, 54 | 54 |
+| FR-ADMIN-02 | 17, 18, 29, 54 | 54 |
 | FR-ADMIN-03 | 114 | 114 |
 | FR-ADMIN-04 | 5, 6, 119 | 119 |
 | FR-ADMIN-05 | 6, 115 | 115 |
@@ -1524,6 +1527,7 @@ These record where the PRD left a choice open, or where this plan reads the PRD 
 | N22 | NFR-SEC-06 and FR-AUTH-05 limit requests per IP address, and FR-AUTH-02 lists each session's IP address, but the documented deployments put a reverse proxy in front of the server: the compose file publishes on `127.0.0.1:7777` for a proxy on the same host (N18), and hosted mode runs behind a load balancer (§10.8). Every request's connection then comes from the proxy, so all clients would share one address's limits, and one client could use up the limit of signing in for everyone. | Decided: a configuration key, `STORYCREEP_TRUSTED_PROXIES`, lists the addresses and CIDR prefixes that proxies connect from, none by default. A request whose connection comes from one of them is taken to come from the rightmost address in its `X-Forwarded-For` header that is not a trusted proxy, and any other request from its connection's address. That address is what the per-IP limits count, an IPv6 address by its /64, and what sessions and the audit log record. `Forwarded` (RFC 7239) is not read, because the proxies in common use set `X-Forwarded-For`. The compose file passes the key through, and the deploy README recommends Docker's default range of network addresses for a proxy that reaches the published port or the compose network. No PRD change. | 14, 15 |
 | N23 | FR-AUTH-05 asks for exponential backoff and a temporary account lock after 10 consecutive failed sign-ins without saying how long a lock lasts or what backs off, and NFR-SEC-06 names the buckets of the rate limits without their limits. | Decided: each sign-in with an email address counts as a failure until it succeeds, which forgets the failures (FR-AUTH-05 AC3). The 10th in a row locks the address for a minute, and each failure after a lock ends locks it for twice as long as the lock before, up to 15 minutes; failures are forgotten 24 hours after the last one. The lock belongs to the address, folded to lower case as `citext` compares it, whether or not an account has it, so that a lock does not tell whether one does (FR-AUTH-01). A sign-in with a locked address is refused before its password is checked, with 429 `rate_limited` and `details.reason` `locked`, and is audited as a failed login with that reason. The limits are constants in the code. A minute: auth 20 per IP address, 10 per user, and 10 per email address that a registration names (signing in is limited by the lock of its address instead); reads 1,200 per IP address and 600 per user; writes 600 and 300; WebSocket connects 60 and 30. An hour: exports 60 and 30. A bucket counts fixed windows from the Unix epoch, in PostgreSQL with the database's clock, and holds its keys as HMAC-SHA256 with a key that migrating generates in `instance_key` (N21). Item 15 attaches the auth bucket to signing in, registering, and changing a password; items 18 and 26 attach it to password reset and token creation, item 26 adds the token key, and items 27 and 52 attach the other buckets. No PRD change. | 15, 18, 26, 27, 52 |
 | N24 | PRD §5.5 resolves an instance admin to `owner` of every workspace and project when "mode = self-hosted and instance_admin_access enabled", but nothing defined that switch, and no code outside the configuration may read the mode (FR-ADMIN-01 AC3). FR-TEN-01 gives every user a personal workspace on first login without saying whether an account that already belongs to a workspace by then, as an invited one does, gets one too. Item 16's "retention placeholders" overlap item 112, which makes retention configurable. | Decided: the switch is the capability `InstanceAdminAccess`, from a new key, `STORYCREEP_INSTANCE_ADMIN_ACCESS`, `off` by default and an error in hosted mode, so that an operator opts in. Every account gets a personal workspace once, at its first sign-in, whatever it belongs to by then, named after its display name. Item 16 reserves a `retention` object in a workspace's stored settings and shows it nowhere; item 112 adds the retention settings to the API together with the jobs that apply them, so that the API never states a retention that nothing applies. Recorded in PRD 1.9 §5.5 and §10.3. | 16, 17, 112, 114 |
+| N25 | FR-ADMIN-02 has first-run setup choose the signup policy, but §10.3 resolved `Signup` once at startup from configuration, so a choice made on a running instance had nowhere to go. Setup's optional SMTP and storage steps would configure settings that nothing reads before items 18 and 29. Until setup completes, whoever first reaches a new instance could complete it and make themselves its administrator. And every account gets a personal workspace at its first sign-in (N24), so the setup owner would get one besides the workspace that setup creates. | Decided: setup stores the signup policy that it chooses, `closed` by default, in a new cross-workspace table, `instance`, whose one row also records when setup completed, and `STORYCREEP_SIGNUP` overrides it for as long as it is set: without the key, the self-hosted `Signup` capability is `setup`, and registering reads the stored policy. Completing setup through `POST /api/v1/setup` needs a setup code, 80 bits of a key that migrating generates in `instance_key`, which the server logs while setup is pending. Unattended setup, from the `STORYCREEP_SETUP_` keys, needs none, and runs before the server is ready. The setup owner is an instance admin, and the setup workspace is the owner's personal workspace. A database that has accounts when it is upgraded counts as set up. The SMTP step lands in item 18 and the storage step in item 29, with the settings that they configure. Recorded in PRD 1.10 FR-ADMIN-02, FR-AUTH-01, §5.3, and §10.3. | 17, 18, 29 |
 
 ---
 
@@ -1544,3 +1548,4 @@ These record where the PRD left a choice open, or where this plan reads the PRD 
 | 1.10 | 2026-10-16 | Decisions from implementing item 12, with PRD 1.8: alignment note N21 records how the audit log records the events that belong to no workspace, with a null `workspace_id`, and where the key of the email hash comes from, a table of keys that migrating generates. Item 12 cites N21. No items added, removed, or renumbered, and no dependency changed. |
 | 1.11 | 2026-10-16 | Decisions from implementing item 15: alignment note N22 records how the server tells a client's IP address behind a reverse proxy, with a new configuration key, `STORYCREEP_TRUSTED_PROXIES`, and N23 the lock after failed sign-ins and the limits of the rate limits' buckets. Item 15 cites both. No items added, removed, or renumbered, and no dependency changed. |
 | 1.12 | 2026-10-16 | Decisions from implementing item 16, with PRD 1.9: alignment note N24 records the capability that lets an instance admin act as owner, `InstanceAdminAccess`, which an operator turns on with a new key and hosted mode refuses, that every account gets a personal workspace once, at its first sign-in, and that item 112, not item 16, adds the retention settings to the API. Item 16 cites N24. No items added, removed, or renumbered, and no dependency changed. |
+| 1.13 | 2026-10-16 | Decisions from implementing item 17, with PRD 1.10: alignment note N25 records where the signup policy that first-run setup chooses is stored, and that `STORYCREEP_SIGNUP` overrides it, the setup code that completing setup through the API needs, and that the setup workspace is the owner's personal workspace. Setup's SMTP and storage steps move from item 17 to items 18 and 29, whose PRD lines, and the coverage matrix, gain the FR-ADMIN-02 slices. Items 17, 18, and 29 cite N25. No items added, removed, or renumbered, and no dependency changed. |

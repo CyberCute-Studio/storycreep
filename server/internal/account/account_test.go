@@ -69,11 +69,13 @@ func options(db DB, signup config.SignupPolicy) Options {
 		Limits: ratelimit.New(db, ratelimit.DefaultPolicy())}
 }
 
-// setup returns a Service under the signup policy, on a new database, and a
-// connection to the database as the superuser.
+// setup returns a Service under the signup policy, on a new database whose
+// first-run setup has completed, and a connection to the database as the
+// superuser.
 func setup(t *testing.T, signup config.SignupPolicy) (*Service, *pgx.Conn) {
 	t.Helper()
 	d := dbtest.New(t)
+	d.MarkSetUp(t)
 	db := d.Open(t)
 	return New(db, options(db, signup)), d.Admin(t)
 }
@@ -177,6 +179,7 @@ func TestRegisterComposition(t *testing.T) {
 func TestRegisterPolicy(t *testing.T) {
 	t.Parallel()
 	d := dbtest.New(t)
+	d.MarkSetUp(t)
 	db, admin := d.Open(t), d.Admin(t)
 	for _, c := range []struct {
 		signup config.SignupPolicy
@@ -469,5 +472,56 @@ func TestAuthenticateMalformedHash(t *testing.T) {
 	_, err := signsIn(context.Background(), s, "jo@example.com", secret.New("correct horse battery staple"))
 	if !errors.Is(err, errMalformedHash) {
 		t.Errorf("%v, want errMalformedHash", err)
+	}
+}
+
+// TestCheckSignupSetup checks that until first-run setup has completed,
+// CheckSignup and Register refuse every registration with ErrSetupRequired,
+// whatever the policy, and that afterwards the capability SignupSetup
+// follows the policy that setup chose, or closed if it chose none, while a
+// policy that the configuration sets overrides it.
+//
+// Verifies: FR-ADMIN-02/AC4
+func TestCheckSignupSetup(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	db, admin := d.Open(t), d.Admin(t)
+	for _, p := range []config.SignupPolicy{config.SignupOpen, config.SignupInvite, config.SignupClosed,
+		config.SignupSetup} {
+		s := New(db, options(db, p))
+		if err := s.CheckSignup(ctx); !errors.Is(err, ErrSetupRequired) {
+			t.Errorf("%s before setup: CheckSignup = %v", p, err)
+		}
+		err := s.Register(ctx, Registration{Email: "jo@example.com", DisplayName: "Jo",
+			Password: secret.New("correct horse battery staple")})
+		if !errors.Is(err, ErrSetupRequired) {
+			t.Errorf("%s before setup: Register = %v", p, err)
+		}
+	}
+	if got := accounts(t, admin); len(got) != 0 {
+		t.Fatalf("%d accounts before setup, want none", len(got))
+	}
+	for _, c := range []struct {
+		capability, chosen config.SignupPolicy
+		want               error
+	}{
+		{config.SignupSetup, "", ErrSignupClosed},
+		{config.SignupSetup, config.SignupOpen, nil},
+		{config.SignupSetup, config.SignupInvite, ErrInviteRequired},
+		{config.SignupClosed, config.SignupOpen, ErrSignupClosed},
+		{config.SignupOpen, config.SignupClosed, nil},
+	} {
+		chosen := any(nil)
+		if c.chosen != "" {
+			chosen = string(c.chosen)
+		}
+		if _, err := admin.Exec(ctx, "UPDATE instance SET setup_completed_at = now(), signup_policy = $1",
+			chosen); err != nil {
+			t.Fatal(err)
+		}
+		if err := New(db, options(db, c.capability)).CheckSignup(ctx); !errors.Is(err, c.want) {
+			t.Errorf("%s with %q chosen: CheckSignup = %v, want %v", c.capability, c.chosen, err, c.want)
+		}
 	}
 }

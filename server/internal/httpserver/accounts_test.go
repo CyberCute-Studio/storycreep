@@ -22,8 +22,18 @@ import (
 const registerPath = "/api/v1/auth/register"
 
 // readyServer returns a ready server with the configuration of env, on a new
-// database, and the database.
+// database whose first-run setup has completed, as registering needs, and
+// the database.
 func readyServer(t *testing.T, env map[string]string) (*server, *dbtest.Database) {
+	t.Helper()
+	s, d := pendingServer(t, env)
+	d.MarkSetUp(t)
+	return s, d
+}
+
+// pendingServer is readyServer, on a database whose first-run setup is
+// pending.
+func pendingServer(t *testing.T, env map[string]string) (*server, *dbtest.Database) {
 	t.Helper()
 	d := dbtest.New(t)
 	s := newServer(loadConfig(t, env), slog.New(slog.DiscardHandler))
