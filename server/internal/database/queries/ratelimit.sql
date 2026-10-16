@@ -84,18 +84,26 @@ DELETE FROM login_attempt WHERE key = @key;
 -- name: DeleteEndedRateLimits :execrows
 -- DeleteEndedRateLimits deletes at most max_rows of the counters whose
 -- window has ended, which count nothing any more. The rate limit cleanup job
--- runs it until it deletes fewer.
+-- runs it until it deletes fewer. It locks the counters that it deletes
+-- first, and skips those that a request holds, which may be counting a hit
+-- in a new window: it never waits for a request, which may hold another of
+-- its counters and wait for this one, so neither can deadlock the other, and
+-- a counter that a request revived after the cleanup read it is checked
+-- again when it is locked, and kept, rather than deleted with the hit.
 DELETE FROM rate_limit WHERE (bucket, key) IN (
-    SELECT e.bucket, e.key FROM rate_limit e WHERE e.window_end <= now() LIMIT @max_rows
+    SELECT e.bucket, e.key FROM rate_limit e WHERE e.window_end <= now()
+    LIMIT @max_rows FOR UPDATE SKIP LOCKED
 );
 
 -- name: DeleteForgottenLoginAttempts :execrows
 -- DeleteForgottenLoginAttempts deletes at most max_rows of the attempts
 -- whose last one was more than forget ago, which BeginLoginAttempt would
--- count from 1 again, and whose lock has ended.
+-- count from 1 again, and whose lock has ended. It locks and skips them as
+-- DeleteEndedRateLimits does, so that an attempt that a sign-in counts again
+-- meanwhile is kept.
 DELETE FROM login_attempt WHERE key IN (
     SELECT e.key FROM login_attempt e
     WHERE e.last_attempt_at <= now() - @forget::interval
         AND (e.locked_until IS NULL OR e.locked_until <= now())
-    LIMIT @max_rows
+    LIMIT @max_rows FOR UPDATE SKIP LOCKED
 );

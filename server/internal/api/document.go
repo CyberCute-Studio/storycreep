@@ -42,8 +42,10 @@ func (m *Mux) errorResponse() *huma.Response {
 			RateLimitLimitHeader: {Schema: &huma.Schema{Type: huma.TypeInteger,
 				Description: "On an operation that a rate limit counts, how many requests of its kind the client may " +
 					"make in a window of time, for its IP address or its account, whichever has the fewest left, " +
-					"or, with 429 rate_limited, for the one that used up its limit, which may be the email address " +
-					"that the request names"}},
+					"or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, " +
+					"which may be the email address that the request names. With details.reason locked, no limit " +
+					"is used up: the email address is locked, and the headers report the IP address or the account " +
+					"as on any other answer"}},
 			RateLimitRemainingHeader: {Schema: &huma.Schema{Type: huma.TypeInteger,
 				Description: "On an operation that a rate limit counts, how many more requests of its kind the client " +
 					"may make in the current window, for the same key as RateLimit-Limit"}},

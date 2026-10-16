@@ -39,7 +39,8 @@ const cleanupInterval = time.Hour
 // cleanUp deletes the counters whose window has ended and the attempts that
 // are forgotten, in batches, each in a transaction of its own, and returns
 // how many rows it deleted. Deleting them changes no limit, so it is safe to
-// repeat.
+// repeat. It skips the rows that a request holds meanwhile, which the next
+// run deletes if they still count nothing then.
 func (l *Limiter) cleanUp(ctx context.Context, db DB) (int64, error) {
 	var total int64
 	for _, deletion := range []struct {

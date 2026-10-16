@@ -334,11 +334,14 @@ var keys = []key{
 		doc: "The reverse proxies in front of the server, whose `X-Forwarded-For` header it believes. The server " +
 			"takes as a request's client the address that its connection comes from, unless that is one of " +
 			"these: then it takes the rightmost address in the request's `X-Forwarded-For` header that is not one " +
-			"of these, because each proxy appends the address that it received the request from. The client's " +
-			"address is what the rate limits of an IP address count (PRD NFR-SEC-06), and what a session and the " +
-			"audit log record. Without this setting, behind a reverse proxy, every request seems to come from the " +
-			"proxy, so all clients share the rate limits of one address, and one client that uses up the limit " +
-			"of signing in refuses everybody's sign-ins until it resets. List only the addresses that the proxies " +
+			"of these, because each proxy appends the address that it received the request from, or the leftmost " +
+			"address if every one is. An entry that is not an IP address, such as `unknown`, ends the search, " +
+			"because what lies to its left cannot be checked, and the listed proxy to its right, which wrote it, is " +
+			"taken for the client. The client's address is what the rate limits of an IP address count (PRD " +
+			"NFR-SEC-06), and what a session and the audit log record. Without this setting, behind a reverse " +
+			"proxy, every request seems to come from the proxy, so all clients share the rate limits of one " +
+			"address, and one client that uses up the limit of signing in refuses everybody's sign-ins until it " +
+			"resets. List only the addresses that the proxies " +
 			"connect from, as the server sees them, because whoever connects from a listed address can claim to " +
 			"be any client. Nor may a listed range hold a client's address, as the proxies see it, such as the " +
 			"addresses of a local network or a VPN that uses the same range: the server skips over every listed " +

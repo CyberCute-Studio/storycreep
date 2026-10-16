@@ -272,13 +272,13 @@ type counted struct {
 }
 
 // Take counts a request in bucket against each of keys, which must each be
-// of a kind that the bucket limits, and returns the state of the key that
-// the request is told about: the one, among the keys that are not hidden,
-// that has the fewest requests left, or none if every key is hidden. If one
-// of the keys has used up its limit, Take returns a *LimitError, with the
-// state of that key, whether or not it is hidden. It panics on a bucket or
-// a key that the policy does not limit, which is a mistake in the code that
-// calls it.
+// of a kind that the bucket limits, once even against a key given twice, and
+// returns the state of the key that the request is told about: the one,
+// among the keys that are not hidden, that has the fewest requests left, or
+// none if every key is hidden. If one of the keys has used up its limit,
+// Take returns a *LimitError, with the state of that key, whether or not it
+// is hidden. It panics on a bucket or a key that the policy does not limit,
+// which is a mistake in the code that calls it.
 func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decision, error) {
 	rate, ok := l.policy.Rates[bucket]
 	if !ok {
@@ -304,8 +304,11 @@ func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decisio
 				return err
 			}
 		}
-		// Two requests that share keys lock their rows in the same order.
+		// Two requests that share keys lock their rows in the same order. A
+		// key given twice counts once, because one statement cannot change a
+		// row twice.
 		slices.SortFunc(cs, func(a, b counted) int { return bytes.Compare(a.hash, b.hash) })
+		cs = slices.CompactFunc(cs, func(a, b counted) bool { return bytes.Equal(a.hash, b.hash) })
 		hashes := make([][]byte, len(cs))
 		for i, c := range cs {
 			hashes[i] = c.hash

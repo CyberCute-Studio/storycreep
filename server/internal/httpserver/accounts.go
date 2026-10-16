@@ -92,7 +92,8 @@ func registerAccounts(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 }
 
 // accountError returns the error that the API answers err with, an error
-// of package account, or err itself if it is none of them.
+// of package account, or of the rate limits that it applies (limitError), or
+// err itself if it is none of them.
 func accountError(err error) error {
 	var fields account.FieldErrors
 	var weak *account.PasswordError

@@ -148,9 +148,10 @@ func TestAuthRateLimit(t *testing.T) {
 // TestLoginLockout runs two servers on one database, and checks that after
 // 10 failed sign-ins in a row with an address, spread across both and made
 // from as many IP addresses, the 11th is refused with 429 rate_limited and
-// the seconds to wait, even with the right password, that an address of no
-// account is locked alike, so that the answer does not tell them apart, and
-// that the audit log records each refusal as a failed login.
+// the seconds to wait, even with the right password, and with the RateLimit
+// headers of its IP address, whose limit it has not used up, that an address
+// of no account is locked alike, so that the answer does not tell them apart,
+// and that the audit log records each refusal as a failed login.
 //
 // Verifies: FR-AUTH-05/AC1, FR-AUTH-05/AC2, FR-TEN-07/AC2
 func TestLoginLockout(t *testing.T) {
@@ -180,6 +181,12 @@ func TestLoginLockout(t *testing.T) {
 				res.code() != api.CodeRateLimited || res.details(t)["reason"] != "locked" || retry < 1 || retry > 60 ||
 				sessionCookieOf(t, res.header) != nil {
 				t.Fatalf("%s, the right password after 10 failures: %d %s %v", email, res.status, res.body, res.header)
+			}
+			// No limit is used up: the RateLimit headers report the IP
+			// address's, as on any other answer.
+			if headerInt(res, limitHeader) != 20 || headerInt(res, remainingHeader) != 19 {
+				t.Errorf("%s, the RateLimit headers of a locked sign-in: %v; want the IP address's 20, with 19 left",
+					email, res.header)
 			}
 			refusals = append(refusals, res)
 		}

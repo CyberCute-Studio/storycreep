@@ -115,12 +115,13 @@ func TestPolicyCheck(t *testing.T) {
 	}
 }
 
-// TestTake checks that a request counts against each of its keys, is
-// refused once one of them has used up its limit, with the state of that
-// key and how long to wait, and tells the client about the key with the
-// fewest requests left, which is never an email address unless it refuses
-// the request. The servers of an instance count in the same rows, and so do
-// the spellings of one email address and the addresses of one IPv6 /64.
+// TestTake checks that a request counts against each of its keys, once
+// against a key given twice, is refused once one of them has used up its
+// limit, with the state of that key and how long to wait, and tells the
+// client about the key with the fewest requests left, which is never an
+// email address unless it refuses the request. The servers of an instance
+// count in the same rows, and so do the spellings of one email address and
+// the addresses of one IPv6 /64.
 //
 // Verifies: FR-API-04/AC3, FR-AUTH-05/AC2, NFR-SEC-06
 func TestTake(t *testing.T) {
@@ -153,6 +154,11 @@ func TestTake(t *testing.T) {
 	// Each bucket counts on its own.
 	if d, err := l.Take(ctx, Auth, ip, jo); err != nil || d.Limit != 10 || d.Remaining != 9 {
 		t.Errorf("the auth bucket: %+v, %v; want the user's limit of 10 with 9 left", d, err)
+	}
+	// A key given twice counts once.
+	twice := UserID(ids.New())
+	if d, err := l.Take(ctx, Auth, twice, twice); err != nil || d.Limit != 10 || d.Remaining != 9 {
+		t.Errorf("a key given twice: %+v, %v; want it counted once, with 9 left", d, err)
 	}
 
 	// The addresses of one /64 count together, and another /64 apart.
@@ -496,5 +502,96 @@ func TestCleanUp(t *testing.T) {
 	if c, a := count(t, admin, `SELECT count(*) FROM rate_limit`), count(t, admin,
 		`SELECT count(*) FROM login_attempt`); c != 1 || a != 1 {
 		t.Errorf("%d counters and %d attempts kept, want 1 of each", c, a)
+	}
+}
+
+// TestCleanUpSkipsHeldRows checks that the cleanup leaves alone a row that a
+// request holds until it commits, as one does that counts a hit in a new
+// window of an ended counter, or a sign-in with an address whose failures
+// were forgotten: the cleanup neither waits for the request, with which it
+// could deadlock, nor deletes the row once the request has revived it.
+func TestCleanUpSkipsHeldRows(t *testing.T) {
+	t.Parallel()
+	l, db, admin := setup(t)
+	ctx := context.Background()
+	if _, err := l.Take(ctx, Read, UserID(ids.New())); err != nil {
+		t.Fatal(err)
+	}
+	failLogins(t, l, "jo@example.com", 1)
+	// waiting reports whether a transaction waits for a lock, as the cleanup
+	// would for the request's row.
+	waiting := func() bool {
+		var n int
+		if err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE NOT granted`).Scan(&n)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return n > 0
+	}
+	for _, c := range []struct {
+		what string
+		// end makes the table's row ended or forgotten, revive is what the
+		// request does to it, and revived counts the row once it is revived.
+		end, revive, revived string
+	}{
+		{
+			"a counter",
+			`UPDATE rate_limit SET window_start = now() - interval '2 hours', window_end = now() - interval '1 hour'`,
+			`UPDATE rate_limit SET window_start = now(), window_end = now() + interval '1 hour', hits = 1`,
+			`SELECT count(*) FROM rate_limit WHERE window_end > now()`,
+		},
+		{
+			"a sign-in attempt",
+			`UPDATE login_attempt SET last_attempt_at = now() - interval '25 hours'`,
+			`UPDATE login_attempt SET failures = 1, last_attempt_at = now()`,
+			`SELECT count(*) FROM login_attempt WHERE last_attempt_at > now() - interval '1 hour'`,
+		},
+	} {
+		func() {
+			exec(t, admin, c.end)
+			tx, err := admin.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+			if _, err := tx.Exec(ctx, c.revive); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() {
+				_, err := l.cleanUp(ctx, db)
+				done <- err
+			}()
+			var cleaned error
+			finished := false
+			for deadline := time.Now().Add(time.Minute); !finished; time.Sleep(10 * time.Millisecond) {
+				select {
+				case cleaned = <-done:
+					finished = true
+					continue
+				default:
+				}
+				if waiting() {
+					t.Errorf("%s: the cleanup waits for the request that holds it", c.what)
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("%s: the cleanup did not finish", c.what)
+				}
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if !finished {
+				cleaned = <-done
+			}
+			if cleaned != nil {
+				t.Fatal(cleaned)
+			}
+			if n := count(t, admin, c.revived); n != 1 {
+				t.Errorf("%s: the cleanup deleted the row that the request revived", c.what)
+			}
+		}()
 	}
 }
