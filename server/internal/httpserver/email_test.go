@@ -375,7 +375,7 @@ func TestWorkspaceAdminSeesNoResetLink(t *testing.T) {
 				t.Errorf("POST %s: %d %s, want 403 email_not_configured", r.path, res.status, res.body)
 			}
 		case resetLinksPath, verificationLinksPath:
-			if res.status != http.StatusForbidden || res.code() != api.CodeInstanceAdminOnly {
+			if res.status != http.StatusForbidden || res.code() != api.CodeInstanceAdminRequired {
 				t.Errorf("POST %s: %d %s, want 403 instance_admin_required", r.path, res.status, res.body)
 			}
 		}
@@ -458,9 +458,9 @@ func TestEmailedReset(t *testing.T) {
 
 // TestHostedVerificationRequired checks that in hosted mode, which always
 // sends email, a user who has not verified their address gets no personal
-// workspace at sign-in, and cannot create a workspace, until they verify it
-// with the link that registering emailed, which gives them the personal
-// workspace.
+// workspace at sign-in, and cannot create a workspace, whatever the request
+// holds, until they verify it with the link that registering emailed, which
+// gives them the personal workspace.
 func TestHostedVerificationRequired(t *testing.T) {
 	t.Parallel()
 	server := emailtest.Start(t, emailtest.Options{})
@@ -472,10 +472,14 @@ func TestHostedVerificationRequired(t *testing.T) {
 	if n := countRows(t, d, "SELECT count(*) FROM workspace"); n != 0 {
 		t.Errorf("an unverified account's sign-in created %d workspaces", n)
 	}
-	res := send(s.main, http.MethodPost, workspacesPath, jsonBody(t, map[string]string{"name": "Harbour"}), "",
-		jo.header(true))
-	if res.status != http.StatusForbidden || res.code() != api.CodeEmailUnverified {
-		t.Errorf("create a workspace before verifying: %d %s, want 403 email_unverified", res.status, res.body)
+	// The refusal comes first, whatever the request holds, even a body that
+	// its schema refuses.
+	for _, body := range []map[string]string{{"name": "Harbour"}, {}} {
+		res := send(s.main, http.MethodPost, workspacesPath, jsonBody(t, body), "", jo.header(true))
+		if res.status != http.StatusForbidden || res.code() != api.CodeEmailUnverified {
+			t.Errorf("create a workspace with %v before verifying: %d %s, want 403 email_unverified", body,
+				res.status, res.body)
+		}
 	}
 	if res := send(s.main, http.MethodPost, emailVerificationPath, nil, "", jo.header(true)); res.status !=
 		http.StatusAccepted {
@@ -493,7 +497,7 @@ func TestHostedVerificationRequired(t *testing.T) {
 		AND metadata->>'personal' = 'true'`); n != 1 {
 		t.Errorf("the verification created %d personal workspaces, want 1", n)
 	}
-	res = send(s.main, http.MethodPost, workspacesPath, jsonBody(t, map[string]string{"name": "Harbour"}), "",
+	res := send(s.main, http.MethodPost, workspacesPath, jsonBody(t, map[string]string{"name": "Harbour"}), "",
 		jo.header(true))
 	if res.status != http.StatusCreated {
 		t.Errorf("create a workspace once verified: %d %s, want 201", res.status, res.body)

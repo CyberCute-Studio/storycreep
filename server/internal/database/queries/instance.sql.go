@@ -56,7 +56,7 @@ type InstanceSMTPRow struct {
 }
 
 // InstanceSMTP returns the SMTP settings that first-run setup chose (package
-// mail), whose host is null if it chose none.
+// email), whose host is null if it chose none.
 func (q *Queries) InstanceSMTP(ctx context.Context) (InstanceSMTPRow, error) {
 	row := q.db.QueryRow(ctx, instanceSMTP)
 	var i InstanceSMTPRow

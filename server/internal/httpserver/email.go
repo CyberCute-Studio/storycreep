@@ -286,7 +286,7 @@ func registerEmail(m *api.Mux, accounts *account.Service, limits *ratelimit.Limi
 			if err != nil {
 				return nil, linkError(err, "")
 			}
-			return &linkOutput{Body: linkBody{URL: link.URL, ExpiresAt: link.ExpiresAt}}, nil
+			return &linkOutput{Body: linkBody{URL: link.URL.Reveal(), ExpiresAt: link.ExpiresAt}}, nil
 		})
 	}
 }
@@ -303,7 +303,7 @@ func linkError(err error, passwordLocation string) error {
 	case errors.Is(err, account.ErrEmailConfigured):
 		return api.NewError(api.CodeEmailConfigured)
 	case errors.Is(err, account.ErrNotInstanceAdmin):
-		return api.NewError(api.CodeInstanceAdminOnly)
+		return api.NewError(api.CodeInstanceAdminRequired)
 	case errors.Is(err, account.ErrTokenInvalid):
 		return api.NewError(api.CodeTokenInvalid)
 	case errors.Is(err, account.ErrTokenUsed):

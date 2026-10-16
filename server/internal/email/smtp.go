@@ -107,8 +107,8 @@ func (s *Service) helloName() string {
 
 // authFor returns the mechanism that signs in to the server of c with
 // settings: PLAIN, or LOGIN where the server offers only that. Each sends
-// the password only over TLS, or to a server on a loopback address, as
-// net/smtp's PLAIN does.
+// the password only over TLS, or to the machine itself
+// (config.SMTPLoopback), as net/smtp's PLAIN does.
 func authFor(c *smtp.Client, settings config.SMTP) (smtp.Auth, error) {
 	ok, mechanisms := c.Extension("AUTH")
 	if !ok {
@@ -140,7 +140,7 @@ type loginAuth struct {
 func (a *loginAuth) Start(server *smtp.ServerInfo) (string, []byte, error) {
 	// As PlainAuth does, the password goes only over TLS, or to the
 	// machine itself.
-	if !server.TLS && !loopback(server.Name) {
+	if !server.TLS && !config.SMTPLoopback(server.Name) {
 		return "", nil, errors.New("unencrypted connection")
 	}
 	if server.Name != a.host {
@@ -160,10 +160,4 @@ func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 		return []byte(a.password), nil
 	}
 	return nil, errors.New("the server asked for something other than the username and the password")
-}
-
-// loopback reports whether host names the machine itself, as net/smtp's
-// PLAIN reads it.
-func loopback(host string) bool {
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }

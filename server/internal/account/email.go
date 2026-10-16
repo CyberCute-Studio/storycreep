@@ -122,8 +122,9 @@ type Link struct {
 	Kind LinkKind
 	// URL opens the web app's page that uses the link, with the secret in
 	// its fragment, which a browser does not send to the server, so that no
-	// log of a request holds it.
-	URL string
+	// log of a request holds it. It is a secret.Value, which its caller
+	// reveals only where it hands the link out.
+	URL secret.Value
 	// ExpiresAt is when it expires.
 	ExpiresAt time.Time
 }
@@ -261,10 +262,11 @@ func (s *Service) RequestVerification(ctx context.Context, userID ids.UUID) erro
 
 // sendLink is the work of the job that emails the link of the token id: it
 // makes the link's secret, holds its hash in the token, and sends the email
-// to the account's address. A token that has been used, has expired, or
-// whose account is no longer active, or no longer has the address that it
-// verifies, is sent no email, and a token of a reset requested for an
-// address of no account is deleted. An instance that no longer sends email
+// to the account's address, in the account's preferred locale, or else the
+// request's. A token that has been used, has expired, or whose account is no
+// longer active, or no longer has the address that it verifies, or has
+// verified it since, is sent no email, and a token of a reset requested for
+// an address of no account is deleted. An instance that no longer sends email
 // sends none either. An attempt that fails to send the email is made again
 // later, with a new secret, which replaces the one that the failed attempt
 // may have sent, so that only the latest email's link works.
@@ -299,8 +301,10 @@ func (s *Service) sendLink(ctx context.Context, db DB, id ids.UUID) error {
 		mail.Address{Name: row.DisplayName, Address: row.Email})
 	if err := s.email.Send(ctx, msg); err != nil {
 		if ctx.Err() != nil {
-			// The server is stopping, which ends the job's context, and the
-			// attempt is made again without counting (jobs.Register).
+			// The job's context ended: the server is stopping, and the
+			// attempt is made again without counting (jobs.Register), or the
+			// job's minute ran out, as when the database was slow to answer
+			// before the mailer's own, shorter timeout could end the send.
 			return fmt.Errorf("account: email the link: %w", errors.Join(ctx.Err(), err))
 		}
 		return fmt.Errorf("account: email the link: %w", err)
@@ -552,7 +556,7 @@ func issueLink(ctx context.Context, tx pgx.Tx, u config.PublicURL, kind LinkKind
 		Metadata: map[string]any{"kind": string(kind)}}); err != nil {
 		return Link{}, err
 	}
-	return Link{Kind: kind, URL: linkURL(u, kind, value), ExpiresAt: expires.Time}, nil
+	return Link{Kind: kind, URL: secret.New(linkURL(u, kind, value)), ExpiresAt: expires.Time}, nil
 }
 
 // cleanUpEmailTokens deletes the tokens that have expired, in batches, each

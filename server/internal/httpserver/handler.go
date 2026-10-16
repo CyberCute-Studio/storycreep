@@ -90,7 +90,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	})
 	s.setups = setup.New(readyDB{s.ready}, setup.Options{
 		Signup:        cfg.Capabilities.Signup,
-		SMTPFixed:     cfg.SMTP != nil,
+		SMTPFixed:     s.email.Fixed(),
 		DefaultLocale: cfg.DefaultLocale,
 		Workspaces:    s.workspaces,
 		Hasher:        s.accounts.Hasher(),

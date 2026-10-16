@@ -173,9 +173,9 @@ var keys = []key{
 		doc: "The SMTP server that the instance sends its email through (PRD FR-AUTH-03): the links that verify " +
 			"an email address and reset a password. `smtp://` connects with STARTTLS, which the server must " +
 			"offer, on port 587 unless the URL names another port; `smtp://` with `?security=none` sends without " +
-			"TLS, for a relay on the same host or network, and then cannot sign in to it unless it is on a " +
-			"loopback address; and `smtps://` uses TLS from the start, on port 465 unless the URL names another. " +
-			"A username and a password in the URL, percent-encoded, sign in with PLAIN or LOGIN. With " +
+			"TLS, for a relay on the same host or network, and then cannot sign in to it unless its host is " +
+			"`localhost`, `127.0.0.1`, or `::1`; and `smtps://` uses TLS from the start, on port 465 unless the URL " +
+			"names another. A username and a password in the URL, percent-encoded, sign in with PLAIN or LOGIN. With " +
 			"`STORYCREEP_SMTP_FROM`, which it needs, it overrides the SMTP settings that first-run setup chose " +
 			"(PRD FR-ADMIN-02), for as long as it is set. When neither sets a server, the instance sends no " +
 			"email, says so to its users, and an instance admin gives them the links as text instead " +

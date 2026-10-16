@@ -276,8 +276,8 @@ func load(keys []key, opts Options) (*Config, error) {
 	}
 
 	// set holds the keys that have a value, valid or not, for the groups'
-	// check.
-	set := map[string]bool{}
+	// check, and missing the required keys that are reported as not set.
+	set, missing := map[string]bool{}, map[string]bool{}
 	for _, k := range keys {
 		v, source := env.get(k.name), SourceEnvironment
 		if v == "" {
@@ -291,6 +291,7 @@ func load(keys []key, opts Options) (*Config, error) {
 		if v == "" {
 			if k.required || k.requiredIn != "" && k.requiredIn == c.mode {
 				problems = append(problems, Problem{Key: k.name, Msg: k.missingMessage(fileUnread)})
+				missing[k.name] = true
 			}
 			c.entries = append(c.entries, Entry{Key: k.name, Source: SourceUnset})
 			continue
@@ -327,7 +328,7 @@ func load(keys []key, opts Options) (*Config, error) {
 		c.entries = append(c.entries, Entry{Key: k.name, Value: v, Source: source})
 	}
 	problems = append(problems, groupProblems(keys, set, fileUnread)...)
-	problems = append(problems, needsProblems(keys, set, fileUnread)...)
+	problems = append(problems, needsProblems(keys, set, missing, fileUnread)...)
 	c.warnings = unknownVariables(env, keys)
 
 	if len(problems) > 0 {
@@ -371,10 +372,11 @@ func groupProblems(keys []key, set map[string]bool, fileUnread bool) []Problem {
 }
 
 // needsProblems reports the keys that a key that is set needs, but that are
-// not set, once each.
-func needsProblems(keys []key, set map[string]bool, fileUnread bool) []Problem {
+// not set, once each, and none that missing holds, which are reported as
+// required already, as hosted mode requires the SMTP server's keys.
+func needsProblems(keys []key, set, missing map[string]bool, fileUnread bool) []Problem {
 	var problems []Problem
-	reported := map[string]bool{}
+	reported := maps.Clone(missing)
 	for _, k := range keys {
 		for _, n := range k.needs {
 			if !set[k.name] || set[n] || reported[n] {

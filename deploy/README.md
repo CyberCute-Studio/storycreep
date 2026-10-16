@@ -83,7 +83,7 @@ STORYCREEP_SMTP_URL=smtp://username:password@smtp.example.com:587
 STORYCREEP_SMTP_FROM=Storycreep <noreply@example.com>
 ```
 
-`smtp://` connects with STARTTLS, which the server must offer, on port 587 unless the URL names another port, and `smtps://` with TLS from the start, on port 465 unless it names another. For a relay on the same machine or network that speaks neither, add `?security=none`, as in `smtp://relay:25?security=none`; the instance then signs in to it only on `localhost`, so that a password never crosses a network in the clear. Percent-encode the username and the password, as `%40` for `@`.
+`smtp://` connects with STARTTLS, which the server must offer, on port 587 unless the URL names another port, and `smtps://` with TLS from the start, on port 465 unless it names another. For a relay on the same machine or network that speaks neither, add `?security=none`, as in `smtp://relay:25?security=none`; the instance then signs in to it only on `localhost`, `127.0.0.1`, or `::1`, so that a password never crosses a network in the clear. Percent-encode the username and the password, as `%40` for `@`.
 
 Without an SMTP server, the instance sends no email, and says so to its users. Registering then sends nothing, and an account's user who has forgotten their password asks an instance admin, who takes a link that resets it with `POST /api/v1/admin/password-reset-links`, and gives it to the user alone, as text. On the machine that runs the server, the operator can print one instead:
 

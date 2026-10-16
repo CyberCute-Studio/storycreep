@@ -2,7 +2,7 @@
 
 -- Email (PRD FR-AUTH-03, FR-ADMIN-02): the SMTP settings that first-run
 -- setup records, and the tokens of the links that verify an email address
--- and reset a password. Package mail sends the email, and package account
+-- and reset a password. Package email sends the email, and package account
 -- issues and checks the tokens.
 
 -- The SMTP settings that first-run setup chose (FR-ADMIN-02), which the

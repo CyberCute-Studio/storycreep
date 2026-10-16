@@ -26,8 +26,8 @@ const (
 	SMTPStartTLS SMTPSecurity = "starttls"
 	// SMTPNone is a connection without TLS, which sends the email as it is,
 	// for a relay on the same host or network. It cannot sign in to the
-	// server, except on a loopback address, so that it never sends a
-	// password where it can be read.
+	// server, except on the machine itself (SMTPLoopback), so that it never
+	// sends a password where it can be read.
 	SMTPNone SMTPSecurity = "none"
 )
 
@@ -90,8 +90,9 @@ func (s SMTP) Check() []SMTPProblem {
 	case SMTPTLS, SMTPStartTLS:
 	case SMTPNone:
 		// The mailer sends a password only over TLS, or to the machine
-		// itself, so these settings could never sign in.
-		if s.Username != "" && s.Host != "localhost" && s.Host != "127.0.0.1" && s.Host != "::1" {
+		// itself, so these settings could never sign in. The host is
+		// compared in lower case, in which it is recorded.
+		if s.Username != "" && !SMTPLoopback(strings.ToLower(s.Host)) {
 			add("security", "is none, which sends a password only to localhost, 127.0.0.1, or ::1; use "+
 				"starttls or tls to sign in to another host")
 		}
@@ -115,6 +116,14 @@ func (s SMTP) Check() []SMTPProblem {
 		add("from", msg)
 	}
 	return problems
+}
+
+// SMTPLoopback reports whether host, an SMTP server's host in lower case,
+// names the machine itself: localhost, 127.0.0.1, or ::1, as net/smtp's PLAIN
+// mechanism reads it. The mailer sends a password without TLS to that host
+// alone.
+func SMTPLoopback(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 // checkSMTPHost says what is wrong with an SMTP server's host, or returns "".
@@ -224,7 +233,10 @@ func ParseSMTPURL(v string) (SMTP, error) {
 	}
 	for name, values := range query {
 		if name != "security" {
-			return fail(fmt.Sprintf("has the query parameter %q, but takes only security", name))
+			// The name is not quoted: a password with a ? that is not
+			// percent-encoded ends the URL's authority there, and the rest of
+			// the password becomes the query.
+			return fail("has a query parameter other than security, which is the only one it takes")
 		}
 		switch {
 		case s.Security == SMTPTLS:

@@ -25,37 +25,37 @@ type Code string
 // The error codes. Each is registered in codes with its status, and
 // docs/error-codes.md is generated from the registry.
 const (
-	CodeInvalidRequest       Code = "invalid_request"
-	CodeInvalidID            Code = "invalid_id"
-	CodeInvalidCursor        Code = "invalid_cursor"
-	CodeUnauthenticated      Code = "unauthenticated"
-	CodeInvalidCredentials   Code = "invalid_credentials"
-	CodeCSRFFailed           Code = "csrf_failed"
-	CodeWrongPassword        Code = "wrong_password"
-	CodeInsufficientRole     Code = "insufficient_role"
-	CodeSignupClosed         Code = "signup_closed"
-	CodeInviteRequired       Code = "invite_required"
-	CodeSetupRequired        Code = "setup_required"
-	CodeInvalidSetupCode     Code = "invalid_setup_code"
-	CodeInstanceAdminOnly    Code = "instance_admin_required"
-	CodeEmailNotConfigured   Code = "email_not_configured"
-	CodeEmailConfigured      Code = "email_configured"
-	CodeEmailUnverified      Code = "email_unverified"
-	CodeTokenInvalid         Code = "token_invalid"
-	CodeTokenUsed            Code = "token_used"
-	CodeTokenExpired         Code = "token_expired"
-	CodeNotFound             Code = "not_found"
-	CodeSlugTaken            Code = "slug_taken"
-	CodeMethodNotAllowed     Code = "method_not_allowed"
-	CodeRequestTimeout       Code = "request_timeout"
-	CodeRequestTooLarge      Code = "request_too_large"
-	CodeUnsupportedMediaType Code = "unsupported_media_type"
-	CodeValidationFailed     Code = "validation_failed"
-	CodeWeakPassword         Code = "weak_password"
-	CodeSlugInvalid          Code = "slug_invalid"
-	CodeRateLimited          Code = "rate_limited"
-	CodeInternal             Code = "internal_error"
-	CodeNotReady             Code = "not_ready"
+	CodeInvalidRequest        Code = "invalid_request"
+	CodeInvalidID             Code = "invalid_id"
+	CodeInvalidCursor         Code = "invalid_cursor"
+	CodeUnauthenticated       Code = "unauthenticated"
+	CodeInvalidCredentials    Code = "invalid_credentials"
+	CodeCSRFFailed            Code = "csrf_failed"
+	CodeWrongPassword         Code = "wrong_password"
+	CodeInsufficientRole      Code = "insufficient_role"
+	CodeSignupClosed          Code = "signup_closed"
+	CodeInviteRequired        Code = "invite_required"
+	CodeSetupRequired         Code = "setup_required"
+	CodeInvalidSetupCode      Code = "invalid_setup_code"
+	CodeInstanceAdminRequired Code = "instance_admin_required"
+	CodeEmailNotConfigured    Code = "email_not_configured"
+	CodeEmailConfigured       Code = "email_configured"
+	CodeEmailUnverified       Code = "email_unverified"
+	CodeTokenInvalid          Code = "token_invalid"
+	CodeTokenUsed             Code = "token_used"
+	CodeTokenExpired          Code = "token_expired"
+	CodeNotFound              Code = "not_found"
+	CodeSlugTaken             Code = "slug_taken"
+	CodeMethodNotAllowed      Code = "method_not_allowed"
+	CodeRequestTimeout        Code = "request_timeout"
+	CodeRequestTooLarge       Code = "request_too_large"
+	CodeUnsupportedMediaType  Code = "unsupported_media_type"
+	CodeValidationFailed      Code = "validation_failed"
+	CodeWeakPassword          Code = "weak_password"
+	CodeSlugInvalid           Code = "slug_invalid"
+	CodeRateLimited           Code = "rate_limited"
+	CodeInternal              Code = "internal_error"
+	CodeNotReady              Code = "not_ready"
 )
 
 // codeSpec registers a code.
@@ -124,7 +124,7 @@ var codes = []codeSpec{
 	{CodeInvalidSetupCode, http.StatusForbidden, i18n.K("error.invalid_setup_code"),
 		"`POST /api/v1/setup` was given a setup code that is not the instance's, so setup stays pending. The " +
 			"server writes the code to its log while setup is pending (PRD FR-ADMIN-02)."},
-	{CodeInstanceAdminOnly, http.StatusForbidden, i18n.K("error.instance_admin_required"),
+	{CodeInstanceAdminRequired, http.StatusForbidden, i18n.K("error.instance_admin_required"),
 		"The route belongs to the instance-admin area, which only a signed-in instance admin may use (PRD " +
 			"FR-ADMIN-03 AC1), and the signed-in user is not one. A workspace's `owner` or `admin` is not an " +
 			"instance admin."},

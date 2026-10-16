@@ -244,7 +244,7 @@ type Patch struct {
 // and that is not reserved.
 func (s *Service) Create(ctx context.Context, userID ids.UUID, in Settings, client audit.Client) (Workspace,
 	error) {
-	if err := s.checkVerified(ctx, userID); err != nil {
+	if err := s.CheckVerified(ctx, userID); err != nil {
 		return Workspace{}, err
 	}
 	d, err := s.Check(ctx, in)
@@ -263,11 +263,13 @@ func (s *Service) Create(ctx context.Context, userID ids.UUID, in Settings, clie
 	return w, nil
 }
 
-// checkVerified returns ErrEmailUnverified if the Service requires a
+// CheckVerified returns ErrEmailUnverified if the Service requires a
 // verified email address and the user userID has not verified theirs, or
-// is not active, and nil otherwise. A verified address stays verified, so
-// the check need not hold in the transaction that creates the workspace.
-func (s *Service) checkVerified(ctx context.Context, userID ids.UUID) error {
+// is not active, and nil otherwise, as Create does first, so that a route
+// can refuse the user before it reads the request's body. A verified address
+// stays verified, so the check need not hold in the transaction that creates
+// the workspace.
+func (s *Service) CheckVerified(ctx context.Context, userID ids.UUID) error {
 	if !s.verified {
 		return nil
 	}

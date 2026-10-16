@@ -510,8 +510,8 @@ func (s *Service) rotate(ctx context.Context, tx pgx.Tx, current Session) (Issue
 // hash, revokes every other session of the account (FR-AUTH-02 AC4),
 // deletes the account's reset links that have not been used (FR-AUTH-03
 // AC4), gives current a new secret (Rotate), and records all of that in the
-// audit log, and it returns current with its new secret. It returns ErrNoSession if
-// current has ended meanwhile, and changes nothing then.
+// audit log, and it returns current with its new secret. It returns
+// ErrNoSession if current has ended meanwhile, and changes nothing then.
 //
 // If the password's hash changes between the check of password and the
 // change, ChangePassword checks password again, against the hash that the

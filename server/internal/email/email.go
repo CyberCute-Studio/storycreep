@@ -12,9 +12,10 @@
 // Email is plain text in UTF-8, with quoted-printable lines. The connection
 // is protected as the settings say: with TLS from the start, with STARTTLS,
 // which a server that does not offer it is refused for, or not at all, for a
-// relay on the same host or network, which then cannot sign in unless it is
-// on a loopback address. A server's certificate must be valid for its host
-// name. Signing in uses PLAIN, or LOGIN where the server offers only that.
+// relay on the same host or network, which then cannot sign in unless its
+// host is localhost, 127.0.0.1, or ::1 (config.SMTPLoopback). A server's
+// certificate must be valid for its host name. Signing in uses PLAIN, or
+// LOGIN where the server offers only that.
 //
 // Sending takes time and can fail, so it is the work of a job (package jobs),
 // which is attempted again when it fails, and never of a request, whose
@@ -57,8 +58,10 @@ type Options struct {
 	// to, instead of the system's. Tests set it.
 	RootCAs *x509.CertPool
 	// Timeout bounds the time that sending one email takes, from connecting
-	// to the SMTP server to its acceptance of the email. Zero means a
-	// minute, which is what a job has before it is cancelled.
+	// to the SMTP server to its acceptance of the email. Zero means 45
+	// seconds, less than the minute that a job has before it is cancelled,
+	// so that a server that does not answer fails the attempt with an error
+	// that names the step it hung at.
 	Timeout time.Duration
 }
 
@@ -72,8 +75,9 @@ type Service struct {
 }
 
 // defaultTimeout bounds the time that sending one email takes, unless
-// Options says otherwise.
-const defaultTimeout = time.Minute
+// Options says otherwise: less than a job's minute, which reading the
+// settings and preparing the link take from too.
+const defaultTimeout = 45 * time.Second
 
 // New returns a Service that reads the SMTP settings of the instance in db,
 // with opts.

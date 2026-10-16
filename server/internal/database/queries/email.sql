@@ -23,17 +23,18 @@ SELECT @id, 'password_reset', (SELECT u.id FROM "user" u WHERE u.email = @email 
 -- name: LockEmailTokenToSend :one
 -- LockEmailTokenToSend returns what the email of a token's link needs, if
 -- the token has neither been used nor expired, and its account is active,
--- and, for a verification, still has the address that it verifies. It locks
--- the token, so that the job that sends it and a use of it run one after the
--- other.
-SELECT t.kind, t.locale, t.expires_at, u.id AS user_id, u.email, u.display_name
+-- and, for a verification, still has the address that it verifies, which is
+-- not verified yet. The email's locale is the account's preferred one, or
+-- else the one of the request that asked for the link. It locks the token,
+-- so that the job that sends it and a use of it run one after the other.
+SELECT t.kind, COALESCE(u.locale, t.locale) AS locale, t.expires_at, u.id AS user_id, u.email, u.display_name
 FROM email_token t
 JOIN "user" u ON u.id = t.user_id
 WHERE t.id = @id
     AND t.used_at IS NULL
     AND t.expires_at > now()
     AND u.status = 'active'
-    AND (t.kind <> 'email_verification' OR t.email = u.email)
+    AND (t.kind <> 'email_verification' OR t.email = u.email AND u.email_verified_at IS NULL)
 FOR UPDATE OF t;
 
 -- name: SetEmailTokenHash :exec

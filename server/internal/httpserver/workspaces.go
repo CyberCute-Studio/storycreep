@@ -156,6 +156,18 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 			"allow is answered with 422 validation_failed." + csrfDoc,
 		Tags:          []string{"Workspaces"},
 		DefaultStatus: http.StatusCreated,
+		// An unverified address is refused before the body is read, whatever
+		// it holds.
+		Middlewares: huma.Middlewares{api.Guard(func(ctx context.Context) error {
+			cur, err := currentFrom(ctx)
+			if err != nil {
+				return err
+			}
+			if err := workspaces.CheckVerified(ctx, cur.session.UserID); err != nil {
+				return workspaceError(err)
+			}
+			return nil
+		})},
 	}, func(ctx context.Context, in *createWorkspaceInput) (*createdWorkspaceOutput, error) {
 		cur, err := currentFrom(ctx)
 		if err != nil {

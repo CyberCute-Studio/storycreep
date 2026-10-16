@@ -60,7 +60,9 @@ func TestParseSMTPURLErrors(t *testing.T) {
 		{"smtp://smtp.example.com#x", "must not have a fragment"},
 		{"smtp://smtp.example.com:0", "the port must be between 1 and 65535"},
 		{"smtp://smtp.example.com:70000", "the port must be between 1 and 65535"},
-		{"smtp://smtp.example.com?tls=off", `has the query parameter "tls"`},
+		{"smtp://smtp.example.com?tls=off", "has a query parameter other than security"},
+		{"smtp://jo:?s3cr3t-pw@smtp.example.com", "has a query parameter other than security"},
+		{"smtp://jo:1234?s3cr3t-pw@smtp.example.com", "has a query parameter other than security"},
 		{"smtp://smtp.example.com?security=tls", "has a security that is not starttls or none"},
 		{"smtps://smtp.example.com?security=none", "takes security only with smtp://"},
 		{"smtp://jo@smtp.example.com", "a username needs a password"},
@@ -134,9 +136,12 @@ func TestSMTPCheck(t *testing.T) {
 		}
 	}
 	local := valid
-	local.Host, local.Security = "localhost", SMTPNone
-	if p := local.Check(); len(p) != 0 {
-		t.Errorf("signing in without TLS on localhost: %v", p)
+	local.Security = SMTPNone
+	for _, host := range []string{"localhost", "LOCALHOST", "127.0.0.1", "::1"} {
+		local.Host = host
+		if p := local.Check(); len(p) != 0 {
+			t.Errorf("signing in without TLS on %s: %v", host, p)
+		}
 	}
 }
 
@@ -168,6 +173,10 @@ func TestSMTPKeys(t *testing.T) {
 			[]string{"STORYCREEP_SMTP_URL"}},
 		{"hosted mode", map[string]string{"STORYCREEP_MODE": "hosted", "STORYCREEP_SMTP_URL": "",
 			"STORYCREEP_SMTP_FROM": ""}, []string{"STORYCREEP_SMTP_URL", "STORYCREEP_SMTP_FROM"}},
+		// The address that hosted mode requires is reported once, not again
+		// as the URL's.
+		{"hosted mode with a URL alone", map[string]string{"STORYCREEP_MODE": "hosted", "STORYCREEP_SMTP_FROM": ""},
+			[]string{"STORYCREEP_SMTP_FROM"}},
 		{"a setup URL alone", map[string]string{"STORYCREEP_SETUP_OWNER_EMAIL": "jo@example.com",
 			"STORYCREEP_SETUP_OWNER_NAME": "Jo", "STORYCREEP_SETUP_OWNER_PASSWORD": "correct horse battery",
 			"STORYCREEP_SETUP_WORKSPACE_NAME": "Harbour", "STORYCREEP_SETUP_SMTP_URL": "smtp://smtp.example.com"},

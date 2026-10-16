@@ -120,7 +120,7 @@ active, as a suspended one.
 			return findError(err)
 		}
 		fmt.Fprintf(inv.stdout, "This link resets the password of %s, once, until %s:\n\n  %s\n", inv.args[0],
-			link.ExpiresAt.UTC().Format("2006-01-02 15:04 MST"), link.URL)
+			link.ExpiresAt.UTC().Format("2006-01-02 15:04 MST"), link.URL.Reveal())
 		return nil
 	},
 }

@@ -358,13 +358,12 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			"sign-in also gives it its personal workspace, named after its display name, which it owns; " +
 			"GET /api/v1/workspaces lists it. Where the instance always sends email, as hosted mode does, that is " +
 			"the first sign-in once the account's email address is verified, or the verification itself. An " +
-			"address of no " +
-			"account, a wrong password, and an account that cannot sign in, such as a suspended one, are all " +
-			"answered with 401 invalid_credentials, after the same work, so that the answer does not tell them " +
-			"apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another " +
-			"origin of the same site, is answered with 403 csrf_failed; browsers send that header only to https " +
-			"URLs and to loopback addresses, such as localhost. After 10 failed sign-ins in a row with an email " +
-			"address, whether or not it belongs to an account, the address is locked for a minute, and each " +
+			"address of no account, a wrong password, and an account that cannot sign in, such as a suspended one, " +
+			"are all answered with 401 invalid_credentials, after the same work, so that the answer does not tell " +
+			"them apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from " +
+			"another origin of the same site, is answered with 403 csrf_failed; browsers send that header only to " +
+			"https URLs and to loopback addresses, such as localhost. After 10 failed sign-ins in a row with an " +
+			"email address, whether or not it belongs to an account, the address is locked for a minute, and each " +
 			"further failure, once a lock ends, locks it for twice as long as the lock before, up to 15 minutes: " +
 			"while it is locked, every sign-in with it is answered with 429 rate_limited, whose details.reason is " +
 			"locked, even with the right password. A successful sign-in forgets the failures, and so do 24 hours " +

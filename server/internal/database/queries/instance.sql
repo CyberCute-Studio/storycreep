@@ -22,7 +22,7 @@ UPDATE instance SET setup_completed_at = now(), signup_policy = @signup_policy, 
 
 -- name: InstanceSMTP :one
 -- InstanceSMTP returns the SMTP settings that first-run setup chose (package
--- mail), whose host is null if it chose none.
+-- email), whose host is null if it chose none.
 SELECT smtp_host, smtp_port, smtp_security, smtp_username, smtp_password, smtp_from FROM instance;
 
 -- name: SetupCodeKey :one

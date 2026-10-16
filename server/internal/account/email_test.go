@@ -3,6 +3,8 @@ package account
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -10,7 +12,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email/emailtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
@@ -304,6 +308,52 @@ func TestSendLinkAgain(t *testing.T) {
 	}
 }
 
+// TestSendLinkReadsTheAccount checks that the email job writes in the
+// account's preferred locale, if it has one, rather than the request's, and
+// sends no verification for an address that was verified since the link was
+// asked for.
+func TestSendLinkReadsTheAccount(t *testing.T) {
+	t.Parallel()
+	m := withEmail(t, true)
+	ctx := context.Background()
+	id := register(t, m.Service, m.admin, "jo@example.com")
+	if err := m.RequestPasswordReset(ctx, "jo@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	tokens := m.queue.take(t)
+	if len(tokens) != 2 {
+		t.Fatalf("enqueued %d emails, want the verification and the reset", len(tokens))
+	}
+	exec(t, m.admin, `UPDATE "user" SET locale = 'de-AT' WHERE id = $1`, id)
+	var locales []string
+	if err := m.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		for _, token := range tokens {
+			row, err := queries.New(tx).LockEmailTokenToSend(ctx, nullUUID(token))
+			if err != nil {
+				return err
+			}
+			locales = append(locales, row.Locale.String)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(locales, []string{"de-AT", "de-AT"}) {
+		t.Errorf("the emails' locales are %q, want the account's", locales)
+	}
+
+	exec(t, m.admin, `UPDATE "user" SET email_verified_at = now() WHERE id = $1`, id)
+	for _, token := range tokens {
+		if err := m.sendLink(ctx, m.db, token); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sent := m.server.Messages()
+	if len(sent) != 1 || !strings.Contains(sent[0].Body(t), "/app/reset-password#token=") {
+		t.Errorf("sent %d emails, want only the reset link", len(sent))
+	}
+}
+
 // TestLinksRefused checks the links that cannot be used: one that has
 // expired, which the email job sends no email for either, one of another
 // kind, one of an account that is no longer active, one whose address is no
@@ -396,12 +446,15 @@ func TestNoEmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(reset.URL, "https://storycreep.example.com/app/reset-password#token=") ||
-		!strings.HasPrefix(verification.URL, "https://storycreep.example.com/app/verify-email#token=") {
-		t.Errorf("the links are %s and %s", reset.URL, verification.URL)
+	if !strings.HasPrefix(reset.URL.Reveal(), "https://storycreep.example.com/app/reset-password#token=") ||
+		!strings.HasPrefix(verification.URL.Reveal(), "https://storycreep.example.com/app/verify-email#token=") {
+		t.Errorf("the links are %s and %s", reset.URL.Reveal(), verification.URL.Reveal())
+	}
+	if s := fmt.Sprint(reset); strings.Contains(s, "#token=") {
+		t.Errorf("a Link prints its secret: %s", s)
 	}
 	tokenOf := func(l Link) secret.Value {
-		_, token, _ := strings.Cut(l.URL, "#token=")
+		_, token, _ := strings.Cut(l.URL.Reveal(), "#token=")
 		return secret.New(token)
 	}
 	if err := m.VerifyEmail(ctx, tokenOf(verification), testClient); err != nil {
@@ -434,8 +487,9 @@ func TestIssueLinkWithEmail(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n := count(t, m.admin, `SELECT count(*) FROM email_token WHERE user_id = $1 AND kind = 'password_reset'
-		AND token_hash IS NOT NULL AND expires_at <= now() + interval '1 hour'`, admin); n != 1 || link.URL == "" {
-		t.Errorf("%d reset tokens that last an hour, and the link %q", n, link.URL)
+		AND token_hash IS NOT NULL AND expires_at <= now() + interval '1 hour'`, admin); n != 1 ||
+		link.URL.Reveal() == "" {
+		t.Errorf("%d reset tokens that last an hour, and the link %q", n, link.URL.Reveal())
 	}
 	if n := count(t, m.admin, `SELECT count(*) FROM audit_entry WHERE action = 'auth.link_issue'
 		AND actor_user_id IS NULL AND metadata->>'kind' = 'password_reset'`); n != 1 {
