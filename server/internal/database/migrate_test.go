@@ -243,11 +243,15 @@ func TestMigrateWaitsForTheLock(t *testing.T) {
 // database's sessions neither end Migrate's wait for the migration lock nor
 // end the idle session that holds the lock while goose migrates on
 // connections of its own, which would release the lock to another instance.
-// Each timeout is shorter than the wait.
+// Each timeout is shorter than the wait. The database has the embedded
+// migrations before the timeouts are set, so that only the test's slow
+// migration, which switches them off for itself, runs under them: the
+// migrations keep the session's timeouts (gooseLocker), and on a busy runner
+// a real migration can take longer than the transaction_timeout below.
 func TestMigrateLockIgnoresSessionTimeouts(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	d := dbtest.Empty(t)
+	d := dbtest.New(t)
 	ident := pgx.Identifier{d.Name}.Sanitize()
 	admin := d.Admin(t)
 	timeouts := map[string]string{
