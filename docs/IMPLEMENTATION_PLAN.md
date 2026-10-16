@@ -244,7 +244,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-ADMIN-02 AC1–AC4 pass and both CLI commands work with `--help`.
 
 ### 18. Email delivery, verification, and password reset
-**Status:** todo · **Depends on:** 17
+**Status:** done ([#20](https://github.com/CyberCute-Studio/storycreep/pull/20)) · **Depends on:** 17
 **PRD:** FR-AUTH-03, FR-ADMIN-02 (SMTP step), FR-ADMIN-06 (`reset-password`)
 - Optional SMTP mailer with templates from the catalog, whose server `STORYCREEP_SMTP_URL` and `STORYCREEP_SMTP_FROM` set, and hosted mode requires (N26). Links are emailed by a job.
 - The SMTP step of first-run setup, through the setup API and unattended, with the settings that the mailer reads (N25, N26).
