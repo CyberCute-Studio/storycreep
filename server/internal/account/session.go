@@ -298,7 +298,7 @@ func (s *Service) insertSession(ctx context.Context, tx pgx.Tx, id ids.UUID, cli
 		TokenHash: hash,
 		UserAgent: pgtype.Text{String: session.UserAgent, Valid: session.UserAgent != ""},
 		Ip:        ip,
-		Lifetime:  interval(s.lifetime),
+		Lifetime:  database.Interval(s.lifetime),
 	})
 	if err != nil {
 		return Issued{}, fmt.Errorf("account: add the session: %w", err)
@@ -321,8 +321,8 @@ func (s *Service) Session(ctx context.Context, value secret.Value) (Session, err
 	var session Session
 	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		row, err := q.ActiveSession(ctx, queries.ActiveSessionParams{TokenHash: hash, Lifetime: interval(s.lifetime),
-			Idle: interval(s.idle)})
+		row, err := q.ActiveSession(ctx, queries.ActiveSessionParams{TokenHash: hash,
+			Lifetime: database.Interval(s.lifetime), Idle: database.Interval(s.idle)})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNoSession
 		}
@@ -371,8 +371,8 @@ func (s *Service) Sessions(ctx context.Context, userID, before ids.UUID, limit i
 		rows, err := queries.New(tx).UserSessions(ctx, queries.UserSessionsParams{
 			UserID:   nullUUID(userID),
 			Before:   nullUUID(before),
-			Lifetime: interval(s.lifetime),
-			Idle:     interval(s.idle),
+			Lifetime: database.Interval(s.lifetime),
+			Idle:     database.Interval(s.idle),
 			MaxRows:  int32(min(limit, 1<<20)),
 		})
 		if err != nil {
@@ -395,7 +395,7 @@ func (s *Service) Sessions(ctx context.Context, userID, before ids.UUID, limit i
 func (s *Service) RevokeSession(ctx context.Context, userID, id ids.UUID, client Client) error {
 	return s.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
 		n, err := queries.New(tx).RevokeSession(ctx, queries.RevokeSessionParams{ID: nullUUID(id),
-			UserID: nullUUID(userID), Lifetime: interval(s.lifetime), Idle: interval(s.idle)})
+			UserID: nullUUID(userID), Lifetime: database.Interval(s.lifetime), Idle: database.Interval(s.idle)})
 		if err != nil {
 			return fmt.Errorf("account: revoke the session: %w", err)
 		}
@@ -433,8 +433,8 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, current Session, clie
 func (s *Service) revokeOthers(ctx context.Context, tx pgx.Tx, current Session, reason string, client Client) (int,
 	error) {
 	revoked, err := queries.New(tx).RevokeOtherSessions(ctx, queries.RevokeOtherSessionsParams{
-		UserID: nullUUID(current.UserID), Keep: nullUUID(current.ID), Lifetime: interval(s.lifetime),
-		Idle: interval(s.idle)})
+		UserID: nullUUID(current.UserID), Keep: nullUUID(current.ID), Lifetime: database.Interval(s.lifetime),
+		Idle: database.Interval(s.idle)})
 	if err != nil {
 		return 0, fmt.Errorf("account: revoke the other sessions: %w", err)
 	}
@@ -489,8 +489,8 @@ func (s *Service) Rotate(ctx context.Context, current Session) (Issued, error) {
 func (s *Service) rotate(ctx context.Context, tx pgx.Tx, current Session) (Issued, error) {
 	value, hash := newSecret()
 	n, err := queries.New(tx).RotateSession(ctx, queries.RotateSessionParams{TokenHash: hash,
-		ID: nullUUID(current.ID), UserID: nullUUID(current.UserID), Lifetime: interval(s.lifetime),
-		Idle: interval(s.idle)})
+		ID: nullUUID(current.ID), UserID: nullUUID(current.UserID), Lifetime: database.Interval(s.lifetime),
+		Idle: database.Interval(s.idle)})
 	if err != nil {
 		return Issued{}, fmt.Errorf("account: rotate the session: %w", err)
 	}
@@ -638,7 +638,7 @@ func (s *Service) cleanUpSessions(ctx context.Context, db DB) (int64, error) {
 		err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 			var err error
 			n, err = queries.New(tx).DeleteEndedSessions(ctx, queries.DeleteEndedSessionsParams{
-				Lifetime: interval(s.lifetime), Idle: interval(s.idle), MaxRows: cleanupBatch})
+				Lifetime: database.Interval(s.lifetime), Idle: database.Interval(s.idle), MaxRows: cleanupBatch})
 			return err
 		})
 		if err != nil {
@@ -649,11 +649,6 @@ func (s *Service) cleanUpSessions(ctx context.Context, db DB) (int64, error) {
 			return total, nil
 		}
 	}
-}
-
-// interval returns d as an interval column.
-func interval(d time.Duration) pgtype.Interval {
-	return pgtype.Interval{Microseconds: d.Microseconds(), Valid: true}
 }
 
 // nullUUID returns id as a uuid column, null if id is zero.

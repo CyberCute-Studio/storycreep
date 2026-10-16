@@ -322,7 +322,7 @@ func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decisio
 		}
 		var err error
 		rows, err = q.TakeRateLimit(ctx, queries.TakeRateLimitParams{Bucket: string(bucket),
-			Period: interval(rate.Period), Keys: hashes})
+			Period: database.Interval(rate.Period), Keys: hashes})
 		if err != nil {
 			return fmt.Errorf("ratelimit: count the request: %w", err)
 		}
@@ -377,8 +377,9 @@ func (l *Limiter) BeginLogin(ctx context.Context, email string) (Attempt, error)
 		if err != nil {
 			return err
 		}
-		_, err = q.BeginLoginAttempt(ctx, queries.BeginLoginAttemptParams{Key: hash, Forget: interval(lockout.Forget),
-			Threshold: int32(lockout.Failures), FirstLock: interval(lockout.First), MaxLock: interval(lockout.Max)})
+		_, err = q.BeginLoginAttempt(ctx, queries.BeginLoginAttemptParams{Key: hash,
+			Forget: database.Interval(lockout.Forget), Threshold: int32(lockout.Failures),
+			FirstLock: database.Interval(lockout.First), MaxLock: database.Interval(lockout.Max)})
 		switch {
 		case err == nil:
 			attempt.hash = hash
@@ -386,17 +387,18 @@ func (l *Limiter) BeginLogin(ctx context.Context, email string) (Attempt, error)
 		case !errors.Is(err, pgx.ErrNoRows):
 			return fmt.Errorf("ratelimit: count the sign-in attempt: %w", err)
 		}
-		// The address is locked.
+		// The address is locked. The upsert that found it locked still locked
+		// its row, until this transaction ends, so no other sign-in can end
+		// or clear the lock meanwhile, and now() is the same in both
+		// statements: the lock is there, and ends after now().
 		remaining, err := q.LoginLockedFor(ctx, hash)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		switch {
+		case err != nil:
 			return fmt.Errorf("ratelimit: read the lock: %w", err)
+		case !remaining.Valid || duration(remaining) <= 0:
+			return errors.New("ratelimit: the sign-in attempt was refused, but its address is not locked")
 		}
-		// A lock that another server's sign-in ended or cleared meanwhile
-		// still refuses this one, which may try again at once.
-		wait = time.Second
-		if remaining.Valid {
-			wait = max(wait, duration(remaining))
-		}
+		wait = duration(remaining)
 		return nil
 	})
 	switch {
@@ -462,11 +464,6 @@ func (l *Limiter) key(ctx context.Context, q *queries.Queries) ([]byte, error) {
 	l.secret = secret
 	l.mu.Unlock()
 	return secret, nil
-}
-
-// interval returns d as an interval column.
-func interval(d time.Duration) pgtype.Interval {
-	return pgtype.Interval{Microseconds: d.Microseconds(), Valid: true}
 }
 
 // duration returns the length of an interval that subtracting two

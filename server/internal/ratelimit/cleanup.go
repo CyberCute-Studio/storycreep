@@ -53,7 +53,7 @@ func (l *Limiter) cleanUp(ctx context.Context, db DB) (int64, error) {
 		}},
 		{"the forgotten sign-in attempts", func(q *queries.Queries) (int64, error) {
 			return q.DeleteForgottenLoginAttempts(ctx, queries.DeleteForgottenLoginAttemptsParams{
-				Forget: interval(l.policy.Lockout.Forget), MaxRows: cleanupBatch})
+				Forget: database.Interval(l.policy.Lockout.Forget), MaxRows: cleanupBatch})
 		}},
 	} {
 		for {

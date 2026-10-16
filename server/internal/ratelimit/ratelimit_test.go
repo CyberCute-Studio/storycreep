@@ -518,12 +518,17 @@ func TestCleanUpSkipsHeldRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	failLogins(t, l, "jo@example.com", 1)
-	// waiting reports whether a transaction waits for a lock, as the cleanup
-	// would for the request's row.
+	// waiting reports whether a transaction on the test's database waits for
+	// a lock, as the cleanup would for the request's row. pg_locks holds the
+	// locks of every database on the server, those of the tests that run
+	// alongside this one too, and a wait for a row is a wait for the
+	// transaction that holds it, which belongs to no database, so the waits
+	// are told apart by the database of the session that waits.
 	waiting := func() bool {
 		var n int
 		if err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-			return tx.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE NOT granted`).Scan(&n)
+			return tx.QueryRow(ctx, `SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+				WHERE NOT l.granted AND a.datname = current_database()`).Scan(&n)
 		}); err != nil {
 			t.Fatal(err)
 		}

@@ -21,9 +21,11 @@ import (
 // Rate limits on the wire (PRD FR-API-04, NFR-SEC-06). An operation that is
 // limited counts each request in its bucket (package ratelimit) for the
 // client's IP address, and for its signed-in user, once the authenticator has
-// found one, before it reads the request's body. Its answers say how much of
-// the limit is left in the RateLimit headers of draft-ietf-httpapi-ratelimit-
-// headers: RateLimit-Limit, how many requests the key may make in a window,
+// found one, before it reads the request's body. Its answers to the requests
+// that it counts, but not to those that the router's middleware, the
+// authenticator, or a guard refused before, say how much of the limit is
+// left in the RateLimit headers of draft-ietf-httpapi-ratelimit-headers:
+// RateLimit-Limit, how many requests the key may make in a window,
 // RateLimit-Remaining, how many more, and RateLimit-Reset, how many seconds
 // until the window ends, of the key with the fewest requests left. A request
 // over the limit is answered with 429 rate_limited, and Retry-After says how

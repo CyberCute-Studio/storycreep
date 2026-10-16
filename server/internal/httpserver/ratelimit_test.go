@@ -86,6 +86,31 @@ func headerInt(res response, name string) int {
 	return n
 }
 
+// windowNeed is how long a test that counts requests in one window of the
+// auth bucket, of a minute, needs at most, hashing their passwords included,
+// on a slow runner.
+const windowNeed = 20 * time.Second
+
+// awaitWindow waits, if the window of a minute that the rate limits count in
+// now ends within need, by the database's clock, which they count with, until
+// the next one starts, so that the requests that the test makes within need
+// all count in one window. It reads the database's clock rather than the
+// RateLimit-Reset of a request, which would count in the window that the
+// test then leaves.
+func awaitWindow(t *testing.T, d *dbtest.Database, need time.Duration) {
+	t.Helper()
+	var left float64
+	if err := d.Admin(t).QueryRow(context.Background(), `SELECT extract(epoch FROM date_bin(interval '1 minute',
+		now(), timestamptz '1970-01-01 00:00:00+00') + interval '1 minute' - now())`).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if wait := time.Duration(left * float64(time.Second)); wait < need {
+		// A moment more, so that the next window has started by the time the
+		// test's first request reaches the database.
+		time.Sleep(wait + 100*time.Millisecond)
+	}
+}
+
 // TestAuthRateLimit runs two servers on one database, and checks that the
 // requests of signing in and registering from one IP address, spread across
 // both, share the address's limit of 20 a minute: each answer says how many
@@ -96,27 +121,20 @@ func headerInt(res response, name string) int {
 // Verifies: FR-API-04/AC3, FR-AUTH-05/AC2, NFR-SEC-06
 func TestAuthRateLimit(t *testing.T) {
 	t.Parallel()
-	first, second, _ := twoInstances(t, openSignup)
+	first, second, d := twoInstances(t, openSignup)
 	// A registration without fields, which counts, and fails without
 	// hashing a password.
 	invalid := []byte(`{}`)
-	var client http.Header
-	for {
-		// The 21 requests must fall in one window of a minute.
-		client = newClient()
-		res := first.send(t, http.MethodPost, registerPath, invalid, client)
-		if res.status != http.StatusUnprocessableEntity || headerInt(res, limitHeader) != 20 ||
-			headerInt(res, remainingHeader) != 19 {
-			t.Fatalf("the first request: %d %s %v", res.status, res.body, res.header)
-		}
-		reset := headerInt(res, resetHeader)
-		if reset < 1 || reset > 60 {
-			t.Fatalf("RateLimit-Reset is %d, want 1 to 60", reset)
-		}
-		if reset >= 20 {
-			break
-		}
-		time.Sleep(time.Duration(reset+1) * time.Second)
+	client := newClient()
+	// The 21 requests must fall in one window of a minute.
+	awaitWindow(t, d, windowNeed)
+	res := first.send(t, http.MethodPost, registerPath, invalid, client)
+	if res.status != http.StatusUnprocessableEntity || headerInt(res, limitHeader) != 20 ||
+		headerInt(res, remainingHeader) != 19 {
+		t.Fatalf("the first request: %d %s %v", res.status, res.body, res.header)
+	}
+	if reset := headerInt(res, resetHeader); reset < 1 || reset > 60 {
+		t.Fatalf("RateLimit-Reset is %d, want 1 to 60", reset)
 	}
 	for i := 2; i <= 20; i++ {
 		inst, path, body := first, registerPath, invalid
@@ -258,7 +276,9 @@ func TestLoginSuccessForgetsFailures(t *testing.T) {
 // Verifies: NFR-SEC-06
 func TestRegisterAddressLimit(t *testing.T) {
 	t.Parallel()
-	s, _ := readyServer(t, openSignup)
+	s, d := readyServer(t, openSignup)
+	// The 12 registrations must fall in one window of a minute.
+	awaitWindow(t, d, windowNeed)
 	for i := range 10 {
 		email := "jo@example.com"
 		if i%2 == 1 {
@@ -290,10 +310,12 @@ func TestRegisterAddressLimit(t *testing.T) {
 // Verifies: NFR-SEC-06
 func TestPasswordChangeRateLimit(t *testing.T) {
 	t.Parallel()
-	s, _ := readyServer(t, map[string]string{"STORYCREEP_SIGNUP": "open", "STORYCREEP_TRUSTED_PROXIES": "192.0.2.1"})
+	s, d := readyServer(t, map[string]string{"STORYCREEP_SIGNUP": "open", "STORYCREEP_TRUSTED_PROXIES": "192.0.2.1"})
 	newAccount(t, s.main, "jo@example.com")
 	si := signIn(t, s.main, "jo@example.com")
 	wrong := passwordChange(t, "not the password at all", "a brand new passphrase")
+	// The 11 attempts must fall in one window of a minute.
+	awaitWindow(t, d, windowNeed)
 	for i := range 10 {
 		res := send(s.main, http.MethodPost, passwordPath, wrong, "", with(si.header(true), newClient()))
 		if res.status != http.StatusForbidden || headerInt(res, limitHeader) != 10 ||
