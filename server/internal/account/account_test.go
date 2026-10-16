@@ -15,6 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -60,12 +61,20 @@ const (
 	testLifetime = 90 * 24 * time.Hour
 )
 
+// options returns the options of a Service in the tests, under the signup
+// policy, with the server's limits, counted in db.
+func options(db DB, signup config.SignupPolicy) Options {
+	return Options{Signup: signup, IdleTimeout: testIdle, Lifetime: testLifetime,
+		Limits: ratelimit.New(db, ratelimit.DefaultPolicy())}
+}
+
 // setup returns a Service under the signup policy, on a new database, and a
 // connection to the database as the superuser.
 func setup(t *testing.T, signup config.SignupPolicy) (*Service, *pgx.Conn) {
 	t.Helper()
 	d := dbtest.New(t)
-	return New(d.Open(t), Options{Signup: signup, IdleTimeout: testIdle, Lifetime: testLifetime}), d.Admin(t)
+	db := d.Open(t)
+	return New(db, options(db, signup)), d.Admin(t)
 }
 
 // signsIn returns the ID of the account that email and password sign in to,
@@ -176,7 +185,7 @@ func TestRegisterPolicy(t *testing.T) {
 		{config.SignupInvite, ErrInviteRequired},
 		{"", ErrSignupClosed},
 	} {
-		s := New(db, Options{Signup: c.signup, IdleTimeout: testIdle, Lifetime: testLifetime})
+		s := New(db, options(db, c.signup))
 		if err := s.CheckSignup(context.Background()); !errors.Is(err, c.want) {
 			t.Errorf("%q: CheckSignup = %v, want %v", c.signup, err, c.want)
 		}
@@ -189,7 +198,7 @@ func TestRegisterPolicy(t *testing.T) {
 			}
 		}
 	}
-	open := New(db, Options{Signup: config.SignupOpen, IdleTimeout: testIdle, Lifetime: testLifetime})
+	open := New(db, options(db, config.SignupOpen))
 	if err := open.CheckSignup(context.Background()); err != nil {
 		t.Errorf("open: CheckSignup = %v", err)
 	}

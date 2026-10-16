@@ -18,6 +18,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -60,6 +61,17 @@ const (
 	revokedBySignOut        = "sign_out"
 	revokedByUser           = "revoked"
 	revokedByPasswordChange = "password_changed"
+)
+
+// The reasons that an audit entry of a failed sign-in records, as its
+// metadata's reason.
+const (
+	// failedCredentials is a sign-in whose address belongs to no active
+	// account, or whose password is not the account's.
+	failedCredentials = "invalid_credentials"
+	// failedLocked is a sign-in that the lock of its address refused, after
+	// too many failures in a row (FR-AUTH-05), whatever its password.
+	failedLocked = "locked"
 )
 
 var (
@@ -133,6 +145,14 @@ func secretHash(s secret.Value) ([]byte, bool) {
 // of its own, with the account that the address belongs to, if any, and the
 // address's keyed hash otherwise (FR-TEN-07).
 //
+// Each sign-in counts as a failure of its address until it succeeds
+// (ratelimit.Limiter.BeginLogin), and one with an address that is locked,
+// after too many failures in a row, returns the *ratelimit.LockedError,
+// without checking the password, even a right one (FR-AUTH-05 AC1). It is
+// recorded in the audit log as a failure too. A sign-in that succeeds
+// forgets the address's failures, in the transaction that starts its session
+// (AC3).
+//
 // If the account's password changes, or the account stops being active,
 // between the check of the password and the start of the session, Login
 // checks the password again, against what the account holds then, at most
@@ -140,6 +160,14 @@ func secretHash(s secret.Value) ([]byte, bool) {
 // not outlive the change, and one with the password that the account holds
 // still signs in, as after another sign-in hashed it again (NFR-SEC-03).
 func (s *Service) Login(ctx context.Context, email string, password secret.Value, client Client) (Issued, error) {
+	counted, err := s.limits.BeginLogin(ctx, canonicalEmail(email))
+	var locked *ratelimit.LockedError
+	if errors.As(err, &locked) {
+		return Issued{}, s.loginLocked(ctx, email, client, locked)
+	}
+	if err != nil {
+		return Issued{}, err
+	}
 	for attempt := 1; ; attempt++ {
 		id, account, hash, err := s.authenticate(ctx, email, password)
 		if errors.Is(err, ErrInvalidCredentials) {
@@ -148,7 +176,7 @@ func (s *Service) Login(ctx context.Context, email string, password secret.Value
 		if err != nil {
 			return Issued{}, err
 		}
-		issued, err := s.startSession(ctx, id, hash, client)
+		issued, err := s.startSession(ctx, id, hash, client, counted)
 		switch {
 		case !errors.Is(err, errCredentialsChanged):
 			return issued, err
@@ -173,21 +201,50 @@ var errCredentialsChanged = errors.New("account: the account changed since its p
 // the account account, or to none if it is zero, and returns
 // ErrInvalidCredentials, or the error that recording it failed with.
 func (s *Service) loginFailed(ctx context.Context, email string, account ids.UUID, client Client) error {
-	entry := audit.Entry{Action: audit.ActionLogin, SubjectID: account, Result: audit.ResultFailure,
-		IP: client.IP, UserAgent: client.UserAgent}
-	if account == (ids.UUID{}) {
-		entry.AttemptedEmail = canonicalEmail(email)
-	}
-	if err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-		return audit.Record(ctx, tx, entry)
-	}); err != nil {
+	if err := s.recordFailedLogin(ctx, email, account, failedCredentials, client); err != nil {
 		return err
 	}
 	return ErrInvalidCredentials
 }
 
+// loginLocked records a sign-in with email that the lock of its address
+// refused, with the account that the address belongs to, if any, and
+// returns locked, or the error that recording it failed with. It looks the
+// account up as a sign-in does, but checks no password, whether or not the
+// address has an account, so that its answer takes as long either way.
+func (s *Service) loginLocked(ctx context.Context, email string, client Client, locked *ratelimit.LockedError) error {
+	row, found, err := s.credentials(ctx, email)
+	if err != nil {
+		return err
+	}
+	var account ids.UUID
+	if found {
+		account = row.ID.Bytes
+	}
+	if err := s.recordFailedLogin(ctx, email, account, failedLocked, client); err != nil {
+		return err
+	}
+	return locked
+}
+
+// recordFailedLogin records, in a transaction of its own, a failed sign-in
+// with email, whose address belongs to the account account, or to none if it
+// is zero, for reason.
+func (s *Service) recordFailedLogin(ctx context.Context, email string, account ids.UUID, reason string,
+	client Client) error {
+	entry := audit.Entry{Action: audit.ActionLogin, SubjectID: account, Result: audit.ResultFailure,
+		IP: client.IP, UserAgent: client.UserAgent, Metadata: map[string]any{"reason": reason}}
+	if account == (ids.UUID{}) {
+		entry.AttemptedEmail = canonicalEmail(email)
+	}
+	return s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		return audit.Record(ctx, tx, entry)
+	})
+}
+
 // startSession starts a session of the account id, whose password a sign-in
-// checked against hash, with client, and records the login, in one
+// checked against hash, with client, forgets the failed sign-ins that
+// counted counts (FR-AUTH-05 AC3), and records the login, in one
 // transaction. That transaction first locks the account's row
 // (LockPasswordHash), and returns errCredentialsChanged, starting nothing,
 // unless the account is still active and holds hash. A change of the
@@ -195,7 +252,8 @@ func (s *Service) loginFailed(ctx context.Context, email string, account ids.UUI
 // other sessions without this one, is seen then; one that comes later waits
 // for the lock, and then revokes this session with the others (FR-AUTH-02
 // AC4).
-func (s *Service) startSession(ctx context.Context, id ids.UUID, hash string, client Client) (Issued, error) {
+func (s *Service) startSession(ctx context.Context, id ids.UUID, hash string, client Client,
+	counted ratelimit.Attempt) (Issued, error) {
 	var issued Issued
 	err := s.db.InTx(ctx, database.Scope{UserID: id}, func(tx pgx.Tx) error {
 		held, err := queries.New(tx).LockPasswordHash(ctx, nullUUID(id))
@@ -208,6 +266,9 @@ func (s *Service) startSession(ctx context.Context, id ids.UUID, hash string, cl
 			return errCredentialsChanged
 		}
 		if issued, err = s.insertSession(ctx, tx, id, client); err != nil {
+			return err
+		}
+		if err := counted.Succeeded(ctx, tx); err != nil {
 			return err
 		}
 		return audit.Record(ctx, tx, audit.Entry{Action: audit.ActionLogin, ActorUserID: id, SubjectID: id,
@@ -237,7 +298,7 @@ func (s *Service) insertSession(ctx context.Context, tx pgx.Tx, id ids.UUID, cli
 		TokenHash: hash,
 		UserAgent: pgtype.Text{String: session.UserAgent, Valid: session.UserAgent != ""},
 		Ip:        ip,
-		Lifetime:  interval(s.lifetime),
+		Lifetime:  database.Interval(s.lifetime),
 	})
 	if err != nil {
 		return Issued{}, fmt.Errorf("account: add the session: %w", err)
@@ -260,8 +321,8 @@ func (s *Service) Session(ctx context.Context, value secret.Value) (Session, err
 	var session Session
 	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		row, err := q.ActiveSession(ctx, queries.ActiveSessionParams{TokenHash: hash, Lifetime: interval(s.lifetime),
-			Idle: interval(s.idle)})
+		row, err := q.ActiveSession(ctx, queries.ActiveSessionParams{TokenHash: hash,
+			Lifetime: database.Interval(s.lifetime), Idle: database.Interval(s.idle)})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNoSession
 		}
@@ -310,8 +371,8 @@ func (s *Service) Sessions(ctx context.Context, userID, before ids.UUID, limit i
 		rows, err := queries.New(tx).UserSessions(ctx, queries.UserSessionsParams{
 			UserID:   nullUUID(userID),
 			Before:   nullUUID(before),
-			Lifetime: interval(s.lifetime),
-			Idle:     interval(s.idle),
+			Lifetime: database.Interval(s.lifetime),
+			Idle:     database.Interval(s.idle),
 			MaxRows:  int32(min(limit, 1<<20)),
 		})
 		if err != nil {
@@ -334,7 +395,7 @@ func (s *Service) Sessions(ctx context.Context, userID, before ids.UUID, limit i
 func (s *Service) RevokeSession(ctx context.Context, userID, id ids.UUID, client Client) error {
 	return s.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
 		n, err := queries.New(tx).RevokeSession(ctx, queries.RevokeSessionParams{ID: nullUUID(id),
-			UserID: nullUUID(userID), Lifetime: interval(s.lifetime), Idle: interval(s.idle)})
+			UserID: nullUUID(userID), Lifetime: database.Interval(s.lifetime), Idle: database.Interval(s.idle)})
 		if err != nil {
 			return fmt.Errorf("account: revoke the session: %w", err)
 		}
@@ -372,8 +433,8 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, current Session, clie
 func (s *Service) revokeOthers(ctx context.Context, tx pgx.Tx, current Session, reason string, client Client) (int,
 	error) {
 	revoked, err := queries.New(tx).RevokeOtherSessions(ctx, queries.RevokeOtherSessionsParams{
-		UserID: nullUUID(current.UserID), Keep: nullUUID(current.ID), Lifetime: interval(s.lifetime),
-		Idle: interval(s.idle)})
+		UserID: nullUUID(current.UserID), Keep: nullUUID(current.ID), Lifetime: database.Interval(s.lifetime),
+		Idle: database.Interval(s.idle)})
 	if err != nil {
 		return 0, fmt.Errorf("account: revoke the other sessions: %w", err)
 	}
@@ -428,8 +489,8 @@ func (s *Service) Rotate(ctx context.Context, current Session) (Issued, error) {
 func (s *Service) rotate(ctx context.Context, tx pgx.Tx, current Session) (Issued, error) {
 	value, hash := newSecret()
 	n, err := queries.New(tx).RotateSession(ctx, queries.RotateSessionParams{TokenHash: hash,
-		ID: nullUUID(current.ID), UserID: nullUUID(current.UserID), Lifetime: interval(s.lifetime),
-		Idle: interval(s.idle)})
+		ID: nullUUID(current.ID), UserID: nullUUID(current.UserID), Lifetime: database.Interval(s.lifetime),
+		Idle: database.Interval(s.idle)})
 	if err != nil {
 		return Issued{}, fmt.Errorf("account: rotate the session: %w", err)
 	}
@@ -577,7 +638,7 @@ func (s *Service) cleanUpSessions(ctx context.Context, db DB) (int64, error) {
 		err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 			var err error
 			n, err = queries.New(tx).DeleteEndedSessions(ctx, queries.DeleteEndedSessionsParams{
-				Lifetime: interval(s.lifetime), Idle: interval(s.idle), MaxRows: cleanupBatch})
+				Lifetime: database.Interval(s.lifetime), Idle: database.Interval(s.idle), MaxRows: cleanupBatch})
 			return err
 		})
 		if err != nil {
@@ -588,11 +649,6 @@ func (s *Service) cleanUpSessions(ctx context.Context, db DB) (int64, error) {
 			return total, nil
 		}
 	}
-}
-
-// interval returns d as an interval column.
-func interval(d time.Duration) pgtype.Interval {
-	return pgtype.Interval{Microseconds: d.Microseconds(), Valid: true}
 }
 
 // nullUUID returns id as a uuid column, null if id is zero.

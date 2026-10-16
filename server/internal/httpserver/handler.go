@@ -15,6 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/version"
 )
 
@@ -29,6 +30,8 @@ type server struct {
 	metricsOff  string
 	// accounts keeps the accounts and their sessions.
 	accounts *account.Service
+	// limits counts the requests of the rate limits.
+	limits *ratelimit.Limiter
 }
 
 func newServer(cfg *config.Config, log *slog.Logger) *server {
@@ -37,10 +40,12 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		ready:   &readiness{log: log},
 		metrics: newMetrics(),
 	}
+	s.limits = ratelimit.New(readyDB{s.ready}, ratelimit.DefaultPolicy())
 	s.accounts = account.New(readyDB{s.ready}, account.Options{
 		Signup:      cfg.Capabilities.Signup,
 		IdleTimeout: cfg.SessionIdleTimeout,
 		Lifetime:    cfg.SessionLifetime,
+		Limits:      s.limits,
 	})
 	cookie := newSessionCookie(cfg.PublicURL)
 	s.main = api.NewMux(api.MuxOptions{
@@ -54,13 +59,13 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 			noindexApp,
 			refuseCrossSite,
 			s.ready.gate,
-			withClient,
+			withClient(cfg.TrustedProxies),
 		},
 		Authenticate: authenticator(s.accounts, cookie),
 	})
 	s.registerOperational(s.main)
-	registerAccounts(s.main, s.accounts)
-	registerSessions(s.main, s.accounts, cookie)
+	registerAccounts(s.main, s.accounts, s.limits)
+	registerSessions(s.main, s.accounts, s.limits, cookie)
 	registerDocument(s.main)
 	registerPages(s.main, cfg.Capabilities.PublicSite)
 

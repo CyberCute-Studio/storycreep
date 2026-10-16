@@ -18,6 +18,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -172,8 +173,9 @@ func TestSessionEnds(t *testing.T) {
 	// A shorter lifetime ends the sessions that started under a longer one.
 	issued := login(t, s, "jo@example.com")
 	exec(t, admin, `UPDATE session SET created_at = now() - interval '2 hours' WHERE id = $1`, issued.ID)
-	shorter := newService(s.db, Options{Signup: config.SignupOpen, IdleTimeout: testIdle, Lifetime: time.Hour},
-		s.hasher)
+	opts := options(s.db, config.SignupOpen)
+	opts.Lifetime = time.Hour
+	shorter := newService(s.db, opts, s.hasher)
 	if _, err := shorter.Session(context.Background(), issued.Secret); !errors.Is(err, ErrNoSession) {
 		t.Errorf("a session older than a shorter lifetime: %v, want ErrNoSession", err)
 	}
@@ -409,7 +411,7 @@ func TestLoginRacesPasswordChange(t *testing.T) {
 		return hash
 	}
 
-	if _, err := s.startSession(ctx, id, check(), testClient); err != nil {
+	if _, err := s.startSession(ctx, id, check(), testClient, ratelimit.Attempt{}); err != nil {
 		t.Errorf("a sign-in whose hash the account still holds: %v", err)
 	}
 	stale := check()
@@ -418,7 +420,7 @@ func TestLoginRacesPasswordChange(t *testing.T) {
 		testClient); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.startSession(ctx, id, stale, testClient); !errors.Is(err, errCredentialsChanged) {
+	if _, err := s.startSession(ctx, id, stale, testClient, ratelimit.Attempt{}); !errors.Is(err, errCredentialsChanged) {
 		t.Errorf("a sign-in that checked the old password: %v, want errCredentialsChanged", err)
 	}
 	if n := count(t, admin, `SELECT count(*) FROM session WHERE revoked_at IS NULL`); n != 1 {
@@ -431,7 +433,7 @@ func TestLoginRacesPasswordChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec(t, admin, `UPDATE "user" SET status = 'suspended' WHERE id = $1`, other)
-	if _, err := s.startSession(ctx, other, hash, testClient); !errors.Is(err, errCredentialsChanged) {
+	if _, err := s.startSession(ctx, other, hash, testClient, ratelimit.Attempt{}); !errors.Is(err, errCredentialsChanged) {
 		t.Errorf("a sign-in of an account suspended meanwhile: %v, want errCredentialsChanged", err)
 	}
 	if n := count(t, admin, `SELECT count(*) FROM session WHERE user_id = $1`, other); n != 0 {
@@ -592,8 +594,7 @@ func TestChangePasswordRacesHashChange(t *testing.T) {
 				exec(t, admin, `UPDATE "user" SET password_hash = $1 WHERE id = $2`, stored, id)
 			}
 		}}
-		racing := newService(db, Options{Signup: config.SignupOpen, IdleTimeout: testIdle, Lifetime: testLifetime},
-			s.hasher)
+		racing := newService(db, options(db, config.SignupOpen), s.hasher)
 		issued, err := racing.ChangePassword(ctx, current.Session, secret.New(testPassword), replacement, testClient)
 		failures := count(t, admin, `SELECT count(*) FROM audit_entry WHERE action = 'auth.password_change'
 			AND result = 'failure' AND actor_user_id = $1`, id)

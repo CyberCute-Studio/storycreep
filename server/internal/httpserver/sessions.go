@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
-	"net/netip"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -17,6 +16,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -148,27 +148,6 @@ func refuseCrossSite(next http.Handler) http.Handler {
 	})
 }
 
-type clientKey struct{}
-
-// withClient gives each request's context the client that the sessions and
-// the audit log record: the address that the connection comes from, which
-// behind a reverse proxy is the proxy's, and its User-Agent header.
-func withClient(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c := account.Client{UserAgent: r.Header.Get("User-Agent")}
-		if ap, err := netip.ParseAddrPort(r.RemoteAddr); err == nil {
-			c.IP = ap.Addr().Unmap()
-		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientKey{}, c)))
-	})
-}
-
-// clientFrom returns the client of a request's context.
-func clientFrom(ctx context.Context) account.Client {
-	c, _ := ctx.Value(clientKey{}).(account.Client)
-	return c
-}
-
 type currentKey struct{}
 
 // current is the session that a request is made with, and its secret.
@@ -229,7 +208,7 @@ type sessionBody struct {
 	LastSeenAt    time.Time `json:"last_seen_at" doc:"When it was last used, to the minute"`
 	ExpiresAt     time.Time `json:"expires_at" doc:"When it ends at the latest, however often it is used: STORYCREEP_SESSION_LIFETIME after its user signed in, or the lifetime in force when its user signed in, if that was shorter"`
 	IdleExpiresAt time.Time `json:"idle_expires_at" doc:"When it ends unless it is used before: STORYCREEP_SESSION_IDLE_TIMEOUT after its last use, or at expires_at if that is sooner"`
-	IP            string    `json:"ip,omitempty" doc:"The IP address that its user signed in from, as the server saw it; behind a reverse proxy, the proxy's"`
+	IP            string    `json:"ip,omitempty" doc:"The IP address that its user signed in from: the address that the connection came from, or, if that is one of STORYCREEP_TRUSTED_PROXIES, the client's address that the proxies forwarded"`
 	UserAgent     string    `json:"user_agent,omitempty" doc:"The User-Agent header of the client that its user signed in with"`
 	Current       bool      `json:"current" doc:"Whether it is the session of the request"`
 }
@@ -266,10 +245,11 @@ func newSignedInBody(s account.Session, value secret.Value) signedInBody {
 }
 
 // signedInOutput answers a request that starts a session or gives it a new
-// secret.
+// secret, which are rate-limited.
 type signedInOutput struct {
 	SetCookie string `header:"Set-Cookie" doc:"The session cookie, which holds the session's secret: __Host-sc_session, Secure, when STORYCREEP_PUBLIC_URL is https, and sc_session otherwise, in either case HttpOnly, SameSite=Lax, for the path /, and expiring when the session ends at the latest"`
-	Body      signedInBody
+	RateLimitOutput
+	Body signedInBody
 }
 
 type sessionOutput struct {
@@ -347,7 +327,7 @@ const csrfDoc = sessionAuthDoc + " It changes something, so it also needs the se
 
 // registerSessions registers the routes of signing in and of the sessions
 // (PRD FR-AUTH-02).
-func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCookie) {
+func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.Limiter, cookie sessionCookie) {
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "login",
 		Method:      http.MethodPost,
@@ -359,15 +339,21 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 			"answered with 401 invalid_credentials, after the same work, so that the answer does not tell them " +
 			"apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another " +
 			"origin of the same site, is answered with 403 csrf_failed; browsers send that header only to https " +
-			"URLs and to loopback addresses, such as localhost.",
-		Tags: []string{"Authentication"},
+			"URLs and to loopback addresses, such as localhost. After 10 failed sign-ins in a row with an email " +
+			"address, whether or not it belongs to an account, the address is locked for a minute, and each " +
+			"further failure, once a lock ends, locks it for twice as long as the lock before, up to 15 minutes: " +
+			"while it is locked, every sign-in with it is answered with 429 rate_limited, whose details.reason is " +
+			"locked, even with the right password. A successful sign-in forgets the failures, and so do 24 hours " +
+			"without one." + authLimitDoc,
+		Tags:        []string{"Authentication"},
+		Middlewares: huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
 	}, func(ctx context.Context, in *loginInput) (*signedInOutput, error) {
 		issued, err := accounts.Login(ctx, in.Body.Email, secret.New(in.Body.Password), clientFrom(ctx))
 		if errors.Is(err, account.ErrInvalidCredentials) {
 			return nil, api.NewError(api.CodeInvalidCredentials)
 		}
 		if err != nil {
-			return nil, err
+			return nil, limitError(err)
 		}
 		return &signedInOutput{SetCookie: cookie.set(issued), Body: newSignedInBody(issued.Session, issued.Secret)}, nil
 	})
@@ -513,8 +499,9 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 			"code points once it is in NFKC, and must not be one of the 10,000 most common passwords, or the " +
 			"answer is 422 weak_password. Changing it revokes every other session of the account, and gives the " +
 			"session of the request a new secret, in the Set-Cookie header, and a new CSRF token, in the body, " +
-			"so that the old ones are no longer valid." + csrfDoc,
-		Tags: []string{"Authentication"},
+			"so that the old ones are no longer valid." + csrfDoc + authLimitDoc,
+		Tags:        []string{"Authentication"},
+		Middlewares: huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
 	}, func(ctx context.Context, in *passwordInput) (*signedInOutput, error) {
 		cur, err := currentFrom(ctx)
 		if err != nil {
