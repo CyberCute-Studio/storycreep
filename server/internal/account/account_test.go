@@ -15,6 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
@@ -284,7 +285,7 @@ func TestRegisterRefuses(t *testing.T) {
 			Password: secret.New("Unbelievable")}, nil, PasswordCommon},
 	} {
 		err := s.Register(context.Background(), c.r)
-		var fields FieldErrors
+		var fields input.FieldErrors
 		var weak *PasswordError
 		switch {
 		case c.fields != nil:

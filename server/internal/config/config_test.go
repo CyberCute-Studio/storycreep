@@ -116,6 +116,7 @@ func TestDefaults(t *testing.T) {
 		{"STORYCREEP_PUBLIC_URL", testURL, SourceEnvironment},
 		{"STORYCREEP_PUBLIC_SITE", "off", SourceDefault},
 		{"STORYCREEP_SIGNUP", "closed", SourceDefault},
+		{"STORYCREEP_INSTANCE_ADMIN_ACCESS", "off", SourceDefault},
 		{"STORYCREEP_SESSION_IDLE_TIMEOUT", "720h", SourceDefault},
 		{"STORYCREEP_SESSION_LIFETIME", "2160h", SourceDefault},
 		{"STORYCREEP_DEFAULT_LOCALE", "en", SourceDefault},
@@ -158,7 +159,7 @@ func TestCapabilities(t *testing.T) {
 			want: Capabilities{
 				PublicSite: false, Signup: SignupClosed, EnforceEntitlements: false, Billing: false,
 				EmailRequired: false, BlobDriver: BlobLocal, MetricsEndpoint: MetricsUnauthenticated,
-				InstanceAdminUI: InstanceAdminOn, SSO: SSOOff,
+				InstanceAdminUI: InstanceAdminOn, InstanceAdminAccess: false, SSO: SSOOff,
 			},
 		},
 		{
@@ -167,7 +168,7 @@ func TestCapabilities(t *testing.T) {
 			want: Capabilities{
 				PublicSite: true, Signup: SignupOpen, EnforceEntitlements: true, Billing: true,
 				EmailRequired: true, BlobDriver: BlobS3, MetricsEndpoint: MetricsProtected,
-				InstanceAdminUI: InstanceAdminOperatorOnly, SSO: SSOPlanFeature,
+				InstanceAdminUI: InstanceAdminOperatorOnly, InstanceAdminAccess: false, SSO: SSOPlanFeature,
 			},
 		},
 		{
@@ -187,6 +188,20 @@ func TestCapabilities(t *testing.T) {
 				c.Signup = SignupOpen
 				return c
 			}(),
+		},
+		{
+			name: "self-hosted with instance admin access",
+			env:  map[string]string{"STORYCREEP_INSTANCE_ADMIN_ACCESS": "on"},
+			want: func() Capabilities {
+				c := modeCapabilities(modeSelfHosted)
+				c.InstanceAdminAccess = true
+				return c
+			}(),
+		},
+		{
+			name: "hosted with instance admin access off",
+			env:  map[string]string{"STORYCREEP_MODE": "hosted", "STORYCREEP_INSTANCE_ADMIN_ACCESS": "off"},
+			want: modeCapabilities(modeHosted),
 		},
 		{
 			name: "self-hosted with a metrics token",
@@ -270,6 +285,7 @@ func TestInvalidValues(t *testing.T) {
 		{"STORYCREEP_PUBLIC_URL", "storycreep.example.com", "must start with http:// or https://"},
 		{"STORYCREEP_PUBLIC_SITE", "yes", "must be on or off"},
 		{"STORYCREEP_SIGNUP", "public", "must be closed, invite, or open"},
+		{"STORYCREEP_INSTANCE_ADMIN_ACCESS", "true", "must be on or off"},
 		{"STORYCREEP_LOG_LEVEL", "verbose", "must be debug, info, warn, or error"},
 		{"STORYCREEP_DEFAULT_LOCALE", "english", "not a BCP 47 language tag, such as en"},
 		{"STORYCREEP_DEFAULT_LOCALE", "fr", "the server has no catalog for that locale, only for en"},
@@ -382,6 +398,8 @@ func TestHostedRules(t *testing.T) {
 		{"plain HTTP", "STORYCREEP_PUBLIC_URL", map[string]string{"STORYCREEP_PUBLIC_URL": "http://storycreep.example.com"}},
 		{"closed signup", "STORYCREEP_SIGNUP", map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_SIGNUP": "closed"}},
 		{"invite signup", "STORYCREEP_SIGNUP", map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_SIGNUP": "invite"}},
+		{"instance admin access", "STORYCREEP_INSTANCE_ADMIN_ACCESS",
+			map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_INSTANCE_ADMIN_ACCESS": "on"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

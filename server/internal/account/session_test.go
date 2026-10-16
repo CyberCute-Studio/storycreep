@@ -16,6 +16,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
@@ -470,7 +471,7 @@ func TestPasswordChangeWaitsForSignIn(t *testing.T) {
 	}()
 	// The change has checked the current password, hashed the new one, and
 	// waits for the lock once a transaction waits for this one.
-	awaitWaiter(t, tx, changed, "the change")
+	dbtest.AwaitWaiter(t, tx, changed, "the change")
 	issued, err := s.insertSession(ctx, tx, id, testClient)
 	if err != nil {
 		t.Fatal(err)
@@ -483,32 +484,6 @@ func TestPasswordChangeWaitsForSignIn(t *testing.T) {
 	}
 	if _, err := s.Session(ctx, issued.Secret); !errors.Is(err, ErrNoSession) {
 		t.Errorf("the session that the sign-in started while the password changed: %v, want ErrNoSession", err)
-	}
-}
-
-// awaitWaiter returns once another transaction waits for a lock that tx
-// holds, and fails the test if done receives first, because what, which
-// should wait, did not, or if nothing waits within a minute.
-func awaitWaiter(t *testing.T, tx pgx.Tx, done <-chan error, what string) {
-	t.Helper()
-	const waiters = `SELECT count(*) FROM pg_locks WHERE NOT granted AND locktype = 'transactionid'
-		AND transactionid::text = pg_current_xact_id()::text`
-	for deadline := time.Now().Add(time.Minute); ; time.Sleep(20 * time.Millisecond) {
-		var waiting int
-		if err := tx.QueryRow(context.Background(), waiters).Scan(&waiting); err != nil {
-			t.Fatal(err)
-		}
-		if waiting > 0 {
-			return
-		}
-		select {
-		case err := <-done:
-			t.Fatalf("%s did not wait for the lock: %v", what, err)
-		default:
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%s never waits for the lock", what)
-		}
 	}
 }
 
@@ -537,7 +512,7 @@ func TestRevokeOtherSessionsWaitsForPasswordChange(t *testing.T) {
 		_, err := s.RevokeOtherSessions(ctx, current.Session, testClient)
 		revoked <- err
 	}()
-	awaitWaiter(t, tx, revoked, "the revocation")
+	dbtest.AwaitWaiter(t, tx, revoked, "the revocation")
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}

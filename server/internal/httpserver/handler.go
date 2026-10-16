@@ -16,7 +16,9 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/version"
+	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
 )
 
 // server holds the handlers of the two listeners.
@@ -30,6 +32,8 @@ type server struct {
 	metricsOff  string
 	// accounts keeps the accounts and their sessions.
 	accounts *account.Service
+	// workspaces keeps the workspaces.
+	workspaces *workspace.Service
 	// limits counts the requests of the rate limits.
 	limits *ratelimit.Limiter
 }
@@ -40,12 +44,20 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		ready:   &readiness{log: log},
 		metrics: newMetrics(),
 	}
+	s.workspaces = workspace.New(readyDB{s.ready}, workspace.Options{
+		Policy:        role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
+		PlanKey:       planKey(cfg.Capabilities),
+		DefaultLocale: cfg.DefaultLocale,
+	})
 	s.limits = ratelimit.New(readyDB{s.ready}, ratelimit.DefaultPolicy())
 	s.accounts = account.New(readyDB{s.ready}, account.Options{
 		Signup:      cfg.Capabilities.Signup,
 		IdleTimeout: cfg.SessionIdleTimeout,
 		Lifetime:    cfg.SessionLifetime,
 		Limits:      s.limits,
+		// The first sign-in gives the account its personal workspace
+		// (FR-TEN-01).
+		Authenticated: s.workspaces.EnsurePersonal,
 	})
 	cookie := newSessionCookie(cfg.PublicURL)
 	s.main = api.NewMux(api.MuxOptions{
@@ -66,6 +78,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s.registerOperational(s.main)
 	registerAccounts(s.main, s.accounts, s.limits)
 	registerSessions(s.main, s.accounts, s.limits, cookie)
+	registerWorkspaces(s.main, s.workspaces)
 	registerDocument(s.main)
 	registerPages(s.main, cfg.Capabilities.PublicSite)
 
@@ -96,6 +109,16 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 			})))
 	}
 	return s
+}
+
+// planKey returns the plan of a new workspace (PRD FR-ENT-01): unlimited
+// while entitlements are not enforced, as in self-hosted mode, and the free
+// plan otherwise.
+func planKey(c config.Capabilities) string {
+	if c.EnforceEntitlements {
+		return "free"
+	}
+	return "unlimited"
 }
 
 // statusBody is the body of /healthz and /readyz.

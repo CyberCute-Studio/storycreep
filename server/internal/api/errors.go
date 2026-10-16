@@ -32,15 +32,18 @@ const (
 	CodeInvalidCredentials   Code = "invalid_credentials"
 	CodeCSRFFailed           Code = "csrf_failed"
 	CodeWrongPassword        Code = "wrong_password"
+	CodeInsufficientRole     Code = "insufficient_role"
 	CodeSignupClosed         Code = "signup_closed"
 	CodeInviteRequired       Code = "invite_required"
 	CodeNotFound             Code = "not_found"
+	CodeSlugTaken            Code = "slug_taken"
 	CodeMethodNotAllowed     Code = "method_not_allowed"
 	CodeRequestTimeout       Code = "request_timeout"
 	CodeRequestTooLarge      Code = "request_too_large"
 	CodeUnsupportedMediaType Code = "unsupported_media_type"
 	CodeValidationFailed     Code = "validation_failed"
 	CodeWeakPassword         Code = "weak_password"
+	CodeSlugInvalid          Code = "slug_invalid"
 	CodeRateLimited          Code = "rate_limited"
 	CodeInternal             Code = "internal_error"
 	CodeNotReady             Code = "not_ready"
@@ -93,6 +96,11 @@ var codes = []codeSpec{
 	{CodeWrongPassword, http.StatusForbidden, i18n.K("error.wrong_password"),
 		"`POST /api/v1/auth/password` was given a current password that is not the account's, so the " +
 			"password stays as it was."},
+	{CodeInsufficientRole, http.StatusForbidden, i18n.K("error.insufficient_role"),
+		"The signed-in user's role in the workspace does not allow the operation, as only an `owner` or an " +
+			"`admin` changes a workspace's settings (PRD §5.6). A user whose role in the workspace is none, as one " +
+			"who is not a member or is a `guest`, is answered with `not_found` instead, so that the answer does not " +
+			"tell that the workspace exists (PRD §5.5)."},
 	{CodeSignupClosed, http.StatusForbidden, i18n.K("error.signup_closed"),
 		"The instance's signup policy, `STORYCREEP_SIGNUP`, is `closed`, so `POST /api/v1/auth/register` " +
 			"creates no account, whatever the request holds (PRD FR-AUTH-01 AC3)."},
@@ -100,7 +108,12 @@ var codes = []codeSpec{
 		"The instance's signup policy, `STORYCREEP_SIGNUP`, is `invite`, so only an invitation creates an " +
 			"account, and `POST /api/v1/auth/register` creates none, whatever the request holds."},
 	{CodeNotFound, http.StatusNotFound, i18n.K("error.not_found"),
-		"No route matches the path, or the resource it names does not exist."},
+		"No route matches the path, or the resource it names does not exist, or the signed-in user's role in " +
+			"it, or in its workspace, is none, as it is for a user who is not a member of the workspace, so that " +
+			"the answer does not tell that it exists (PRD §5.5, FR-TEN-04 AC6)."},
+	{CodeSlugTaken, http.StatusConflict, i18n.K("error.slug_taken"),
+		"Another workspace has the slug, which is unique on the instance (PRD FR-TEN-01 AC3). `details.errors` " +
+			"names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeMethodNotAllowed, http.StatusMethodNotAllowed, i18n.K("error.method_not_allowed"),
 		"A route matches the path, but not the method. The `Allow` header lists the methods it takes."},
 	{CodeRequestTimeout, http.StatusRequestTimeout, i18n.K("error.request_timeout"),
@@ -122,6 +135,12 @@ var codes = []codeSpec{
 			"with fewer than 12 characters, counted as Unicode code points once the password is in NFKC, or " +
 			"`common`, one of the 10,000 most common passwords, compared without regard to case. " +
 			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeSlugInvalid, http.StatusUnprocessableEntity, i18n.K("error.slug_invalid"),
+		"A slug is not one that the route takes (PRD FR-TEN-01 AC3). A workspace's slug is groups of lowercase " +
+			"ASCII letters and digits joined by single hyphens, as `harbour-team`, of at most 64 characters, and " +
+			"not a reserved word, such as `admin`, `api`, or a name that Windows reserves for a device, such as " +
+			"`con`. `details.reason` says which rule it breaks: `format` or `reserved`. `details.errors` names the " +
+			"field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeRateLimited, http.StatusTooManyRequests, i18n.K("error.rate_limited"),
 		"The client made too many requests (PRD FR-API-04 AC3, NFR-SEC-06), or signing in with an email address " +
 			"failed too often in a row (FR-AUTH-05). The `Retry-After` header says how many seconds to wait. " +

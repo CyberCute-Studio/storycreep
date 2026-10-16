@@ -357,6 +357,7 @@ func TestCSRF(t *testing.T) {
 	newAccount(t, s.main, "jo@example.com")
 	si := signIn(t, s.main, "jo@example.com")
 	other := signIn(t, s.main, "jo@example.com")
+	personal := personalWorkspace(t, s.main, si)
 	routes := []struct {
 		method, path string
 		body         []byte
@@ -365,6 +366,8 @@ func TestCSRF(t *testing.T) {
 		{http.MethodDelete, sessionsPath, nil},
 		{http.MethodDelete, sessionsPath + "/" + other.body.Session.ID, nil},
 		{http.MethodPost, passwordPath, passwordChange(t, testPassword, "a brand new passphrase")},
+		{http.MethodPost, workspacesPath, []byte(`{"name": "Harbour"}`)},
+		{http.MethodPatch, workspacesPath + "/" + personal.ID, []byte(`{"name": "Harbour"}`)},
 	}
 	attempts := []struct {
 		name   string
@@ -392,8 +395,12 @@ func TestCSRF(t *testing.T) {
 	if n := countRows(t, d, `SELECT count(*) FROM session WHERE revoked_at IS NULL`); n != 2 {
 		t.Errorf("%d active sessions, want both", n)
 	}
-	if n := countRows(t, d, `SELECT count(*) FROM audit_entry WHERE action <> 'auth.login'`); n != 0 {
-		t.Errorf("%d entries of other events than sign-ins, want none", n)
+	if n := countRows(t, d, `SELECT count(*) FROM audit_entry
+		WHERE action <> 'auth.login' AND NOT (action = 'workspace.create' AND metadata->>'personal' = 'true')`); n != 0 {
+		t.Errorf("%d entries of other events than sign-ins and the personal workspace's creation, want none", n)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM workspace WHERE name <> 'Jo'`); n != 0 {
+		t.Errorf("%d workspaces besides the personal one, or a personal one renamed", n)
 	}
 
 	for _, path := range []string{sessionPath, sessionsPath} {
@@ -611,7 +618,7 @@ func TestSessionAuditEvents(t *testing.T) {
 			actor_user_id IS NOT NULL, metadata ? 'email_hmac', metadata ? 'session_id',
 			workspace_id IS NULL AND host(ip) = '192.0.2.1' AND user_agent = 'Auditor/1.0'
 				AND request_id = 'audit-test'
-		FROM audit_entry WHERE request_id = 'audit-test' OR user_agent = 'Auditor/1.0'`)
+		FROM audit_entry WHERE (request_id = 'audit-test' OR user_agent = 'Auditor/1.0') AND action LIKE 'auth.%'`)
 	if err != nil {
 		t.Fatal(err)
 	}

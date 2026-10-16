@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document version | 1.8 |
+| Document version | 1.9 |
 | Date | 2026-10-16 |
 | Status | Approved for implementation |
 | Product | Storycreep — branching narrative design tool for games |
@@ -1557,20 +1557,22 @@ Two functions resolve roles. Each operation in §5.6 is marked with the one that
 
 ```
 workspace_role(user, workspace) =
-    if user.is_instance_admin and mode = self-hosted and instance_admin_access enabled: owner
+    if user.is_instance_admin and InstanceAdminAccess: owner
     m = membership(user, workspace)
     if m is absent: none                       // not a member at all
     else if m.role = guest: none               // guests have no workspace-wide capability
     else: m.role
 
 effective_role(user, project) =               // project-scoped operations only
-    if user.is_instance_admin and mode = self-hosted and instance_admin_access enabled: owner
+    if user.is_instance_admin and InstanceAdminAccess: owner
     m = membership(user, project.workspace)
     if m is absent: none
     else if project_grant exists for (m, project): grant.role    // never owner (FR-TEN-04)
     else if m.role = guest: none               // guests need an explicit grant
     else: m.role
 ```
+
+`InstanceAdminAccess` is the capability of §10.3 that lets an instance admin act as `owner` of every workspace and project without a membership. It is off unless the operator sets `STORYCREEP_INSTANCE_ADMIN_ACCESS=on`, which only self-hosted mode accepts; hosted mode refuses to start with it, because there instance admin is restricted to operator accounts (FR-ADMIN-03 AC3). Off, an instance admin resolves like any other user, by their memberships and grants.
 
 `none` denies every operation. A request whose resolved role is `none` receives 404 rather than 403, so it does not reveal that the project or workspace exists. Both functions are pure, have no database access beyond their lookups, and are unit-tested exhaustively over the combination space, including the absent membership.
 
@@ -2592,6 +2594,7 @@ A single `capabilities` struct is resolved once at startup from configuration, a
 | `BlobDriver` | local disk | S3-compatible |
 | `MetricsEndpoint` | on, unauthenticated on the admin port | protected |
 | `InstanceAdminUI` | on | operator-only |
+| `InstanceAdminAccess` | off, configurable | off, cannot be turned on |
 | `SSO` | off (later: configurable) | plan feature |
 
 There is no build tag, no fork, and no second image. `STORYCREEP_MODE` is read in exactly one package (FR-ADMIN-01 AC3). Hosted-only code (billing, plan management) lives in its own package behind an interface with a no-op implementation that is selected in self-hosted mode; the package is present in the open-source repository (ADR-011 — AGPL, not open-core).
@@ -3227,3 +3230,4 @@ No metric below depends on telemetry from running instances (ADR-026); every one
 | 1.6 | 2026-10-15 | **Database logins** (plan note N16): the server takes two database URLs, the application's non-superuser login and the superuser that applies migrations. Migrating creates or updates the application login from its URL and grants it the application role, and the server refuses an application login that row-level security would not hold (§5.4, §10.8). **CI:** the database tests run on the Linux runner only, because the Windows and macOS runners cannot run Linux containers (§9.9). |
 | 1.7 | 2026-10-15 | **Maintenance login** (plan note N20): the maintenance path's pool logs in as a login of its own, from a third database URL, `STORYCREEP_DATABASE_MAINTENANCE_URL`, which migrating provisions like the application's login and grants `storycreep_maintenance`, and each of its transactions acts as that role through `SET LOCAL ROLE`, because PostgreSQL does not pass `BYPASSRLS` on to a role's members (§5.4, §10.8). |
 | 1.8 | 2026-10-16 | **Audit log** (plan note N21): an event that belongs to no workspace, such as a login, is recorded with a null `workspace_id`, which row-level security lets the application add only from a transaction without a workspace (FR-TEN-01 AC1, FR-TEN-07, §5.3). The keyed hash of an unknown login address is HMAC-SHA256 with a random key that migrating generates and keeps in a new cross-workspace table, `instance_key`, so that nothing needs configuring for it (§5.3, §5.4, §9.6). |
+| 1.9 | 2026-10-16 | **Instance admin access** (plan note N24): §5.5 let an instance admin act as `owner` of every workspace and project when "mode = self-hosted and instance_admin_access enabled", but defined no such switch. It is the capability `InstanceAdminAccess` (§10.3), off unless `STORYCREEP_INSTANCE_ADMIN_ACCESS=on`, which hosted mode refuses, so that an operator opts in to it and the resolution functions read no mode. |

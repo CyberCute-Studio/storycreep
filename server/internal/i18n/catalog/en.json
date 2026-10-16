@@ -1,5 +1,6 @@
 {
   "error.csrf_failed": "The request lacks the session's CSRF token, or came from another origin.",
+  "error.insufficient_role": "Your role in this workspace does not allow this.",
   "error.internal_error": "An internal error occurred.",
   "error.invalid_credentials": "The email address or the password is wrong.",
   "error.invalid_cursor": "The pagination cursor is invalid.",
@@ -24,6 +25,8 @@
   "error.request_timeout": "The request body did not arrive in time.",
   "error.request_too_large": "The request body is too large.",
   "error.signup_closed": "Registration is closed on this server.",
+  "error.slug_invalid": "The slug must be lowercase letters and digits joined by single hyphens, and not a reserved word.",
+  "error.slug_taken": "Another workspace already has this slug.",
   "error.unauthenticated": "Authentication is required.",
   "error.unsupported_media_type": "The request body is not in a supported format.",
   "error.validation_failed": "The request is invalid.",

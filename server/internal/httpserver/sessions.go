@@ -281,9 +281,29 @@ type sessionsInput struct {
 	api.PageParams
 }
 
-// sessionKey is the key that the list of sessions is paged by.
-type sessionKey struct {
+// idKey is the key that a list in the order of its items' IDs is paged by,
+// as the lists of sessions and of workspaces are.
+type idKey struct {
 	ID string `json:"id"`
+}
+
+// cursorID returns the ID that cursor, a next_cursor of a list paged by
+// idKey, holds, or the zero UUID for the empty cursor of the first page. A
+// cursor that holds no ID, or not in the form that the server writes, is
+// answered with invalid_cursor.
+func cursorID(cursor string) (ids.UUID, error) {
+	if cursor == "" {
+		return ids.UUID{}, nil
+	}
+	key, err := api.DecodeCursor[idKey](cursor)
+	if err != nil {
+		return ids.UUID{}, err
+	}
+	id, err := ids.ParseUUID(key.ID)
+	if err != nil || id.String() != key.ID {
+		return ids.UUID{}, api.NewError(api.CodeInvalidCursor)
+	}
+	return id, nil
 }
 
 type sessionsOutput struct {
@@ -334,7 +354,9 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 		Path:        "/api/v1/auth/login",
 		Summary:     "Sign in",
 		Description: "Signs in with an account's email address and password, and starts a session, whose secret " +
-			"the Set-Cookie header gives the client, and whose CSRF token the body holds. An address of no " +
+			"the Set-Cookie header gives the client, and whose CSRF token the body holds. The account's first " +
+			"sign-in also gives it its personal workspace, named after its display name, which it owns; " +
+			"GET /api/v1/workspaces lists it. An address of no " +
 			"account, a wrong password, and an account that cannot sign in, such as a suspended one, are all " +
 			"answered with 401 invalid_credentials, after the same work, so that the answer does not tell them " +
 			"apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another " +
@@ -407,22 +429,16 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 		if err != nil {
 			return nil, err
 		}
-		var before ids.UUID
-		if in.Cursor != "" {
-			key, err := api.DecodeCursor[sessionKey](in.Cursor)
-			if err != nil {
-				return nil, err
-			}
-			if before, err = ids.ParseUUID(key.ID); err != nil || before.String() != key.ID {
-				return nil, api.NewError(api.CodeInvalidCursor)
-			}
+		before, err := cursorID(in.Cursor)
+		if err != nil {
+			return nil, err
 		}
 		sessions, err := accounts.Sessions(ctx, cur.session.UserID, before, in.Fetch())
 		if err != nil {
 			return nil, err
 		}
-		page, err := api.NewPage(in.PageParams, sessions, func(s account.Session) sessionKey {
-			return sessionKey{ID: s.ID.String()}
+		page, err := api.NewPage(in.PageParams, sessions, func(s account.Session) idKey {
+			return idKey{ID: s.ID.String()}
 		})
 		if err != nil {
 			return nil, err

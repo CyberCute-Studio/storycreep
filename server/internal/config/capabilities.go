@@ -24,6 +24,11 @@ type Capabilities struct {
 	MetricsEndpoint MetricsEndpoint
 	// InstanceAdminUI is who can use the instance-admin area.
 	InstanceAdminUI InstanceAdminUI
+	// InstanceAdminAccess lets an instance admin act as the owner of every
+	// workspace and project, without a membership (PRD §5.5,
+	// STORYCREEP_INSTANCE_ADMIN_ACCESS). It is off in both modes unless the
+	// key turns it on, which only self-hosted mode allows.
+	InstanceAdminAccess bool
 	// SSO is how single sign-on is offered.
 	SSO SSO
 }
@@ -87,6 +92,7 @@ func modeCapabilities(m mode) Capabilities {
 			BlobDriver:          BlobS3,
 			MetricsEndpoint:     MetricsProtected,
 			InstanceAdminUI:     InstanceAdminOperatorOnly,
+			InstanceAdminAccess: false,
 			SSO:                 SSOPlanFeature,
 		}
 	}
@@ -99,6 +105,7 @@ func modeCapabilities(m mode) Capabilities {
 		BlobDriver:          BlobLocal,
 		MetricsEndpoint:     MetricsUnauthenticated,
 		InstanceAdminUI:     InstanceAdminOn,
+		InstanceAdminAccess: false,
 		SSO:                 SSOOff,
 	}
 }
@@ -120,6 +127,7 @@ func (c Capabilities) Describe() []Capability {
 		{"BlobDriver", string(c.BlobDriver)},
 		{"MetricsEndpoint", string(c.MetricsEndpoint)},
 		{"InstanceAdminUI", string(c.InstanceAdminUI)},
+		{"InstanceAdminAccess", onOff(c.InstanceAdminAccess)},
 		{"SSO", string(c.SSO)},
 	}
 }
