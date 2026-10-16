@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
@@ -355,10 +356,10 @@ func TestChangePassword(t *testing.T) {
 			t.Errorf("%s is not found: %v", name, err)
 		}
 	}
-	if _, err := s.Authenticate(ctx, "jo@example.com", replacement); err != nil {
+	if _, err := signsIn(ctx, s, "jo@example.com", replacement); err != nil {
 		t.Errorf("the new password does not sign in: %v", err)
 	}
-	if _, err := s.Authenticate(ctx, "jo@example.com", secret.New(testPassword)); !errors.Is(err,
+	if _, err := signsIn(ctx, s, "jo@example.com", secret.New(testPassword)); !errors.Is(err,
 		ErrInvalidCredentials) {
 		t.Errorf("the old password: %v, want ErrInvalidCredentials", err)
 	}
@@ -382,7 +383,7 @@ func TestChangePassword(t *testing.T) {
 		testClient); !errors.Is(err, ErrNoSession) {
 		t.Errorf("a change from an ended session: %v, want ErrNoSession", err)
 	}
-	if _, err := s.Authenticate(ctx, "jo@example.com", replacement); err != nil {
+	if _, err := signsIn(ctx, s, "jo@example.com", replacement); err != nil {
 		t.Errorf("the change from an ended session changed the password: %v", err)
 	}
 }
@@ -467,25 +468,7 @@ func TestPasswordChangeWaitsForSignIn(t *testing.T) {
 	}()
 	// The change has checked the current password, hashed the new one, and
 	// waits for the lock once a transaction waits for this one.
-	const waiters = `SELECT count(*) FROM pg_locks WHERE NOT granted AND locktype = 'transactionid'
-		AND transactionid::text = pg_current_xact_id()::text`
-	for deadline := time.Now().Add(time.Minute); ; time.Sleep(20 * time.Millisecond) {
-		var waiting int
-		if err := tx.QueryRow(ctx, waiters).Scan(&waiting); err != nil {
-			t.Fatal(err)
-		}
-		if waiting > 0 {
-			break
-		}
-		select {
-		case err := <-changed:
-			t.Fatalf("the change did not wait for the sign-in's lock: %v", err)
-		default:
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the change never waits for the sign-in's lock")
-		}
-	}
+	awaitWaiter(t, tx, changed, "the change")
 	issued, err := s.insertSession(ctx, tx, id, testClient)
 	if err != nil {
 		t.Fatal(err)
@@ -498,6 +481,144 @@ func TestPasswordChangeWaitsForSignIn(t *testing.T) {
 	}
 	if _, err := s.Session(ctx, issued.Secret); !errors.Is(err, ErrNoSession) {
 		t.Errorf("the session that the sign-in started while the password changed: %v, want ErrNoSession", err)
+	}
+}
+
+// awaitWaiter returns once another transaction waits for a lock that tx
+// holds, and fails the test if done receives first, because what, which
+// should wait, did not, or if nothing waits within a minute.
+func awaitWaiter(t *testing.T, tx pgx.Tx, done <-chan error, what string) {
+	t.Helper()
+	const waiters = `SELECT count(*) FROM pg_locks WHERE NOT granted AND locktype = 'transactionid'
+		AND transactionid::text = pg_current_xact_id()::text`
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(20 * time.Millisecond) {
+		var waiting int
+		if err := tx.QueryRow(context.Background(), waiters).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting > 0 {
+			return
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("%s did not wait for the lock: %v", what, err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s never waits for the lock", what)
+		}
+	}
+}
+
+// TestRevokeOtherSessionsWaitsForPasswordChange checks that revoking the
+// account's other sessions waits while a transaction holds the account's row,
+// as a password change does from its update on, before it revokes the
+// sessions itself and gives its own a new secret, so that the two run one
+// after the other rather than each lock sessions that the other waits for.
+func TestRevokeOtherSessionsWaitsForPasswordChange(t *testing.T) {
+	t.Parallel()
+	s, admin := setup(t, config.SignupOpen)
+	id := register(t, s, admin, "jo@example.com")
+	current, other := login(t, s, "jo@example.com"), login(t, s, "jo@example.com")
+	ctx := context.Background()
+
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `UPDATE "user" SET updated_at = now() WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	revoked := make(chan error, 1)
+	go func() {
+		_, err := s.RevokeOtherSessions(ctx, current.Session, testClient)
+		revoked <- err
+	}()
+	awaitWaiter(t, tx, revoked, "the revocation")
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-revoked; err != nil {
+		t.Fatalf("the revocation: %v", err)
+	}
+	if _, err := s.Session(ctx, other.Secret); !errors.Is(err, ErrNoSession) {
+		t.Errorf("the other session: %v, want ErrNoSession", err)
+	}
+}
+
+// hookDB is a DB that calls before with the number of each transaction that
+// it begins, counted from 1, just before it begins it.
+type hookDB struct {
+	DB
+	before func(n int)
+	n      int
+}
+
+func (h *hookDB) InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
+	h.n++
+	h.before(h.n)
+	return h.DB.InTx(ctx, scope, fn)
+}
+
+// TestChangePasswordRacesHashChange checks a password change during which
+// the hash of the account's password changes, after the change checked the
+// current password against it: when another sign-in hashed the same
+// password again (NFR-SEC-03), the change still goes through, and when
+// another change replaced the password, it is refused as the wrong password,
+// recorded so, and changes nothing.
+func TestChangePasswordRacesHashChange(t *testing.T) {
+	t.Parallel()
+	s, admin := setup(t, config.SignupOpen)
+	ctx := context.Background()
+	replacement := secret.New("a brand new passphrase")
+	for _, c := range []struct {
+		name, email, stored string
+		changes             bool
+	}{
+		{"hashed again", "jo@example.com", testPassword, true},
+		{"changed", "mo@example.com", "another passphrase entirely", false},
+	} {
+		id := register(t, s, admin, c.email)
+		current, other := login(t, s, c.email), login(t, s, c.email)
+		stored, err := s.hasher.Hash(ctx, secret.New(c.stored))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The change's first transaction reads the hash, and its second
+		// replaces it, once the current password matched it.
+		db := &hookDB{DB: s.db, before: func(n int) {
+			if n == 2 {
+				exec(t, admin, `UPDATE "user" SET password_hash = $1 WHERE id = $2`, stored, id)
+			}
+		}}
+		racing := newService(db, Options{Signup: config.SignupOpen, IdleTimeout: testIdle, Lifetime: testLifetime},
+			s.hasher)
+		issued, err := racing.ChangePassword(ctx, current.Session, secret.New(testPassword), replacement, testClient)
+		failures := count(t, admin, `SELECT count(*) FROM audit_entry WHERE action = 'auth.password_change'
+			AND result = 'failure' AND actor_user_id = $1`, id)
+		_, otherErr := s.Session(ctx, other.Secret)
+		if c.changes {
+			if err != nil || issued.ID != current.ID {
+				t.Fatalf("%s: ChangePassword = %v, %v; want the session with a new secret", c.name, issued.ID, err)
+			}
+			if _, err := signsIn(ctx, s, c.email, replacement); err != nil {
+				t.Errorf("%s: the new password does not sign in: %v", c.name, err)
+			}
+			if !errors.Is(otherErr, ErrNoSession) || failures != 0 {
+				t.Errorf("%s: the other session: %v; %d failures recorded, want none", c.name, otherErr, failures)
+			}
+			continue
+		}
+		if !errors.Is(err, ErrWrongPassword) {
+			t.Errorf("%s: ChangePassword = %v, want ErrWrongPassword", c.name, err)
+		}
+		if _, err := signsIn(ctx, s, c.email, secret.New(c.stored)); err != nil {
+			t.Errorf("%s: the password that replaced the old one does not sign in: %v", c.name, err)
+		}
+		if otherErr != nil || failures != 1 {
+			t.Errorf("%s: the other session: %v; %d failures recorded, want 1", c.name, otherErr, failures)
+		}
 	}
 }
 

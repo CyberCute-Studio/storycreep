@@ -58,7 +58,7 @@ type Entry struct {
 	Result    Result
 	// IP is the client's address, without its zone, and UserAgent its
 	// User-Agent header, each zero if it is unknown. The client chooses its
-	// user agent, so Record keeps at most maxUserAgentBytes of it, and
+	// user agent, so Record keeps at most MaxUserAgentBytes of it, and
 	// replaces what a text column cannot hold.
 	IP        netip.Addr
 	UserAgent string
@@ -78,10 +78,11 @@ type Entry struct {
 // of its AttemptedEmail, in lowercase hexadecimal.
 const emailHashKey = "email_hmac"
 
-// maxUserAgentBytes bounds the user agent that an entry keeps, so that a
+// MaxUserAgentBytes bounds the user agent that an entry keeps, so that a
 // client cannot fill the log with a long one. A longer one is cut at a
-// character's boundary.
-const maxUserAgentBytes = 512
+// character's boundary. Other packages that keep a client's user agent, such
+// as the sessions, keep as much of it (ClientText).
+const MaxUserAgentBytes = 512
 
 // Record appends e to the audit log in tx, the transaction of the change that
 // e records, so that the entry commits if and only if the change does
@@ -150,7 +151,7 @@ func Record(ctx context.Context, tx pgx.Tx, e Entry) error {
 		SubjectID:    nullUUID(e.SubjectID),
 		Result:       string(e.Result),
 		Ip:           ip,
-		UserAgent:    nullText(ClientText(e.UserAgent, maxUserAgentBytes)),
+		UserAgent:    nullText(ClientText(e.UserAgent, MaxUserAgentBytes)),
 		RequestID:    nullText(ClientText(logging.RequestID(ctx), 0)),
 		Metadata:     encoded,
 	})

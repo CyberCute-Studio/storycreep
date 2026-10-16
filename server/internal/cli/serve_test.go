@@ -55,14 +55,15 @@ func TestServe(t *testing.T) {
 		admin bool
 		args  []string
 		// ready is the status of /readyz once the log has the message
-		// started.
+		// started, which the test waits for before it stops the server.
 		ready   int
 		started string
-		// workers is what the log says about the job workers, if anything.
-		workers string
+		// logged is another message that the log has by the time the server
+		// stops, if any.
+		logged string
 	}{
 		// The workers start once the server is ready, so the test waits for
-		// them before it stops the server.
+		// them, and the log says first that the server is ready.
 		{"auto-migrate", true, nil, http.StatusOK, "the job workers started", "ready"},
 		{"no-auto-migrate", false, []string{"--no-auto-migrate"}, http.StatusServiceUnavailable,
 			"the database has pending migrations; run storycreep migrate to apply them", ""},
@@ -106,8 +107,8 @@ func TestServe(t *testing.T) {
 				t.Fatal("serve did not stop")
 			}
 			wants := []string{`"msg":"listening"`, `"msg":"stopped"`}
-			if tt.workers != "" {
-				wants = append(wants, `"msg":"`+tt.workers+`"`)
+			if tt.logged != "" {
+				wants = append(wants, `"msg":"`+tt.logged+`"`)
 			}
 			for _, want := range wants {
 				if !strings.Contains(stderr.String(), want) {

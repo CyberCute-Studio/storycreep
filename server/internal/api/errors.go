@@ -81,12 +81,14 @@ var codes = []codeSpec{
 			"answer is the same for each, so that it does not tell whether an address has an account " +
 			"(PRD FR-AUTH-01)."},
 	{CodeCSRFFailed, http.StatusForbidden, i18n.K("error.csrf_failed"),
-		"The request changes something, with a method other than `GET`, `HEAD`, or `OPTIONS`, and either it " +
-			"has the session cookie but not the session's CSRF token, which `POST /api/v1/auth/login` and " +
-			"`GET /api/v1/auth/session` return as `csrf_token`, in its `X-CSRF-Token` header, or a browser sent " +
-			"it from another site, as its `Sec-Fetch-Site` header says, whatever its credentials (PRD FR-AUTH-02 " +
-			"AC5). Browsers send that header only to `https` URLs and to loopback addresses, such as `localhost`, " +
-			"so with a plain-HTTP `STORYCREEP_PUBLIC_URL` of another host only the CSRF token is checked."},
+		"The request changes something, with a method other than `GET`, `HEAD`, or `OPTIONS` (PRD FR-AUTH-02 " +
+			"AC5). Either it was made to a route that needs a signed-in user with the session cookie but without " +
+			"the session's CSRF token, which `POST /api/v1/auth/login` and `GET /api/v1/auth/session` return as " +
+			"`csrf_token`, in its `X-CSRF-Token` header, or a browser sent it, to any route, signing in included, " +
+			"from another site or from another origin of the same site, as its `Sec-Fetch-Site` header says, " +
+			"whatever its credentials. Browsers send that header only to `https` URLs and to loopback addresses, " +
+			"such as `localhost`, so with a plain-HTTP `STORYCREEP_PUBLIC_URL` of another host only the CSRF " +
+			"token is checked, on the routes that need a signed-in user."},
 	{CodeWrongPassword, http.StatusForbidden, i18n.K("error.wrong_password"),
 		"`POST /api/v1/auth/password` was given a current password that is not the account's, so the " +
 			"password stays as it was."},

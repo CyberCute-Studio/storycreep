@@ -159,7 +159,7 @@ func TestRecord(t *testing.T) {
 	// What a client sends that the columns cannot hold as it is: an address
 	// with a zone, and a user agent that is too long, with bytes that are not
 	// UTF-8 and a NUL character.
-	agent := "\xff\x00" + strings.Repeat("é", maxUserAgentBytes)
+	agent := "\xff\x00" + strings.Repeat("é", MaxUserAgentBytes)
 	if err := f.DB.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		return Record(ctx, tx, Entry{Action: ActionLogin, ActorUserID: a.UserID, SubjectID: a.UserID,
 			Result: ResultSuccess, IP: netip.MustParseAddr("fe80::1%eth0"), UserAgent: agent})
@@ -171,7 +171,7 @@ func TestRecord(t *testing.T) {
 		t.Fatalf("%d login entries about the user, want 1", len(got))
 	}
 	e = got[0]
-	if want := ClientText(agent, maxUserAgentBytes); e.userAgent.String != want || len(want) > maxUserAgentBytes {
+	if want := ClientText(agent, MaxUserAgentBytes); e.userAgent.String != want || len(want) > MaxUserAgentBytes {
 		t.Errorf("the user agent is %q, want %q", e.userAgent.String, want)
 	}
 	if e.ip == nil || *e.ip != netip.MustParseAddr("fe80::1") {
@@ -608,9 +608,9 @@ func TestEvents(t *testing.T) {
 	}
 }
 
-// TestText checks that text keeps only what a text column can hold, cut at a
-// character's boundary.
-func TestText(t *testing.T) {
+// TestClientText checks that ClientText keeps only what a text column can
+// hold, cut at a character's boundary.
+func TestClientText(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		in    string

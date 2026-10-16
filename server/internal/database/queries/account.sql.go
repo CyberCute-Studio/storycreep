@@ -60,6 +60,20 @@ func (q *Queries) LockPasswordHash(ctx context.Context, id pgtype.UUID) (pgtype.
 	return password_hash, err
 }
 
+const lockUser = `-- name: LockUser :exec
+SELECT id FROM "user" WHERE id = $1 FOR SHARE
+`
+
+// LockUser locks an account's row against changes until the transaction
+// ends, as LockPasswordHash does, whatever the account's status. Revoking
+// the account's other sessions takes this lock first, so that it and a
+// change of the password, which revokes them too, run one after the other,
+// and cannot deadlock over the sessions' rows (FR-AUTH-02).
+func (q *Queries) LockUser(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, lockUser, id)
+	return err
+}
+
 const updatePasswordHash = `-- name: UpdatePasswordHash :execrows
 UPDATE "user" SET password_hash = $1, updated_at = now()
 WHERE id = $2 AND password_hash = $3

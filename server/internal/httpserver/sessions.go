@@ -38,7 +38,8 @@ import (
 // The server keeps nothing for it, and it changes when the session's secret
 // does. A browser also tells the server where a request comes from, in its
 // Sec-Fetch-Site header, and the server refuses every such request that
-// comes from another site, signing in included (refuseCrossSite). Browsers
+// comes from another site, or from another origin of the same site, signing
+// in included (refuseCrossSite). Browsers
 // send that header only to an https URL or to a loopback address such as
 // localhost, so with a plain-HTTP public URL of another host, such as a LAN
 // address, the CSRF token alone protects the requests made with a session,
@@ -356,9 +357,9 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 			"the Set-Cookie header gives the client, and whose CSRF token the body holds. An address of no " +
 			"account, a wrong password, and an account that cannot sign in, such as a suspended one, are all " +
 			"answered with 401 invalid_credentials, after the same work, so that the answer does not tell them " +
-			"apart. A request that a browser's Sec-Fetch-Site header says comes from another site is answered " +
-			"with 403 csrf_failed; browsers send that header only to https URLs and to loopback addresses, such as " +
-			"localhost.",
+			"apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another " +
+			"origin of the same site, is answered with 403 csrf_failed; browsers send that header only to https " +
+			"URLs and to loopback addresses, such as localhost.",
 		Tags: []string{"Authentication"},
 	}, func(ctx context.Context, in *loginInput) (*signedInOutput, error) {
 		issued, err := accounts.Login(ctx, in.Body.Email, secret.New(in.Body.Password), clientFrom(ctx))

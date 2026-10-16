@@ -37,3 +37,11 @@ SELECT password_hash FROM "user" WHERE id = @id AND status = 'active';
 -- revocation of the other sessions that changing the password does sees
 -- every session that the old password started (PRD FR-AUTH-02 AC4).
 SELECT password_hash FROM "user" WHERE id = @id AND status = 'active' FOR SHARE;
+
+-- name: LockUser :exec
+-- LockUser locks an account's row against changes until the transaction
+-- ends, as LockPasswordHash does, whatever the account's status. Revoking
+-- the account's other sessions takes this lock first, so that it and a
+-- change of the password, which revokes them too, run one after the other,
+-- and cannot deadlock over the sessions' rows (FR-AUTH-02).
+SELECT id FROM "user" WHERE id = @id FOR SHARE;

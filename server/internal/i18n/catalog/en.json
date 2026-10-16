@@ -1,5 +1,5 @@
 {
-  "error.csrf_failed": "The request lacks the session's CSRF token, or came from another site.",
+  "error.csrf_failed": "The request lacks the session's CSRF token, or came from another origin.",
   "error.internal_error": "An internal error occurred.",
   "error.invalid_credentials": "The email address or the password is wrong.",
   "error.invalid_cursor": "The pagination cursor is invalid.",

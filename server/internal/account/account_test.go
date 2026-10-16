@@ -68,6 +68,13 @@ func setup(t *testing.T, signup config.SignupPolicy) (*Service, *pgx.Conn) {
 	return New(d.Open(t), Options{Signup: signup, IdleTimeout: testIdle, Lifetime: testLifetime}), d.Admin(t)
 }
 
+// signsIn returns the ID of the account that email and password sign in to,
+// as authenticate checks them, without starting a session.
+func signsIn(ctx context.Context, s *Service, email string, password secret.Value) (ids.UUID, error) {
+	id, _, _, err := s.authenticate(ctx, email, password)
+	return id, err
+}
+
 // TestRegister checks the account that a registration creates: its address
 // and display name without the white space around them, a hash of its
 // password with the current parameters, active, and neither verified nor an
@@ -123,7 +130,7 @@ func TestRegisterExistingAddress(t *testing.T) {
 	if after := accounts(t, admin); !slices.Equal(after, before) {
 		t.Errorf("the accounts were %+v, and are %+v", before, after)
 	}
-	if _, err := s.Authenticate(ctx, "jo@example.com", first.Password); err != nil {
+	if _, err := signsIn(ctx, s, "jo@example.com", first.Password); err != nil {
 		t.Errorf("the first password no longer signs in: %v", err)
 	}
 }
@@ -148,7 +155,7 @@ func TestRegisterComposition(t *testing.T) {
 		t.Errorf("the accounts are %+v, want one, of %q", got, composed)
 	}
 	for _, email := range []string{composed, decomposed} {
-		if _, err := s.Authenticate(ctx, email, password); err != nil {
+		if _, err := signsIn(ctx, s, email, password); err != nil {
 			t.Errorf("signing in as %q: %v", email, err)
 		}
 	}
@@ -356,7 +363,7 @@ func TestAuthenticate(t *testing.T) {
 	addAccount(t, admin, "nopassword@example.com", pgtype.Text{}, "active")
 
 	for _, email := range []string{"jo@example.com", "JO@example.COM", " jo@example.com "} {
-		if id, err := s.Authenticate(ctx, email, password); err != nil || id != active {
+		if id, err := signsIn(ctx, s, email, password); err != nil || id != active {
 			t.Errorf("%q: %v, %v; want %v", email, id, err, active)
 		}
 	}
@@ -370,7 +377,7 @@ func TestAuthenticate(t *testing.T) {
 		{"nopassword@example.com", "correct horse battery staple"},
 		{"nopassword@example.com", ""},
 	} {
-		if id, err := s.Authenticate(ctx, c.email, secret.New(c.password)); !errors.Is(err, ErrInvalidCredentials) ||
+		if id, err := signsIn(ctx, s, c.email, secret.New(c.password)); !errors.Is(err, ErrInvalidCredentials) ||
 			id != (ids.UUID{}) {
 			t.Errorf("%q with %q: %v, %v; want ErrInvalidCredentials", c.email, c.password, id, err)
 		}
@@ -396,14 +403,14 @@ func TestAuthenticateRehashes(t *testing.T) {
 	}
 	id := addAccount(t, admin, "jo@example.com", pgtype.Text{String: old, Valid: true}, "active")
 
-	if _, err := s.Authenticate(ctx, "jo@example.com", secret.New("a wrong password")); !errors.Is(err,
+	if _, err := signsIn(ctx, s, "jo@example.com", secret.New("a wrong password")); !errors.Is(err,
 		ErrInvalidCredentials) {
 		t.Fatalf("a wrong password: %v", err)
 	}
 	if got := passwordHash(t, admin, id); got != old {
 		t.Fatalf("a wrong password changed the hash to %q", got)
 	}
-	if got, err := s.Authenticate(ctx, "jo@example.com", password); err != nil || got != id {
+	if got, err := signsIn(ctx, s, "jo@example.com", password); err != nil || got != id {
 		t.Fatalf("the right password: %v, %v", got, err)
 	}
 	rehashed := passwordHash(t, admin, id)
@@ -413,7 +420,7 @@ func TestAuthenticateRehashes(t *testing.T) {
 	if match, rehash, err := s.hasher.Verify(ctx, rehashed, password); err != nil || !match || rehash {
 		t.Errorf("the new hash: match %t, rehash %t, error %v", match, rehash, err)
 	}
-	if _, err := s.Authenticate(ctx, "jo@example.com", password); err != nil {
+	if _, err := signsIn(ctx, s, "jo@example.com", password); err != nil {
 		t.Fatal(err)
 	}
 	if got := passwordHash(t, admin, id); got != rehashed {
@@ -449,7 +456,7 @@ func TestAuthenticateMalformedHash(t *testing.T) {
 	t.Parallel()
 	s, admin := setup(t, config.SignupOpen)
 	addAccount(t, admin, "jo@example.com", pgtype.Text{String: "$2a$10$bcrypt", Valid: true}, "active")
-	_, err := s.Authenticate(context.Background(), "jo@example.com", secret.New("correct horse battery staple"))
+	_, err := signsIn(context.Background(), s, "jo@example.com", secret.New("correct horse battery staple"))
 	if !errors.Is(err, errMalformedHash) {
 		t.Errorf("%v, want errMalformedHash", err)
 	}

@@ -47,11 +47,6 @@ import (
 // than the 128 that FR-AUTH-02 AC3 asks for.
 const sessionSecretBytes = 32
 
-// maxUserAgentBytes bounds the user agent that a session keeps, as the audit
-// log bounds its own. A longer one is cut at a character's boundary
-// (audit.ClientText).
-const maxUserAgentBytes = 512
-
 // cleanupBatch is how many ended sessions the session cleanup job deletes in
 // a transaction.
 const cleanupBatch = 1000
@@ -131,7 +126,7 @@ func secretHash(s secret.Value) ([]byte, bool) {
 	return sum[:], true
 }
 
-// Login signs an account in, as Authenticate checks its address and
+// Login signs an account in, as authenticate checks its address and
 // password, and starts a session for it, with client, and the audit entry of
 // the login, in one transaction (startSession). A failed sign-in returns
 // ErrInvalidCredentials, and is recorded in the audit log, in a transaction
@@ -141,7 +136,7 @@ func secretHash(s secret.Value) ([]byte, bool) {
 // If the account's password changes, or the account stops being active,
 // between the check of the password and the start of the session, Login
 // checks the password again, against what the account holds then, at most
-// loginAttempts times in all, so that a sign-in with the old password does
+// passwordAttempts times in all, so that a sign-in with the old password does
 // not outlive the change, and one with the password that the account holds
 // still signs in, as after another sign-in hashed it again (NFR-SEC-03).
 func (s *Service) Login(ctx context.Context, email string, password secret.Value, client Client) (Issued, error) {
@@ -157,18 +152,21 @@ func (s *Service) Login(ctx context.Context, email string, password secret.Value
 		switch {
 		case !errors.Is(err, errCredentialsChanged):
 			return issued, err
-		case attempt == loginAttempts:
+		case attempt == passwordAttempts:
 			return Issued{}, s.loginFailed(ctx, email, id, client)
 		}
 	}
 }
 
-// loginAttempts is how many times Login checks a password at most, when the
-// account's password changes after each check (startSession).
-const loginAttempts = 2
+// passwordAttempts is how many times Login and ChangePassword check a
+// password at most, when the account's password's hash changes after each
+// check (startSession, changePassword).
+const passwordAttempts = 2
 
 // errCredentialsChanged is returned by startSession when the account's
-// password, or whether it can sign in, changed since the sign-in checked it.
+// password, or whether it can sign in, changed since the sign-in checked it,
+// and by changePassword when the password's hash changed since it checked the
+// current password.
 var errCredentialsChanged = errors.New("account: the account changed since its password was checked")
 
 // loginFailed records a failed sign-in with email, whose address belongs to
@@ -225,8 +223,10 @@ func (s *Service) startSession(ctx context.Context, id ids.UUID, hash string, cl
 // insertSession starts a session of the account id in tx.
 func (s *Service) insertSession(ctx context.Context, tx pgx.Tx, id ids.UUID, client Client) (Issued, error) {
 	value, hash := newSecret()
+	// The session keeps as much of the user agent as the audit log does, cut
+	// at a character's boundary.
 	session := Session{ID: ids.New(), UserID: id, IP: client.IP.WithZone(""),
-		UserAgent: audit.ClientText(client.UserAgent, maxUserAgentBytes)}
+		UserAgent: audit.ClientText(client.UserAgent, audit.MaxUserAgentBytes)}
 	var ip *netip.Addr
 	if session.IP.IsValid() {
 		ip = &session.IP
@@ -348,9 +348,19 @@ func (s *Service) RevokeSession(ctx context.Context, userID, id ids.UUID, client
 // RevokeOtherSessions revokes every active session of the account of
 // current but current itself, which client asks for, records each
 // revocation in the audit log, and returns how many it revoked.
+//
+// It first locks the account's row (LockUser), so that it and a change of
+// the password, which updates the row, run one after the other, in the order
+// that they lock it. Each revokes sessions that the other revokes too, and
+// the change then gives its own session a new secret, so that run together
+// each could hold a session's row that the other waits for: a deadlock,
+// which PostgreSQL would end by failing one of them.
 func (s *Service) RevokeOtherSessions(ctx context.Context, current Session, client Client) (int, error) {
 	var n int
 	err := s.db.InTx(ctx, database.Scope{UserID: current.UserID}, func(tx pgx.Tx) error {
+		if err := queries.New(tx).LockUser(ctx, nullUUID(current.UserID)); err != nil {
+			return fmt.Errorf("account: lock the account: %w", err)
+		}
 		var err error
 		n, err = s.revokeOthers(ctx, tx, current, revokedByUser, client)
 		return err
@@ -438,11 +448,33 @@ func (s *Service) rotate(ctx context.Context, tx pgx.Tx, current Session) (Issue
 // current a new secret (Rotate), and records all of that in the audit log,
 // and it returns current with its new secret. It returns ErrNoSession if
 // current has ended meanwhile, and changes nothing then.
+//
+// If the password's hash changes between the check of password and the
+// change, ChangePassword checks password again, against the hash that the
+// account holds then, at most passwordAttempts times in all, so that a
+// password that another sign-in hashed again meanwhile (NFR-SEC-03) is still
+// the account's, and one that another change replaced is not.
 func (s *Service) ChangePassword(ctx context.Context, current Session, password, replacement secret.Value,
 	client Client) (Issued, error) {
 	if err := CheckPassword(replacement); err != nil {
 		return Issued{}, err
 	}
+	for attempt := 1; ; attempt++ {
+		issued, err := s.changePassword(ctx, current, password, replacement, client)
+		switch {
+		case !errors.Is(err, errCredentialsChanged):
+			return issued, err
+		case attempt == passwordAttempts:
+			return Issued{}, s.passwordChangeFailed(ctx, current.UserID, client)
+		}
+	}
+}
+
+// changePassword is one attempt of ChangePassword, which returns
+// errCredentialsChanged, and changes nothing, if the password's hash changed
+// since it checked password against it.
+func (s *Service) changePassword(ctx context.Context, current Session, password, replacement secret.Value,
+	client Client) (Issued, error) {
 	var old pgtype.Text
 	err := s.db.InTx(ctx, database.Scope{UserID: current.UserID}, func(tx pgx.Tx) error {
 		var err error
@@ -465,12 +497,7 @@ func (s *Service) ChangePassword(ctx context.Context, current Session, password,
 		return Issued{}, err
 	}
 	if !match || !old.Valid {
-		if err := s.db.InTx(ctx, database.Scope{UserID: current.UserID}, func(tx pgx.Tx) error {
-			return recordPasswordChange(ctx, tx, current.UserID, audit.ResultFailure, client)
-		}); err != nil {
-			return Issued{}, err
-		}
-		return Issued{}, ErrWrongPassword
+		return Issued{}, s.passwordChangeFailed(ctx, current.UserID, client)
 	}
 	replaced, err := s.hasher.Hash(ctx, replacement)
 	if err != nil {
@@ -484,8 +511,10 @@ func (s *Service) ChangePassword(ctx context.Context, current Session, password,
 			return fmt.Errorf("account: replace the password's hash: %w", err)
 		}
 		if n == 0 {
-			// The password changed since it was checked, by another request.
-			return ErrWrongPassword
+			// The hash changed since password was checked against it: another
+			// sign-in hashed the same password again, or another request
+			// changed it.
+			return errCredentialsChanged
 		}
 		if _, err := s.revokeOthers(ctx, tx, current, revokedByPasswordChange, client); err != nil {
 			return err
@@ -499,6 +528,19 @@ func (s *Service) ChangePassword(ctx context.Context, current Session, password,
 		return Issued{}, err
 	}
 	return issued, nil
+}
+
+// passwordChangeFailed records that the user userID failed to change the
+// account's password, because the current password given is not the
+// account's, and returns ErrWrongPassword, or the error that recording it
+// failed with.
+func (s *Service) passwordChangeFailed(ctx context.Context, userID ids.UUID, client Client) error {
+	if err := s.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
+		return recordPasswordChange(ctx, tx, userID, audit.ResultFailure, client)
+	}); err != nil {
+		return err
+	}
+	return ErrWrongPassword
 }
 
 // recordPasswordChange records an attempt of the user userID to change the

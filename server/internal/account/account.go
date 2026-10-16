@@ -17,7 +17,7 @@
 // a 32-byte key, and these parameters (RFC 9106 §4, the second recommended
 // setting): memory 64 MiB (m=65536), 3 passes (t=3), and parallelism 4
 // (p=4). A hash records its parameters, in the PHC string format, so that
-// when a release changes them, Authenticate replaces a hash made with the old
+// when a release changes them, signing in replaces a hash made with the old
 // ones at the account's next sign-in, once the password has matched it.
 //
 // Signing in starts a session (session.go), which the server finds by its
@@ -67,8 +67,8 @@ var (
 	ErrInviteRequired = errors.New("account: signup needs an invitation")
 )
 
-// ErrInvalidCredentials is returned by Authenticate when the address belongs
-// to no active account, or the password is not the account's.
+// ErrInvalidCredentials is returned by Login when the address belongs to no
+// active account, or the password is not the account's.
 var ErrInvalidCredentials = errors.New("account: the email address or the password is wrong")
 
 // DB runs a transaction of the application login, as *database.DB does.
@@ -94,7 +94,7 @@ type Service struct {
 	idle, lifetime time.Duration
 	hasher         *Hasher
 	// decoy is a hash with the current parameters that no password matches
-	// (Hasher.decoy), which Authenticate checks a password against when the
+	// (Hasher.decoy), which signing in checks a password against when the
 	// address has no account, so that it takes as long as when it has one.
 	decoy string
 }
@@ -304,37 +304,33 @@ func isControl(r rune) bool {
 	return unicode.IsControl(r) || unicode.In(r, unicode.Bidi_Control, unicode.Zl, unicode.Zp)
 }
 
-// Authenticate returns the ID of the active account that the email address
-// belongs to, if password is its password, and ErrInvalidCredentials if the
-// address belongs to no account, to one that is not active, as a suspended
-// one or one whose deletion is pending (FR-GDPR-02), or to one without a
-// password, or if the password is another. It takes as long whichever of
-// these it is, because it checks the password against a decoy hash, with the
-// current parameters, when it has no hash to check it against. The exception
-// is an account whose hash was made with other parameters, against which a
-// wrong password takes as long as those parameters take: after a release
-// changes them, the time of a failed sign-in tells such an account from an
-// address without one, until the account's next sign-in replaces its hash.
-// The address is looked up in its canonical form (canonicalEmail), and one
-// that registration would refuse (checkEmail), which no account has, such as
-// one with a NUL character, is not looked up at all.
+// authenticate checks a sign-in, for Login. It returns as id the ID of the
+// active account that the email address belongs to, if password is its
+// password, and ErrInvalidCredentials if the address belongs to no account,
+// to one that is not active, as a suspended one or one whose deletion is
+// pending (FR-GDPR-02), or to one without a password, or if the password is
+// another. It takes as long whichever of these it is, because it checks the
+// password against a decoy hash, with the current parameters, when it has no
+// hash to check it against. The exception is an account whose hash was made
+// with other parameters, against which a wrong password takes as long as
+// those parameters take: after a release changes them, the time of a failed
+// sign-in tells such an account from an address without one, until the
+// account's next sign-in replaces its hash. The address is looked up in its
+// canonical form (canonicalEmail), and one that registration would refuse
+// (checkEmail), which no account has, such as one with a NUL character, is
+// not looked up at all.
 //
 // When the password matches a hash made with other parameters than the
-// current ones, Authenticate hashes the password again and replaces the
+// current ones, authenticate hashes the password again and replaces the
 // account's hash (NFR-SEC-03), unless the account's password changed in the
-// meantime. Login checks the password as it does (authenticate), and does
-// not call it.
-func (s *Service) Authenticate(ctx context.Context, email string, password secret.Value) (ids.UUID, error) {
-	id, _, _, err := s.authenticate(ctx, email, password)
-	return id, err
-}
-
-// authenticate is Authenticate, and also returns the ID of the account that
-// the address belongs to, if one does, whether or not it signs in, which the
-// audit log names as the subject of a failed sign-in, and, when it signs in,
-// the hash that the account holds now, as far as it knows: the one that the
-// password matched, or the one that replaced it. Login starts a session only
-// while the account still holds that hash (startSession).
+// meantime.
+//
+// It also returns as account the ID of the account that the address belongs
+// to, if one does, whether or not it signs in, which the audit log names as
+// the subject of a failed sign-in, and, when it signs in, the hash that the
+// account holds now, as far as it knows: the one that the password matched,
+// or the one that replaced it. Login starts a session only while the account
+// still holds that hash (startSession).
 func (s *Service) authenticate(ctx context.Context, email string, password secret.Value) (id, account ids.UUID,
 	hash string, err error) {
 	var found bool
