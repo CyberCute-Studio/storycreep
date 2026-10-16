@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
@@ -194,6 +195,190 @@ func TestTenantTablesCheckFindsOmissions(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("problems =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// tablePrivileges lists, for each of storycreep_app and
+// storycreep_maintenance and each of the tables, which privileges the role
+// has on the table: on the whole table or, for those that PostgreSQL grants
+// on columns too, on any of its columns, granted to the role, to a role whose
+// privileges it inherits, or to PUBLIC, or given by a predefined role such as
+// pg_write_all_data.
+func tablePrivileges(t *testing.T, conn *pgx.Conn, tables []string) []string {
+	t.Helper()
+	rows, err := conn.Query(context.Background(), `
+		SELECT format('%s on %s: %s', r.rolname, c.relname, array_to_string(ARRAY(
+			SELECT p.name FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'])
+				WITH ORDINALITY p (name, n)
+			WHERE CASE WHEN p.name IN ('DELETE', 'TRUNCATE', 'TRIGGER') THEN has_table_privilege(r.oid, c.oid, p.name)
+				ELSE has_any_column_privilege(r.oid, c.oid, p.name) END
+			ORDER BY p.n), ', '))
+		FROM pg_roles r, pg_class c
+		WHERE r.rolname IN ('storycreep_app', 'storycreep_maintenance')
+			AND c.relnamespace = 'public'::regnamespace AND c.relname = ANY ($1)
+		ORDER BY r.rolname, c.relname`, tables)
+	var got []string
+	if err == nil {
+		got, err = pgx.CollectRows(rows, pgx.RowTo[string])
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+// TestTenancyPrivileges pins what the server's roles may do with the tables
+// of the tenancy migration, 00004, which the isolation harness does not: it
+// expects refused whatever operations the grants refuse. The application may
+// delete neither a user nor a workspace, whose cascades reach every
+// workspace's rows past row-level security, and may neither change nor
+// delete an audit entry (FR-TEN-07 AC1); storycreep_maintenance may only read
+// the tables; and neither role may truncate one, which row-level security
+// does not hold either. Only these grants keep the logins from that, which is
+// why the server refuses a login with pg_write_all_data (checkLogin). A
+// migration that grants a job more, as the jobs that delete rows will need,
+// changes the test, and says why with its grant. The test then grants more on
+// a table and on a column, to check that it finds them.
+//
+// Verifies: NFR-SEC-01, FR-TEN-07/AC1
+func TestTenancyPrivileges(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	tables := []string{"api_token", "audit_entry", "invite", "membership", "project", "project_grant", "session",
+		"user", "workspace"}
+	want := []string{
+		"storycreep_app on api_token: SELECT, INSERT, UPDATE, DELETE",
+		"storycreep_app on audit_entry: SELECT, INSERT",
+		"storycreep_app on invite: SELECT, INSERT, UPDATE, DELETE",
+		"storycreep_app on membership: SELECT, INSERT, UPDATE, DELETE",
+		"storycreep_app on project: SELECT, INSERT, UPDATE, DELETE",
+		"storycreep_app on project_grant: SELECT, INSERT, UPDATE, DELETE",
+		"storycreep_app on session: SELECT, INSERT, UPDATE, DELETE",
+		"storycreep_app on user: SELECT, INSERT, UPDATE",
+		"storycreep_app on workspace: SELECT, INSERT, UPDATE",
+	}
+	for _, table := range tables {
+		want = append(want, "storycreep_maintenance on "+table+": SELECT")
+	}
+	if got := tablePrivileges(t, admin, tables); !slices.Equal(got, want) {
+		t.Errorf("privileges =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+
+	if _, err := admin.Exec(ctx, `
+		GRANT DELETE ON workspace TO storycreep_app;
+		GRANT UPDATE (result) ON audit_entry TO storycreep_app;
+		GRANT TRUNCATE ON project TO storycreep_app;
+		GRANT INSERT (id) ON session TO storycreep_maintenance`); err != nil {
+		t.Fatal(err)
+	}
+	var changed []string
+	for _, p := range tablePrivileges(t, admin, tables) {
+		if !slices.Contains(want, p) {
+			changed = append(changed, p)
+		}
+	}
+	wantChanged := []string{
+		"storycreep_app on audit_entry: SELECT, INSERT, UPDATE",
+		"storycreep_app on project: SELECT, INSERT, UPDATE, DELETE, TRUNCATE",
+		"storycreep_app on workspace: SELECT, INSERT, UPDATE, DELETE",
+		"storycreep_maintenance on session: SELECT, INSERT",
+	}
+	if !slices.Equal(changed, wantChanged) {
+		t.Errorf("after more grants, the check finds\n%s\nwant\n%s", strings.Join(changed, "\n"),
+			strings.Join(wantChanged, "\n"))
+	}
+}
+
+// errRolledBack rolls back a transaction whose statements worked.
+var errRolledBack = errors.New("rolled back")
+
+// crossWorkspaceReferences adds, in transactions of workspace A that it rolls
+// back, rows of A that refer through each foreign key between tenant tables
+// to a row of workspace B, and returns the keys through which it could, by
+// the table and column that refers. It first adds each row with a reference
+// to A's row instead, and fails the test unless that works, so that a
+// statement that fails for another reason does not pass for one that the key
+// refuses.
+func crossWorkspaceReferences(t *testing.T, f *isolationtest.Fixture) []string {
+	t.Helper()
+	ctx := context.Background()
+	a := f.A
+	const grant = "INSERT INTO project_grant (id, workspace_id, membership_id, project_id, role) " +
+		"VALUES ($1, $2, $3, $4, 'viewer')"
+	const token = "INSERT INTO api_token (id, workspace_id, user_id, project_id, name, token_hash, scopes) " +
+		"VALUES ($1, $2, $3, $4, 'isolation', $5, ARRAY['project:read'])"
+	var reached []string
+	for _, c := range []struct {
+		key string
+		sql string
+		// args are the arguments of a new row of A that refers to w's row.
+		args func(w *isolationtest.Workspace) []any
+	}{
+		{"project_grant.membership_id", grant, func(w *isolationtest.Workspace) []any {
+			return []any{ids.New(), a.ID, w.Rows["membership"], a.Rows["project"]}
+		}},
+		{"project_grant.project_id", grant, func(w *isolationtest.Workspace) []any {
+			return []any{ids.New(), a.ID, a.Rows["membership"], w.Rows["project"]}
+		}},
+		{"api_token.project_id", token, func(w *isolationtest.Workspace) []any {
+			return []any{ids.New(), a.ID, a.UserID, w.Rows["project"], isolationtest.TokenHash()}
+		}},
+	} {
+		for _, w := range []*isolationtest.Workspace{a, f.B} {
+			err := f.DB.InTx(ctx, a.Scope(), func(tx pgx.Tx) error {
+				if _, err := tx.Exec(ctx, c.sql, c.args(w)...); err != nil {
+					return err
+				}
+				return errRolledBack
+			})
+			var pgErr *pgconn.PgError
+			switch {
+			case w == a:
+				if !errors.Is(err, errRolledBack) {
+					t.Errorf("%s: a row that refers to its own workspace's: %v", c.key, err)
+				}
+			case errors.Is(err, errRolledBack):
+				reached = append(reached, c.key)
+			case !errors.As(err, &pgErr) || pgErr.Code != "23503":
+				t.Errorf("%s: a row that refers to another workspace's: %v, want a foreign key violation", c.key, err)
+			}
+		}
+	}
+	return reached
+}
+
+// TestWorkspaceScopedForeignKeys checks that a row cannot refer to a row of
+// another workspace through the foreign keys between tenant tables:
+// project_grant's to membership and to project, and api_token's to project,
+// each of which includes workspace_id (00004). PostgreSQL checks foreign keys
+// past row-level security, so a key on the ID alone would let a transaction of
+// workspace A refer to B's rows, and find out whether an ID exists in B. The
+// test then weakens each key to one on the ID alone, to check that it finds
+// them.
+//
+// Verifies: NFR-SEC-01
+func TestWorkspaceScopedForeignKeys(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := isolationtest.New(t, dbtest.New(t), isolationtest.Tables)
+	if got := crossWorkspaceReferences(t, f); len(got) > 0 {
+		t.Errorf("rows of one workspace refer to another's through %v", got)
+	}
+
+	if _, err := f.Admin().Exec(ctx, `
+		ALTER TABLE project_grant DROP CONSTRAINT project_grant_workspace_id_membership_id_fkey,
+			DROP CONSTRAINT project_grant_workspace_id_project_id_fkey,
+			ADD FOREIGN KEY (membership_id) REFERENCES membership ON DELETE CASCADE,
+			ADD FOREIGN KEY (project_id) REFERENCES project ON DELETE CASCADE;
+		ALTER TABLE api_token DROP CONSTRAINT api_token_workspace_id_project_id_fkey,
+			ADD FOREIGN KEY (project_id) REFERENCES project ON DELETE CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"project_grant.membership_id", "project_grant.project_id", "api_token.project_id"}
+	if got := crossWorkspaceReferences(t, f); !slices.Equal(got, want) {
+		t.Errorf("with keys on the ID alone, rows refer to another workspace's through %v, want %v", got, want)
 	}
 }
 
@@ -438,10 +623,13 @@ func (r *recorder) Errorf(format string, args ...any) {
 
 // TestIsolationHarnessFindsLeaks runs the isolation harness on tables that
 // row-level security does not hold, one without it, one whose policy lets
-// every row through, and one whose policy for updates lets a row move into
-// another workspace, and on operations that fail or find nothing on their own
-// workspace's rows, so that TestTenantIsolation cannot pass because the
-// harness stopped working.
+// every row through, one whose policy for updates lets a row move into
+// another workspace, and two with a policy for reads that holds, behind which
+// a policy for deletes lets every row through on one, and a policy for
+// updates lets every row into the transaction's own workspace on the other,
+// and on operations that fail or find nothing on their own workspace's rows,
+// so that TestTenantIsolation cannot pass because the harness stopped
+// working.
 //
 // Verifies: NFR-SEC-01
 func TestIsolationHarnessFindsLeaks(t *testing.T) {
@@ -459,7 +647,19 @@ func TestIsolationHarnessFindsLeaks(t *testing.T) {
 			USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);
 		CREATE POLICY moves ON loose_check FOR UPDATE TO storycreep_app
 			USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid) WITH CHECK (true);
-		GRANT SELECT, INSERT, UPDATE, DELETE ON leaky, open_policy, loose_check TO storycreep_app`); err != nil {
+		CREATE TABLE loose_delete (id uuid PRIMARY KEY, workspace_id uuid NOT NULL);
+		ALTER TABLE loose_delete ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+		CREATE POLICY workspace_isolation ON loose_delete TO storycreep_app
+			USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);
+		CREATE POLICY deletes ON loose_delete FOR DELETE TO storycreep_app USING (true);
+		CREATE TABLE loose_update (id uuid PRIMARY KEY, workspace_id uuid NOT NULL);
+		ALTER TABLE loose_update ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+		CREATE POLICY workspace_isolation ON loose_update TO storycreep_app
+			USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);
+		CREATE POLICY updates ON loose_update FOR UPDATE TO storycreep_app
+			USING (true) WITH CHECK (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);
+		GRANT SELECT, INSERT, UPDATE, DELETE ON leaky, open_policy, loose_check, loose_delete, loose_update
+			TO storycreep_app`); err != nil {
 		t.Fatal(err)
 	}
 	insert := func(table string) isolationtest.Table {
@@ -470,7 +670,8 @@ func TestIsolationHarnessFindsLeaks(t *testing.T) {
 					Args: []any{id, w.ID}}, nil
 			}}
 	}
-	f := isolationtest.New(t, d, []isolationtest.Table{insert("leaky"), insert("open_policy"), insert("loose_check")})
+	f := isolationtest.New(t, d, []isolationtest.Table{insert("leaky"), insert("open_policy"), insert("loose_check"),
+		insert("loose_delete"), insert("loose_update")})
 	rec := &recorder{TB: t}
 	f.CheckTables(rec)
 	f.Check(rec, isolationtest.Op{Name: "failing", Run: func(context.Context, pgx.Tx, *isolationtest.Workspace) ([]ids.UUID, error) {
@@ -485,6 +686,8 @@ func TestIsolationHarnessFindsLeaks(t *testing.T) {
 		want = append(want,
 			table+": read by workspace: from another workspace's transaction, reaches 1 of the workspace's rows",
 			table+": read without a filter: from another workspace's transaction, reaches 1 of the workspace's rows",
+			table+": update without a filter: from another workspace's transaction, reaches 1 of the workspace's rows",
+			table+": delete without a filter: from another workspace's transaction, reaches 1 of the workspace's rows",
 			table+": update by workspace: from another workspace's transaction, reaches 1 of the workspace's rows",
 			table+": delete by workspace: from another workspace's transaction, reaches 1 of the workspace's rows",
 			table+": delete by workspace: from another workspace's transaction, changes the workspace's rows",
@@ -496,11 +699,15 @@ func TestIsolationHarnessFindsLeaks(t *testing.T) {
 		)
 	}
 	// loose_check holds every operation but the move, which only the check
-	// of new rows refuses.
+	// of new rows refuses. loose_delete and loose_update hold every operation
+	// that reads a column, which their policy for reads holds too, and only
+	// the delete and the update without a filter find their looser policy.
 	want = append(want,
 		"loose_check: move into a workspace: from another workspace's transaction: <nil>, want row-level security "+
 			"to refuse it",
 		"loose_check: move into a workspace: from another workspace's transaction, changes the workspace's rows",
+		"loose_delete: delete without a filter: from another workspace's transaction, reaches 1 of the workspace's rows",
+		"loose_update: update without a filter: from another workspace's transaction, reaches 1 of the workspace's rows",
 		"failing: fails on its own workspace's rows: no such thing",
 		"empty: finds none of its own workspace's rows, so it shows nothing about another's",
 	)
