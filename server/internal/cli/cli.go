@@ -55,6 +55,7 @@ type command struct {
 // invocation is what a command runs with.
 type invocation struct {
 	args           []string
+	stdin          io.Reader
 	stdout, stderr io.Writer
 	// flags are the parsed flags of the command.
 	flags *flag.FlagSet
@@ -71,6 +72,8 @@ func (e usageError) Error() string { return e.msg }
 var commands = []*command{
 	serve,
 	migrate,
+	createUser,
+	grantRole,
 	validateConfig,
 	healthcheck,
 }
@@ -84,10 +87,11 @@ func lookup(name string) *command {
 	return nil
 }
 
-// Run runs the command line args, without the program name, and returns the
-// exit status. env is the environment the configuration is read from, as
-// config.Options.Env describes; the zero value is the process environment.
-func Run(ctx context.Context, args []string, stdout, stderr io.Writer, env config.Environment) int {
+// Run runs the command line args, without the program name, with standard
+// input, output, and error, and returns the exit status. env is the
+// environment the configuration is read from, as config.Options.Env
+// describes; the zero value is the process environment.
+func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, env config.Environment) int {
 	if len(args) == 0 {
 		printUsage(stderr)
 		return ExitUsage
@@ -106,7 +110,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, env confi
 			}
 			return usageFailure(stderr, "", fmt.Sprintf("unknown command %q", name))
 		}
-		return c.execute(ctx, args[1:], stdout, stderr, env)
+		return c.execute(ctx, args[1:], stdin, stdout, stderr, env)
 	}
 }
 
@@ -159,7 +163,8 @@ func (c *command) flagSet() *flag.FlagSet {
 	return fs
 }
 
-func (c *command) execute(ctx context.Context, args []string, stdout, stderr io.Writer, env config.Environment) int {
+func (c *command) execute(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer,
+	env config.Environment) int {
 	fs := c.flagSet()
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -167,6 +172,16 @@ func (c *command) execute(ctx context.Context, args []string, stdout, stderr io.
 			return ExitOK
 		}
 		return usageFailure(stderr, c.name, err.Error())
+	}
+	// Parsing stops at the first argument, so a flag after the arguments
+	// would be taken for one of them, and the command would refuse it with a
+	// message that does not say why.
+	for _, a := range fs.Args() {
+		name, _, _ := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if strings.HasPrefix(a, "-") && name != "" && fs.Lookup(name) != nil {
+			return usageFailure(stderr, c.name, fmt.Sprintf("the flag %s comes after the arguments; put the flags "+
+				"first", a))
+		}
 	}
 	if c.args == "" && fs.NArg() > 0 {
 		return usageFailure(stderr, c.name, fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
@@ -180,7 +195,7 @@ func (c *command) execute(ctx context.Context, args []string, stdout, stderr io.
 			return usageFailure(stderr, c.name, "the -config path is empty")
 		}
 	}
-	inv := &invocation{args: fs.Args(), stdout: stdout, stderr: stderr, flags: fs}
+	inv := &invocation{args: fs.Args(), stdin: stdin, stdout: stdout, stderr: stderr, flags: fs}
 
 	if c.loadsConfig {
 		cfg, err := config.Load(config.Options{File: configFile, Env: env})
@@ -194,8 +209,16 @@ func (c *command) execute(ctx context.Context, args []string, stdout, stderr io.
 
 	if err := c.run(ctx, inv); err != nil {
 		var uerr usageError
-		if errors.As(err, &uerr) {
+		var cerr *config.Error
+		switch {
+		case errors.As(err, &uerr):
 			return usageFailure(stderr, c.name, uerr.msg)
+		case errors.As(err, &cerr):
+			// A command that checks the configuration further, as
+			// validate-config does, reports what it refuses as the frame
+			// reports an invalid configuration.
+			printConfigError(stderr, c.name, err)
+			return ExitFailure
 		}
 		fmt.Fprintf(stderr, "storycreep %s: %v\n", c.name, err)
 		return ExitFailure

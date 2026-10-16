@@ -66,6 +66,9 @@ var (
 	ErrInsufficientRole = errors.New("workspace: the user's role in the workspace does not allow it")
 	// ErrSlugTaken is returned for a slug that another workspace has.
 	ErrSlugTaken = errors.New("workspace: another workspace has the slug")
+	// ErrLastOwner is returned for a change that would leave a workspace
+	// without an owner whose account is active (FR-TEN-02 AC2).
+	ErrLastOwner = errors.New("workspace: the change would leave the workspace without an owner")
 )
 
 // SlugReason says why a slug is not valid.
@@ -225,6 +228,38 @@ type Patch struct {
 // -3, and so on, that no workspace has and that is not reserved.
 func (s *Service) Create(ctx context.Context, userID ids.UUID, in Settings, client audit.Client) (Workspace,
 	error) {
+	d, err := s.Check(ctx, in)
+	if err != nil {
+		return Workspace{}, err
+	}
+	var w Workspace
+	err = s.db.InTx(ctx, database.Scope{WorkspaceID: d.ID(), UserID: userID}, func(tx pgx.Tx) error {
+		var err error
+		w, err = s.Insert(ctx, tx, d, userID, false, client)
+		return err
+	})
+	if err != nil {
+		return Workspace{}, err
+	}
+	return w, nil
+}
+
+// Draft is a workspace to create, whose settings Check has checked.
+type Draft struct {
+	w     Workspace
+	slugs iter.Seq[string]
+}
+
+// ID returns the ID of the workspace to create, which the transaction that
+// creates it must be scoped to (Insert).
+func (d Draft) ID() ids.UUID {
+	return d.w.ID
+}
+
+// Check checks the settings in as Create does, and returns the workspace to
+// create, with a new ID. It returns input.FieldErrors if the name or the
+// default locale is not valid, and then a *SlugError if the slug is not.
+func (s *Service) Check(ctx context.Context, in Settings) (Draft, error) {
 	var errs input.FieldErrors
 	name := strings.TrimSpace(in.Name)
 	if msg := input.CheckName(name, MaxNameLength); msg != "" {
@@ -238,25 +273,27 @@ func (s *Service) Create(ctx context.Context, userID ids.UUID, in Settings, clie
 		errs = append(errs, input.FieldError{Field: "default_locale", Message: localeProblem})
 	}
 	if len(errs) > 0 {
-		return Workspace{}, errs
+		return Draft{}, errs
 	}
 	slugs := candidates(name)
 	if in.Slug != "" {
 		if err := CheckSlug(in.Slug); err != nil {
-			return Workspace{}, err
+			return Draft{}, err
 		}
 		slugs = slices.Values([]string{in.Slug})
 	}
-	w := Workspace{ID: ids.New(), Name: name, DefaultLocale: locale}
-	err := s.db.InTx(ctx, database.Scope{WorkspaceID: w.ID, UserID: userID}, func(tx pgx.Tx) error {
-		var err error
-		w, err = s.insert(ctx, tx, w, userID, slugs, false, client)
-		return err
-	})
-	if err != nil {
-		return Workspace{}, err
-	}
-	return w, nil
+	return Draft{w: Workspace{ID: ids.New(), Name: name, DefaultLocale: locale}, slugs: slugs}, nil
+}
+
+// Insert creates the workspace d in tx, a transaction of d's workspace, with
+// the user userID as its owner, which client asks for, and records that in
+// the audit log, personal saying whether it is the user's personal
+// workspace, as the one that first-run setup creates is (FR-ADMIN-02). It
+// returns ErrSlugTaken if another workspace has the slug, or every slug
+// derived from the name.
+func (s *Service) Insert(ctx context.Context, tx pgx.Tx, d Draft, userID ids.UUID, personal bool,
+	client audit.Client) (Workspace, error) {
+	return s.insert(ctx, tx, d.w, userID, d.slugs, personal, client)
 }
 
 // EnsurePersonal gives the account userID its personal workspace, at the
@@ -615,6 +652,91 @@ func (s *Service) workspace(id pgtype.UUID, name, slug string, doc []byte,
 		}
 	}
 	return w
+}
+
+// BySlug returns the ID of the workspace with the slug, or ErrNotFound if
+// there is none, for the operator, who names a workspace by its slug
+// (storycreep grant-role). It resolves no role, so only the operator's
+// commands may call it.
+func (s *Service) BySlug(ctx context.Context, slug string) (ids.UUID, error) {
+	var id ids.UUID
+	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		row, err := queries.New(tx).WorkspaceBySlug(ctx, slug)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("workspace: read the workspace: %w", err)
+		}
+		id = row.Bytes
+		return nil
+	})
+	return id, err
+}
+
+// Grant gives the user userID the role r in the workspace id, for the
+// operator's storycreep grant-role (FR-ADMIN-06), whoever the operator is,
+// so only the operator's commands may call it: it makes the user a member
+// with the role, or changes the role of their membership to it, and records
+// that in the audit log, without an actor. It returns the role that the
+// membership had before, or role.None if the user was not a member, and
+// leaves a membership that has r already as it is. It returns ErrNotFound if
+// the workspace does not exist, and ErrLastOwner if r is not owner and the
+// user is the workspace's last owner whose account is active. The caller
+// checks that the account is active, and that r is a role of a membership.
+func (s *Service) Grant(ctx context.Context, id, userID ids.UUID, r role.Role) (role.Role, error) {
+	previous := role.None
+	err := s.db.InTx(ctx, database.Scope{WorkspaceID: id}, func(tx pgx.Tx) error {
+		q := queries.New(tx)
+		// The lock serializes the grants of a workspace, so that two cannot
+		// each demote one of its last two owners.
+		_, err := q.LockWorkspace(ctx, nullUUID(id))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("workspace: read the workspace: %w", err)
+		}
+		m, err := q.LockMembership(ctx, queries.LockMembershipParams{WorkspaceID: nullUUID(id),
+			UserID: nullUUID(userID)})
+		entry := audit.Entry{WorkspaceID: id, Result: audit.ResultSuccess, Metadata: map[string]any{"role": r}}
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			mid := ids.New()
+			if err := q.InsertMembership(ctx, queries.InsertMembershipParams{ID: nullUUID(mid),
+				WorkspaceID: nullUUID(id), UserID: nullUUID(userID), Role: string(r)}); err != nil {
+				return fmt.Errorf("workspace: add the membership: %w", err)
+			}
+			entry.Action, entry.SubjectID = audit.ActionMembershipCreate, mid
+		case err != nil:
+			return fmt.Errorf("workspace: read the membership: %w", err)
+		case m.Role == string(r):
+			previous = r
+			return nil
+		default:
+			previous = role.Role(m.Role)
+			if previous == role.Owner {
+				owners, err := q.CountOwners(ctx, nullUUID(id))
+				if err != nil {
+					return fmt.Errorf("workspace: count the owners: %w", err)
+				}
+				if owners <= 1 {
+					return ErrLastOwner
+				}
+			}
+			if err := q.UpdateMembershipRole(ctx, queries.UpdateMembershipRoleParams{Role: string(r),
+				WorkspaceID: nullUUID(id), ID: m.ID}); err != nil {
+				return fmt.Errorf("workspace: change the membership's role: %w", err)
+			}
+			entry.Action, entry.SubjectID = audit.ActionMembershipRoleChange, m.ID.Bytes
+			entry.Metadata["previous_role"] = previous
+		}
+		return audit.Record(ctx, tx, entry)
+	})
+	if err != nil {
+		return "", err
+	}
+	return previous, nil
 }
 
 // nullUUID returns id as a uuid column, null if id is zero.

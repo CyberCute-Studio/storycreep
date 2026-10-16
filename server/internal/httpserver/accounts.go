@@ -3,7 +3,6 @@ package httpserver
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -62,14 +61,16 @@ func registerAccounts(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 		Path:        "/api/v1/auth/register",
 		Summary:     "Register an account",
 		Description: "Creates an account with an email address, a display name, and a password, if the instance's " +
-			"signup policy, STORYCREEP_SIGNUP, lets anyone register. Under closed the answer is 403 signup_closed, " +
-			"and under invite 403 invite_required, because only an invitation creates an account then; either " +
-			"comes whatever the request holds. An email address or a display name that its field does not allow " +
-			"is answered with 422 validation_failed. The password must have at least 12 characters, counted as " +
-			"Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, " +
-			"compared without regard to case, or the answer is 422 weak_password. Otherwise the answer is 202 " +
-			"without a body, whether or not the address has an account already, which then stays as it was, so " +
-			"that the answer does not tell whether an address has an account." + authLimitDoc,
+			"signup policy lets anyone register: the policy that STORYCREEP_SIGNUP sets, or else the one that " +
+			"first-run setup chose. Until setup has completed, the answer is 403 setup_required, whatever the " +
+			"policy. Under closed the answer is 403 signup_closed, and under invite 403 invite_required, because " +
+			"only an invitation creates an account then; each comes whatever the request holds. An email " +
+			"address or a display name that its field does not allow is answered with 422 validation_failed. " +
+			"The password must have at least 12 characters, counted as Unicode code points once it is in NFKC, " +
+			"and must not be one of the 10,000 most common passwords, compared without regard to case, or the " +
+			"answer is 422 weak_password. Otherwise the answer is 202 without a body, whether or not the address " +
+			"has an account already, which then stays as it was, so that the answer does not tell whether an " +
+			"address has an account." + authLimitDoc,
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusAccepted,
 		// The policy is checked before the body is read, so that a
@@ -101,6 +102,8 @@ func accountError(err error) error {
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, account.ErrSetupRequired):
+		return api.NewError(api.CodeSetupRequired)
 	case errors.Is(err, account.ErrSignupClosed):
 		return api.NewError(api.CodeSignupClosed)
 	case errors.Is(err, account.ErrInviteRequired):
@@ -117,14 +120,12 @@ func accountError(err error) error {
 // the password at location, such as body.password.
 func weakPasswordError(weak *account.PasswordError, location string) *api.Error {
 	msg := i18n.Message{Key: i18n.K("error.weak_password.common")}
-	problem := "is one of the most common passwords"
 	if weak.Reason == account.PasswordTooShort {
 		msg = i18n.Message{Key: i18n.K("error.weak_password.too_short"),
 			Args: i18n.Args{"min": account.MinPasswordLength}}
-		problem = fmt.Sprintf("has fewer than %d characters", account.MinPasswordLength)
 	}
 	return &api.Error{Code: api.CodeWeakPassword, Message: msg, Details: map[string]any{
 		"reason": weak.Reason,
-		"errors": []api.Problem{{Location: location, Message: problem}},
+		"errors": []api.Problem{{Location: location, Message: weak.Problem()}},
 	}}
 }

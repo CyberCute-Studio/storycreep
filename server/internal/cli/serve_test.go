@@ -82,7 +82,8 @@ func TestServe(t *testing.T) {
 			var stdout, stderr syncBuffer
 			done := make(chan int, 1)
 			go func() {
-				done <- Run(ctx, append([]string{"serve"}, tt.args...), &stdout, &stderr, config.MapEnvironment(env))
+				done <- Run(ctx, append([]string{"serve"}, tt.args...), strings.NewReader(""), &stdout, &stderr,
+					config.MapEnvironment(env))
 			}()
 
 			for deadline := time.Now().Add(time.Minute); ; time.Sleep(20 * time.Millisecond) {

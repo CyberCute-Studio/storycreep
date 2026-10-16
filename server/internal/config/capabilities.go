@@ -8,7 +8,9 @@ type Capabilities struct {
 	// PublicSite serves the marketing pages and documentation
 	// (STORYCREEP_PUBLIC_SITE).
 	PublicSite bool
-	// Signup is who can register an account (STORYCREEP_SIGNUP).
+	// Signup is who can register an account (STORYCREEP_SIGNUP): a policy,
+	// or SignupSetup, the policy that first-run setup chose (PRD
+	// FR-ADMIN-02), which Resolve finds.
 	Signup SignupPolicy
 	// EnforceEntitlements applies plan limits. Without it, every workspace
 	// has the unlimited plan.
@@ -40,7 +42,28 @@ const (
 	SignupClosed SignupPolicy = "closed"
 	SignupInvite SignupPolicy = "invite"
 	SignupOpen   SignupPolicy = "open"
+	// SignupSetup is the Signup capability of a self-hosted instance whose
+	// configuration sets no policy: the policy that first-run setup chose
+	// applies (PRD FR-ADMIN-02). It is not a policy itself, and
+	// STORYCREEP_SIGNUP does not take it.
+	SignupSetup SignupPolicy = "setup"
 )
+
+// Resolve returns the signup policy that applies under the Signup
+// capability p, when first-run setup chose the policy chosen, or "" if it
+// chose none: p itself, if it is a policy, or else, if it is SignupSetup,
+// chosen. Anything else, such as a chosen policy that is none, resolves to
+// SignupClosed, so that a mistake lets nobody in.
+func (p SignupPolicy) Resolve(chosen SignupPolicy) SignupPolicy {
+	if p == SignupSetup {
+		p = chosen
+	}
+	switch p {
+	case SignupInvite, SignupOpen:
+		return p
+	}
+	return SignupClosed
+}
 
 // BlobDriver is a blob storage backend.
 type BlobDriver string
@@ -98,7 +121,7 @@ func modeCapabilities(m mode) Capabilities {
 	}
 	return Capabilities{
 		PublicSite:          false,
-		Signup:              SignupClosed,
+		Signup:              SignupSetup,
 		EnforceEntitlements: false,
 		Billing:             false,
 		EmailRequired:       false,

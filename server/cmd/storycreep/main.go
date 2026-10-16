@@ -17,7 +17,7 @@ func main() {
 	// The first signal asks the command to stop. Restoring the default
 	// handling then lets a second one end a command that does not.
 	context.AfterFunc(ctx, stop)
-	code := cli.Run(ctx, os.Args[1:], os.Stdout, os.Stderr, config.Environment{})
+	code := cli.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, config.Environment{})
 	stop()
 	os.Exit(code)
 }

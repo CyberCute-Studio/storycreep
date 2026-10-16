@@ -12,28 +12,36 @@ import (
 )
 
 const insertUser = `-- name: InsertUser :execrows
-INSERT INTO "user" (id, email, password_hash, display_name)
-VALUES ($1, $2, $3, $4)
+INSERT INTO "user" (id, email, password_hash, display_name, is_instance_admin, personal_workspace_created_at)
+VALUES ($1, $2, $3, $4, $5,
+    CASE WHEN $6::boolean THEN now() END)
 ON CONFLICT (email) DO NOTHING
 `
 
 type InsertUserParams struct {
-	ID           pgtype.UUID
-	Email        string
-	PasswordHash pgtype.Text
-	DisplayName  string
+	ID                pgtype.UUID
+	Email             string
+	PasswordHash      pgtype.Text
+	DisplayName       string
+	IsInstanceAdmin   bool
+	PersonalWorkspace bool
 }
 
 // InsertUser adds an account (package account), unless the address has one
 // already, as citext compares addresses: then it adds nothing and changes
 // nothing, and reports no row, so that registering an address that has an
-// account leaves the account as it was (PRD FR-AUTH-01 AC1).
+// account leaves the account as it was (PRD FR-AUTH-01 AC1). An account that
+// first-run setup adds is an instance admin, and its personal workspace is
+// the one that setup creates, which personal_workspace marks as given
+// (FR-ADMIN-02).
 func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (int64, error) {
 	result, err := q.db.Exec(ctx, insertUser,
 		arg.ID,
 		arg.Email,
 		arg.PasswordHash,
 		arg.DisplayName,
+		arg.IsInstanceAdmin,
+		arg.PersonalWorkspace,
 	)
 	if err != nil {
 		return 0, err
@@ -74,6 +82,28 @@ func (q *Queries) LockUser(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const setInstanceAdmin = `-- name: SetInstanceAdmin :execrows
+UPDATE "user" SET is_instance_admin = $1, updated_at = now()
+WHERE id = $2 AND (status = 'active' OR NOT $1::boolean)
+    AND is_instance_admin <> $1
+`
+
+type SetInstanceAdminParams struct {
+	IsInstanceAdmin bool
+	ID              pgtype.UUID
+}
+
+// SetInstanceAdmin makes an active account an instance admin, or an account
+// of any status no longer one, and reports no row if it was so already, or
+// is not active and is to become one.
+func (q *Queries) SetInstanceAdmin(ctx context.Context, arg SetInstanceAdminParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setInstanceAdmin, arg.IsInstanceAdmin, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updatePasswordHash = `-- name: UpdatePasswordHash :execrows
 UPDATE "user" SET password_hash = $1, updated_at = now()
 WHERE id = $2 AND password_hash = $3
@@ -97,6 +127,24 @@ func (q *Queries) UpdatePasswordHash(ctx context.Context, arg UpdatePasswordHash
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const userByEmail = `-- name: UserByEmail :one
+SELECT id, status FROM "user" WHERE email = $1
+`
+
+type UserByEmailRow struct {
+	ID     pgtype.UUID
+	Status string
+}
+
+// UserByEmail returns the account that an address belongs to, whatever its
+// status, for the commands of the operator (package cli).
+func (q *Queries) UserByEmail(ctx context.Context, email string) (UserByEmailRow, error) {
+	row := q.db.QueryRow(ctx, userByEmail, email)
+	var i UserByEmailRow
+	err := row.Scan(&i.ID, &i.Status)
+	return i, err
 }
 
 const userCredentials = `-- name: UserCredentials :one

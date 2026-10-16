@@ -12,6 +12,12 @@
 // traffic, and the database stays at the last migration that succeeded
 // (FR-ADMIN-04 AC3).
 //
+// Before the server is ready, it takes the setup step (PRD FR-ADMIN-02):
+// with the configuration's STORYCREEP_SETUP_ keys, it completes first-run
+// setup unattended if it is pending, and without them, it logs the setup
+// code while setup is pending (setupStep). A configuration that unattended
+// setup refuses stops the server, as a failed database step does.
+//
 // Once the server is ready, it runs the job queue's workers (PRD FR-JOBS-01,
 // package jobs), unless Options.InlineWorkers is off, so that other instances
 // run them. Not being able to start them stops the server, as a failed
@@ -235,7 +241,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	}
 	defer queue.Close()
 	s.metrics.registry.MustRegister(queue.Collector())
-	workerErr := make(chan error, 1)
+	workerErr, setupErr := make(chan error, 1), make(chan error, 1)
 
 	var wg sync.WaitGroup
 	pollCtx, stopPolling := context.WithCancel(ctx)
@@ -257,6 +263,15 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 		log.ErrorContext(ctx, "the pending migrations could not be read, so the server does not serve", "error", err)
 		return err
 	case len(pending) == 0:
+		if err := s.setupStep(ctx); err != nil {
+			stop()
+			if ctx.Err() != nil {
+				log.InfoContext(ctx, "stopped")
+				return nil
+			}
+			log.ErrorContext(ctx, "the setup step of startup failed, so the server does not serve", "error", err)
+			return err
+		}
 		s.ready.setPhase(phaseReady)
 		log.InfoContext(ctx, "ready")
 		if err := queue.Start(ctx); err != nil {
@@ -275,7 +290,16 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 			interval = defaultPollInterval
 		}
 		wg.Go(func() {
-			if s.ready.waitForMigrations(pollCtx, db, interval) {
+			if !s.ready.waitForMigrations(pollCtx, db, interval) {
+				return
+			}
+			if err := s.setupStep(pollCtx); err != nil {
+				if pollCtx.Err() == nil {
+					setupErr <- err
+				}
+				return
+			}
+			if s.ready.migrationsApplied(pollCtx) {
 				if err := queue.Start(ctx); err != nil && ctx.Err() == nil {
 					workerErr <- err
 				}
@@ -295,7 +319,61 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 		stop()
 		log.ErrorContext(ctx, "the job workers could not start, so the server stops", "error", err)
 		return err
+	case err := <-setupErr:
+		stop()
+		log.ErrorContext(ctx, "the setup step of startup failed, so the server stops", "error", err)
+		return err
 	}
+}
+
+// The messages of the setup step's records.
+const (
+	setupPendingMessage = "first-run setup is pending: complete it with this setup code, which POST " + setupPath +
+		" asks for, or restart the server with the STORYCREEP_SETUP_ keys set"
+	setupUnattendedMessage = "completed first-run setup unattended, with the STORYCREEP_SETUP_ keys"
+	setupIgnoredMessage    = "first-run setup has completed, so the server ignores the STORYCREEP_SETUP_ keys; " +
+		"remove them from the configuration, STORYCREEP_SETUP_OWNER_PASSWORD above all"
+)
+
+// setupStep is the setup step of startup (PRD FR-ADMIN-02), which the server
+// takes once the database has every migration applied, before it is ready.
+// With the configuration's STORYCREEP_SETUP_ keys, it completes first-run
+// setup unattended, if setup is pending, and returns a *setup.ConfigError if
+// setup refuses a value of the keys. Without them, it logs the setup code,
+// which completing setup through the API asks for, while setup is pending,
+// at every start, so that the operator finds it in the log of the latest.
+// It writes that record as a warning whatever STORYCREEP_LOG_LEVEL is,
+// because without the code, setup cannot complete through the API: a level
+// of error, which drops the other warnings, would otherwise leave the
+// operator nowhere to read it.
+func (s *server) setupStep(ctx context.Context) error {
+	if s.unattended != nil {
+		done, err := s.setups.Unattended(ctx, s.unattended)
+		switch {
+		case err != nil:
+			return err
+		case done:
+			s.log.InfoContext(ctx, setupUnattendedMessage)
+		default:
+			s.log.WarnContext(ctx, setupIgnoredMessage)
+		}
+		return nil
+	}
+	st, err := s.setups.Status(ctx)
+	if err != nil || st.Completed {
+		return err
+	}
+	code, err := s.setups.Code(ctx)
+	if err != nil {
+		return err
+	}
+	// The handler writes a record that it is given whatever its level, which
+	// only the logger checks, as WarnContext would.
+	r := slog.NewRecord(time.Now(), slog.LevelWarn, setupPendingMessage, 0)
+	r.AddAttrs(slog.String("setup_code", code))
+	// As the logger does, the server goes on if the log cannot be written.
+	_ = s.log.Handler().Handle(ctx, r)
+	return nil
 }
 
 // serverJobs returns the registry of the server's own jobs.

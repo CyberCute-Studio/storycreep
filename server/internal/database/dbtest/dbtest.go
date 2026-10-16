@@ -162,6 +162,17 @@ func (d *Database) Admin(t testing.TB) *pgx.Conn {
 	return Connect(t, d.AdminURL)
 }
 
+// MarkSetUp marks the database's first-run setup completed (PRD FR-ADMIN-02),
+// without an owner or a chosen signup policy, as migrating marks a database
+// that had accounts before setup existed, for a test that registers
+// accounts, which nobody can do until setup has completed.
+func (d *Database) MarkSetUp(t testing.TB) {
+	t.Helper()
+	if _, err := d.Admin(t).Exec(context.Background(), "UPDATE instance SET setup_completed_at = now()"); err != nil {
+		t.Fatalf("mark the setup of %s completed: %v", d.Name, err)
+	}
+}
+
 // Connect returns a connection to the database at url, closed when the test
 // ends.
 func Connect(t testing.TB, url config.DatabaseURL) *pgx.Conn {

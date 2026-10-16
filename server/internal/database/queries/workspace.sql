@@ -83,3 +83,26 @@ WHERE w.status = 'active'
     AND (sqlc.narg(after)::uuid IS NULL OR w.id > sqlc.narg(after)::uuid)
 ORDER BY w.id
 LIMIT @max_rows;
+
+-- name: WorkspaceBySlug :one
+-- WorkspaceBySlug returns the ID of the workspace with the slug, for the
+-- commands of the operator (package cli).
+SELECT id FROM workspace WHERE slug = @slug AND status = 'active';
+
+-- name: LockMembership :one
+-- LockMembership returns a user's membership of the workspace, and locks it
+-- against changes until the transaction ends, and no row if the user is not
+-- a member.
+SELECT id, role FROM membership WHERE workspace_id = @workspace_id AND user_id = @user_id FOR UPDATE;
+
+-- name: UpdateMembershipRole :exec
+-- UpdateMembershipRole changes the role of a membership of the workspace.
+UPDATE membership SET role = @role, updated_at = now() WHERE workspace_id = @workspace_id AND id = @id;
+
+-- name: CountOwners :one
+-- CountOwners returns how many owners the workspace has whose accounts are
+-- active, which are the ones that count for the rule that a workspace keeps
+-- an owner (PRD FR-TEN-02 AC2): an owner whose account's deletion is pending
+-- does not (FR-GDPR-02 AC4).
+SELECT count(*) FROM membership m JOIN "user" u ON u.id = m.user_id
+WHERE m.workspace_id = @workspace_id AND m.role = 'owner' AND u.status = 'active';

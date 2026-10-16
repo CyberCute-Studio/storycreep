@@ -34,8 +34,27 @@ const (
 	// creator becomes its owner: by a user, or by the first sign-in of an
 	// account, which gives it its personal workspace, as its metadata's
 	// personal says. It belongs to the workspace that it creates, which is
-	// its subject.
+	// its subject. The workspace that first-run setup creates is its owner's
+	// personal workspace (FR-ADMIN-02).
 	ActionWorkspaceCreate Action = "workspace.create"
+	// ActionMembershipCreate is a user's becoming a member of a workspace,
+	// as the operator's storycreep grant-role makes them (FR-ADMIN-06), with
+	// the role that its metadata's role names. It belongs to that workspace,
+	// and its subject is the membership. An entry without an actor is the
+	// operator's, who acts through the command line.
+	ActionMembershipCreate Action = "membership.create"
+	// ActionMembershipRoleChange is a change of a membership's role, from
+	// its metadata's previous_role to its role, as grant-role makes it. It
+	// belongs to the membership's workspace, and its subject is the
+	// membership.
+	ActionMembershipRoleChange Action = "membership.role_change"
+	// ActionInstanceAdminGrant makes an account an instance admin, as the
+	// operator's storycreep create-user --instance-admin and grant-role do,
+	// and ActionInstanceAdminRevoke makes it no longer one, as grant-role
+	// --revoke does. Each belongs to no workspace, and its subject is the
+	// account.
+	ActionInstanceAdminGrant  Action = "instance.admin_grant"
+	ActionInstanceAdminRevoke Action = "instance.admin_revoke"
 )
 
 // Result is how an event ended.
@@ -83,6 +102,12 @@ var events = []eventSpec{
 	{action: ActionPasswordChange, subject: "user", results: []Result{ResultSuccess, ResultFailure}},
 	{action: ActionWorkspaceCreate, inWorkspace: true, subject: "workspace", results: []Result{ResultSuccess},
 		metadata: []string{"personal"}},
+	{action: ActionMembershipCreate, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
+		metadata: []string{"role"}},
+	{action: ActionMembershipRoleChange, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
+		metadata: []string{"role", "previous_role"}},
+	{action: ActionInstanceAdminGrant, subject: "user", results: []Result{ResultSuccess}},
+	{action: ActionInstanceAdminRevoke, subject: "user", results: []Result{ResultSuccess}},
 }
 
 // lookup returns the registration of a, and false if a is not registered.

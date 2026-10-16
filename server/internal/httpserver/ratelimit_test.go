@@ -59,12 +59,13 @@ func (inst *instance) send(t *testing.T, method, path string, body []byte, heade
 	return response{status: res.StatusCode, header: res.Header, body: b}
 }
 
-// twoInstances runs two servers on one new database, with the configuration
-// of env, behind a proxy on the loopback interface that they trust, and
-// returns them and the database.
+// twoInstances runs two servers on one new database, whose first-run setup
+// has completed, with the configuration of env, behind a proxy on the
+// loopback interface that they trust, and returns them and the database.
 func twoInstances(t *testing.T, env map[string]string) (*instance, *instance, *dbtest.Database) {
 	t.Helper()
 	d := dbtest.New(t)
+	d.MarkSetUp(t)
 	vars := map[string]string{
 		"STORYCREEP_DATABASE_URL":       d.AppURL.Reveal(),
 		"STORYCREEP_DATABASE_ADMIN_URL": d.AdminURL.Reveal(),

@@ -2,10 +2,27 @@
 -- InsertUser adds an account (package account), unless the address has one
 -- already, as citext compares addresses: then it adds nothing and changes
 -- nothing, and reports no row, so that registering an address that has an
--- account leaves the account as it was (PRD FR-AUTH-01 AC1).
-INSERT INTO "user" (id, email, password_hash, display_name)
-VALUES (@id, @email, @password_hash, @display_name)
+-- account leaves the account as it was (PRD FR-AUTH-01 AC1). An account that
+-- first-run setup adds is an instance admin, and its personal workspace is
+-- the one that setup creates, which personal_workspace marks as given
+-- (FR-ADMIN-02).
+INSERT INTO "user" (id, email, password_hash, display_name, is_instance_admin, personal_workspace_created_at)
+VALUES (@id, @email, @password_hash, @display_name, @is_instance_admin,
+    CASE WHEN @personal_workspace::boolean THEN now() END)
 ON CONFLICT (email) DO NOTHING;
+
+-- name: UserByEmail :one
+-- UserByEmail returns the account that an address belongs to, whatever its
+-- status, for the commands of the operator (package cli).
+SELECT id, status FROM "user" WHERE email = @email;
+
+-- name: SetInstanceAdmin :execrows
+-- SetInstanceAdmin makes an active account an instance admin, or an account
+-- of any status no longer one, and reports no row if it was so already, or
+-- is not active and is to become one.
+UPDATE "user" SET is_instance_admin = @is_instance_admin, updated_at = now()
+WHERE id = @id AND (status = 'active' OR NOT @is_instance_admin::boolean)
+    AND is_instance_admin <> @is_instance_admin;
 
 -- name: UserCredentials :one
 -- UserCredentials returns what signing in checks of the account that the

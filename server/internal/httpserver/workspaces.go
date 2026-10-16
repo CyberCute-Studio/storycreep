@@ -231,22 +231,34 @@ func workspaceError(err error) error {
 	case errors.Is(err, workspace.ErrInsufficientRole):
 		return api.NewError(api.CodeInsufficientRole)
 	case errors.Is(err, workspace.ErrSlugTaken):
-		return &api.Error{Code: api.CodeSlugTaken, Details: map[string]any{
-			"errors": []api.Problem{{Location: "body.slug", Message: "is another workspace's slug"}},
-		}}
+		return slugTakenError("body.slug")
 	case errors.As(err, &slug):
-		message := "is not groups of lowercase letters and digits joined by single hyphens, of at most 64 characters"
-		if slug.Reason == workspace.SlugReserved {
-			message = "is a reserved word"
-		}
-		return &api.Error{Code: api.CodeSlugInvalid, Details: map[string]any{
-			"reason": slug.Reason,
-			"errors": []api.Problem{{Location: "body.slug", Message: message}},
-		}}
+		return slugInvalidError(slug, "body.slug")
 	case errors.As(err, &fields):
 		return fieldErrors(fields)
 	}
 	return err
+}
+
+// slugTakenError returns the error that the API answers a slug that another
+// workspace has with, for the slug at location, such as body.slug.
+func slugTakenError(location string) *api.Error {
+	return &api.Error{Code: api.CodeSlugTaken, Details: map[string]any{
+		"errors": []api.Problem{{Location: location, Message: "is another workspace's slug"}},
+	}}
+}
+
+// slugInvalidError returns the error that the API answers slug with, for the
+// slug at location, such as body.slug.
+func slugInvalidError(slug *workspace.SlugError, location string) *api.Error {
+	message := "is not groups of lowercase letters and digits joined by single hyphens, of at most 64 characters"
+	if slug.Reason == workspace.SlugReserved {
+		message = "is a reserved word"
+	}
+	return &api.Error{Code: api.CodeSlugInvalid, Details: map[string]any{
+		"reason": slug.Reason,
+		"errors": []api.Problem{{Location: location, Message: message}},
+	}}
 }
 
 // fieldErrors returns the error that the API answers fields of a request's

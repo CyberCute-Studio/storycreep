@@ -29,6 +29,22 @@ func (q *Queries) ClaimPersonalWorkspace(ctx context.Context, id pgtype.UUID) (s
 	return display_name, err
 }
 
+const countOwners = `-- name: CountOwners :one
+SELECT count(*) FROM membership m JOIN "user" u ON u.id = m.user_id
+WHERE m.workspace_id = $1 AND m.role = 'owner' AND u.status = 'active'
+`
+
+// CountOwners returns how many owners the workspace has whose accounts are
+// active, which are the ones that count for the rule that a workspace keeps
+// an owner (PRD FR-TEN-02 AC2): an owner whose account's deletion is pending
+// does not (FR-GDPR-02 AC4).
+func (q *Queries) CountOwners(ctx context.Context, workspaceID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countOwners, workspaceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const insertMembership = `-- name: InsertMembership :exec
 INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, $4)
 `
@@ -102,6 +118,30 @@ func (q *Queries) InstanceAdmin(ctx context.Context, id pgtype.UUID) (bool, erro
 	return is_instance_admin, err
 }
 
+const lockMembership = `-- name: LockMembership :one
+SELECT id, role FROM membership WHERE workspace_id = $1 AND user_id = $2 FOR UPDATE
+`
+
+type LockMembershipParams struct {
+	WorkspaceID pgtype.UUID
+	UserID      pgtype.UUID
+}
+
+type LockMembershipRow struct {
+	ID   pgtype.UUID
+	Role string
+}
+
+// LockMembership returns a user's membership of the workspace, and locks it
+// against changes until the transaction ends, and no row if the user is not
+// a member.
+func (q *Queries) LockMembership(ctx context.Context, arg LockMembershipParams) (LockMembershipRow, error) {
+	row := q.db.QueryRow(ctx, lockMembership, arg.WorkspaceID, arg.UserID)
+	var i LockMembershipRow
+	err := row.Scan(&i.ID, &i.Role)
+	return i, err
+}
+
 const lockMembershipRole = `-- name: LockMembershipRole :one
 SELECT role FROM membership WHERE workspace_id = $1 AND user_id = $2 FOR SHARE
 `
@@ -171,6 +211,22 @@ func (q *Queries) MembershipRole(ctx context.Context, arg MembershipRoleParams) 
 	var role string
 	err := row.Scan(&role)
 	return role, err
+}
+
+const updateMembershipRole = `-- name: UpdateMembershipRole :exec
+UPDATE membership SET role = $1, updated_at = now() WHERE workspace_id = $2 AND id = $3
+`
+
+type UpdateMembershipRoleParams struct {
+	Role        string
+	WorkspaceID pgtype.UUID
+	ID          pgtype.UUID
+}
+
+// UpdateMembershipRole changes the role of a membership of the workspace.
+func (q *Queries) UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) error {
+	_, err := q.db.Exec(ctx, updateMembershipRole, arg.Role, arg.WorkspaceID, arg.ID)
+	return err
 }
 
 const updateWorkspace = `-- name: UpdateWorkspace :one
@@ -293,4 +349,17 @@ func (q *Queries) Workspace(ctx context.Context, id pgtype.UUID) (WorkspaceRow, 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const workspaceBySlug = `-- name: WorkspaceBySlug :one
+SELECT id FROM workspace WHERE slug = $1 AND status = 'active'
+`
+
+// WorkspaceBySlug returns the ID of the workspace with the slug, for the
+// commands of the operator (package cli).
+func (q *Queries) WorkspaceBySlug(ctx context.Context, slug string) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, workspaceBySlug, slug)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }

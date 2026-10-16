@@ -64,11 +64,40 @@ type Config struct {
 	SessionIdleTimeout, SessionLifetime time.Duration
 	// Capabilities are the mode-dependent behaviours.
 	Capabilities Capabilities
+	// Setup is the first-run setup that the server completes unattended,
+	// from the STORYCREEP_SETUP_ keys, or nil if the configuration has none
+	// (PRD FR-ADMIN-02).
+	Setup *UnattendedSetup
 
 	mode     mode
 	file     string
 	entries  []Entry
 	warnings []string
+}
+
+// UnattendedSetup is what unattended first-run setup completes setup with
+// (PRD FR-ADMIN-02), as the configuration holds it. The configuration checks
+// only that the keys it needs are set; package setup checks the values, as
+// the setup API checks them, when the server starts, and for storycreep
+// validate-config (setup.CheckUnattended).
+type UnattendedSetup struct {
+	// OwnerEmail, OwnerName, and OwnerPassword are the first owner's email
+	// address, display name, and password.
+	OwnerEmail, OwnerName string
+	OwnerPassword         secret.Value
+	// WorkspaceName is the first workspace's name, and WorkspaceSlug its
+	// slug, or "" to derive one from the name.
+	WorkspaceName, WorkspaceSlug string
+	// Signup is the signup policy that setup records, or "" for closed.
+	Signup SignupPolicy
+}
+
+// unattendedSetup returns c.Setup, which it creates first if it is nil.
+func (c *Config) unattendedSetup() *UnattendedSetup {
+	if c.Setup == nil {
+		c.Setup = &UnattendedSetup{}
+	}
+	return c.Setup
 }
 
 // Entry is one key's effective value, for display. The value of a secret key
@@ -231,6 +260,9 @@ func load(keys []key, opts Options) (*Config, error) {
 		fileUnread = file == nil
 	}
 
+	// set holds the keys that have a value, valid or not, for the groups'
+	// check.
+	set := map[string]bool{}
 	for _, k := range keys {
 		v, source := env.get(k.name), SourceEnvironment
 		if v == "" {
@@ -248,6 +280,7 @@ func load(keys []key, opts Options) (*Config, error) {
 			c.entries = append(c.entries, Entry{Key: k.name, Source: SourceUnset})
 			continue
 		}
+		set[k.name] = true
 		if err := k.set(c, v); err != nil {
 			msg := err.Error()
 			var hidden hiddenValueError
@@ -278,6 +311,7 @@ func load(keys []key, opts Options) (*Config, error) {
 		}
 		c.entries = append(c.entries, Entry{Key: k.name, Value: v, Source: source})
 	}
+	problems = append(problems, groupProblems(keys, set, fileUnread)...)
 	c.warnings = unknownVariables(env, keys)
 
 	if len(problems) > 0 {
@@ -298,6 +332,26 @@ func (k key) set(c *Config, v string) error {
 		return errors.New("must be " + orList(k.values))
 	}
 	return k.parse(c, v)
+}
+
+// groupProblems reports the keys that a group needs but that are not set,
+// in a group of which set holds a key.
+func groupProblems(keys []key, set map[string]bool, fileUnread bool) []Problem {
+	used := map[string]bool{}
+	for _, k := range keys {
+		used[k.group] = used[k.group] || k.group != "" && set[k.name]
+	}
+	var problems []Problem
+	for _, k := range keys {
+		if k.groupRequired && used[k.group] && !set[k.name] {
+			msg := fmt.Sprintf("required with the other %s keys, which need it, but not set", k.group)
+			if fileUnread {
+				msg += " (the configuration file, which may set it, could not be read)"
+			}
+			problems = append(problems, Problem{Key: k.name, Msg: msg + "; set it, or unset them"})
+		}
+	}
+	return problems
 }
 
 func (k key) missingMessage(fileUnread bool) string {

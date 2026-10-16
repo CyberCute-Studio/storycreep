@@ -30,6 +30,14 @@ once the database has every migration applied, which 'storycreep migrate'
 does, and checks for that every 5 seconds. Until then, /readyz and the API
 answer 503.
 
+Once the database has every migration applied, and before it serves, it
+takes the setup step of first-run setup. While setup is pending, it writes
+the setup code, which completing setup through POST /api/v1/setup asks for,
+to its log as a warning, whatever STORYCREEP_LOG_LEVEL is. With the
+STORYCREEP_SETUP_ keys set, it completes setup itself instead, and exits with
+status 1 if setup refuses one of their values, naming its key. Once setup
+has completed, it ignores those keys, and warns that they are still set.
+
 Once it serves, it also runs the background jobs that it and the other
 instances enqueue, 4 at a time, on a pool of 7 database connections of its
 own.

@@ -39,13 +39,20 @@ type PasswordError struct {
 }
 
 func (e *PasswordError) Error() string {
+	return "account: the password " + e.Problem()
+}
+
+// Problem says what is wrong with the password, after its subject, as "has
+// fewer than 12 characters", for the API, the operator's commands, and
+// unattended first-run setup to say alike.
+func (e *PasswordError) Problem() string {
 	switch e.Reason {
 	case PasswordTooShort:
-		return "account: the password has fewer than " + strconv.Itoa(MinPasswordLength) + " characters"
+		return "has fewer than " + strconv.Itoa(MinPasswordLength) + " characters"
 	case PasswordCommon:
-		return "account: the password is one of the most common passwords"
+		return "is one of the most common passwords"
 	}
-	return "account: the password breaks the policy"
+	return "breaks the policy"
 }
 
 // CheckPassword returns a *PasswordError if password breaks the policy
