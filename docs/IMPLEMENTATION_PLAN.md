@@ -233,7 +233,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-TEN-01 AC2–AC3 and the unit tests of FR-TEN-04 AC3 and AC6 pass.
 
 ### 17. First-run setup and user-admin CLI
-**Status:** todo · **Depends on:** 16
+**Status:** done ([#19](https://github.com/CyberCute-Studio/storycreep/pull/19)) · **Depends on:** 16
 **PRD:** FR-ADMIN-02 (all but the SMTP and storage steps), FR-ADMIN-06 (`create-user`, `grant-role`)
 - A one-time setup API: first owner, first workspace, signup policy. The same setup can run unattended from environment variables. The chosen policy is stored with the instance, and `STORYCREEP_SIGNUP` overrides it (N25). The SMTP and storage steps land with the settings they configure, in items 18 and 29 (N25).
 - Completing setup through the API needs a setup code, which the server logs while setup is pending (N25).
