@@ -184,7 +184,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-TEN-01 AC1 and the isolation harness pass, and both §5.4 tests pass.
 
 ### 12. Audit log recording
-**Status:** todo · **Depends on:** 11
+**Status:** done ([#14](https://github.com/CyberCute-Studio/storycreep/pull/14)) · **Depends on:** 11
 **PRD:** FR-TEN-07 (AC1, AC3), §9.6
 - An audit writer that runs in the caller's transaction, and a registry of event types.
 - Grants reject `UPDATE` and `DELETE` from the application role.
