@@ -90,7 +90,7 @@ func (r *readiness) notReady(ctx context.Context, pingDB bool) error {
 	}
 	return huma.ErrorWithHeaders(
 		&api.Error{Code: api.CodeNotReady, Message: i18n.Message{Key: msg}, Details: map[string]any{"reason": reason}},
-		http.Header{"Retry-After": {retryAfter}})
+		http.Header{api.RetryAfterHeader: {retryAfter}})
 }
 
 // waitForMigrations checks every interval whether the database has applied

@@ -340,7 +340,10 @@ var keys = []key{
 			"proxy, so all clients share the rate limits of one address, and one client that uses up the limit " +
 			"of signing in refuses everybody's sign-ins until it resets. List only the addresses that the proxies " +
 			"connect from, as the server sees them, because whoever connects from a listed address can claim to " +
-			"be any client. The proxy must set the header or append to it, as nginx's " +
+			"be any client. Nor may a listed range hold a client's address, as the proxies see it, such as the " +
+			"addresses of a local network or a VPN that uses the same range: the server skips over every listed " +
+			"address in the header, a client's as well as a proxy's, so that client too can claim to be any " +
+			"client. The proxy must set the header or append to it, as nginx's " +
 			"`$proxy_add_x_forwarded_for` does, and Caddy and Traefik do unasked. A proxy on the same machine " +
 			"as a container connects to it from the gateway of the container's network, such as `172.18.0.1`, " +
 			"which `docker network inspect` shows, and a proxy in a container from that container's address.",

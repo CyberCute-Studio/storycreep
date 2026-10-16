@@ -77,8 +77,9 @@ const (
 	IP Kind = "ip"
 	// User counts a signed-in user.
 	User Kind = "user"
-	// Email counts an email address that a request names, as signing in
-	// and registering do, whether or not it belongs to an account.
+	// Email counts an email address that a registration names, whether or
+	// not it belongs to an account. Signing in does not count it: the lock
+	// of an address after failed sign-ins limits those (BeginLogin).
 	Email Kind = "email"
 )
 
@@ -309,6 +310,13 @@ func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decisio
 		for i, c := range cs {
 			hashes[i] = c.hash
 		}
+		// Every request of a key counts in the key's one row, so the requests
+		// of a key wait for each other's commits. The commit need not wait for
+		// the disk: a crash of the database would lose only a few requests'
+		// counts, and a limit lets a few more requests through then.
+		if err := q.CommitWithoutFlush(ctx); err != nil {
+			return fmt.Errorf("ratelimit: commit without waiting for the disk: %w", err)
+		}
 		var err error
 		rows, err = q.TakeRateLimit(ctx, queries.TakeRateLimitParams{Bucket: string(bucket),
 			Period: interval(rate.Period), Keys: hashes})
@@ -384,7 +392,7 @@ func (l *Limiter) BeginLogin(ctx context.Context, email string) (Attempt, error)
 		// still refuses this one, which may try again at once.
 		wait = time.Second
 		if remaining.Valid {
-			wait = max(wait, time.Duration(remaining.Microseconds)*time.Microsecond)
+			wait = max(wait, duration(remaining))
 		}
 		return nil
 	})
@@ -433,21 +441,34 @@ func (l *Limiter) hash(ctx context.Context, q *queries.Queries, k Key) ([]byte, 
 }
 
 // key returns the key of the hash, which it reads from the database the
-// first time.
+// first time. It reads it without holding l.mu, so that a request whose read
+// is slow keeps no other request waiting on the mutex, past the end of that
+// request's context; requests that read it at once each read the same key.
 func (l *Limiter) key(ctx context.Context, q *queries.Queries) ([]byte, error) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.secret == nil {
-		secret, err := q.RateLimitKey(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("ratelimit: read the key of the hash: %w", err)
-		}
-		l.secret = secret
+	secret := l.secret
+	l.mu.Unlock()
+	if secret != nil {
+		return secret, nil
 	}
-	return l.secret, nil
+	secret, err := q.RateLimitKey(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ratelimit: read the key of the hash: %w", err)
+	}
+	l.mu.Lock()
+	l.secret = secret
+	l.mu.Unlock()
+	return secret, nil
 }
 
 // interval returns d as an interval column.
 func interval(d time.Duration) pgtype.Interval {
 	return pgtype.Interval{Microseconds: d.Microseconds(), Valid: true}
+}
+
+// duration returns the length of an interval that subtracting two
+// timestamps gives, which PostgreSQL writes as days, of 24 hours each, and
+// the time beyond them, but never as months.
+func duration(i pgtype.Interval) time.Duration {
+	return time.Duration(i.Days)*24*time.Hour + time.Duration(i.Microseconds)*time.Microsecond
 }

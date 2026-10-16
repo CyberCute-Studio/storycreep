@@ -51,7 +51,7 @@ Either way, every request then reaches the server from the proxy, so set `STORYC
 STORYCREEP_TRUSTED_PROXIES=172.16.0.0/12
 ```
 
-`docker network inspect storycreep_default --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'` prints the network's addresses, to check that the range holds them. Whoever connects from a trusted address can claim any address, so trust only addresses that nothing but the proxy connects from: with the default `STORYCREEP_PUBLISH`, only programs on this machine reach the server.
+`docker network inspect storycreep_default --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'` prints the network's addresses, to check that the range holds them. Whoever connects from a trusted address can claim any address, so trust only addresses that nothing but the proxy connects from: with the default `STORYCREEP_PUBLISH`, only programs on this machine reach the server. Nor may the range hold the addresses of the clients themselves, as the proxy sees them, because the server skips over every trusted address in `X-Forwarded-For`, a client's as well as a proxy's, and takes the one to its left, which the client wrote. If the users' own network or VPN has addresses in `172.16.0.0/12`, such as `172.20.0.0/16`, any of them could claim any address and slip past the rate limits of an IP address, so trust only the subnet that the command above prints, and set it again whenever Compose creates the network anew.
 
 To reach the server from other machines without a proxy, set `STORYCREEP_PUBLISH=0.0.0.0:7777` and `STORYCREEP_PUBLIC_URL` to the URL they use, and leave `STORYCREEP_TRUSTED_PROXIES` unset. Their traffic is then unencrypted, and a port that Docker publishes is open even where a host firewall, such as ufw, would block it.
 

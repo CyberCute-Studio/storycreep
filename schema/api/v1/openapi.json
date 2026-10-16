@@ -339,6 +339,24 @@
                   "type": "string"
                 }
               },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited, for the one that used up its limit, which may be the email address that the request names",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
               "Retry-After": {
                 "schema": {
                   "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
@@ -396,6 +414,24 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited, for the one that used up its limit, which may be the email address that the request names",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
                 }
               },
               "Retry-After": {
@@ -495,6 +531,24 @@
                   "type": "string"
                 }
               },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited, for the one that used up its limit, which may be the email address that the request names",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
               "Retry-After": {
                 "schema": {
                   "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
@@ -567,6 +621,24 @@
                   "type": "string"
                 }
               },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited, for the one that used up its limit, which may be the email address that the request names",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
               "Retry-After": {
                 "schema": {
                   "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
@@ -611,6 +683,24 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited, for the one that used up its limit, which may be the email address that the request names",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
                 }
               },
               "Retry-After": {
@@ -669,6 +759,24 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited, for the one that used up its limit, which may be the email address that the request names",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
                 }
               },
               "Retry-After": {
@@ -742,6 +850,24 @@
                   "type": "string"
                 }
               },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited, for the one that used up its limit, which may be the email address that the request names",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
               "Retry-After": {
                 "schema": {
                   "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
@@ -809,6 +935,24 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited, for the one that used up its limit, which may be the email address that the request names",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
                 }
               },
               "Retry-After": {
@@ -900,6 +1044,24 @@
                   "type": "string"
                 }
               },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited, for the one that used up its limit, which may be the email address that the request names",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
               "Retry-After": {
                 "schema": {
                   "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
@@ -943,6 +1105,24 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited, for the one that used up its limit, which may be the email address that the request names",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
                 }
               },
               "Retry-After": {
@@ -991,6 +1171,24 @@
                   "type": "string"
                 }
               },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited, for the one that used up its limit, which may be the email address that the request names",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
               "Retry-After": {
                 "schema": {
                   "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
@@ -1034,6 +1232,24 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited, for the one that used up its limit, which may be the email address that the request names",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
                 }
               },
               "Retry-After": {

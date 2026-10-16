@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/netip"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -191,6 +193,69 @@ func TestTake(t *testing.T) {
 	}()
 }
 
+// concurrently makes n calls of try at once, the even ones with first and the
+// odd ones with second, and returns how many returned nil and how many
+// returned an error that refused reports as a refusal. It fails the test on
+// any other error.
+func concurrently(t *testing.T, n int, first, second *Limiter, try func(*Limiter, int) error,
+	refused func(error) bool) (allowed, refusals int) {
+	t.Helper()
+	var ok, no atomic.Int32
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			l := first
+			if i%2 == 1 {
+				l = second
+			}
+			switch err := try(l, i); {
+			case err == nil:
+				ok.Add(1)
+			case refused(err):
+				no.Add(1)
+			default:
+				errs <- err
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("a call failed: %v", err)
+	}
+	return int(ok.Load()), int(no.Load())
+}
+
+// TestTakeConcurrent checks that the requests of one key made at once, on
+// two servers, are counted one by one, so that exactly the key's limit of
+// them is allowed, and that requests that share keys, which they give in
+// either order, do not deadlock, because each locks the keys' rows in the
+// same order.
+//
+// Verifies: FR-AUTH-05/AC2, NFR-SEC-06
+func TestTakeConcurrent(t *testing.T) {
+	t.Parallel()
+	l, db, _ := setup(t)
+	other := New(db, testPolicy())
+	ip, jo := ClientIP(netip.MustParseAddr("203.0.113.7")), UserID(ids.New())
+	const requests = 12
+	allowed, refused := concurrently(t, requests, l, other, func(s *Limiter, i int) error {
+		keys := []Key{ip, jo}
+		if i%4 >= 2 {
+			keys = []Key{jo, ip}
+		}
+		_, err := s.Take(context.Background(), Read, keys...)
+		return err
+	}, func(err error) bool {
+		var limited *LimitError
+		return errors.As(err, &limited)
+	})
+	if allowed != 2 || refused != requests-2 {
+		t.Errorf("%d requests allowed and %d refused, want the user's limit of 2 allowed", allowed, refused)
+	}
+}
+
 // TestTakeNewWindow checks that a key whose window has ended counts from
 // one again in its next window.
 //
@@ -290,6 +355,49 @@ func TestLockout(t *testing.T) {
 	}
 	// Another address is not locked.
 	failLogins(t, l, "mo@example.com", 1)
+}
+
+// TestLockoutConcurrent checks that sign-in attempts with an address made
+// at once, on two servers, as an attacker makes them, are counted one by
+// one: the 10 that reach the lock are let through, and every other one is
+// refused.
+//
+// Verifies: FR-AUTH-05/AC1, FR-AUTH-05/AC2
+func TestLockoutConcurrent(t *testing.T) {
+	t.Parallel()
+	l, db, admin := setup(t)
+	other := New(db, testPolicy())
+	const attempts = 16
+	begun, refused := concurrently(t, attempts, l, other, func(s *Limiter, _ int) error {
+		_, err := s.BeginLogin(context.Background(), "jo@example.com")
+		return err
+	}, func(err error) bool {
+		var locked *LockedError
+		return errors.As(err, &locked)
+	})
+	if begun != 10 || refused != attempts-10 {
+		t.Errorf("%d attempts begun and %d refused, want 10 begun", begun, refused)
+	}
+	if n := count(t, admin, `SELECT failures FROM login_attempt`); n != 10 {
+		t.Errorf("%d failures, want 10", n)
+	}
+}
+
+// TestLockoutLongerThanADay checks that the wait of a lock of a day or more
+// is the whole of it, although PostgreSQL writes the time left of it in days
+// and the hours beyond them.
+func TestLockoutLongerThanADay(t *testing.T) {
+	t.Parallel()
+	_, db, _ := setup(t)
+	policy := testPolicy()
+	policy.Lockout = Lockout{Failures: 2, First: 30 * time.Hour, Max: 30 * time.Hour, Forget: 48 * time.Hour}
+	l := New(db, policy)
+	failLogins(t, l, "jo@example.com", 2)
+	_, err := l.BeginLogin(context.Background(), "jo@example.com")
+	var locked *LockedError
+	if !errors.As(err, &locked) || locked.RetryAfter() < 30*time.Hour-time.Minute || locked.RetryAfter() > 30*time.Hour {
+		t.Errorf("the attempt after the lock: %v; want it locked for 30 hours", err)
+	}
 }
 
 // TestLockoutBackoff checks that each failure after a lock ends locks the

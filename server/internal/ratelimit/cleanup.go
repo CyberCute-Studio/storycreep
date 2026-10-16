@@ -42,22 +42,28 @@ const cleanupInterval = time.Hour
 // repeat.
 func (l *Limiter) cleanUp(ctx context.Context, db DB) (int64, error) {
 	var total int64
-	for _, del := range []func(*queries.Queries) (int64, error){
-		func(q *queries.Queries) (int64, error) { return q.DeleteEndedRateLimits(ctx, cleanupBatch) },
-		func(q *queries.Queries) (int64, error) {
+	for _, deletion := range []struct {
+		// what names the rows that del deletes, for its error.
+		what string
+		del  func(*queries.Queries) (int64, error)
+	}{
+		{"the counters whose window has ended", func(q *queries.Queries) (int64, error) {
+			return q.DeleteEndedRateLimits(ctx, cleanupBatch)
+		}},
+		{"the forgotten sign-in attempts", func(q *queries.Queries) (int64, error) {
 			return q.DeleteForgottenLoginAttempts(ctx, queries.DeleteForgottenLoginAttemptsParams{
 				Forget: interval(l.policy.Lockout.Forget), MaxRows: cleanupBatch})
-		},
+		}},
 	} {
 		for {
 			var n int64
 			err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 				var err error
-				n, err = del(queries.New(tx))
+				n, err = deletion.del(queries.New(tx))
 				return err
 			})
 			if err != nil {
-				return total, fmt.Errorf("ratelimit: delete the counters that count nothing: %w", err)
+				return total, fmt.Errorf("ratelimit: delete %s: %w", deletion.what, err)
 			}
 			total += n
 			if n < cleanupBatch {

@@ -14,6 +14,15 @@ SELECT key FROM instance_key WHERE name = 'rate_limit';
 -- count as one.
 SELECT lower(@email::text)::text;
 
+-- name: CommitWithoutFlush :exec
+-- CommitWithoutFlush makes the transaction that it runs in commit without
+-- waiting for its commit to be flushed to disk (synchronous_commit off), so
+-- that the transaction holds the locks of its rows no longer than it runs. A
+-- crash of the database may then lose the last few hundred milliseconds of
+-- such commits, which for a rate limit's counters is a few requests that go
+-- uncounted.
+SELECT set_config('synchronous_commit', 'off', true);
+
 -- name: TakeRateLimit :many
 -- TakeRateLimit counts a hit of each key in a bucket, in the bucket's window
 -- of length period that holds now, counted from the Unix epoch. A key whose

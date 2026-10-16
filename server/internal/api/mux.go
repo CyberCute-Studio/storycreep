@@ -172,17 +172,30 @@ func limitBodyRead(d time.Duration) func(http.Handler) http.Handler {
 	}
 }
 
+// The headers of a rate limit (PRD FR-API-04, NFR-SEC-06), which package
+// httpserver sets, an operation's error replaces (replacedHeaders), and the
+// error response documents (errorResponse): RateLimit-Limit, -Remaining, and
+// -Reset, of draft-ietf-httpapi-ratelimit-headers, and Retry-After, which
+// also answers not_ready.
+const (
+	RateLimitLimitHeader     = "RateLimit-Limit"
+	RateLimitRemainingHeader = "RateLimit-Remaining"
+	RateLimitResetHeader     = "RateLimit-Reset"
+	RetryAfterHeader         = "Retry-After"
+)
+
 // replacedHeaders are the headers that an operation's error replaces, rather
-// than adds to (replaceHeaders): Cache-Control, which a cache reads as one
-// header, in which no-store wins, and the headers of a rate limit, which
-// state one key's limit, and which the limit's middleware sets before the
-// operation, and the operation's own limit may replace (package httpserver).
+// than adds to (replaceHeaders), by their canonical names: Cache-Control,
+// which a cache reads as one header, in which no-store wins, and the headers
+// of a rate limit, which state one key's limit, and which the limit's
+// middleware sets before the operation, and the operation's own limit may
+// replace (package httpserver).
 var replacedHeaders = map[string]bool{
-	"Cache-Control":       true,
-	"Ratelimit-Limit":     true,
-	"Ratelimit-Remaining": true,
-	"Ratelimit-Reset":     true,
-	"Retry-After":         true,
+	"Cache-Control": true,
+	http.CanonicalHeaderKey(RateLimitLimitHeader):     true,
+	http.CanonicalHeaderKey(RateLimitRemainingHeader): true,
+	http.CanonicalHeaderKey(RateLimitResetHeader):     true,
+	http.CanonicalHeaderKey(RetryAfterHeader):         true,
 }
 
 // replaceHeaders is huma middleware that makes a header of replacedHeaders

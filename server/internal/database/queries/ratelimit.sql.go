@@ -70,6 +70,21 @@ func (q *Queries) ClearLoginAttempts(ctx context.Context, key []byte) error {
 	return err
 }
 
+const commitWithoutFlush = `-- name: CommitWithoutFlush :exec
+SELECT set_config('synchronous_commit', 'off', true)
+`
+
+// CommitWithoutFlush makes the transaction that it runs in commit without
+// waiting for its commit to be flushed to disk (synchronous_commit off), so
+// that the transaction holds the locks of its rows no longer than it runs. A
+// crash of the database may then lose the last few hundred milliseconds of
+// such commits, which for a rate limit's counters is a few requests that go
+// uncounted.
+func (q *Queries) CommitWithoutFlush(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, commitWithoutFlush)
+	return err
+}
+
 const deleteEndedRateLimits = `-- name: DeleteEndedRateLimits :execrows
 DELETE FROM rate_limit WHERE (bucket, key) IN (
     SELECT e.bucket, e.key FROM rate_limit e WHERE e.window_end <= now() LIMIT $1

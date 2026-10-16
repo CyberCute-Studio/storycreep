@@ -29,11 +29,12 @@ import (
 // over the limit is answered with 429 rate_limited, and Retry-After says how
 // many seconds to wait (FR-API-04 AC3).
 
-// The headers of a rate limit.
+// The headers of a rate limit, which package api names, so that an
+// operation's error replaces those that rateLimit set before it.
 const (
-	limitHeader     = "RateLimit-Limit"
-	remainingHeader = "RateLimit-Remaining"
-	resetHeader     = "RateLimit-Reset"
+	limitHeader     = api.RateLimitLimitHeader
+	remainingHeader = api.RateLimitRemainingHeader
+	resetHeader     = api.RateLimitResetHeader
 )
 
 // RateLimitOutput documents, in an operation's answer, the headers that its
@@ -88,13 +89,13 @@ func limitError(err error) error {
 	switch {
 	case errors.As(err, &limited):
 		h := decisionHeaders(limited.Decision)
-		h.Set("Retry-After", seconds(limited.RetryAfter()))
+		h.Set(api.RetryAfterHeader, seconds(limited.RetryAfter()))
 		return huma.ErrorWithHeaders(&api.Error{Code: api.CodeRateLimited,
 			Details: map[string]any{"reason": "rate", "bucket": limited.Bucket}}, h)
 	case errors.As(err, &locked):
 		return huma.ErrorWithHeaders(&api.Error{Code: api.CodeRateLimited,
 			Message: i18n.Message{Key: i18n.K("error.rate_limited.locked")},
-			Details: map[string]any{"reason": "locked"}}, http.Header{"Retry-After": {seconds(locked.RetryAfter())}})
+			Details: map[string]any{"reason": "locked"}}, http.Header{api.RetryAfterHeader: {seconds(locked.RetryAfter())}})
 	}
 	return err
 }

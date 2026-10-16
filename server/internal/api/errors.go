@@ -130,8 +130,9 @@ var codes = []codeSpec{
 			"`RateLimit-Reset` header's seconds have passed; or `locked`, when 10 sign-ins in a row with the email " +
 			"address failed, whether or not it belongs to an account, which locks it for a minute, and each further " +
 			"failure, once a lock ends, for twice as long as the lock before, up to 15 minutes. While the address " +
-			"is locked, `POST /api/v1/auth/login` refuses every sign-in with it, even with the right password, " +
-			"until one succeeds after the lock. The failures are forgotten a day after the last one. " +
+			"is locked, `POST /api/v1/auth/login` refuses every sign-in with it, even with the right password. Once " +
+			"the lock ends, the next sign-in is checked: one that succeeds forgets the failures, and one that fails " +
+			"locks the address again. The failures are forgotten a day after the last one. " +
 			"`details.bucket` is `auth` for signing in, registering, and changing a password."},
 	{CodeInternal, http.StatusInternalServerError, i18n.K("error.internal_error"),
 		"The server failed. Its log has the cause, under the envelope's `request_id`."},
