@@ -349,6 +349,36 @@ var keys = []key{
 		},
 	},
 	{
+		name: "STORYCREEP_TRUSTED_PROXIES",
+		doc: "The reverse proxies in front of the server, whose `X-Forwarded-For` header it believes. The server " +
+			"takes as a request's client the address that its connection comes from, unless that is one of " +
+			"these: then it takes the rightmost address in the request's `X-Forwarded-For` header that is not one " +
+			"of these, because each proxy appends the address that it received the request from, or the leftmost " +
+			"address if every one is. An entry that is not an IP address, such as `unknown`, ends the search, " +
+			"because what lies to its left cannot be checked, and the listed proxy to its right, which wrote it, is " +
+			"taken for the client. The client's address is what the rate limits of an IP address count (PRD " +
+			"NFR-SEC-06), and what a session and the audit log record. Without this setting, behind a reverse " +
+			"proxy, every request seems to come from the proxy, so all clients share the rate limits of one " +
+			"address, and one client that uses up the limit of signing in refuses everybody's sign-ins until it " +
+			"resets. List only the addresses that the proxies " +
+			"connect from, as the server sees them, because whoever connects from a listed address can claim to " +
+			"be any client. Nor may a listed range hold a client's address, as the proxies see it, such as the " +
+			"addresses of a local network or a VPN that uses the same range: the server skips over every listed " +
+			"address in the header, a client's as well as a proxy's, so that client too can claim to be any " +
+			"client. The proxy must set the header or append to it, as nginx's " +
+			"`$proxy_add_x_forwarded_for` does, and Caddy and Traefik do unasked. A proxy on the same machine " +
+			"as a container connects to it from the gateway of the container's network, such as `172.18.0.1`, " +
+			"which `docker network inspect` shows, and a proxy in a container from that container's address.",
+		valuesDoc: "IP addresses and CIDR prefixes, separated by commas, such as `172.18.0.1` or " +
+			"`10.0.0.0/8, 192.168.1.7`",
+		parse: func(c *Config, v string) error {
+			proxies, err := parseProxies(v)
+			c.TrustedProxies = proxies
+			return err
+		},
+		effective: func(c *Config) string { return proxiesString(c.TrustedProxies) },
+	},
+	{
 		name: "STORYCREEP_ADMIN_ADDR",
 		doc: "The address of the admin port, which serves only `/metrics`, in Prometheus's text format, written " +
 			"like `STORYCREEP_HTTP_ADDR`, or `off` for no admin port. Its port must differ from the port of " +

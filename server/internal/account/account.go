@@ -22,6 +22,11 @@
 //
 // Signing in starts a session (session.go), which the server finds by its
 // secret, on every request made with it.
+//
+// Registering and signing in are limited (package ratelimit, PRD FR-AUTH-05):
+// each email address may be registered only so often, and an address with
+// which signing in failed too often in a row is locked for a while, whether
+// or not it belongs to an account, so that neither tells whether it does.
 package account
 
 import (
@@ -41,6 +46,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -82,6 +88,10 @@ type Options struct {
 	// IdleTimeout is how long a session lasts unused, and Lifetime how long
 	// it lasts at most. Both must be positive.
 	IdleTimeout, Lifetime time.Duration
+	// Limits limit how often an email address is registered, and lock an
+	// address out of signing in after too many failures in a row. It must
+	// be set.
+	Limits *ratelimit.Limiter
 	// Authenticated, if set, is called by Login once the password has matched
 	// the account userID's, which client signs in to, before the session
 	// starts, in no transaction. An error fails the sign-in, which then
@@ -97,6 +107,7 @@ type Service struct {
 	signup config.SignupPolicy
 	// idle and lifetime are the sessions' idle timeout and lifetime.
 	idle, lifetime time.Duration
+	limits         *ratelimit.Limiter
 	// authenticated is Options.Authenticated.
 	authenticated func(ctx context.Context, userID ids.UUID, client Client) error
 	hasher        *Hasher
@@ -107,8 +118,8 @@ type Service struct {
 }
 
 // New returns a Service that keeps accounts in db, with opts. It panics if
-// a session's idle timeout or lifetime is not positive, which is a mistake
-// in the code that calls it.
+// a session's idle timeout or lifetime is not positive, or opts has no
+// Limits, which are mistakes in the code that calls it.
 func New(db DB, opts Options) *Service {
 	return newService(db, opts, NewHasher())
 }
@@ -118,8 +129,11 @@ func newService(db DB, opts Options, h *Hasher) *Service {
 		panic(fmt.Sprintf("account: the sessions' idle timeout %v and lifetime %v must be positive", opts.IdleTimeout,
 			opts.Lifetime))
 	}
+	if opts.Limits == nil {
+		panic("account: the Service has no Limits")
+	}
 	return &Service{db: db, signup: opts.Signup, idle: opts.IdleTimeout, lifetime: opts.Lifetime,
-		authenticated: opts.Authenticated, hasher: h, decoy: h.decoy()}
+		limits: opts.Limits, authenticated: opts.Authenticated, hasher: h, decoy: h.decoy()}
 }
 
 // CheckSignup returns ErrSignupClosed or ErrInviteRequired unless the signup
@@ -148,14 +162,19 @@ type Registration struct {
 // work, hashing the password included, so that the caller answers the same
 // and as late (FR-AUTH-01 AC1). It returns the error of CheckSignup unless
 // the policy lets anyone register, input.FieldErrors if the email address or
-// the display name is not valid, and a *PasswordError if the password breaks
-// the policy, in that order, and adds nothing then.
+// the display name is not valid, a *ratelimit.LimitError if the address has
+// been registered too often lately (FR-AUTH-05), whether or not it has an
+// account, and a *PasswordError if the password breaks the policy, in that
+// order, and adds nothing then.
 func (s *Service) Register(ctx context.Context, r Registration) error {
 	if err := s.CheckSignup(ctx); err != nil {
 		return err
 	}
 	email, name, err := r.fields()
 	if err != nil {
+		return err
+	}
+	if _, err := s.limits.Take(ctx, ratelimit.Auth, ratelimit.EmailAddress(email)); err != nil {
 		return err
 	}
 	if err := CheckPassword(r.Password); err != nil {
@@ -271,21 +290,9 @@ func checkDisplayName(name string) string {
 // still holds that hash (startSession).
 func (s *Service) authenticate(ctx context.Context, email string, password secret.Value) (id, account ids.UUID,
 	hash string, err error) {
-	var found bool
-	var row queries.UserCredentialsRow
-	if email = canonicalEmail(email); checkEmail(email) == "" {
-		err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-			var err error
-			row, err = queries.New(tx).UserCredentials(ctx, email)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
-			}
-			found = err == nil
-			return err
-		})
-		if err != nil {
-			return ids.UUID{}, ids.UUID{}, "", fmt.Errorf("account: read the account: %w", err)
-		}
+	row, found, err := s.credentials(ctx, email)
+	if err != nil {
+		return ids.UUID{}, ids.UUID{}, "", err
 	}
 	if found {
 		account = row.ID.Bytes
@@ -309,6 +316,32 @@ func (s *Service) authenticate(ctx context.Context, email string, password secre
 		}
 	}
 	return account, account, hash, nil
+}
+
+// credentials returns the credentials of the account that the email address
+// belongs to, in its canonical form (canonicalEmail), whatever the account's
+// status, and false if it belongs to none. An address that registration
+// would refuse (checkEmail), which no account has, such as one with a NUL
+// character, is not looked up at all.
+func (s *Service) credentials(ctx context.Context, email string) (queries.UserCredentialsRow, bool, error) {
+	var row queries.UserCredentialsRow
+	var found bool
+	if email = canonicalEmail(email); checkEmail(email) != "" {
+		return row, false, nil
+	}
+	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		var err error
+		row, err = queries.New(tx).UserCredentials(ctx, email)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		found = err == nil
+		return err
+	})
+	if err != nil {
+		return row, false, fmt.Errorf("account: read the account: %w", err)
+	}
+	return row, found, nil
 }
 
 // rehash replaces old, the hash of the account id's password, with a hash of

@@ -147,7 +147,7 @@ func NewMux(opts MuxOptions) *Mux {
 	config.DefaultFormat = "application/json"
 	config.Transformers = []huma.Transformer{fillEnvelope}
 	m.api = humachi.New(m.router, config)
-	m.api.UseMiddleware(replaceCacheControl)
+	m.api.UseMiddleware(replaceHeaders)
 	return m
 }
 
@@ -172,29 +172,60 @@ func limitBodyRead(d time.Duration) func(http.Handler) http.Handler {
 	}
 }
 
-// replaceCacheControl is huma middleware that makes a Cache-Control that an
-// operation returns with an error, as NotModified does, replace the one that
-// the router's middleware set before it, such as httpserver's no-store. huma
-// adds an error's headers to those already set, and a cache reads two
-// Cache-Control headers as one, in which no-store wins.
-func replaceCacheControl(ctx huma.Context, next func(huma.Context)) {
-	next(&cacheControlContext{wrapped: ctx})
+// The headers of a rate limit (PRD FR-API-04, NFR-SEC-06), which package
+// httpserver sets, an operation's error replaces (replacedHeaders), and the
+// error response documents (errorResponse): RateLimit-Limit, -Remaining, and
+// -Reset, of draft-ietf-httpapi-ratelimit-headers, and Retry-After, which
+// also answers not_ready.
+const (
+	RateLimitLimitHeader     = "RateLimit-Limit"
+	RateLimitRemainingHeader = "RateLimit-Remaining"
+	RateLimitResetHeader     = "RateLimit-Reset"
+	RetryAfterHeader         = "Retry-After"
+)
+
+// replacedHeaders are the headers that an operation's error replaces, rather
+// than adds to (replaceHeaders), by their canonical names: Cache-Control,
+// which a cache reads as one header, in which no-store wins, and the headers
+// of a rate limit, which state one key's limit, and which the limit's
+// middleware sets before the operation, and the operation's own limit may
+// replace (package httpserver).
+var replacedHeaders = map[string]bool{
+	"Cache-Control": true,
+	http.CanonicalHeaderKey(RateLimitLimitHeader):     true,
+	http.CanonicalHeaderKey(RateLimitRemainingHeader): true,
+	http.CanonicalHeaderKey(RateLimitResetHeader):     true,
+	http.CanonicalHeaderKey(RetryAfterHeader):         true,
+}
+
+// replaceHeaders is huma middleware that makes a header of replacedHeaders
+// that an operation returns with an error, as NotModified returns
+// Cache-Control, replace the one that middleware set before it, such as
+// httpserver's Cache-Control: no-store. huma adds an error's headers to those
+// already set.
+func replaceHeaders(ctx huma.Context, next func(huma.Context)) {
+	next(&replacingContext{wrapped: ctx})
 }
 
 // wrapped is huma.Context under a name that, embedded, does not clash with
 // the interface's method Context.
 type wrapped = huma.Context
 
-// cacheControlContext is a huma.Context whose first Cache-Control appended
-// replaces the one already set. Those appended after it add to it.
-type cacheControlContext struct {
+// replacingContext is a huma.Context whose first value appended of each of
+// replacedHeaders replaces the one already set. Those appended after it add
+// to it.
+type replacingContext struct {
 	wrapped
-	replaced bool
+	// replaced are the headers whose first value has been appended.
+	replaced map[string]bool
 }
 
-func (c *cacheControlContext) AppendHeader(name, value string) {
-	if !c.replaced && http.CanonicalHeaderKey(name) == "Cache-Control" {
-		c.replaced = true
+func (c *replacingContext) AppendHeader(name, value string) {
+	if name = http.CanonicalHeaderKey(name); replacedHeaders[name] && !c.replaced[name] {
+		if c.replaced == nil {
+			c.replaced = map[string]bool{}
+		}
+		c.replaced[name] = true
 		c.SetHeader(name, value)
 		return
 	}
@@ -203,7 +234,7 @@ func (c *cacheControlContext) AppendHeader(name, value string) {
 
 // Unwrap returns the context that c wraps, as humachi.Unwrap expects of a
 // context that middleware wraps.
-func (c *cacheControlContext) Unwrap() huma.Context {
+func (c *replacingContext) Unwrap() huma.Context {
 	return c.wrapped
 }
 

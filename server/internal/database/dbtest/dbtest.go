@@ -174,6 +174,26 @@ func Connect(t testing.TB, url config.DatabaseURL) *pgx.Conn {
 	return conn
 }
 
+// AwaitWindow waits, if the window of time of length period that the
+// database's clock is in, counted from the Unix epoch, as package ratelimit
+// counts its windows, ends within need, until the next window starts, so
+// that what a test does within need falls in one window. It reads the
+// clock of the database server, which counts the windows, rather than the
+// machine's, whose clock may differ from it.
+func (d *Database) AwaitWindow(t testing.TB, period, need time.Duration) {
+	t.Helper()
+	var left float64
+	if err := d.srv.admin.QueryRow(context.Background(), `SELECT extract(epoch FROM date_bin($1::interval, now(),
+		timestamptz '1970-01-01 00:00:00+00') + $1::interval - now())`, database.Interval(period)).Scan(&left); err != nil {
+		t.Fatalf("read the time left in the window: %v", err)
+	}
+	if wait := time.Duration(left * float64(time.Second)); wait < need {
+		// A moment more, so that the next window has started by the time the
+		// test's first statement reaches the database.
+		time.Sleep(wait + 100*time.Millisecond)
+	}
+}
+
 // URL returns the URL that connects to the database as login with password.
 func (d *Database) URL(t testing.TB, login, password string) config.DatabaseURL {
 	t.Helper()

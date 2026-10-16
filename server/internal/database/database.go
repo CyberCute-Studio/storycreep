@@ -24,9 +24,11 @@ import (
 	"io/fs"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
@@ -193,6 +195,13 @@ func settingValue(id ids.UUID) string {
 		return ""
 	}
 	return id.String()
+}
+
+// Interval returns d as an interval parameter of the queries, in
+// microseconds, without days or months, which PostgreSQL adds to a
+// timestamptz as the same length of time whatever the calendar.
+func Interval(d time.Duration) pgtype.Interval {
+	return pgtype.Interval{Microseconds: d.Microseconds(), Valid: true}
 }
 
 // Pending returns the versions of the embedded migrations, or of the

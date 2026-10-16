@@ -276,7 +276,7 @@
             "type": "string"
           },
           "ip": {
-            "description": "The IP address that its user signed in from, as the server saw it; behind a reverse proxy, the proxy's",
+            "description": "The IP address that its user signed in from: the address that the connection came from, or, if that is one of STORYCREEP_TRUSTED_PROXIES, the client's address that the proxies forwarded",
             "type": "string"
           },
           "last_seen_at": {
@@ -447,7 +447,7 @@
   "paths": {
     "/api/v1/auth/login": {
       "post": {
-        "description": "Signs in with an account's email address and password, and starts a session, whose secret the Set-Cookie header gives the client, and whose CSRF token the body holds. The account's first sign-in also gives it its personal workspace, named after its display name, which it owns; GET /api/v1/workspaces lists it. An address of no account, a wrong password, and an account that cannot sign in, such as a suspended one, are all answered with 401 invalid_credentials, after the same work, so that the answer does not tell them apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another origin of the same site, is answered with 403 csrf_failed; browsers send that header only to https URLs and to loopback addresses, such as localhost.",
+        "description": "Signs in with an account's email address and password, and starts a session, whose secret the Set-Cookie header gives the client, and whose CSRF token the body holds. The account's first sign-in also gives it its personal workspace, named after its display name, which it owns; GET /api/v1/workspaces lists it. An address of no account, a wrong password, and an account that cannot sign in, such as a suspended one, are all answered with 401 invalid_credentials, after the same work, so that the answer does not tell them apart. A request that a browser's Sec-Fetch-Site header says comes from another site, or from another origin of the same site, is answered with 403 csrf_failed; browsers send that header only to https URLs and to loopback addresses, such as localhost. After 10 failed sign-ins in a row with an email address, whether or not it belongs to an account, the address is locked for a minute, and each further failure, once a lock ends, locks it for twice as long as the lock before, up to 15 minutes: while it is locked, every sign-in with it is answered with 429 rate_limited, whose details.reason is locked, even with the right password. A successful sign-in forgets the failures, and so do 24 hours without one. Signing in, registering, and changing a password share a rate limit of 20 requests a minute for each IP address. Registering also has one of 10 a minute for each email address, and changing a password one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.",
         "operationId": "login",
         "requestBody": {
           "content": {
@@ -470,6 +470,27 @@
             },
             "description": "OK",
             "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
               "Set-Cookie": {
                 "schema": {
                   "description": "The session cookie, which holds the session's secret: __Host-sc_session, Secure, when STORYCREEP_PUBLIC_URL is https, and sc_session otherwise, in either case HttpOnly, SameSite=Lax, for the path /, and expiring when the session ends at the latest",
@@ -492,6 +513,30 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
                 }
               }
             }
@@ -546,6 +591,30 @@
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
                 }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
               }
             }
           }
@@ -558,7 +627,7 @@
     },
     "/api/v1/auth/password": {
       "post": {
-        "description": "Changes the signed-in account's password, if current_password is the account's, or the answer is 403 wrong_password. The new password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, or the answer is 422 weak_password. Changing it revokes every other session of the account, and gives the session of the request a new secret, in the Set-Cookie header, and a new CSRF token, in the body, so that the old ones are no longer valid. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.",
+        "description": "Changes the signed-in account's password, if current_password is the account's, or the answer is 403 wrong_password. The new password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, or the answer is 422 weak_password. Changing it revokes every other session of the account, and gives the session of the request a new secret, in the Set-Cookie header, and a new CSRF token, in the body, so that the old ones are no longer valid. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Signing in, registering, and changing a password share a rate limit of 20 requests a minute for each IP address. Registering also has one of 10 a minute for each email address, and changing a password one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.",
         "operationId": "changePassword",
         "parameters": [
           {
@@ -593,6 +662,27 @@
             },
             "description": "OK",
             "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
               "Set-Cookie": {
                 "schema": {
                   "description": "The session cookie, which holds the session's secret: __Host-sc_session, Secure, when STORYCREEP_PUBLIC_URL is https, and sc_session otherwise, in either case HttpOnly, SameSite=Lax, for the path /, and expiring when the session ends at the latest",
@@ -616,6 +706,30 @@
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
                 }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
               }
             }
           }
@@ -628,7 +742,7 @@
     },
     "/api/v1/auth/register": {
       "post": {
-        "description": "Creates an account with an email address, a display name, and a password, if the instance's signup policy, STORYCREEP_SIGNUP, lets anyone register. Under closed the answer is 403 signup_closed, and under invite 403 invite_required, because only an invitation creates an account then; either comes whatever the request holds. An email address or a display name that its field does not allow is answered with 422 validation_failed. The password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, compared without regard to case, or the answer is 422 weak_password. Otherwise the answer is 202 without a body, whether or not the address has an account already, which then stays as it was, so that the answer does not tell whether an address has an account.",
+        "description": "Creates an account with an email address, a display name, and a password, if the instance's signup policy, STORYCREEP_SIGNUP, lets anyone register. Under closed the answer is 403 signup_closed, and under invite 403 invite_required, because only an invitation creates an account then; either comes whatever the request holds. An email address or a display name that its field does not allow is answered with 422 validation_failed. The password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, compared without regard to case, or the answer is 422 weak_password. Otherwise the answer is 202 without a body, whether or not the address has an account already, which then stays as it was, so that the answer does not tell whether an address has an account. Signing in, registering, and changing a password share a rate limit of 20 requests a minute for each IP address. Registering also has one of 10 a minute for each email address, and changing a password one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.",
         "operationId": "registerAccount",
         "requestBody": {
           "content": {
@@ -642,7 +756,30 @@
         },
         "responses": {
           "202": {
-            "description": "Accepted"
+            "description": "Accepted",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -658,6 +795,30 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
                 }
               }
             }
@@ -698,6 +859,30 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
                 }
               }
             }
@@ -750,6 +935,30 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
                 }
               }
             }
@@ -816,6 +1025,30 @@
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
                 }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
               }
             }
           }
@@ -878,6 +1111,30 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
                 }
               }
             }
@@ -962,6 +1219,30 @@
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
                 }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
               }
             }
           }
@@ -1028,6 +1309,30 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
                 }
               }
             }
@@ -1097,6 +1402,30 @@
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
                 }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
               }
             }
           }
@@ -1148,6 +1477,30 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
                 }
               }
             }
@@ -1219,6 +1572,30 @@
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
                 }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
               }
             }
           }
@@ -1257,6 +1634,30 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
                 }
               }
             }
@@ -1298,6 +1699,30 @@
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
                 }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
               }
             }
           }
@@ -1336,6 +1761,30 @@
                 "schema": {
                   "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
                   "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
                 }
               }
             }

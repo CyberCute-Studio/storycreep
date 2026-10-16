@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/netip"
 	"os"
 	"reflect"
 	"slices"
@@ -123,6 +124,7 @@ func TestDefaults(t *testing.T) {
 		{"STORYCREEP_DATABASE_ADMIN_URL", "", SourceUnset},
 		{"STORYCREEP_DATABASE_MAINTENANCE_URL", "", SourceUnset},
 		{"STORYCREEP_HTTP_ADDR", ":8080", SourceDefault},
+		{"STORYCREEP_TRUSTED_PROXIES", "", SourceUnset},
 		{"STORYCREEP_ADMIN_ADDR", "127.0.0.1:9090", SourceDefault},
 		{"STORYCREEP_METRICS_TOKEN", "", SourceUnset},
 		{"STORYCREEP_LOG_LEVEL", "info", SourceDefault},
@@ -449,6 +451,40 @@ func TestSessionDurations(t *testing.T) {
 			if len(problems) != 1 || problems[0].Key != key {
 				t.Errorf("%s=%s: problems %v, want one for the key", key, v, problems)
 			}
+		}
+	}
+}
+
+// TestTrustedProxies checks STORYCREEP_TRUSTED_PROXIES: none by default,
+// addresses and prefixes, masked, with IPv4 addresses written as IPv6 ones
+// read as IPv4, shown as they are in effect, and the refusal of an entry
+// that is neither, which the problem names by its place.
+func TestTrustedProxies(t *testing.T) {
+	if c := mustLoad(t, withRequired(nil)); c.TrustedProxies != nil {
+		t.Errorf("the default is %v, want none", c.TrustedProxies)
+	}
+	c := mustLoad(t, withRequired(map[string]string{
+		"STORYCREEP_TRUSTED_PROXIES": " 172.18.0.1,10.1.2.3/8 , fd00::1/64,::ffff:192.168.1.7, ::ffff:10.0.0.0/104",
+	}))
+	want := []netip.Prefix{
+		netip.MustParsePrefix("172.18.0.1/32"), netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("fd00::/64"), netip.MustParsePrefix("192.168.1.7/32"),
+		netip.MustParsePrefix("10.0.0.0/8"),
+	}
+	if !slices.Equal(c.TrustedProxies, want) {
+		t.Errorf("TrustedProxies = %v, want %v", c.TrustedProxies, want)
+	}
+	const shown = "172.18.0.1, 10.0.0.0/8, fd00::/64, 192.168.1.7, 10.0.0.0/8"
+	if i := slices.IndexFunc(c.Entries(), func(e Entry) bool { return e.Key == "STORYCREEP_TRUSTED_PROXIES" }); i < 0 ||
+		c.Entries()[i].Value != shown {
+		t.Errorf("Entries() = %v, want STORYCREEP_TRUSTED_PROXIES shown as %q", c.Entries(), shown)
+	}
+	for _, v := range []string{"proxy.example.com", "10.0.0.0/33", "10.0.0.1,", "10.0.0.1,,10.0.0.2", "10.0.0.1:80"} {
+		problems := loadProblems(t, Options{Env: MapEnvironment(withRequired(map[string]string{
+			"STORYCREEP_TRUSTED_PROXIES": v}))})
+		if len(problems) != 1 || problems[0].Key != "STORYCREEP_TRUSTED_PROXIES" ||
+			!strings.Contains(problems[0].Msg, "is not an IP address or a CIDR prefix") {
+			t.Errorf("%q: problems %v, want one for the key", v, problems)
 		}
 	}
 }

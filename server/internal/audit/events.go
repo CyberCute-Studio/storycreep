@@ -15,7 +15,10 @@ const (
 	// that the address belongs to, if any, and a failed attempt for an
 	// address that belongs to no account records the address as its keyed
 	// hash instead (Entry.AttemptedEmail). A successful one names the
-	// session that it started in its metadata's session_id.
+	// session that it started in its metadata's session_id, and a failed
+	// one says why in its metadata's reason: invalid_credentials, or
+	// locked, when too many failures in a row had locked the address, and
+	// the password was not checked (FR-AUTH-05).
 	ActionLogin Action = "auth.login"
 	// ActionSessionRevoke is the end of a session before its time
 	// (FR-AUTH-02): its user signed out of it, revoked it, or changed the
@@ -75,7 +78,7 @@ type eventSpec struct {
 // events is the registry of event types.
 var events = []eventSpec{
 	{action: ActionLogin, subject: "user", results: []Result{ResultSuccess, ResultFailure},
-		metadata: []string{"session_id"}, attemptedEmail: true},
+		metadata: []string{"session_id", "reason"}, attemptedEmail: true},
 	{action: ActionSessionRevoke, subject: "session", results: []Result{ResultSuccess}, metadata: []string{"reason"}},
 	{action: ActionPasswordChange, subject: "user", results: []Result{ResultSuccess, ResultFailure}},
 	{action: ActionWorkspaceCreate, inWorkspace: true, subject: "workspace", results: []Result{ResultSuccess},

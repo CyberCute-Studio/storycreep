@@ -86,8 +86,9 @@ type Options struct {
 	// --no-inline-workers is given.
 	InlineWorkers bool
 	// Jobs holds the kinds of job that the server enqueues and runs. Nil
-	// means the server's own: the session cleanup (package account). The
-	// plan items that add jobs register them in serverJobs.
+	// means the server's own: the session cleanup (package account) and the
+	// rate limit cleanup (package ratelimit). The plan items that add jobs
+	// register them in serverJobs.
 	Jobs *jobs.Registry
 }
 
@@ -301,6 +302,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 func (s *server) serverJobs() *jobs.Registry {
 	r := jobs.NewRegistry()
 	s.accounts.RegisterJobs(r)
+	s.limits.RegisterJobs(r)
 	return r
 }
 

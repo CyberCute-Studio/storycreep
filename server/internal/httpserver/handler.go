@@ -15,6 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/version"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
@@ -33,6 +34,8 @@ type server struct {
 	accounts *account.Service
 	// workspaces keeps the workspaces.
 	workspaces *workspace.Service
+	// limits counts the requests of the rate limits.
+	limits *ratelimit.Limiter
 }
 
 func newServer(cfg *config.Config, log *slog.Logger) *server {
@@ -46,10 +49,12 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		PlanKey:       planKey(cfg.Capabilities),
 		DefaultLocale: cfg.DefaultLocale,
 	})
+	s.limits = ratelimit.New(readyDB{s.ready}, ratelimit.DefaultPolicy())
 	s.accounts = account.New(readyDB{s.ready}, account.Options{
 		Signup:      cfg.Capabilities.Signup,
 		IdleTimeout: cfg.SessionIdleTimeout,
 		Lifetime:    cfg.SessionLifetime,
+		Limits:      s.limits,
 		// The first sign-in gives the account its personal workspace
 		// (FR-TEN-01).
 		Authenticated: s.workspaces.EnsurePersonal,
@@ -66,13 +71,13 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 			noindexApp,
 			refuseCrossSite,
 			s.ready.gate,
-			withClient,
+			withClient(cfg.TrustedProxies),
 		},
 		Authenticate: authenticator(s.accounts, cookie),
 	})
 	s.registerOperational(s.main)
-	registerAccounts(s.main, s.accounts)
-	registerSessions(s.main, s.accounts, cookie)
+	registerAccounts(s.main, s.accounts, s.limits)
+	registerSessions(s.main, s.accounts, s.limits, cookie)
 	registerWorkspaces(s.main, s.workspaces)
 	registerDocument(s.main)
 	registerPages(s.main, cfg.Capabilities.PublicSite)

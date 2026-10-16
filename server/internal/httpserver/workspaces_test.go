@@ -204,13 +204,6 @@ func TestCreateWorkspace(t *testing.T) {
 	}
 }
 
-// with returns h with the headers of more added.
-func with(h, more http.Header) http.Header {
-	out := maps.Clone(h)
-	maps.Copy(out, more)
-	return out
-}
-
 // TestWorkspaceSlugs checks that a slug is unique on the instance, and that
 // one of the wrong form or a reserved word is refused, as a workspace is
 // created and as its slug changes, and that nothing changes then.
