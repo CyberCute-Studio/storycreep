@@ -173,7 +173,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### Milestone B — Identity and tenancy
 
 ### 11. Tenancy schema, RLS, context bootstrap, and maintenance role
-**Status:** todo · **Depends on:** 5
+**Status:** done ([#12](https://github.com/CyberCute-Studio/storycreep/pull/12)) · **Depends on:** 5
 **PRD:** §5.3 (identity and tenancy), §5.4, FR-TEN-01 (AC1), NFR-SEC-01, ADR-002
 - Tables: `user`, `workspace`, `membership`, `project_grant`, `invite`, `session`, `api_token`, `audit_entry`, plus a `project` shell needed by `route_project_workspace`.
 - `FORCE ROW LEVEL SECURITY` policies on every tenant table.
