@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/netip"
 	"os"
 	"runtime"
 	"slices"
@@ -44,6 +45,9 @@ type Config struct {
 	DatabaseMaintenanceURL DatabaseURL
 	// HTTPAddr is the address the server listens on for HTTP.
 	HTTPAddr string
+	// TrustedProxies are the reverse proxies in front of the server, whose
+	// X-Forwarded-For header names a request's client, or none.
+	TrustedProxies []netip.Prefix
 	// AdminAddr is the address of the admin port, which serves /metrics, or
 	// "" if there is none.
 	AdminAddr string

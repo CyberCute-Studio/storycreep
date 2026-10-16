@@ -41,6 +41,7 @@ const (
 	CodeUnsupportedMediaType Code = "unsupported_media_type"
 	CodeValidationFailed     Code = "validation_failed"
 	CodeWeakPassword         Code = "weak_password"
+	CodeRateLimited          Code = "rate_limited"
 	CodeInternal             Code = "internal_error"
 	CodeNotReady             Code = "not_ready"
 )
@@ -121,6 +122,17 @@ var codes = []codeSpec{
 			"with fewer than 12 characters, counted as Unicode code points once the password is in NFKC, or " +
 			"`common`, one of the 10,000 most common passwords, compared without regard to case. " +
 			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeRateLimited, http.StatusTooManyRequests, i18n.K("error.rate_limited"),
+		"The client made too many requests (PRD FR-API-04 AC3, NFR-SEC-06), or signing in with an email address " +
+			"failed too often in a row (FR-AUTH-05). The `Retry-After` header says how many seconds to wait. " +
+			"`details.reason` says which: `rate`, when the requests of a kind, its `details.bucket`, used up their " +
+			"limit for the client's IP address, its account, or the email address that they name, until the " +
+			"`RateLimit-Reset` header's seconds have passed; or `locked`, when 10 sign-ins in a row with the email " +
+			"address failed, whether or not it belongs to an account, which locks it for a minute, and each further " +
+			"failure, once a lock ends, for twice as long as the lock before, up to 15 minutes. While the address " +
+			"is locked, `POST /api/v1/auth/login` refuses every sign-in with it, even with the right password, " +
+			"until one succeeds after the lock. The failures are forgotten a day after the last one. " +
+			"`details.bucket` is `auth` for signing in, registering, and changing a password."},
 	{CodeInternal, http.StatusInternalServerError, i18n.K("error.internal_error"),
 		"The server failed. Its log has the cause, under the envelope's `request_id`."},
 	{CodeNotReady, http.StatusServiceUnavailable, i18n.K("error.not_ready"),

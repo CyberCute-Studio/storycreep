@@ -46,6 +46,7 @@ func TestFile(t *testing.T) {
 		{"STORYCREEP_DATABASE_ADMIN_URL", "", SourceUnset},
 		{"STORYCREEP_DATABASE_MAINTENANCE_URL", "", SourceUnset},
 		{"STORYCREEP_HTTP_ADDR", ":8080", SourceDefault},
+		{"STORYCREEP_TRUSTED_PROXIES", "", SourceUnset},
 		{"STORYCREEP_ADMIN_ADDR", "127.0.0.1:9090", SourceDefault},
 		{"STORYCREEP_METRICS_TOKEN", "", SourceUnset},
 		// An empty value counts as unset, so the default applies.

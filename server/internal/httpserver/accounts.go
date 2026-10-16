@@ -13,6 +13,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -46,11 +47,14 @@ type registerInput struct {
 	Body registerBody
 }
 
-// acceptedOutput is an answer of 202 without a body.
-type acceptedOutput struct{}
+// acceptedOutput is an answer of 202 without a body, of a registration,
+// which is rate-limited.
+type acceptedOutput struct {
+	RateLimitOutput
+}
 
 // registerAccounts registers the routes of accounts (PRD FR-AUTH-01).
-func registerAccounts(m *api.Mux, accounts *account.Service) {
+func registerAccounts(m *api.Mux, accounts *account.Service, limits *ratelimit.Limiter) {
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "registerAccount",
 		Method:      http.MethodPost,
@@ -64,14 +68,16 @@ func registerAccounts(m *api.Mux, accounts *account.Service) {
 			"Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, " +
 			"compared without regard to case, or the answer is 422 weak_password. Otherwise the answer is 202 " +
 			"without a body, whether or not the address has an account already, which then stays as it was, so " +
-			"that the answer does not tell whether an address has an account.",
+			"that the answer does not tell whether an address has an account." + authLimitDoc,
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusAccepted,
 		// The policy is checked before the body is read, so that a
-		// registration is refused whatever it holds (FR-AUTH-01 AC3).
+		// registration is refused whatever it holds (FR-AUTH-01 AC3), and
+		// before the rate limit, which a registration that is refused anyway
+		// need not count.
 		Middlewares: huma.Middlewares{api.Guard(func(ctx context.Context) error {
 			return accountError(accounts.CheckSignup(ctx))
-		})},
+		}), rateLimit(limits, ratelimit.Auth)},
 	}, func(ctx context.Context, in *registerInput) (*acceptedOutput, error) {
 		err := accounts.Register(ctx, account.Registration{
 			Email:       in.Body.Email,
@@ -106,7 +112,7 @@ func accountError(err error) error {
 	case errors.As(err, &weak):
 		return weakPasswordError(weak, "body.password")
 	}
-	return err
+	return limitError(err)
 }
 
 // weakPasswordError returns the error that the API answers weak with, for

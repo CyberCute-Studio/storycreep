@@ -46,6 +46,14 @@ func send(h http.Handler, method, path string, body []byte, contentType string, 
 	return response{status: w.Code, header: w.Header(), body: w.Body.Bytes()}
 }
 
+// dropCounts removes from h the RateLimit headers that count the client's
+// requests, which change from one request to the next, whatever the request
+// holds.
+func dropCounts(h http.Header) {
+	h.Del(remainingHeader)
+	h.Del(resetHeader)
+}
+
 // registration returns the JSON body of a registration.
 func registration(t *testing.T, email, displayName, password string) []byte {
 	t.Helper()
@@ -94,6 +102,7 @@ func TestRegisterHidesExistingAccounts(t *testing.T) {
 	}
 	for _, h := range []http.Header{created.header, again.header} {
 		h.Del(requestIDHeader)
+		dropCounts(h)
 	}
 	if !maps.EqualFunc(created.header, again.header, slices.Equal) {
 		t.Errorf("the headers differ: %v and %v", created.header, again.header)

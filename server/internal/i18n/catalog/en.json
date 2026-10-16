@@ -19,6 +19,8 @@
   "error.not_ready.migrations_pending": "The database has pending migrations, which storycreep migrate applies.",
   "error.not_ready.starting": "The server is starting.",
   "error.not_ready.stopping": "The server is stopping.",
+  "error.rate_limited": "Too many requests. Try again later.",
+  "error.rate_limited.locked": "Too many failed sign-ins with this email address. Try again later.",
   "error.request_timeout": "The request body did not arrive in time.",
   "error.request_too_large": "The request body is too large.",
   "error.signup_closed": "Registration is closed on this server.",

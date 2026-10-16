@@ -33,7 +33,8 @@ The compose file names its Compose project `storycreep`, and the containers and 
 | `STORYCREEP_IMAGE` | `ghcr.io/cybercute-studio/storycreep:main` | The image to run. |
 | `STORYCREEP_PUBLISH` | `127.0.0.1:7777` | Where Docker publishes the server's HTTP port, as `[address:]port`. The default reaches it from this machine only. A port without an address, such as `8000`, publishes it on every network interface, as `0.0.0.0:8000` does, so to change only the port, keep the address, as in `127.0.0.1:8000`. Another port is another URL, so set `STORYCREEP_PUBLIC_URL` with it, as in `http://localhost:8000`. |
 | `STORYCREEP_PUBLIC_URL` | `http://localhost:7777` | The URL users open Storycreep at. |
-| `STORYCREEP_MODE`, `STORYCREEP_PUBLIC_SITE`, `STORYCREEP_SIGNUP`, `STORYCREEP_SESSION_IDLE_TIMEOUT`, `STORYCREEP_SESSION_LIFETIME`, `STORYCREEP_DEFAULT_LOCALE`, `STORYCREEP_LOG_LEVEL`, `STORYCREEP_ADMIN_ADDR`, `STORYCREEP_METRICS_TOKEN` | The server's | The server keys of the same names, which [`docs/configuration.md`](../docs/configuration.md) describes. |
+| `STORYCREEP_TRUSTED_PROXIES` | Not set | The addresses that a reverse proxy in front of the server connects from, whose `X-Forwarded-For` header the server believes. See [Behind a reverse proxy](#behind-a-reverse-proxy). |
+| `STORYCREEP_MODE`, `STORYCREEP_PUBLIC_SITE`, `STORYCREEP_SIGNUP`, `STORYCREEP_SESSION_IDLE_TIMEOUT`, `STORYCREEP_SESSION_LIFETIME`, `STORYCREEP_DEFAULT_LOCALE`, `STORYCREEP_LOG_LEVEL`, `STORYCREEP_ADMIN_ADDR`, `STORYCREEP_METRICS_TOKEN` | The server's | The server keys of the same names, which [`docs/configuration.md`](../docs/configuration.md) describes, as it does `STORYCREEP_TRUSTED_PROXIES`. |
 | `COMPOSE_PROJECT_NAME` | `storycreep` | The Compose project's name, which the containers' and volumes' names start with. Another name is another instance, with volumes of its own, so set it before the first start. |
 
 The compose file sets the database URLs itself. The three logins in them take their password from `POSTGRES_PASSWORD`, through `PGPASSWORD`, so that a password with characters such as `@` or `/` needs no escaping.
@@ -44,7 +45,15 @@ The server speaks plain HTTP, and expects a reverse proxy in front of it to term
 
 A proxy that runs in a container cannot reach `127.0.0.1:7777`, because its `127.0.0.1` is its own container's. Connect it to the compose project's network, `storycreep_default`, or `<name>_default` for a project that `COMPOSE_PROJECT_NAME` names, as an external network of the proxy's own compose file, for example, and forward it to `app:8080`.
 
-To reach the server from other machines without a proxy, set `STORYCREEP_PUBLISH=0.0.0.0:7777` and `STORYCREEP_PUBLIC_URL` to the URL they use. Their traffic is then unencrypted, and a port that Docker publishes is open even where a host firewall, such as ufw, would block it.
+Either way, every request then reaches the server from the proxy, so set `STORYCREEP_TRUSTED_PROXIES` to tell the server to take the client's address from the `X-Forwarded-For` header that the proxy sets, as Caddy and Traefik do unasked, and nginx with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. Without it, all clients share the rate limits of the proxy's address, so one client that uses up the limit of signing in, 20 requests a minute, keeps everyone from signing in until the minute ends, and the sessions that users list show the proxy's address. The proxy's connections come from the compose project's network: from its gateway for a proxy on the same machine, and from the proxy's container for one on the network. Docker gives the networks that it creates addresses in `172.16.0.0/12`, and then in `192.168.0.0/16`, unless its daemon is configured otherwise, and Compose may give the network other addresses each time it creates it, as after `docker compose down`, so set the range rather than one address:
+
+```sh
+STORYCREEP_TRUSTED_PROXIES=172.16.0.0/12
+```
+
+`docker network inspect storycreep_default --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'` prints the network's addresses, to check that the range holds them. Whoever connects from a trusted address can claim any address, so trust only addresses that nothing but the proxy connects from: with the default `STORYCREEP_PUBLISH`, only programs on this machine reach the server.
+
+To reach the server from other machines without a proxy, set `STORYCREEP_PUBLISH=0.0.0.0:7777` and `STORYCREEP_PUBLIC_URL` to the URL they use, and leave `STORYCREEP_TRUSTED_PROXIES` unset. Their traffic is then unencrypted, and a port that Docker publishes is open even where a host firewall, such as ufw, would block it.
 
 ### Metrics
 

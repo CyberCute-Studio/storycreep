@@ -1,0 +1,392 @@
+package ratelimit
+
+import (
+	"context"
+	"errors"
+	"net/netip"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+)
+
+func TestMain(m *testing.M) {
+	os.Exit(dbtest.Run(m))
+}
+
+// testPolicy is the server's policy, but with small limits of the read
+// bucket, in windows of an hour, which a test does not outlast.
+func testPolicy() Policy {
+	p := DefaultPolicy()
+	p.Rates[Read] = Rate{Period: time.Hour, Limits: map[Kind]int{IP: 3, User: 2}}
+	p.Rates[Auth] = Rate{Period: time.Hour, Limits: map[Kind]int{IP: 20, User: 10, Email: 2}}
+	return p
+}
+
+// setup returns a Limiter with testPolicy on a new database, the database's
+// pool, and a connection to it as the superuser. It waits for the next hour
+// if the current one ends within a minute, so that no window of the test
+// policy ends during the test.
+func setup(t *testing.T) (*Limiter, *database.DB, *pgx.Conn) {
+	t.Helper()
+	if left := time.Until(time.Now().Truncate(time.Hour).Add(time.Hour)); left < time.Minute {
+		time.Sleep(left + time.Second)
+	}
+	d := dbtest.New(t)
+	db := d.Open(t)
+	return New(db, testPolicy()), db, d.Admin(t)
+}
+
+// exec runs sql as the superuser.
+func exec(t *testing.T, admin *pgx.Conn, sql string, args ...any) {
+	t.Helper()
+	if _, err := admin.Exec(context.Background(), sql, args...); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// count returns the number that a query counts, as the superuser.
+func count(t *testing.T, admin *pgx.Conn, sql string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := admin.QueryRow(context.Background(), sql, args...).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// TestDefaultPolicy checks the server's limits, which docs/error-codes.md,
+// docs/configuration.md, and the descriptions of the API's operations state:
+// a lock after 10 failed sign-ins in a row, for a minute, doubling up to 15
+// minutes, with failures forgotten after a day, and 20 requests a minute of
+// the auth bucket for an IP address, and 10 for an account and an email
+// address.
+//
+// Verifies: NFR-SEC-06
+func TestDefaultPolicy(t *testing.T) {
+	p := DefaultPolicy()
+	if err := p.check(); err != nil {
+		t.Fatal(err)
+	}
+	if want := (Lockout{Failures: 10, First: time.Minute, Max: 15 * time.Minute, Forget: 24 * time.Hour}); p.Lockout !=
+		want {
+		t.Errorf("the lockout is %+v, want %+v", p.Lockout, want)
+	}
+	auth := p.Rates[Auth]
+	if auth.Period != time.Minute || auth.Limits[IP] != 20 || auth.Limits[User] != 10 || auth.Limits[Email] != 10 {
+		t.Errorf("the auth bucket is %+v", auth)
+	}
+	for _, b := range []Bucket{Auth, Read, Write, Export, Connect} {
+		r, ok := p.Rates[b]
+		if !ok || r.Limits[IP] == 0 || r.Limits[User] == 0 {
+			t.Errorf("the bucket %s does not limit IP addresses and users: %+v", b, r)
+		}
+	}
+}
+
+// TestPolicyCheck checks that New refuses a policy that cannot work.
+func TestPolicyCheck(t *testing.T) {
+	for name, change := range map[string]func(*Policy){
+		"a period under a second":    func(p *Policy) { p.Rates[Read] = Rate{Period: time.Millisecond} },
+		"a period of a fraction":     func(p *Policy) { p.Rates[Read] = Rate{Period: 1500 * time.Millisecond} },
+		"a limit of none":            func(p *Policy) { p.Rates[Read] = Rate{Period: time.Minute, Limits: map[Kind]int{IP: 0}} },
+		"a lock after one failure":   func(p *Policy) { p.Lockout.Failures = 1 },
+		"a lock of no time":          func(p *Policy) { p.Lockout.First = 0 },
+		"a longest lock too short":   func(p *Policy) { p.Lockout.Max = p.Lockout.First / 2 },
+		"failures forgotten in lock": func(p *Policy) { p.Lockout.Forget = p.Lockout.Max },
+	} {
+		p := DefaultPolicy()
+		change(&p)
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s: New did not panic", name)
+				}
+			}()
+			New(nil, p)
+		}()
+	}
+}
+
+// TestTake checks that a request counts against each of its keys, is
+// refused once one of them has used up its limit, with the state of that
+// key and how long to wait, and tells the client about the key with the
+// fewest requests left, which is never an email address unless it refuses
+// the request. The servers of an instance count in the same rows, and so do
+// the spellings of one email address and the addresses of one IPv6 /64.
+//
+// Verifies: FR-API-04/AC3, FR-AUTH-05/AC2, NFR-SEC-06
+func TestTake(t *testing.T) {
+	t.Parallel()
+	l, db, _ := setup(t)
+	// A second server of the instance, on its own pool.
+	other := New(db, testPolicy())
+	ctx := context.Background()
+	ip := ClientIP(netip.MustParseAddr("203.0.113.7"))
+	jo, mo := UserID(ids.New()), UserID(ids.New())
+
+	d, err := l.Take(ctx, Read, ip, jo)
+	if err != nil || d.Limit != 2 || d.Remaining != 1 || d.Reset <= 0 || d.Reset > time.Hour {
+		t.Fatalf("the first request: %+v, %v; want the user's limit of 2 with 1 left", d, err)
+	}
+	if d, err = other.Take(ctx, Read, ip, jo); err != nil || d.Limit != 2 || d.Remaining != 0 {
+		t.Fatalf("the second request, on the other server: %+v, %v; want none left", d, err)
+	}
+	_, err = l.Take(ctx, Read, ip, jo)
+	var limited *LimitError
+	if !errors.As(err, &limited) || limited.Bucket != Read || limited.Decision.Limit != 2 ||
+		limited.Decision.Remaining != 0 || limited.RetryAfter() <= 0 || limited.RetryAfter() > time.Hour {
+		t.Fatalf("the third request: %v; want the user's limit used up", err)
+	}
+	// The IP address has made 3 requests, its limit, so another user's
+	// request from it is refused for the address's sake.
+	if _, err := other.Take(ctx, Read, ip, mo); !errors.As(err, &limited) || limited.Decision.Limit != 3 {
+		t.Errorf("another user from the address: %v; want the address's limit used up", err)
+	}
+	// Each bucket counts on its own.
+	if d, err := l.Take(ctx, Auth, ip, jo); err != nil || d.Limit != 10 || d.Remaining != 9 {
+		t.Errorf("the auth bucket: %+v, %v; want the user's limit of 10 with 9 left", d, err)
+	}
+
+	// The addresses of one /64 count together, and another /64 apart.
+	near := ClientIP(netip.MustParseAddr("2001:db8:1:2::1"))
+	far := ClientIP(netip.MustParseAddr("2001:db8:1:3::1"))
+	if near != ClientIP(netip.MustParseAddr("2001:db8:1:2:ffff:ffff:ffff:ffff")) || near == far {
+		t.Errorf("the keys of IPv6 addresses: %+v and %+v", near, far)
+	}
+	if ClientIP(netip.MustParseAddr("::ffff:203.0.113.7")) != ip {
+		t.Error("an IPv4 address written as an IPv6 one is another key")
+	}
+
+	// An email address is hidden from the client, until it refuses a request,
+	// and its spellings are one key.
+	if d, err := l.Take(ctx, Auth, EmailAddress("Jo@Example.com")); err != nil || d != (Decision{}) {
+		t.Errorf("an email address: %+v, %v; want nothing to tell", d, err)
+	}
+	if d, err := l.Take(ctx, Auth, ClientIP(netip.MustParseAddr("198.51.100.1")),
+		EmailAddress("jo@example.COM")); err != nil || d.Limit != 20 || d.Remaining != 19 {
+		t.Errorf("an email address with an IP address: %+v, %v; want the address's limit", d, err)
+	}
+	if _, err := l.Take(ctx, Auth, EmailAddress("JO@EXAMPLE.COM")); !errors.As(err, &limited) ||
+		limited.Bucket != Auth || limited.Decision.Limit != 2 || limited.Decision.Remaining != 0 {
+		t.Errorf("a third spelling of the address: %v; want its limit of 2 used up", err)
+	}
+	// An address that PostgreSQL cannot hold is still counted.
+	if _, err := l.Take(ctx, Auth, EmailAddress("jo\x00@example.com")); err != nil {
+		t.Errorf("an address with a NUL character: %v", err)
+	}
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("taking an email address in the read bucket did not panic")
+			}
+		}()
+		_, _ = l.Take(ctx, Read, EmailAddress("jo@example.com"))
+	}()
+}
+
+// TestTakeNewWindow checks that a key whose window has ended counts from
+// one again in its next window.
+//
+// Verifies: NFR-SEC-06
+func TestTakeNewWindow(t *testing.T) {
+	t.Parallel()
+	l, _, admin := setup(t)
+	ctx := context.Background()
+	jo := UserID(ids.New())
+	for range 2 {
+		if _, err := l.Take(ctx, Read, jo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := l.Take(ctx, Read, jo); err == nil {
+		t.Fatal("the third request in the window was allowed")
+	}
+	exec(t, admin, `UPDATE rate_limit SET window_start = window_start - interval '1 hour',
+		window_end = window_end - interval '1 hour'`)
+	if d, err := l.Take(ctx, Read, jo); err != nil || d.Remaining != 1 {
+		t.Errorf("the first request of the next window: %+v, %v; want 1 left", d, err)
+	}
+}
+
+// TestTakeHoldsNoAddress checks that the counters hold no IP address, user
+// ID, or email address as it is, but a keyed hash of each.
+func TestTakeHoldsNoAddress(t *testing.T) {
+	t.Parallel()
+	l, _, admin := setup(t)
+	id := ids.New()
+	if _, err := l.Take(context.Background(), Auth, ClientIP(netip.MustParseAddr("203.0.113.7")), UserID(id),
+		EmailAddress("jo@example.com")); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, admin, `SELECT count(*) FROM rate_limit WHERE bucket = 'auth'`); n != 3 {
+		t.Fatalf("%d counters, want 3", n)
+	}
+	for _, v := range []string{"203.0.113.7", id.String(), "jo@example.com"} {
+		if n := count(t, admin, `SELECT count(*) FROM rate_limit WHERE position(convert_to($1, 'UTF8') IN key) > 0`,
+			v); n != 0 {
+			t.Errorf("a counter holds %s", v)
+		}
+	}
+}
+
+// failLogins begins n sign-in attempts with email, none of which succeeds,
+// and fails the test if one is refused.
+func failLogins(t *testing.T, l *Limiter, email string, n int) {
+	t.Helper()
+	for i := range n {
+		if _, err := l.BeginLogin(context.Background(), email); err != nil {
+			t.Fatalf("attempt %d: %v", i+1, err)
+		}
+	}
+}
+
+// lockedFor returns how long the address of email is locked, as the
+// superuser reads it, or zero.
+func lockedFor(t *testing.T, admin *pgx.Conn) time.Duration {
+	t.Helper()
+	var seconds float64
+	if err := admin.QueryRow(context.Background(), `SELECT coalesce(max(extract(epoch FROM locked_until - now())), 0)
+		FROM login_attempt`).Scan(&seconds); err != nil {
+		t.Fatal(err)
+	}
+	return time.Duration(seconds * float64(time.Second))
+}
+
+// TestLockout checks that the 10th failed sign-in in a row with an address
+// locks it for a minute, during which the 11th is refused, whoever makes it
+// and whatever its password, that the servers of an instance count the
+// same failures, and that the spellings of an address are one address.
+//
+// Verifies: FR-AUTH-05/AC1, FR-AUTH-05/AC2
+func TestLockout(t *testing.T) {
+	t.Parallel()
+	l, db, admin := setup(t)
+	other := New(db, testPolicy())
+	failLogins(t, l, "jo@example.com", 5)
+	failLogins(t, other, "Jo@Example.com", 4)
+	if lockedFor(t, admin) != 0 {
+		t.Fatal("9 failures locked the address")
+	}
+	failLogins(t, l, "JO@example.com", 1)
+	if d := lockedFor(t, admin); d < 50*time.Second || d > time.Minute {
+		t.Fatalf("the 10th failure locks the address for %v, want a minute", d)
+	}
+	for _, s := range []*Limiter{l, other} {
+		_, err := s.BeginLogin(context.Background(), "jo@example.com")
+		var locked *LockedError
+		if !errors.As(err, &locked) || locked.RetryAfter() < 50*time.Second || locked.RetryAfter() > time.Minute {
+			t.Errorf("the 11th attempt: %v; want it locked for a minute", err)
+		}
+	}
+	if n := count(t, admin, `SELECT failures FROM login_attempt`); n != 10 {
+		t.Errorf("%d failures, want the 10 before the lock", n)
+	}
+	// Another address is not locked.
+	failLogins(t, l, "mo@example.com", 1)
+}
+
+// TestLockoutBackoff checks that each failure after a lock ends locks the
+// address for twice as long as the lock before, up to 15 minutes, and that
+// failures more than a day apart count from 1 again.
+//
+// Verifies: FR-AUTH-05/AC1
+func TestLockoutBackoff(t *testing.T) {
+	t.Parallel()
+	l, _, admin := setup(t)
+	failLogins(t, l, "jo@example.com", 10)
+	for _, want := range []time.Duration{2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 15 * time.Minute,
+		15 * time.Minute} {
+		exec(t, admin, `UPDATE login_attempt SET locked_until = now() - interval '1 second'`)
+		failLogins(t, l, "jo@example.com", 1)
+		if d := lockedFor(t, admin); d < want-10*time.Second || d > want {
+			t.Errorf("the lock after it ends is %v, want %v", d, want)
+		}
+	}
+	exec(t, admin, `UPDATE login_attempt SET locked_until = NULL, last_attempt_at = now() - interval '25 hours'`)
+	failLogins(t, l, "jo@example.com", 1)
+	if n := count(t, admin, `SELECT failures FROM login_attempt`); n != 1 || lockedFor(t, admin) != 0 {
+		t.Errorf("a failure a day after the last: %d failures, locked for %v; want 1, unlocked", n,
+			lockedFor(t, admin))
+	}
+}
+
+// TestLoginSucceeded checks that a sign-in that succeeds forgets the
+// failures of its address, in the transaction that it is told in, so that
+// 9 more fail before the address is locked.
+//
+// Verifies: FR-AUTH-05/AC3
+func TestLoginSucceeded(t *testing.T) {
+	t.Parallel()
+	l, db, admin := setup(t)
+	ctx := context.Background()
+	succeed := func(rollBack bool) {
+		t.Helper()
+		attempt, err := l.BeginLogin(ctx, "jo@example.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		errRollBack := errors.New("roll back")
+		if err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+			if err := attempt.Succeeded(ctx, tx); err != nil {
+				return err
+			}
+			if rollBack {
+				return errRollBack
+			}
+			return nil
+		}); err != nil && !errors.Is(err, errRollBack) {
+			t.Fatal(err)
+		}
+	}
+	failLogins(t, l, "jo@example.com", 8)
+	// A sign-in whose session did not start still counts.
+	succeed(true)
+	if n := count(t, admin, `SELECT failures FROM login_attempt`); n != 9 {
+		t.Fatalf("%d failures, want 9", n)
+	}
+	succeed(false)
+	if n := count(t, admin, `SELECT count(*) FROM login_attempt`); n != 0 {
+		t.Fatalf("%d attempts kept, want none", n)
+	}
+	failLogins(t, l, "jo@example.com", 9)
+	if lockedFor(t, admin) != 0 {
+		t.Error("9 failures after a success locked the address")
+	}
+	// An address that PostgreSQL cannot hold is counted too.
+	failLogins(t, l, "jo\x00@example.com", 1)
+}
+
+// TestCleanUp checks that the cleanup deletes the counters whose window has
+// ended and the attempts that are forgotten, and keeps the others.
+func TestCleanUp(t *testing.T) {
+	t.Parallel()
+	l, db, admin := setup(t)
+	ctx := context.Background()
+	if _, err := l.Take(ctx, Read, UserID(ids.New())); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Take(ctx, Read, UserID(ids.New())); err != nil {
+		t.Fatal(err)
+	}
+	failLogins(t, l, "jo@example.com", 1)
+	failLogins(t, l, "mo@example.com", 1)
+	exec(t, admin, `UPDATE rate_limit SET window_start = now() - interval '2 hours', window_end = now() - interval
+		'1 hour' WHERE ctid = (SELECT min(ctid) FROM rate_limit)`)
+	exec(t, admin, `UPDATE login_attempt SET last_attempt_at = now() - interval '25 hours'
+		WHERE ctid = (SELECT min(ctid) FROM login_attempt)`)
+	n, err := l.cleanUp(ctx, db)
+	if err != nil || n != 2 {
+		t.Fatalf("cleanUp = %d, %v; want 2 rows deleted", n, err)
+	}
+	if c, a := count(t, admin, `SELECT count(*) FROM rate_limit`), count(t, admin,
+		`SELECT count(*) FROM login_attempt`); c != 1 || a != 1 {
+		t.Errorf("%d counters and %d attempts kept, want 1 of each", c, a)
+	}
+}

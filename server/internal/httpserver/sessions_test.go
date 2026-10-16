@@ -553,6 +553,7 @@ func TestLoginAnswersAlike(t *testing.T) {
 		res := send(s.main, http.MethodPost, loginPath, credentials(t, c.email, c.password), "",
 			http.Header{"Accept-Language": {"en"}})
 		res.header.Del(requestIDHeader)
+		dropCounts(res.header)
 		var env struct {
 			Error api.ErrorBody `json:"error"`
 		}
@@ -631,8 +632,8 @@ func TestSessionAuditEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []entry{
-		{"auth.login", "failure", "user", "", false, false, false, true},
-		{"auth.login", "failure", "", "", false, true, false, true},
+		{"auth.login", "failure", "user", "invalid_credentials", false, false, false, true},
+		{"auth.login", "failure", "", "invalid_credentials", false, true, false, true},
 		{"auth.login", "success", "user", "", true, false, true, true},
 		{"auth.session_revoke", "success", "session", "revoked", true, false, false, true},
 		{"auth.password_change", "failure", "user", "", true, false, false, true},
