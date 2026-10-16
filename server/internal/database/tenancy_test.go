@@ -21,18 +21,19 @@ import (
 // no workspace_id and no row-level security (PRD §5.4), besides River's,
 // whose names start with river_ and which belong to the job queue. Every other
 // table is a tenant table.
-var crossWorkspaceTables = []string{"goose_db_version", "session", "user", "workspace"}
+var crossWorkspaceTables = []string{"goose_db_version", "instance_key", "session", "user", "workspace"}
 
 // auditTable is the one tenant table whose workspace_id has no foreign key,
-// so that the audit log outlives a workspace that is hard deleted (FR-TEN-01
-// AC1).
+// so that the audit log outlives a workspace that is hard deleted, and may be
+// null, for the events that belong to no workspace, such as a login
+// (FR-TEN-01 AC1, FR-TEN-07).
 const auditTable = "audit_entry"
 
 // tenantTableProblems enumerates the tables of the public schema and returns
 // what is wrong with them: a table that is neither a tenant table nor one of
 // crossWorkspaceTables, a tenant table whose workspace_id is missing, may be
-// null, is not a uuid, lacks the foreign key to workspace (or, for
-// audit_entry, has one), or leads no index, a tenant table without forced
+// null (except audit_entry's), is not a uuid, lacks the foreign key to
+// workspace (or, for audit_entry, has one), or leads no index, a tenant table without forced
 // row-level security or without a policy for storycreep_app, or that
 // storycreep_maintenance may not read, as the maintenance jobs must (PRD
 // §5.4), a table that spans workspaces but has a workspace_id, and a tenant
@@ -93,7 +94,7 @@ func tenantTableProblems(t *testing.T, conn *pgx.Conn, registered []string) []st
 			add("has no workspace_id; a table whose rows span workspaces is one of the cross-workspace tables")
 			continue
 		}
-		if !tb.notNull {
+		if !tb.notNull && tb.name != auditTable {
 			add("workspace_id may be null")
 		}
 		if !tb.uuid {
@@ -139,7 +140,8 @@ func tableNames(tables []isolationtest.Table) []string {
 
 // TestTenantTables enumerates the tables that the migrations create, and
 // checks that each one whose rows belong to a workspace has a non-null
-// workspace_id with a foreign key to workspace (audit_entry's has none),
+// workspace_id with a foreign key to workspace (audit_entry's has none, and
+// is null for an event of no workspace),
 // forced row-level security with a policy for the application, a grant that
 // lets storycreep_maintenance read it, and a place among the isolation
 // harness's tables, and that every other table is one of those that span
