@@ -265,7 +265,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-TEN-02 AC1 and AC3 pass, AC2 over removal, and FR-TEN-03 AC4 over invites and removal. Item 20 adds AC2's demotion through its role-change route.
 
 ### 20. Workspace roles and permission-matrix harness
-**Status:** todo · **Depends on:** 19
+**Status:** done ([#22](https://github.com/CyberCute-Studio/storycreep/pull/22)) · **Depends on:** 19
 **PRD:** FR-TEN-03, §5.6, FR-TEN-02 (AC2 for demotion, and the invitations that a role change revokes)
 - Role-change operations and their routes. Admins manage members and roles up to `admin`. Granting `owner` by role change, and demoting an owner, require `owner` and otherwise return 403 `owner_required` (§5.6), as inviting an owner and removing one do from item 19 (N27). A role change revokes the open invitations that the member made or was last given the link of as text whose role the new role may not give, as a removal does from item 19: every one, for a demotion from `admin` or `owner` to a role that cannot manage members, and those as `owner`, for an owner made `admin` (N27, N28). A service-layer authorisation package. A lint test that no handler writes to a repository directly.
 - A table-driven test over every (role × operation) pair in §5.6 for the operations that exist so far, with the two member-management rows of §5.6 as separate operations. Later PRs add their rows (standing checklist).
