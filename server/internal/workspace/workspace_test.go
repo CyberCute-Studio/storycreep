@@ -406,3 +406,120 @@ func TestGrantKeepsAnOwner(t *testing.T) {
 		t.Errorf("BySlug of no workspace: %v", err)
 	}
 }
+
+// TestRemoveKeepsAnOwner checks that of two owners who each remove
+// themselves at once, one is removed, and the other is told that they are
+// the last owner, so that the workspace keeps one.
+//
+// Verifies: FR-TEN-02/AC2
+func TestRemoveKeepsAnOwner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, d := newService(t, role.Policy{})
+	first, second := addUser(t, d, "First"), addUser(t, d, "Second")
+	w, err := s.Create(ctx, first, Settings{Name: "Harbour"}, audit.Client{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Grant(ctx, w.ID, second, role.Owner); err != nil {
+		t.Fatal(err)
+	}
+	members, _, err := s.Members(ctx, first, w.ID, ids.UUID{}, 10)
+	if err != nil || len(members) != 2 {
+		t.Fatalf("Members = %+v, %v", members, err)
+	}
+	results := make(chan error, len(members))
+	var start sync.WaitGroup
+	start.Add(1)
+	for _, m := range members {
+		go func() {
+			start.Wait()
+			results <- s.RemoveMember(ctx, m.UserID, w.ID, m.MembershipID, audit.Client{})
+		}()
+	}
+	start.Done()
+	var removed, refused int
+	for range members {
+		switch err := <-results; {
+		case err == nil:
+			removed++
+		case errors.Is(err, ErrLastOwner):
+			refused++
+		default:
+			t.Errorf("RemoveMember: %v", err)
+		}
+	}
+	if removed != 1 || refused != 1 {
+		t.Errorf("%d owners were removed and %d refused, want 1 and 1", removed, refused)
+	}
+	if n := count(t, d, `SELECT count(*) FROM membership WHERE workspace_id = $1 AND role = 'owner'`, w.ID); n != 1 {
+		t.Errorf("the workspace has %d owners, want 1", n)
+	}
+}
+
+// TestMembersIsolation tries the queries of a workspace's members from
+// another workspace's transaction, where row-level security must keep them
+// from reading, changing, or adding a membership (NFR-SEC-01).
+//
+// Verifies: NFR-SEC-01
+func TestMembersIsolation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := isolationtest.New(t, dbtest.New(t), isolationtest.Tables)
+	member := func(w *isolationtest.Workspace) ids.UUID {
+		var id ids.UUID
+		if err := f.Admin().QueryRow(ctx, `SELECT user_id FROM membership WHERE id = $1`,
+			w.Rows["membership"]).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	found := func(target *isolationtest.Workspace, err error) ([]ids.UUID, error) {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return []ids.UUID{target.Rows["membership"]}, err
+	}
+	for _, op := range []isolationtest.Op{
+		{Name: "the members", Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) (
+			[]ids.UUID, error) {
+			rows, err := queries.New(tx).WorkspaceMembers(ctx, queries.WorkspaceMembersParams{
+				WorkspaceID: nullUUID(target.ID), MaxRows: 10})
+			var out []ids.UUID
+			for _, r := range rows {
+				out = append(out, r.ID.Bytes)
+			}
+			return out, err
+		}},
+		{Name: "lock a membership", Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) (
+			[]ids.UUID, error) {
+			_, err := queries.New(tx).LockMembershipByID(ctx, queries.LockMembershipByIDParams{
+				WorkspaceID: nullUUID(target.ID), ID: nullUUID(target.Rows["membership"])})
+			return found(target, err)
+		}},
+		{Name: "a user's membership", Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) (
+			[]ids.UUID, error) {
+			_, err := queries.New(tx).MembershipOf(ctx, queries.MembershipOfParams{WorkspaceID: nullUUID(target.ID),
+				UserID: nullUUID(member(target))})
+			return found(target, err)
+		}},
+		{Name: "remove a membership", Blind: true, Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			return nil, queries.New(tx).DeleteMembership(ctx, queries.DeleteMembershipParams{
+				WorkspaceID: nullUUID(target.ID), ID: nullUUID(target.Rows["membership"])})
+		}},
+		{Name: "join a workspace", Denied: true, Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			user, err := isolationtest.NewUser(ctx, f.Admin())
+			if err != nil {
+				return nil, err
+			}
+			id := ids.New()
+			_, err = queries.New(tx).JoinWorkspace(ctx, queries.JoinWorkspaceParams{ID: nullUUID(id),
+				WorkspaceID: nullUUID(target.ID), UserID: nullUUID(user), Role: "viewer"})
+			return []ids.UUID{id}, err
+		}},
+	} {
+		f.Check(t, op)
+	}
+}

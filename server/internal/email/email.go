@@ -31,6 +31,7 @@ package email
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -143,4 +145,22 @@ func (s *Service) Settings(ctx context.Context) (config.SMTP, bool, error) {
 func (s *Service) Configured(ctx context.Context) (bool, error) {
 	_, ok, err := s.Settings(ctx)
 	return ok, err
+}
+
+// JobError returns err, the error of Deliver of a job's work, as the work
+// returns it to the queue (package jobs). If the job's context ended, it is
+// joined with the context's error: either the server is stopping, and the
+// attempt is made again without counting (jobs.Register), or the job's
+// minute ran out, as when the database was slow to answer before the
+// mailer's own, shorter timeout could end the send. If the server refuses
+// the email for good (Permanent), which no other attempt would send either,
+// it ends the job (jobs.Cancel). Otherwise the job is attempted again later.
+func JobError(ctx context.Context, err error) error {
+	switch {
+	case ctx.Err() != nil:
+		return errors.Join(ctx.Err(), err)
+	case Permanent(err):
+		return jobs.Cancel(err)
+	}
+	return err
 }

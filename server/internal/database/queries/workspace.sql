@@ -108,3 +108,49 @@ UPDATE membership SET role = @role, updated_at = now() WHERE workspace_id = @wor
 -- does not (FR-GDPR-02 AC4).
 SELECT count(*) FROM membership m JOIN "user" u ON u.id = m.user_id
 WHERE m.workspace_id = @workspace_id AND m.role = 'owner' AND u.status = 'active';
+
+-- name: WorkspaceMembers :many
+-- WorkspaceMembers returns the memberships of the workspace, guests' included,
+-- with each member's display name and email address, in the order of the
+-- memberships' IDs, after the membership after, or from the first if after
+-- is null.
+SELECT m.id, m.user_id, m.role, m.joined_at, u.display_name, u.email::text AS email
+FROM membership m
+JOIN "user" u ON u.id = m.user_id
+WHERE m.workspace_id = @workspace_id
+    AND (sqlc.narg(after)::uuid IS NULL OR m.id > sqlc.narg(after)::uuid)
+ORDER BY m.id
+LIMIT @max_rows;
+
+-- name: LockMembershipByID :one
+-- LockMembershipByID returns the member and the role of a membership of the
+-- workspace, and locks it against changes until the transaction ends, and no
+-- row if the workspace has no such membership.
+SELECT user_id, role FROM membership WHERE workspace_id = @workspace_id AND id = @id FOR UPDATE;
+
+-- name: CountOtherOwners :one
+-- CountOtherOwners returns how many owners the workspace has, besides the
+-- membership id, whose accounts are active: the owners that would be left
+-- for the rule that a workspace keeps an owner (PRD FR-TEN-02 AC2) if that
+-- membership were no longer an owner's (CountOwners).
+SELECT count(*) FROM membership m JOIN "user" u ON u.id = m.user_id
+WHERE m.workspace_id = @workspace_id AND m.role = 'owner' AND u.status = 'active' AND m.id <> @id;
+
+-- name: DeleteMembership :exec
+-- DeleteMembership removes a membership of the workspace, and with it the
+-- membership's project grants.
+DELETE FROM membership WHERE workspace_id = @workspace_id AND id = @id;
+
+-- name: JoinWorkspace :execrows
+-- JoinWorkspace makes a user a member of the workspace with a role, as
+-- accepting an invitation of the user invited_by does, unless the user is a
+-- member already, which it reports as no row, without failing the
+-- transaction.
+INSERT INTO membership (id, workspace_id, user_id, role, invited_by)
+VALUES (@id, @workspace_id, @user_id, @role, @invited_by)
+ON CONFLICT (user_id, workspace_id) DO NOTHING;
+
+-- name: MembershipOf :one
+-- MembershipOf returns a user's membership of the workspace, and no row if
+-- the user is not a member.
+SELECT id, role FROM membership WHERE workspace_id = @workspace_id AND user_id = @user_id;

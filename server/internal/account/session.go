@@ -112,9 +112,9 @@ type Issued struct {
 	Secret secret.Value
 }
 
-// newSecret returns a new secret, and the SHA-256 hash that the database
-// holds of it.
-func newSecret() (secret.Value, []byte) {
+// NewSecret returns a new secret, of a session, a link, or an invitation's
+// link (package invite), and the SHA-256 hash that the database holds of it.
+func NewSecret() (secret.Value, []byte) {
 	b := make([]byte, sessionSecretBytes)
 	// crypto/rand.Read never fails; the program crashes if the operating
 	// system's source does.
@@ -123,9 +123,9 @@ func newSecret() (secret.Value, []byte) {
 	return secret.New(base64.RawURLEncoding.EncodeToString(b)), sum[:]
 }
 
-// secretHash returns the hash that the database holds of s, and false if s
-// is not a secret that newSecret could have made.
-func secretHash(s secret.Value) ([]byte, bool) {
+// SecretHash returns the hash that the database holds of s, and false if s
+// is not a secret that NewSecret could have made.
+func SecretHash(s secret.Value) ([]byte, bool) {
 	b, err := base64.RawURLEncoding.Strict().DecodeString(s.Reveal())
 	if err != nil || len(b) != sessionSecretBytes {
 		return nil, false
@@ -157,7 +157,7 @@ func secretHash(s secret.Value) ([]byte, bool) {
 // not outlive the change, and one with the password that the account holds
 // still signs in, as after another sign-in hashed it again (NFR-SEC-03).
 func (s *Service) Login(ctx context.Context, email string, password secret.Value, client Client) (Issued, error) {
-	counted, err := s.limits.BeginLogin(ctx, canonicalEmail(email))
+	counted, err := s.limits.BeginLogin(ctx, CanonicalEmail(email))
 	var locked *ratelimit.LockedError
 	if errors.As(err, &locked) {
 		return Issued{}, s.loginLocked(ctx, email, client, locked)
@@ -237,7 +237,7 @@ func (s *Service) recordFailedLogin(ctx context.Context, email string, account i
 	entry := audit.Entry{Action: audit.ActionLogin, SubjectID: account, Result: audit.ResultFailure,
 		IP: client.IP, UserAgent: client.UserAgent, Metadata: map[string]any{"reason": reason}}
 	if account == (ids.UUID{}) {
-		entry.AttemptedEmail = canonicalEmail(email)
+		entry.AttemptedEmail = CanonicalEmail(email)
 	}
 	return s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		return audit.Record(ctx, tx, entry)
@@ -285,7 +285,7 @@ func (s *Service) startSession(ctx context.Context, id ids.UUID, hash string, cl
 
 // insertSession starts a session of the account id in tx.
 func (s *Service) insertSession(ctx context.Context, tx pgx.Tx, id ids.UUID, client Client) (Issued, error) {
-	value, hash := newSecret()
+	value, hash := NewSecret()
 	// The session keeps as much of the user agent as the audit log does, cut
 	// at a character's boundary.
 	session := Session{ID: ids.New(), UserID: id, IP: client.IP.WithZone(""),
@@ -316,7 +316,7 @@ func (s *Service) insertSession(ctx context.Context, tx pgx.Tx, id ids.UUID, cli
 // once, by every server (FR-AUTH-02 AC1), and records that the session is
 // used, if it last did over a minute ago.
 func (s *Service) Session(ctx context.Context, value secret.Value) (Session, error) {
-	hash, ok := secretHash(value)
+	hash, ok := SecretHash(value)
 	if !ok {
 		return Session{}, ErrNoSession
 	}
@@ -495,7 +495,7 @@ func (s *Service) Rotate(ctx context.Context, current Session) (Issued, error) {
 
 // rotate is Rotate in tx.
 func (s *Service) rotate(ctx context.Context, tx pgx.Tx, current Session) (Issued, error) {
-	value, hash := newSecret()
+	value, hash := NewSecret()
 	n, err := queries.New(tx).RotateSession(ctx, queries.RotateSessionParams{TokenHash: hash,
 		ID: nullUUID(current.ID), UserID: nullUUID(current.UserID), Lifetime: database.Interval(s.lifetime),
 		Idle: database.Interval(s.idle)})

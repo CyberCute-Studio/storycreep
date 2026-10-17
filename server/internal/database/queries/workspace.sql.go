@@ -36,6 +36,27 @@ func (q *Queries) ClaimPersonalWorkspace(ctx context.Context, arg ClaimPersonalW
 	return display_name, err
 }
 
+const countOtherOwners = `-- name: CountOtherOwners :one
+SELECT count(*) FROM membership m JOIN "user" u ON u.id = m.user_id
+WHERE m.workspace_id = $1 AND m.role = 'owner' AND u.status = 'active' AND m.id <> $2
+`
+
+type CountOtherOwnersParams struct {
+	WorkspaceID pgtype.UUID
+	ID          pgtype.UUID
+}
+
+// CountOtherOwners returns how many owners the workspace has, besides the
+// membership id, whose accounts are active: the owners that would be left
+// for the rule that a workspace keeps an owner (PRD FR-TEN-02 AC2) if that
+// membership were no longer an owner's (CountOwners).
+func (q *Queries) CountOtherOwners(ctx context.Context, arg CountOtherOwnersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countOtherOwners, arg.WorkspaceID, arg.ID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countOwners = `-- name: CountOwners :one
 SELECT count(*) FROM membership m JOIN "user" u ON u.id = m.user_id
 WHERE m.workspace_id = $1 AND m.role = 'owner' AND u.status = 'active'
@@ -50,6 +71,22 @@ func (q *Queries) CountOwners(ctx context.Context, workspaceID pgtype.UUID) (int
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deleteMembership = `-- name: DeleteMembership :exec
+DELETE FROM membership WHERE workspace_id = $1 AND id = $2
+`
+
+type DeleteMembershipParams struct {
+	WorkspaceID pgtype.UUID
+	ID          pgtype.UUID
+}
+
+// DeleteMembership removes a membership of the workspace, and with it the
+// membership's project grants.
+func (q *Queries) DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error {
+	_, err := q.db.Exec(ctx, deleteMembership, arg.WorkspaceID, arg.ID)
+	return err
 }
 
 const insertMembership = `-- name: InsertMembership :exec
@@ -125,6 +162,38 @@ func (q *Queries) InstanceAdmin(ctx context.Context, id pgtype.UUID) (bool, erro
 	return is_instance_admin, err
 }
 
+const joinWorkspace = `-- name: JoinWorkspace :execrows
+INSERT INTO membership (id, workspace_id, user_id, role, invited_by)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (user_id, workspace_id) DO NOTHING
+`
+
+type JoinWorkspaceParams struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	UserID      pgtype.UUID
+	Role        string
+	InvitedBy   pgtype.UUID
+}
+
+// JoinWorkspace makes a user a member of the workspace with a role, as
+// accepting an invitation of the user invited_by does, unless the user is a
+// member already, which it reports as no row, without failing the
+// transaction.
+func (q *Queries) JoinWorkspace(ctx context.Context, arg JoinWorkspaceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, joinWorkspace,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.Role,
+		arg.InvitedBy,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const lockMembership = `-- name: LockMembership :one
 SELECT id, role FROM membership WHERE workspace_id = $1 AND user_id = $2 FOR UPDATE
 `
@@ -146,6 +215,30 @@ func (q *Queries) LockMembership(ctx context.Context, arg LockMembershipParams) 
 	row := q.db.QueryRow(ctx, lockMembership, arg.WorkspaceID, arg.UserID)
 	var i LockMembershipRow
 	err := row.Scan(&i.ID, &i.Role)
+	return i, err
+}
+
+const lockMembershipByID = `-- name: LockMembershipByID :one
+SELECT user_id, role FROM membership WHERE workspace_id = $1 AND id = $2 FOR UPDATE
+`
+
+type LockMembershipByIDParams struct {
+	WorkspaceID pgtype.UUID
+	ID          pgtype.UUID
+}
+
+type LockMembershipByIDRow struct {
+	UserID pgtype.UUID
+	Role   string
+}
+
+// LockMembershipByID returns the member and the role of a membership of the
+// workspace, and locks it against changes until the transaction ends, and no
+// row if the workspace has no such membership.
+func (q *Queries) LockMembershipByID(ctx context.Context, arg LockMembershipByIDParams) (LockMembershipByIDRow, error) {
+	row := q.db.QueryRow(ctx, lockMembershipByID, arg.WorkspaceID, arg.ID)
+	var i LockMembershipByIDRow
+	err := row.Scan(&i.UserID, &i.Role)
 	return i, err
 }
 
@@ -199,6 +292,29 @@ func (q *Queries) LockWorkspace(ctx context.Context, id pgtype.UUID) (LockWorksp
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const membershipOf = `-- name: MembershipOf :one
+SELECT id, role FROM membership WHERE workspace_id = $1 AND user_id = $2
+`
+
+type MembershipOfParams struct {
+	WorkspaceID pgtype.UUID
+	UserID      pgtype.UUID
+}
+
+type MembershipOfRow struct {
+	ID   pgtype.UUID
+	Role string
+}
+
+// MembershipOf returns a user's membership of the workspace, and no row if
+// the user is not a member.
+func (q *Queries) MembershipOf(ctx context.Context, arg MembershipOfParams) (MembershipOfRow, error) {
+	row := q.db.QueryRow(ctx, membershipOf, arg.WorkspaceID, arg.UserID)
+	var i MembershipOfRow
+	err := row.Scan(&i.ID, &i.Role)
 	return i, err
 }
 
@@ -369,4 +485,60 @@ func (q *Queries) WorkspaceBySlug(ctx context.Context, slug string) (pgtype.UUID
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const workspaceMembers = `-- name: WorkspaceMembers :many
+SELECT m.id, m.user_id, m.role, m.joined_at, u.display_name, u.email::text AS email
+FROM membership m
+JOIN "user" u ON u.id = m.user_id
+WHERE m.workspace_id = $1
+    AND ($2::uuid IS NULL OR m.id > $2::uuid)
+ORDER BY m.id
+LIMIT $3
+`
+
+type WorkspaceMembersParams struct {
+	WorkspaceID pgtype.UUID
+	After       pgtype.UUID
+	MaxRows     int32
+}
+
+type WorkspaceMembersRow struct {
+	ID          pgtype.UUID
+	UserID      pgtype.UUID
+	Role        string
+	JoinedAt    pgtype.Timestamptz
+	DisplayName string
+	Email       string
+}
+
+// WorkspaceMembers returns the memberships of the workspace, guests' included,
+// with each member's display name and email address, in the order of the
+// memberships' IDs, after the membership after, or from the first if after
+// is null.
+func (q *Queries) WorkspaceMembers(ctx context.Context, arg WorkspaceMembersParams) ([]WorkspaceMembersRow, error) {
+	rows, err := q.db.Query(ctx, workspaceMembers, arg.WorkspaceID, arg.After, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkspaceMembersRow
+	for rows.Next() {
+		var i WorkspaceMembersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Role,
+			&i.JoinedAt,
+			&i.DisplayName,
+			&i.Email,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

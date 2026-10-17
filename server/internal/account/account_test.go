@@ -321,7 +321,7 @@ func TestRegisterRefuses(t *testing.T) {
 func TestFieldsOutsideASCII(t *testing.T) {
 	t.Parallel()
 	for _, email := range []string{"žofie@example.com", "jo@bücher.example", "用户@例子.广告"} {
-		if msg := checkEmail(email); msg != "" {
+		if msg := CheckEmail(email); msg != "" {
 			t.Errorf("the address %q %s", email, msg)
 		}
 	}

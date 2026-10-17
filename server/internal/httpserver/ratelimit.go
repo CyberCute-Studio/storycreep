@@ -52,11 +52,13 @@ type RateLimitOutput struct {
 // authLimitDoc says, in the description of an operation that the auth bucket
 // limits, what its rate limit does.
 const authLimitDoc = " Signing in, registering, changing a password, completing first-run setup, asking for a link " +
-	"that resets a password or verifies an email address, using one, and an instance admin's taking one as text " +
-	"share a rate limit of 20 requests a minute for each IP address. Registering and asking for a link that resets " +
-	"a password also share one of 10 a minute for each email address, so that each counts against the other for " +
-	"the same address, and changing a password, asking for a link that verifies the signed-in account's email " +
-	"address, and an instance admin's taking a link as text share one of 10 a minute for each account. The " +
+	"that resets a password or verifies an email address, using one, an instance admin's taking one as text, " +
+	"inviting someone to a workspace, sending an invitation anew, and reading, accepting, or registering with an " +
+	"invitation's link share a rate limit of 20 requests a minute for each IP address. Registering, with an " +
+	"invitation or without, and asking for a link that resets a password also share one of 10 a minute for each " +
+	"email address, so that each counts against the other for the same address, and changing a password, asking " +
+	"for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, " +
+	"inviting someone, sending an invitation anew, and accepting one share one of 10 a minute for each account. The " +
 	"RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over " +
 	"a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the " +
 	"limit that it is over, that of the email address included, and whose Retry-After header says how many seconds " +

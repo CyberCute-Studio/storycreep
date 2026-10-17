@@ -33,6 +33,7 @@ const (
 	CodeCSRFFailed            Code = "csrf_failed"
 	CodeWrongPassword         Code = "wrong_password"
 	CodeInsufficientRole      Code = "insufficient_role"
+	CodeOwnerRequired         Code = "owner_required"
 	CodeSignupClosed          Code = "signup_closed"
 	CodeInviteRequired        Code = "invite_required"
 	CodeSetupRequired         Code = "setup_required"
@@ -44,8 +45,15 @@ const (
 	CodeTokenInvalid          Code = "token_invalid"
 	CodeTokenUsed             Code = "token_used"
 	CodeTokenExpired          Code = "token_expired"
+	CodeInviteEmailMismatch   Code = "invite_email_mismatch"
 	CodeNotFound              Code = "not_found"
 	CodeSlugTaken             Code = "slug_taken"
+	CodeLastOwner             Code = "last_owner"
+	CodeAlreadyMember         Code = "already_member"
+	CodeInviteExists          Code = "invite_exists"
+	CodeInviteExpired         Code = "invite_expired"
+	CodeInviteRevoked         Code = "invite_revoked"
+	CodeInviteAccepted        Code = "invite_accepted"
 	CodeMethodNotAllowed      Code = "method_not_allowed"
 	CodeRequestTimeout        Code = "request_timeout"
 	CodeRequestTooLarge       Code = "request_too_large"
@@ -107,16 +115,22 @@ var codes = []codeSpec{
 			"password stays as it was."},
 	{CodeInsufficientRole, http.StatusForbidden, i18n.K("error.insufficient_role"),
 		"The signed-in user's role in the workspace does not allow the operation, as only an `owner` or an " +
-			"`admin` changes a workspace's settings (PRD §5.6). A user whose role in the workspace is none, as one " +
-			"who is not a member or is a `guest`, is answered with `not_found` instead, so that the answer does not " +
-			"tell that the workspace exists (PRD §5.5)."},
+			"`admin` changes a workspace's settings, invites, or removes members (PRD §5.6). A user whose role in the " +
+			"workspace is none, as one who is not a member or is a `guest`, is answered with `not_found` instead, so " +
+			"that the answer does not tell that the workspace exists (PRD §5.5)."},
+	{CodeOwnerRequired, http.StatusForbidden, i18n.K("error.owner_required"),
+		"Only an `owner` of the workspace may do this, and the signed-in user is an `admin`: invite someone as " +
+			"`owner`, send such an invitation anew, or remove an owner (PRD §5.6, FR-TEN-03 AC4)."},
 	{CodeSignupClosed, http.StatusForbidden, i18n.K("error.signup_closed"),
 		"The instance's signup policy is `closed`, so `POST /api/v1/auth/register` creates no account, " +
-			"whatever the request holds (PRD FR-AUTH-01 AC3). The policy is the one that `STORYCREEP_SIGNUP` " +
-			"sets, or else the one that first-run setup chose, or else `closed`."},
+			"whatever the request holds (PRD FR-AUTH-01 AC3), and nor does `POST /api/v1/invites/register`, with an " +
+			"invitation or without: only an account that exists already accepts an invitation then (FR-TEN-02). The " +
+			"policy is the one that `STORYCREEP_SIGNUP` sets, or else the one that first-run setup chose, or else " +
+			"`closed`."},
 	{CodeInviteRequired, http.StatusForbidden, i18n.K("error.invite_required"),
 		"The instance's signup policy is `invite`, so only an invitation creates an account, and " +
-			"`POST /api/v1/auth/register` creates none, whatever the request holds."},
+			"`POST /api/v1/auth/register` creates none, whatever the request holds. `POST /api/v1/invites/register` " +
+			"registers an account with an invitation's link."},
 	{CodeSetupRequired, http.StatusForbidden, i18n.K("error.setup_required"),
 		"The instance's first-run setup has not completed, so `POST /api/v1/auth/register` creates no " +
 			"account, whatever the signup policy and whatever the request holds, so that the first account is " +
@@ -145,13 +159,19 @@ var codes = []codeSpec{
 	{CodeTokenInvalid, http.StatusBadRequest, i18n.K("error.token_invalid"),
 		"The link's token does not exist: it was mistyped, or it was deleted, as a change of the password deletes " +
 			"the account's reset links that have not been used (PRD FR-AUTH-03 AC4), or as an expired one is " +
-			"deleted after a while. Or it is the token of another kind of link, or its account can no longer use " +
-			"it, as one that is suspended, or one whose address is no longer the one that it verifies."},
+			"deleted after a while, or it was replaced, as sending an invitation anew replaces its link. Or it is " +
+			"the token of another kind of link, or its account can no longer use it, as one that is suspended, or " +
+			"one whose address is no longer the one that it verifies, or its invitation's workspace no longer " +
+			"exists."},
 	{CodeTokenUsed, http.StatusBadRequest, i18n.K("error.token_used"),
 		"The link has been used already, and a link is used once (PRD FR-AUTH-03 AC2)."},
 	{CodeTokenExpired, http.StatusBadRequest, i18n.K("error.token_expired"),
 		"The link has expired: a link that verifies an email address lasts 24 hours, and one that resets a " +
 			"password an hour (PRD FR-AUTH-03)."},
+	{CodeInviteEmailMismatch, http.StatusForbidden, i18n.K("error.invite_email_mismatch"),
+		"The invitation is to another email address than the account's, or than the one that the registration " +
+			"names, and only an account with that address may accept it (PRD FR-TEN-02 AC3). A link invitation, " +
+			"which is to no address, may be accepted by whoever holds its link."},
 	{CodeNotFound, http.StatusNotFound, i18n.K("error.not_found"),
 		"No route matches the path, or the resource it names does not exist, or the signed-in user's role in " +
 			"it, or in its workspace, is none, as it is for a user who is not a member of the workspace, so that " +
@@ -159,6 +179,26 @@ var codes = []codeSpec{
 	{CodeSlugTaken, http.StatusConflict, i18n.K("error.slug_taken"),
 		"Another workspace has the slug, which is unique on the instance (PRD FR-TEN-01 AC3). `details.errors` " +
 			"names the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeLastOwner, http.StatusConflict, i18n.K("error.last_owner"),
+		"The change would leave the workspace without an owner whose account is active, and a workspace keeps one " +
+			"(PRD FR-TEN-02 AC2): its last owner cannot be removed. An owner whose account's deletion is pending " +
+			"does not count (FR-GDPR-02). Make another member an owner first."},
+	{CodeAlreadyMember, http.StatusConflict, i18n.K("error.already_member"),
+		"The account is a member of the workspace already: the one that an invitation's email address belongs " +
+			"to, or the signed-in user, who accepts an invitation of a workspace that they belong to, which then " +
+			"stays open."},
+	{CodeInviteExists, http.StatusConflict, i18n.K("error.invite_exists"),
+		"The email address has an open invitation of the workspace already, one that has been neither accepted " +
+			"nor revoked, whether or not it has expired. Send that one anew, or revoke it first."},
+	{CodeInviteExpired, http.StatusGone, i18n.K("error.invite_expired"),
+		"The invitation has expired: it lasts 14 days from when it was made, sent anew, or emailed (PRD " +
+			"FR-TEN-02 AC1). An owner or admin of the workspace sends it anew."},
+	{CodeInviteRevoked, http.StatusGone, i18n.K("error.invite_revoked"),
+		"An owner or admin of the workspace revoked the invitation, which no longer works (PRD FR-TEN-02 AC1)."},
+	{CodeInviteAccepted, http.StatusGone, i18n.K("error.invite_accepted"),
+		"The invitation has been accepted already, and an invitation is accepted once. Its link answers so to " +
+			"anyone but the account that accepted it, while that account is still a member, and an owner or admin " +
+			"of the workspace can neither revoke it nor send it anew."},
 	{CodeMethodNotAllowed, http.StatusMethodNotAllowed, i18n.K("error.method_not_allowed"),
 		"A route matches the path, but not the method. The `Allow` header lists the methods it takes."},
 	{CodeRequestTimeout, http.StatusRequestTimeout, i18n.K("error.request_timeout"),
@@ -199,7 +239,8 @@ var codes = []codeSpec{
 			"locks the address again. The failures are forgotten a day after the last one. " +
 			"`details.bucket` is `auth` for signing in, registering, changing a password, completing first-run " +
 			"setup, asking for a link that resets a password or verifies an email address, using such a link, " +
-			"and an instance admin's taking one as text."},
+			"an instance admin's taking one as text, inviting someone to a workspace or sending an invitation " +
+			"anew, and reading, accepting, or registering with an invitation's link."},
 	{CodeInternal, http.StatusInternalServerError, i18n.K("error.internal_error"),
 		"The server failed. Its log has the cause, under the envelope's `request_id`."},
 	{CodeNotReady, http.StatusServiceUnavailable, i18n.K("error.not_ready"),

@@ -81,8 +81,8 @@ func find(ctx context.Context, tx pgx.Tx, email string) (queries.UserByEmailRow,
 // lookup returns the account that the email address belongs to, whatever
 // its status, or ErrNoAccount if it belongs to none.
 func lookup(ctx context.Context, tx pgx.Tx, email string) (queries.UserByEmailRow, error) {
-	email = canonicalEmail(email)
-	if checkEmail(email) != "" {
+	email = CanonicalEmail(email)
+	if CheckEmail(email) != "" {
 		// No account has an address that registration would refuse.
 		return queries.UserByEmailRow{}, ErrNoAccount
 	}
