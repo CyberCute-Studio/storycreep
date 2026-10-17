@@ -45,6 +45,7 @@
   "error.rate_limited.locked": "Too many failed sign-ins with this email address. Try again later.",
   "error.request_timeout": "The request body did not arrive in time.",
   "error.request_too_large": "The request body is too large.",
+  "error.revision_conflict": "This has changed since you last saw it, so nothing was changed.",
   "error.setup_required": "This server's first-run setup has not been completed yet.",
   "error.signup_closed": "Registration is closed on this server.",
   "error.slug_invalid": "The slug must be lowercase letters and digits joined by single hyphens, and not a reserved word.",
