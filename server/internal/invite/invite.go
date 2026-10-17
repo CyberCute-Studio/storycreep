@@ -28,7 +28,12 @@
 // and only the job of the latest request to email an invitation sends
 // anything, so that sending an invitation anew again and again cannot flood
 // an inbox, even when the jobs of the earlier requests are retried, as once
-// an SMTP server that was down takes email again.
+// an SMTP server that was down takes email again. The instance also emails
+// an address 10 invitations an hour at most, from all workspaces together
+// (ratelimit.InviteEmail), so that an account that owns many workspaces
+// cannot flood an inbox either: the job of an email over that limit is put
+// off until the address may be emailed again, and tells no one why, so that
+// no workspace learns that others invited the address.
 // The email names no one and nothing but the instance and the role, never
 // the workspace or the inviting user, whose names their users chose, so that
 // an account cannot put text of its own in email that the instance sends to
@@ -69,6 +74,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
@@ -138,9 +144,11 @@ type Options struct {
 	// none, as in tests.
 	Email *email.Service
 	// Queue enqueues the jobs that email invitations, in the transaction of
-	// the change that needs them, as *jobs.Queue does. It must be set where
-	// Email is.
-	Queue account.Enqueuer
+	// the change that needs them, as *jobs.Queue does, and Limits counts the
+	// invitations that the jobs email each address (ratelimit.InviteEmail).
+	// Both must be set where Email is.
+	Queue  account.Enqueuer
+	Limits *ratelimit.Limiter
 	// PublicURL is the instance's URL, which links open.
 	PublicURL config.PublicURL
 }
@@ -152,13 +160,14 @@ type Service struct {
 	accounts   *account.Service
 	email      *email.Service
 	queue      account.Enqueuer
+	limits     *ratelimit.Limiter
 	publicURL  config.PublicURL
 }
 
 // New returns a Service that keeps the invitations in db, with opts.
 func New(db DB, opts Options) *Service {
 	return &Service{db: db, workspaces: opts.Workspaces, accounts: opts.Accounts, email: opts.Email,
-		queue: opts.Queue, publicURL: opts.PublicURL}
+		queue: opts.Queue, limits: opts.Limits, publicURL: opts.PublicURL}
 }
 
 // Invite is an invitation, as its workspace's owners and admins see it.

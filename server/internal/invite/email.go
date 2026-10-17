@@ -19,6 +19,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -126,12 +127,21 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 // records that the invitation's link was not emailed after all, and is made
 // again later, with a new secret, which replaces the one that the failed
 // attempt may have sent, so that only the latest email's link works, unless
-// the SMTP server refuses the email for good (email.JobError). The job reads
-// the SMTP settings, as it does the invitation, on the workers' pool that it
-// carries, db.
+// the SMTP server refuses the email for good (email.JobError). An email that
+// would take the address over the limit of invitation emails of all
+// workspaces together (ratelimit.InviteEmail) is put off, with the
+// invitation as it was, until the limit's window ends (jobs.Snooze), which
+// spends none of the job's attempts; the invitation's admins see only that
+// it is still to be emailed. The limit counts each email that the job tries
+// to send, whether or not the SMTP server takes it. The job reads the SMTP
+// settings, as it does the invitation, on the workers' pool that it carries,
+// db.
 func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUID) error {
 	if s.email == nil {
 		return nil
+	}
+	if s.limits == nil {
+		return errors.New("invite: the Service has no Limits to count the invitations that it emails")
 	}
 	mailer := s.email.WithDB(db)
 	settings, configured, err := mailer.Settings(ctx)
@@ -141,6 +151,7 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 	value, hash := account.NewSecret()
 	var row queries.LockInviteToSendRow
 	found := false
+	var over *ratelimit.LimitError
 	scope := database.Scope{WorkspaceID: id}
 	err = db.InTx(ctx, scope, func(tx pgx.Tx) error {
 		q := queries.New(tx)
@@ -153,10 +164,22 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 		if err != nil {
 			return err
 		}
+		// The limit is counted while the invitation is locked, so that the
+		// email that it lets through is the one that this attempt sends. An
+		// email over it changes nothing, and is put off.
+		if _, err := s.limits.Take(ctx, ratelimit.InviteEmail, ratelimit.EmailAddress(row.Email)); err != nil {
+			if errors.As(err, &over) {
+				return errPutOff
+			}
+			return err
+		}
 		found = true
 		return q.SetInviteHash(ctx, queries.SetInviteHashParams{TokenHash: hash,
 			Lifetime: database.Interval(Lifetime), WorkspaceID: nullUUID(id), ID: nullUUID(inviteID)})
 	})
+	if errors.Is(err, errPutOff) {
+		return jobs.Snooze(over.RetryAfter())
+	}
 	if err != nil {
 		return fmt.Errorf("invite: prepare the invitation's email: %w", err)
 	}
@@ -195,6 +218,10 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 // unmarkTimeout is how long a job whose email failed has to record that,
 // once its own context has ended.
 const unmarkTimeout = 10 * time.Second
+
+// errPutOff rolls back the transaction of a job whose email the limit of
+// invitation emails puts off.
+var errPutOff = errors.New("invite: the address has been emailed as many invitations as it may be for now")
 
 // inviteEmail returns the email of an invitation with the role r, with the
 // secret value, to the address address, in locale, a BCP 47 tag, or the

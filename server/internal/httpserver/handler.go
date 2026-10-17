@@ -101,6 +101,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		Accounts:   s.accounts,
 		Email:      s.email,
 		Queue:      s.queue,
+		Limits:     s.limits,
 		PublicURL:  cfg.PublicURL,
 	})
 	s.setups = setup.New(readyDB{s.ready}, setup.Options{

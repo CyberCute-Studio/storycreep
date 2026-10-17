@@ -5,7 +5,8 @@
 // A rate limit counts the requests of a kind, a bucket (auth, read, write,
 // export, or connect), separately for each key that makes them: the
 // client's IP address, the signed-in user, or the email address that a
-// request names. Each bucket counts in fixed windows of time, of the same
+// request names. One bucket counts no request but email that the instance
+// sends: the invitations that it emails an address (InviteEmail). Each bucket counts in fixed windows of time, of the same
 // length for every key, and allows each kind of key a number of requests in
 // a window (Policy). A request is allowed only if none of its keys has used
 // up its limit, and counts against all of them either way.
@@ -65,6 +66,15 @@ const (
 	Export Bucket = "export"
 	// Connect is the opening of a WebSocket connection.
 	Connect Bucket = "connect"
+	// InviteEmail is the email of an invitation to an address, which the
+	// job that sends it counts against the address, from every workspace
+	// together, so that no account, however many workspaces it owns, can
+	// make the instance flood an inbox with invitations (FR-TEN-02). A
+	// workspace emails an address one invitation in 10 minutes at most
+	// (package invite), so its limit is above the 6 that one workspace can
+	// send in an hour, and only the invitations of several workspaces reach
+	// it.
+	InviteEmail Bucket = "invite_email"
 )
 
 // Kind is what a key counts the requests of.
@@ -78,8 +88,9 @@ const (
 	// User counts a signed-in user.
 	User Kind = "user"
 	// Email counts an email address that a registration names, whether or
-	// not it belongs to an account. Signing in does not count it: the lock
-	// of an address after failed sign-ins limits those (BeginLogin).
+	// not it belongs to an account, or that an invitation is emailed to.
+	// Signing in does not count it: the lock of an address after failed
+	// sign-ins limits those (BeginLogin).
 	Email Kind = "email"
 )
 
@@ -162,6 +173,8 @@ func DefaultPolicy() Policy {
 			Write:   {Period: time.Minute, Limits: map[Kind]int{IP: 600, User: 300}},
 			Export:  {Period: time.Hour, Limits: map[Kind]int{IP: 60, User: 30}},
 			Connect: {Period: time.Minute, Limits: map[Kind]int{IP: 60, User: 30}},
+			// Invitation emails are counted by the address alone, in hours.
+			InviteEmail: {Period: time.Hour, Limits: map[Kind]int{Email: 10}},
 		},
 		Lockout: Lockout{Failures: 10, First: time.Minute, Max: 15 * time.Minute, Forget: 24 * time.Hour},
 	}

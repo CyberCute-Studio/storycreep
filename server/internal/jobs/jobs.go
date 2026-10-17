@@ -163,6 +163,15 @@ func (e cancelError) Error() string { return e.err.Error() }
 
 func (e cancelError) Unwrap() error { return river.JobCancel(e.err) }
 
+// Snooze returns the error of work that puts its job off for d, at least
+// zero: the job is attempted again once d has passed, and the attempt does
+// not count, so that a job can be put off however often, as one that waits
+// for a rate limit to let it through does. The storycreep_job_attempts_total
+// counter counts the attempt as snoozed.
+func Snooze(d time.Duration) error {
+	return river.JobSnooze(max(d, 0))
+}
+
 // Periodic makes the server enqueue a job with args every interval, which
 // is at least a second. The instance that River elects as the leader among
 // those that run workers enqueues it: once when it becomes the leader, and

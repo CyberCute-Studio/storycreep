@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/riverqueue/river/rivertype"
 	"golang.org/x/text/language"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
@@ -111,11 +112,11 @@ func newFixture(t *testing.T, mailer *email.Service) *fixture {
 	d := dbtest.New(t)
 	db := d.Open(t)
 	workspaces := workspace.New(db, workspace.Options{PlanKey: "unlimited", DefaultLocale: language.English})
-	accounts := account.New(db, account.Options{IdleTimeout: time.Hour, Lifetime: time.Hour,
-		Limits: ratelimit.New(db, ratelimit.DefaultPolicy())})
+	limits := ratelimit.New(db, ratelimit.DefaultPolicy())
+	accounts := account.New(db, account.Options{IdleTimeout: time.Hour, Lifetime: time.Hour, Limits: limits})
 	f := &fixture{d: d, db: db, queue: &queueSpy{}}
 	f.Service = New(db, Options{Workspaces: workspaces, Accounts: accounts, Email: mailer, Queue: f.queue,
-		PublicURL: testPublicURL})
+		Limits: limits, PublicURL: testPublicURL})
 	f.owner = f.addUser(t, "owner@example.com")
 	w, err := workspaces.Create(context.Background(), f.owner, workspace.Settings{Name: "Harbour"}, audit.Client{})
 	if err != nil {
@@ -350,6 +351,95 @@ func TestEmailsWaitForResendInterval(t *testing.T) {
 	}
 	if at := f.queue.last(t).At; !at.Equal(due) {
 		t.Errorf("the email of a new invitation to the address is due at %v, want %v", at, due)
+	}
+}
+
+// awaitWindow waits, if less than need is left of the window of period that
+// the database's clock is in, until the next window starts, so that what a
+// test counts in a rate limit falls in one window.
+func awaitWindow(t *testing.T, f *fixture, period, need time.Duration) {
+	t.Helper()
+	var now time.Time
+	if err := f.d.Admin(t).QueryRow(context.Background(), "SELECT now()").Scan(&now); err != nil {
+		t.Fatal(err)
+	}
+	if left := period - time.Duration(now.UnixNano()%int64(period)); left < need {
+		time.Sleep(left + time.Second)
+	}
+}
+
+// TestEmailsLimitedAcrossWorkspaces checks that the invitations of several
+// workspaces, each of which emails the address once, together email it only
+// as often in an hour as the limit of invitation emails allows, as their
+// case does not change the address, and that the job of the next one is put
+// off until the hour ends, without spending an attempt, and leaves the
+// invitation as it was, while another address is emailed all the same.
+func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	server := emailtest.Start(t, emailtest.Options{})
+	settings := server.Settings(config.SMTPNone, "Storycreep <noreply@example.com>")
+	f := newFixture(t, email.New(nil, email.Options{SMTP: &settings, Hostname: "storycreep.example.com"}))
+	policy := ratelimit.DefaultPolicy()
+	policy.Rates[ratelimit.InviteEmail] = ratelimit.Rate{Period: time.Hour,
+		Limits: map[ratelimit.Kind]int{ratelimit.Email: 2}}
+	f.limits = ratelimit.New(f.db, policy)
+	awaitWindow(t, f, time.Hour, time.Minute)
+
+	type job struct{ workspace, invite, request ids.UUID }
+	var jobs []job
+	owner := f.owner
+	for i, address := range []string{"hana@example.com", "Hana@Example.com", "HANA@example.com"} {
+		ws := f.workspace
+		if i > 0 {
+			owner = f.addUser(t, fmt.Sprintf("owner%d@example.com", i))
+			w, err := f.workspaces.Create(ctx, owner, workspace.Settings{Name: fmt.Sprintf("Studio %d", i)},
+				audit.Client{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws = w.ID
+		}
+		inv, err := f.Create(ctx, owner, ws, Request{Email: address, Role: role.Viewer}, audit.Client{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if at := f.queue.last(t).At; !at.IsZero() {
+			t.Errorf("the email of workspace %d's invitation is due at %v, want at once", i, at)
+		}
+		jobs = append(jobs, job{ws, inv.ID, f.queue.request(t)})
+	}
+	for _, j := range jobs[:2] {
+		if err := f.send(ctx, f.db, j.workspace, j.invite, j.request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server.Wait(t, 2, 10*time.Second)
+
+	last := jobs[2]
+	err := f.send(ctx, f.db, last.workspace, last.invite, last.request)
+	var snooze *rivertype.JobSnoozeError
+	if !errors.As(err, &snooze) || snooze.Duration <= 0 || snooze.Duration > time.Hour {
+		t.Errorf("the third workspace's email: %v, want it put off until the hour ends", err)
+	}
+	if got := server.Messages(); len(got) != 2 {
+		t.Errorf("%d invitations were emailed, want 2", len(got))
+	}
+	if n := f.count(t, `SELECT count(*) FROM invite WHERE id = $1 AND token_hash IS NULL AND sent_at IS NULL
+		AND email_request = $2`, last.invite, last.request); n != 1 {
+		t.Errorf("the invitation whose email was put off changed")
+	}
+
+	other, err := f.Create(ctx, owner, last.workspace, Request{Email: "jo@example.com", Role: role.Viewer},
+		audit.Client{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.send(ctx, f.db, last.workspace, other.ID, f.queue.request(t)); err != nil {
+		t.Errorf("the email of another address: %v", err)
+	}
+	if got := server.Wait(t, 3, 10*time.Second); len(got[2].To) != 1 || got[2].To[0] != "jo@example.com" {
+		t.Errorf("the third email is to %v, want jo@example.com", got[2].To)
 	}
 }
 
