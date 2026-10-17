@@ -34,6 +34,13 @@ const (
 	None Role = "none"
 )
 
+// Memberships returns the roles that a membership of a workspace can have,
+// and so an invitation can give: those that allow something, from the most
+// to the least, and Guest.
+func Memberships() []Role {
+	return []Role{Owner, Admin, Editor, Commenter, Viewer, Guest}
+}
+
 // rank orders the roles that allow something: owner > admin > editor >
 // commenter > viewer (§5.6). Guest, None, and any other value rank 0.
 func rank(r Role) int {

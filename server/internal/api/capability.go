@@ -2,8 +2,11 @@ package api
 
 // Capability is what a caller must hold to use a route (PRD NFR-SEC-02).
 // Every route declares one when it is registered, and a test walks the
-// routers and fails on a route that did not. The capabilities of PRD §5.6
-// join as the routes that need them are added (plan item 20).
+// routers and fails on a route that did not. A route of a workspace declares
+// the capability of the rows of the permission matrix (§5.6) that cover it,
+// whose role the service checks (package authz), or, as reading the
+// workspace, which no row covers, one of its own, and the capabilities of
+// the later rows join as the routes that need them are added.
 type Capability string
 
 const (
@@ -23,12 +26,16 @@ const (
 	// ReadWorkspace is reading a workspace, which needs a role in it other
 	// than none (§5.5).
 	ReadWorkspace Capability = "workspace.read"
+	// ListMembers is listing a workspace's members and their roles, which
+	// needs a role in it other than none (§5.6).
+	ListMembers Capability = "workspace.members.list"
 	// ManageWorkspaceSettings is changing a workspace's settings, which
 	// needs owner or admin (§5.6).
 	ManageWorkspaceSettings Capability = "workspace.settings"
-	// ManageMembers is inviting people to a workspace, its invitations, and
-	// removing its members, which needs owner or admin, and owner for an
-	// invitation as owner and for removing an owner (§5.6).
+	// ManageMembers is inviting people to a workspace, its invitations,
+	// removing its members, and changing their roles, which needs owner or
+	// admin, and owner for granting the owner role, by a role change or an
+	// invitation, and for demoting or removing an owner (§5.6).
 	ManageMembers Capability = "workspace.members"
 	// ManageInstance is the instance-admin area (PRD FR-ADMIN-03), which
 	// needs a signed-in instance admin, whom the service checks (package
@@ -43,9 +50,11 @@ var capabilities = map[Capability]bool{
 	ScrapeMetrics: false,
 	OwnAccount:    true,
 	// The role that a workspace's capabilities need is resolved in the
-	// service, from the authenticated user (package workspace).
+	// service, from the authenticated user (package workspace), and package
+	// authz decides what it allows.
 	CreateWorkspace:         true,
 	ReadWorkspace:           true,
+	ListMembers:             true,
 	ManageWorkspaceSettings: true,
 	ManageMembers:           true,
 	ManageInstance:          true,

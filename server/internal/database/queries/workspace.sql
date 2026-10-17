@@ -107,14 +107,6 @@ SELECT id, role FROM membership WHERE workspace_id = @workspace_id AND user_id =
 -- UpdateMembershipRole changes the role of a membership of the workspace.
 UPDATE membership SET role = @role, updated_at = now() WHERE workspace_id = @workspace_id AND id = @id;
 
--- name: CountOwners :one
--- CountOwners returns how many owners the workspace has whose accounts are
--- active, which are the ones that count for the rule that a workspace keeps
--- an owner (PRD FR-TEN-02 AC2): an owner whose account's deletion is pending
--- does not (FR-GDPR-02 AC4).
-SELECT count(*) FROM membership m JOIN "user" u ON u.id = m.user_id
-WHERE m.workspace_id = @workspace_id AND m.role = 'owner' AND u.status = 'active';
-
 -- name: WorkspaceMembers :many
 -- WorkspaceMembers returns the memberships of the workspace, guests' included,
 -- with each member's display name and email address, in the order of the
@@ -134,11 +126,21 @@ LIMIT @max_rows;
 -- row if the workspace has no such membership.
 SELECT user_id, role FROM membership WHERE workspace_id = @workspace_id AND id = @id FOR UPDATE;
 
+-- name: WorkspaceMember :one
+-- WorkspaceMember returns a membership of the workspace, with its member's
+-- display name and email address, as WorkspaceMembers does, and no row if the
+-- workspace has no such membership.
+SELECT m.id, m.user_id, m.role, m.joined_at, u.display_name, u.email::text AS email
+FROM membership m
+JOIN "user" u ON u.id = m.user_id
+WHERE m.workspace_id = @workspace_id AND m.id = @id;
+
 -- name: CountOtherOwners :one
 -- CountOtherOwners returns how many owners the workspace has, besides the
 -- membership id, whose accounts are active: the owners that would be left
 -- for the rule that a workspace keeps an owner (PRD FR-TEN-02 AC2) if that
--- membership were no longer an owner's (CountOwners).
+-- membership were no longer an owner's. An owner whose account's deletion is
+-- pending does not count (FR-GDPR-02 AC4).
 SELECT count(*) FROM membership m JOIN "user" u ON u.id = m.user_id
 WHERE m.workspace_id = @workspace_id AND m.role = 'owner' AND u.status = 'active' AND m.id <> @id;
 

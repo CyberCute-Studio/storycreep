@@ -63,9 +63,12 @@ const (
 	// operator's, who acts through the command line.
 	ActionMembershipCreate Action = "membership.create"
 	// ActionMembershipRoleChange is a change of a membership's role, from
-	// its metadata's previous_role to its role, as grant-role makes it. It
-	// belongs to the membership's workspace, and its subject is the
-	// membership.
+	// its metadata's previous_role to its role, by an owner or admin of the
+	// workspace, its actor (FR-TEN-03), or by the operator's grant-role,
+	// without one. It revokes the workspace's open invitations that the
+	// member made, or whose link the member was last given as text, whose
+	// role the new role may not give (ActionInviteRevoke). It belongs to the
+	// membership's workspace, and its subject is the membership.
 	ActionMembershipRoleChange Action = "membership.role_change"
 	// ActionMembershipRemove is the removal of a member from a workspace by
 	// one of its owners or admins (FR-TEN-02), its actor, which ends the
@@ -94,7 +97,9 @@ const (
 	// that the removal of a member revokes, because the member made it, was
 	// last given its link as text, or has the address that it invites, has
 	// the removal's actor, and its metadata's membership_id names the removed
-	// membership (ActionMembershipRemove).
+	// membership (ActionMembershipRemove); one that a change of a member's
+	// role revokes has the change's actor, or none for the operator's, and
+	// its membership_id names the membership (ActionMembershipRoleChange).
 	ActionInviteRevoke Action = "invite.revoke"
 	// ActionInviteAccept is the acceptance of an invitation by the user who
 	// accepts it, its actor, who joins the workspace (ActionMembershipCreate)

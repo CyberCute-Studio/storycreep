@@ -104,15 +104,18 @@ UPDATE invite SET revoked_at = now(), updated_at = now() WHERE workspace_id = @w
 
 -- name: RevokeMemberInvites :many
 -- RevokeMemberInvites revokes the open invitations of the workspace, expired
--- or not, that the user user_id made, whose link the user was last given as
--- text (link_holder), as by sending one anew, or that are to the user's
--- address, as citext compares them, as the removal of the user's membership
--- does (package workspace), so that no link that the user holds lets them
--- back in, and returns them.
+-- or not, whose role is one of roles, that the user user_id made, whose link
+-- the user was last given as text (link_holder), as by sending one anew, or,
+-- if addressed is set, that are to the user's address, as citext compares
+-- them, and returns them. The removal of the user's membership revokes them
+-- all, those to the address included, so that no link that the user holds
+-- lets them back in, and a change of its role those of the roles that the
+-- new role may not give (package workspace).
 UPDATE invite SET revoked_at = now(), updated_at = now()
 WHERE workspace_id = @workspace_id AND accepted_at IS NULL AND revoked_at IS NULL
+    AND role = ANY(@roles::text[])
     AND (created_by = @user_id OR link_holder = @user_id
-        OR email = (SELECT u.email FROM "user" u WHERE u.id = @user_id))
+        OR (@addressed::boolean AND email = (SELECT u.email FROM "user" u WHERE u.id = @user_id)))
 RETURNING id, email, role;
 
 -- name: LockInviteByHash :one
