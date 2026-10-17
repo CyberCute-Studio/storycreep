@@ -18,12 +18,13 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
 )
 
-// Members and invitations on the wire (PRD FR-TEN-02, FR-AUTH-03): a
-// workspace's member list and the removal of a member, its invitations,
-// which its owners and admins make, send anew, and revoke, and the routes
-// that the holder of an invitation's link reads it, accepts it, and
-// registers an account with. A link opens the web app's page /app/invite,
-// with its token in the URL's fragment, which the page sends to the API.
+// Members and invitations on the wire (PRD FR-TEN-02, FR-TEN-03,
+// FR-AUTH-03): a workspace's member list, the removal of a member and the
+// change of their role, its invitations, which its owners and admins make,
+// send anew, and revoke, and the routes that the holder of an invitation's
+// link reads it, accepts it, and registers an account with. A link opens the
+// web app's page /app/invite, with its token in the URL's fragment, which
+// the page sends to the API.
 
 // memberBody is a member of a workspace, as its member list shows them.
 type memberBody struct {
@@ -53,6 +54,23 @@ type removeMemberInput struct {
 	CSRFInput
 	WorkspaceID  string `path:"workspace_id" doc:"The workspace's ID"`
 	MembershipID string `path:"membership_id" doc:"The ID of the membership to remove"`
+}
+
+// changeRoleBody is the body of PATCH
+// /api/v1/workspaces/{workspace_id}/members/{membership_id}.
+type changeRoleBody struct {
+	Role string `json:"role" enum:"owner,admin,editor,commenter,viewer,guest" doc:"The membership's new role. Only an owner grants the role owner, and an admin is answered with 403 owner_required."`
+}
+
+type changeRoleInput struct {
+	CSRFInput
+	WorkspaceID  string `path:"workspace_id" doc:"The workspace's ID"`
+	MembershipID string `path:"membership_id" doc:"The ID of the membership whose role to change"`
+	Body         changeRoleBody
+}
+
+type memberOutput struct {
+	Body memberBody
 }
 
 // inviteBody is an invitation, as its workspace's owners and admins see it.
@@ -192,7 +210,7 @@ const inviteStateDoc = " A token that belongs to no invitation, as one that send
 // invitations (PRD FR-TEN-02, FR-AUTH-03).
 func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.Service, accounts *account.Service,
 	limits *ratelimit.Limiter) {
-	api.Register(m, api.ReadWorkspace, huma.Operation{
+	api.Register(m, api.ListMembers, huma.Operation{
 		OperationID: "listMembers",
 		Method:      http.MethodGet,
 		Path:        "/api/v1/workspaces/{workspace_id}/members",
@@ -265,6 +283,43 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			return nil, memberError(err)
 		}
 		return &struct{}{}, nil
+	})
+
+	api.Register(m, api.ManageMembers, huma.Operation{
+		OperationID: "changeMemberRole",
+		Method:      http.MethodPatch,
+		Path:        "/api/v1/workspaces/{workspace_id}/members/{membership_id}",
+		Summary:     "Change a member's role",
+		Description: "Changes the role of a membership of a workspace, and returns the member, with their email " +
+			"address. A membership that has the role already stays as it is. Only an owner grants the role owner, " +
+			"or changes an owner's role, and an admin is answered with 403 owner_required (FR-TEN-03 AC4). A " +
+			"workspace keeps an owner whose account is active, so changing the role of its last one is answered " +
+			"with 409 last_owner (FR-TEN-02 AC2). An owner or an admin may change their own role, as long as the " +
+			"workspace keeps an owner. The change also revokes the workspace's open invitations, expired or not, " +
+			"that the member made, and those whose link the member was last given as text, as by sending one anew, " +
+			"whose role the new role may not give: every one, for a role below admin, and those as owner, for " +
+			"admin, so that no link that they hold gives what their role no longer may." + manageMembersDoc +
+			" So is a membership that the workspace does not have." + csrfDoc,
+		Tags: []string{"Members"},
+	}, func(ctx context.Context, in *changeRoleInput) (*memberOutput, error) {
+		cur, err := currentFrom(ctx)
+		if err != nil {
+			return nil, err
+		}
+		id, err := ids.Decode(ids.Workspace, in.WorkspaceID)
+		if err != nil {
+			return nil, err
+		}
+		membershipID, err := ids.Decode(ids.Membership, in.MembershipID)
+		if err != nil {
+			return nil, err
+		}
+		member, err := workspaces.ChangeRole(ctx, cur.session.UserID, id, membershipID, role.Role(in.Body.Role),
+			clientFrom(ctx))
+		if err != nil {
+			return nil, memberError(err)
+		}
+		return &memberOutput{Body: newMemberBody(member)}, nil
 	})
 
 	api.Register(m, api.ManageMembers, huma.Operation{

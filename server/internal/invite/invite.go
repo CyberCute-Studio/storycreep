@@ -75,6 +75,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
@@ -222,14 +223,11 @@ type Request struct {
 	Role role.Role
 }
 
-// roles are the roles that an invitation may give: those of a membership.
-var roles = []role.Role{role.Owner, role.Admin, role.Editor, role.Commenter, role.Viewer, role.Guest}
-
 // manage returns the role that the user userID acts with in the workspace id,
-// whose transaction tx is, which must be owner or admin to manage its
-// invitations, or the error of package workspace that refuses them:
-// ErrNotFound if the workspace does not exist, or the user's role in it is
-// none, and ErrInsufficientRole otherwise. It locks the user's membership
+// whose transaction tx is, which must allow authz.ManageMembers to manage its
+// invitations, or the error that refuses them: workspace.ErrNotFound if the
+// workspace does not exist, or the user's role in it is none, and
+// workspace.ErrInsufficientRole otherwise. It locks the user's membership
 // until tx ends (workspace.Service.Authorize) unless the operation only
 // reads.
 func (s *Service) manage(ctx context.Context, tx pgx.Tx, userID, id ids.UUID, reads bool) (role.Role, error) {
@@ -238,11 +236,11 @@ func (s *Service) manage(ctx context.Context, tx pgx.Tx, userID, id ids.UUID, re
 		authorize = s.workspaces.Role
 	}
 	r, err := authorize(ctx, tx, userID, id)
-	switch {
-	case err != nil:
+	if err != nil {
 		return "", err
-	case !r.AtLeast(role.Admin):
-		return "", workspace.ErrInsufficientRole
+	}
+	if err := authz.Check(r, authz.ManageMembers); err != nil {
+		return "", err
 	}
 	return r, nil
 }
@@ -281,8 +279,8 @@ func (s *Service) Create(ctx context.Context, userID, id ids.UUID, in Request, c
 		if err != nil {
 			return err
 		}
-		if in.Role == role.Owner && r != role.Owner {
-			return workspace.ErrOwnerRequired
+		if err := authz.CheckGrant(r, in.Role); err != nil {
+			return err
 		}
 		if inv, err = in.check(); err != nil {
 			return err
@@ -373,7 +371,7 @@ func (in Request) check() (Invite, error) {
 			errs = append(errs, input.FieldError{Field: "email", Message: msg})
 		}
 	}
-	if !slices.Contains(roles, in.Role) {
+	if !slices.Contains(role.Memberships(), in.Role) {
 		errs = append(errs, input.FieldError{Field: "role",
 			Message: "is not one of owner, admin, editor, commenter, viewer, and guest"})
 	}
@@ -468,11 +466,11 @@ func (s *Service) Resend(ctx context.Context, userID, id, inviteID ids.UUID, cli
 		if inv, revoked, err = lock(ctx, tx, id, inviteID); err != nil {
 			return err
 		}
-		switch {
-		case revoked:
+		if revoked {
 			return ErrRevoked
-		case inv.Role == role.Owner && r != role.Owner:
-			return workspace.ErrOwnerRequired
+		}
+		if err := authz.CheckGrant(r, inv.Role); err != nil {
+			return err
 		}
 		if err := refuseMember(ctx, queries.New(tx), id, inv.Email); err != nil {
 			return err

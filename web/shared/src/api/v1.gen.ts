@@ -2,6 +2,11 @@
 // "go test ./internal/httpserver -run TestOpenAPIDocument -update" in server/
 // instead.
 
+export interface ChangeRoleBody {
+  /** The membership's new role. Only an owner grants the role owner, and an admin is answered with 403 owner_required. */
+  role: "owner" | "admin" | "editor" | "commenter" | "viewer" | "guest";
+}
+
 export interface CompleteSetupBody {
   /** The first owner's account, which is an instance admin */
   owner: SetupOwnerBody;
@@ -367,6 +372,29 @@ export interface Operations {
     };
     responses: {
       200: MembershipBody;
+    };
+  };
+  /**
+   * Change a member's role
+   *
+   * Changes the role of a membership of a workspace, and returns the member, with their email address. A membership that has the role already stays as it is. Only an owner grants the role owner, or changes an owner's role, and an admin is answered with 403 owner_required (FR-TEN-03 AC4). A workspace keeps an owner whose account is active, so changing the role of its last one is answered with 409 last_owner (FR-TEN-02 AC2). An owner or an admin may change their own role, as long as the workspace keeps an owner. The change also revokes the workspace's open invitations, expired or not, that the member made, and those whose link the member was last given as text, as by sending one anew, whose role the new role may not give: every one, for a role below admin, and those as owner, for admin, so that no link that they hold gives what their role no longer may. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a membership that the workspace does not have. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  changeMemberRole: {
+    input: {
+      path: {
+        /** The ID of the membership whose role to change */
+        membership_id: string;
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: ChangeRoleBody;
+    };
+    responses: {
+      200: MemberBody;
     };
   };
   /**
@@ -893,6 +921,7 @@ export interface Operations {
 /** The method and path of each operation. */
 export const routes = {
   acceptInvite: { method: "POST", path: "/api/v1/invites/accept" },
+  changeMemberRole: { method: "PATCH", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}" },
   changePassword: { method: "POST", path: "/api/v1/auth/password" },
   completeSetup: { method: "POST", path: "/api/v1/setup" },
   createInvite: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/invites" },

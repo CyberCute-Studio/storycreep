@@ -182,10 +182,6 @@ func createUserError(err error) error {
 // instance admin.
 const instanceAdminRole = "instance-admin"
 
-// workspaceRoles are the roles of a membership, which grant-role gives in a
-// workspace.
-var workspaceRoles = []role.Role{role.Owner, role.Admin, role.Editor, role.Commenter, role.Viewer, role.Guest}
-
 var grantRole = &command{
 	name:    "grant-role",
 	summary: "Give an account a role in a workspace, or make it an instance admin",
@@ -230,7 +226,7 @@ account that has the role already stays as it is.
 		}
 		r := role.Role(name)
 		switch {
-		case !slices.Contains(workspaceRoles, r):
+		case !slices.Contains(role.Memberships(), r):
 			return usageError{fmt.Sprintf("unknown role %q; a role is owner, admin, editor, commenter, viewer, "+
 				"guest, or instance-admin", name)}
 		case revoke:
