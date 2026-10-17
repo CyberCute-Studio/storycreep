@@ -43,7 +43,9 @@ const (
 	// invitation, and demoting or removing an owner (W).
 	ManageOwners Operation = "workspace.owners.manage"
 	// ManageWorkspaceSettings is changing a workspace's settings (W): its
-	// name, slug, and default locale, and later its retention and 2FA policy.
+	// name, slug, and default locale, and later its retention and 2FA policy,
+	// and reading its usage against its plan's limits, which its settings
+	// show (FR-ENT-02 AC2).
 	ManageWorkspaceSettings Operation = "workspace.settings"
 )
 

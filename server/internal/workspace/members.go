@@ -13,9 +13,11 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
 // Members (PRD FR-TEN-02, FR-TEN-03): every member of a workspace with a
@@ -34,6 +36,13 @@ import (
 // give (authz.Ungrantable), so that no link that they hold gives what their
 // role no longer may. A user joins a workspace by accepting an invitation
 // (package invite, Join), or through the operator (Grant).
+//
+// Every membership counts towards the workspace's members (FR-ENT-01,
+// FR-ENT-02), guests' included, and addMembership is the one site that
+// enforces the members limit of the workspace's plan: creating a workspace,
+// which adds its owner, Grant, and Join all add a membership through it.
+// Inviting someone does not check the limit, so that a workspace at its limit
+// can still invite, as after a member leaves; accepting does.
 
 var (
 	// ErrOwnerRequired is returned for an operation that only an owner of
@@ -221,6 +230,9 @@ func (s *Service) RemoveMember(ctx context.Context, userID, id, membershipID ids
 			ID: nullUUID(membershipID)}); err != nil {
 			return fmt.Errorf("workspace: remove the membership: %w", err)
 		}
+		if err := usage.Record(ctx, tx, id, usage.Members, -1); err != nil {
+			return err
+		}
 		if err := audit.Record(ctx, tx, audit.Entry{Action: audit.ActionMembershipRemove, WorkspaceID: id,
 			ActorUserID: userID, SubjectID: membershipID, Result: audit.ResultSuccess, IP: client.IP,
 			UserAgent: client.UserAgent, Metadata: map[string]any{"role": target.Role,
@@ -405,11 +417,51 @@ func roleNames(roles []role.Role) []string {
 // which the user invitedBy made, or a user since deleted if it is zero, does
 // (package invite), and records that in the audit log, with the user as its
 // actor, as client. It returns the new membership's ID, or ErrAlreadyMember
-// if the user is a member of the workspace already, and adds nothing then.
-// The caller checks that the workspace exists, and that the user's account
-// is active.
-func Join(ctx context.Context, tx pgx.Tx, id, userID ids.UUID, r role.Role, invitedBy, inviteID ids.UUID,
-	client audit.Client) (ids.UUID, error) {
+// if the user is a member of the workspace already, and then an
+// *entitlements.LimitError if the workspace has as many members as its plan
+// allows (FR-ENT-01), and adds nothing then. The caller checks that the
+// workspace exists, and that the user's account is active.
+func (s *Service) Join(ctx context.Context, tx pgx.Tx, id, userID ids.UUID, r role.Role, invitedBy,
+	inviteID ids.UUID, client audit.Client) (ids.UUID, error) {
+	// A member is told so, rather than that the workspace is full, whatever
+	// its usage.
+	_, err := queries.New(tx).MembershipOf(ctx, queries.MembershipOfParams{WorkspaceID: nullUUID(id),
+		UserID: nullUUID(userID)})
+	switch {
+	case err == nil:
+		return ids.UUID{}, ErrAlreadyMember
+	case !errors.Is(err, pgx.ErrNoRows):
+		return ids.UUID{}, fmt.Errorf("workspace: read the membership: %w", err)
+	}
+	mid, err := s.addMembership(ctx, tx, id, userID, r, invitedBy)
+	if err != nil {
+		return ids.UUID{}, err
+	}
+	err = audit.Record(ctx, tx, audit.Entry{Action: audit.ActionMembershipCreate, WorkspaceID: id,
+		ActorUserID: userID, SubjectID: mid, Result: audit.ResultSuccess, IP: client.IP, UserAgent: client.UserAgent,
+		Metadata: map[string]any{"role": r, "invite_id": inviteID.String()}})
+	if err != nil {
+		return ids.UUID{}, err
+	}
+	return mid, nil
+}
+
+// addMembership makes the user userID a member of the workspace id, whose
+// transaction tx is, with the role r, invited by the user invitedBy, or by
+// nobody if it is zero, and returns the new membership's ID. It is the one
+// site that enforces the members limit (FR-ENT-01 AC1): it checks the limit
+// first, which, counted exactly, holds the lock of the workspace's members
+// until tx ends (package usage), so that two memberships added at once cannot
+// both pass it, and records the new member in the workspace's usage, so that
+// the next check counts it (FR-ENT-02). It returns an *entitlements.LimitError
+// if the workspace has as many members as its plan allows, and
+// ErrAlreadyMember if the user is a member already, as one that a
+// transaction added meanwhile, and adds nothing then.
+func (s *Service) addMembership(ctx context.Context, tx pgx.Tx, id, userID ids.UUID, r role.Role,
+	invitedBy ids.UUID) (ids.UUID, error) {
+	if err := s.ent.Check(ctx, tx, id, entitlements.Members, 1); err != nil {
+		return ids.UUID{}, err
+	}
 	mid := ids.New()
 	n, err := queries.New(tx).JoinWorkspace(ctx, queries.JoinWorkspaceParams{ID: nullUUID(mid),
 		WorkspaceID: nullUUID(id), UserID: nullUUID(userID), Role: string(r), InvitedBy: nullUUID(invitedBy)})
@@ -419,10 +471,7 @@ func Join(ctx context.Context, tx pgx.Tx, id, userID ids.UUID, r role.Role, invi
 	case n == 0:
 		return ids.UUID{}, ErrAlreadyMember
 	}
-	err = audit.Record(ctx, tx, audit.Entry{Action: audit.ActionMembershipCreate, WorkspaceID: id,
-		ActorUserID: userID, SubjectID: mid, Result: audit.ResultSuccess, IP: client.IP, UserAgent: client.UserAgent,
-		Metadata: map[string]any{"role": r, "invite_id": inviteID.String()}})
-	if err != nil {
+	if err := usage.Record(ctx, tx, id, usage.Members, 1); err != nil {
 		return ids.UUID{}, err
 	}
 	return mid, nil

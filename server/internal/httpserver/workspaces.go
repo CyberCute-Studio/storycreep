@@ -9,6 +9,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
@@ -235,11 +236,16 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 }
 
 // workspaceError returns the error that the API answers err with, an error
-// of package workspace, or err itself if it is none of them.
+// of package workspace, or err itself if it is none of them. Creating a
+// workspace adds its owner as its first member, which a plan that allows no
+// member refuses with limit_exceeded.
 func workspaceError(err error) error {
 	var fields input.FieldErrors
 	var slug *workspace.SlugError
+	var limit *entitlements.LimitError
 	switch {
+	case errors.As(err, &limit):
+		return limitExceededError(err)
 	case errors.Is(err, workspace.ErrNotFound):
 		return api.NewError(api.CodeNotFound)
 	case errors.Is(err, workspace.ErrInsufficientRole):

@@ -53,6 +53,13 @@ const (
 	gooseLock int64 = 0x73746f7279637271
 )
 
+// UsageLock is the class of the transaction-scoped advisory locks that
+// package usage takes of a workspace's key that it counts exactly (PRD
+// FR-ENT-02): the first integer of the two-integer key space of
+// pg_advisory_xact_lock, which the single-bigint keys above never meet, and
+// whose second integer is the workspace's key's own. It spells "usag".
+const UsageLock int32 = 0x75736167
+
 // timeoutsOff switches off the timeouts that the server, the database, or the
 // login set and that would end a wait for an advisory lock early, or end an
 // idle session and with it the locks it holds: for the session, or, if $1 is

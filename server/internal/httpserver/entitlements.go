@@ -7,6 +7,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
+	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
 // pricingPath is the public site's page that offers the plans (PRD
@@ -14,18 +15,20 @@ import (
 // workspace's plan would raise the limit.
 const pricingPath = "pricing"
 
-// entitlementOptions returns the options of the server's entitlements (PRD
-// FR-ENT-01) under cfg: each workspace's plan while the EnforceEntitlements
+// EntitlementOptions returns the options of the server's entitlements (PRD
+// FR-ENT-01) under cfg, which the operator's commands that add to a limit
+// use too (package cli): each workspace's plan while the EnforceEntitlements
 // capability is on, and the unlimited plan otherwise, capped by
 // STORYCREEP_WORKSPACE_LIMITS. An answer of limit_exceeded links to the
 // pricing page only where the instance bills for plans and serves that page,
-// so a self-hosted instance never offers an upgrade (FR-ENT-03 AC2). No
-// enforcement site checks a limit yet, so the options have no meter: usage
-// metering (FR-ENT-02) adds one with the first.
-func entitlementOptions(cfg *config.Config) entitlements.Options {
+// so a self-hosted instance never offers an upgrade (FR-ENT-03 AC2). The
+// limits are checked against the workspaces' usage, as package usage meters
+// it (FR-ENT-02).
+func EntitlementOptions(cfg *config.Config) entitlements.Options {
 	opts := entitlements.Options{
 		Enforce: cfg.Capabilities.EnforceEntitlements,
 		Caps:    cfg.WorkspaceLimits,
+		Meter:   usage.Meter{},
 	}
 	if cfg.Capabilities.Billing && cfg.Capabilities.PublicSite {
 		opts.UpgradeURL = cfg.PublicURL.URL().JoinPath(pricingPath).String()

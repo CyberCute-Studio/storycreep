@@ -62,9 +62,10 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		ready:   &readiness{log: log},
 		metrics: newMetrics(),
 	}
-	s.entitlements = entitlements.New(entitlementOptions(cfg))
+	s.entitlements = entitlements.New(EntitlementOptions(cfg))
 	s.workspaces = workspace.New(readyDB{s.ready}, workspace.Options{
 		Policy:        role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
+		Entitlements:  s.entitlements,
 		PlanKey:       s.entitlements.NewWorkspacePlan(),
 		DefaultLocale: cfg.DefaultLocale,
 		// An instance that always sends email can require a verified
@@ -136,6 +137,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerAccounts(s.main, s.accounts, s.limits)
 	registerSessions(s.main, s.accounts, s.limits, cookie)
 	registerWorkspaces(s.main, s.workspaces)
+	registerUsage(s.main, s.workspaces)
 	registerInvites(s.main, s.workspaces, s.invites, s.accounts, s.limits)
 	registerSetup(s.main, s.setups, s.limits)
 	registerEmail(s.main, s.accounts, s.limits)

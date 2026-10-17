@@ -109,6 +109,15 @@ export interface IssueLinkBody {
   email: string;
 }
 
+export interface LimitUsageBody {
+  /** The most that the workspace may use: its plan's limit, or the instance's cap if that is smaller. Without it, the workspace may use any amount. */
+  limit?: number;
+  /** How much the workspace uses */
+  used: number;
+  /** Set when the workspace uses at least 80% of its limit, so that a client can warn before a change is refused with 409 limit_exceeded */
+  warning: boolean;
+}
+
 export interface LinkBody {
   /** When the link expires */
   expires_at: string;
@@ -155,6 +164,11 @@ export interface MembershipBody {
   slug: string;
   /** When its name, slug, or settings last changed */
   updated_at: string;
+}
+
+export interface MeteredUsageBody {
+  /** How much the workspace uses */
+  used: number;
 }
 
 export interface PageInviteBody {
@@ -307,6 +321,21 @@ export interface UpdateWorkspaceBody {
   slug?: string;
 }
 
+export interface UsageBody {
+  /** The boards of the workspace's projects */
+  boards: MeteredUsageBody;
+  /** The workspace's members, guests included */
+  members: LimitUsageBody;
+  /** The nodes of the workspace's projects */
+  nodes: MeteredUsageBody;
+  /** The workspace's projects */
+  projects: LimitUsageBody;
+  /** The snapshots of the workspace's projects */
+  snapshots: MeteredUsageBody;
+  /** The bytes that the workspace's stored files take up. Uploads that run at once may take it past its limit by what they add together. */
+  storage_bytes: LimitUsageBody;
+}
+
 export interface VerifyEmailBody {
   /** The token of the link that verifies the email address: what follows token= in the fragment of the URL that the link opens */
   token: string;
@@ -360,7 +389,7 @@ export interface Operations {
   /**
    * Accept an invitation
    *
-   * Accepts an invitation with its link as the signed-in user, who joins its workspace with its role, and returns the membership. An invitation to an address that is not the account's is answered with 403 invite_email_mismatch (FR-TEN-02 AC3), while a link invitation may be accepted by any account. A user who is a member of the workspace already is answered with 409 already_member, and the invitation stays open. Accepting again an invitation that the user accepted, as registering with it does, returns the membership again, while the user is still a member. A token that belongs to no invitation, as one that sending the invitation anew replaced, or whose workspace no longer exists, is answered with 400 token_invalid, an invitation that has been revoked with 410 invite_revoked, one that has been accepted with 410 invite_accepted, and one that has expired with 410 invite_expired (FR-TEN-02 AC1). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, and reading, accepting, or registering with an invitation's link share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, and accepting one share one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   * Accepts an invitation with its link as the signed-in user, who joins its workspace with its role, and returns the membership. An invitation to an address that is not the account's is answered with 403 invite_email_mismatch (FR-TEN-02 AC3), while a link invitation may be accepted by any account. A user who is a member of the workspace already is answered with 409 already_member, and a workspace that has as many members as its plan allows with 409 limit_exceeded, and the invitation stays open either way. Accepting again an invitation that the user accepted, as registering with it does, returns the membership again, while the user is still a member. A token that belongs to no invitation, as one that sending the invitation anew replaced, or whose workspace no longer exists, is answered with 400 token_invalid, an invitation that has been revoked with 410 invite_revoked, one that has been accepted with 410 invite_accepted, and one that has expired with 410 invite_expired (FR-TEN-02 AC1). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, and reading, accepting, or registering with an invitation's link share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, and accepting one share one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
    */
   acceptInvite: {
     input: {
@@ -557,6 +586,22 @@ export interface Operations {
     };
   };
   /**
+   * Get a workspace's usage
+   *
+   * Returns how much the workspace uses of each thing that the plans meter, and, for those that its plan limits, the limit and whether it uses 80% of it or more, which the workspace's settings and the invitation dialog show. A change that would take the workspace past a limit is refused with 409 limit_exceeded. A self-hosted instance limits nothing, unless STORYCREEP_WORKSPACE_LIMITS caps a limit. Only an owner or an admin of the workspace may read it, as its settings, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
+   */
+  getWorkspaceUsage: {
+    input: {
+      path: {
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+    };
+    responses: {
+      200: UsageBody;
+    };
+  };
+  /**
    * Take a link that resets a password
    *
    * Returns a link that resets the password of the active account that the email address belongs to, which lasts an hour, and is used once with POST /api/v1/auth/password-reset/confirm. It is for an instance that sends no email, whose links an instance admin gives out instead, to the account's user alone, because whoever holds a link can use it; an instance that sends email answers 403 email_configured. A user who is not an instance admin, such as a workspace's owner or admin, is answered with 403 instance_admin_required, whatever the request holds. An address that belongs to no active account is answered with 404 not_found. The audit log records the issue. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, and reading, accepting, or registering with an invitation's link share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, and accepting one share one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
@@ -728,7 +773,7 @@ export interface Operations {
   /**
    * Register an account with an invitation
    *
-   * Creates an account, as POST /api/v1/auth/register does, and accepts an invitation with its link as the new account, which joins the invitation's workspace with its role, under the invite and the open signup policies. Until first-run setup has completed, the answer is 403 setup_required, whatever the policy. Under closed, the answer is 403 signup_closed, whatever the request holds, and only an account that exists already accepts an invitation, with POST /api/v1/invites/accept. An invitation to an address registers that address, and another is answered with 403 invite_email_mismatch (FR-TEN-02 AC3). A token that belongs to no invitation, as one that sending the invitation anew replaced, or whose workspace no longer exists, is answered with 400 token_invalid, an invitation that has been revoked with 410 invite_revoked, one that has been accepted with 410 invite_accepted, and one that has expired with 410 invite_expired (FR-TEN-02 AC1). The fields are checked as POST /api/v1/auth/register checks them, with its errors. Otherwise the answer is 202 without a body, whether or not the address has an account already, so that it does not tell whether an address has one: an account that exists stays as it was, and the invitation stays open for it. The client then signs in, and accepts the invitation with POST /api/v1/invites/accept, which returns the membership either way. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, and reading, accepting, or registering with an invitation's link share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, and accepting one share one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   * Creates an account, as POST /api/v1/auth/register does, and accepts an invitation with its link as the new account, which joins the invitation's workspace with its role, under the invite and the open signup policies. Until first-run setup has completed, the answer is 403 setup_required, whatever the policy. Under closed, the answer is 403 signup_closed, whatever the request holds, and only an account that exists already accepts an invitation, with POST /api/v1/invites/accept. An invitation to an address registers that address, and another is answered with 403 invite_email_mismatch (FR-TEN-02 AC3). A token that belongs to no invitation, as one that sending the invitation anew replaced, or whose workspace no longer exists, is answered with 400 token_invalid, an invitation that has been revoked with 410 invite_revoked, one that has been accepted with 410 invite_accepted, and one that has expired with 410 invite_expired (FR-TEN-02 AC1). The fields are checked as POST /api/v1/auth/register checks them, with its errors. Otherwise the answer is 202 without a body, whether or not the address has an account already, so that it does not tell whether an address has one: an account that exists stays as it was, and the invitation stays open for it. So does a new account's, which joins no workspace, if the invitation's workspace has as many members as its plan allows. The client then signs in, and accepts the invitation with POST /api/v1/invites/accept, which returns the membership either way, or answers 409 limit_exceeded while the workspace is full. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, and reading, accepting, or registering with an invitation's link share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, and accepting one share one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
    */
   registerWithInvite: {
     input: {
@@ -934,6 +979,7 @@ export const routes = {
   getSetup: { method: "GET", path: "/api/v1/setup" },
   getVersion: { method: "GET", path: "/version" },
   getWorkspace: { method: "GET", path: "/api/v1/workspaces/{workspace_id}" },
+  getWorkspaceUsage: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/usage" },
   issuePasswordResetLink: { method: "POST", path: "/api/v1/admin/password-reset-links" },
   issueVerificationLink: { method: "POST", path: "/api/v1/admin/verification-links" },
   listInvites: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/invites" },

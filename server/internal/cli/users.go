@@ -14,6 +14,8 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
+	"github.com/CyberCute-Studio/storycreep/server/internal/httpserver"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
@@ -198,7 +200,10 @@ workspace's open invitations that the account made, or was last given the
 link of as text, whose role the new role may not give: every one, for a role
 below admin, and those as owner, for admin, so that no link that it holds
 gives what its role no longer may. The workspace's audit log records the
-change, and each invitation that it revokes.
+change, and each invitation that it revokes. A new member counts towards the
+workspace's members limit, as one who accepts an invitation does: the
+workspace's plan in hosted mode, or the cap of STORYCREEP_WORKSPACE_LIMITS,
+so it fails if the workspace has as many members as the limit allows.
 
 The role instance-admin, without a workspace, makes the account an instance
 admin, who will manage the instance on the instance-admin screens, and, while
@@ -279,8 +284,11 @@ func grantWorkspaceRole(ctx context.Context, inv *invocation, email string, r ro
 	if err != nil {
 		return findError(err)
 	}
-	// The policy resolves no role here: the operator acts for themselves.
-	workspaces := workspace.New(db, workspace.Options{})
+	// The policy resolves no role here: the operator acts for themselves. A
+	// new member counts towards the workspace's members limit, as one that
+	// the API adds does (FR-ENT-01).
+	workspaces := workspace.New(db, workspace.Options{
+		Entitlements: entitlements.New(httpserver.EntitlementOptions(inv.cfg))})
 	id, err := workspaces.BySlug(ctx, slug)
 	if errors.Is(err, workspace.ErrNotFound) {
 		return fmt.Errorf("no workspace has the slug %q", slug)
@@ -289,7 +297,11 @@ func grantWorkspaceRole(ctx context.Context, inv *invocation, email string, r ro
 		return err
 	}
 	previous, err := workspaces.Grant(ctx, id, userID, r)
+	var limit *entitlements.LimitError
 	switch {
+	case errors.As(err, &limit):
+		return fmt.Errorf("%s has %d members, and its limit is %d, so %s cannot join it; remove a member first, or "+
+			"raise the limit", slug, limit.Usage, limit.Limit, email)
 	case errors.Is(err, workspace.ErrNotFound):
 		return fmt.Errorf("no workspace has the slug %q", slug)
 	case errors.Is(err, workspace.ErrLastOwner):

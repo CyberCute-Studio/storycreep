@@ -136,6 +136,31 @@ var Tables = []Table{
 		return Statement{id, "INSERT INTO applied_command (workspace_id, project_id, command_id, seq) " +
 			"VALUES ($1, $2, $3, $4)", []any{w.ID, w.Rows["project"], id, seq()}}, nil
 	}},
+	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A workspace has one counter of a key.
+		id := ids.New()
+		return Statement{id, "INSERT INTO usage_counter (id, workspace_id, key, value) VALUES ($1, $2, $3, 7)",
+			[]any{id, w.ID, usageKey()}}, nil
+	}},
+	{Name: "usage_delta", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// Two members, which the workspace's one membership does not match,
+		// so that a recount of its members finds it drifted.
+		id := ids.New()
+		return Statement{id, "INSERT INTO usage_delta (id, workspace_id, key, delta) VALUES ($1, $2, 'members', 2)",
+			[]any{id, w.ID}}, nil
+	}},
+}
+
+// usageKey returns a random key of usage, of lowercase letters as the keys
+// are, so that the counters that the harness adds to one workspace do not
+// share one.
+func usageKey() string {
+	b := make([]byte, 12)
+	_, _ = rand.Read(b)
+	for i := range b {
+		b[i] = 'a' + b[i]%26
+	}
+	return "isolation_" + string(b)
 }
 
 // seq returns a random positive seq, so that the operations that the harness

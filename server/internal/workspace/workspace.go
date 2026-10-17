@@ -51,6 +51,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
@@ -166,6 +167,10 @@ type DB interface {
 type Options struct {
 	// Policy resolves the roles.
 	Policy role.Policy
+	// Entitlements check the members limit of the workspaces' plans
+	// (FR-ENT-01), which every new membership adds to. It is required,
+	// because a Service without it would let every workspace past its plan.
+	Entitlements *entitlements.Service
 	// PlanKey is the plan of a new workspace (FR-ENT-01).
 	PlanKey string
 	// DefaultLocale is the instance's default locale, which a workspace
@@ -181,16 +186,21 @@ type Options struct {
 type Service struct {
 	db     DB
 	policy role.Policy
+	ent    *entitlements.Service
 	plan   string
 	locale language.Tag
 	// verified is Options.RequireVerifiedEmail.
 	verified bool
 }
 
-// New returns a Service that keeps the workspaces in db, with opts.
+// New returns a Service that keeps the workspaces in db, with opts. It
+// panics if opts.Entitlements is nil.
 func New(db DB, opts Options) *Service {
-	return &Service{db: db, policy: opts.Policy, plan: opts.PlanKey, locale: opts.DefaultLocale,
-		verified: opts.RequireVerifiedEmail}
+	if opts.Entitlements == nil {
+		panic("workspace: a Service needs the entitlements that check its workspaces' members limit")
+	}
+	return &Service{db: db, policy: opts.Policy, ent: opts.Entitlements, plan: opts.PlanKey,
+		locale: opts.DefaultLocale, verified: opts.RequireVerifiedEmail}
 }
 
 // Workspace is a workspace.
@@ -246,7 +256,9 @@ type Patch struct {
 // *SlugError if the slug is not, and ErrSlugTaken if another workspace has
 // it, and creates nothing then. A slug derived from the name is the first of
 // the name's slug, then that with -2, -3, and so on, that no workspace has
-// and that is not reserved.
+// and that is not reserved. The owner is the workspace's first member, which
+// its plan's members limit counts (FR-ENT-01), so Create returns an
+// *entitlements.LimitError only if a new workspace's plan allows no member.
 func (s *Service) Create(ctx context.Context, userID ids.UUID, in Settings, client audit.Client) (Workspace,
 	error) {
 	if err := s.CheckVerified(ctx, userID); err != nil {
@@ -413,8 +425,7 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, w Workspace, userID ids
 	if w.Slug == "" {
 		return Workspace{}, ErrSlugTaken
 	}
-	if err := q.InsertMembership(ctx, queries.InsertMembershipParams{ID: nullUUID(ids.New()),
-		WorkspaceID: nullUUID(w.ID), UserID: nullUUID(userID), Role: string(role.Owner)}); err != nil {
+	if _, err := s.addMembership(ctx, tx, w.ID, userID, role.Owner, ids.UUID{}); err != nil {
 		return Workspace{}, fmt.Errorf("workspace: add the owner's membership: %w", err)
 	}
 	row, err := q.Workspace(ctx, nullUUID(w.ID))
@@ -749,9 +760,12 @@ func (s *Service) BySlug(ctx context.Context, slug string) (ids.UUID, error) {
 // that in the audit log, without an actor. It returns the role that the
 // membership had before, or role.None if the user was not a member, and
 // leaves a membership that has r already as it is. It returns ErrNotFound if
-// the workspace does not exist, and ErrLastOwner if r is not owner and the
-// user is the workspace's last owner whose account is active. The caller
-// checks that the account is active, and that r is a role of a membership.
+// the workspace does not exist, ErrLastOwner if r is not owner and the user
+// is the workspace's last owner whose account is active, and an
+// *entitlements.LimitError if the user is not a member and the workspace has
+// as many members as its plan allows (FR-ENT-01), and changes nothing then.
+// The caller checks that the account is active, and that r is a role of a
+// membership.
 func (s *Service) Grant(ctx context.Context, id, userID ids.UUID, r role.Role) (role.Role, error) {
 	previous := role.None
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: id}, func(tx pgx.Tx) error {
@@ -769,10 +783,9 @@ func (s *Service) Grant(ctx context.Context, id, userID ids.UUID, r role.Role) (
 			UserID: nullUUID(userID)})
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
-			mid := ids.New()
-			if err := q.InsertMembership(ctx, queries.InsertMembershipParams{ID: nullUUID(mid),
-				WorkspaceID: nullUUID(id), UserID: nullUUID(userID), Role: string(r)}); err != nil {
-				return fmt.Errorf("workspace: add the membership: %w", err)
+			mid, err := s.addMembership(ctx, tx, id, userID, r, ids.UUID{})
+			if err != nil {
+				return err
 			}
 			return audit.Record(ctx, tx, audit.Entry{Action: audit.ActionMembershipCreate, WorkspaceID: id,
 				SubjectID: mid, Result: audit.ResultSuccess, Metadata: map[string]any{"role": r}})

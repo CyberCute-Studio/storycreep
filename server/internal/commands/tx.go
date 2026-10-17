@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
+	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
 // Tx is the transaction that a batch is applied in, as the functions of a
@@ -39,6 +42,10 @@ type Tx struct {
 	changed []Revision
 	at      map[Ref]int
 	revs    map[Ref]int64
+	// usage is what the batch's commands add to each key of the workspace's
+	// usage, and usageKeys the keys in the order of their first report.
+	usage     map[usage.Key]int64
+	usageKeys []usage.Key
 }
 
 // Exec runs a statement in the batch's transaction.
@@ -104,6 +111,50 @@ func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 	}
 	t.at[ref] = len(t.changed)
 	t.changed = append(t.changed, Revision{Ref: ref, Rev: rev})
+	return nil
+}
+
+// AddUsage reports that the command adds delta to the workspace's usage of
+// key (package usage, PRD FR-ENT-02), or takes -delta from it, as creating a
+// node adds 1 to nodes, and deleting a board with its nodes takes them. Once
+// every command of the batch has applied, the pipeline records what they add
+// to each key together, as one delta, in the batch's transaction, so that it
+// commits exactly when the batch does. It returns an error, which the command
+// returns to refuse the batch, unless it is called from the command's Apply,
+// or if it adds to a key that names a limit of the plans that the command
+// does not declare (Spec.Limits), so that the pipeline checked it before the
+// batch applied (FR-ENT-01).
+func (t *Tx) AddUsage(key usage.Key, delta int64) error {
+	switch {
+	case t.current == nil:
+		return errors.New("commands: AddUsage is called outside a command's Apply")
+	case !key.Known():
+		return fmt.Errorf("commands: %s adds to %q, which is not a key of usage", t.current.typ, key)
+	case delta > 0 && slices.Contains(entitlements.LimitKeys(), entitlements.LimitKey(key)) &&
+		!slices.Contains(t.current.limits, entitlements.LimitKey(key)):
+		return fmt.Errorf("commands: %s adds to %s, a limit of the plans that it does not declare, so nothing "+
+			"checked it", t.current.typ, key)
+	}
+	sum, seen := t.usage[key]
+	if delta > 0 && sum > math.MaxInt64-delta || delta < 0 && sum < math.MinInt64-delta {
+		return fmt.Errorf("commands: what the batch adds to %s does not fit in 64 bits", key)
+	}
+	if !seen {
+		t.usageKeys = append(t.usageKeys, key)
+	}
+	t.usage[key] = sum + delta
+	return nil
+}
+
+// recordUsage records what the batch's commands added to each key of the
+// workspace's usage (AddUsage), in the order of the keys' first reports, as
+// one delta of each key, unless they add up to nothing.
+func (t *Tx) recordUsage(ctx context.Context) error {
+	for _, key := range t.usageKeys {
+		if err := usage.Record(ctx, t.tx, t.workspace, key, t.usage[key]); err != nil {
+			return fmt.Errorf("commands: %w", err)
+		}
+	}
 	return nil
 }
 

@@ -240,11 +240,19 @@ var permissionMatrix = []struct {
 		row:     "Workspace settings, retention, 2FA policy",
 		op:      authz.ManageWorkspaceSettings,
 		allowed: [5]bool{true, true, false, false, false},
-		ops: []matrixOp{{name: "rename the workspace", success: http.StatusOK,
-			do: func(t *testing.T, f *rolesFixture, si signedIn) response {
-				return call(f.s.main, http.MethodPatch, workspacesPath+"/"+f.ws,
-					jsonBody(t, map[string]string{"name": "Harbour"}), si.header(true))
-			}}},
+		ops: []matrixOp{
+			{name: "rename the workspace", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPatch, workspacesPath+"/"+f.ws,
+						jsonBody(t, map[string]string{"name": "Harbour"}), si.header(true))
+				}},
+			// The settings show the workspace's usage against its plan's
+			// limits (FR-ENT-02 AC2).
+			{name: "read the usage", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, usagePath(f.ws), nil, si.header(false))
+				}},
+		},
 	},
 }
 

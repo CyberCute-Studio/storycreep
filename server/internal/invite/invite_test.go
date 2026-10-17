@@ -24,11 +24,13 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email/emailtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
+	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
 )
 
@@ -111,7 +113,8 @@ func newFixture(t *testing.T, mailer *email.Service) *fixture {
 	t.Helper()
 	d := dbtest.New(t)
 	db := d.Open(t)
-	workspaces := workspace.New(db, workspace.Options{PlanKey: "unlimited", DefaultLocale: language.English})
+	workspaces := workspace.New(db, workspace.Options{PlanKey: "unlimited", DefaultLocale: language.English,
+		Entitlements: entitlements.New(entitlements.Options{Meter: usage.Meter{}})})
 	limits := ratelimit.New(db, ratelimit.DefaultPolicy())
 	accounts := account.New(db, account.Options{IdleTimeout: time.Hour, Lifetime: time.Hour, Limits: limits})
 	f := &fixture{d: d, db: db, queue: &queueSpy{}}

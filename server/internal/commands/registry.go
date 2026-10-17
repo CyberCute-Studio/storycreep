@@ -60,7 +60,9 @@ type Spec[P any] struct {
 	// kinds only (Tx.Changed).
 	Touches []ids.Kind
 	// Limits are the limits of the workspace's plan that the command adds to,
-	// which the pipeline checks before it applies the batch (FR-ENT-01).
+	// which the pipeline checks before it applies the batch (FR-ENT-01). Its
+	// Apply reports what it adds to them, as to any key of usage, with
+	// Tx.AddUsage, which refuses to add to a limit that is not here.
 	Limits []Limit[P]
 	// Check returns what is wrong with a payload that its schema cannot say,
 	// such as an identifier of the wrong type, with each field's name in the
@@ -78,8 +80,9 @@ type Spec[P any] struct {
 	// cannot be undone.
 	NonUndoable bool
 	// Apply applies the command in the batch's transaction, and reports each
-	// entity that it changes with Tx.Changed. An error refuses the whole
-	// batch, which then changes nothing.
+	// entity that it changes with Tx.Changed, and what it adds to the
+	// workspace's usage with Tx.AddUsage. An error refuses the whole batch,
+	// which then changes nothing.
 	Apply func(ctx context.Context, tx *Tx, p P) error
 }
 

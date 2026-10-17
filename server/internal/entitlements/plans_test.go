@@ -290,6 +290,11 @@ func TestLoadRefuses(t *testing.T) {
 		{"an undeclared limit", edit(func(doc map[string]any) {
 			plan(doc, "team")["limits"].(map[string]any)["boards"] = 5
 		}), "plans[2] (team): the limits are boards,"},
+		// Every workspace has its owner, so a plan without a member could
+		// create none.
+		{"no member", edit(func(doc map[string]any) {
+			plan(doc, "team")["limits"].(map[string]any)["members"] = 0
+		}), "plans[2] (team): members is 0, but every workspace has its owner"},
 		{"a missing feature", edit(func(doc map[string]any) {
 			delete(plan(doc, "studio")["features"].(map[string]any), "sso")
 		}), "plans[3] (studio): the features are audit_export, collaboration, but the file declares"},

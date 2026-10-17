@@ -21,6 +21,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
+	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
 func TestMain(m *testing.M) {
@@ -71,6 +72,10 @@ const (
 	// noteBadInverse is undone by a step that cannot be applied, or has an
 	// inverse that reports a change.
 	noteBadInverse Type = "note.bad_inverse"
+	// noteMeter adds to a key of the workspace's usage what its payload
+	// says, as creating a note would add to nodes. It declares the projects
+	// limit, and no other.
+	noteMeter Type = "note.meter"
 )
 
 // errRefused is noteFail's refusal.
@@ -103,6 +108,12 @@ type badInversePayload struct {
 	// only Apply may, and then be the note's deletion, which an undo could
 	// apply.
 	Changes bool `json:"changes,omitempty"`
+}
+
+// meterPayload is noteMeter's payload.
+type meterPayload struct {
+	Key   string `json:"key"`
+	Delta int64  `json:"delta"`
 }
 
 // noteState is a note as the States of its entity show it.
@@ -294,6 +305,16 @@ func noteRegistry() *Registry {
 			return []Step{{Type: p.Step, Payload: struct{}{}}}, nil
 		},
 		Apply: func(context.Context, *Tx, badInversePayload) error { return nil },
+	})
+	Register(r, Spec[meterPayload]{
+		Type: noteMeter, Capability: authz.ListMembers, Touches: touches, NonUndoable: true,
+		Limits: []Limit[meterPayload]{{Key: entitlements.Projects, Adds: func(p meterPayload) int64 {
+			if p.Key == string(entitlements.Projects) {
+				return p.Delta
+			}
+			return 0
+		}}},
+		Apply: func(_ context.Context, tx *Tx, p meterPayload) error { return tx.AddUsage(usage.Key(p.Key), p.Delta) },
 	})
 	return r
 }

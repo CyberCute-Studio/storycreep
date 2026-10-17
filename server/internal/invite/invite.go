@@ -64,6 +64,15 @@
 // either way, but only a new account joins the workspace, and an address
 // with an account leaves the invitation open, for the account to accept
 // once it signs in.
+//
+// Accepting makes a membership, which the members limit of the workspace's
+// plan counts (FR-ENT-01), so a workspace that has as many members as its
+// plan allows refuses it: Accept returns an *entitlements.LimitError, and
+// leaves the invitation open, for when a member leaves. Registering with the
+// link of such a workspace adds the new account all the same, but leaves the
+// invitation open, as an address with an account does, so that its answer
+// still does not tell whether the address has one; the account is refused
+// when it accepts once it signs in.
 package invite
 
 import (
@@ -83,6 +92,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
@@ -627,9 +637,11 @@ func (s *Service) Lookup(ctx context.Context, value secret.Value) (Preview, erro
 // invitation that cannot be accepted, ErrEmailMismatch for one to another
 // address than the user's account's (FR-TEN-02 AC3), and
 // workspace.ErrAlreadyMember if the user is a member of the workspace
-// already, which leaves the invitation open. An invitation that the user
-// accepted already, as registering with it does, returns the user's
-// membership again, while the user is still a member.
+// already, and an *entitlements.LimitError if the workspace has as many
+// members as its plan allows (FR-ENT-01), which both leave the invitation
+// open. An invitation that the user accepted already, as registering with it
+// does, returns the user's membership again, while the user is still a
+// member.
 func (s *Service) Accept(ctx context.Context, userID ids.UUID, value secret.Value, client audit.Client) (
 	workspace.Membership, error) {
 	id, hash, err := s.workspaceOf(ctx, userID, value)
@@ -679,7 +691,7 @@ func (s *Service) accept(ctx context.Context, tx pgx.Tx, h held, userID ids.UUID
 	client audit.Client) error {
 	inviteID := ids.UUID(h.row.ID.Bytes)
 	r := role.Role(h.row.Role)
-	mid, err := workspace.Join(ctx, tx, h.workspaceID, userID, r, h.row.CreatedBy.Bytes, inviteID, client)
+	mid, err := s.workspaces.Join(ctx, tx, h.workspaceID, userID, r, h.row.CreatedBy.Bytes, inviteID, client)
 	if err != nil {
 		return err
 	}
@@ -702,15 +714,17 @@ func (s *Service) accept(ctx context.Context, tx pgx.Tx, h held, userID ids.UUID
 // Register adds no account, leaves the invitation open, and returns nil all
 // the same, once it has checked the invitation and hashed the password as
 // for a new account, so that its caller answers the same (FR-AUTH-01 AC1);
-// the account accepts the invitation once it signs in. It
-// returns account.ErrSetupRequired or account.ErrSignupClosed unless the
-// signup policy lets an invitation create an account
-// (account.Service.CheckInvitedSignup), then ErrTokenInvalid, ErrRevoked,
-// ErrAccepted, or ErrExpired for an invitation that cannot be accepted,
-// ErrEmailMismatch for one to another address than reg.Email, and the
-// errors of RegisterInvited for a registration that is not valid, as one
-// whose address registration refuses, whatever the invitation's, and adds
-// nothing then.
+// the account accepts the invitation once it signs in. A new account is
+// added without accepting the invitation, which stays open in the same way,
+// if the workspace has as many members as its plan allows (FR-ENT-01), so
+// that the answer is the same then too. It returns account.ErrSetupRequired
+// or account.ErrSignupClosed unless the signup policy lets an invitation
+// create an account (account.Service.CheckInvitedSignup), then
+// ErrTokenInvalid, ErrRevoked, ErrAccepted, or ErrExpired for an invitation
+// that cannot be accepted, ErrEmailMismatch for one to another address than
+// reg.Email, and the errors of RegisterInvited for a registration that is not
+// valid, as one whose address registration refuses, whatever the
+// invitation's, and adds nothing then.
 func (s *Service) Register(ctx context.Context, value secret.Value, reg account.Registration,
 	client audit.Client) error {
 	if err := s.accounts.CheckInvitedSignup(ctx); err != nil {
@@ -753,7 +767,16 @@ func (s *Service) Register(ctx context.Context, value secret.Value, reg account.
 		case !h.row.EmailMatches:
 			return ErrEmailMismatch
 		}
-		return s.accept(ctx, tx, h, userID, true, client)
+		// The workspace checks its members limit before it adds anything, so
+		// a refusal leaves nothing of the acceptance to undo. Refusing the
+		// registration would tell that the address has no account, whose
+		// registration would otherwise have been answered 202, so the account
+		// stays, and is refused when it accepts once it signs in.
+		var limit *entitlements.LimitError
+		if err := s.accept(ctx, tx, h, userID, true, client); !errors.As(err, &limit) {
+			return err
+		}
+		return nil
 	})
 }
 

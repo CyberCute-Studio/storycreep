@@ -16,8 +16,10 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
+	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
 )
 
@@ -40,8 +42,9 @@ func newTestService(t *testing.T, signup config.SignupPolicy) (*Service, *dbtest
 	return New(db, Options{
 		Signup:        signup,
 		DefaultLocale: language.English,
-		Workspaces:    workspace.New(db, workspace.Options{PlanKey: "unlimited", DefaultLocale: language.English}),
-		Hasher:        account.NewHasher(),
+		Workspaces: workspace.New(db, workspace.Options{PlanKey: "unlimited", DefaultLocale: language.English,
+			Entitlements: entitlements.New(entitlements.Options{Meter: usage.Meter{}})}),
+		Hasher: account.NewHasher(),
 	}), d
 }
 
