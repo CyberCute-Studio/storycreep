@@ -131,7 +131,7 @@ type RevisionConflictError struct {
 }
 
 func (e *RevisionConflictError) Error() string {
-	return fmt.Sprintf("commands: the batch expects revisions that %d of its commands' entities no longer have",
+	return fmt.Sprintf("commands: the batch's commands expect %d revisions that their entities no longer have",
 		len(e.Conflicts))
 }
 
@@ -274,12 +274,9 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 			}
 		}
 		// The lock is taken once the actor is authorised, so that nobody
-		// without a role on the project can hold up its batches, and so after
-		// the membership and the grant that authorise them, which the batch
-		// locks first: a change that locks the project's row and then its
-		// grants, as deleting the project does through their foreign key,
-		// would deadlock with a batch that waits for the lock, so it deletes or
-		// locks the grants first (N30).
+		// without a role on the project can hold up its batches. It is the
+		// only row that the batch locks before its commands apply: roles says
+		// why the membership and the grant that authorise the batch are not.
 		seq, err := q.LockProjectSeq(ctx, queries.LockProjectSeqParams{WorkspaceID: nullUUID(workspaceID),
 			ID: nullUUID(projectID)})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -372,15 +369,24 @@ func activeWorkspace(ctx context.Context, q *queries.Queries, workspaceID ids.UU
 // roles returns the role that the user acts with for each scope of
 // operation (§5.5): their effective role on the project for a
 // project-scoped one, and their role in its workspace for a workspace-scoped
-// one. It returns ErrNotFound if the effective role is none. It locks the
-// user's membership, and its grant on the project, until the transaction
-// ends, so that a change of either waits for the batch that it authorised.
-// It reads whether the user is an instance admin only if the policy lets an
-// instance admin act as owner, because otherwise the answer changes nothing.
+// one. It returns ErrNotFound if the effective role is none. It reads
+// whether the user is an instance admin only if the policy lets an instance
+// admin act as owner, because otherwise the answer changes nothing.
+//
+// It locks neither the user's membership nor their grant on the project, so
+// a change of either that commits once it has read them, as while the batch
+// waits for the project's lock, is ordered after the batch that they
+// authorised. Locked FOR SHARE, they would make a removal or a role change,
+// which locks the membership FOR UPDATE while it holds the workspace's row,
+// wait for the member's batches, and PostgreSQL grants a share lock at once
+// even while such a lock waits, so a member who kept batches in flight, one
+// overlapping the next, would put off their own removal for as long as they
+// sent them, and every change of the workspace's members and settings, which
+// waits for the workspace's row, with it.
 func (p *Pipeline) roles(ctx context.Context, q *queries.Queries, userID, workspaceID, projectID ids.UUID) (
 	map[authz.Scope]role.Role, error) {
 	member, grant := role.None, role.None
-	m, err := q.ShareMembership(ctx, queries.ShareMembershipParams{WorkspaceID: nullUUID(workspaceID),
+	m, err := q.MembershipOf(ctx, queries.MembershipOfParams{WorkspaceID: nullUUID(workspaceID),
 		UserID: nullUUID(userID)})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -388,7 +394,7 @@ func (p *Pipeline) roles(ctx context.Context, q *queries.Queries, userID, worksp
 		return nil, fmt.Errorf("commands: read the membership: %w", err)
 	default:
 		member = role.Role(m.Role)
-		g, err := q.ShareProjectGrant(ctx, queries.ShareProjectGrantParams{WorkspaceID: nullUUID(workspaceID),
+		g, err := q.ProjectGrantRole(ctx, queries.ProjectGrantRoleParams{WorkspaceID: nullUUID(workspaceID),
 			MembershipID: m.ID, ProjectID: nullUUID(projectID)})
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
@@ -460,7 +466,8 @@ func (p *Pipeline) checkRevs(ctx context.Context, t *Tx, cmds []decoded) error {
 			}
 		}
 	}
-	current := map[Ref]int64{}
+	// No command has applied yet, so the revisions that the batch has seen
+	// (Tx.revs) are the ones that it reads here, of the entities that exist.
 	for _, kind := range slices.Sorted(maps.Keys(byKind)) {
 		revs, err := p.registry.entities[kind].Revs(ctx, t, byKind[kind])
 		if err != nil {
@@ -469,8 +476,7 @@ func (p *Pipeline) checkRevs(ctx context.Context, t *Tx, cmds []decoded) error {
 		// An ID that the batch did not ask for is not one of its entities.
 		for _, id := range byKind[kind] {
 			if rev, ok := revs[id]; ok {
-				ref := Ref{Kind: kind, ID: id}
-				current[ref], t.revs[ref] = rev, rev
+				t.revs[Ref{Kind: kind, ID: id}] = rev
 			}
 		}
 	}
@@ -480,7 +486,7 @@ func (p *Pipeline) checkRevs(ctx context.Context, t *Tx, cmds []decoded) error {
 	for i, c := range cmds {
 		for _, ref := range sortedRefs(c.ExpectedRev) {
 			expected := c.ExpectedRev[ref]
-			rev, found := current[ref]
+			rev, found := t.revs[ref]
 			if found && rev == expected {
 				continue
 			}

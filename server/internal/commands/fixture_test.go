@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -440,6 +441,20 @@ func (w *world) count(t *testing.T, sql string, args ...any) int {
 		t.Fatalf("%s: %v", sql, err)
 	}
 	return n
+}
+
+// waitsForALock reports whether a session of the world's database comes to
+// wait for a lock within a minute, as a batch does for the project's row
+// while another transaction holds it.
+func (w *world) waitsForALock(t *testing.T) bool {
+	t.Helper()
+	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if w.count(t, "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "+
+			"AND wait_event_type = 'Lock'") > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // pipeline returns a pipeline of the notes' commands in the world, with

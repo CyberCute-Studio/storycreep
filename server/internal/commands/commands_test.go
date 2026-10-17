@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -532,15 +531,9 @@ func TestNotFound(t *testing.T) {
 		_, err := p.Apply(ctx, w.as(ownerUser), waitingProject, batch)
 		done <- err
 	}()
-	for deadline := time.Now().Add(time.Minute); ; time.Sleep(10 * time.Millisecond) {
-		if w.count(t, "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "+
-			"AND wait_event_type = 'Lock'") > 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			hold("ROLLBACK")
-			t.Fatalf("the batch does not wait for the project's lock: %v", <-done)
-		}
+	if !w.waitsForALock(t) {
+		hold("ROLLBACK")
+		t.Fatalf("the batch does not wait for the project's lock: %v", <-done)
 	}
 	hold("UPDATE workspace SET status = 'pending_deletion', deleted_at = now() WHERE id = $1", waiting)
 	hold("COMMIT")
@@ -552,11 +545,69 @@ func TestNotFound(t *testing.T) {
 	}
 }
 
+// TestRolesAreNotLocked checks that a batch locks neither its actor's
+// membership nor their grant on the project: removing the member, which
+// locks both FOR UPDATE, does not wait for the member's batch, even while the
+// batch waits for the project's lock, where a lock FOR SHARE would let the
+// member's overlapping batches put the removal off for as long as they kept
+// coming. The batch, which its roles authorised before the removal, still
+// applies, ordered before it, and the member's next batch is told that the
+// project does not exist.
+func TestRolesAreNotLocked(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	p := w.pipeline(t, nil)
+	holder, remover := w.d.Admin(t), w.d.Admin(t)
+	run := func(c *pgx.Conn, sql string, args ...any) error {
+		_, err := c.Exec(ctx, sql, args...)
+		return err
+	}
+	if err := run(holder, "BEGIN"); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(holder, "SELECT seq FROM project WHERE id = $1 FOR NO KEY UPDATE", w.project); err != nil {
+		t.Fatal(err)
+	}
+	// The granted viewer has a membership and a grant, which the batch reads.
+	_, id := newNote()
+	batch := []Command{command(t, noteCreate, notePayload{ID: id, Body: "in flight"}, nil)}
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.Apply(ctx, w.as(grantedViewerUser), w.project, batch)
+		done <- err
+	}()
+	if !w.waitsForALock(t) {
+		_ = run(holder, "ROLLBACK")
+		t.Fatalf("the batch does not wait for the project's lock: %v", <-done)
+	}
+	// Deleting the membership deletes the grant through its foreign key.
+	err := run(remover, "SET lock_timeout = '5s'")
+	if err == nil {
+		err = run(remover, "DELETE FROM membership WHERE workspace_id = $1 AND user_id = $2", w.ws,
+			w.users[grantedViewerUser])
+	}
+	if commit := run(holder, "COMMIT"); commit != nil {
+		t.Fatal(commit)
+	}
+	if err != nil {
+		t.Errorf("removing the member while their batch waits for the project's lock: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Errorf("the batch that the member's roles authorised before the removal: %v", err)
+	}
+	_, id = newNote()
+	if _, err := p.Apply(ctx, w.as(grantedViewerUser), w.project,
+		[]Command{command(t, noteCreate, notePayload{ID: id, Body: "removed"}, nil)}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a batch of the removed member: %v, want ErrNotFound", err)
+	}
+}
+
 // TestIsolation tries the pipeline's queries on another workspace's rows,
 // from a transaction of one workspace, where row-level security must keep
-// them from reading or locking its memberships, grants, and projects, from
-// setting a project's seq, and from adding to its operation log and its
-// applied commands (NFR-SEC-01).
+// them from reading its project grants, from locking its projects or setting
+// their seqs, and from adding to its operation log and its applied commands
+// (NFR-SEC-01). The membership is read with MembershipOf, a query of package
+// workspace, whose isolation test tries it.
 //
 // Verifies: NFR-SEC-01
 func TestIsolation(t *testing.T) {
@@ -580,17 +631,9 @@ func TestIsolation(t *testing.T) {
 		return []ids.UUID{id}, err
 	}
 	f.Check(t, isolationtest.Op{
-		Name: "a membership, locked",
+		Name: "a project grant's role",
 		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
-			m, err := queries.New(tx).ShareMembership(ctx, queries.ShareMembershipParams{
-				WorkspaceID: nullUUID(target.ID), UserID: nullUUID(column(target, "membership", "user_id"))})
-			return found(m.ID.Bytes, err)
-		},
-	})
-	f.Check(t, isolationtest.Op{
-		Name: "a project grant, locked",
-		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
-			_, err := queries.New(tx).ShareProjectGrant(ctx, queries.ShareProjectGrantParams{
+			_, err := queries.New(tx).ProjectGrantRole(ctx, queries.ProjectGrantRoleParams{
 				WorkspaceID: nullUUID(target.ID), MembershipID: nullUUID(target.Rows["membership"]),
 				ProjectID: nullUUID(column(target, "project_grant", "project_id"))})
 			return found(target.Rows["project_grant"], err)

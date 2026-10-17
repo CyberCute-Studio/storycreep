@@ -9,20 +9,13 @@
 SELECT w.id FROM workspace w
 WHERE w.id = route_project_workspace(@project_id::uuid) AND w.status = 'active';
 
--- name: ShareMembership :one
--- ShareMembership returns a user's membership of the workspace, and no row if
--- the user is not a member. It locks the membership FOR SHARE until the
--- transaction ends, so that a change of its role, or its removal, waits for
--- the batch of commands that the role authorised.
-SELECT id, role FROM membership WHERE workspace_id = @workspace_id AND user_id = @user_id FOR SHARE;
-
--- name: ShareProjectGrant :one
--- ShareProjectGrant returns the role of the membership's grant on the
--- project (FR-TEN-04), and no row if it has none, and locks the grant FOR
--- SHARE until the transaction ends, as ShareMembership locks the membership.
+-- name: ProjectGrantRole :one
+-- ProjectGrantRole returns the role of the membership's grant on the project
+-- (FR-TEN-04), and no row if it has none. It locks nothing, as MembershipOf,
+-- which a batch of commands reads the membership with, does not (package
+-- commands says why).
 SELECT role FROM project_grant
-WHERE workspace_id = @workspace_id AND membership_id = @membership_id AND project_id = @project_id
-FOR SHARE;
+WHERE workspace_id = @workspace_id AND membership_id = @membership_id AND project_id = @project_id;
 
 -- name: LockProjectSeq :one
 -- LockProjectSeq returns the seq of the project's latest operation, and locks

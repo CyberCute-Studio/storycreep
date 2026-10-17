@@ -96,6 +96,28 @@ func (q *Queries) LockProjectSeq(ctx context.Context, arg LockProjectSeqParams) 
 	return seq, err
 }
 
+const projectGrantRole = `-- name: ProjectGrantRole :one
+SELECT role FROM project_grant
+WHERE workspace_id = $1 AND membership_id = $2 AND project_id = $3
+`
+
+type ProjectGrantRoleParams struct {
+	WorkspaceID  pgtype.UUID
+	MembershipID pgtype.UUID
+	ProjectID    pgtype.UUID
+}
+
+// ProjectGrantRole returns the role of the membership's grant on the project
+// (FR-TEN-04), and no row if it has none. It locks nothing, as MembershipOf,
+// which a batch of commands reads the membership with, does not (package
+// commands says why).
+func (q *Queries) ProjectGrantRole(ctx context.Context, arg ProjectGrantRoleParams) (string, error) {
+	row := q.db.QueryRow(ctx, projectGrantRole, arg.WorkspaceID, arg.MembershipID, arg.ProjectID)
+	var role string
+	err := row.Scan(&role)
+	return role, err
+}
+
 const projectWorkspace = `-- name: ProjectWorkspace :one
 SELECT w.id FROM workspace w
 WHERE w.id = route_project_workspace($1::uuid) AND w.status = 'active'
@@ -129,51 +151,4 @@ type SetProjectSeqParams struct {
 func (q *Queries) SetProjectSeq(ctx context.Context, arg SetProjectSeqParams) error {
 	_, err := q.db.Exec(ctx, setProjectSeq, arg.Seq, arg.WorkspaceID, arg.ID)
 	return err
-}
-
-const shareMembership = `-- name: ShareMembership :one
-SELECT id, role FROM membership WHERE workspace_id = $1 AND user_id = $2 FOR SHARE
-`
-
-type ShareMembershipParams struct {
-	WorkspaceID pgtype.UUID
-	UserID      pgtype.UUID
-}
-
-type ShareMembershipRow struct {
-	ID   pgtype.UUID
-	Role string
-}
-
-// ShareMembership returns a user's membership of the workspace, and no row if
-// the user is not a member. It locks the membership FOR SHARE until the
-// transaction ends, so that a change of its role, or its removal, waits for
-// the batch of commands that the role authorised.
-func (q *Queries) ShareMembership(ctx context.Context, arg ShareMembershipParams) (ShareMembershipRow, error) {
-	row := q.db.QueryRow(ctx, shareMembership, arg.WorkspaceID, arg.UserID)
-	var i ShareMembershipRow
-	err := row.Scan(&i.ID, &i.Role)
-	return i, err
-}
-
-const shareProjectGrant = `-- name: ShareProjectGrant :one
-SELECT role FROM project_grant
-WHERE workspace_id = $1 AND membership_id = $2 AND project_id = $3
-FOR SHARE
-`
-
-type ShareProjectGrantParams struct {
-	WorkspaceID  pgtype.UUID
-	MembershipID pgtype.UUID
-	ProjectID    pgtype.UUID
-}
-
-// ShareProjectGrant returns the role of the membership's grant on the
-// project (FR-TEN-04), and no row if it has none, and locks the grant FOR
-// SHARE until the transaction ends, as ShareMembership locks the membership.
-func (q *Queries) ShareProjectGrant(ctx context.Context, arg ShareProjectGrantParams) (string, error) {
-	row := q.db.QueryRow(ctx, shareProjectGrant, arg.WorkspaceID, arg.MembershipID, arg.ProjectID)
-	var role string
-	err := row.Scan(&role)
-	return role, err
 }
