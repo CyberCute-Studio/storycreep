@@ -29,15 +29,17 @@
 // anything, so that sending an invitation anew again and again cannot flood
 // an inbox, even when the jobs of the earlier requests are retried, as once
 // an SMTP server that was down takes email again. The instance also emails
-// an address 10 invitations an hour at most, from all workspaces together
-// (ratelimit.InviteEmail), so that an account that owns many workspaces
+// a mailbox 10 invitations an hour at most, from all workspaces together,
+// counting the addresses that differ only in a +tag, or, at Gmail, in dots,
+// as one (ratelimit.InviteEmail, ratelimit.Mailbox), so that an account
+// that owns many workspaces, or invites many addresses of one mailbox,
 // cannot flood an inbox either. The email of an invitation over that limit
-// is not sent: the invitation stays without a link, as one still to be
-// emailed, and its admins send it anew later. No answer says why, so that
-// inviting an address does not tell a workspace that others invited it,
-// although an account that fills the limit with its own workspaces'
-// invitations can tell from how many of them are emailed that others used
-// some of it, as any limit of an address alone lets whoever fills it tell.
+// is not sent: the invitation stays without a link, as one not emailed, and
+// its admins send it anew later. No answer says why, so that inviting an
+// address does not tell a workspace that others invited it, although an
+// account that fills the limit with its own workspaces' invitations can
+// tell from how many of them are emailed that others used some of it, as
+// any limit of a mailbox alone lets whoever fills it tell.
 // The email names no one and nothing but the instance and the role, never
 // the workspace or the inviting user, whose names their users chose, so that
 // an account cannot put text of its own in email that the instance sends to
@@ -149,7 +151,7 @@ type Options struct {
 	Email *email.Service
 	// Queue enqueues the jobs that email invitations, in the transaction of
 	// the change that needs them, as *jobs.Queue does, and Limits counts the
-	// invitations that the jobs email each address (ratelimit.InviteEmail).
+	// invitations that the jobs email each mailbox (ratelimit.InviteEmail).
 	// Both must be set where Email is.
 	Queue  account.Enqueuer
 	Limits *ratelimit.Limiter

@@ -3,14 +3,14 @@
 // (PRD FR-AUTH-05, NFR-SEC-06, FR-API-04).
 //
 // A rate limit counts the requests of a kind, a bucket (auth, read, write,
-// export, or connect), separately for each key that makes them: the
-// client's IP address, the signed-in user, or the email address that a
-// request names. Each bucket counts in fixed windows of time, of the same
-// length for every key, and allows each kind of key a number of requests in
-// a window (Policy). A request is allowed only if none of its keys has used
-// up its limit, and counts against all of them either way. One bucket counts
-// no request, but email that the instance sends: the invitations that it
-// emails an address (InviteEmail).
+// export, connect, or invite_email), separately for each key that makes
+// them: the client's IP address, the signed-in user, or the email address
+// that a request names. Each bucket counts in fixed windows of time, of the
+// same length for every key, and allows each kind of key a number of
+// requests in a window (Policy). A request is allowed only if none of its
+// keys has used up its limit, and counts against all of them either way.
+// The invite_email bucket counts no request, but email that the instance
+// sends: the invitations that it emails a mailbox (InviteEmail, Mailbox).
 //
 // The counters are rows in PostgreSQL, and every server of an instance
 // counts in the same rows, with the database's clock, so the limits hold
@@ -67,17 +67,20 @@ const (
 	Export Bucket = "export"
 	// Connect is the opening of a WebSocket connection.
 	Connect Bucket = "connect"
-	// InviteEmail is the email of an invitation to an address, which the
-	// job that sends it counts against the address, from every workspace
-	// together, so that no account, however many workspaces it owns, can
-	// make the instance flood an inbox with invitations (FR-TEN-02). A
-	// workspace emails an address one invitation in 10 minutes at most
-	// (package invite), so the limit is above the 6 that one workspace can
-	// send in an hour, and the emails that one workspace sends do not reach
-	// it alone. Its counts that send nothing still can: an email that the
-	// SMTP server did not take, after which a resend is due at once, and
-	// one of an invitation sent anew or closed between its count and its
-	// sending, whose replacement counts again.
+	// InviteEmail is the email of an invitation, which the job that sends
+	// it counts against the mailbox that its address goes to (Mailbox),
+	// from every workspace together, so that no account, however many
+	// workspaces it owns, or addresses of one mailbox it invites, can make
+	// the instance flood an inbox with invitations (FR-TEN-02). A workspace
+	// emails an address one invitation in 10 minutes at most (package
+	// invite), so the limit is above the 6 that one workspace can send an
+	// address in an hour, and those do not reach it alone. Counts that send
+	// nothing still can: that of an email that the SMTP server did not take,
+	// after which a resend is due at once; that of an invitation sent anew
+	// or closed between its count and its sending, whose replacement counts
+	// again; and that of an attempt cut off between its count and the link
+	// that it gives the invitation, whose next attempt counts the email
+	// again.
 	InviteEmail Bucket = "invite_email"
 )
 
@@ -92,9 +95,9 @@ const (
 	// User counts a signed-in user.
 	User Kind = "user"
 	// Email counts an email address that a registration names, whether or
-	// not it belongs to an account, or that an invitation is emailed to.
-	// Signing in does not count it: the lock of an address after failed
-	// sign-ins limits those (BeginLogin).
+	// not it belongs to an account, or the mailbox that an invitation is
+	// emailed to (Mailbox). Signing in does not count it: the lock of an
+	// address after failed sign-ins limits those (BeginLogin).
 	Email Kind = "email"
 )
 
@@ -135,6 +138,31 @@ func UserID(id ids.UUID) Key {
 // one key.
 func EmailAddress(email string) Key {
 	return Key{kind: Email, value: email, hidden: true}
+}
+
+// Mailbox returns the key of the mailbox that an email address, as package
+// account holds it, goes to, as far as the address tells, so that the
+// addresses of one mailbox are one key, as EmailAddress's spellings of one
+// address are: the address without its subaddress, the part of its local
+// part from its first + on, which most mail services deliver to the
+// mailbox of the rest (RFC 5233), unless the local part starts with it,
+// and, at Gmail, whose gmail.com and googlemail.com are one, without the
+// dots of its local part, which Gmail ignores. Two mailboxes that only a
+// subaddress or the dots tell apart, where a service does not deliver so,
+// share the key.
+func Mailbox(email string) Key {
+	at := strings.LastIndexByte(email, '@')
+	if at < 0 {
+		return EmailAddress(email)
+	}
+	local, domain := email[:at], email[at+1:]
+	if i := strings.IndexByte(local, '+'); i > 0 {
+		local = local[:i]
+	}
+	if strings.EqualFold(domain, "gmail.com") || strings.EqualFold(domain, "googlemail.com") {
+		local, domain = strings.ReplaceAll(local, ".", ""), "gmail.com"
+	}
+	return EmailAddress(local + "@" + domain)
 }
 
 // Rate is how many requests a bucket allows each kind of key in a window.
@@ -300,9 +328,11 @@ func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decisio
 	return l.TakeOn(ctx, l.db, bucket, keys...)
 }
 
-// TakeOn is Take in a transaction of its own on db rather than on the
-// Limiter's database, as a job counts on the workers' pool that it carries
-// (package jobs).
+// TakeOn is Take in a transaction of its own on db, another pool of the
+// Limiter's database than the one that it was made with, as a job counts on
+// the workers' pool that it carries (package jobs). db must reach the same
+// database: the Limiter reads the key of the hash once, in whichever pool it
+// first counts.
 func (l *Limiter) TakeOn(ctx context.Context, db DB, bucket Bucket, keys ...Key) (Decision, error) {
 	rate, ok := l.policy.Rates[bucket]
 	if !ok {

@@ -134,23 +134,28 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 // attempt may have sent, so that only the latest email's link works, unless
 // the SMTP server refuses the email for good (email.JobError).
 //
-// An attempt that has an email to send counts it against its address's
-// limit of invitation emails from all workspaces together
-// (ratelimit.InviteEmail), and sends nothing if the address is over it: the
-// job ends, and the invitation stays without a link, which its admins see
-// as still to be emailed, and send anew later. An attempt that finds the
-// invitation with a link does not count the email, because an earlier
-// attempt of the job, which counted it, gave it that link: so the retries
-// of an email that an SMTP server that is down refused, or that the
-// server's stop cut off, do not use up the address's limit. An attempt that
-// failed, or was cut off, before it gave the invitation its link, as one
-// that failed before its count, leaves the email to be counted by the next,
-// whatever its number, so that no email goes uncounted. The count is made
-// before the invitation is locked to be sent, in a transaction of its own,
-// so that no lock of the invitation waits on it; an invitation that is sent
-// anew or closed in between counted its email to no use. The job reads the
-// SMTP settings, as it does the invitation, and counts the email, on the
-// workers' pool that it carries, db, one connection at a time.
+// An attempt that has an email to send counts it against the limit of
+// invitation emails, from all workspaces together, of the mailbox that its
+// address goes to (ratelimit.InviteEmail, ratelimit.Mailbox), and sends
+// nothing if the mailbox is over it: the job ends, cancelled, with the
+// limit as its error, as one whose email the SMTP server refuses for good
+// does, so that the job's row and metrics tell an operator why, and the
+// invitation stays without a link, which its admins see as not emailed,
+// and send anew later. An attempt that finds the invitation with a link
+// does not count the email, because an earlier attempt of the job, which
+// counted it, gave it that link: so the retries of an email that an SMTP
+// server that is down refused, or that the server's stop cut off, do not
+// use up the mailbox's limit. An attempt that failed, or was cut off,
+// before it gave the invitation its link, as one that failed before its
+// count, leaves the email to be counted by the next, whatever its number,
+// so that no email goes uncounted. The count is made before the invitation
+// is locked to be sent, in a transaction of its own, so that no lock of the
+// invitation waits on it; an invitation that is sent anew or closed in
+// between counted its email to no use, and so did an attempt cut off
+// between its count and its link, whose next attempt counts the email
+// again. The job reads the SMTP settings, as it does the invitation, and
+// counts the email, on the workers' pool that it carries, db, one
+// connection at a time.
 func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUID) error {
 	if s.email == nil {
 		return nil
@@ -166,29 +171,31 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 	scope := database.Scope{WorkspaceID: id}
 	params := queries.LockInviteToSendParams{WorkspaceID: nullUUID(id), ID: nullUUID(inviteID),
 		EmailRequest: nullUUID(request)}
-	var address string
-	linked := false
+	var pending queries.LockInviteToSendRow
+	toSend := false
 	err = db.InTx(ctx, scope, func(tx pgx.Tx) error {
-		row, err := queries.New(tx).LockInviteToSend(ctx, params)
+		var err error
+		pending, err = queries.New(tx).LockInviteToSend(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
-		address, linked = row.Email, row.Linked
+		toSend = err == nil
 		return err
 	})
 	switch {
 	case err != nil:
 		return fmt.Errorf("invite: read the invitation to email: %w", err)
-	case address == "":
+	case !toSend:
 		// Nothing to send, so nothing to count.
 		return nil
 	}
-	if !linked {
+	if !pending.Linked {
 		var over *ratelimit.LimitError
-		_, err = s.limits.TakeOn(ctx, db, ratelimit.InviteEmail, ratelimit.EmailAddress(address))
+		_, err = s.limits.TakeOn(ctx, db, ratelimit.InviteEmail, ratelimit.Mailbox(pending.Email))
 		switch {
 		case errors.As(err, &over):
-			return nil
+			// No attempt sends it: its admins send the invitation anew.
+			return jobs.Cancel(fmt.Errorf("invite: the invitation's email is over its mailbox's limit: %w", err))
 		case err != nil:
 			return fmt.Errorf("invite: count the invitation's email: %w", err)
 		}

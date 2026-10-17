@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/riverqueue/river"
 	"golang.org/x/text/language"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
@@ -355,13 +356,13 @@ func TestEmailsWaitForResendInterval(t *testing.T) {
 
 // TestEmailsLimitedAcrossWorkspaces checks that the invitations of several
 // workspaces, each of which emails the address once, together email it only
-// as often in an hour as the limit of invitation emails allows, as their
-// case does not change the address: the job of the next one sends nothing,
-// ends, and leaves the invitation without a link, as one still to be
-// emailed, even when an earlier attempt of the job failed before it counted
-// the email. A retry of a job whose earlier attempt gave the invitation its
-// link, and so counted its email, is not counted again, and another address
-// is emailed all the same.
+// as often in an hour as the limit of invitation emails allows, as neither
+// their case nor a +tag changes the mailbox: the job of the next one sends
+// nothing, ends, cancelled with the limit as its error, and leaves the
+// invitation without a link, as one not emailed, even when an earlier
+// attempt of the job failed before it counted the email. A retry of a job
+// whose earlier attempt gave the invitation its link, and so counted its
+// email, is not counted again, and another mailbox is emailed all the same.
 //
 // Verifies: NFR-SEC-06
 func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
@@ -378,7 +379,7 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 
 	type job struct{ workspace, invite, request, owner ids.UUID }
 	var queued []job
-	for i, address := range []string{"hana@example.com", "Hana@Example.com", "HANA@example.com"} {
+	for i, address := range []string{"hana@example.com", "Hana@Example.com", "HANA+studio@example.com"} {
 		ws, owner := f.workspace, f.owner
 		if i > 0 {
 			owner = f.addUser(t, fmt.Sprintf("owner%d@example.com", i))
@@ -404,15 +405,18 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 
 	// The third job's first attempt fails before it counts the email, as when
 	// the database does not answer, and its next attempt counts it, and so
-	// finds the address over the limit, rather than send it uncounted.
+	// finds the mailbox over the limit, rather than send it uncounted.
 	over := queued[2]
-	cancelled, cancel := context.WithCancel(ctx)
+	ended, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := f.send(cancelled, f.db, over.workspace, over.invite, over.request); err == nil {
+	if err := f.send(ended, f.db, over.workspace, over.invite, over.request); err == nil {
 		t.Errorf("an attempt without a database succeeded")
 	}
-	if err := f.send(ctx, f.db, over.workspace, over.invite, over.request); err != nil {
-		t.Errorf("the job of an email over the limit: %v, want it to end", err)
+	err := f.send(ctx, f.db, over.workspace, over.invite, over.request)
+	var limited *ratelimit.LimitError
+	var cancelled *river.JobCancelError
+	if !errors.As(err, &limited) || !errors.As(err, &cancelled) {
+		t.Errorf("the job of an email over the limit: %v, want it cancelled with the limit", err)
 	}
 	if got := server.Messages(); len(got) != 2 {
 		t.Errorf("%d invitations were emailed, want 2", len(got))
@@ -428,7 +432,7 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 	// A retry of the first job, as after an email that the SMTP server did
 	// not take, or an attempt that the server's stop cut off, finds the link
 	// that its earlier attempt gave the invitation, and sends without
-	// counting, although the address is over the limit.
+	// counting, although the mailbox is over the limit.
 	first := queued[0]
 	if _, err := f.d.Admin(t).Exec(ctx, "UPDATE invite SET sent_at = NULL WHERE id = $1", first.invite); err != nil {
 		t.Fatal(err)
@@ -444,7 +448,7 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := f.send(ctx, f.db, over.workspace, other.ID, f.queue.request(t)); err != nil {
-		t.Errorf("the email of another address: %v", err)
+		t.Errorf("the email of another mailbox: %v", err)
 	}
 	if got := server.Wait(t, 4, 10*time.Second); len(got[3].To) != 1 || got[3].To[0] != "jo@example.com" {
 		t.Errorf("the fourth email is to %v, want jo@example.com", got[3].To)

@@ -63,7 +63,7 @@ type inviteBody struct {
 	Role      string     `json:"role" enum:"owner,admin,editor,commenter,viewer,guest" doc:"The role that accepting it gives in the workspace"`
 	Status    string     `json:"status" enum:"pending,expired" doc:"pending until it expires, and expired from then until it is sent anew. A pending invitation is accepted with its link once it has one: one that the instance emails has none until its email is sent, as sent_at says."`
 	ExpiresAt time.Time  `json:"expires_at" doc:"When it expires: 14 days after it was made, sent anew, or emailed"`
-	SentAt    *time.Time `json:"sent_at,omitempty" doc:"When the instance emailed its link, which then lasts its 14 days from then. Without it, no email holds its current link: the instance sends no email, the invitation is a link invitation, or its email is still to be sent, or could not be sent, as to an address that the SMTP server refuses."`
+	SentAt    *time.Time `json:"sent_at,omitempty" doc:"When the instance emailed its link, which then lasts its 14 days from then. Without it, no email holds its current link: the instance sends no email, the invitation is a link invitation, or its email is still to be sent, or was not sent, as to an address that the SMTP server refuses, or over the instance's limit of invitation emails to the address's mailbox, which sending the invitation anew tries again."`
 	CreatedBy string     `json:"created_by,omitempty" doc:"The ID of the account that made it, unless that account was deleted"`
 	CreatedAt time.Time  `json:"created_at" doc:"When it was made"`
 	URL       string     `json:"url,omitempty" doc:"Its link, which opens the web app's page that accepts it, with its token in the URL's fragment. It is here only in the answer that made the invitation or sent it anew, and only when the instance does not email it: for a link invitation, and for every invitation on an instance that sends no email. Whoever holds it can accept the invitation, so give it only to the person invited. The database holds no copy, and sending the invitation anew gives a new link, in place of this one."`
@@ -166,11 +166,12 @@ type registerWithInviteInput struct {
 }
 
 // inviteEmailLimitDoc says, in the description of an operation that emails
-// an invitation, what the limit of invitation emails to an address, from all
-// workspaces together, does (ratelimit.InviteEmail).
-const inviteEmailLimitDoc = " The instance also emails an address 10 invitations an hour at most, from all " +
-	"workspaces together. The email of an invitation over that limit is not sent, and the invitation stays " +
-	"without a link, its sent_at empty; send it anew later."
+// an invitation, what the limit of invitation emails to a mailbox, from all
+// workspaces together, does (ratelimit.InviteEmail, ratelimit.Mailbox).
+const inviteEmailLimitDoc = " The instance also emails a mailbox 10 invitations an hour at most, from all " +
+	"workspaces together, counting the addresses that differ only in a +tag, as jo+work@example.com and " +
+	"jo@example.com, or, at Gmail, in dots, as one. The email of an invitation over that limit is not sent, and " +
+	"the invitation stays without a link, its sent_at empty; send it anew later."
 
 // manageMembersDoc says, in the description of an operation that manages a
 // workspace's members or invitations, who may.

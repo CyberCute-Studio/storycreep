@@ -100,12 +100,37 @@ func TestDefaultPolicy(t *testing.T) {
 		t.Errorf("the auth bucket is %+v", auth)
 	}
 	if r := p.Rates[InviteEmail]; r.Period != time.Hour || len(r.Limits) != 1 || r.Limits[Email] != 10 {
-		t.Errorf("the invite_email bucket is %+v, want 10 an hour for each email address alone", r)
+		t.Errorf("the invite_email bucket is %+v, want 10 an hour for each mailbox alone", r)
 	}
 	for _, b := range []Bucket{Auth, Read, Write, Export, Connect} {
 		r, ok := p.Rates[b]
 		if !ok || r.Limits[IP] == 0 || r.Limits[User] == 0 {
 			t.Errorf("the bucket %s does not limit IP addresses and users: %+v", b, r)
+		}
+	}
+}
+
+// TestMailbox checks that the addresses that differ only in a subaddress,
+// or, at Gmail, in the dots of the local part or in its domain, are one
+// mailbox's key, while a local part that starts with + keeps it, and the
+// dots of another service's addresses tell them apart.
+func TestMailbox(t *testing.T) {
+	for address, want := range map[string]string{
+		"jo@example.com":             "jo@example.com",
+		"jo+work@example.com":        "jo@example.com",
+		"jo+work+late@Example.com":   "jo@Example.com",
+		"jo+@example.com":            "jo@example.com",
+		"+jo@example.com":            "+jo@example.com",
+		"j.o@example.com":            "j.o@example.com",
+		"j.o+work@gmail.com":         "jo@gmail.com",
+		"J.O@GoogleMail.com":         "JO@gmail.com",
+		"žofie.k+x@GMAIL.COM":        "žofiek@gmail.com",
+		"jo+work@sub.gmail.com":      "jo@sub.gmail.com",
+		"j.o+work@gmail.com.example": "j.o@gmail.com.example",
+		"not an address":             "not an address",
+	} {
+		if got := Mailbox(address); got != EmailAddress(want) {
+			t.Errorf("Mailbox(%q) is %+v, want the key of %q", address, got, want)
 		}
 	}
 }
