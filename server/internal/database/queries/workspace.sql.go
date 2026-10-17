@@ -14,16 +14,23 @@ import (
 const claimPersonalWorkspace = `-- name: ClaimPersonalWorkspace :one
 UPDATE "user" SET personal_workspace_created_at = now(), updated_at = now()
 WHERE id = $1 AND personal_workspace_created_at IS NULL AND status = 'active'
+    AND (email_verified_at IS NOT NULL OR NOT $2::boolean)
 RETURNING display_name
 `
+
+type ClaimPersonalWorkspaceParams struct {
+	ID              pgtype.UUID
+	RequireVerified bool
+}
 
 // ClaimPersonalWorkspace marks that the active account's sign-in gives it its
 // personal workspace, and returns its display name, which names the
 // workspace. It returns no row if the account has had one already, or is not
-// active. Of two sign-ins at once, the second waits for the first's
+// active, or, if require_verified is set, has not verified its email address
+// (FR-AUTH-03). Of two sign-ins at once, the second waits for the first's
 // transaction, and then finds the mark set.
-func (q *Queries) ClaimPersonalWorkspace(ctx context.Context, id pgtype.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, claimPersonalWorkspace, id)
+func (q *Queries) ClaimPersonalWorkspace(ctx context.Context, arg ClaimPersonalWorkspaceParams) (string, error) {
+	row := q.db.QueryRow(ctx, claimPersonalWorkspace, arg.ID, arg.RequireVerified)
 	var display_name string
 	err := row.Scan(&display_name)
 	return display_name, err

@@ -37,8 +37,8 @@ const (
 )
 
 // countedStates are the states that the jobs gauge counts, by River's names
-// for them: those of the jobs that wait or run, and discarded, the
-// dead-letter state.
+// for them: those of the jobs that wait or run, and the dead-letter states,
+// discarded, and cancelled (Cancel).
 var countedStates = []string{
 	string(rivertype.JobStatePending),
 	string(rivertype.JobStateScheduled),
@@ -46,6 +46,7 @@ var countedStates = []string{
 	string(rivertype.JobStateRunning),
 	string(rivertype.JobStateRetryable),
 	string(rivertype.JobStateDiscarded),
+	string(rivertype.JobStateCancelled),
 }
 
 // metrics are the job queue's Prometheus metrics: the attempts that this
@@ -67,7 +68,8 @@ func newMetrics(pool *pgxpool.Pool, kinds []string) *metrics {
 			Name: "storycreep_job_attempts_total",
 			Help: "Attempts at jobs that this instance's workers finished, by kind and outcome: completed; failed, " +
 				"to be attempted again; discarded, failed for the last time, which is the dead-letter state; " +
-				"cancelled; snoozed; or interrupted by the instance stopping, to be attempted again.",
+				"cancelled, failed in a way that no attempt would mend, which is the dead-letter state too; " +
+				"snoozed; or interrupted by the instance stopping, to be attempted again.",
 		}, []string{"kind", "outcome"}),
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "storycreep_job_duration_seconds",
@@ -76,8 +78,9 @@ func newMetrics(pool *pgxpool.Pool, kinds []string) *metrics {
 		}, []string{"kind"}),
 		jobs: prometheus.NewDesc("storycreep_jobs",
 			"Jobs in the database, by queue and state: pending, scheduled, available, running, retryable, which "+
-				"failed and wait to be attempted again, and discarded, which failed for the last time and stay "+
-				"for 7 days. Every instance reports the same counts.",
+				"failed and wait to be attempted again, and the dead-letter states, which stay for 7 days: "+
+				"discarded, which failed for the last time, and cancelled, which failed in a way that no attempt "+
+				"would mend. Every instance reports the same counts.",
 			[]string{"queue", "state"}, nil),
 	}
 }

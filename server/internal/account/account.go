@@ -28,6 +28,10 @@
 // Signing in starts a session (session.go), which the server finds by its
 // secret, on every request made with it.
 //
+// Links verify an account's email address and reset its password
+// (email.go): an instance that sends email emails them, and one that sends
+// none gives them as text to its instance admins and its operator only.
+//
 // Registering and signing in are limited (package ratelimit, PRD FR-AUTH-05):
 // each email address may be registered only so often, and an address with
 // which signing in failed too often in a row is locked for a while, whether
@@ -49,6 +53,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/email"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
@@ -113,6 +118,22 @@ type Options struct {
 	// starts no session. The server gives the account its personal workspace
 	// there (FR-TEN-01), so it must be safe to call at every sign-in.
 	Authenticated func(ctx context.Context, userID ids.UUID, client Client) error
+	// Email sends the instance's email, or is nil for an instance that sends
+	// none, as in tests.
+	Email *email.Service
+	// Queue enqueues the jobs that email links. It must be set where Email
+	// is.
+	Queue Enqueuer
+	// PublicURL is the instance's URL, which links open.
+	PublicURL config.PublicURL
+	// Verified, if set, is called by VerifyEmail once it has verified the
+	// email address of the account userID, which client asks for, in no
+	// transaction. The server gives the account its personal workspace
+	// there, where a workspace needs a verified address (FR-AUTH-03).
+	// VerifyEmail returns its error, although the address stays verified and
+	// the link used, so a callback whose failure the account's next sign-in
+	// mends, as the server's does, logs the failure rather than return it.
+	Verified func(ctx context.Context, userID ids.UUID, client Client) error
 }
 
 // Service creates accounts, checks their passwords, and keeps their
@@ -123,9 +144,14 @@ type Service struct {
 	// idle and lifetime are the sessions' idle timeout and lifetime.
 	idle, lifetime time.Duration
 	limits         *ratelimit.Limiter
-	// authenticated is Options.Authenticated.
-	authenticated func(ctx context.Context, userID ids.UUID, client Client) error
-	hasher        *Hasher
+	// authenticated is Options.Authenticated, and verified Options.Verified.
+	authenticated, verified func(ctx context.Context, userID ids.UUID, client Client) error
+	// email, queue, and publicURL are Options.Email, Options.Queue, and
+	// Options.PublicURL.
+	email     *email.Service
+	queue     Enqueuer
+	publicURL config.PublicURL
+	hasher    *Hasher
 	// decoy is a hash with the current parameters that no password matches
 	// (Hasher.decoy), which signing in checks a password against when the
 	// address has no account, so that it takes as long as when it has one.
@@ -148,7 +174,8 @@ func newService(db DB, opts Options, h *Hasher) *Service {
 		panic("account: the Service has no Limits")
 	}
 	return &Service{db: db, signup: opts.Signup, idle: opts.IdleTimeout, lifetime: opts.Lifetime,
-		limits: opts.Limits, authenticated: opts.Authenticated, hasher: h, decoy: h.decoy()}
+		limits: opts.Limits, authenticated: opts.Authenticated, verified: opts.Verified, email: opts.Email,
+		queue: opts.Queue, publicURL: opts.PublicURL, hasher: h, decoy: h.decoy()}
 }
 
 // Hasher returns the Hasher that the Service hashes passwords with, which
@@ -196,10 +223,15 @@ type Registration struct {
 // Register creates an account, unless the address has one already, which it
 // leaves as it was. Either way it returns nil, after it has done the same
 // work, hashing the password included, so that the caller answers the same
-// and as late (FR-AUTH-01 AC1). It returns the error of CheckSignup unless
-// the policy lets anyone register, input.FieldErrors if the email address or
-// the display name is not valid, a *ratelimit.LimitError if the address has
-// been registered too often lately (FR-AUTH-05), whether or not it has an
+// and as late (FR-AUTH-01 AC1). On an instance that sends email, a new
+// account is emailed a link that verifies its address (FR-AUTH-03), by a
+// job that the transaction that adds the account enqueues, so that the
+// answer does not wait for the email; an address that has an account gets
+// the token and the job too, without the account, which the job deletes, as
+// RequestPasswordReset does. It returns the error of CheckSignup unless the
+// policy lets anyone register, input.FieldErrors if the email address or the
+// display name is not valid, a *ratelimit.LimitError if the address has been
+// registered too often lately (FR-AUTH-05), whether or not it has an
 // account, and a *PasswordError if the password breaks the policy, in that
 // order, and adds nothing then.
 func (s *Service) Register(ctx context.Context, r Registration) error {
@@ -220,17 +252,31 @@ func (s *Service) Register(ctx context.Context, r Registration) error {
 	if err != nil {
 		return err
 	}
+	verify, err := s.EmailConfigured(ctx)
+	if err != nil {
+		return err
+	}
 	return s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-		_, err := queries.New(tx).InsertUser(ctx, queries.InsertUserParams{
-			ID:           pgtype.UUID{Bytes: ids.New(), Valid: true},
+		id := ids.New()
+		n, err := queries.New(tx).InsertUser(ctx, queries.InsertUserParams{
+			ID:           pgtype.UUID{Bytes: id, Valid: true},
 			Email:        email,
 			PasswordHash: pgtype.Text{String: hash, Valid: true},
 			DisplayName:  name,
 		})
-		if err != nil {
+		switch {
+		case err != nil:
 			return fmt.Errorf("account: add the account: %w", err)
+		case !verify:
+			return nil
+		case n == 0:
+			// The address has an account, which is emailed nothing, but the
+			// token and the job are added all the same, without the account,
+			// and the job deletes the token, so that the work does not tell
+			// whether the address has one.
+			id = ids.UUID{}
 		}
-		return nil
+		return s.enqueueLink(ctx, tx, LinkVerification, id, email)
 	})
 }
 

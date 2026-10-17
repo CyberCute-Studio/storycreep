@@ -70,7 +70,9 @@ func registerAccounts(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			"and must not be one of the 10,000 most common passwords, compared without regard to case, or the " +
 			"answer is 422 weak_password. Otherwise the answer is 202 without a body, whether or not the address " +
 			"has an account already, which then stays as it was, so that the answer does not tell whether an " +
-			"address has an account." + authLimitDoc,
+			"address has an account. On an instance that sends email, as GET /api/v1/instance says, a new account " +
+			"is emailed a link that verifies its address, which POST /api/v1/auth/verify-email uses, and an " +
+			"address that has an account already is emailed nothing." + authLimitDoc,
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusAccepted,
 		// The policy is checked before the body is read, so that a

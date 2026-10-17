@@ -21,10 +21,12 @@ INSERT INTO membership (id, workspace_id, user_id, role) VALUES (@id, @workspace
 -- ClaimPersonalWorkspace marks that the active account's sign-in gives it its
 -- personal workspace, and returns its display name, which names the
 -- workspace. It returns no row if the account has had one already, or is not
--- active. Of two sign-ins at once, the second waits for the first's
+-- active, or, if require_verified is set, has not verified its email address
+-- (FR-AUTH-03). Of two sign-ins at once, the second waits for the first's
 -- transaction, and then finds the mark set.
 UPDATE "user" SET personal_workspace_created_at = now(), updated_at = now()
 WHERE id = @id AND personal_workspace_created_at IS NULL AND status = 'active'
+    AND (email_verified_at IS NOT NULL OR NOT @require_verified::boolean)
 RETURNING display_name;
 
 -- name: InstanceAdmin :one

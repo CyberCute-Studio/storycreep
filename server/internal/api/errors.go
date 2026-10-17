@@ -25,30 +25,37 @@ type Code string
 // The error codes. Each is registered in codes with its status, and
 // docs/error-codes.md is generated from the registry.
 const (
-	CodeInvalidRequest       Code = "invalid_request"
-	CodeInvalidID            Code = "invalid_id"
-	CodeInvalidCursor        Code = "invalid_cursor"
-	CodeUnauthenticated      Code = "unauthenticated"
-	CodeInvalidCredentials   Code = "invalid_credentials"
-	CodeCSRFFailed           Code = "csrf_failed"
-	CodeWrongPassword        Code = "wrong_password"
-	CodeInsufficientRole     Code = "insufficient_role"
-	CodeSignupClosed         Code = "signup_closed"
-	CodeInviteRequired       Code = "invite_required"
-	CodeSetupRequired        Code = "setup_required"
-	CodeInvalidSetupCode     Code = "invalid_setup_code"
-	CodeNotFound             Code = "not_found"
-	CodeSlugTaken            Code = "slug_taken"
-	CodeMethodNotAllowed     Code = "method_not_allowed"
-	CodeRequestTimeout       Code = "request_timeout"
-	CodeRequestTooLarge      Code = "request_too_large"
-	CodeUnsupportedMediaType Code = "unsupported_media_type"
-	CodeValidationFailed     Code = "validation_failed"
-	CodeWeakPassword         Code = "weak_password"
-	CodeSlugInvalid          Code = "slug_invalid"
-	CodeRateLimited          Code = "rate_limited"
-	CodeInternal             Code = "internal_error"
-	CodeNotReady             Code = "not_ready"
+	CodeInvalidRequest        Code = "invalid_request"
+	CodeInvalidID             Code = "invalid_id"
+	CodeInvalidCursor         Code = "invalid_cursor"
+	CodeUnauthenticated       Code = "unauthenticated"
+	CodeInvalidCredentials    Code = "invalid_credentials"
+	CodeCSRFFailed            Code = "csrf_failed"
+	CodeWrongPassword         Code = "wrong_password"
+	CodeInsufficientRole      Code = "insufficient_role"
+	CodeSignupClosed          Code = "signup_closed"
+	CodeInviteRequired        Code = "invite_required"
+	CodeSetupRequired         Code = "setup_required"
+	CodeInvalidSetupCode      Code = "invalid_setup_code"
+	CodeInstanceAdminRequired Code = "instance_admin_required"
+	CodeEmailNotConfigured    Code = "email_not_configured"
+	CodeEmailConfigured       Code = "email_configured"
+	CodeEmailUnverified       Code = "email_unverified"
+	CodeTokenInvalid          Code = "token_invalid"
+	CodeTokenUsed             Code = "token_used"
+	CodeTokenExpired          Code = "token_expired"
+	CodeNotFound              Code = "not_found"
+	CodeSlugTaken             Code = "slug_taken"
+	CodeMethodNotAllowed      Code = "method_not_allowed"
+	CodeRequestTimeout        Code = "request_timeout"
+	CodeRequestTooLarge       Code = "request_too_large"
+	CodeUnsupportedMediaType  Code = "unsupported_media_type"
+	CodeValidationFailed      Code = "validation_failed"
+	CodeWeakPassword          Code = "weak_password"
+	CodeSlugInvalid           Code = "slug_invalid"
+	CodeRateLimited           Code = "rate_limited"
+	CodeInternal              Code = "internal_error"
+	CodeNotReady              Code = "not_ready"
 )
 
 // codeSpec registers a code.
@@ -117,6 +124,34 @@ var codes = []codeSpec{
 	{CodeInvalidSetupCode, http.StatusForbidden, i18n.K("error.invalid_setup_code"),
 		"`POST /api/v1/setup` was given a setup code that is not the instance's, so setup stays pending. The " +
 			"server writes the code to its log while setup is pending (PRD FR-ADMIN-02)."},
+	{CodeInstanceAdminRequired, http.StatusForbidden, i18n.K("error.instance_admin_required"),
+		"The route belongs to the instance-admin area, which only a signed-in instance admin may use (PRD " +
+			"FR-ADMIN-03 AC1), and the signed-in user is not one. A workspace's `owner` or `admin` is not an " +
+			"instance admin."},
+	{CodeEmailNotConfigured, http.StatusForbidden, i18n.K("error.email_not_configured"),
+		"The instance sends no email, because neither `STORYCREEP_SMTP_URL` nor first-run setup gave it an SMTP " +
+			"server, so it cannot email the link that the request asks for (PRD FR-AUTH-03). The answer is the same " +
+			"for every email address. An instance admin gives out the links as text instead, which " +
+			"`POST /api/v1/admin/password-reset-links` and `POST /api/v1/admin/verification-links` issue, and " +
+			"`GET /api/v1/instance` says whether the instance sends email."},
+	{CodeEmailConfigured, http.StatusForbidden, i18n.K("error.email_configured"),
+		"The instance sends email, so it emails its links to the account's address, and an instance admin " +
+			"takes none as text (PRD FR-AUTH-03). `POST /api/v1/auth/password-reset` and " +
+			"`POST /api/v1/auth/email-verification` email them."},
+	{CodeEmailUnverified, http.StatusForbidden, i18n.K("error.email_unverified"),
+		"The signed-in user has not verified their email address, which the instance requires before they " +
+			"create a workspace, where it always sends email (the `EmailRequired` capability, as in hosted mode; " +
+			"PRD FR-AUTH-03). The link that `POST /api/v1/auth/email-verification` emails verifies it."},
+	{CodeTokenInvalid, http.StatusBadRequest, i18n.K("error.token_invalid"),
+		"The link's token does not exist: it was mistyped, or it was deleted, as a change of the password deletes " +
+			"the account's reset links that have not been used (PRD FR-AUTH-03 AC4), or as an expired one is " +
+			"deleted after a while. Or it is the token of another kind of link, or its account can no longer use " +
+			"it, as one that is suspended, or one whose address is no longer the one that it verifies."},
+	{CodeTokenUsed, http.StatusBadRequest, i18n.K("error.token_used"),
+		"The link has been used already, and a link is used once (PRD FR-AUTH-03 AC2)."},
+	{CodeTokenExpired, http.StatusBadRequest, i18n.K("error.token_expired"),
+		"The link has expired: a link that verifies an email address lasts 24 hours, and one that resets a " +
+			"password an hour (PRD FR-AUTH-03)."},
 	{CodeNotFound, http.StatusNotFound, i18n.K("error.not_found"),
 		"No route matches the path, or the resource it names does not exist, or the signed-in user's role in " +
 			"it, or in its workspace, is none, as it is for a user who is not a member of the workspace, so that " +
@@ -162,8 +197,9 @@ var codes = []codeSpec{
 			"is locked, `POST /api/v1/auth/login` refuses every sign-in with it, even with the right password. Once " +
 			"the lock ends, the next sign-in is checked: one that succeeds forgets the failures, and one that fails " +
 			"locks the address again. The failures are forgotten a day after the last one. " +
-			"`details.bucket` is `auth` for signing in, registering, changing a password, and completing first-run " +
-			"setup."},
+			"`details.bucket` is `auth` for signing in, registering, changing a password, completing first-run " +
+			"setup, asking for a link that resets a password or verifies an email address, using such a link, " +
+			"and an instance admin's taking one as text."},
 	{CodeInternal, http.StatusInternalServerError, i18n.K("error.internal_error"),
 		"The server failed. Its log has the cause, under the envelope's `request_id`."},
 	{CodeNotReady, http.StatusServiceUnavailable, i18n.K("error.not_ready"),

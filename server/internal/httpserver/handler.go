@@ -15,6 +15,8 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/email"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/setup"
@@ -42,6 +44,10 @@ type server struct {
 	unattended *config.UnattendedSetup
 	// limits counts the requests of the rate limits.
 	limits *ratelimit.Limiter
+	// email sends the instance's email.
+	email *email.Service
+	// queue is the job queue, once Run has opened it.
+	queue *queueRef
 }
 
 func newServer(cfg *config.Config, log *slog.Logger) *server {
@@ -54,8 +60,13 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		Policy:        role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
 		PlanKey:       planKey(cfg.Capabilities),
 		DefaultLocale: cfg.DefaultLocale,
+		// An instance that always sends email can require a verified
+		// address (FR-AUTH-03).
+		RequireVerifiedEmail: cfg.Capabilities.EmailRequired,
 	})
 	s.limits = ratelimit.New(readyDB{s.ready}, ratelimit.DefaultPolicy())
+	s.email = email.New(readyDB{s.ready}, email.Options{SMTP: cfg.SMTP, Hostname: cfg.PublicURL.URL().Hostname()})
+	s.queue = &queueRef{}
 	s.accounts = account.New(readyDB{s.ready}, account.Options{
 		Signup:      cfg.Capabilities.Signup,
 		IdleTimeout: cfg.SessionIdleTimeout,
@@ -64,9 +75,27 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		// The first sign-in gives the account its personal workspace
 		// (FR-TEN-01).
 		Authenticated: s.workspaces.EnsurePersonal,
+		Email:         s.email,
+		Queue:         s.queue,
+		PublicURL:     cfg.PublicURL,
+		// Where a workspace needs a verified address, the verification gives
+		// the account the personal workspace that its first sign-in could
+		// not. The address is verified, and the link used, by then, so a
+		// failure to give the workspace is logged rather than answered, which
+		// would tell the user that the link failed when a second use of it
+		// can only be refused, and the account's next sign-in gives the
+		// workspace instead.
+		Verified: func(ctx context.Context, userID ids.UUID, client account.Client) error {
+			if err := s.workspaces.EmailVerified(ctx, userID, client); err != nil {
+				s.log.ErrorContext(ctx, "the verified account's personal workspace could not be created, so its "+
+					"next sign-in creates it", "error", err)
+			}
+			return nil
+		},
 	})
 	s.setups = setup.New(readyDB{s.ready}, setup.Options{
 		Signup:        cfg.Capabilities.Signup,
+		SMTPFixed:     s.email.Fixed(),
 		DefaultLocale: cfg.DefaultLocale,
 		Workspaces:    s.workspaces,
 		Hasher:        s.accounts.Hasher(),
@@ -93,6 +122,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerSessions(s.main, s.accounts, s.limits, cookie)
 	registerWorkspaces(s.main, s.workspaces)
 	registerSetup(s.main, s.setups, s.limits)
+	registerEmail(s.main, s.accounts, s.limits)
 	registerDocument(s.main)
 	registerPages(s.main, cfg.Capabilities.PublicSite)
 

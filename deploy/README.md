@@ -34,15 +34,16 @@ The compose file names its Compose project `storycreep`, and the containers and 
 | `STORYCREEP_PUBLISH` | `127.0.0.1:7777` | Where Docker publishes the server's HTTP port, as `[address:]port`. The default reaches it from this machine only. A port without an address, such as `8000`, publishes it on every network interface, as `0.0.0.0:8000` does, so to change only the port, keep the address, as in `127.0.0.1:8000`. Another port is another URL, so set `STORYCREEP_PUBLIC_URL` with it, as in `http://localhost:8000`. |
 | `STORYCREEP_PUBLIC_URL` | `http://localhost:7777` | The URL users open Storycreep at. |
 | `STORYCREEP_TRUSTED_PROXIES` | Not set | The addresses that a reverse proxy in front of the server connects from, whose `X-Forwarded-For` header the server believes. See [Behind a reverse proxy](#behind-a-reverse-proxy). |
-| `STORYCREEP_SETUP_OWNER_EMAIL`, `STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, `STORYCREEP_SETUP_WORKSPACE_NAME`, `STORYCREEP_SETUP_WORKSPACE_SLUG`, `STORYCREEP_SETUP_SIGNUP` | Not set | Unattended first-run setup. See [First-run setup](#first-run-setup). |
-| `STORYCREEP_MODE`, `STORYCREEP_PUBLIC_SITE`, `STORYCREEP_SIGNUP`, `STORYCREEP_INSTANCE_ADMIN_ACCESS`, `STORYCREEP_SESSION_IDLE_TIMEOUT`, `STORYCREEP_SESSION_LIFETIME`, `STORYCREEP_DEFAULT_LOCALE`, `STORYCREEP_LOG_LEVEL`, `STORYCREEP_ADMIN_ADDR`, `STORYCREEP_METRICS_TOKEN` | The server's | The server keys of the same names, which [`docs/configuration.md`](../docs/configuration.md) describes, as it does `STORYCREEP_TRUSTED_PROXIES` and the `STORYCREEP_SETUP_` keys. |
+| `STORYCREEP_SMTP_URL`, `STORYCREEP_SMTP_FROM` | Not set | The SMTP server that the instance sends its email through, and the address that the email comes from. See [Email](#email). |
+| `STORYCREEP_SETUP_OWNER_EMAIL`, `STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, `STORYCREEP_SETUP_WORKSPACE_NAME`, `STORYCREEP_SETUP_WORKSPACE_SLUG`, `STORYCREEP_SETUP_SIGNUP`, `STORYCREEP_SETUP_SMTP_URL`, `STORYCREEP_SETUP_SMTP_FROM` | Not set | Unattended first-run setup. See [First-run setup](#first-run-setup). |
+| `STORYCREEP_MODE`, `STORYCREEP_PUBLIC_SITE`, `STORYCREEP_SIGNUP`, `STORYCREEP_INSTANCE_ADMIN_ACCESS`, `STORYCREEP_SESSION_IDLE_TIMEOUT`, `STORYCREEP_SESSION_LIFETIME`, `STORYCREEP_DEFAULT_LOCALE`, `STORYCREEP_LOG_LEVEL`, `STORYCREEP_ADMIN_ADDR`, `STORYCREEP_METRICS_TOKEN` | The server's | The server keys of the same names, which [`docs/configuration.md`](../docs/configuration.md) describes, as it does `STORYCREEP_TRUSTED_PROXIES`, the `STORYCREEP_SMTP_` keys, and the `STORYCREEP_SETUP_` keys. |
 | `COMPOSE_PROJECT_NAME` | `storycreep` | The Compose project's name, which the containers' and volumes' names start with. Another name is another instance, with volumes of its own, so set it before the first start. |
 
 The compose file sets the database URLs itself. The three logins in them take their password from `POSTGRES_PASSWORD`, through `PGPASSWORD`, so that a password with characters such as `@` or `/` needs no escaping.
 
 ### First-run setup
 
-A new instance has no accounts. Until its first-run setup has completed, nobody can register one, whatever `STORYCREEP_SIGNUP` says. Setup creates the first owner, who is an instance admin, and the first workspace, which is the owner's, and records who can register afterwards: nobody (`closed`, the default), people holding an invitation (`invite`), or anyone (`open`). `STORYCREEP_SIGNUP` overrides that choice for as long as it is set.
+A new instance has no accounts. Until its first-run setup has completed, nobody can register one, whatever `STORYCREEP_SIGNUP` says. Setup creates the first owner, who is an instance admin, and the first workspace, which is the owner's, and records who can register afterwards: nobody (`closed`, the default), people holding an invitation (`invite`), or anyone (`open`). `STORYCREEP_SIGNUP` overrides that choice for as long as it is set. Setup can also record the SMTP server that the instance sends its email through (see [Email](#email)), which `STORYCREEP_SMTP_URL` overrides in the same way.
 
 Completing setup asks for a setup code, so that whoever reaches a new instance first cannot make themselves its administrator. While setup is pending, the server writes the code to its log at every start:
 
@@ -57,7 +58,9 @@ The web interface has no setup screen yet, so complete setup through the API, fr
   "setup_code": "7K2M-Q9XD-4RTB-H8VW",
   "owner": {"email": "jo@example.com", "display_name": "Jo Novak", "password": "at least 12 characters"},
   "workspace": {"name": "Harbour Studio"},
-  "signup_policy": "closed"
+  "signup_policy": "closed",
+  "smtp": {"host": "smtp.example.com", "port": 587, "security": "starttls", "username": "storycreep",
+           "password": "the SMTP password", "from": "Storycreep <noreply@example.com>"}
 }
 ```
 
@@ -67,9 +70,26 @@ and send it:
 curl -H 'Content-Type: application/json' --data-binary @setup.json http://localhost:7777/api/v1/setup
 ```
 
-The answer is `201`, with the owner's account ID and the workspace, or an error that names what to change. Then delete `setup.json`, which holds the password. The API's OpenAPI document, at `/api/v1/openapi.json`, describes `POST /api/v1/setup` in full.
+Leave out `smtp` for an instance that sends no email. The answer is `201`, with the owner's account ID and the workspace, or an error that names what to change. Then delete `setup.json`, which holds the passwords. The API's OpenAPI document, at `/api/v1/openapi.json`, describes `POST /api/v1/setup` in full.
 
-To complete setup without anyone visiting the instance, set `STORYCREEP_SETUP_OWNER_EMAIL`, `STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, and `STORYCREEP_SETUP_WORKSPACE_NAME` in `.env` before the first start, and optionally `STORYCREEP_SETUP_WORKSPACE_SLUG` and `STORYCREEP_SETUP_SIGNUP`. The server then completes setup itself, as the setup API would, and needs no code. A value that setup refuses, such as a password of fewer than 12 characters, stops the server, and its log names the setting. Once setup has completed, the server ignores these settings, so remove them from `.env`, the password above all, and run `docker compose up -d` again.
+To complete setup without anyone visiting the instance, set `STORYCREEP_SETUP_OWNER_EMAIL`, `STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, and `STORYCREEP_SETUP_WORKSPACE_NAME` in `.env` before the first start, and optionally `STORYCREEP_SETUP_WORKSPACE_SLUG`, `STORYCREEP_SETUP_SIGNUP`, and the SMTP server, with `STORYCREEP_SETUP_SMTP_URL` and `STORYCREEP_SETUP_SMTP_FROM`, which are written as `STORYCREEP_SMTP_URL` and `STORYCREEP_SMTP_FROM` are. The server then completes setup itself, as the setup API would, and needs no code. A value that setup refuses, such as a password of fewer than 12 characters, stops the server, and its log names the setting. Once setup has completed, the server ignores these settings, so remove them from `.env`, the passwords above all, and run `docker compose up -d` again.
+
+### Email
+
+The instance emails the links that verify an account's email address and reset its password, which last 24 hours and an hour, through the SMTP server that first-run setup chose, or that `STORYCREEP_SMTP_URL` and `STORYCREEP_SMTP_FROM` set, which override it:
+
+```sh
+STORYCREEP_SMTP_URL=smtp://username:password@smtp.example.com:587
+STORYCREEP_SMTP_FROM=Storycreep <noreply@example.com>
+```
+
+`smtp://` connects with STARTTLS, which the server must offer, on port 587 unless the URL names another port, and `smtps://` with TLS from the start, on port 465 unless it names another. For a relay on the same machine or network that speaks neither, add `?security=none`, as in `smtp://relay:25?security=none`; the instance then signs in to it only on `localhost`, `127.0.0.1`, or `::1`, so that a password never crosses a network in the clear. Percent-encode the username and the password, as `%40` for `@`.
+
+Without an SMTP server, the instance sends no email, and says so to its users. Registering then sends nothing, and an account's user who has forgotten their password asks an instance admin, who takes a link that resets it with `POST /api/v1/admin/password-reset-links`, and gives it to the user alone, as text. On the machine that runs the server, the operator can print one instead:
+
+```sh
+docker compose exec app storycreep reset-password jo@example.com
+```
 
 ### Behind a reverse proxy
 

@@ -46,10 +46,20 @@ const (
 	testDatabaseShown = "postgres://storycreep:" + secret.Redacted + "@db:5432/storycreep"
 )
 
+// testSMTPURL and testSMTPFrom are a valid STORYCREEP_SMTP_URL and
+// STORYCREEP_SMTP_FROM, which hosted mode requires.
+const (
+	testSMTPURL  = "smtp://storycreep:pw-s3cr3t@smtp.example.com:587"
+	testSMTPFrom = "Storycreep <noreply@example.com>"
+)
+
 // withRequired returns env with valid values for the required keys it does
-// not set.
+// not set, and, in hosted mode, for the keys that the mode requires.
 func withRequired(env map[string]string) map[string]string {
 	out := map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_DATABASE_URL": testDatabaseURL}
+	if env["STORYCREEP_MODE"] == "hosted" {
+		out["STORYCREEP_SMTP_URL"], out["STORYCREEP_SMTP_FROM"] = testSMTPURL, testSMTPFrom
+	}
 	maps.Copy(out, env)
 	return out
 }
@@ -117,12 +127,16 @@ func TestDefaults(t *testing.T) {
 		{"STORYCREEP_PUBLIC_SITE", "off", SourceDefault},
 		{"STORYCREEP_SIGNUP", "", SourceUnset},
 		{"STORYCREEP_INSTANCE_ADMIN_ACCESS", "off", SourceDefault},
+		{"STORYCREEP_SMTP_URL", "", SourceUnset},
+		{"STORYCREEP_SMTP_FROM", "", SourceUnset},
 		{"STORYCREEP_SETUP_OWNER_EMAIL", "", SourceUnset},
 		{"STORYCREEP_SETUP_OWNER_NAME", "", SourceUnset},
 		{"STORYCREEP_SETUP_OWNER_PASSWORD", "", SourceUnset},
 		{"STORYCREEP_SETUP_WORKSPACE_NAME", "", SourceUnset},
 		{"STORYCREEP_SETUP_WORKSPACE_SLUG", "", SourceUnset},
 		{"STORYCREEP_SETUP_SIGNUP", "", SourceUnset},
+		{"STORYCREEP_SETUP_SMTP_URL", "", SourceUnset},
+		{"STORYCREEP_SETUP_SMTP_FROM", "", SourceUnset},
 		{"STORYCREEP_SESSION_IDLE_TIMEOUT", "720h", SourceDefault},
 		{"STORYCREEP_SESSION_LIFETIME", "2160h", SourceDefault},
 		{"STORYCREEP_DEFAULT_LOCALE", "en", SourceDefault},

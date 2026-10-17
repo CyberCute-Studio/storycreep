@@ -156,7 +156,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (I
 const revokeOtherSessions = `-- name: RevokeOtherSessions :many
 UPDATE session s SET revoked_at = now(), updated_at = now()
 WHERE s.user_id = $1
-    AND s.id <> $2
+    AND s.id IS DISTINCT FROM $2
     AND s.revoked_at IS NULL
     AND s.expires_at > now()
     AND s.created_at + $3::interval > now()
@@ -172,7 +172,8 @@ type RevokeOtherSessionsParams struct {
 }
 
 // RevokeOtherSessions revokes every active session of a user but the one
-// to keep, and returns their IDs.
+// to keep, or every one if keep is null, as resetting the password does,
+// and returns their IDs.
 func (q *Queries) RevokeOtherSessions(ctx context.Context, arg RevokeOtherSessionsParams) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, revokeOtherSessions,
 		arg.UserID,

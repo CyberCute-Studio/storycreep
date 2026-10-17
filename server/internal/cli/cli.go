@@ -74,6 +74,7 @@ var commands = []*command{
 	migrate,
 	createUser,
 	grantRole,
+	resetPassword,
 	validateConfig,
 	healthcheck,
 }

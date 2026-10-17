@@ -16,7 +16,9 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 )
 
 const registerPath = "/api/v1/auth/register"
@@ -32,12 +34,19 @@ func readyServer(t *testing.T, env map[string]string) (*server, *dbtest.Database
 }
 
 // pendingServer is readyServer, on a database whose first-run setup is
-// pending.
+// pending. Its job queue enqueues the server's jobs, and runs none.
 func pendingServer(t *testing.T, env map[string]string) (*server, *dbtest.Database) {
 	t.Helper()
 	d := dbtest.New(t)
 	s := newServer(loadConfig(t, env), slog.New(slog.DiscardHandler))
-	s.ready.db.Store(d.Open(t))
+	db := d.Open(t)
+	s.ready.db.Store(db)
+	q, err := jobs.Open(context.Background(), db, config.DatabaseURL{}, jobs.Options{Registry: s.serverJobs()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	s.queue.queue.Store(q)
 	s.ready.setPhase(phaseReady)
 	return s, d
 }

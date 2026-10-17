@@ -34,13 +34,23 @@ const testMetricsToken = "test-metrics-token-0123456789"
 // connect to no database.
 const testDatabaseURL = "postgres://storycreep:pw@db:5432/storycreep"
 
+// testSMTPURL and testSMTPFrom are an SMTP server that no test reaches, for
+// the configurations of hosted mode, which requires one.
+const (
+	testSMTPURL  = "smtp://smtp.example.com:587"
+	testSMTPFrom = "Storycreep <noreply@example.com>"
+)
+
 // loadConfig returns the configuration of env, with a public URL and a
-// database URL unless env sets them.
+// database URL unless env sets them, and, in hosted mode, an SMTP server.
 func loadConfig(t *testing.T, env map[string]string) *config.Config {
 	t.Helper()
 	vars := map[string]string{
 		"STORYCREEP_PUBLIC_URL":   "http://localhost:8080",
 		"STORYCREEP_DATABASE_URL": testDatabaseURL,
+	}
+	if env["STORYCREEP_MODE"] == "hosted" {
+		vars["STORYCREEP_SMTP_URL"], vars["STORYCREEP_SMTP_FROM"] = testSMTPURL, testSMTPFrom
 	}
 	maps.Copy(vars, env)
 	cfg, err := config.Load(config.Options{Env: config.MapEnvironment(vars)})
@@ -134,11 +144,14 @@ func TestRoutesDeclareCapabilities(t *testing.T) {
 	s := newServer(loadConfig(t, nil), slog.New(slog.DiscardHandler))
 	want := map[string][]string{
 		"main": {"DELETE /api/v1/auth/sessions", "DELETE /api/v1/auth/sessions/{session_id}", "GET /",
-			"GET /api/v1/auth/session", "GET /api/v1/auth/sessions", "GET /api/v1/openapi.json",
-			"GET /api/v1/setup", "GET /api/v1/workspaces", "GET /api/v1/workspaces/{workspace_id}", "GET /app",
-			"GET /app/*", "GET /healthz", "GET /readyz", "GET /version", "PATCH /api/v1/workspaces/{workspace_id}",
-			"POST /api/v1/auth/login", "POST /api/v1/auth/logout", "POST /api/v1/auth/password",
-			"POST /api/v1/auth/register", "POST /api/v1/setup", "POST /api/v1/workspaces"},
+			"GET /api/v1/auth/session", "GET /api/v1/auth/sessions", "GET /api/v1/instance",
+			"GET /api/v1/openapi.json", "GET /api/v1/setup", "GET /api/v1/workspaces",
+			"GET /api/v1/workspaces/{workspace_id}", "GET /app", "GET /app/*", "GET /healthz", "GET /readyz",
+			"GET /version", "PATCH /api/v1/workspaces/{workspace_id}", "POST /api/v1/admin/password-reset-links",
+			"POST /api/v1/admin/verification-links", "POST /api/v1/auth/email-verification", "POST /api/v1/auth/login",
+			"POST /api/v1/auth/logout", "POST /api/v1/auth/password", "POST /api/v1/auth/password-reset",
+			"POST /api/v1/auth/password-reset/confirm", "POST /api/v1/auth/register", "POST /api/v1/auth/verify-email",
+			"POST /api/v1/setup", "POST /api/v1/workspaces"},
 		"admin": {"GET /metrics"},
 	}
 	for name, m := range map[string]*api.Mux{"main": s.main, "admin": s.admin} {

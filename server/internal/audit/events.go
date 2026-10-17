@@ -22,14 +22,31 @@ const (
 	ActionLogin Action = "auth.login"
 	// ActionSessionRevoke is the end of a session before its time
 	// (FR-AUTH-02): its user signed out of it, revoked it, or changed the
-	// account's password, which revokes the account's other sessions. Its
-	// metadata's reason says which: sign_out, revoked, or password_changed.
-	// It belongs to no workspace, as a login does.
+	// account's password, which revokes the account's other sessions, or
+	// reset it through a link, which revokes all of them (FR-AUTH-03). Its
+	// metadata's reason says which: sign_out, revoked, password_changed, or
+	// password_reset. It belongs to no workspace, as a login does.
 	ActionSessionRevoke Action = "auth.session_revoke"
 	// ActionPasswordChange is an attempt by a signed-in user to change the
 	// account's password, which fails when the current password given is
 	// not the account's. It belongs to no workspace.
 	ActionPasswordChange Action = "auth.password_change"
+	// ActionPasswordReset is the replacement of an account's password
+	// through a link that resets it (FR-AUTH-03), which signs the account
+	// out everywhere. Its actor is the account, whose link it was. It
+	// belongs to no workspace.
+	ActionPasswordReset Action = "auth.password_reset"
+	// ActionEmailVerify is the verification of an account's email address
+	// through a link (FR-AUTH-03). Its actor is the account. It belongs to
+	// no workspace.
+	ActionEmailVerify Action = "auth.email_verify"
+	// ActionLinkIssue is the issue of a link that resets an account's
+	// password or verifies its email address, as text, on an instance that
+	// sends no email (FR-AUTH-03): to an instance admin, who is its actor,
+	// or to the operator's storycreep reset-password, without an actor. Its
+	// subject is the account, and its metadata's kind says which link:
+	// password_reset or email_verification. It belongs to no workspace.
+	ActionLinkIssue Action = "auth.link_issue"
 	// ActionWorkspaceCreate is the creation of a workspace (FR-TEN-01), whose
 	// creator becomes its owner: by a user, or by the first sign-in of an
 	// account, which gives it its personal workspace, as its metadata's
@@ -100,6 +117,9 @@ var events = []eventSpec{
 		metadata: []string{"session_id", "reason"}, attemptedEmail: true},
 	{action: ActionSessionRevoke, subject: "session", results: []Result{ResultSuccess}, metadata: []string{"reason"}},
 	{action: ActionPasswordChange, subject: "user", results: []Result{ResultSuccess, ResultFailure}},
+	{action: ActionPasswordReset, subject: "user", results: []Result{ResultSuccess}},
+	{action: ActionEmailVerify, subject: "user", results: []Result{ResultSuccess}},
+	{action: ActionLinkIssue, subject: "user", results: []Result{ResultSuccess}, metadata: []string{"kind"}},
 	{action: ActionWorkspaceCreate, inWorkspace: true, subject: "workspace", results: []Result{ResultSuccess},
 		metadata: []string{"personal"}},
 	{action: ActionMembershipCreate, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},

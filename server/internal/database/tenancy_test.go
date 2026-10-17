@@ -21,8 +21,8 @@ import (
 // no workspace_id and no row-level security (PRD §5.4), besides River's,
 // whose names start with river_ and which belong to the job queue. Every other
 // table is a tenant table.
-var crossWorkspaceTables = []string{"goose_db_version", "instance", "instance_key", "login_attempt", "rate_limit",
-	"session", "user", "workspace"}
+var crossWorkspaceTables = []string{"email_token", "goose_db_version", "instance", "instance_key", "login_attempt",
+	"rate_limit", "session", "user", "workspace"}
 
 // auditTable is the one tenant table whose workspace_id has no foreign key,
 // so that the audit log outlives a workspace that is hard deleted, and may be
