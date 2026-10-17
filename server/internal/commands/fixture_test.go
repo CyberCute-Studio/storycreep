@@ -357,6 +357,29 @@ func (d *betweenDB) InTx(ctx context.Context, scope database.Scope, fn func(tx p
 	return d.DB.InTx(ctx, scope, fn)
 }
 
+// beforeDB is a DB whose transactions call before with each query that they
+// run through QueryRow, before they run it, as the reads of the queries'
+// :one statements, such as the read of a workspace's plan, are run.
+type beforeDB struct {
+	DB
+	before func(sql string)
+}
+
+func (d *beforeDB) InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
+	return d.DB.InTx(ctx, scope, func(tx pgx.Tx) error { return fn(beforeTx{Tx: tx, before: d.before}) })
+}
+
+// beforeTx is a transaction of a beforeDB.
+type beforeTx struct {
+	pgx.Tx
+	before func(sql string)
+}
+
+func (t beforeTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	t.before(sql)
+	return t.Tx.QueryRow(ctx, sql, args...)
+}
+
 // fixedMeter is an entitlements.Meter whose usage of each limit is fixed.
 type fixedMeter map[entitlements.LimitKey]int64
 

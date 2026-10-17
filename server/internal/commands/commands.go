@@ -38,6 +38,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"time"
 
@@ -287,48 +288,69 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		}
 		// The batch may have waited for the lock for as long as the project's
 		// other batches took, and a deletion requested meanwhile refuses it
-		// too, rather than letting it apply, or, with plans enforced, fail on
-		// the read of the plan of a workspace that is no longer active. The
-		// read is a statement of its own, which sees what committed while the
-		// batch waited, as the lock's own statement does not.
+		// too, rather than letting it apply. The read is a statement of its
+		// own, which sees what committed while the batch waited, as the lock's
+		// own statement does not.
 		if err := activeWorkspace(ctx, q, workspaceID); err != nil {
-			return err
-		}
-		if err := p.checkLimits(ctx, tx, workspaceID, cmds); err != nil {
 			return err
 		}
 		t := &Tx{tx: tx, pipeline: p, actor: actor, project: projectID, workspace: workspaceID, at: map[Ref]int{},
 			revs: map[Ref]int64{}}
-		if err := p.checkRevs(ctx, t, cmds); err != nil {
-			return err
+		res, err = p.applyLocked(ctx, q, t, cmds, seq)
+		// Each later read is a statement of its own too, so a deletion
+		// requested once the read above is done is seen by the next read that
+		// only an active workspace answers, as the read of its plan with plans
+		// enforced, which then finds no row, and would fail the batch as a 500.
+		// A batch that fails for want of a row is refused as above if its
+		// workspace is no longer active.
+		if errors.Is(err, pgx.ErrNoRows) && errors.Is(activeWorkspace(ctx, q, workspaceID), ErrNotFound) {
+			return ErrNotFound
 		}
-		// A batch with a command that cannot be undone has no inverse, so
-		// none of its commands' inverses is computed, only to be dropped.
-		inverses := make([][]logStep, len(cmds))
-		undoable := !slices.ContainsFunc(cmds, func(c decoded) bool { return c.spec.inverse == nil })
-		for i, c := range cmds {
-			if undoable {
-				steps, err := c.spec.inverse(ctx, t, c.payload)
-				if err == nil {
-					inverses[i], err = p.registry.checkSteps(steps)
-				}
-				if err != nil {
-					return fmt.Errorf("commands: the inverse of command %d (%s): %w", i, c.spec.typ, err)
-				}
-			}
-			// Only Apply reports changes (Tx.Changed): neither the reads of
-			// the revisions nor an inverse, which only reads.
-			t.current = c.spec
-			err := c.spec.apply(ctx, t, c.payload)
-			t.current = nil
-			if err != nil {
-				return fmt.Errorf("commands: command %d (%s): %w", i, c.spec.typ, err)
-			}
-		}
-		res = Result{Seq: seq + 1, Revisions: slices.Clone(t.changed)}
-		return p.record(ctx, q, t, cmds, res, inverses, undoable)
+		return err
 	})
 	if err != nil {
+		return Result{}, err
+	}
+	return res, nil
+}
+
+// applyLocked applies the decoded commands cmds in t, the batch's
+// transaction, once it holds the lock of the project, whose seq is seq: it
+// checks the limits and the revisions, applies the commands, and records the
+// batch.
+func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded, seq int64) (Result,
+	error) {
+	if err := p.checkLimits(ctx, t.tx, t.workspace, cmds); err != nil {
+		return Result{}, err
+	}
+	if err := p.checkRevs(ctx, t, cmds); err != nil {
+		return Result{}, err
+	}
+	// A batch with a command that cannot be undone has no inverse, so none of
+	// its commands' inverses is computed, only to be dropped.
+	inverses := make([][]logStep, len(cmds))
+	undoable := !slices.ContainsFunc(cmds, func(c decoded) bool { return c.spec.inverse == nil })
+	for i, c := range cmds {
+		if undoable {
+			steps, err := c.spec.inverse(ctx, t, c.payload)
+			if err == nil {
+				inverses[i], err = p.registry.checkSteps(steps)
+			}
+			if err != nil {
+				return Result{}, fmt.Errorf("commands: the inverse of command %d (%s): %w", i, c.spec.typ, err)
+			}
+		}
+		// Only Apply reports changes (Tx.Changed): neither the reads of the
+		// revisions nor an inverse, which only reads.
+		t.current = c.spec
+		err := c.spec.apply(ctx, t, c.payload)
+		t.current = nil
+		if err != nil {
+			return Result{}, fmt.Errorf("commands: command %d (%s): %w", i, c.spec.typ, err)
+		}
+	}
+	res := Result{Seq: seq + 1, Revisions: slices.Clone(t.changed)}
+	if err := p.record(ctx, q, t, cmds, res, inverses, undoable); err != nil {
 		return Result{}, err
 	}
 	return res, nil
@@ -429,22 +451,42 @@ func (p *Pipeline) roles(ctx context.Context, q *queries.Queries, userID, worksp
 // (FR-ENT-01). It returns an *entitlements.LimitError for the first limit, in
 // the order of the commands, that the batch would take the workspace past.
 func (p *Pipeline) checkLimits(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, cmds []decoded) error {
-	var keys []entitlements.LimitKey
-	adds := map[entitlements.LimitKey]int64{}
-	for _, c := range cmds {
-		for i, key := range c.spec.limits {
-			if _, ok := adds[key]; !ok {
-				keys = append(keys, key)
-			}
-			adds[key] += c.adds[i]
-		}
-	}
+	keys, adds := batchAdds(cmds)
 	for _, key := range keys {
 		if err := p.ent.Check(ctx, tx, workspaceID, key, adds[key]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// batchAdds returns the limits that the commands cmds add to, in the order of
+// the commands, and how much all of them add to each. A sum past what an
+// int64 holds would wrap around, as to an amount that adds nothing, which
+// entitlements.Check allows without reading the usage, so a sum that would
+// pass math.MaxInt64 stays there, more than any quota, whatever the commands
+// after it take away, and one that would pass math.MinInt64 is held at it.
+func batchAdds(cmds []decoded) ([]entitlements.LimitKey, map[entitlements.LimitKey]int64) {
+	var keys []entitlements.LimitKey
+	adds := map[entitlements.LimitKey]int64{}
+	for _, c := range cmds {
+		for i, key := range c.spec.limits {
+			sum, ok := adds[key]
+			if !ok {
+				keys = append(keys, key)
+			}
+			switch a := c.adds[i]; {
+			case sum == math.MaxInt64:
+			case a > 0 && sum > math.MaxInt64-a:
+				adds[key] = math.MaxInt64
+			case a < 0 && sum < math.MinInt64-a:
+				adds[key] = math.MinInt64
+			default:
+				adds[key] = sum + a
+			}
+		}
+	}
+	return keys, adds
 }
 
 // checkRevs returns a *RevisionConflictError if an entity that a command of

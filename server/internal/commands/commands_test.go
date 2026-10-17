@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"math"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
@@ -67,10 +71,12 @@ func sameJSON(t *testing.T, a []byte, b string) bool {
 // to the project's operation log with the project's next seq, the commands
 // that it applied, the inverse that undoes them from the last to the first,
 // and the entities that it changed with their revisions after it, which its
-// Result names too; that each of its commands is recorded as applied with
-// the seq; that the audit entries and the jobs of its commands commit with
-// it; and that the Notifier is told its seq once it has committed, with a
-// context that the request's cancellation does not reach.
+// Result names too, and its actor, with the API token that they act with;
+// that each of its commands is recorded as applied with the seq; that the
+// audit entries and the jobs of its commands commit with it, the entries
+// with its actor, token, and client; and that the Notifier is told its seq
+// once it has committed, with a context that the request's cancellation does
+// not reach.
 func TestApplyAppendsTheOperation(t *testing.T) {
 	// The request's context can be cancelled, as a request's is.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -93,7 +99,11 @@ func TestApplyAppendsTheOperation(t *testing.T) {
 	update := command(t, noteUpdate, notePayload{ID: aID, Body: "second"}, map[Ref]int64{noteRef(a): 1})
 	createB := command(t, noteCreate, notePayload{ID: bID, Body: "other"}, nil)
 	again := command(t, noteUpdate, notePayload{ID: aID, Body: "third"}, nil)
-	res, err = p.Apply(ctx, w.as(ownerUser), w.project, []Command{update, createB, again})
+	// The second batch is applied with an API token, by a client whose
+	// address and user agent the audit log records.
+	byToken := Actor{UserID: w.users[ownerUser], TokenID: ids.New(),
+		Client: audit.Client{IP: netip.MustParseAddr("192.0.2.7"), UserAgent: "importer/1.0"}}
+	res, err = p.Apply(ctx, byToken, w.project, []Command{update, createB, again})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +120,11 @@ func TestApplyAppendsTheOperation(t *testing.T) {
 		t.Errorf("the first operation's inverse: %s", first.inverse)
 	}
 	second := w.operation(t, 2)
-	if second.typ != batchType || !slices.Equal(second.commandIDs, []ids.UUID{update.ID, createB.ID, again.ID}) {
-		t.Errorf("the second operation: %s of %v", second.typ, second.commandIDs)
+	if second.typ != batchType || !slices.Equal(second.commandIDs, []ids.UUID{update.ID, createB.ID, again.ID}) ||
+		second.actor == nil || *second.actor != byToken.UserID || second.token == nil ||
+		*second.token != byToken.TokenID {
+		t.Errorf("the second operation: %s of %v by %v with %v", second.typ, second.commandIDs, second.actor,
+			second.token)
 	}
 	wantPayload := fmt.Sprintf(`[
 		{"command_id": %q, "type": "note.update", "payload": {"id": %q, "body": "second"}},
@@ -151,6 +164,11 @@ func TestApplyAppendsTheOperation(t *testing.T) {
 	if n := w.count(t, "SELECT count(*) FROM audit_entry WHERE workspace_id = $1 AND actor_user_id = $2", w.ws,
 		w.users[ownerUser]); n != 2 {
 		t.Errorf("%d of the audit entries are the batches' actor's in their workspace, want 2", n)
+	}
+	if n := w.count(t, "SELECT count(*) FROM audit_entry WHERE workspace_id = $1 AND actor_user_id = $2 "+
+		"AND actor_token_id = $3 AND ip = $4 AND user_agent = $5", w.ws, byToken.UserID, byToken.TokenID,
+		byToken.Client.IP, byToken.Client.UserAgent); n != 1 {
+		t.Errorf("%d of the audit entries are the second batch's, with its token and client, want 1", n)
 	}
 	if want := []notice{{w.project, 1, true}, {w.project, 2, true}}; !slices.Equal(w.notes.told(), want) {
 		t.Errorf("the notifier was told %v, want %v", w.notes.told(), want)
@@ -457,7 +475,8 @@ func TestRoles(t *testing.T) {
 // is pending, which blocks every access to it at once, its owners' too
 // (FR-TEN-05 AC1), is told that the project does not exist, even when the
 // deletion is requested once the batch has begun: between its two
-// transactions, or while it waits for the project's lock.
+// transactions, while it waits for the project's lock, or once it holds the
+// lock, before a read that only an active workspace answers, as of its plan.
 func TestNotFound(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -539,6 +558,33 @@ func TestNotFound(t *testing.T) {
 	hold("COMMIT")
 	if err := <-done; !errors.Is(err, ErrNotFound) {
 		t.Errorf("a deletion requested while the batch waits for the lock: %v, want ErrNotFound", err)
+	}
+
+	// And so does a deletion requested once the batch, which holds the lock,
+	// has read the workspace's status again, right before it reads the plan,
+	// which only an active workspace has.
+	planned, plannedProject := ids.New(), ids.New()
+	w.exec(t, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Planned', $2, 'unlimited')", planned,
+		"planned-"+planned.String()[:8])
+	w.exec(t, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", plannedProject, planned)
+	w.exec(t, "INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'owner')", ids.New(),
+		planned, w.users[ownerUser])
+	read := false
+	before := &beforeDB{DB: w.db, before: func(sql string) {
+		if !read && strings.Contains(sql, "SELECT plan_key FROM workspace") {
+			read = true
+			w.exec(t, "UPDATE workspace SET status = 'pending_deletion', deleted_at = now() WHERE id = $1", planned)
+		}
+	}}
+	enforced := New(before, Options{Registry: noteRegistry(), Jobs: w.queue,
+		Entitlements: entitlements.New(entitlements.Options{Enforce: true, Meter: fixedMeter{}})})
+	_, id = newNote()
+	if _, err := enforced.Apply(ctx, w.as(ownerUser), plannedProject,
+		[]Command{command(t, noteCreate, notePayload{ID: id, Body: "planned"}, nil)}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a deletion requested right before the read of the plan: %v, want ErrNotFound", err)
+	}
+	if !read {
+		t.Error("the batch did not read the workspace's plan")
 	}
 	if got := w.written(t); got != (written{}) {
 		t.Errorf("the refused batches wrote %+v", got)
@@ -707,6 +753,38 @@ func TestLimits(t *testing.T) {
 	}
 	if after := w.written(t); after != before {
 		t.Errorf("the refused batch wrote %+v, where there was %+v", after, before)
+	}
+}
+
+// TestBatchAdds checks that what a batch's commands add to a limit is summed
+// without wrapping around: a sum past what an int64 holds stays at
+// math.MaxInt64, whatever the commands after it take away, so that the limit
+// still refuses it, rather than wrap around to an amount that adds nothing.
+func TestBatchAdds(t *testing.T) {
+	projects := &spec{limits: []entitlements.LimitKey{entitlements.Projects}}
+	both := &spec{limits: []entitlements.LimitKey{entitlements.StorageBytes, entitlements.Projects}}
+	adding := func(s *spec, adds ...int64) decoded { return decoded{spec: s, adds: adds} }
+	for _, tt := range []struct {
+		name string
+		cmds []decoded
+		keys []entitlements.LimitKey
+		want map[entitlements.LimitKey]int64
+	}{
+		{"none", []decoded{adding(&spec{})}, nil, map[entitlements.LimitKey]int64{}},
+		{"summed", []decoded{adding(projects, 2), adding(both, 5, 3), adding(projects, -1)},
+			[]entitlements.LimitKey{entitlements.Projects, entitlements.StorageBytes},
+			map[entitlements.LimitKey]int64{entitlements.Projects: 4, entitlements.StorageBytes: 5}},
+		{"past the most", []decoded{adding(projects, math.MaxInt64-1), adding(projects, 2), adding(projects, -5)},
+			[]entitlements.LimitKey{entitlements.Projects},
+			map[entitlements.LimitKey]int64{entitlements.Projects: math.MaxInt64}},
+		{"past the least", []decoded{adding(projects, math.MinInt64+1), adding(projects, -2), adding(projects, 3)},
+			[]entitlements.LimitKey{entitlements.Projects},
+			map[entitlements.LimitKey]int64{entitlements.Projects: math.MinInt64 + 3}},
+	} {
+		keys, adds := batchAdds(tt.cmds)
+		if !slices.Equal(keys, tt.keys) || !maps.Equal(adds, tt.want) {
+			t.Errorf("%s: %v, %v, want %v, %v", tt.name, keys, adds, tt.keys, tt.want)
+		}
 	}
 }
 

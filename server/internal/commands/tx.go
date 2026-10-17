@@ -18,8 +18,10 @@ import (
 // command and of an entity see it: the queries' DBTX, which runs statements
 // in it, with the batch's actor and project, and what the pipeline does in
 // it for the commands. Everything that a command does through it commits
-// exactly when the batch does. It has no way to commit or roll back, which
-// is the pipeline's to do once every command has applied.
+// exactly when the batch does. It has no method that commits or rolls back,
+// which is the pipeline's to do once every command has applied, and a
+// command runs no statement through Exec that ends the transaction either,
+// as COMMIT or ROLLBACK.
 type Tx struct {
 	tx        pgx.Tx
 	pipeline  *Pipeline

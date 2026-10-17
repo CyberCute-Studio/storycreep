@@ -413,13 +413,15 @@ func (r *Registry) decode(batch []Command) ([]decoded, error) {
 			add("type", "is not a type of command")
 			continue
 		}
+		// An entity's identifier is encoded only for the field of a problem,
+		// which a valid expected revision has none of.
 		for _, ref := range sortedRefs(c.ExpectedRev) {
-			field := "expected_rev." + encodeRef(ref)
 			switch {
 			case !slices.Contains(s.touches, ref.Kind):
-				add(field, fmt.Sprintf("names a %s, which the command does not touch", ref.Kind))
+				add("expected_rev."+encodeRef(ref), fmt.Sprintf("names a %s, which the command does not touch",
+					ref.Kind))
 			case c.ExpectedRev[ref] < 1:
-				add(field, "is not a revision; an entity's first revision is 1")
+				add("expected_rev."+encodeRef(ref), "is not a revision; an entity's first revision is 1")
 			}
 		}
 		fields := r.validate(s.schema, c.Payload)
