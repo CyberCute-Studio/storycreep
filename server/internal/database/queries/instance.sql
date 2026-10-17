@@ -28,3 +28,19 @@ SELECT smtp_host, smtp_port, smtp_security, smtp_username, smtp_password, smtp_f
 -- name: SetupCodeKey :one
 -- SetupCodeKey returns the key that the setup code is made of.
 SELECT key FROM instance_key WHERE name = 'setup_code';
+
+-- name: InstanceAdminAccess :one
+-- InstanceAdminAccess returns the InstanceAdminAccess capability that a
+-- server of the instance last started with, or null if none has recorded it
+-- (package workspace).
+SELECT instance_admin_access FROM instance;
+
+-- name: SetInstanceAdminAccess :exec
+-- SetInstanceAdminAccess records the InstanceAdminAccess capability that a
+-- server starts with.
+UPDATE instance SET instance_admin_access = @enabled, updated_at = now();
+
+-- name: InstanceAdmins :many
+-- InstanceAdmins returns the accounts that are instance admins, whatever
+-- their status, in the order of their IDs.
+SELECT id FROM "user" WHERE is_instance_admin ORDER BY id;

@@ -416,6 +416,8 @@ func TestOwnerRequired(t *testing.T) {
 // member was given by sending them anew, and those to the member's address,
 // so that none lets them back in, and records each revocation with the
 // removal's actor and membership, while the other invitations stay open.
+//
+// Verifies: FR-TEN-02/AC4
 func TestRemoveRevokesInvites(t *testing.T) {
 	t.Parallel()
 	s, d, owner, ws := inviteServer(t, "open", nil)

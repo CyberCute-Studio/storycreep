@@ -335,20 +335,43 @@ const (
 	setupUnattendedMessage = "completed first-run setup unattended, with the STORYCREEP_SETUP_ keys"
 	setupIgnoredMessage    = "first-run setup has completed, so the server ignores the STORYCREEP_SETUP_ keys; " +
 		"remove them from the configuration, STORYCREEP_SETUP_OWNER_PASSWORD above all"
+	accessEndedMessage = "STORYCREEP_INSTANCE_ADMIN_ACCESS is off, and a server last started with it on, or none " +
+		"had recorded how it started, so the server revoked the instance admins' invitations that their own roles " +
+		"may not give"
 )
 
 // setupStep is the setup step of startup (PRD FR-ADMIN-02), which the server
 // takes once the database has every migration applied, before it is ready.
-// With the configuration's STORYCREEP_SETUP_ keys, it completes first-run
-// setup unattended, if setup is pending, and returns a *setup.ConfigError if
-// setup refuses a value of the keys. Without them, it logs the setup code,
-// which completing setup through the API asks for, while setup is pending,
-// at every start, so that the operator finds it in the log of the latest.
-// It writes that record as a warning whatever STORYCREEP_LOG_LEVEL is,
-// because without the code, setup cannot complete through the API: a level
-// of error, which drops the other warnings, would otherwise leave the
-// operator nowhere to read it.
+// It completes or reports first-run setup (setup), and then records the
+// InstanceAdminAccess capability that the server starts with, and, if it is
+// off after a server last started with it on, revokes the invitations that
+// instance admins made through it, whose roles their own roles may not give
+// (workspace.Service.RecordAccess, PRD §5.5), and logs how many.
 func (s *server) setupStep(ctx context.Context) error {
+	if err := s.setup(ctx); err != nil {
+		return err
+	}
+	revoked, err := s.workspaces.RecordAccess(ctx)
+	if err != nil {
+		return err
+	}
+	if revoked > 0 {
+		s.log.InfoContext(ctx, accessEndedMessage, "invites", revoked)
+	}
+	return nil
+}
+
+// setup is the part of the setup step that first-run setup takes. With the
+// configuration's STORYCREEP_SETUP_ keys, it completes first-run setup
+// unattended, if setup is pending, and returns a *setup.ConfigError if setup
+// refuses a value of the keys. Without them, it logs the setup code, which
+// completing setup through the API asks for, while setup is pending, at
+// every start, so that the operator finds it in the log of the latest. It
+// writes that record as a warning whatever STORYCREEP_LOG_LEVEL is, because
+// without the code, setup cannot complete through the API: a level of error,
+// which drops the other warnings, would otherwise leave the operator nowhere
+// to read it.
+func (s *server) setup(ctx context.Context) error {
 	if s.unattended != nil {
 		done, err := s.setups.Unattended(ctx, s.unattended)
 		switch {

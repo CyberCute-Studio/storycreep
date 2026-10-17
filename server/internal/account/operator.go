@@ -101,11 +101,16 @@ func lookup(ctx context.Context, tx pgx.Tx, email string) (queries.UserByEmailRo
 // whatever its status, for storycreep grant-role, and records that in the
 // audit log. Revoking does not need an active account, so that the operator
 // can take the role from a suspended account, which would otherwise get it
-// back with its status. It reports whether that changed the account, which
-// it does not if the account was so already, and returns the errors of
-// Find, but ErrNotActive only to make an account an instance admin.
-func SetInstanceAdmin(ctx context.Context, db DB, email string, admin bool) (bool, error) {
+// back with its status. It returns the account's ID, and reports whether
+// that changed the account, which it does not if the account was so already,
+// and returns the errors of Find, but ErrNotActive only to make an account an
+// instance admin. Revoking waits for the operations that the account's role
+// as an instance admin authorises (workspace.Service.Authorize), whose
+// invitations the caller then revokes
+// (workspace.Service.RevokeAccessInvites).
+func SetInstanceAdmin(ctx context.Context, db DB, email string, admin bool) (ids.UUID, bool, error) {
 	changed := false
+	var id ids.UUID
 	err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		look := lookup
 		if admin {
@@ -115,6 +120,7 @@ func SetInstanceAdmin(ctx context.Context, db DB, email string, admin bool) (boo
 		if err != nil {
 			return err
 		}
+		id = row.ID.Bytes
 		n, err := queries.New(tx).SetInstanceAdmin(ctx, queries.SetInstanceAdminParams{IsInstanceAdmin: admin,
 			ID: pgtype.UUID{Bytes: row.ID.Bytes, Valid: true}})
 		if err != nil {
@@ -130,5 +136,8 @@ func SetInstanceAdmin(ctx context.Context, db DB, email string, admin bool) (boo
 		return audit.Record(ctx, tx, audit.Entry{Action: action, SubjectID: row.ID.Bytes,
 			Result: audit.ResultSuccess})
 	})
-	return changed, err
+	if err != nil {
+		return ids.UUID{}, false, err
+	}
+	return id, changed, nil
 }

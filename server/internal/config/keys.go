@@ -153,8 +153,13 @@ var keys = []key{
 		name: "STORYCREEP_INSTANCE_ADMIN_ACCESS",
 		doc: "Whether an instance admin acts as the owner of every workspace and project, without being a member " +
 			"(PRD §5.5): `on` lets them read and manage any workspace, as when its last owner has left, and `off` " +
-			"resolves their role by their memberships, like anyone else's. Hosted mode, where instance admin is " +
-			"restricted to operator accounts, refuses `on`.",
+			"resolves their role by their memberships, like anyone else's. The first server to start with `off` " +
+			"after a server last started with `on` revokes the open invitations that instance admins made, or were " +
+			"given the link of, whose roles their own roles may not give (FR-TEN-02 AC4). A server that runs with " +
+			"`on` while another starts with `off`, as during a rolling restart, can make more such invitations, " +
+			"which no later start revokes, so stop every server before any starts with `off`; after a rolling " +
+			"restart, `storycreep grant-role --revoke` revokes them for each instance admin, which it makes no " +
+			"longer one. Hosted mode, where instance admin is restricted to operator accounts, refuses `on`.",
 		values: []string{"on", "off"},
 		def:    func(m mode) string { return onOff(modeCapabilities(m).InstanceAdminAccess) },
 		parse: func(c *Config, v string) error {

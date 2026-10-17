@@ -34,6 +34,22 @@ RETURNING display_name;
 -- no row if the account is not active.
 SELECT is_instance_admin FROM "user" WHERE id = @id AND status = 'active';
 
+-- name: LockInstanceAdmin :one
+-- LockInstanceAdmin is InstanceAdmin, and locks the account against changes
+-- until the transaction ends, so that making it no longer an instance admin
+-- waits for the operation that the role authorised (package workspace).
+SELECT is_instance_admin FROM "user" WHERE id = @id AND status = 'active' FOR SHARE;
+
+-- name: WorkspacesAfter :many
+-- WorkspacesAfter returns the IDs of the instance's workspaces, whatever
+-- their status, in the order of their IDs, after the workspace after, or from
+-- the first if after is null, for work that goes through every workspace,
+-- each in a transaction of its own.
+SELECT id FROM workspace
+WHERE sqlc.narg(after)::uuid IS NULL OR id > sqlc.narg(after)::uuid
+ORDER BY id
+LIMIT @max_rows;
+
 -- name: Workspace :one
 -- Workspace returns a workspace.
 SELECT id, name, slug, settings, created_at, updated_at FROM workspace WHERE id = @id AND status = 'active';

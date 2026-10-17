@@ -97,6 +97,8 @@ func TestDemoteLastOwner(t *testing.T) {
 // one, for a role that does not manage members, and those as owner, for
 // admin. Their links are refused, each revocation is recorded with the
 // change's actor and membership, and the others stay open.
+//
+// Verifies: FR-TEN-02/AC4
 func TestRoleChangeRevokesInvites(t *testing.T) {
 	t.Parallel()
 	s, d, owner, ws := inviteServer(t, "open", nil)

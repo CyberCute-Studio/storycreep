@@ -560,7 +560,7 @@ func (s *Service) Get(ctx context.Context, userID, id ids.UUID) (Workspace, role
 		}
 		member, err := q.MembershipRole(ctx, queries.MembershipRoleParams{WorkspaceID: nullUUID(id),
 			UserID: nullUUID(userID)})
-		if r, err = s.resolve(ctx, q, userID, member, err); err != nil {
+		if r, err = s.resolve(ctx, q, userID, member, err, false); err != nil {
 			return err
 		}
 		w = s.workspace(row.ID, row.Name, row.Slug, row.Settings, row.CreatedAt, row.UpdatedAt)
@@ -576,9 +576,13 @@ func (s *Service) Get(ctx context.Context, userID, id ids.UUID) (Workspace, role
 // of q's transaction, whose membership's role a query returned as member,
 // with err, or ErrNotFound if it is none. It reads whether the user is an
 // instance admin only if the policy lets an instance admin act as owner,
-// because otherwise the answer changes nothing.
-func (s *Service) resolve(ctx context.Context, q *queries.Queries, userID ids.UUID, member string, err error) (
-	role.Role, error) {
+// because otherwise the answer changes nothing, and then, if lock is set,
+// locks the account until the transaction ends, as the caller locks the
+// membership, so that making the user no longer an instance admin waits for
+// the operation that the role authorises, whose invitations the revocation
+// then finds (RevokeAccessInvites).
+func (s *Service) resolve(ctx context.Context, q *queries.Queries, userID ids.UUID, member string, err error,
+	lock bool) (role.Role, error) {
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		member = string(role.None)
@@ -587,7 +591,11 @@ func (s *Service) resolve(ctx context.Context, q *queries.Queries, userID ids.UU
 	}
 	admin := false
 	if s.policy.InstanceAdminAccess {
-		admin, err = q.InstanceAdmin(ctx, nullUUID(userID))
+		read := q.InstanceAdmin
+		if lock {
+			read = q.LockInstanceAdmin
+		}
+		admin, err = read(ctx, nullUUID(userID))
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			// The account is no longer active.
@@ -624,7 +632,7 @@ func (s *Service) Update(ctx context.Context, userID, id ids.UUID, p Patch) (Wor
 		}
 		member, err := q.LockMembershipRole(ctx, queries.LockMembershipRoleParams{WorkspaceID: nullUUID(id),
 			UserID: nullUUID(userID)})
-		if r, err = s.resolve(ctx, q, userID, member, err); err != nil {
+		if r, err = s.resolve(ctx, q, userID, member, err, true); err != nil {
 			return err
 		}
 		if err := authz.Check(r, authz.ManageWorkspaceSettings); err != nil {
