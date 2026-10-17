@@ -62,7 +62,9 @@ type Spec[P any] struct {
 	// Limits are the limits of the workspace's plan that the command adds to,
 	// which the pipeline checks before it applies the batch (FR-ENT-01). Its
 	// Apply reports what it adds to them, as to any key of usage, with
-	// Tx.AddUsage, which refuses to add to a limit that is not here.
+	// Tx.AddUsage, which refuses to add to a limit that is not here, and the
+	// pipeline refuses a batch that adds more to a limit than its commands'
+	// Adds say, which is all that it checked the limit for.
 	Limits []Limit[P]
 	// Check returns what is wrong with a payload that its schema cannot say,
 	// such as an identifier of the wrong type, with each field's name in the

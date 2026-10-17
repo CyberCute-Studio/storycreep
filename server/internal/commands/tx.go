@@ -44,8 +44,11 @@ type Tx struct {
 	revs    map[Ref]int64
 	// usage is what the batch's commands add to each key of the workspace's
 	// usage, and usageKeys the keys in the order of their first report.
+	// checked is what the batch's commands declared that they add to each
+	// limit (Spec.Limits), which is what the pipeline checked the limit for.
 	usage     map[usage.Key]int64
 	usageKeys []usage.Key
+	checked   map[entitlements.LimitKey]int64
 }
 
 // Exec runs a statement in the batch's transaction.
@@ -123,7 +126,9 @@ func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 // returns to refuse the batch, unless it is called from the command's Apply,
 // or if it adds to a key that names a limit of the plans that the command
 // does not declare (Spec.Limits), so that the pipeline checked it before the
-// batch applied (FR-ENT-01).
+// batch applied (FR-ENT-01). The pipeline checked the limit for what the
+// batch's commands declared that they add to it (Limit.Adds), so it refuses
+// a batch whose commands add more to it than that (recordUsage).
 func (t *Tx) AddUsage(key usage.Key, delta int64) error {
 	switch {
 	case t.current == nil:
@@ -148,9 +153,19 @@ func (t *Tx) AddUsage(key usage.Key, delta int64) error {
 
 // recordUsage records what the batch's commands added to each key of the
 // workspace's usage (AddUsage), in the order of the keys' first reports, as
-// one delta of each key, unless they add up to nothing.
+// one delta of each key, unless they add up to nothing. It refuses the batch
+// if its commands added more to a limit than they declared (Spec.Limits),
+// which is all that the pipeline checked the limit for, as with a command
+// whose Limit.Adds says 0, which Check allows without reading the usage, let
+// alone holding the lock of a key counted exactly (FR-ENT-01).
 func (t *Tx) recordUsage(ctx context.Context) error {
 	for _, key := range t.usageKeys {
+		limit := entitlements.LimitKey(key)
+		if added := t.usage[key]; added > 0 && slices.Contains(entitlements.LimitKeys(), limit) &&
+			added > t.checked[limit] {
+			return fmt.Errorf("commands: the batch adds %d to %s, but its commands declared %d, which is all that "+
+				"the limit was checked for", added, key, t.checked[limit])
+		}
 		if err := usage.Record(ctx, t.tx, t.workspace, key, t.usage[key]); err != nil {
 			return fmt.Errorf("commands: %w", err)
 		}

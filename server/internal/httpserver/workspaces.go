@@ -237,8 +237,9 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 
 // workspaceError returns the error that the API answers err with, an error
 // of package workspace, or err itself if it is none of them. Creating a
-// workspace adds its owner as its first member, which a plan that allows no
-// member refuses with limit_exceeded.
+// workspace checks the members limit for its owner, its first member, which
+// every plan and every cap allows (entitlements.Load, config), so it is
+// refused with limit_exceeded only if that ever stops being so.
 func workspaceError(err error) error {
 	var fields input.FieldErrors
 	var slug *workspace.SlugError

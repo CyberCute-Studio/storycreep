@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"slices"
 	"testing"
@@ -135,7 +136,8 @@ func TestWorkspaceUsage(t *testing.T) {
 			"nodes":         {"used": 0.0},
 			"snapshots":     {"used": 0.0},
 		} {
-			if gotObj := got[k]; len(gotObj) != len(wantObj) || !mapsEqual(gotObj, wantObj) {
+			// The values are scalars, which compare as maps.Equal compares them.
+			if gotObj := got[k]; !maps.Equal(gotObj, wantObj) {
 				t.Errorf("as %s, the usage of %s is %v, want %v", r, k, gotObj, wantObj)
 			}
 		}
@@ -145,17 +147,6 @@ func TestWorkspaceUsage(t *testing.T) {
 	stranger := newNamedAccount(t, s.main, "stranger@example.com", "Stranger")
 	wantCode(t, "a stranger's usage", call(s.main, http.MethodGet, usagePath(ws), nil, stranger.header(false)),
 		http.StatusNotFound, api.CodeNotFound)
-}
-
-// mapsEqual reports whether two JSON objects have the same keys and values,
-// which are scalars.
-func mapsEqual(a, b map[string]any) bool {
-	for k, v := range a {
-		if w, ok := b[k]; !ok || w != v {
-			return false
-		}
-	}
-	return len(a) == len(b)
 }
 
 // TestUsageBodyKeys checks that the body of a workspace's usage has a field

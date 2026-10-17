@@ -68,10 +68,19 @@ SELECT (
 
 -- name: WorkspaceIDs :many
 -- WorkspaceIDs returns the IDs of the workspaces after the workspace after,
--- or from the first if after is null, in order, whatever their status, for
--- the jobs that work on each workspace in a transaction of its own (§5.4).
--- The workspace table has no row-level security.
+-- or from the first if after is null, up to and including the workspace
+-- through, or to the last if through is null, in order, whatever their
+-- status, for the jobs that work on each workspace in a transaction of its
+-- own (§5.4). The workspace table has no row-level security.
 SELECT id FROM workspace
-WHERE sqlc.narg(after)::uuid IS NULL OR id > sqlc.narg(after)::uuid
+WHERE (sqlc.narg(after)::uuid IS NULL OR id > sqlc.narg(after)::uuid)
+    AND (sqlc.narg(through)::uuid IS NULL OR id <= sqlc.narg(through)::uuid)
 ORDER BY id
 LIMIT @max_rows;
+
+-- name: RandomWorkspaceID :one
+-- RandomWorkspaceID returns the ID of a workspace picked at random, whatever
+-- its status, and no row if there is none, which the jobs that work on each
+-- workspace start their run at, so that a run that ends before it reaches
+-- every workspace leaves others than the last run did.
+SELECT id FROM workspace ORDER BY random() LIMIT 1;

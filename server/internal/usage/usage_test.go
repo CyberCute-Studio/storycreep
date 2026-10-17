@@ -1,9 +1,12 @@
 package usage_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io/fs"
 	"os"
+	"slices"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -327,6 +330,65 @@ func TestReconcileCorrectsDrift(t *testing.T) {
 	}
 	if corrected, err := usage.Reconcile(ctx, f.db); err != nil || corrected != 0 {
 		t.Errorf("a second reconciliation corrected %d keys, %v; want none", corrected, err)
+	}
+}
+
+// TestEachWorkspace checks that a run of the jobs reaches every workspace
+// once, from one picked at random on, in the order of their IDs and then on
+// from the first, so that runs start at different workspaces; that it goes
+// on past a workspace whose work fails, and returns the error; and that once
+// the run has no time left, it starts no other workspace, and ends without
+// an error, so that a job never runs past its minute however many workspaces
+// there are.
+func TestEachWorkspace(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	var all []ids.UUID
+	for range 5 {
+		ws, _ := f.workspace(t, 1)
+		all = append(all, ws)
+	}
+	slices.SortFunc(all, func(a, b ids.UUID) int { return bytes.Compare(a[:], b[:]) })
+	always := func() bool { return true }
+	starts := map[ids.UUID]bool{}
+	failed := errors.New("the work failed")
+	for range 40 {
+		var got []ids.UUID
+		err := usage.EachWorkspace(ctx, f.db, always, func(ws ids.UUID) error {
+			got = append(got, ws)
+			if ws == all[2] {
+				return failed
+			}
+			return nil
+		})
+		if !errors.Is(err, failed) {
+			t.Fatalf("a run whose work failed for a workspace: %v, want its error", err)
+		}
+		if len(got) == 0 {
+			t.Fatal("a run reached no workspace")
+		}
+		i := slices.Index(all, got[0])
+		if i < 0 {
+			t.Fatalf("a run started at %v, which is not a workspace", got[0])
+		}
+		if want := append(slices.Clone(all[i:]), all[:i]...); !slices.Equal(got, want) {
+			t.Fatalf("a run reached %v, want %v", got, want)
+		}
+		starts[got[0]] = true
+	}
+	if len(starts) < 2 {
+		t.Errorf("40 runs all started at the workspace %v", starts)
+	}
+
+	left := 2
+	var got []ids.UUID
+	err := usage.EachWorkspace(ctx, f.db, func() bool { left--; return left >= 0 }, func(ws ids.UUID) error {
+		got = append(got, ws)
+		return nil
+	})
+	if err != nil || len(got) != 2 {
+		t.Errorf("a run with time for two workspaces reached %d, %v; want 2 without an error", len(got), err)
 	}
 }
 

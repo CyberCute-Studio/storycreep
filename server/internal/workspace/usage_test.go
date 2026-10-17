@@ -3,7 +3,9 @@ package workspace
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/text/language"
@@ -104,7 +106,10 @@ func TestMembersLimit(t *testing.T) {
 
 // TestMembersLimitTakesTurns checks that two members added at once to a
 // workspace with room for one are not both let in: the second waits for the
-// first, and then counts it (FR-ENT-02, exact counting).
+// first, and then counts it (FR-ENT-02, exact counting). They accept
+// invitations (Join), which, unlike Grant, lock no row that the other needs,
+// so only the lock that the members limit's check holds makes them take
+// turns, and the first stays open until the second waits for that lock.
 //
 // Verifies: FR-ENT-01/AC1
 func TestMembersLimitTakesTurns(t *testing.T) {
@@ -115,30 +120,52 @@ func TestMembersLimitTakesTurns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	users := []ids.UUID{addUser(t, d, "First"), addUser(t, d, "Second")}
-	errs := make(chan error, len(users))
-	for _, u := range users {
-		go func() {
-			_, err := s.Grant(ctx, w.ID, u, role.Editor)
-			errs <- err
-		}()
+	first, second := addUser(t, d, "First"), addUser(t, d, "Second")
+	joined, stop, firstDone := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	release := sync.OnceFunc(func() { close(stop) })
+	t.Cleanup(release)
+	go func() {
+		firstDone <- s.db.InTx(ctx, database.Scope{WorkspaceID: w.ID, UserID: first}, func(tx pgx.Tx) error {
+			if _, err := s.Join(ctx, tx, w.ID, first, role.Editor, ids.UUID{}, ids.New(), audit.Client{}); err != nil {
+				return err
+			}
+			close(joined)
+			<-stop
+			return nil
+		})
+	}()
+	select {
+	case <-joined:
+	case err := <-firstDone:
+		t.Fatalf("the first acceptance: %v", err)
 	}
-	var added, refused int
-	for range users {
-		var l *entitlements.LimitError
-		switch err := <-errs; {
-		case err == nil:
-			added++
-		case errors.As(err, &l):
-			refused++
-		default:
+	// waits returns how many sessions wait for a lock of usage.
+	admin := d.Admin(t)
+	waits := func() int {
+		var n int
+		if err := admin.QueryRow(ctx, "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted "+
+			"AND classid = $1", database.UsageLock).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
+		return n
 	}
-	if added != 1 || refused != 1 {
-		t.Errorf("of two members added at once to a workspace with room for one, %d were added and %d refused",
-			added, refused)
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- s.join(t, w.ID, second, role.Editor) }()
+	for deadline := time.Now().Add(time.Minute); waits() == 0; time.Sleep(20 * time.Millisecond) {
+		select {
+		case err := <-secondDone:
+			t.Fatalf("the second acceptance did not wait for the first, which is still open: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the second acceptance never waits for the first")
+		}
 	}
+	release()
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	wantLimit(t, "the second acceptance, once the first has committed", <-secondDone, 2)
 	if n := count(t, d, "SELECT count(*) FROM membership WHERE workspace_id = $1", w.ID); n != 2 {
 		t.Errorf("the workspace has %d members, want 2", n)
 	}

@@ -32,7 +32,11 @@
 //
 // The jobs work on one workspace at a time, in a transaction of that
 // workspace, listing the workspaces from the workspace table, which has no
-// row-level security (§5.4).
+// row-level security (§5.4). A job has a minute to run (package jobs), which
+// an instance with many workspaces would need more than to work on all of
+// them, so a run stops starting workspaces once it has run for passBudget,
+// and starts at a workspace picked at random, going on past the last to the
+// first, so that the workspaces that one run does not reach, another does.
 package usage
 
 import (
@@ -41,6 +45,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"slices"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -184,36 +189,74 @@ type DB interface {
 // workspacePage is how many workspaces' IDs the jobs read at once.
 const workspacePage = 1000
 
-// eachWorkspace calls fn with the ID of every workspace, whatever its status,
-// in the order of their IDs. It goes on past a workspace that fn fails for,
-// and returns the errors of all of them, but stops at once when ctx ends.
-func eachWorkspace(ctx context.Context, db DB, fn func(workspaceID ids.UUID) error) error {
-	var errs []error
-	var after ids.UUID
-	for {
-		var page []pgtype.UUID
-		err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-			var err error
-			page, err = queries.New(tx).WorkspaceIDs(ctx, queries.WorkspaceIDsParams{After: nullUUID(after),
-				MaxRows: workspacePage})
-			return err
-		})
-		if err != nil {
-			return errors.Join(append(errs, fmt.Errorf("usage: list the workspaces: %w", err))...)
+// passBudget is how long a run of a job of usage starts workspaces' work for.
+// It is well inside the minute that a job has (package jobs), whose end would
+// fail the run, and attempt it again from the start, so that on an instance
+// with more workspaces than a minute's work, no run would reach the last
+// ones.
+const passBudget = 40 * time.Second
+
+// within returns a function that reports whether budget has not passed since
+// within was called.
+func within(budget time.Duration) func() bool {
+	end := time.Now().Add(budget)
+	return func() bool { return time.Now().Before(end) }
+}
+
+// eachWorkspace calls fn with the ID of each workspace, whatever its status,
+// for as long as more reports that the run has time left: from a workspace
+// picked at random on, in the order of their IDs, and then from the first up
+// to that one, so that it calls fn once for every workspace if more lets it,
+// and a run that ends earlier leaves others than the last run did. It goes on
+// past a workspace that fn fails for, and returns the errors of all of them,
+// but stops at once when ctx ends.
+func eachWorkspace(ctx context.Context, db DB, more func() bool, fn func(workspaceID ids.UUID) error) error {
+	var start pgtype.UUID
+	err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		var err error
+		if start, err = queries.New(tx).RandomWorkspaceID(ctx); errors.Is(err, pgx.ErrNoRows) {
+			return nil
 		}
-		for _, id := range page {
-			if err := ctx.Err(); err != nil {
-				return errors.Join(append(errs, err)...)
-			}
-			if err := fn(id.Bytes); err != nil {
-				errs = append(errs, err)
-			}
-		}
-		if len(page) < workspacePage {
-			return errors.Join(errs...)
-		}
-		after = page[len(page)-1].Bytes
+		return err
+	})
+	switch {
+	case err != nil:
+		return fmt.Errorf("usage: pick the workspace to start at: %w", err)
+	case !start.Valid:
+		// The instance has no workspace.
+		return nil
 	}
+	var errs []error
+	for _, span := range []queries.WorkspaceIDsParams{{After: start}, {Through: start}} {
+		span.MaxRows = workspacePage
+		for {
+			var page []pgtype.UUID
+			err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+				var err error
+				page, err = queries.New(tx).WorkspaceIDs(ctx, span)
+				return err
+			})
+			if err != nil {
+				return errors.Join(append(errs, fmt.Errorf("usage: list the workspaces: %w", err))...)
+			}
+			for _, id := range page {
+				if err := ctx.Err(); err != nil {
+					return errors.Join(append(errs, err)...)
+				}
+				if !more() {
+					return errors.Join(errs...)
+				}
+				if err := fn(id.Bytes); err != nil {
+					errs = append(errs, err)
+				}
+			}
+			if len(page) < workspacePage {
+				break
+			}
+			span.After = page[len(page)-1]
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // nullUUID returns id as a uuid column, null if id is zero.

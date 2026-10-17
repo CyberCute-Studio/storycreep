@@ -110,10 +110,12 @@ type badInversePayload struct {
 	Changes bool `json:"changes,omitempty"`
 }
 
-// meterPayload is noteMeter's payload.
+// meterPayload is noteMeter's payload. Undeclared makes the command declare
+// that it adds nothing to the projects limit, whatever it adds.
 type meterPayload struct {
-	Key   string `json:"key"`
-	Delta int64  `json:"delta"`
+	Key        string `json:"key"`
+	Delta      int64  `json:"delta"`
+	Undeclared bool   `json:"undeclared,omitempty"`
 }
 
 // noteState is a note as the States of its entity show it.
@@ -309,7 +311,7 @@ func noteRegistry() *Registry {
 	Register(r, Spec[meterPayload]{
 		Type: noteMeter, Capability: authz.ListMembers, Touches: touches, NonUndoable: true,
 		Limits: []Limit[meterPayload]{{Key: entitlements.Projects, Adds: func(p meterPayload) int64 {
-			if p.Key == string(entitlements.Projects) {
+			if p.Key == string(entitlements.Projects) && !p.Undeclared {
 				return p.Delta
 			}
 			return 0

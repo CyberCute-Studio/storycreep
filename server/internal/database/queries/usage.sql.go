@@ -161,24 +161,42 @@ func (q *Queries) MemberDrift(ctx context.Context, workspaceID pgtype.UUID) (int
 	return drift, err
 }
 
+const randomWorkspaceID = `-- name: RandomWorkspaceID :one
+SELECT id FROM workspace ORDER BY random() LIMIT 1
+`
+
+// RandomWorkspaceID returns the ID of a workspace picked at random, whatever
+// its status, and no row if there is none, which the jobs that work on each
+// workspace start their run at, so that a run that ends before it reaches
+// every workspace leaves others than the last run did.
+func (q *Queries) RandomWorkspaceID(ctx context.Context) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, randomWorkspaceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const workspaceIDs = `-- name: WorkspaceIDs :many
 SELECT id FROM workspace
-WHERE $1::uuid IS NULL OR id > $1::uuid
+WHERE ($1::uuid IS NULL OR id > $1::uuid)
+    AND ($2::uuid IS NULL OR id <= $2::uuid)
 ORDER BY id
-LIMIT $2
+LIMIT $3
 `
 
 type WorkspaceIDsParams struct {
 	After   pgtype.UUID
+	Through pgtype.UUID
 	MaxRows int32
 }
 
 // WorkspaceIDs returns the IDs of the workspaces after the workspace after,
-// or from the first if after is null, in order, whatever their status, for
-// the jobs that work on each workspace in a transaction of its own (§5.4).
-// The workspace table has no row-level security.
+// or from the first if after is null, up to and including the workspace
+// through, or to the last if through is null, in order, whatever their
+// status, for the jobs that work on each workspace in a transaction of its
+// own (§5.4). The workspace table has no row-level security.
 func (q *Queries) WorkspaceIDs(ctx context.Context, arg WorkspaceIDsParams) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, workspaceIDs, arg.After, arg.MaxRows)
+	rows, err := q.db.Query(ctx, workspaceIDs, arg.After, arg.Through, arg.MaxRows)
 	if err != nil {
 		return nil, err
 	}

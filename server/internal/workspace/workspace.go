@@ -256,9 +256,10 @@ type Patch struct {
 // *SlugError if the slug is not, and ErrSlugTaken if another workspace has
 // it, and creates nothing then. A slug derived from the name is the first of
 // the name's slug, then that with -2, -3, and so on, that no workspace has
-// and that is not reserved. The owner is the workspace's first member, which
-// its plan's members limit counts (FR-ENT-01), so Create returns an
-// *entitlements.LimitError only if a new workspace's plan allows no member.
+// and that is not reserved. The owner is the workspace's first member, whom
+// the members limit counts (FR-ENT-01), and every plan and every cap of the
+// instance allows one, so Create returns an *entitlements.LimitError only if
+// that ever stops being so.
 func (s *Service) Create(ctx context.Context, userID ids.UUID, in Settings, client audit.Client) (Workspace,
 	error) {
 	if err := s.CheckVerified(ctx, userID); err != nil {

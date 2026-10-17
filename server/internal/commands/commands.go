@@ -321,9 +321,11 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 // batch.
 func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded, seq int64) (Result,
 	error) {
-	if err := p.checkLimits(ctx, t.tx, t.workspace, cmds); err != nil {
+	checked, err := p.checkLimits(ctx, t.tx, t.workspace, cmds)
+	if err != nil {
 		return Result{}, err
 	}
+	t.checked = checked
 	if err := p.checkRevs(ctx, t, cmds); err != nil {
 		return Result{}, err
 	}
@@ -452,16 +454,19 @@ func (p *Pipeline) roles(ctx context.Context, q *queries.Queries, userID, worksp
 // checkLimits checks, with the entitlements, each limit of the workspace's
 // plan that the batch adds to, for what all of its commands add together, so
 // that a batch whose commands each fit, but not all of them, is refused
-// (FR-ENT-01). It returns an *entitlements.LimitError for the first limit, in
-// the order of the commands, that the batch would take the workspace past.
-func (p *Pipeline) checkLimits(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, cmds []decoded) error {
+// (FR-ENT-01), and returns what it checked each limit for, which the batch's
+// usage may not pass (Tx.recordUsage). It returns an *entitlements.LimitError
+// for the first limit, in the order of the commands, that the batch would take
+// the workspace past.
+func (p *Pipeline) checkLimits(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, cmds []decoded) (
+	map[entitlements.LimitKey]int64, error) {
 	keys, adds := batchAdds(cmds)
 	for _, key := range keys {
 		if err := p.ent.Check(ctx, tx, workspaceID, key, adds[key]); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return adds, nil
 }
 
 // batchAdds returns the limits that the commands cmds add to, in the order of
