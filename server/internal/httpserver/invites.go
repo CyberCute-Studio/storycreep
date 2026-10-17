@@ -277,11 +277,11 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			"is sent, and the answer holds no link. A workspace emails an address one invitation in 10 minutes at " +
 			"most, so the email of an invitation made sooner after the workspace last emailed the address, as " +
 			"after revoking an invitation that was emailed and inviting the address again, is sent once those 10 " +
-			"minutes have passed." + inviteEmailLimitDoc + " Otherwise, and for a link invitation on every " +
-			"instance, the " +
-			"answer's url is the link, which the signed-in user gives the person invited; the server keeps no " +
-			"copy of it. The email names the instance and the role, but neither the workspace nor who invites, " +
-			"which the page that the link opens shows instead (POST /api/v1/invites/lookup)." + csrfDoc +
+			"minutes have passed." + inviteEmailLimitDoc + " On an instance that sends no email, and for a link " +
+			"invitation on every instance, the answer's url is the link, which the signed-in user gives the " +
+			"person invited; the server keeps no copy of it. The email names the instance and the role, but " +
+			"neither the workspace nor who invites, which the page that the link opens shows instead (POST " +
+			"/api/v1/invites/lookup)." + csrfDoc +
 			authLimitDoc,
 		Tags:          []string{"Members"},
 		DefaultStatus: http.StatusCreated,

@@ -231,7 +231,7 @@ func TestSendSkipsClosedInvites(t *testing.T) {
 	for i, state := range []string{"revoked_at = now()", "expires_at = now() - interval '1 second'",
 		"accepted_at = now()", "email_request = gen_random_uuid()"} {
 		id, request := add(fmt.Sprintf("closed%d@example.com", i), state)
-		if err := f.send(ctx, f.db, f.workspace, id, request, 1); err != nil {
+		if err := f.send(ctx, f.db, f.workspace, id, request); err != nil {
 			t.Errorf("%s: %v", state, err)
 		}
 	}
@@ -239,7 +239,7 @@ func TestSendSkipsClosedInvites(t *testing.T) {
 		t.Errorf("%d emails for closed invitations, or for requests that later ones replaced", len(got))
 	}
 	open, request := add("hana@example.com", "")
-	if err := f.send(ctx, f.db, f.workspace, open, request, 1); err != nil {
+	if err := f.send(ctx, f.db, f.workspace, open, request); err != nil {
 		t.Fatal(err)
 	}
 	got := server.Wait(t, 1, 10*time.Second)
@@ -264,7 +264,7 @@ func TestSendSkipsClosedInvites(t *testing.T) {
 		request); err != nil {
 		t.Fatal(err)
 	}
-	if err := quiet.send(ctx, quiet.db, quiet.workspace, id, request, 1); err != nil {
+	if err := quiet.send(ctx, quiet.db, quiet.workspace, id, request); err != nil {
 		t.Errorf("send without email: %v", err)
 	}
 	if n := quiet.count(t, "SELECT count(*) FROM invite WHERE token_hash IS NOT NULL"); n != 0 {
@@ -299,7 +299,7 @@ func TestEmailsWaitForResendInterval(t *testing.T) {
 	// The job's attempt, and another, as after an attempt whose email
 	// failed, each send the email.
 	for n := 1; n <= 2; n++ {
-		if err := f.send(ctx, f.db, f.workspace, inv.ID, first, n); err != nil {
+		if err := f.send(ctx, f.db, f.workspace, inv.ID, first); err != nil {
 			t.Fatal(err)
 		}
 		server.Wait(t, n, 10*time.Second)
@@ -324,7 +324,7 @@ func TestEmailsWaitForResendInterval(t *testing.T) {
 	// The first request's job, attempted again once the invitation has been
 	// sent anew, sends nothing, although the invitation has no link yet: the
 	// second request's job emails it when it is due.
-	if err := f.send(ctx, f.db, f.workspace, inv.ID, first, 3); err != nil {
+	if err := f.send(ctx, f.db, f.workspace, inv.ID, first); err != nil {
 		t.Fatal(err)
 	}
 	if got := server.Messages(); len(got) != 2 {
@@ -335,7 +335,7 @@ func TestEmailsWaitForResendInterval(t *testing.T) {
 	if err != nil || len(list) != 1 || !list[0].SentAt.IsZero() {
 		t.Errorf("the invitations are %+v, %v, want the one sent anew, without when it was emailed", list, err)
 	}
-	if err := f.send(ctx, f.db, f.workspace, inv.ID, second, 1); err != nil {
+	if err := f.send(ctx, f.db, f.workspace, inv.ID, second); err != nil {
 		t.Fatal(err)
 	}
 	server.Wait(t, 3, 10*time.Second)
@@ -358,8 +358,10 @@ func TestEmailsWaitForResendInterval(t *testing.T) {
 // as often in an hour as the limit of invitation emails allows, as their
 // case does not change the address: the job of the next one sends nothing,
 // ends, and leaves the invitation without a link, as one still to be
-// emailed. A retry of a job whose first attempt counted its email is not
-// counted again, and another address is emailed all the same.
+// emailed, even when an earlier attempt of the job failed before it counted
+// the email. A retry of a job whose earlier attempt gave the invitation its
+// link, and so counted its email, is not counted again, and another address
+// is emailed all the same.
 //
 // Verifies: NFR-SEC-06
 func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
@@ -375,7 +377,7 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 	f.d.AwaitWindow(t, time.Hour, time.Minute)
 
 	type job struct{ workspace, invite, request, owner ids.UUID }
-	var jobs []job
+	var queued []job
 	for i, address := range []string{"hana@example.com", "Hana@Example.com", "HANA@example.com"} {
 		ws, owner := f.workspace, f.owner
 		if i > 0 {
@@ -391,17 +393,25 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		jobs = append(jobs, job{ws, inv.ID, f.queue.request(t), owner})
+		queued = append(queued, job{ws, inv.ID, f.queue.request(t), owner})
 	}
-	for _, j := range jobs[:2] {
-		if err := f.send(ctx, f.db, j.workspace, j.invite, j.request, 1); err != nil {
+	for _, j := range queued[:2] {
+		if err := f.send(ctx, f.db, j.workspace, j.invite, j.request); err != nil {
 			t.Fatal(err)
 		}
 	}
 	server.Wait(t, 2, 10*time.Second)
 
-	over := jobs[2]
-	if err := f.send(ctx, f.db, over.workspace, over.invite, over.request, 1); err != nil {
+	// The third job's first attempt fails before it counts the email, as when
+	// the database does not answer, and its next attempt counts it, and so
+	// finds the address over the limit, rather than send it uncounted.
+	over := queued[2]
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := f.send(cancelled, f.db, over.workspace, over.invite, over.request); err == nil {
+		t.Errorf("an attempt without a database succeeded")
+	}
+	if err := f.send(ctx, f.db, over.workspace, over.invite, over.request); err != nil {
 		t.Errorf("the job of an email over the limit: %v, want it to end", err)
 	}
 	if got := server.Messages(); len(got) != 2 {
@@ -416,9 +426,14 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 	}
 
 	// A retry of the first job, as after an email that the SMTP server did
-	// not take, sends although the address is over the limit.
-	first := jobs[0]
-	if err := f.send(ctx, f.db, first.workspace, first.invite, first.request, 2); err != nil {
+	// not take, or an attempt that the server's stop cut off, finds the link
+	// that its earlier attempt gave the invitation, and sends without
+	// counting, although the address is over the limit.
+	first := queued[0]
+	if _, err := f.d.Admin(t).Exec(ctx, "UPDATE invite SET sent_at = NULL WHERE id = $1", first.invite); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.send(ctx, f.db, first.workspace, first.invite, first.request); err != nil {
 		t.Fatal(err)
 	}
 	server.Wait(t, 3, 10*time.Second)
@@ -428,7 +443,7 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.send(ctx, f.db, over.workspace, other.ID, f.queue.request(t), 1); err != nil {
+	if err := f.send(ctx, f.db, over.workspace, other.ID, f.queue.request(t)); err != nil {
 		t.Errorf("the email of another address: %v", err)
 	}
 	if got := server.Wait(t, 4, 10*time.Second); len(got[3].To) != 1 || got[3].To[0] != "jo@example.com" {
@@ -449,7 +464,7 @@ func TestRefusedEmailIsNotSent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.send(ctx, f.db, f.workspace, inv.ID, f.queue.request(t), 1); !email.Permanent(err) {
+	if err := f.send(ctx, f.db, f.workspace, inv.ID, f.queue.request(t)); !email.Permanent(err) {
 		t.Errorf("send to a refused address: %v, want the refusal for good, which ends the job", err)
 	}
 	if n := f.count(t, "SELECT count(*) FROM invite WHERE id = $1 AND sent_at IS NULL", inv.ID); n != 1 {

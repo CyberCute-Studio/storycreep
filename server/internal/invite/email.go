@@ -112,7 +112,7 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 		if err != nil {
 			return fmt.Errorf("invite: the job's request %q is not a UUID: %w", job.Args.Request, err)
 		}
-		return s.send(ctx, job.DB, id, inviteID, request, job.Attempt)
+		return s.send(ctx, job.DB, id, inviteID, request)
 	})
 }
 
@@ -134,20 +134,24 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 // attempt may have sent, so that only the latest email's link works, unless
 // the SMTP server refuses the email for good (email.JobError).
 //
-// The first attempt of a job that has an email to send counts it against
-// its address's limit of invitation emails from all workspaces together
+// An attempt that has an email to send counts it against its address's
+// limit of invitation emails from all workspaces together
 // (ratelimit.InviteEmail), and sends nothing if the address is over it: the
 // job ends, and the invitation stays without a link, which its admins see
-// as still to be emailed, and send anew later. The later attempts of a job
-// whose first one counted its email do not count it again, so that the
-// retries of an email that an SMTP server that is down refused do not use
-// up the address's limit. The count is made before the invitation is
-// locked to be sent, in a transaction of its own, so that no lock of the
-// invitation waits on it; an invitation that is sent anew or closed in
-// between counted its email to no use. The job reads the SMTP settings, as
-// it does the invitation, and counts the email, on the workers' pool that it
-// carries, db, one connection at a time.
-func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUID, attempt int) error {
+// as still to be emailed, and send anew later. An attempt that finds the
+// invitation with a link does not count the email, because an earlier
+// attempt of the job, which counted it, gave it that link: so the retries
+// of an email that an SMTP server that is down refused, or that the
+// server's stop cut off, do not use up the address's limit. An attempt that
+// failed, or was cut off, before it gave the invitation its link, as one
+// that failed before its count, leaves the email to be counted by the next,
+// whatever its number, so that no email goes uncounted. The count is made
+// before the invitation is locked to be sent, in a transaction of its own,
+// so that no lock of the invitation waits on it; an invitation that is sent
+// anew or closed in between counted its email to no use. The job reads the
+// SMTP settings, as it does the invitation, and counts the email, on the
+// workers' pool that it carries, db, one connection at a time.
+func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUID) error {
 	if s.email == nil {
 		return nil
 	}
@@ -162,23 +166,24 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 	scope := database.Scope{WorkspaceID: id}
 	params := queries.LockInviteToSendParams{WorkspaceID: nullUUID(id), ID: nullUUID(inviteID),
 		EmailRequest: nullUUID(request)}
-	if attempt <= 1 {
-		var address string
-		err := db.InTx(ctx, scope, func(tx pgx.Tx) error {
-			row, err := queries.New(tx).LockInviteToSend(ctx, params)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
-			}
-			address = row.Email
-			return err
-		})
-		switch {
-		case err != nil:
-			return fmt.Errorf("invite: read the invitation to email: %w", err)
-		case address == "":
-			// Nothing to send, so nothing to count.
+	var address string
+	linked := false
+	err = db.InTx(ctx, scope, func(tx pgx.Tx) error {
+		row, err := queries.New(tx).LockInviteToSend(ctx, params)
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
+		address, linked = row.Email, row.Linked
+		return err
+	})
+	switch {
+	case err != nil:
+		return fmt.Errorf("invite: read the invitation to email: %w", err)
+	case address == "":
+		// Nothing to send, so nothing to count.
+		return nil
+	}
+	if !linked {
 		var over *ratelimit.LimitError
 		_, err = s.limits.TakeOn(ctx, db, ratelimit.InviteEmail, ratelimit.EmailAddress(address))
 		switch {

@@ -73,8 +73,11 @@ const (
 	// make the instance flood an inbox with invitations (FR-TEN-02). A
 	// workspace emails an address one invitation in 10 minutes at most
 	// (package invite), so the limit is above the 6 that one workspace can
-	// send in an hour, and only the invitations of several workspaces reach
-	// it.
+	// send in an hour, and the emails that one workspace sends do not reach
+	// it alone. Its counts that send nothing still can: an email that the
+	// SMTP server did not take, after which a resend is due at once, and
+	// one of an invitation sent anew or closed between its count and its
+	// sending, whose replacement counts again.
 	InviteEmail Bucket = "invite_email"
 )
 

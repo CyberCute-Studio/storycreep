@@ -252,7 +252,8 @@ func (q *Queries) LockInviteByHash(ctx context.Context, arg LockInviteByHashPara
 const lockInviteToSend = `-- name: LockInviteToSend :one
 SELECT
     i.email::text AS email, i.role,
-    COALESCE(u.locale, w.settings->>'default_locale') AS locale
+    COALESCE(u.locale, w.settings->>'default_locale') AS locale,
+    (i.token_hash IS NOT NULL)::boolean AS linked
 FROM invite i
 JOIN workspace w ON w.id = i.workspace_id AND w.status = 'active'
 LEFT JOIN "user" u ON u.email = i.email
@@ -271,6 +272,7 @@ type LockInviteToSendRow struct {
 	Email  string
 	Role   string
 	Locale pgtype.Text
+	Linked bool
 }
 
 // LockInviteToSend returns what the email of an invitation's link needs, if
@@ -280,15 +282,23 @@ type LockInviteToSendRow struct {
 // asked for it to be emailed, so that the job of a request that a later one
 // superseded sends nothing, while the job of the latest request is due once
 // the workspace may email the address again (InviteEmailDue): the address,
-// the role, and the locale that the email is written in, the preferred
-// locale of the account that the address belongs to, if it has one, and else
-// the workspace's default locale, as a BCP 47 tag, or null if neither has
-// one. It locks the invitation, so that the job that sends it and a use of
-// it, or its being sent anew, run one after the other.
+// the role, the locale that the email is written in, the preferred locale
+// of the account that the address belongs to, if it has one, and else the
+// workspace's default locale, as a BCP 47 tag, or null if neither has one,
+// and whether the invitation has a link: one that an earlier attempt of the
+// job of email_request gave it (SetInviteHash), since a request to email an
+// invitation leaves it without one. It locks the invitation, so that the job
+// that sends it and a use of it, or its being sent anew, run one after the
+// other.
 func (q *Queries) LockInviteToSend(ctx context.Context, arg LockInviteToSendParams) (LockInviteToSendRow, error) {
 	row := q.db.QueryRow(ctx, lockInviteToSend, arg.WorkspaceID, arg.ID, arg.EmailRequest)
 	var i LockInviteToSendRow
-	err := row.Scan(&i.Email, &i.Role, &i.Locale)
+	err := row.Scan(
+		&i.Email,
+		&i.Role,
+		&i.Locale,
+		&i.Linked,
+	)
 	return i, err
 }
 
