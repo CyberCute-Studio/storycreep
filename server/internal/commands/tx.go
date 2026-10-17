@@ -26,8 +26,9 @@ type Tx struct {
 	actor     Actor
 	project   ids.UUID
 	workspace ids.UUID
-	// current is the command whose revisions the pipeline checks, or that
-	// it undoes or applies.
+	// current is the command that the pipeline applies, or nil outside a
+	// command's Apply, as while it reads the revisions or computes an
+	// inverse, which only read, so that only Apply reports changes.
 	current *spec
 	// changed are the entities that the batch's commands changed, with their
 	// latest revisions, in the order of their first change, and at their
@@ -74,15 +75,16 @@ func (t *Tx) WorkspaceID() ids.UUID {
 // ID, which now has the revision rev, so that the operation's entity_refs,
 // and the batch's Result, name it with that revision. An entity that several
 // commands of the batch change is named once, with its latest revision. It
-// returns an error, which the command returns to refuse the batch, unless the
-// command touches the kind (Spec.Touches) and rev is above every revision of
-// the entity that the batch has seen, as it is when the command incremented
-// it.
+// returns an error, which the command returns to refuse the batch, unless it
+// is called from the command's Apply, which alone changes anything (not from
+// an Inverse, nor from an Entity's functions), the command touches the kind
+// (Spec.Touches), and rev is above every revision of the entity that the
+// batch has seen, as it is when the command incremented it.
 func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 	ref := Ref{Kind: kind, ID: id}
 	switch {
 	case t.current == nil:
-		return errors.New("commands: Changed is called outside a command")
+		return errors.New("commands: Changed is called outside a command's Apply")
 	case !slices.Contains(t.current.touches, kind):
 		return fmt.Errorf("commands: %s changed a %s, which it does not touch", t.current.typ, kind)
 	case rev < 1:

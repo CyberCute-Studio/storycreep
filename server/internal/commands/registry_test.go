@@ -12,6 +12,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 )
 
 // TestDecodeRefusesInvalidBatches checks that a batch is refused before
@@ -169,17 +170,49 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 	}
 
 	state := func(context.Context, *Tx, ids.UUID) (any, error) { return nil, nil }
-	rev := func(context.Context, *Tx, ids.UUID) (int64, bool, error) { return 0, false, nil }
+	revs := func(context.Context, *Tx, []ids.UUID) (map[ids.UUID]int64, error) { return nil, nil }
 	for name, e := range map[string]Entity{
-		"no kind":             {Rev: rev, State: state},
-		"no Rev":              {Kind: ids.Board, State: state},
-		"no State":            {Kind: ids.Board, Rev: rev},
-		"a registered kind":   {Kind: ids.Node, Rev: rev, State: state},
-		"a kind out of range": {Kind: ids.Kind(200), Rev: rev, State: state},
+		"no kind":             {Revs: revs, State: state},
+		"no Revs":             {Kind: ids.Board, State: state},
+		"no State":            {Kind: ids.Board, Revs: revs},
+		"a registered kind":   {Kind: ids.Node, Revs: revs, State: state},
+		"a kind out of range": {Kind: ids.Kind(200), Revs: revs, State: state},
 	} {
 		if !panics(func() { RegisterEntity(noteRegistry(), e) }) {
 			t.Errorf("RegisterEntity accepts %s", name)
 		}
+	}
+}
+
+// FieldError is a payload whose type has the name of input.FieldError, a
+// type of another package.
+type FieldError struct {
+	Field string `json:"field"`
+}
+
+// TestRegisterKeepsPackagesApart checks that the payloads' types of two
+// packages that share a name each have a schema of their own, which validates
+// its own payloads, rather than the second's registration panicking as a
+// duplicate of the first.
+func TestRegisterKeepsPackagesApart(t *testing.T) {
+	r := noteRegistry()
+	theirs, ours := Type("note.theirs"), Type("note.ours")
+	if panics(func() {
+		Register(r, Spec[input.FieldError]{Type: theirs, Capability: authz.ListMembers, Touches: []ids.Kind{ids.Node},
+			NonUndoable: true, Apply: func(context.Context, *Tx, input.FieldError) error { return nil }})
+		Register(r, Spec[FieldError]{Type: ours, Capability: authz.ListMembers, Touches: []ids.Kind{ids.Node},
+			NonUndoable: true, Apply: func(context.Context, *Tx, FieldError) error { return nil }})
+	}) {
+		t.Fatal("Register refuses a payload whose type has the name of another package's")
+	}
+	raw := func(s string) json.RawMessage { return json.RawMessage(s) }
+	if _, err := r.decode([]Command{{ID: ids.New(), Type: theirs, Payload: raw(`{"Field": "a", "Message": "b"}`)},
+		{ID: ids.New(), Type: ours, Payload: raw(`{"field": "a"}`)}}); err != nil {
+		t.Errorf("each payload against its own schema: %v", err)
+	}
+	_, err := r.decode([]Command{{ID: ids.New(), Type: ours, Payload: raw(`{"Field": "a", "Message": "b"}`)}})
+	if !hasProblem(err, 0, "payload.Message") {
+		t.Errorf("a payload of one type against the other's schema: %v", err)
 	}
 }
 

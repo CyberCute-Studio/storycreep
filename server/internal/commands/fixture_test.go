@@ -67,7 +67,8 @@ const (
 	// noteMisreport changes a note as its payload's mode says Changed is not
 	// to be called.
 	noteMisreport Type = "note.misreport"
-	// noteBadInverse is undone by a step that cannot be applied.
+	// noteBadInverse is undone by a step that cannot be applied, or has an
+	// inverse that reports a change.
 	noteBadInverse Type = "note.bad_inverse"
 )
 
@@ -97,6 +98,10 @@ type badInversePayload struct {
 	// Step is the type of its inverse's step, whose payload is an empty
 	// object.
 	Step Type `json:"step"`
+	// Changes makes the inverse report a change of the note instead, which
+	// only Apply may, and then be the note's deletion, which an undo could
+	// apply.
+	Changes bool `json:"changes,omitempty"`
 }
 
 // noteState is a note as the State of its entity shows it.
@@ -170,12 +175,21 @@ func noteRegistry() *Registry {
 	r := NewRegistry()
 	RegisterEntity(r, Entity{
 		Kind: ids.Node,
-		Rev: func(ctx context.Context, tx *Tx, id ids.UUID) (int64, bool, error) {
-			s, err := readNote(ctx, tx, id)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return 0, false, nil
+		Revs: func(ctx context.Context, tx *Tx, notes []ids.UUID) (map[ids.UUID]int64, error) {
+			revs := map[ids.UUID]int64{}
+			rows, err := tx.Query(ctx, "SELECT id, rev FROM note "+
+				"WHERE workspace_id = $1 AND project_id = $2 AND id = ANY($3::uuid[])", tx.WorkspaceID(), tx.ProjectID(),
+				notes)
+			if err != nil {
+				return nil, err
 			}
-			return s.Rev, err == nil, err
+			var id ids.UUID
+			var rev int64
+			_, err = pgx.ForEachRow(rows, []any{&id, &rev}, func() error {
+				revs[id] = rev
+				return nil
+			})
+			return revs, err
 		},
 		State: func(ctx context.Context, tx *Tx, id ids.UUID) (any, error) {
 			return readNote(ctx, tx, id)
@@ -255,7 +269,13 @@ func noteRegistry() *Registry {
 	})
 	Register(r, Spec[badInversePayload]{
 		Type: noteBadInverse, Capability: authz.ListMembers, Touches: touches,
-		Inverse: func(_ context.Context, _ *Tx, p badInversePayload) ([]Step, error) {
+		Inverse: func(_ context.Context, tx *Tx, p badInversePayload) ([]Step, error) {
+			if p.Changes {
+				if err := tx.Changed(ids.Node, noteUUID(p.ID), 1<<40); err != nil {
+					return nil, err
+				}
+				return []Step{{Type: noteDelete, Payload: noteIDPayload{ID: p.ID}}}, nil
+			}
 			return []Step{{Type: p.Step, Payload: struct{}{}}}, nil
 		},
 		Apply: func(context.Context, *Tx, badInversePayload) error { return nil },
@@ -280,10 +300,12 @@ const (
 	outsiderUser      = "outsider"
 )
 
-// notice is what a Notifier was told.
+// notice is what a Notifier was told, and whether its context was one that
+// nothing cancels.
 type notice struct {
-	project ids.UUID
-	seq     int64
+	project  ids.UUID
+	seq      int64
+	detached bool
 }
 
 // recorder is a Notifier that records what it is told.
@@ -292,10 +314,10 @@ type recorder struct {
 	notices []notice
 }
 
-func (r *recorder) Committed(_ context.Context, projectID ids.UUID, seq int64) {
+func (r *recorder) Committed(ctx context.Context, projectID ids.UUID, seq int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.notices = append(r.notices, notice{projectID, seq})
+	r.notices = append(r.notices, notice{projectID, seq, ctx.Done() == nil})
 }
 
 func (r *recorder) told() []notice {

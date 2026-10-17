@@ -11,11 +11,14 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
@@ -65,9 +68,12 @@ func sameJSON(t *testing.T, a []byte, b string) bool {
 // and the entities that it changed with their revisions after it, which its
 // Result names too; that each of its commands is recorded as applied with
 // the seq; that the audit entries and the jobs of its commands commit with
-// it; and that the Notifier is told its seq once it has committed.
+// it; and that the Notifier is told its seq once it has committed, with a
+// context that the request's cancellation does not reach.
 func TestApplyAppendsTheOperation(t *testing.T) {
-	ctx := context.Background()
+	// The request's context can be cancelled, as a request's is.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	w := newWorld(t)
 	p := w.pipeline(t, nil)
 	a, aID := newNote()
@@ -145,7 +151,7 @@ func TestApplyAppendsTheOperation(t *testing.T) {
 		w.users[ownerUser]); n != 2 {
 		t.Errorf("%d of the audit entries are the batches' actor's in their workspace, want 2", n)
 	}
-	if want := []notice{{w.project, 1}, {w.project, 2}}; !slices.Equal(w.notes.told(), want) {
+	if want := []notice{{w.project, 1, true}, {w.project, 2, true}}; !slices.Equal(w.notes.told(), want) {
 		t.Errorf("the notifier was told %v, want %v", w.notes.told(), want)
 	}
 }
@@ -445,8 +451,10 @@ func TestRoles(t *testing.T) {
 	}
 }
 
-// TestNotFound checks that a batch of a project that does not exist, or of
-// another workspace's project, is told that the project does not exist.
+// TestNotFound checks that a batch of a project that does not exist, of
+// another workspace's project, or of a project of a workspace whose deletion
+// is pending, which blocks every access to it at once, its owners' too
+// (FR-TEN-05 AC1), is told that the project does not exist.
 func TestNotFound(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -456,8 +464,14 @@ func TestNotFound(t *testing.T) {
 	w.exec(t, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Other', $2, 'unlimited')", other,
 		"other-"+other.String()[:8])
 	w.exec(t, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", otherProject, other)
+	deleting, deletingProject := ids.New(), ids.New()
+	w.exec(t, "INSERT INTO workspace (id, name, slug, plan_key, status, deleted_at) "+
+		"VALUES ($1, 'Deleting', $2, 'unlimited', 'pending_deletion', now())", deleting, "deleting-"+deleting.String()[:8])
+	w.exec(t, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", deletingProject, deleting)
+	w.exec(t, "INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'owner')", ids.New(),
+		deleting, w.users[ownerUser])
 	for name, project := range map[string]ids.UUID{"no project": ids.New(), "no ID": {},
-		"another workspace's project": otherProject} {
+		"another workspace's project": otherProject, "a project of a workspace being deleted": deletingProject} {
 		_, id := newNote()
 		_, err := p.Apply(ctx, w.as(ownerUser), project,
 			[]Command{command(t, noteCreate, notePayload{ID: id, Body: "lost"}, nil)})
@@ -468,6 +482,89 @@ func TestNotFound(t *testing.T) {
 	if got := w.written(t); got != (written{}) {
 		t.Errorf("the refused batches wrote %+v", got)
 	}
+}
+
+// TestIsolation tries the pipeline's queries on another workspace's rows,
+// from a transaction of one workspace, where row-level security must keep
+// them from reading or locking its memberships, grants, and projects, from
+// setting a project's seq, and from adding to its operation log and its
+// applied commands (NFR-SEC-01).
+//
+// Verifies: NFR-SEC-01
+func TestIsolation(t *testing.T) {
+	t.Parallel()
+	f := isolationtest.New(t, dbtest.New(t), isolationtest.Tables)
+	ctx := context.Background()
+	// column reads, as the superuser, a column of the row of a table that
+	// the fixture added to the workspace.
+	column := func(w *isolationtest.Workspace, table, name string) ids.UUID {
+		var id ids.UUID
+		if err := f.Admin().QueryRow(ctx, "SELECT "+name+" FROM "+table+" WHERE id = $1", w.Rows[table]).
+			Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	found := func(id ids.UUID, err error) ([]ids.UUID, error) {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return []ids.UUID{id}, err
+	}
+	f.Check(t, isolationtest.Op{
+		Name: "a membership, locked",
+		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
+			m, err := queries.New(tx).ShareMembership(ctx, queries.ShareMembershipParams{
+				WorkspaceID: nullUUID(target.ID), UserID: nullUUID(column(target, "membership", "user_id"))})
+			return found(m.ID.Bytes, err)
+		},
+	})
+	f.Check(t, isolationtest.Op{
+		Name: "a project grant, locked",
+		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
+			_, err := queries.New(tx).ShareProjectGrant(ctx, queries.ShareProjectGrantParams{
+				WorkspaceID: nullUUID(target.ID), MembershipID: nullUUID(target.Rows["membership"]),
+				ProjectID: nullUUID(column(target, "project_grant", "project_id"))})
+			return found(target.Rows["project_grant"], err)
+		},
+	})
+	f.Check(t, isolationtest.Op{
+		Name: "a project's seq, locked",
+		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
+			_, err := queries.New(tx).LockProjectSeq(ctx, queries.LockProjectSeqParams{
+				WorkspaceID: nullUUID(target.ID), ID: nullUUID(target.Rows["project"])})
+			return found(target.Rows["project"], err)
+		},
+	})
+	f.Check(t, isolationtest.Op{
+		Name:  "a project's new seq",
+		Blind: true,
+		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
+			return nil, queries.New(tx).SetProjectSeq(ctx, queries.SetProjectSeqParams{Seq: 1,
+				WorkspaceID: nullUUID(target.ID), ID: nullUUID(target.Rows["project"])})
+		},
+	})
+	f.Check(t, isolationtest.Op{
+		Name:   "a new operation",
+		Denied: true,
+		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
+			id := ids.New()
+			return []ids.UUID{id}, queries.New(tx).InsertOperation(ctx, queries.InsertOperationParams{ID: nullUUID(id),
+				WorkspaceID: nullUUID(target.ID), ProjectID: nullUUID(target.Rows["project"]), Seq: 1,
+				CommandIds: []pgtype.UUID{nullUUID(ids.New())}, ActorUserID: nullUUID(target.UserID),
+				Type: string(noteCreate), Payload: []byte("[]"), EntityRefs: []byte("[]")})
+		},
+	})
+	f.Check(t, isolationtest.Op{
+		Name:   "a new applied command",
+		Denied: true,
+		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
+			id := ids.New()
+			return []ids.UUID{id}, queries.New(tx).InsertAppliedCommands(ctx, queries.InsertAppliedCommandsParams{
+				WorkspaceID: nullUUID(target.ID), ProjectID: nullUUID(target.Rows["project"]), Seq: 1,
+				CommandIds: []pgtype.UUID{nullUUID(id)}})
+		},
+	})
 }
 
 // TestLimits checks that the limits of the workspace's plan are checked for
@@ -503,8 +600,9 @@ func TestLimits(t *testing.T) {
 }
 
 // TestUndo checks that a batch with a command that cannot be undone has no
-// inverse, and that a command whose inverse could not be applied refuses
-// its batch.
+// inverse, for which none of its commands' inverses is computed, and that a
+// command whose inverse could not be applied refuses a batch that can be
+// undone.
 func TestUndo(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -530,11 +628,24 @@ func TestUndo(t *testing.T) {
 	if after := w.written(t); after != before {
 		t.Errorf("the refused batches wrote %+v, where there was %+v", after, before)
 	}
+
+	// The batch cannot be undone, so the inverse that could not be applied
+	// is not computed, and does not refuse it.
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, noteBadInverse, badInversePayload{ID: xID, Step: "note.unknown"}, nil),
+		command(t, noteDelete, noteIDPayload{ID: xID}, nil),
+	}); err != nil {
+		t.Fatalf("a batch that cannot be undone, with an inverse that could not be applied: %v", err)
+	}
+	if o := w.operation(t, 2); o.inverse != nil {
+		t.Errorf("a batch that cannot be undone has the inverse %s", o.inverse)
+	}
 }
 
 // TestChanged checks that a command that reports a change of an entity of a
 // kind that it does not touch, or a revision that the entity had already, or
-// none, refuses its batch.
+// none, refuses its batch, as does one whose inverse reports a change, which
+// only Apply may.
 func TestChanged(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -551,6 +662,12 @@ func TestChanged(t *testing.T) {
 		if err == nil {
 			t.Errorf("a command that misreports its change (%s) applies", mode)
 		}
+	}
+	// The inverse's step could be applied, so only the change that it
+	// reports refuses the batch.
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{command(t, noteBadInverse,
+		badInversePayload{ID: xID, Step: noteDelete, Changes: true}, map[Ref]int64{noteRef(x): 1})}); err == nil {
+		t.Error("a command whose inverse reports a change applies")
 	}
 	if got := w.written(t); got.seq != 1 {
 		t.Errorf("the refused batches left the seq %d", got.seq)

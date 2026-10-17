@@ -1,9 +1,13 @@
 -- name: ProjectWorkspace :one
 -- ProjectWorkspace returns the workspace of the project, through the context
--- bootstrap (PRD §5.4), or null if there is no such project. A transaction
--- without a workspace calls it, to find the workspace that the request's
--- transaction then acts in.
-SELECT route_project_workspace(@project_id::uuid)::uuid AS workspace_id;
+-- bootstrap (PRD §5.4), and no row if there is no such project, or if its
+-- workspace's deletion is pending, which blocks every access to it at once
+-- (FR-TEN-05 AC1), as it does to the workspaces that the queries of package
+-- workspace find. A transaction without a workspace calls it, to find the
+-- workspace that the request's transaction then acts in; the workspace table
+-- has no row-level security, so the transaction reads its status.
+SELECT w.id FROM workspace w
+WHERE w.id = route_project_workspace(@project_id::uuid) AND w.status = 'active';
 
 -- name: ShareMembership :one
 -- ShareMembership returns a user's membership of the workspace, and no row if

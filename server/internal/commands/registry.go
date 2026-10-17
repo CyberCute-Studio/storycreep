@@ -64,8 +64,10 @@ type Spec[P any] struct {
 	// Inverse returns the commands that undo the command, in the order to
 	// apply them (§10.4). The pipeline calls it in the batch's transaction
 	// once it has checked the command's revisions, right before Apply, so
-	// that it reads the state that Apply changes. Exactly one of Inverse and
-	// NonUndoable is set.
+	// that it reads the state that Apply changes, unless a command of the
+	// batch is NonUndoable, which leaves the batch without an inverse. It
+	// only reads, so it reports no change (Tx.Changed). Exactly one of
+	// Inverse and NonUndoable is set.
 	Inverse func(ctx context.Context, tx *Tx, p P) ([]Step, error)
 	// NonUndoable marks a command without a meaningful inverse, whose batch
 	// cannot be undone.
@@ -94,16 +96,19 @@ type Step struct {
 
 // Entity registers a kind of entity that commands change, whose rows carry a
 // revision, rev, which every change increments (PRD §5.7, ADR-006). Its
-// functions read the entity of the batch's project in the batch's
+// functions read the entities of the batch's project in the batch's
 // transaction. The pipeline applies a project's batches one at a time, under
 // a lock of the project's row, so what they read stays as it is until a
 // command of the batch changes it.
 type Entity struct {
 	Kind ids.Kind
-	// Rev returns the entity's revision, and false if the project has no
-	// such entity, as when it never existed or has been purged. An entity in
-	// the trash still exists.
-	Rev func(ctx context.Context, tx *Tx, id ids.UUID) (rev int64, found bool, err error)
+	// Revs returns, by their IDs, the revisions of the project's entities of
+	// the kind whose IDs are among entities, and leaves out an ID that the
+	// project has no such entity of, as when it never existed or has been
+	// purged. An entity in the trash still exists. The pipeline asks once for
+	// every entity of the kind that a batch expects a revision of, so that a
+	// batch over many entities costs one query of each kind.
+	Revs func(ctx context.Context, tx *Tx, entities []ids.UUID) (map[ids.UUID]int64, error)
 	// State returns the entity as it is now, as the API shows it, which a
 	// client that sent a stale revision is answered with
 	// (RevisionConflictError). It encodes as JSON.
@@ -124,7 +129,29 @@ type Registry struct {
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
 	return &Registry{specs: map[Type]*spec{}, entities: map[ids.Kind]Entity{},
-		schemas: huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)}
+		schemas: huma.NewMapRegistry("#/components/schemas/", schemaName)}
+}
+
+// schemaName names the schema of a payload, and of each struct that it
+// holds, as huma.DefaultSchemaNamer does, after the Go type, but with the
+// path of the type's package before it, so that the types of two packages
+// that share a name, as the CreatePayload of two kinds of entity, each have a
+// schema of their own, where huma's registry would refuse the second with a
+// panic. The registry only validates payloads, so the names are never shown.
+func schemaName(t reflect.Type, hint string) string {
+	name := huma.DefaultSchemaNamer(t, hint)
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.PkgPath() == "" {
+		return name
+	}
+	return strings.Map(func(r rune) rune {
+		if 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' {
+			return r
+		}
+		return '_'
+	}, t.PkgPath()) + "_" + name
 }
 
 // Types returns the registered types of command, in order.
@@ -143,8 +170,8 @@ func RegisterEntity(r *Registry, e Entity) {
 	switch {
 	case !validKind(e.Kind):
 		panic(fmt.Sprintf("commands: %v is not a kind of entity", e.Kind))
-	case e.Rev == nil || e.State == nil:
-		panic(fmt.Sprintf("commands: the entity %s needs both Rev and State", e.Kind))
+	case e.Revs == nil || e.State == nil:
+		panic(fmt.Sprintf("commands: the entity %s needs both Revs and State", e.Kind))
 	}
 	if _, ok := r.entities[e.Kind]; ok {
 		panic(fmt.Sprintf("commands: the entity %s is registered already", e.Kind))
@@ -310,11 +337,12 @@ func (r *Registry) decode(batch []Command) ([]decoded, error) {
 	first := map[ids.UUID]int{}
 	for i, c := range batch {
 		add := func(field, msg string) { problems = append(problems, Problem{Command: i, Field: field, Message: msg}) }
-		if j, dup := first[c.ID]; dup && c.ID != (ids.UUID{}) {
-			add("command_id", fmt.Sprintf("is the ID of command %d of the batch too", j))
-		} else if c.ID == (ids.UUID{}) {
+		switch j, dup := first[c.ID]; {
+		case c.ID == (ids.UUID{}):
 			add("command_id", "is missing")
-		} else {
+		case dup:
+			add("command_id", fmt.Sprintf("is the ID of command %d of the batch too", j))
+		default:
 			first[c.ID] = i
 		}
 		s, ok := r.specs[c.Type]
@@ -380,28 +408,31 @@ func (r *Registry) validate(schema *huma.Schema, raw []byte) input.FieldErrors {
 	return out
 }
 
-// checkSteps returns an error unless every step of an inverse is a
-// registered type of command whose payload its schema and Check allow, so
-// that an undo can apply it.
-func (r *Registry) checkSteps(steps []Step) error {
+// checkSteps returns the steps of an inverse as the operation log keeps
+// them, each with its payload encoded once, or an error unless every step
+// is a registered type of command whose payload its schema and Check allow,
+// so that an undo can apply it.
+func (r *Registry) checkSteps(steps []Step) ([]logStep, error) {
+	out := make([]logStep, len(steps))
 	for i, st := range steps {
 		s, ok := r.specs[st.Type]
 		if !ok {
-			return fmt.Errorf("step %d has the type %q, which is not registered", i, st.Type)
+			return nil, fmt.Errorf("step %d has the type %q, which is not registered", i, st.Type)
 		}
 		raw, err := json.Marshal(st.Payload)
 		if err != nil {
-			return fmt.Errorf("step %d (%s) does not encode: %w", i, st.Type, err)
+			return nil, fmt.Errorf("step %d (%s) does not encode: %w", i, st.Type, err)
 		}
 		problems := r.validate(s.schema, raw)
 		if len(problems) == 0 {
 			_, _, problems = s.decode(raw)
 		}
 		if len(problems) > 0 {
-			return fmt.Errorf("step %d (%s) is not valid: %w", i, st.Type, problems)
+			return nil, fmt.Errorf("step %d (%s) is not valid: %w", i, st.Type, problems)
 		}
+		out[i] = logStep{Type: st.Type, Payload: raw}
 	}
-	return nil
+	return out, nil
 }
 
 // sortedRefs returns the entities of revs in order of their kinds and IDs.
