@@ -296,7 +296,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-API-03 AC2 (single batch) and AC3 pass at the service level.
 
 ### 23. Usage metering
-**Status:** todo · **Depends on:** 22
+**Status:** done ([#26](https://github.com/CyberCute-Studio/storycreep/pull/26)) · **Depends on:** 22
 **PRD:** FR-ENT-02, FR-ENT-01 (`members` limit), §5.7
 - `usage_delta` rows inserted in the command transaction, and `usage_counter`. The meter that the entitlement layer's `Check` reads usage through (N29, N31).
 - A rollup job using `DELETE … RETURNING`, and a reconciliation job.
