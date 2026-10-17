@@ -28,15 +28,19 @@
 // and only the job of the latest request to email an invitation sends
 // anything, so that sending an invitation anew again and again cannot flood
 // an inbox, even when the jobs of the earlier requests are retried, as once
-// an SMTP server that was down takes email again. The instance also emails
-// an address 10 invitations an hour at most, from all workspaces together
-// (ratelimit.InviteEmail), so that an account that owns many workspaces
-// cannot flood an inbox either: the job of an email over that limit is put
-// off until its turn in a later hour, and no answer says why, so that
-// inviting an address does not tell a workspace that others invited it. An
-// account that fills the limit with invitations of workspaces of its own
-// can still tell, from how many of them are emailed within the hour, that
-// other workspaces used some of it, as any limit of an address alone lets
+// an SMTP server that was down takes email again. The instance also paces
+// the invitations that it emails an address, from all workspaces together
+// (ratelimit.InviteEmail): 10 at once, and then one every 6 minutes, so that
+// an account that owns many workspaces cannot flood an inbox either. The
+// email of an invitation over that pace takes a turn in the address's queue,
+// which the invitation holds, however often it is sent anew, and its job is
+// put off until then, and no answer says why, so that inviting an address
+// does not tell a workspace that others invited it; a workspace whose
+// invitation is revoked while its email waits emails the address no other
+// until ResendInterval after that turn, so that its invitations hold one
+// turn at a time. An account that fills the queue with invitations of
+// workspaces of its own can still tell, from when they are emailed, that
+// other workspaces took turns in it, as any limit of an address alone lets
 // whoever fills it tell.
 // The email names no one and nothing but the instance and the role, never
 // the workspace or the inviting user, whose names their users chose, so that
@@ -148,7 +152,7 @@ type Options struct {
 	// none, as in tests.
 	Email *email.Service
 	// Queue enqueues the jobs that email invitations, in the transaction of
-	// the change that needs them, as *jobs.Queue does, and Limits counts the
+	// the change that needs them, as *jobs.Queue does, and Limits paces the
 	// invitations that the jobs email each address (ratelimit.InviteEmail).
 	// Both must be set where Email is.
 	Queue  account.Enqueuer

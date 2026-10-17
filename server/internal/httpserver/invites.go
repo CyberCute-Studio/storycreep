@@ -166,13 +166,14 @@ type registerWithInviteInput struct {
 }
 
 // inviteEmailLimitDoc says, in the description of an operation that emails
-// an invitation, how the limit of invitation emails to an address, from all
+// an invitation, how the pace of invitation emails to an address, from all
 // workspaces together, puts the email off (ratelimit.InviteEmail).
-const inviteEmailLimitDoc = " The instance also emails an address 10 invitations an hour at most, from all " +
-	"workspaces together: the email of an invitation over that limit waits for a later hour, as the emails that " +
-	"the limit puts off are sent about in the order in which it put them off, 10 an hour, and its sent_at stays " +
-	"empty until then. An invitation that expires before its email is sent is not emailed, and sending it anew " +
-	"gives it 14 days more, and its email a place after those that wait already."
+const inviteEmailLimitDoc = " The instance also paces the invitations that it emails an address, from all " +
+	"workspaces together: 10 at once, and then one every 6 minutes. The email of an invitation over that pace " +
+	"takes a turn after those that wait already, and is sent then, in the order of the turns, and the " +
+	"invitation's sent_at stays empty until then. Sending the invitation anew keeps its turn, and gives it 14 " +
+	"days more; one that expires before its turn is not emailed. A workspace whose invitation is revoked while " +
+	"its email waits emails the address no other invitation until 10 minutes after that turn."
 
 // manageMembersDoc says, in the description of an operation that manages a
 // workspace's members or invitations, who may.

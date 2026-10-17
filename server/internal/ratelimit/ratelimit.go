@@ -5,12 +5,16 @@
 // A rate limit counts the requests of a kind, a bucket (auth, read, write,
 // export, or connect), separately for each key that makes them: the
 // client's IP address, the signed-in user, or the email address that a
-// request names. One bucket counts no request but email that the instance
-// sends: the invitations that it emails an address (InviteEmail). Each
-// bucket counts in fixed windows of time, of the same length for every key,
-// and allows each kind of key a number of requests in a window (Policy). A
-// request is allowed only if none of its keys has used up its limit, and
-// counts against all of them either way.
+// request names. Each bucket counts in fixed windows of time, of the same
+// length for every key, and allows each kind of key a number of requests in
+// a window (Policy). A request is allowed only if none of its keys has used
+// up its limit, and counts against all of them either way.
+//
+// One bucket counts no request, but email that the instance sends: the
+// invitations that it emails an address (InviteEmail). It paces them rather
+// than counting them in windows (ReserveTx): an email over its limit is not
+// refused, but takes a turn, after those that took one before it, and waits
+// for it.
 //
 // The counters are rows in PostgreSQL, and every server of an instance
 // counts in the same rows, with the database's clock, so the limits hold
@@ -68,8 +72,8 @@ const (
 	// Connect is the opening of a WebSocket connection.
 	Connect Bucket = "connect"
 	// InviteEmail is the email of an invitation to an address, which the
-	// job that sends it counts against the address, from every workspace
-	// together, so that no account, however many workspaces it owns, can
+	// job that sends it paces by the address, from every workspace together
+	// (ReserveTx), so that no account, however many workspaces it owns, can
 	// make the instance flood an inbox with invitations (FR-TEN-02). A
 	// workspace emails an address one invitation in 10 minutes at most
 	// (package invite), so its limit is above the 6 that one workspace can
@@ -139,9 +143,14 @@ type Rate struct {
 	// Period is the length of the bucket's windows, which start at the
 	// multiples of Period since the Unix epoch.
 	Period time.Duration
-	// Limits are how many requests each kind of key may make in a window. A
-	// key of a kind without a limit cannot be taken in the bucket.
+	// Limits are how many requests each kind of key may make in a window,
+	// or, in a bucket that paces them, at once, and then one in each
+	// Period/Limit. A key of a kind without a limit cannot be taken in the
+	// bucket.
 	Limits map[Kind]int
+	// Paced makes the bucket pace the requests of a key (ReserveTx) rather
+	// than count them in windows (Take).
+	Paced bool
 }
 
 // Lockout is when failed sign-ins lock an email address.
@@ -174,8 +183,9 @@ func DefaultPolicy() Policy {
 			Write:   {Period: time.Minute, Limits: map[Kind]int{IP: 600, User: 300}},
 			Export:  {Period: time.Hour, Limits: map[Kind]int{IP: 60, User: 30}},
 			Connect: {Period: time.Minute, Limits: map[Kind]int{IP: 60, User: 30}},
-			// Invitation emails are counted by the address alone, in hours.
-			InviteEmail: {Period: time.Hour, Limits: map[Kind]int{Email: 10}},
+			// Invitation emails are paced by the address alone: 10 at once,
+			// and then one every 6 minutes.
+			InviteEmail: {Period: time.Hour, Limits: map[Kind]int{Email: 10}, Paced: true},
 		},
 		Lockout: Lockout{Failures: 10, First: time.Minute, Max: 15 * time.Minute, Forget: 24 * time.Hour},
 	}
@@ -250,10 +260,6 @@ type LimitError struct {
 	Bucket Bucket
 	// Decision is the state of the key that refused it.
 	Decision Decision
-	// over is how many requests of that key its window has refused, this
-	// one included, and period is the length of the bucket's windows.
-	over   int
-	period time.Duration
 }
 
 func (e *LimitError) Error() string {
@@ -264,22 +270,6 @@ func (e *LimitError) Error() string {
 // RetryAfter is how long until the request would be allowed.
 func (e *LimitError) RetryAfter() time.Duration {
 	return e.Decision.Reset
-}
-
-// Turn is how long until the request's turn, if the requests of the key that
-// its limit refuses were each allowed in a later window, as many in each as
-// the limit allows, in the order in which they were refused: until the
-// window ends for the first Limit of them that it refuses, until the window
-// after it ends for the next Limit, and so on. Work that a limit refuses and
-// that waits for its turn, as a job that snoozes does, rather than for the
-// window to end, is tried again a window's worth at a time, about in the
-// order in which it was refused, instead of all at once when the window ends,
-// to be refused again but for Limit of it.
-func (e *LimitError) Turn() time.Duration {
-	if e.over <= 0 || e.Decision.Limit <= 0 {
-		return e.Decision.Reset
-	}
-	return e.Decision.Reset + time.Duration((e.over-1)/e.Decision.Limit)*e.period
 }
 
 // LockedError is the error of a sign-in with an email address that is
@@ -312,56 +302,10 @@ type counted struct {
 // none if every key is hidden. If one of the keys has used up its limit,
 // Take returns a *LimitError, with the state of that key, whether or not it
 // is hidden. It panics on a bucket or a key that the policy does not limit,
-// which is a mistake in the code that calls it.
+// or on a bucket that paces its requests, which is a mistake in the code that
+// calls it.
 func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decision, error) {
-	rate, cs := l.counted(bucket, keys)
-	if len(cs) == 0 {
-		return Decision{}, nil
-	}
-	var rows []queries.TakeRateLimitRow
-	err := l.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-		// The commit need not wait for the disk, which TakeRateLimit tells it
-		// in the same statement: a crash of the database would lose only a
-		// few requests' counts, and a limit lets a few more requests through
-		// then.
-		var err error
-		cs, rows, err = l.count(ctx, queries.New(tx), bucket, rate, cs, false)
-		return err
-	})
-	if err != nil {
-		return Decision{}, err
-	}
-	return decide(bucket, rate, cs, rows)
-}
-
-// TakeTx counts a request as Take does, but in tx, a transaction of the
-// caller's, so that the request is counted, allowed or refused, only if tx
-// commits, with whatever else tx changes, whose commit waits for the disk as
-// it would have. The counters of keys stay locked until tx ends, so a
-// transaction that counts a key waits for any other that has counted it to
-// end, and a caller that locks rows of its own as well locks them before it
-// counts, as every caller that counts those keys does, so that none waits
-// for another that waits for it.
-func (l *Limiter) TakeTx(ctx context.Context, tx pgx.Tx, bucket Bucket, keys ...Key) (Decision, error) {
-	rate, cs := l.counted(bucket, keys)
-	if len(cs) == 0 {
-		return Decision{}, nil
-	}
-	cs, rows, err := l.count(ctx, queries.New(tx), bucket, rate, cs, true)
-	if err != nil {
-		return Decision{}, err
-	}
-	return decide(bucket, rate, cs, rows)
-}
-
-// counted returns the rate of bucket, and the keys that a request of it
-// counts against, with their limits. It panics on a bucket or a key that
-// the policy does not limit.
-func (l *Limiter) counted(bucket Bucket, keys []Key) (Rate, []counted) {
-	rate, ok := l.policy.Rates[bucket]
-	if !ok {
-		panic(fmt.Sprintf("ratelimit: the bucket %q has no rate", bucket))
-	}
+	rate := l.rate(bucket, false)
 	cs := make([]counted, len(keys))
 	for i, k := range keys {
 		limit, ok := rate.Limits[k.kind]
@@ -370,55 +314,53 @@ func (l *Limiter) counted(bucket Bucket, keys []Key) (Rate, []counted) {
 		}
 		cs[i] = counted{Key: k, limit: limit}
 	}
-	return rate, cs
-}
-
-// count counts a request in bucket, whose rate is rate, against each of cs,
-// with q, a transaction's queries, and returns cs with their hashes, each
-// key once, and their counters. Unless flush is set, the transaction then
-// commits without waiting for the disk (TakeRateLimit).
-func (l *Limiter) count(ctx context.Context, q *queries.Queries, bucket Bucket, rate Rate, cs []counted,
-	flush bool) ([]counted, []queries.TakeRateLimitRow, error) {
-	for i := range cs {
-		var err error
-		if cs[i].hash, err = l.hash(ctx, q, cs[i].Key); err != nil {
-			return nil, nil, err
+	if len(cs) == 0 {
+		return Decision{}, nil
+	}
+	var rows []queries.TakeRateLimitRow
+	err := l.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		q := queries.New(tx)
+		for i := range cs {
+			var err error
+			if cs[i].hash, err = l.hash(ctx, q, cs[i].Key); err != nil {
+				return err
+			}
 		}
-	}
-	// Two requests that share keys lock their rows in the same order. A key
-	// given twice counts once, because one statement cannot change a row
-	// twice.
-	slices.SortFunc(cs, func(a, b counted) int { return bytes.Compare(a.hash, b.hash) })
-	cs = slices.CompactFunc(cs, func(a, b counted) bool { return bytes.Equal(a.hash, b.hash) })
-	hashes := make([][]byte, len(cs))
-	for i, c := range cs {
-		hashes[i] = c.hash
-	}
-	// Every request of a key counts in the key's one row, so the requests of
-	// a key wait for each other's commits.
-	rows, err := q.TakeRateLimit(ctx, queries.TakeRateLimitParams{Bucket: string(bucket),
-		Period: database.Interval(rate.Period), Keys: hashes, Flush: flush})
+		// Two requests that share keys lock their rows in the same order. A
+		// key given twice counts once, because one statement cannot change a
+		// row twice.
+		slices.SortFunc(cs, func(a, b counted) int { return bytes.Compare(a.hash, b.hash) })
+		cs = slices.CompactFunc(cs, func(a, b counted) bool { return bytes.Equal(a.hash, b.hash) })
+		hashes := make([][]byte, len(cs))
+		for i, c := range cs {
+			hashes[i] = c.hash
+		}
+		// Every request of a key counts in the key's one row, so the requests
+		// of a key wait for each other's commits. The commit need not wait for
+		// the disk, which TakeRateLimit tells it in the same statement: a crash
+		// of the database would lose only a few requests' counts, and a limit
+		// lets a few more requests through then.
+		var err error
+		rows, err = q.TakeRateLimit(ctx, queries.TakeRateLimitParams{Bucket: string(bucket),
+			Period: database.Interval(rate.Period), Keys: hashes})
+		if err != nil {
+			return fmt.Errorf("ratelimit: count the request: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("ratelimit: count the request: %w", err)
+		return Decision{}, err
 	}
-	return cs, rows, nil
-}
-
-// decide returns what Take returns for a request in bucket, whose rate is
-// rate, that count counted against cs, with their counters rows.
-func decide(bucket Bucket, rate Rate, cs []counted, rows []queries.TakeRateLimitRow) (Decision, error) {
 	var told, refused *Decision
-	over := 0
 	for _, c := range cs {
 		i := slices.IndexFunc(rows, func(r queries.TakeRateLimitRow) bool { return bytes.Equal(r.Key, c.hash) })
 		if i < 0 {
 			return Decision{}, errors.New("ratelimit: a key was not counted")
 		}
-		hits := int(rows[i].Hits)
-		d := Decision{Limit: c.limit, Remaining: max(0, c.limit-hits),
+		d := Decision{Limit: c.limit, Remaining: max(0, c.limit-int(rows[i].Hits)),
 			Reset: rows[i].WindowEnd.Time.Sub(rows[i].Now.Time)}
-		if hits > c.limit && (refused == nil || d.Reset > refused.Reset) {
-			refused, over = &d, hits-c.limit
+		if int(rows[i].Hits) > c.limit && (refused == nil || d.Reset > refused.Reset) {
+			refused = &d
 		}
 		if !c.hidden && (told == nil || cmp.Or(cmp.Compare(d.Remaining, told.Remaining),
 			cmp.Compare(told.Reset, d.Reset)) < 0) {
@@ -426,12 +368,63 @@ func decide(bucket Bucket, rate Rate, cs []counted, rows []queries.TakeRateLimit
 		}
 	}
 	if refused != nil {
-		return *refused, &LimitError{Bucket: bucket, Decision: *refused, over: over, period: rate.Period}
+		return *refused, &LimitError{Bucket: bucket, Decision: *refused}
 	}
 	if told == nil {
 		return Decision{}, nil
 	}
 	return *told, nil
+}
+
+// ReserveTx takes a turn for a request of key in bucket, a bucket that paces
+// the requests of a key rather than counting them in windows, in tx, a
+// transaction of the caller's, so that the turn is taken only if tx commits,
+// and returns how long until the turn, or zero if the request may go at once.
+// The bucket lets the key make as many requests at once as its limit, and
+// then one in each Period/limit: each request takes the turn after the last
+// one taken, and none is refused, so that the requests that wait go one at a
+// time, in the order in which they took their turns, and only as many of them
+// wait as took turns. A request whose turn is to come does not take another
+// when it comes, but goes: its turn counts it. The key's counter stays locked
+// until tx ends, so a caller that locks rows of its own as well locks them
+// before it takes a turn, as every caller that takes turns of those keys
+// does, so that none waits for another that waits for it. ReserveTx panics on
+// a bucket or a key that the policy does not limit, or on a bucket that does
+// not pace its requests, which is a mistake in the code that calls it.
+func (l *Limiter) ReserveTx(ctx context.Context, tx pgx.Tx, bucket Bucket, key Key) (time.Duration, error) {
+	rate := l.rate(bucket, true)
+	limit, ok := rate.Limits[key.kind]
+	if !ok {
+		panic(fmt.Sprintf("ratelimit: the bucket %s does not limit a key of %s", bucket, key.kind))
+	}
+	q := queries.New(tx)
+	hash, err := l.hash(ctx, q, key)
+	if err != nil {
+		return 0, err
+	}
+	row, err := q.ReserveRateLimit(ctx, queries.ReserveRateLimitParams{Bucket: string(bucket), Key: hash,
+		Spacing: database.Interval(rate.Period / time.Duration(limit))})
+	if err != nil {
+		return 0, fmt.Errorf("ratelimit: take the request's turn: %w", err)
+	}
+	// The key's turns, this one the last, run out at the counter's
+	// window_end, one in each Period/limit, and the request may go once no
+	// more of them are left than a Period holds, the limit's worth.
+	return max(0, row.WindowEnd.Time.Sub(row.Now.Time)-rate.Period), nil
+}
+
+// rate returns the rate of bucket, which paces the requests of a key if
+// paced is set, and counts them in windows otherwise. It panics on a bucket
+// that the policy does not limit, or that does the other.
+func (l *Limiter) rate(bucket Bucket, paced bool) Rate {
+	rate, ok := l.policy.Rates[bucket]
+	switch {
+	case !ok:
+		panic(fmt.Sprintf("ratelimit: the bucket %q has no rate", bucket))
+	case rate.Paced != paced:
+		panic(fmt.Sprintf("ratelimit: the bucket %s is paced: %t", bucket, rate.Paced))
+	}
+	return rate
 }
 
 // Attempt is a sign-in attempt, which counts as a failure until Succeeded

@@ -29,6 +29,16 @@ ALTER TABLE invite
 	-- link as text. It is an identifier that the request makes and the job's
 	-- arguments hold, and grants nothing.
 	ADD COLUMN email_request uuid,
+	-- When the invitation's email may be sent, if the pace of invitation
+	-- emails to its address, from all workspaces together, put it off: the
+	-- turn that the job of one of its requests took in the address's queue
+	-- (package ratelimit's InviteEmail), which the jobs of the requests after
+	-- it, as when it is sent anew, wait for rather than take another, so that
+	-- the invitation keeps its place and takes one turn however often it is
+	-- sent anew; or null if it took none, or its email has been sent since.
+	-- The workspace emails the address no other invitation before then
+	-- (InviteEmailDue).
+	ADD COLUMN email_turn timestamptz,
 	-- The account that accepted the invitation, which accepting it again
 	-- answers as done, or null until it is accepted, or once the account is
 	-- deleted.

@@ -20,6 +20,11 @@
 -- be emailed, whose job alone emails it (LockInviteToSend), so that a job of
 -- an earlier request, which a later one superseded, sends nothing, however
 -- often it is retried.
+--
+-- email_turn is the turn that the invitation's email took in the queue of
+-- invitation emails to its address, from all workspaces together (package
+-- ratelimit's InviteEmail), which the jobs of its requests wait for, while
+-- the email waits for it.
 
 -- name: InsertInvite :one
 -- InsertInvite adds an invitation that expires after lifetime: to the
@@ -76,25 +81,31 @@ FOR UPDATE;
 -- none until the job of the request email_request that emails its link adds
 -- one, in place of the one that its link held, which no longer works, and
 -- makes it expire lifetime from now. It keeps when the job last emailed the
--- invitation for the email to come, and forgets it for a link given as text.
--- The jobs of earlier requests to email it send nothing from then on. It
--- returns when the invitation expires.
+-- invitation, and the turn that its email waits for, if any, for the email
+-- to come, and forgets both for a link given as text. The jobs of earlier
+-- requests to email it send nothing from then on. It returns when the
+-- invitation expires.
 UPDATE invite SET token_hash = sqlc.narg(token_hash)::bytea,
     sent_at = CASE WHEN sqlc.narg(token_hash)::bytea IS NULL THEN sent_at END,
+    email_turn = CASE WHEN sqlc.narg(token_hash)::bytea IS NULL THEN email_turn END,
     link_holder = sqlc.narg(link_holder)::uuid, email_request = sqlc.narg(email_request)::uuid,
     expires_at = now() + @lifetime::interval, updated_at = now()
 WHERE workspace_id = @workspace_id AND id = @id
 RETURNING expires_at;
 
 -- name: InviteEmailDue :one
--- InviteEmailDue returns when the workspace may next email an invitation to
--- the address email: resend_interval after the job last emailed one of the
--- workspace's invitations to it, revoked and accepted ones included, and no
--- row if that time has passed, or no job has emailed one.
-SELECT (max(sent_at) + @resend_interval::interval)::timestamptz AS due
+-- InviteEmailDue returns when the workspace may next email its invitation id
+-- to the address email: resend_interval after the job last emailed one of the
+-- workspace's invitations to it, revoked and accepted ones included, or after
+-- the turn that the email of another of them took in the address's queue
+-- (email_turn), as one revoked while its email waited did, so that the
+-- workspace's invitations to the address hold one turn at a time; and no row
+-- if that time has passed, or no job has emailed one or taken a turn.
+SELECT (max(greatest(sent_at, CASE WHEN id <> @id THEN email_turn END)) + @resend_interval::interval)::timestamptz
+    AS due
 FROM invite
 WHERE workspace_id = @workspace_id AND email = @email
-HAVING max(sent_at) + @resend_interval::interval > now();
+HAVING max(greatest(sent_at, CASE WHEN id <> @id THEN email_turn END)) + @resend_interval::interval > now();
 
 -- name: RevokeInvite :exec
 -- RevokeInvite revokes an invitation, which accepting then answers as
@@ -151,11 +162,14 @@ WHERE workspace_id = @workspace_id AND id = @id;
 -- the role, and the locale that the email is written in, the preferred
 -- locale of the account that the address belongs to, if it has one, and else
 -- the workspace's default locale, as a BCP 47 tag, or null if neither has
--- one. It locks the invitation, so that the job that sends it and a use of
--- it, or its being sent anew, run one after the other.
+-- one; and the turn that the email took in the address's queue, if it waits
+-- for one (email_turn), with the database's clock, which the turn is of. It
+-- locks the invitation, so that the job that sends it and a use of it, or its
+-- being sent anew, run one after the other.
 SELECT
     i.email::text AS email, i.role,
-    COALESCE(u.locale, w.settings->>'default_locale') AS locale
+    COALESCE(u.locale, w.settings->>'default_locale') AS locale,
+    i.email_turn, now()::timestamptz AS now
 FROM invite i
 JOIN workspace w ON w.id = i.workspace_id AND w.status = 'active'
 LEFT JOIN "user" u ON u.email = i.email
@@ -169,8 +183,16 @@ FOR UPDATE OF i;
 -- earlier attempt of the job sent, or that a link given as text held, records
 -- that the job emails it now, and makes it expire lifetime from now, so that
 -- the link lasts as long as the email says, however late the job sends it.
-UPDATE invite SET token_hash = @token_hash, sent_at = now(), link_holder = NULL,
+-- The email no longer waits for a turn.
+UPDATE invite SET token_hash = @token_hash, sent_at = now(), link_holder = NULL, email_turn = NULL,
     expires_at = now() + @lifetime::interval, updated_at = now()
+WHERE workspace_id = @workspace_id AND id = @id;
+
+-- name: SetInviteEmailTurn :exec
+-- SetInviteEmailTurn records the turn that the email of an invitation took
+-- in its address's queue, wait from now, until which it waits, and for which
+-- the jobs of later requests to email it wait too, rather than take another.
+UPDATE invite SET email_turn = now() + @wait::interval, updated_at = now()
 WHERE workspace_id = @workspace_id AND id = @id;
 
 -- name: UnmarkInviteSent :exec

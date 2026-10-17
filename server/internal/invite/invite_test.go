@@ -354,34 +354,38 @@ func TestEmailsWaitForResendInterval(t *testing.T) {
 	}
 }
 
-// TestEmailsLimitedAcrossWorkspaces checks that the invitations of several
-// workspaces, each of which emails the address once, together email it only
-// as often in an hour as the limit of invitation emails allows, as their
-// case does not change the address, and that the job of each email over the
-// limit leaves its invitation as it was and is put off until its turn: the
-// end of the hour for the first two that the hour puts off, as the limit is
-// two, and the end of the next hour for the third, while another address is
-// emailed all the same.
+// TestEmailsPacedAcrossWorkspaces checks that the invitations of several
+// workspaces to one address, however its case is spelt, take turns in the
+// address's queue of invitation emails: as many are emailed at once as the
+// pace allows, and the job of each after them leaves its invitation as it
+// was but for its turn, the one after the last taken, and is put off until
+// then. A job that runs again before its turn, as when its worker wakes it
+// early, and the job of a request that sends the invitation anew, wait for
+// the same turn rather than take another, and the job of the request that
+// sending anew replaced sends nothing. A workspace whose invitation is
+// revoked while its email waits emails the address no new invitation until
+// ResendInterval after that turn. Once its turn has come, the invitation is
+// emailed without taking another, and another address is emailed all the
+// same.
 //
 // Verifies: NFR-SEC-06
-func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
+func TestEmailsPacedAcrossWorkspaces(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	server := emailtest.Start(t, emailtest.Options{})
 	settings := server.Settings(config.SMTPNone, "Storycreep <noreply@example.com>")
 	f := newFixture(t, email.New(nil, email.Options{SMTP: &settings, Hostname: "storycreep.example.com"}))
+	// The address may have 2 at once, and then one every 30 minutes.
 	policy := ratelimit.DefaultPolicy()
 	policy.Rates[ratelimit.InviteEmail] = ratelimit.Rate{Period: time.Hour,
-		Limits: map[ratelimit.Kind]int{ratelimit.Email: 2}}
+		Limits: map[ratelimit.Kind]int{ratelimit.Email: 2}, Paced: true}
 	f.limits = ratelimit.New(f.db, policy)
-	f.d.AwaitWindow(t, time.Hour, time.Minute)
 
-	type job struct{ workspace, invite, request ids.UUID }
+	type job struct{ workspace, owner, invite, request ids.UUID }
 	var jobs []job
-	owner := f.owner
 	for i, address := range []string{"hana@example.com", "Hana@Example.com", "HANA@example.com",
 		"hana@EXAMPLE.com", "HaNa@example.com"} {
-		ws := f.workspace
+		ws, owner := f.workspace, f.owner
 		if i > 0 {
 			owner = f.addUser(t, fmt.Sprintf("owner%d@example.com", i))
 			w, err := f.workspaces.Create(ctx, owner, workspace.Settings{Name: fmt.Sprintf("Studio %d", i)},
@@ -398,7 +402,7 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 		if at := f.queue.last(t).At; !at.IsZero() {
 			t.Errorf("the email of workspace %d's invitation is due at %v, want at once", i, at)
 		}
-		jobs = append(jobs, job{ws, inv.ID, f.queue.request(t)})
+		jobs = append(jobs, job{ws, owner, inv.ID, f.queue.request(t)})
 	}
 	for _, j := range jobs[:2] {
 		if err := f.send(ctx, f.db, j.workspace, j.invite, j.request); err != nil {
@@ -407,39 +411,100 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 	}
 	server.Wait(t, 2, 10*time.Second)
 
-	for i, j := range jobs[2:] {
-		// The first two that the hour puts off wait for the hour to end, and
-		// the third for the next one.
-		least, most := turnMargin, time.Hour+turnMargin
-		if i == 2 {
-			least, most = most, most+time.Hour
-		}
+	// putOff runs the job j, and checks that it is put off until about want
+	// from now, its turn, which its invitation holds, as it was otherwise.
+	putOff := func(what string, j job, want time.Duration) {
+		t.Helper()
 		err := f.send(ctx, f.db, j.workspace, j.invite, j.request)
 		var snooze *rivertype.JobSnoozeError
-		if !errors.As(err, &snooze) || snooze.Duration <= least || snooze.Duration > most {
-			t.Errorf("the email of workspace %d: %v, want it put off for more than %v and at most %v", i+2, err,
-				least, most)
+		if !errors.As(err, &snooze) || snooze.Duration <= want-time.Minute+turnMargin ||
+			snooze.Duration > want+turnMargin {
+			t.Errorf("%s: %v, want it put off for about %v", what, err, want)
 		}
 		if n := f.count(t, `SELECT count(*) FROM invite WHERE id = $1 AND token_hash IS NULL AND sent_at IS NULL
-			AND email_request = $2`, j.invite, j.request); n != 1 {
-			t.Errorf("the invitation of workspace %d, whose email was put off, changed", i+2)
+			AND email_request = $2 AND email_turn > now()`, j.invite, j.request); n != 1 {
+			t.Errorf("%s: the invitation changed, or holds no turn", what)
 		}
+	}
+	for i, j := range jobs[2:] {
+		putOff(fmt.Sprintf("the email of workspace %d", i+2), j, time.Duration(i+1)*30*time.Minute)
+	}
+	putOff("the email of workspace 3, run again", jobs[3], time.Hour)
+
+	if _, err := f.Resend(ctx, jobs[2].owner, jobs[2].workspace, jobs[2].invite, audit.Client{}); err != nil {
+		t.Fatal(err)
+	}
+	if at := f.queue.last(t).At; !at.IsZero() {
+		t.Errorf("the email of the invitation sent anew is due at %v, want at once", at)
+	}
+	replaced := jobs[2].request
+	jobs[2].request = f.queue.request(t)
+	putOff("the email of workspace 2, sent anew", jobs[2], 30*time.Minute)
+	if err := f.send(ctx, f.db, jobs[2].workspace, jobs[2].invite, replaced); err != nil {
+		t.Errorf("the job of the request that sending anew replaced: %v", err)
 	}
 	if got := server.Messages(); len(got) != 2 {
 		t.Errorf("%d invitations were emailed, want 2", len(got))
 	}
 
-	last := jobs[len(jobs)-1]
-	other, err := f.Create(ctx, owner, last.workspace, Request{Email: "jo@example.com", Role: role.Viewer},
-		audit.Client{})
+	var turn time.Time
+	if err := f.d.Admin(t).QueryRow(ctx, "SELECT email_turn FROM invite WHERE id = $1", jobs[4].invite).Scan(
+		&turn); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Revoke(ctx, jobs[4].owner, jobs[4].workspace, jobs[4].invite, audit.Client{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Create(ctx, jobs[4].owner, jobs[4].workspace, Request{Email: "hana@example.com",
+		Role: role.Editor}, audit.Client{}); err != nil {
+		t.Fatal(err)
+	}
+	if at, want := f.queue.last(t).At, turn.Add(ResendInterval); !at.Equal(want) {
+		t.Errorf("the email of a new invitation, after one revoked while its email waited, is due at %v, want %v",
+			at, want)
+	}
+
+	if _, err := f.d.Admin(t).Exec(ctx, "UPDATE invite SET email_turn = now() WHERE id = $1",
+		jobs[2].invite); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.send(ctx, f.db, jobs[2].workspace, jobs[2].invite, jobs[2].request); err != nil {
+		t.Errorf("the email whose turn has come: %v", err)
+	}
+	if got := server.Wait(t, 3, 10*time.Second); len(got[2].To) != 1 ||
+		!strings.EqualFold(got[2].To[0], "hana@example.com") {
+		t.Errorf("the third email is to %v, want hana@example.com", got[2].To)
+	}
+	if n := f.count(t, `SELECT count(*) FROM invite WHERE id = $1 AND token_hash IS NOT NULL AND sent_at IS NOT NULL
+		AND email_turn IS NULL`, jobs[2].invite); n != 1 {
+		t.Errorf("the invitation emailed in its turn has no hash, or still holds its turn")
+	}
+	// The 5 emails took 5 turns, so the next is at 2 hours: the email in its
+	// turn took none.
+	rollBack := errors.New("roll back")
+	if err := f.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		wait, err := f.limits.ReserveTx(ctx, tx, ratelimit.InviteEmail, ratelimit.EmailAddress("hana@example.com"))
+		if err != nil {
+			return err
+		}
+		if wait <= 2*time.Hour-time.Minute || wait > 2*time.Hour {
+			t.Errorf("the address's next turn is in %v, want about 2 hours", wait)
+		}
+		return rollBack
+	}); !errors.Is(err, rollBack) {
+		t.Fatal(err)
+	}
+
+	other, err := f.Create(ctx, jobs[3].owner, jobs[3].workspace, Request{Email: "jo@example.com",
+		Role: role.Viewer}, audit.Client{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.send(ctx, f.db, last.workspace, other.ID, f.queue.request(t)); err != nil {
+	if err := f.send(ctx, f.db, jobs[3].workspace, other.ID, f.queue.request(t)); err != nil {
 		t.Errorf("the email of another address: %v", err)
 	}
-	if got := server.Wait(t, 3, 10*time.Second); len(got[2].To) != 1 || got[2].To[0] != "jo@example.com" {
-		t.Errorf("the third email is to %v, want jo@example.com", got[2].To)
+	if got := server.Wait(t, 4, 10*time.Second); len(got[3].To) != 1 || got[3].To[0] != "jo@example.com" {
+		t.Errorf("the fourth email is to %v, want jo@example.com", got[3].To)
 	}
 }
 
