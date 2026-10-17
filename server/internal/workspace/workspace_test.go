@@ -754,6 +754,8 @@ func TestChangeRoleChecks(t *testing.T) {
 // members, and those as owner for admin, while the others stay open, an
 // invitation to the member's address among them, which only a removal
 // revokes.
+//
+// Verifies: FR-TEN-02/AC4
 func TestGrantRevokesInvites(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

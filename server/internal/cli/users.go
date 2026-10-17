@@ -203,8 +203,14 @@ change, and each invitation that it revokes.
 The role instance-admin, without a workspace, makes the account an instance
 admin, who will manage the instance on the instance-admin screens, and, while
 STORYCREEP_INSTANCE_ADMIN_ACCESS is on, acts as the owner of every workspace
-and project. With --revoke, the account is no longer one. The audit log
-records the change.
+and project. With --revoke, the account is no longer one, and every
+workspace's open invitations that it made, or was last given the link of as
+text, whose role its own role there may not give are revoked: every one where
+it is not a member, and those as owner where it is an admin, and so on, so
+that no link that it holds gives what it may no longer. --revoke revokes them
+even from an account that is no longer an instance admin, so that running it
+again finishes a run that stopped. The audit log records the change, and each
+invitation that it revokes.
 
 It fails if the address belongs to no account, or to one that is not active,
 as a suspended one, or if the workspace does not exist. --revoke is the
@@ -250,9 +256,19 @@ func grantInstanceAdmin(ctx context.Context, inv *invocation, email string, admi
 		return err
 	}
 	defer db.Close()
-	changed, err := account.SetInstanceAdmin(ctx, db, email, admin)
+	id, changed, err := account.SetInstanceAdmin(ctx, db, email, admin)
 	if err != nil {
 		return findError(err)
+	}
+	revoked := 0
+	if !admin {
+		// The policy resolves no role here: the account's invitations are
+		// revoked by its memberships alone.
+		if revoked, err = workspace.New(db, workspace.Options{}).RevokeAccessInvites(ctx,
+			[]ids.UUID{id}); err != nil {
+			return fmt.Errorf("%s is not an instance admin, but revoking its invitations failed after %d; run the "+
+				"command again to finish: %w", email, revoked, err)
+		}
 	}
 	switch {
 	case !changed && admin:
@@ -263,6 +279,13 @@ func grantInstanceAdmin(ctx context.Context, inv *invocation, email string, admi
 		fmt.Fprintf(inv.stdout, "%s is now an instance admin.\n", email)
 	default:
 		fmt.Fprintf(inv.stdout, "%s is no longer an instance admin.\n", email)
+	}
+	switch revoked {
+	case 0:
+	case 1:
+		fmt.Fprintln(inv.stdout, "Revoked 1 of its invitations, whose role it may no longer give.")
+	default:
+		fmt.Fprintf(inv.stdout, "Revoked %d of its invitations, whose roles it may no longer give.\n", revoked)
 	}
 	return nil
 }

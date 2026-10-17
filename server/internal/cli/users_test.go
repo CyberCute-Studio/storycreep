@@ -345,6 +345,84 @@ func TestGrantRole(t *testing.T) {
 	}
 }
 
+// TestRevokeInstanceAdminRevokesInvites checks that grant-role --revoke
+// instance-admin revokes the open invitations that the account made, or was
+// given the link of, whose roles its memberships may not give, says how
+// many, and records each without an actor, and that running it again, as
+// after a run that stopped, revokes those that are left, from an account
+// that is no longer an instance admin.
+//
+// Verifies: FR-TEN-02/AC4
+func TestRevokeInstanceAdminRevokesInvites(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	env := databaseEnv(d)
+	ctx := context.Background()
+	for _, email := range []string{"owner@example.com", "jo@example.com"} {
+		if code, _, stderr := runWithInput(t, env, testPassword, "create-user", email, "Someone"); code != ExitOK {
+			t.Fatalf("create-user %s: exit %d, stderr %q", email, code, stderr)
+		}
+	}
+	if _, err := d.Admin(t).Exec(ctx, `
+		UPDATE "user" SET is_instance_admin = true WHERE email = 'jo@example.com';
+		INSERT INTO workspace (id, name, slug, plan_key) VALUES
+			('0192f5c4-0000-7000-8000-0000000000aa', 'Harbour', 'harbour', 'unlimited'),
+			('0192f5c4-0000-7000-8000-0000000000bb', 'Lagoon', 'lagoon', 'unlimited');
+		INSERT INTO membership (id, workspace_id, user_id, role)
+			SELECT gen_random_uuid(), '0192f5c4-0000-7000-8000-0000000000bb', id, 'admin' FROM "user"
+			WHERE email = 'jo@example.com'`); err != nil {
+		t.Fatal(err)
+	}
+	// invite adds an invitation of the workspace with the role, which the
+	// account of maker made and whose link the account of holder holds.
+	invite := func(workspaceID, role, maker, holder string) {
+		t.Helper()
+		if _, err := d.Admin(t).Exec(ctx, `INSERT INTO invite
+			(id, workspace_id, role, token_hash, expires_at, created_by, link_holder)
+			SELECT gen_random_uuid(), $1, $2, sha256(gen_random_uuid()::text::bytea), now() + interval '1 day',
+				(SELECT id FROM "user" WHERE email = $3), (SELECT id FROM "user" WHERE email = $4)`,
+			workspaceID, role, maker, holder); err != nil {
+			t.Fatal(err)
+		}
+	}
+	harbour, lagoon := "0192f5c4-0000-7000-8000-0000000000aa", "0192f5c4-0000-7000-8000-0000000000bb"
+	invite(harbour, "owner", "jo@example.com", "jo@example.com")
+	invite(harbour, "viewer", "owner@example.com", "jo@example.com")
+	invite(lagoon, "owner", "jo@example.com", "jo@example.com")
+	invite(lagoon, "editor", "jo@example.com", "jo@example.com")
+	invite(harbour, "owner", "owner@example.com", "owner@example.com")
+
+	open := func() []string {
+		return query(t, d, `SELECT format('%s %s', w.slug, i.role) FROM invite i JOIN workspace w ON w.id = i.workspace_id
+			WHERE i.revoked_at IS NULL ORDER BY w.slug, i.role`)
+	}
+	code, stdout, stderr := runWithInput(t, env, "", "grant-role", "--revoke", "jo@example.com", "instance-admin")
+	if code != ExitOK || stdout != "jo@example.com is no longer an instance admin.\n"+
+		"Revoked 3 of its invitations, whose roles it may no longer give.\n" {
+		t.Errorf("--revoke: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	// Jo, an admin of lagoon, may still invite as editor there.
+	if got, want := open(), []string{"harbour owner", "lagoon editor"}; !slices.Equal(got, want) {
+		t.Errorf("the open invitations are %q, want %q", got, want)
+	}
+	if got := query(t, d, `SELECT count(*)::text FROM audit_entry WHERE action = 'invite.revoke'
+		AND actor_user_id IS NULL
+		AND metadata->>'user_id' = (SELECT id::text FROM "user" WHERE email = 'jo@example.com')`); !slices.Equal(got,
+		[]string{"3"}) {
+		t.Errorf("%q revocations recorded, want 3", got)
+	}
+
+	invite(harbour, "admin", "jo@example.com", "jo@example.com")
+	code, stdout, stderr = runWithInput(t, env, "", "grant-role", "--revoke", "jo@example.com", "instance-admin")
+	if code != ExitOK || stdout != "jo@example.com is not an instance admin.\n"+
+		"Revoked 1 of its invitations, whose role it may no longer give.\n" {
+		t.Errorf("--revoke again: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	if got, want := open(), []string{"harbour owner", "lagoon editor"}; !slices.Equal(got, want) {
+		t.Errorf("after --revoke again, the open invitations are %q, want %q", got, want)
+	}
+}
+
 // TestUserCommandsHelp checks the help of create-user, grant-role, and
 // reset-password.
 //

@@ -99,7 +99,11 @@ const (
 	// the removal's actor, and its metadata's membership_id names the removed
 	// membership (ActionMembershipRemove); one that a change of a member's
 	// role revokes has the change's actor, or none for the operator's, and
-	// its membership_id names the membership (ActionMembershipRoleChange).
+	// its membership_id names the membership (ActionMembershipRoleChange);
+	// and one that the end of an account's instance admin access revokes,
+	// by the operator's grant-role or a server's start with the
+	// InstanceAdminAccess capability off, has no actor, and its user_id names
+	// the account (PRD §5.5).
 	ActionInviteRevoke Action = "invite.revoke"
 	// ActionInviteAccept is the acceptance of an invitation by the user who
 	// accepts it, its actor, who joins the workspace (ActionMembershipCreate)
@@ -175,7 +179,7 @@ var events = []eventSpec{
 	{action: ActionInviteResend, inWorkspace: true, subject: "invite", results: []Result{ResultSuccess},
 		metadata: []string{"role", "kind", "emailed"}},
 	{action: ActionInviteRevoke, inWorkspace: true, subject: "invite", results: []Result{ResultSuccess},
-		metadata: []string{"role", "kind", "membership_id"}},
+		metadata: []string{"role", "kind", "membership_id", "user_id"}},
 	{action: ActionInviteAccept, inWorkspace: true, subject: "invite", results: []Result{ResultSuccess},
 		metadata: []string{"role", "kind", "membership_id", "new_account"}},
 	{action: ActionInstanceAdminGrant, subject: "user", results: []Result{ResultSuccess}},

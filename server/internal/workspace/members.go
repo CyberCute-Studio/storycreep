@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -59,9 +60,11 @@ type Member struct {
 }
 
 // Authorize returns the role that the user userID acts with in the workspace
-// id, whose transaction tx is, and locks the user's membership against
-// changes until tx ends, so that a change of the role, or the membership's
-// removal, waits for the operation that the role authorises, as Update does.
+// id, whose transaction tx is, and locks the user's membership, and their
+// account if they act as an instance admin, against changes until tx ends,
+// so that a change of the role, the membership's removal, or the end of
+// their instance admin role waits for the operation that the role
+// authorises, as Update does.
 // It returns ErrNotFound if the workspace does not exist, or the user's role
 // in it is none.
 func (s *Service) Authorize(ctx context.Context, tx pgx.Tx, userID, id ids.UUID) (role.Role, error) {
@@ -86,11 +89,11 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, userID, id ids.UUID,
 	if !lock {
 		member, err := q.MembershipRole(ctx, queries.MembershipRoleParams{WorkspaceID: nullUUID(id),
 			UserID: nullUUID(userID)})
-		return s.resolve(ctx, q, userID, member, err)
+		return s.resolve(ctx, q, userID, member, err, false)
 	}
 	member, err := q.LockMembershipRole(ctx, queries.LockMembershipRoleParams{WorkspaceID: nullUUID(id),
 		UserID: nullUUID(userID)})
-	return s.resolve(ctx, q, userID, member, err)
+	return s.resolve(ctx, q, userID, member, err, true)
 }
 
 // Members returns at most limit of the members of the workspace id, in the
@@ -147,7 +150,7 @@ func (s *Service) manageMember(ctx context.Context, q *queries.Queries, userID, 
 	}
 	member, err := q.LockMembershipRole(ctx, queries.LockMembershipRoleParams{WorkspaceID: nullUUID(id),
 		UserID: nullUUID(userID)})
-	r, err := s.resolve(ctx, q, userID, member, err)
+	r, err := s.resolve(ctx, q, userID, member, err, true)
 	if err != nil {
 		return "", err
 	}
@@ -227,7 +230,8 @@ func (s *Service) RemoveMember(ctx context.Context, userID, id, membershipID ids
 				"user_id": ids.UUID(target.UserID.Bytes).String()}}); err != nil {
 			return err
 		}
-		return recordRevoked(ctx, tx, id, userID, membershipID, client, revoked)
+		return recordRevoked(ctx, tx, id, userID, client, revoked,
+			map[string]any{"membership_id": membershipID.String()})
 	})
 }
 
@@ -350,7 +354,8 @@ func setRole(ctx context.Context, tx pgx.Tx, c roleChange) error {
 		Metadata: map[string]any{"role": c.role, "previous_role": c.previous}}); err != nil {
 		return err
 	}
-	return recordRevoked(ctx, tx, c.workspaceID, c.actor, c.membershipID, c.client, revoked)
+	return recordRevoked(ctx, tx, c.workspaceID, c.actor, c.client, revoked,
+		map[string]any{"membership_id": c.membershipID.String()})
 }
 
 // keepOwner returns ErrLastOwner if the workspace id, whose transaction q's
@@ -369,11 +374,13 @@ func keepOwner(ctx context.Context, q *queries.Queries, id, membershipID ids.UUI
 }
 
 // recordRevoked records in the audit log the revocation of each invitation
-// of revoked, of the workspace id, whose transaction tx is, which the
-// removal or the role change of the membership membershipID revoked, as the
-// user actor asked, or the operator if actor is zero, as client.
-func recordRevoked(ctx context.Context, tx pgx.Tx, id, actor, membershipID ids.UUID, client audit.Client,
-	revoked []queries.RevokeMemberInvitesRow) error {
+// of revoked, of the workspace id, whose transaction tx is, as the user actor
+// asked, or the operator or the server if actor is zero, as client, with the
+// metadata cause, which names what revoked them: the membership whose
+// removal or role change did, or the account whose instance admin access
+// ended (RevokeAccessInvites).
+func recordRevoked(ctx context.Context, tx pgx.Tx, id, actor ids.UUID, client audit.Client,
+	revoked []queries.RevokeMemberInvitesRow, cause map[string]any) error {
 	for _, inv := range revoked {
 		// The kinds of invitation are package invite's: email, to an
 		// address, and link, to whoever holds the link.
@@ -381,10 +388,11 @@ func recordRevoked(ctx context.Context, tx pgx.Tx, id, actor, membershipID ids.U
 		if inv.Email.Valid {
 			kind = "email"
 		}
+		metadata := map[string]any{"role": inv.Role, "kind": kind}
+		maps.Copy(metadata, cause)
 		if err := audit.Record(ctx, tx, audit.Entry{Action: audit.ActionInviteRevoke, WorkspaceID: id,
 			ActorUserID: actor, SubjectID: inv.ID.Bytes, Result: audit.ResultSuccess, IP: client.IP,
-			UserAgent: client.UserAgent, Metadata: map[string]any{"role": inv.Role, "kind": kind,
-				"membership_id": membershipID.String()}}); err != nil {
+			UserAgent: client.UserAgent, Metadata: metadata}); err != nil {
 			return err
 		}
 	}

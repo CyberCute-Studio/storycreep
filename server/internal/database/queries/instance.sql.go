@@ -42,6 +42,46 @@ func (q *Queries) CompleteSetup(ctx context.Context, arg CompleteSetupParams) er
 	return err
 }
 
+const instanceAdminAccess = `-- name: InstanceAdminAccess :one
+SELECT instance_admin_access FROM instance
+`
+
+// InstanceAdminAccess returns the InstanceAdminAccess capability that a
+// server of the instance last started with, or null if none has recorded it
+// (package workspace).
+func (q *Queries) InstanceAdminAccess(ctx context.Context) (pgtype.Bool, error) {
+	row := q.db.QueryRow(ctx, instanceAdminAccess)
+	var instance_admin_access pgtype.Bool
+	err := row.Scan(&instance_admin_access)
+	return instance_admin_access, err
+}
+
+const instanceAdmins = `-- name: InstanceAdmins :many
+SELECT id FROM "user" WHERE is_instance_admin ORDER BY id
+`
+
+// InstanceAdmins returns the accounts that are instance admins, whatever
+// their status, in the order of their IDs.
+func (q *Queries) InstanceAdmins(ctx context.Context) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, instanceAdmins)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const instanceSMTP = `-- name: InstanceSMTP :one
 SELECT smtp_host, smtp_port, smtp_security, smtp_username, smtp_password, smtp_from FROM instance
 `
@@ -110,6 +150,17 @@ func (q *Queries) LockInstanceSetup(ctx context.Context) (LockInstanceSetupRow, 
 	var i LockInstanceSetupRow
 	err := row.Scan(&i.SetupCompleted, &i.SignupPolicy)
 	return i, err
+}
+
+const setInstanceAdminAccess = `-- name: SetInstanceAdminAccess :exec
+UPDATE instance SET instance_admin_access = $1, updated_at = now()
+`
+
+// SetInstanceAdminAccess records the InstanceAdminAccess capability that a
+// server starts with.
+func (q *Queries) SetInstanceAdminAccess(ctx context.Context, enabled pgtype.Bool) error {
+	_, err := q.db.Exec(ctx, setInstanceAdminAccess, enabled)
+	return err
 }
 
 const setupCodeKey = `-- name: SetupCodeKey :one

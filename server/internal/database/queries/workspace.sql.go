@@ -179,6 +179,20 @@ func (q *Queries) JoinWorkspace(ctx context.Context, arg JoinWorkspaceParams) (i
 	return result.RowsAffected(), nil
 }
 
+const lockInstanceAdmin = `-- name: LockInstanceAdmin :one
+SELECT is_instance_admin FROM "user" WHERE id = $1 AND status = 'active' FOR SHARE
+`
+
+// LockInstanceAdmin is InstanceAdmin, and locks the account against changes
+// until the transaction ends, so that making it no longer an instance admin
+// waits for the operation that the role authorised (package workspace).
+func (q *Queries) LockInstanceAdmin(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, lockInstanceAdmin, id)
+	var is_instance_admin bool
+	err := row.Scan(&is_instance_admin)
+	return is_instance_admin, err
+}
+
 const lockMembership = `-- name: LockMembership :one
 SELECT id, role FROM membership WHERE workspace_id = $1 AND user_id = $2 FOR UPDATE
 `
@@ -559,6 +573,42 @@ func (q *Queries) WorkspaceMembers(ctx context.Context, arg WorkspaceMembersPara
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workspacesAfter = `-- name: WorkspacesAfter :many
+SELECT id FROM workspace
+WHERE $1::uuid IS NULL OR id > $1::uuid
+ORDER BY id
+LIMIT $2
+`
+
+type WorkspacesAfterParams struct {
+	After   pgtype.UUID
+	MaxRows int32
+}
+
+// WorkspacesAfter returns the IDs of the instance's workspaces, whatever
+// their status, in the order of their IDs, after the workspace after, or from
+// the first if after is null, for work that goes through every workspace,
+// each in a transaction of its own.
+func (q *Queries) WorkspacesAfter(ctx context.Context, arg WorkspacesAfterParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, workspacesAfter, arg.After, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
