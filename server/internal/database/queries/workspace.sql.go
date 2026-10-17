@@ -542,3 +542,17 @@ func (q *Queries) WorkspaceMembers(ctx context.Context, arg WorkspaceMembersPara
 	}
 	return items, nil
 }
+
+const workspacePlan = `-- name: WorkspacePlan :one
+SELECT plan_key FROM workspace WHERE id = $1 AND status = 'active'
+`
+
+// WorkspacePlan returns the plan of a workspace, which sets its limits and
+// features while entitlements are enforced (package entitlements, PRD
+// FR-ENT-01).
+func (q *Queries) WorkspacePlan(ctx context.Context, id pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, workspacePlan, id)
+	var plan_key string
+	err := row.Scan(&plan_key)
+	return plan_key, err
+}

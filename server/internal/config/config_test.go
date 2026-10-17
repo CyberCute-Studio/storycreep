@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/text/language"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -127,6 +128,7 @@ func TestDefaults(t *testing.T) {
 		{"STORYCREEP_PUBLIC_SITE", "off", SourceDefault},
 		{"STORYCREEP_SIGNUP", "", SourceUnset},
 		{"STORYCREEP_INSTANCE_ADMIN_ACCESS", "off", SourceDefault},
+		{"STORYCREEP_WORKSPACE_LIMITS", "", SourceUnset},
 		{"STORYCREEP_SMTP_URL", "", SourceUnset},
 		{"STORYCREEP_SMTP_FROM", "", SourceUnset},
 		{"STORYCREEP_SETUP_OWNER_EMAIL", "", SourceUnset},
@@ -307,6 +309,19 @@ func TestInvalidValues(t *testing.T) {
 		{"STORYCREEP_SIGNUP", "public", "must be closed, invite, or open"},
 		{"STORYCREEP_INSTANCE_ADMIN_ACCESS", "true", "must be on or off"},
 		{"STORYCREEP_LOG_LEVEL", "verbose", "must be debug, info, warn, or error"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "members", "entry 1 is not a limit and a whole number joined by =, such as members=20"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "members=5,", "entry 2 is not a limit and a whole number joined by ="},
+		{"STORYCREEP_WORKSPACE_LIMITS", "=5", "entry 1 is not a limit and a whole number joined by ="},
+		{"STORYCREEP_WORKSPACE_LIMITS", "members=5, boards=3", "entry 2 names no limit; the limits are members, projects, or storage_bytes"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "Members=5", "entry 1 names no limit"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "snapshot_retention=3", "entry 1 names snapshot_retention, which nothing checks yet, so it cannot be capped"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "members=5, members=6", "entry 2 names members again"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "members=0", "entry 1 caps members at a value that is not a whole number from 1 to 9223372036854775807"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "projects=+3", "entry 1 caps projects at a value that is not a whole number"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "projects=-3", "entry 1 caps projects at a value that is not a whole number"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "projects=2.5", "entry 1 caps projects at a value that is not a whole number"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "storage_bytes=10GB", "entry 1 caps storage_bytes at a value that is not a whole number"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "storage_bytes=9223372036854775808", "entry 1 caps storage_bytes at a value that is not a whole number"},
 		{"STORYCREEP_DEFAULT_LOCALE", "english", "not a BCP 47 language tag, such as en"},
 		{"STORYCREEP_DEFAULT_LOCALE", "fr", "the server has no catalog for that locale, only for en"},
 		{"STORYCREEP_HTTP_ADDR", "8080", "must be host:port"},
@@ -420,6 +435,8 @@ func TestHostedRules(t *testing.T) {
 		{"invite signup", "STORYCREEP_SIGNUP", map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_SIGNUP": "invite"}},
 		{"instance admin access", "STORYCREEP_INSTANCE_ADMIN_ACCESS",
 			map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_INSTANCE_ADMIN_ACCESS": "on"}},
+		{"workspace limits", "STORYCREEP_WORKSPACE_LIMITS",
+			map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_WORKSPACE_LIMITS": "members=5"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -505,6 +522,32 @@ func TestTrustedProxies(t *testing.T) {
 		if len(problems) != 1 || problems[0].Key != "STORYCREEP_TRUSTED_PROXIES" ||
 			!strings.Contains(problems[0].Msg, "is not an IP address or a CIDR prefix") {
 			t.Errorf("%q: problems %v, want one for the key", v, problems)
+		}
+	}
+}
+
+// TestWorkspaceLimits checks that STORYCREEP_WORKSPACE_LIMITS caps the
+// limits that it names, with white space around its entries, and shows them
+// in the order of the plan file, and that its reference names every limit
+// that the server checks, which are the ones it takes.
+func TestWorkspaceLimits(t *testing.T) {
+	if c := mustLoad(t, withRequired(nil)); c.WorkspaceLimits != nil {
+		t.Errorf("the default is %v, want no caps", c.WorkspaceLimits)
+	}
+	c := mustLoad(t, withRequired(map[string]string{
+		"STORYCREEP_WORKSPACE_LIMITS": " storage_bytes = 1073741824,members=20 ",
+	}))
+	want := entitlements.Caps{entitlements.StorageBytes: 1073741824, entitlements.Members: 20}
+	if !maps.Equal(c.WorkspaceLimits, want) {
+		t.Errorf("WorkspaceLimits = %v, want %v", c.WorkspaceLimits, want)
+	}
+	if e := entry(t, c, "STORYCREEP_WORKSPACE_LIMITS"); e.Value != "members=20, storage_bytes=1073741824" {
+		t.Errorf("the entry shows %q, want the caps in the order of the plan file", e.Value)
+	}
+	i := slices.IndexFunc(keys, func(k key) bool { return k.name == "STORYCREEP_WORKSPACE_LIMITS" })
+	for _, l := range entitlements.LimitKeys() {
+		if !strings.Contains(keys[i].doc, "`"+string(l)+"`") {
+			t.Errorf("the reference of STORYCREEP_WORKSPACE_LIMITS does not name the limit %s", l)
 		}
 	}
 }

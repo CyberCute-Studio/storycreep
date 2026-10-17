@@ -31,6 +31,8 @@
   "error.invite_required": "Registration on this server needs an invitation.",
   "error.invite_revoked": "This invitation has been revoked.",
   "error.last_owner": "A workspace keeps an owner, so its last owner cannot be removed. Make another member an owner first.",
+  "error.limit_exceeded": "This would take the workspace past one of its limits.",
+  "error.limit_exceeded.key": "{key, select, members {This would take the workspace past its limit of {limit, plural, one {# member} other {# members}}.} projects {This would take the workspace past its limit of {limit, plural, one {# project} other {# projects}}.} storage_bytes {This would take the workspace past its storage limit of {limit, plural, one {# byte} other {# bytes}}.} other {This would take the workspace past its limit of {limit, number} for {key}.}}",
   "error.method_not_allowed": "The method is not allowed for this resource.",
   "error.not_found": "The resource does not exist.",
   "error.not_ready": "The server is not ready.",
