@@ -193,8 +193,12 @@ A workspace role, owner, admin, editor, commenter, viewer, or guest, is
 given in the workspace whose slug is the third argument: the account becomes
 a member of the workspace with the role, or its membership's role changes to
 it. A workspace keeps an owner, so the role of its last owner whose account
-is active changes only to owner. The workspace's audit log records the
-change.
+is active changes only to owner. A change of the role also revokes the
+workspace's open invitations that the account made, or was last given the
+link of as text, whose role the new role may not give: every one, for a role
+below admin, and those as owner, for admin, so that no link that it holds
+gives what its role no longer may. The workspace's audit log records the
+change, and each invitation that it revokes.
 
 The role instance-admin, without a workspace, makes the account an instance
 admin, who will manage the instance on the instance-admin screens, and, while

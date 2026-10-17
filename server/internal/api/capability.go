@@ -3,9 +3,10 @@ package api
 // Capability is what a caller must hold to use a route (PRD NFR-SEC-02).
 // Every route declares one when it is registered, and a test walks the
 // routers and fails on a route that did not. A route of a workspace declares
-// the capability of the row of the permission matrix (§5.6) that it belongs
-// to, whose role the service checks (package authz), and the capabilities
-// of the later rows join as the routes that need them are added.
+// the capability of the rows of the permission matrix (§5.6) that cover it,
+// whose role the service checks (package authz), or, as reading the
+// workspace, which no row covers, one of its own, and the capabilities of
+// the later rows join as the routes that need them are added.
 type Capability string
 
 const (

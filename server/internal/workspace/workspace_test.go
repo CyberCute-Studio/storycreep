@@ -751,7 +751,9 @@ func TestChangeRoleChecks(t *testing.T) {
 // TestGrantRevokesInvites checks that the operator's demotion of a member
 // revokes their invitations that the new role may not give, as a change of
 // role through the API does: every one for a role that does not manage
-// members, and those as owner for admin, while the others stay open.
+// members, and those as owner for admin, while the others stay open, an
+// invitation to the member's address among them, which only a removal
+// revokes.
 func TestGrantRevokesInvites(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -774,6 +776,14 @@ func TestGrantRevokesInvites(t *testing.T) {
 	held := addInvite(t, d, w.ID, owner, admin, role.Viewer)
 	made := addInvite(t, d, w.ID, admin, owner, role.Commenter)
 	owners := addInvite(t, d, w.ID, owner, owner, role.Owner)
+	// An invitation to the admin's address, still to be emailed, which the
+	// owner made.
+	addressed := ids.New()
+	if _, err := d.Admin(t).Exec(ctx, `INSERT INTO invite (id, workspace_id, email, role, expires_at, created_by)
+		SELECT $1, $2, email, 'editor', now() + interval '1 day', $3 FROM "user" WHERE id = $4`, addressed, w.ID,
+		owner, admin); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := s.Grant(ctx, w.ID, second, role.Admin); err != nil {
 		t.Fatal(err)
@@ -791,6 +801,9 @@ func TestGrantRevokesInvites(t *testing.T) {
 	}
 	if revoked(t, d, owners) {
 		t.Errorf("the owner's own invitation was revoked")
+	}
+	if revoked(t, d, addressed) {
+		t.Errorf("the invitation to the demoted admin's address was revoked")
 	}
 	if n := count(t, d, `SELECT count(*) FROM audit_entry WHERE action = 'invite.revoke' AND actor_user_id IS NULL
 		AND metadata->>'membership_id' = $1`, membershipOf(t, d, w.ID, admin).String()); n != 2 {

@@ -13,6 +13,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
@@ -143,15 +144,18 @@ type matrixOp struct {
 // every operation with 404, which does not tell them that the workspace
 // exists (§5.5). The two rows that manage members are separate: an admin
 // does all of the first, and is refused the second with 403 owner_required
-// (FR-TEN-03 AC4). A later operation of §5.6 adds its row here (plan item
-// 20, standing checklist).
+// (FR-TEN-03 AC4). Each row names its operation of package authz, and a
+// later operation of §5.6 adds its row here, or TestPermissionMatrix fails
+// (plan item 20, standing checklist).
 var permissionMatrix = []struct {
 	row     string
+	op      authz.Operation
 	allowed [5]bool
 	ops     []matrixOp
 }{
 	{
 		row:     "List members and their roles",
+		op:      authz.ListMembers,
 		allowed: [5]bool{true, true, true, true, true},
 		ops: []matrixOp{{name: "list the members", success: http.StatusOK,
 			do: func(t *testing.T, f *rolesFixture, si signedIn) response {
@@ -161,6 +165,7 @@ var permissionMatrix = []struct {
 	{
 		row: "Invite/remove members, see the invitations and members' email addresses, change roles, for roles " +
 			"up to admin",
+		op:      authz.ManageMembers,
 		allowed: [5]bool{true, true, false, false, false},
 		ops: []matrixOp{
 			{name: "invite as admin", success: http.StatusCreated,
@@ -203,6 +208,7 @@ var permissionMatrix = []struct {
 	},
 	{
 		row:     "Grant the owner role (by role change or invite), demote or remove an owner",
+		op:      authz.ManageOwners,
 		allowed: [5]bool{true, false, false, false, false},
 		ops: []matrixOp{
 			{name: "invite as owner", success: http.StatusCreated,
@@ -232,6 +238,7 @@ var permissionMatrix = []struct {
 	},
 	{
 		row:     "Workspace settings, retention, 2FA policy",
+		op:      authz.ManageWorkspaceSettings,
 		allowed: [5]bool{true, true, false, false, false},
 		ops: []matrixOp{{name: "rename the workspace", success: http.StatusOK,
 			do: func(t *testing.T, f *rolesFixture, si signedIn) response {
@@ -241,15 +248,24 @@ var permissionMatrix = []struct {
 	},
 }
 
-// TestPermissionMatrix tries every operation of permissionMatrix as each of
-// matrixRoles, and checks that the role that its row of §5.6 allows does it,
-// and that every other role is refused: with 403 insufficient_role, or
+// TestPermissionMatrix checks that permissionMatrix has a row for each
+// operation of package authz, tries every operation of the API in it as each
+// of matrixRoles, and checks that the role that its row of §5.6 allows does
+// it, and that every other role is refused: with 403 insufficient_role, or
 // owner_required for an admin, or with 404 for a guest and a user who is not
 // a member.
 //
 // Verifies: FR-TEN-03/AC1
 func TestPermissionMatrix(t *testing.T) {
 	t.Parallel()
+	var named []authz.Operation
+	for _, row := range permissionMatrix {
+		named = append(named, row.op)
+	}
+	slices.Sort(named)
+	if want := authz.Operations(); !slices.Equal(named, want) {
+		t.Errorf("the rows are those of %v, want one of each operation of package authz, %v", named, want)
+	}
 	f := newRolesFixture(t)
 	for _, row := range permissionMatrix {
 		for _, op := range row.ops {
@@ -304,9 +320,9 @@ var viewerReads = map[api.Capability]bool{
 // passes validation and reaches the operation.
 func sampleValue(t *testing.T, registry huma.Registry, s *huma.Schema) any {
 	t.Helper()
-	if s.Ref != "" {
-		if s = registry.SchemaFromRef(s.Ref); s == nil {
-			t.Fatalf("no schema for %s", s.Ref)
+	if ref := s.Ref; ref != "" {
+		if s = registry.SchemaFromRef(ref); s == nil {
+			t.Fatalf("no schema for %s", ref)
 		}
 	}
 	switch {

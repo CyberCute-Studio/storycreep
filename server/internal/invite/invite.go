@@ -14,7 +14,10 @@
 // open invitations that the member made, those whose link the member was
 // last given as text, as by sending one anew, and those to the member's
 // address (workspace.Service.RemoveMember), so that no link that they hold
-// lets them back in.
+// lets them back in, and changing a member's role revokes those that the
+// member made or was last given the link of whose role the new role may not
+// give (workspace.Service.ChangeRole), so that no link that they hold gives
+// what their role no longer may.
 //
 // The link holds the invitation's secret, made as a session's is, and the
 // database holds only its SHA-256 hash, so that whoever reads the database
@@ -321,8 +324,9 @@ type link struct {
 	// hash is the SHA-256 hash of the secret of a link given as text, and
 	// holder the user who is given it, the invitation's link holder, whose
 	// removal from the workspace revokes the invitation
-	// (workspace.Service.RemoveMember), or neither for a link that is
-	// emailed.
+	// (workspace.Service.RemoveMember), as does a change of their role to one
+	// that may not give the invitation's (workspace.Service.ChangeRole), or
+	// neither for a link that is emailed.
 	hash   []byte
 	holder ids.UUID
 	// request is the request to email the link, whose job alone emails it

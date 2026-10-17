@@ -43,6 +43,11 @@ type handlerRules struct {
 	// writing an audit entry, which a service does in the transaction of its
 	// change.
 	functions map[string][]string
+	// compared are the packages, by their paths below the module, whose
+	// declarations a handler may not compare a value with, by == or !=, or
+	// as a case of a switch on the value: the roles, which a permission check
+	// compares (package role).
+	compared []string
 	// adapters are the declarations, as Type.Method, that may call methods
 	// anyway: those that hand the database and the job queue to the services,
 	// which they delegate to and no handler calls.
@@ -55,6 +60,7 @@ var rules = handlerRules{
 	methods: []string{"InTx", "Begin", "BeginTx", "BeginFunc", "Pool", "Exec", "SendBatch", "CopyFrom", "Enqueue",
 		"AtLeast"},
 	functions: map[string][]string{"internal/audit": {"Record"}},
+	compared:  []string{"internal/role"},
 	adapters:  []string{"readyDB.InTx", "queueRef.Enqueue"},
 }
 
@@ -136,8 +142,48 @@ func lintFile(fset *token.FileSet, rel string, f *ast.File, module string, rules
 		}
 		names[name] = below
 	}
+	// comparedName returns the name of e, as pkg.Name, if e is a declaration
+	// of a package of rules.compared, and "" otherwise.
+	comparedName := func(e ast.Expr) string {
+		sel, ok := e.(*ast.SelectorExpr)
+		if !ok {
+			return ""
+		}
+		x, ok := sel.X.(*ast.Ident)
+		if !ok || !slices.Contains(rules.compared, names[x.Name]) {
+			return ""
+		}
+		return x.Name + "." + sel.Sel.Name
+	}
 	check := func(decl string, n ast.Node) {
 		ast.Inspect(n, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.BinaryExpr:
+				if n.Op == token.EQL || n.Op == token.NEQ {
+					for _, operand := range []ast.Expr{n.X, n.Y} {
+						if name := comparedName(operand); name != "" {
+							report(operand.Pos(), "compares %s", name)
+						}
+					}
+				}
+				return true
+			case *ast.SwitchStmt:
+				if n.Tag == nil {
+					return true
+				}
+				for _, stmt := range n.Body.List {
+					clause, ok := stmt.(*ast.CaseClause)
+					if !ok {
+						continue
+					}
+					for _, e := range clause.List {
+						if name := comparedName(e); name != "" {
+							report(e.Pos(), "compares %s", name)
+						}
+					}
+				}
+				return true
+			}
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -259,6 +305,19 @@ func TestHandlerLintFindsWrites(t *testing.T) {
 			"	readyDB{}.InTx()",
 			"}",
 			"var _ = func() { pool.Pool() }"},
+		"internal/httpserver/roles.go": {"package httpserver",
+			`import r "example.com/m/internal/role"`,
+			"func check(m r.Role, v any) {",
+			"	if m == r.Owner || r.Admin != m || m == \"viewer\" {",
+			"	}",
+			"	switch m {",
+			"	case r.Editor, \"guest\":",
+			"	}",
+			"	switch v.(type) {",
+			"	case r.Role:",
+			"	}",
+			"	use(r.Owner, r.Role(\"x\"), m.String() == \"x\")",
+			"}"},
 		"internal/httpserver/handler_test.go": {"package httpserver",
 			`import _ "example.com/m/internal/database/queries"`, "func f(tx Tx) { tx.Exec(nil) }"},
 		"internal/httpserver/sub/sub.go":       {"package sub", "func f(tx Tx) { tx.Begin() }"},
@@ -292,14 +351,17 @@ func TestHandlerLintFindsWrites(t *testing.T) {
 		"internal/httpserver/handler.go:4: imports example.com/m/internal/database/queries",
 		"internal/httpserver/handler.go:5: imports example.com/m/internal/authz",
 		"internal/httpserver/handler.go:9: calls InTx",
+		"internal/httpserver/roles.go:4: compares r.Admin",
+		"internal/httpserver/roles.go:4: compares r.Owner",
+		"internal/httpserver/roles.go:7: compares r.Editor",
 		"internal/httpserver/sub/sub.go:2: calls Begin",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("violations =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	// The adapters, the handlers, sub, api, and generic; not the tests,
-	// testdata, _skipped, or another package's files.
-	if n != 5 {
-		t.Errorf("the lint read %d files, want 5", n)
+	// The adapters, the handlers, the roles, sub, api, and generic; not the
+	// tests, testdata, _skipped, or another package's files.
+	if n != 6 {
+		t.Errorf("the lint read %d files, want 6", n)
 	}
 }
