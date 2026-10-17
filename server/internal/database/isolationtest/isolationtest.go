@@ -48,8 +48,11 @@ type Querier interface {
 // row-level security protects.
 type Table struct {
 	Name string
-	// ID is the column that identifies a row of the table on its own, or ""
-	// for id. The harness reads the rows that an operation reaches by it.
+	// ID is the column of the IDs that the harness gives the table's rows,
+	// or "" for id. The harness reads the rows that an operation reaches by
+	// it, so each row that it adds has an ID of its own there, which a random
+	// one is, even where the table's key is wider, as applied_command's
+	// command_id is unique only within its project.
 	ID string
 	// Insert prepares a new row of the workspace w. It first adds, through
 	// admin, the superuser's connection, the rows of other tables that the

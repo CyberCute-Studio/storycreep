@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
@@ -168,20 +170,62 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 	}) {
 		t.Error("Register accepts a payload that is not a struct")
 	}
+	// What the API gives a request's body beyond its JSON, a payload never
+	// gets.
+	if !panics(func() { registerPayload[defaultPayload](t) }) {
+		t.Error("Register accepts a payload with a default")
+	}
+	if !panics(func() { registerPayload[heldDefaultPayload](t) }) {
+		t.Error("Register accepts a payload that holds a struct with a default")
+	}
+	if !panics(func() { registerPayload[heldResolverPayload](t) }) {
+		t.Error("Register accepts a payload that holds a type that resolves itself")
+	}
 
-	state := func(context.Context, *Tx, ids.UUID) (any, error) { return nil, nil }
+	states := func(context.Context, *Tx, []ids.UUID) (map[ids.UUID]any, error) { return nil, nil }
 	revs := func(context.Context, *Tx, []ids.UUID) (map[ids.UUID]int64, error) { return nil, nil }
 	for name, e := range map[string]Entity{
-		"no kind":             {Revs: revs, State: state},
-		"no Revs":             {Kind: ids.Board, State: state},
-		"no State":            {Kind: ids.Board, Revs: revs},
-		"a registered kind":   {Kind: ids.Node, Revs: revs, State: state},
-		"a kind out of range": {Kind: ids.Kind(200), Revs: revs, State: state},
+		"no kind":             {Revs: revs, States: states},
+		"no Revs":             {Kind: ids.Board, States: states},
+		"no States":           {Kind: ids.Board, Revs: revs},
+		"a registered kind":   {Kind: ids.Node, Revs: revs, States: states},
+		"a kind out of range": {Kind: ids.Kind(200), Revs: revs, States: states},
 	} {
 		if !panics(func() { RegisterEntity(noteRegistry(), e) }) {
 			t.Errorf("RegisterEntity accepts %s", name)
 		}
 	}
+}
+
+// defaultPayload is a payload with a default, which the API would fill in
+// where a request's body leaves the field out.
+type defaultPayload struct {
+	Body string `json:"body,omitempty" default:"empty"`
+}
+
+// heldDefaultPayload is a payload that holds a struct with a default.
+type heldDefaultPayload struct {
+	Items []*defaultPayload `json:"items"`
+}
+
+// resolving is a type that resolves itself, as huma calls it on a request's
+// body.
+type resolving struct {
+	Name string `json:"name"`
+}
+
+func (*resolving) Resolve(huma.Context) []error { return nil }
+
+// heldResolverPayload is a payload that holds a type that resolves itself.
+type heldResolverPayload struct {
+	ByName map[string]resolving `json:"by_name"`
+}
+
+// registerPayload registers a type of command whose payload is a P.
+func registerPayload[P any](t *testing.T) {
+	t.Helper()
+	Register(noteRegistry(), Spec[P]{Type: "note.payload", Capability: authz.ListMembers,
+		Touches: []ids.Kind{ids.Node}, NonUndoable: true, Apply: func(context.Context, *Tx, P) error { return nil }})
 }
 
 // FieldError is a payload whose type has the name of input.FieldError, a

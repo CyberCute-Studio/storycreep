@@ -42,6 +42,10 @@ const batchType = "batch"
 
 // Spec declares a type of command whose payload is a P, which is a struct
 // that encoding/json decodes the payload's JSON object into (PRD §10.4).
+// Neither P nor a type that it holds has a field with a default, or resolves
+// itself (huma.Resolver), as the type of a request's body of the API may,
+// because the API gives a body those, but a payload means what its JSON says,
+// and Check checks it.
 type Spec[P any] struct {
 	Type Type
 	// Capability is the operation of the permission matrix that the command
@@ -109,10 +113,13 @@ type Entity struct {
 	// every entity of the kind that a batch expects a revision of, so that a
 	// batch over many entities costs one query of each kind.
 	Revs func(ctx context.Context, tx *Tx, entities []ids.UUID) (map[ids.UUID]int64, error)
-	// State returns the entity as it is now, as the API shows it, which a
+	// States returns, by their IDs, the project's entities of the kind whose
+	// IDs are among entities, each as it is now, as the API shows it, which a
 	// client that sent a stale revision is answered with
-	// (RevisionConflictError). It encodes as JSON.
-	State func(ctx context.Context, tx *Tx, id ids.UUID) (any, error)
+	// (RevisionConflictError). Each encodes as JSON. As with Revs, the
+	// pipeline asks once for every entity of the kind that a batch expects a
+	// stale revision of, each of which Revs has just found.
+	States func(ctx context.Context, tx *Tx, entities []ids.UUID) (map[ids.UUID]any, error)
 }
 
 // Registry holds the types of command, and the kinds of entity that they
@@ -170,8 +177,8 @@ func RegisterEntity(r *Registry, e Entity) {
 	switch {
 	case !validKind(e.Kind):
 		panic(fmt.Sprintf("commands: %v is not a kind of entity", e.Kind))
-	case e.Revs == nil || e.State == nil:
-		panic(fmt.Sprintf("commands: the entity %s needs both Revs and State", e.Kind))
+	case e.Revs == nil || e.States == nil:
+		panic(fmt.Sprintf("commands: the entity %s needs both Revs and States", e.Kind))
 	}
 	if _, ok := r.entities[e.Kind]; ok {
 		panic(fmt.Sprintf("commands: the entity %s is registered already", e.Kind))
@@ -200,7 +207,8 @@ type spec struct {
 // that is registered already, a Capability that is not an operation of the
 // permission matrix, no Touches, a touched kind that is not registered or
 // twice, a limit that the plan file does not check or twice, both Inverse and
-// NonUndoable or neither, no Apply, or a payload that is not a struct.
+// NonUndoable or neither, no Apply, or a payload that is not a struct, or that
+// has a field with a default or a type that resolves itself.
 func Register[P any](r *Registry, s Spec[P]) {
 	fail := func(format string, args ...any) {
 		panic(fmt.Sprintf("commands: %s: ", s.Type) + fmt.Sprintf(format, args...))
@@ -221,6 +229,9 @@ func Register[P any](r *Registry, s Spec[P]) {
 		fail("the command has no Apply")
 	case pt.Kind() != reflect.Struct:
 		fail("the payload is a %s, not a struct", pt)
+	}
+	if problem := unapplied(pt); problem != "" {
+		fail("%s", problem)
 	}
 	for i, k := range s.Touches {
 		if _, ok := r.entities[k]; !ok {
@@ -273,6 +284,55 @@ func Register[P any](r *Registry, s Spec[P]) {
 	}
 	sp.apply = func(ctx context.Context, tx *Tx, payload any) error { return s.Apply(ctx, tx, payload.(P)) }
 	r.specs[s.Type] = sp
+}
+
+// resolvers are the interfaces of a type that resolves itself, whose method
+// huma calls on a request's body once the body decodes.
+var resolvers = []reflect.Type{reflect.TypeFor[huma.Resolver](), reflect.TypeFor[huma.ResolverWithPath]()}
+
+// unapplied returns what the payload's type t has that the API would apply to
+// a request's body of the type, but decode does not apply to a payload, or ""
+// if it has nothing: a field, of t or of a struct that t holds, with a
+// default, which huma fills in where a body leaves the field out, or a type
+// that resolves itself, which huma calls once a body decodes. It walks the
+// types as huma does, through pointers, slices, arrays, and maps to the
+// exported fields of structs.
+func unapplied(t reflect.Type) string {
+	seen := map[reflect.Type]bool{}
+	var walk func(t reflect.Type, at string) string
+	walk = func(t reflect.Type, at string) string {
+		for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array ||
+			t.Kind() == reflect.Map {
+			t = t.Elem()
+		}
+		if seen[t] {
+			return ""
+		}
+		seen[t] = true
+		if slices.ContainsFunc(resolvers, reflect.PointerTo(t).Implements) {
+			return fmt.Sprintf("the payload's %s is a %s, which resolves itself, as a request's body may, but a "+
+				"payload never does; its Check checks it instead", at, t)
+		}
+		if t.Kind() != reflect.Struct {
+			return ""
+		}
+		for i := range t.NumField() {
+			f := t.Field(i)
+			if !f.IsExported() {
+				continue
+			}
+			name := at + "." + f.Name
+			if f.Tag.Get("default") != "" {
+				return fmt.Sprintf("the payload's field %s has a default, which a request's body is given where it "+
+					"leaves the field out, but a payload never is", name)
+			}
+			if problem := walk(f.Type, name); problem != "" {
+				return problem
+			}
+		}
+		return ""
+	}
+	return walk(t, t.Name())
 }
 
 // Problem is what is wrong with a command of a batch, or with the batch.

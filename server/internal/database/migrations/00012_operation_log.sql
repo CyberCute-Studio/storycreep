@@ -17,7 +17,8 @@ ALTER TABLE project ADD COLUMN seq bigint NOT NULL DEFAULT 0 CHECK (seq >= 0);
 -- One row per applied batch, which is one logical undo step (§5.7). The log
 -- is appended to and never changed, so the application may add and read its
 -- rows but neither change nor delete them; a project's hard deletion deletes
--- them with the project, and compaction (FR-GDPR-03) is a maintenance job's.
+-- them with the project, and the migration that adds compaction (FR-GDPR-03),
+-- which is not among the maintenance role's jobs (§5.4), grants what it needs.
 CREATE TABLE operation (
 	id uuid PRIMARY KEY,
 	workspace_id uuid NOT NULL REFERENCES workspace ON DELETE CASCADE,

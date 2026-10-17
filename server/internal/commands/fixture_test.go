@@ -104,7 +104,7 @@ type badInversePayload struct {
 	Changes bool `json:"changes,omitempty"`
 }
 
-// noteState is a note as the State of its entity shows it.
+// noteState is a note as the States of its entity show it.
 type noteState struct {
 	ID      string `json:"id"`
 	Body    string `json:"body"`
@@ -191,8 +191,22 @@ func noteRegistry() *Registry {
 			})
 			return revs, err
 		},
-		State: func(ctx context.Context, tx *Tx, id ids.UUID) (any, error) {
-			return readNote(ctx, tx, id)
+		States: func(ctx context.Context, tx *Tx, notes []ids.UUID) (map[ids.UUID]any, error) {
+			states := map[ids.UUID]any{}
+			rows, err := tx.Query(ctx, "SELECT id, body, rev, deleted_at IS NOT NULL FROM note "+
+				"WHERE workspace_id = $1 AND project_id = $2 AND id = ANY($3::uuid[])", tx.WorkspaceID(), tx.ProjectID(),
+				notes)
+			if err != nil {
+				return nil, err
+			}
+			var id ids.UUID
+			var s noteState
+			_, err = pgx.ForEachRow(rows, []any{&id, &s.Body, &s.Rev, &s.Deleted}, func() error {
+				s.ID = ids.Encode(ids.Node, id)
+				states[id] = s
+				return nil
+			})
+			return states, err
 		},
 	})
 	touches := []ids.Kind{ids.Node}
@@ -324,6 +338,22 @@ func (r *recorder) told() []notice {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return slices.Clone(r.notices)
+}
+
+// betweenDB is a DB that calls between before its second transaction, which
+// is a batch's own, once the pipeline has found the batch's project in the
+// first.
+type betweenDB struct {
+	DB
+	between func()
+	calls   int
+}
+
+func (d *betweenDB) InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
+	if d.calls++; d.calls == 2 {
+		d.between()
+	}
+	return d.DB.InTx(ctx, scope, fn)
 }
 
 // fixedMeter is an entitlements.Meter whose usage of each limit is fixed.

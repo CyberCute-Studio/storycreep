@@ -479,6 +479,30 @@ func TestNotFound(t *testing.T) {
 			t.Errorf("%s: %v, want ErrNotFound", name, err)
 		}
 	}
+
+	// A deletion requested once the pipeline has found the project's
+	// workspace, before the batch's transaction begins, refuses the batch
+	// too, rather than letting it apply, or, with plans enforced, fail on the
+	// read of the plan of a workspace that is no longer active.
+	late, lateProject := ids.New(), ids.New()
+	w.exec(t, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Late', $2, 'unlimited')", late,
+		"late-"+late.String()[:8])
+	w.exec(t, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", lateProject, late)
+	w.exec(t, "INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'owner')", ids.New(), late,
+		w.users[ownerUser])
+	db := &betweenDB{DB: w.db, between: func() {
+		w.exec(t, "UPDATE workspace SET status = 'pending_deletion', deleted_at = now() WHERE id = $1", late)
+	}}
+	lately := New(db, Options{Registry: noteRegistry(), Jobs: w.queue,
+		Entitlements: entitlements.New(entitlements.Options{Enforce: true, Meter: fixedMeter{}})})
+	_, id := newNote()
+	if _, err := lately.Apply(ctx, w.as(ownerUser), lateProject,
+		[]Command{command(t, noteCreate, notePayload{ID: id, Body: "late"}, nil)}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a deletion requested meanwhile: %v, want ErrNotFound", err)
+	}
+	if db.calls != 2 {
+		t.Errorf("the pipeline opened %d transactions, want 2", db.calls)
+	}
 	if got := w.written(t); got != (written{}) {
 		t.Errorf("the refused batches wrote %+v", got)
 	}

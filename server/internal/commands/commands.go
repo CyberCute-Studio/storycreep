@@ -147,7 +147,7 @@ type Conflict struct {
 	Expected int64
 	// Exists says whether the entity still exists. One that does has the
 	// revision Current, and the state State, encoded as JSON as its kind's
-	// Entity.State gives it. One that does not, as one that was purged from
+	// Entity.States gives it. One that does not, as one that was purged from
 	// the trash, has neither: the client's "target deleted" (FR-OFF-04 AC5).
 	// An entity in the trash still exists.
 	Exists  bool
@@ -257,6 +257,15 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 	var res Result
 	err = p.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
+		// workspaceOf found the workspace active in a transaction of its own,
+		// so the batch's reads it again, before the roles, so that a deletion
+		// requested in between refuses the batch as well, and with 404,
+		// whatever the actor's role would allow (FR-TEN-05 AC1).
+		if _, err := q.Workspace(ctx, nullUUID(workspaceID)); errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return fmt.Errorf("commands: read the workspace: %w", err)
+		}
 		roles, err := p.roles(ctx, q, actor.UserID, workspaceID, projectID)
 		if err != nil {
 			return err
@@ -318,7 +327,8 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 
 // workspaceOf returns the workspace of the project, through the context
 // bootstrap (§5.4), or ErrNotFound if there is no such project, or if its
-// workspace's deletion is pending (FR-TEN-05 AC1).
+// workspace's deletion is pending (FR-TEN-05 AC1), which the batch's own
+// transaction checks again.
 func (p *Pipeline) workspaceOf(ctx context.Context, userID, projectID ids.UUID) (ids.UUID, error) {
 	var ws pgtype.UUID
 	err := p.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
@@ -410,11 +420,11 @@ func (p *Pipeline) checkLimits(ctx context.Context, tx pgx.Tx, workspaceID ids.U
 // checkRevs returns a *RevisionConflictError if an entity that a command of
 // cmds expects a revision of does not have it, before any command applies,
 // and records the revisions that it reads (Tx.Changed). It reads the
-// revisions of each kind's entities with one call of the kind's Revs, which
+// revisions of each kind's entities with one call of the kind's Revs, and
+// the states of the stale ones with one call of its States, each of which
 // asks for each entity once, however many commands expect a revision of it,
 // so that a batch over many entities costs a query of each kind rather than
-// one of each entity, while it holds the project's lock; and it reads the
-// state of each stale entity once.
+// one of each entity, while it holds the project's lock.
 func (p *Pipeline) checkRevs(ctx context.Context, t *Tx, cmds []decoded) error {
 	byKind := map[ids.Kind][]ids.UUID{}
 	asked := map[Ref]bool{}
@@ -440,8 +450,9 @@ func (p *Pipeline) checkRevs(ctx context.Context, t *Tx, cmds []decoded) error {
 			}
 		}
 	}
-	states := map[Ref]json.RawMessage{}
 	var conflicts []Conflict
+	stale := map[ids.Kind][]ids.UUID{}
+	states := map[Ref]json.RawMessage{}
 	for i, c := range cmds {
 		for _, ref := range sortedRefs(c.ExpectedRev) {
 			expected := c.ExpectedRev[ref]
@@ -449,28 +460,37 @@ func (p *Pipeline) checkRevs(ctx context.Context, t *Tx, cmds []decoded) error {
 			if found && rev == expected {
 				continue
 			}
-			conflict := Conflict{Command: i, CommandID: c.ID, Type: c.spec.typ, Ref: ref, Expected: expected}
-			if found {
-				state, ok := states[ref]
-				if !ok {
-					s, err := p.registry.entities[ref.Kind].State(ctx, t, ref.ID)
-					if err == nil {
-						state, err = json.Marshal(s)
-					}
-					if err != nil {
-						return fmt.Errorf("commands: read the state of %s: %w", encodeRef(ref), err)
-					}
-					states[ref] = state
-				}
-				conflict.Exists, conflict.Current, conflict.State = true, rev, state
+			conflicts = append(conflicts, Conflict{Command: i, CommandID: c.ID, Type: c.spec.typ, Ref: ref,
+				Expected: expected, Exists: found, Current: rev})
+			if _, ok := states[ref]; found && !ok {
+				states[ref] = nil
+				stale[ref.Kind] = append(stale[ref.Kind], ref.ID)
 			}
-			conflicts = append(conflicts, conflict)
 		}
 	}
-	if len(conflicts) > 0 {
-		return &RevisionConflictError{Conflicts: conflicts}
+	if len(conflicts) == 0 {
+		return nil
 	}
-	return nil
+	for _, kind := range slices.Sorted(maps.Keys(stale)) {
+		got, err := p.registry.entities[kind].States(ctx, t, stale[kind])
+		if err != nil {
+			return fmt.Errorf("commands: read the states of the %s entities: %w", kind, err)
+		}
+		for _, id := range stale[kind] {
+			ref := Ref{Kind: kind, ID: id}
+			s, ok := got[id]
+			if !ok {
+				return fmt.Errorf("commands: %s has a revision but no state", encodeRef(ref))
+			}
+			if states[ref], err = json.Marshal(s); err != nil {
+				return fmt.Errorf("commands: encode the state of %s: %w", encodeRef(ref), err)
+			}
+		}
+	}
+	for i, c := range conflicts {
+		conflicts[i].State = states[c.Ref]
+	}
+	return &RevisionConflictError{Conflicts: conflicts}
 }
 
 // The operation log's JSON (PRD §5.3).
