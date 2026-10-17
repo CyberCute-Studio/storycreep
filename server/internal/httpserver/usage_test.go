@@ -1,15 +1,19 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
 )
@@ -45,36 +49,49 @@ func wantMembersLimit(t *testing.T, what string, res response, limit float64) {
 // members as STORYCREEP_WORKSPACE_LIMITS caps it at refuses to let in another
 // by an invitation, with 409 limit_exceeded naming the limit and the usage,
 // and keeps the invitation open: accepting it refuses, and registering with
-// it answers 202 as for an address with an account, adding the account but
-// not the member, who is refused on accepting once signed in, and let in
-// once a member has left. Inviting is not refused.
+// it answers 202 alike for a new address and for one with an account, adding
+// the new address's account but not the member, who is refused on accepting
+// once signed in, and let in once a member has left, and leaving the account
+// that the other address has as it was. Inviting is not refused.
 //
-// Verifies: FR-ENT-01/AC1
+// Verifies: FR-ENT-01/AC1, FR-AUTH-01/AC1
 func TestMembersLimitThroughInvitations(t *testing.T) {
 	t.Parallel()
 	s, d, admin, ws := inviteServer(t, "open", map[string]string{"STORYCREEP_WORKSPACE_LIMITS": "members=2"})
 	first := linkToken(t, createInvite(t, s.main, admin, ws, "", "editor").URL)
 	second := linkToken(t, createInvite(t, s.main, admin, ws, "", "viewer").URL)
 	emailed := linkToken(t, createInvite(t, s.main, admin, ws, "bo@example.com", "commenter").URL)
+	existing := linkToken(t, createInvite(t, s.main, admin, ws, "al@example.com", "commenter").URL)
 
 	jo := newNamedAccount(t, s.main, "jo@example.com", "Jo")
 	accepted(t, acceptInvite(t, s.main, jo, first))
 	al := newNamedAccount(t, s.main, "al@example.com", "Al")
 	wantMembersLimit(t, "accept past the limit", acceptInvite(t, s.main, al, second), 2)
 
+	// A new address, and one that has an account, which are answered alike.
 	accounts := countAccounts(t, d)
-	if res := registerWithInvite(t, s.main, emailed, ""); res.status != http.StatusAccepted || len(res.body) != 0 {
-		t.Errorf("register with an invitation to a full workspace: %d %s, want 202 without a body", res.status,
-			res.body)
+	for _, token := range []string{emailed, existing} {
+		if res := registerWithInvite(t, s.main, token, ""); res.status != http.StatusAccepted || len(res.body) != 0 {
+			t.Errorf("register with an invitation to a full workspace: %d %s, want 202 without a body", res.status,
+				res.body)
+		}
 	}
 	if n := countAccounts(t, d); n != accounts+1 {
-		t.Errorf("registering with an invitation to a full workspace left %d accounts, want %d", n, accounts+1)
+		t.Errorf("registering with invitations to a full workspace left %d accounts, want %d, the new address's",
+			n, accounts+1)
 	}
 	if got := membersOf(t, s.main, admin, ws); len(got) != 2 {
 		t.Errorf("the full workspace has %d members, want 2", len(got))
 	}
-	if got := invitesOf(t, s.main, admin, ws); len(got) != 2 {
-		t.Errorf("the full workspace has %d open invitations, want the 2 refused", len(got))
+	if got := invitesOf(t, s.main, admin, ws); len(got) != 3 {
+		t.Errorf("the full workspace has %d open invitations, want the 3 refused", len(got))
+	}
+	// The account that the address had already is as it was, with its own
+	// display name rather than the registration's.
+	var name string
+	if err := d.Admin(t).QueryRow(context.Background(), `SELECT display_name FROM "user"
+		WHERE email = 'al@example.com'`).Scan(&name); err != nil || name != "Al" {
+		t.Errorf("after registering at a full workspace, al's account is named %q (%v), want Al", name, err)
 	}
 	bo := signIn(t, s.main, "bo@example.com")
 	wantMembersLimit(t, "accept a registration's invitation past the limit", acceptInvite(t, s.main, bo, emailed), 2)
@@ -155,6 +172,95 @@ func TestMembersLimitLinkRegistration(t *testing.T) {
 	membershipOf(t, membersOf(t, s.main, admin, ws), signIn(t, s.main, "al@example.com"))
 	if got := readUsage(t, s.main, admin, ws)["members"]; got["used"] != 2.0 || got["limit"] != 2.0 {
 		t.Errorf("the usage of members is %v, want 2 of 2", got)
+	}
+}
+
+// TestMembersLimitLinkRegistrationRace checks that a registration with the
+// link of a link invitation that found room in the workspace, but whose
+// workspace fills up before the transaction that adds the account, is
+// refused all the same, with 409 limit_exceeded, adding no account, for a
+// new address as for one that has an account, so that the registrations that
+// a link lets through at once do not keep an account each once the
+// workspace is full, and the answer still does not tell whether the address
+// has one. An open transaction that adds an account with the same address
+// holds the registration where it adds the account, while another
+// invitation fills the workspace, and then rolls back, leaving the address
+// new, or commits, giving it an account.
+//
+// Verifies: FR-ENT-01/AC1, FR-AUTH-01/AC1
+func TestMembersLimitLinkRegistrationRace(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, d, admin, ws := inviteServer(t, "invite", map[string]string{"STORYCREEP_WORKSPACE_LIMITS": "members=2"})
+	link := linkToken(t, createInvite(t, s.main, admin, ws, "", "editor").URL)
+	// held reports whether a session of the test's own database waits to add
+	// an account, as the registration does for the open transaction's.
+	watcher := d.Admin(t)
+	held := func() bool {
+		var n int
+		if err := watcher.QueryRow(ctx, "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "+
+			"AND wait_event_type = 'Lock' AND query LIKE '%name: InsertUser %'").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n > 0
+	}
+	for i, existing := range []bool{false, true} {
+		email := fmt.Sprintf("racer%d@example.com", i)
+		tx, err := d.Admin(t).Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO "user" (id, email, display_name) VALUES ($1, $2, 'Racer')`, ids.New(),
+			email); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan response, 1)
+		go func() { done <- registerWithInvite(t, s.main, link, email) }()
+		for deadline := time.Now().Add(time.Minute); !held(); time.Sleep(20 * time.Millisecond) {
+			select {
+			case res := <-done:
+				t.Fatalf("the registration of %s was not held where it adds the account: %d %s", email, res.status,
+					res.body)
+			default:
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the registration of %s is never held where it adds the account", email)
+			}
+		}
+		// Another invitation fills the workspace meanwhile.
+		filler := fmt.Sprintf("filler%d@example.com", i)
+		if res := registerWithInvite(t, s.main, linkToken(t, createInvite(t, s.main, admin, ws, "", "viewer").URL),
+			filler); res.status != http.StatusAccepted {
+			t.Fatalf("fill the workspace: %d %s, want 202", res.status, res.body)
+		}
+		if existing {
+			err = tx.Commit(ctx)
+		} else {
+			err = tx.Rollback(ctx)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantMembersLimit(t, fmt.Sprintf("register %s (with an account: %v) once the workspace has filled up", email,
+			existing), <-done, 2)
+		var accounts int
+		var name string
+		if err := watcher.QueryRow(ctx, `SELECT count(*), coalesce(max(display_name), '') FROM "user"
+			WHERE email = $1`, email).Scan(&accounts, &name); err != nil {
+			t.Fatal(err)
+		}
+		if existing && (accounts != 1 || name != "Racer") || !existing && accounts != 0 {
+			t.Errorf("the refused registration of %s (with an account: %v) left %d accounts named %q", email,
+				existing, accounts, name)
+		}
+		// The filler leaves, so that the next registration finds room first.
+		if res := call(s.main, http.MethodDelete, memberPath(ws, membershipOf(t, membersOf(t, s.main, admin, ws),
+			signIn(t, s.main, filler))), nil, admin.header(true)); res.status != http.StatusNoContent {
+			t.Fatalf("remove %s: %d %s", filler, res.status, res.body)
+		}
+	}
+	if got := invitesOf(t, s.main, admin, ws); len(got) != 1 {
+		t.Errorf("the workspace has %d open invitations, want the link's", len(got))
 	}
 }
 

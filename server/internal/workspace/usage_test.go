@@ -109,68 +109,83 @@ func TestMembersLimit(t *testing.T) {
 // first, and then counts it (FR-ENT-02, exact counting). They accept
 // invitations (Join), which, unlike Grant, lock no row that the other needs,
 // so only the lock that the members limit's check holds makes them take
-// turns, and the first stays open until the second waits for that lock.
+// turns, and the first stays open until the second waits for that lock. A
+// user who accepts twice at once is told the second time that they are a
+// member already, rather than that the workspace, which their first
+// acceptance filled, is full.
 //
 // Verifies: FR-ENT-01/AC1
 func TestMembersLimitTakesTurns(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	s, d := newCappedService(t, 2)
-	w, err := s.Create(ctx, addUser(t, d, "Owner"), Settings{Name: "Harbour"}, audit.Client{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, second := addUser(t, d, "First"), addUser(t, d, "Second")
-	joined, stop, firstDone := make(chan struct{}), make(chan struct{}), make(chan error, 1)
-	release := sync.OnceFunc(func() { close(stop) })
-	t.Cleanup(release)
-	go func() {
-		firstDone <- s.db.InTx(ctx, database.Scope{WorkspaceID: w.ID, UserID: first}, func(tx pgx.Tx) error {
-			if _, err := s.Join(ctx, tx, w.ID, first, role.Editor, ids.UUID{}, ids.New(), audit.Client{}); err != nil {
-				return err
-			}
-			close(joined)
-			<-stop
-			return nil
-		})
-	}()
-	select {
-	case <-joined:
-	case err := <-firstDone:
-		t.Fatalf("the first acceptance: %v", err)
-	}
-	// waits returns how many sessions wait for a lock of usage in the test's
-	// own database, of the many that pg_locks shows, one for each test that
-	// runs at once.
-	admin := d.Admin(t)
-	waits := func() int {
-		var n int
-		if err := admin.QueryRow(ctx, "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted "+
-			"AND classid = $1 AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
-			database.UsageLock).Scan(&n); err != nil {
+	for _, sameUser := range []bool{false, true} {
+		ctx := context.Background()
+		s, d := newCappedService(t, 2)
+		w, err := s.Create(ctx, addUser(t, d, "Owner"), Settings{Name: "Harbour"}, audit.Client{})
+		if err != nil {
 			t.Fatal(err)
 		}
-		return n
-	}
-	secondDone := make(chan error, 1)
-	go func() { secondDone <- s.join(t, w.ID, second, role.Editor) }()
-	for deadline := time.Now().Add(time.Minute); waits() == 0; time.Sleep(20 * time.Millisecond) {
+		first, second := addUser(t, d, "First"), addUser(t, d, "Second")
+		if sameUser {
+			second = first
+		}
+		joined, stop, firstDone := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+		release := sync.OnceFunc(func() { close(stop) })
+		t.Cleanup(release)
+		go func() {
+			firstDone <- s.db.InTx(ctx, database.Scope{WorkspaceID: w.ID, UserID: first}, func(tx pgx.Tx) error {
+				if _, err := s.Join(ctx, tx, w.ID, first, role.Editor, ids.UUID{}, ids.New(),
+					audit.Client{}); err != nil {
+					return err
+				}
+				close(joined)
+				<-stop
+				return nil
+			})
+		}()
 		select {
-		case err := <-secondDone:
-			t.Fatalf("the second acceptance did not wait for the first, which is still open: %v", err)
-		default:
+		case <-joined:
+		case err := <-firstDone:
+			t.Fatalf("the first acceptance: %v", err)
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("the second acceptance never waits for the first")
+		// waits returns how many sessions wait for a lock of usage in the
+		// test's own database, of the many that pg_locks shows, one for each
+		// test that runs at once.
+		admin := d.Admin(t)
+		waits := func() int {
+			var n int
+			if err := admin.QueryRow(ctx, "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND "+
+				"NOT granted AND classid = $1 AND database = (SELECT oid FROM pg_database WHERE datname = "+
+				"current_database())", database.UsageLock).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			return n
 		}
-	}
-	release()
-	if err := <-firstDone; err != nil {
-		t.Fatal(err)
-	}
-	wantLimit(t, "the second acceptance, once the first has committed", <-secondDone, 2)
-	if n := count(t, d, "SELECT count(*) FROM membership WHERE workspace_id = $1", w.ID); n != 2 {
-		t.Errorf("the workspace has %d members, want 2", n)
+		secondDone := make(chan error, 1)
+		go func() { secondDone <- s.join(t, w.ID, second, role.Editor) }()
+		for deadline := time.Now().Add(time.Minute); waits() == 0; time.Sleep(20 * time.Millisecond) {
+			select {
+			case err := <-secondDone:
+				t.Fatalf("the second acceptance (same user: %v) did not wait for the first, which is still open: %v",
+					sameUser, err)
+			default:
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the second acceptance (same user: %v) never waits for the first", sameUser)
+			}
+		}
+		release()
+		if err := <-firstDone; err != nil {
+			t.Fatal(err)
+		}
+		if err := <-secondDone; sameUser && !errors.Is(err, ErrAlreadyMember) {
+			t.Errorf("the same user's second acceptance, once the first has committed: %v, want ErrAlreadyMember",
+				err)
+		} else if !sameUser {
+			wantLimit(t, "the second acceptance, once the first has committed", err, 2)
+		}
+		if n := count(t, d, "SELECT count(*) FROM membership WHERE workspace_id = $1", w.ID); n != 2 {
+			t.Errorf("the workspace has %d members, want 2", n)
+		}
 	}
 }
 

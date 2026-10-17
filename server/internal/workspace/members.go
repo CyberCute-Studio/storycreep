@@ -424,16 +424,6 @@ func roleNames(roles []role.Role) []string {
 // workspace exists, and that the user's account is active.
 func (s *Service) Join(ctx context.Context, tx pgx.Tx, id, userID ids.UUID, r role.Role, invitedBy,
 	inviteID ids.UUID, client audit.Client) (ids.UUID, error) {
-	// A member is told so, rather than that the workspace is full, whatever
-	// its usage.
-	_, err := queries.New(tx).MembershipOf(ctx, queries.MembershipOfParams{WorkspaceID: nullUUID(id),
-		UserID: nullUUID(userID)})
-	switch {
-	case err == nil:
-		return ids.UUID{}, ErrAlreadyMember
-	case !errors.Is(err, pgx.ErrNoRows):
-		return ids.UUID{}, fmt.Errorf("workspace: read the membership: %w", err)
-	}
 	mid, err := s.addMembership(ctx, tx, id, userID, r, invitedBy)
 	if err != nil {
 		return ids.UUID{}, err
@@ -452,10 +442,11 @@ func (s *Service) Join(ctx context.Context, tx pgx.Tx, id, userID ids.UUID, r ro
 // nil if it has room for one more. It is the members limit's one check, which
 // addMembership makes before it adds a membership, and package invite before
 // it registers an account with the link of a link invitation, which any
-// address may register with, so that a full workspace's link, which stays
-// open, adds no account. For a limit that is a number, it holds the lock of
-// the workspace's members until tx ends (package usage), so a transaction
-// that only asks, as package invite's, ends soon after.
+// address may register with, and again in the transaction that adds the
+// account, so that a full workspace's link, which stays open, adds no
+// account. For a limit that is a number, it holds the lock of the
+// workspace's members until tx ends (package usage), so a transaction that
+// only asks, as package invite's, ends soon after.
 func (s *Service) CheckRoom(ctx context.Context, tx pgx.Tx, id ids.UUID) error {
 	return s.ent.Check(ctx, tx, id, entitlements.Members, 1)
 }
@@ -468,12 +459,29 @@ func (s *Service) CheckRoom(ctx context.Context, tx pgx.Tx, id ids.UUID) error {
 // workspace's members until tx ends (package usage), so that two memberships
 // added at once cannot both pass it, and records the new member in the
 // workspace's usage, so that the next check counts it (FR-ENT-02). It
-// returns an *entitlements.LimitError if the workspace has as many members as
-// its plan allows, and ErrAlreadyMember if the user is a member already, as
-// one that a transaction added meanwhile, and adds nothing then.
+// returns ErrAlreadyMember if the user is a member already, as one that a
+// transaction added meanwhile, whatever the workspace's usage, and otherwise
+// an *entitlements.LimitError if the workspace has as many members as its
+// plan allows, and adds nothing then.
 func (s *Service) addMembership(ctx context.Context, tx pgx.Tx, id, userID ids.UUID, r role.Role,
 	invitedBy ids.UUID) (ids.UUID, error) {
 	if err := s.CheckRoom(ctx, tx, id); err != nil {
+		var limit *entitlements.LimitError
+		if !errors.As(err, &limit) {
+			return ids.UUID{}, err
+		}
+		// A member is told so, rather than that the workspace is full: one
+		// whose membership another transaction added, holding the lock that
+		// the check waited for, which has committed since, as much as one
+		// who was a member before.
+		_, merr := queries.New(tx).MembershipOf(ctx, queries.MembershipOfParams{WorkspaceID: nullUUID(id),
+			UserID: nullUUID(userID)})
+		switch {
+		case merr == nil:
+			return ids.UUID{}, ErrAlreadyMember
+		case !errors.Is(merr, pgx.ErrNoRows):
+			return ids.UUID{}, fmt.Errorf("workspace: read the membership: %w", merr)
+		}
 		return ids.UUID{}, err
 	}
 	mid := ids.New()

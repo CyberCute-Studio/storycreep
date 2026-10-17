@@ -21,10 +21,12 @@
 // only writer of the counters (AC1).
 //
 // The keys that are created rarely, projects, members, and snapshots, are
-// counted exactly: reading one through Meter takes a transaction-scoped
-// advisory lock of the workspace's key first, which serializes the changes
-// that check the key's limit, so that two cannot both pass the check against
-// the same usage. The others are counted approximately, without a lock, so
+// counted exactly: reading one through Meter, as only the check of its limit
+// does, takes a transaction-scoped advisory lock of the workspace's key
+// first, which serializes the changes that check the key's limit, so that
+// two cannot both pass the check against the same usage. No limit of the
+// plans checks snapshots yet, so nothing takes its lock until one does. The
+// others are counted approximately, without a lock, so
 // that the changes that add to them often, as nodes, never wait for each
 // other (AC3); of these, only storage_bytes is a limit, which a burst of
 // changes that run at once may pass by what they add together. Plan limits
@@ -92,7 +94,7 @@ func (k Key) Known() bool {
 }
 
 // Exact reports whether k is counted exactly, under a lock of the workspace's
-// key, rather than approximately.
+// key that the check of its limit takes (Meter), rather than approximately.
 func (k Key) Exact() bool {
 	return k == Projects || k == Members || k == Snapshots
 }
