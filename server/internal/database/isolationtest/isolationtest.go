@@ -23,6 +23,7 @@ package isolationtest
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"slices"
@@ -47,6 +48,12 @@ type Querier interface {
 // row-level security protects.
 type Table struct {
 	Name string
+	// ID is the column of the IDs that the harness gives the table's rows,
+	// or "" for id. The harness reads the rows that an operation reaches by
+	// it, so each row that it adds has an ID of its own there, which a random
+	// one is, even where the table's key is wider, as applied_command's
+	// command_id is unique only within its project.
+	ID string
 	// Insert prepares a new row of the workspace w. It first adds, through
 	// admin, the superuser's connection, the rows of other tables that the
 	// new row needs, and then returns the statement that adds the row. The
@@ -56,9 +63,18 @@ type Table struct {
 	Insert func(ctx context.Context, admin Querier, w *Workspace) (Statement, error)
 }
 
+// idColumn returns the quoted name of the column that identifies a row of
+// the table (Table.ID).
+func (t Table) idColumn() string {
+	if t.ID == "" {
+		return "id"
+	}
+	return pgx.Identifier{t.ID}.Sanitize()
+}
+
 // Statement adds a row.
 type Statement struct {
-	// ID is the new row's ID.
+	// ID is the new row's ID, the value of its Table.ID column.
 	ID   ids.UUID
 	SQL  string
 	Args []any
@@ -67,11 +83,11 @@ type Statement struct {
 // Tables are the tenant tables, in an order in which each table's rows need
 // only rows of the tables before it.
 var Tables = []Table{
-	{"project", func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+	{Name: "project", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		id := ids.New()
 		return Statement{id, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", []any{id, w.ID}}, nil
 	}},
-	{"membership", func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+	{Name: "membership", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
 		// A user is a member of a workspace once.
 		user, err := NewUser(ctx, admin)
 		if err != nil {
@@ -81,7 +97,7 @@ var Tables = []Table{
 		return Statement{id, "INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'editor')",
 			[]any{id, w.ID, user}}, nil
 	}},
-	{"project_grant", func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+	{Name: "project_grant", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
 		// A membership has one grant per project.
 		project := ids.New()
 		if _, err := admin.Exec(ctx, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", project, w.ID); err != nil {
@@ -91,22 +107,43 @@ var Tables = []Table{
 		return Statement{id, "INSERT INTO project_grant (id, workspace_id, membership_id, project_id, role) " +
 			"VALUES ($1, $2, $3, $4, 'viewer')", []any{id, w.ID, w.Rows["membership"], project}}, nil
 	}},
-	{"invite", func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+	{Name: "invite", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		id := ids.New()
 		return Statement{id, "INSERT INTO invite (id, workspace_id, role, token_hash, expires_at) " +
 			"VALUES ($1, $2, 'viewer', $3, now() + interval '14 days')", []any{id, w.ID, TokenHash()}}, nil
 	}},
-	{"api_token", func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+	{Name: "api_token", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		id := ids.New()
 		return Statement{id, "INSERT INTO api_token (id, workspace_id, user_id, project_id, name, token_hash, scopes) " +
 			"VALUES ($1, $2, $3, $4, 'isolation', $5, ARRAY['project:read'])",
 			[]any{id, w.ID, w.UserID, w.Rows["project"], TokenHash()}}, nil
 	}},
-	{"audit_entry", func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+	{Name: "audit_entry", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		id := ids.New()
 		return Statement{id, "INSERT INTO audit_entry (id, workspace_id, actor_user_id, action, result) " +
 			"VALUES ($1, $2, $3, 'isolation.test', 'success')", []any{id, w.ID, w.UserID}}, nil
 	}},
+	{Name: "operation", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A project has one operation of a seq.
+		id := ids.New()
+		return Statement{id, "INSERT INTO operation (id, workspace_id, project_id, seq, command_ids, actor_user_id, " +
+			"type, payload, entity_refs) VALUES ($1, $2, $3, $4, ARRAY[$5::uuid], $6, 'isolation.test', '[]', '[]')",
+			[]any{id, w.ID, w.Rows["project"], seq(), ids.New(), w.UserID}}, nil
+	}},
+	{Name: "applied_command", ID: "command_id", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement,
+		error) {
+		id := ids.New()
+		return Statement{id, "INSERT INTO applied_command (workspace_id, project_id, command_id, seq) " +
+			"VALUES ($1, $2, $3, $4)", []any{w.ID, w.Rows["project"], id, seq()}}, nil
+	}},
+}
+
+// seq returns a random positive seq, so that the operations that the harness
+// adds to one project do not share one.
+func seq() int64 {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return int64(binary.BigEndian.Uint64(b[:])>>2) + 1
 }
 
 // TokenHash returns a random 32-byte value, as the SHA-256 hash of a secret
@@ -322,9 +359,10 @@ func (f *Fixture) locked(t testing.TB, w *Workspace) []ids.UUID {
 	var all []ids.UUID
 	for _, table := range f.tables {
 		ident := pgx.Identifier{table.Name}.Sanitize()
-		rows, err := f.admin.Query(context.Background(), "WITH free AS (SELECT id FROM "+ident+
+		id := table.idColumn()
+		rows, err := f.admin.Query(context.Background(), "WITH free AS (SELECT "+id+" FROM "+ident+
 			" WHERE workspace_id = $1 FOR NO KEY UPDATE SKIP LOCKED) "+
-			"SELECT id FROM "+ident+" WHERE workspace_id = $1 AND id NOT IN (SELECT id FROM free)", w.ID)
+			"SELECT "+id+" FROM "+ident+" WHERE workspace_id = $1 AND "+id+" NOT IN (SELECT "+id+" FROM free)", w.ID)
 		var got []ids.UUID
 		if err == nil {
 			got, err = pgx.CollectRows(rows, pgx.RowTo[ids.UUID])
@@ -358,7 +396,7 @@ func (f *Fixture) snapshot(t testing.TB, w *Workspace) (string, []ids.UUID) {
 			ident+" t WHERE workspace_id = $1", w.ID).Scan(&d); err != nil {
 			t.Fatalf("read %s: %v", table.Name, err)
 		}
-		rows, err := f.admin.Query(ctx, "SELECT id FROM "+ident+" WHERE workspace_id = $1", w.ID)
+		rows, err := f.admin.Query(ctx, "SELECT "+table.idColumn()+" FROM "+ident+" WHERE workspace_id = $1", w.ID)
 		var got []ids.UUID
 		if err == nil {
 			got, err = pgx.CollectRows(rows, pgx.RowTo[ids.UUID])
@@ -381,7 +419,7 @@ func (f *Fixture) snapshot(t testing.TB, w *Workspace) (string, []ids.UUID) {
 func (f *Fixture) CheckTables(t testing.TB) {
 	t.Helper()
 	for _, table := range f.tables {
-		ident := pgx.Identifier{table.Name}.Sanitize()
+		ident, id := pgx.Identifier{table.Name}.Sanitize(), table.idColumn()
 		can := f.privileges(t, table.Name)
 		query := func(sql string, filtered bool) func(context.Context, pgx.Tx, *Workspace) ([]ids.UUID, error) {
 			return func(ctx context.Context, tx pgx.Tx, target *Workspace) ([]ids.UUID, error) {
@@ -407,9 +445,9 @@ func (f *Fixture) CheckTables(t testing.TB) {
 			privilege string
 		}{
 			{Op{Name: table.Name + ": read by workspace",
-				Run: query("SELECT id FROM "+ident+" WHERE workspace_id = $1", true)}, "SELECT"},
+				Run: query("SELECT "+id+" FROM "+ident+" WHERE workspace_id = $1", true)}, "SELECT"},
 			{Op{Name: table.Name + ": read without a filter",
-				Run: query("SELECT id FROM "+ident, false)}, "SELECT"},
+				Run: query("SELECT "+id+" FROM "+ident, false)}, "SELECT"},
 			// A WHERE or RETURNING clause that reads the table's columns, as
 			// those of the update and the delete by workspace below do, holds
 			// the rows that the statement reaches to the table's SELECT
@@ -429,10 +467,10 @@ func (f *Fixture) CheckTables(t testing.TB) {
 			{Op{Name: table.Name + ": delete without a filter", Blind: true,
 				Run: blind("DELETE FROM " + ident)}, "DELETE"},
 			{Op{Name: table.Name + ": update by workspace",
-				Run: query("UPDATE "+ident+" SET workspace_id = workspace_id WHERE workspace_id = $1 RETURNING id", true)},
+				Run: query("UPDATE "+ident+" SET workspace_id = workspace_id WHERE workspace_id = $1 RETURNING "+id, true)},
 				"UPDATE"},
 			{Op{Name: table.Name + ": delete by workspace",
-				Run: query("DELETE FROM "+ident+" WHERE workspace_id = $1 RETURNING id", true)}, "DELETE"},
+				Run: query("DELETE FROM "+ident+" WHERE workspace_id = $1 RETURNING "+id, true)}, "DELETE"},
 			// Unlike the others, this operation changes the rows that the
 			// transaction sees, A's, rather than the target's: it moves them
 			// into the target, which adds rows to the target as surely as an
@@ -444,7 +482,7 @@ func (f *Fixture) CheckTables(t testing.TB) {
 			// all that refuses it. On A's own rows, it moves them nowhere.
 			{Op{Name: table.Name + ": move into a workspace", Denied: true,
 				Run: func(ctx context.Context, tx pgx.Tx, target *Workspace) ([]ids.UUID, error) {
-					moved, err := query("SELECT id FROM "+ident, false)(ctx, tx, target)
+					moved, err := query("SELECT "+id+" FROM "+ident, false)(ctx, tx, target)
 					if err == nil {
 						_, err = tx.Exec(ctx, "UPDATE "+ident+" SET workspace_id = $1", target.ID)
 					}

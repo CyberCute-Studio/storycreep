@@ -312,6 +312,10 @@ func crossWorkspaceReferences(t *testing.T, f *isolationtest.Fixture) []string {
 		"VALUES ($1, $2, $3, $4, 'viewer')"
 	const token = "INSERT INTO api_token (id, workspace_id, user_id, project_id, name, token_hash, scopes) " +
 		"VALUES ($1, $2, $3, $4, 'isolation', $5, ARRAY['project:read'])"
+	// The fixture's operation has a random seq, which 1 is not.
+	const operation = "INSERT INTO operation (id, workspace_id, project_id, seq, command_ids, type, payload, " +
+		"entity_refs) VALUES ($1, $2, $3, 1, ARRAY[$4::uuid], 'isolation.test', '[]', '[]')"
+	const applied = "INSERT INTO applied_command (workspace_id, project_id, command_id, seq) VALUES ($1, $2, $3, 1)"
 	var reached []string
 	for _, c := range []struct {
 		key string
@@ -327,6 +331,12 @@ func crossWorkspaceReferences(t *testing.T, f *isolationtest.Fixture) []string {
 		}},
 		{"api_token.project_id", token, func(w *isolationtest.Workspace) []any {
 			return []any{ids.New(), a.ID, a.UserID, w.Rows["project"], isolationtest.TokenHash()}
+		}},
+		{"operation.project_id", operation, func(w *isolationtest.Workspace) []any {
+			return []any{ids.New(), a.ID, w.Rows["project"], ids.New()}
+		}},
+		{"applied_command.project_id", applied, func(w *isolationtest.Workspace) []any {
+			return []any{a.ID, w.Rows["project"], ids.New()}
 		}},
 	} {
 		for _, w := range []*isolationtest.Workspace{a, f.B} {
@@ -354,12 +364,12 @@ func crossWorkspaceReferences(t *testing.T, f *isolationtest.Fixture) []string {
 
 // TestWorkspaceScopedForeignKeys checks that a row cannot refer to a row of
 // another workspace through the foreign keys between tenant tables:
-// project_grant's to membership and to project, and api_token's to project,
-// each of which includes workspace_id (00004). PostgreSQL checks foreign keys
-// past row-level security, so a key on the ID alone would let a transaction of
-// workspace A refer to B's rows, and find out whether an ID exists in B. The
-// test then weakens each key to one on the ID alone, to check that it finds
-// them.
+// project_grant's to membership and to project, and api_token's to project
+// (00004), and operation's and applied_command's to project (00012), each of
+// which includes workspace_id. PostgreSQL checks foreign keys past row-level
+// security, so a key on the ID alone would let a transaction of workspace A
+// refer to B's rows, and find out whether an ID exists in B. The test then
+// weakens each key to one on the ID alone, to check that it finds them.
 //
 // Verifies: NFR-SEC-01
 func TestWorkspaceScopedForeignKeys(t *testing.T) {
@@ -376,10 +386,15 @@ func TestWorkspaceScopedForeignKeys(t *testing.T) {
 			ADD FOREIGN KEY (membership_id) REFERENCES membership ON DELETE CASCADE,
 			ADD FOREIGN KEY (project_id) REFERENCES project ON DELETE CASCADE;
 		ALTER TABLE api_token DROP CONSTRAINT api_token_workspace_id_project_id_fkey,
+			ADD FOREIGN KEY (project_id) REFERENCES project ON DELETE CASCADE;
+		ALTER TABLE operation DROP CONSTRAINT operation_workspace_id_project_id_fkey,
+			ADD FOREIGN KEY (project_id) REFERENCES project ON DELETE CASCADE;
+		ALTER TABLE applied_command DROP CONSTRAINT applied_command_workspace_id_project_id_fkey,
 			ADD FOREIGN KEY (project_id) REFERENCES project ON DELETE CASCADE`); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"project_grant.membership_id", "project_grant.project_id", "api_token.project_id"}
+	want := []string{"project_grant.membership_id", "project_grant.project_id", "api_token.project_id",
+		"operation.project_id", "applied_command.project_id"}
 	if got := crossWorkspaceReferences(t, f); !slices.Equal(got, want) {
 		t.Errorf("with keys on the ID alone, rows refer to another workspace's through %v, want %v", got, want)
 	}

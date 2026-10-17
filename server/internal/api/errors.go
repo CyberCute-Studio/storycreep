@@ -52,6 +52,7 @@ const (
 	CodeAlreadyMember         Code = "already_member"
 	CodeInviteExists          Code = "invite_exists"
 	CodeLimitExceeded         Code = "limit_exceeded"
+	CodeRevisionConflict      Code = "revision_conflict"
 	CodeInviteExpired         Code = "invite_expired"
 	CodeInviteRevoked         Code = "invite_revoked"
 	CodeInviteAccepted        Code = "invite_accepted"
@@ -203,6 +204,18 @@ var codes = []codeSpec{
 			"does unless `STORYCREEP_PUBLIC_SITE` is `off`, the limit is the plan's rather than a cap of the " +
 			"instance, and another plan allows more. A self-hosted instance never sends it (FR-ENT-03 AC2). A " +
 			"workspace past a limit already, as after its plan changed, keeps what it has, but cannot add more."},
+	{CodeRevisionConflict, http.StatusConflict, i18n.K("error.revision_conflict"),
+		"Commands of the batch expect revisions of entities that the entities no longer have, because they changed " +
+			"after the client read them, so nothing of the batch is applied (PRD FR-API-03 AC3, ADR-006). Every " +
+			"`expected_rev` of a batch is checked against the entities as they are before the batch, not as an " +
+			"earlier command of it would leave them, so an entity that the batch creates has no revision to expect. " +
+			"`details.conflicts` lists each command's entities whose revisions are not the ones that its " +
+			"`expected_rev` names: the command's index in the batch as `command`, its `command_id`, and its `type`, " +
+			"and the entity's `id`, its `expected_rev`, and `exists`, which is `true`, with the entity's " +
+			"`current_rev` and its `state`, the entity as it is now, or `false`, without them, for an entity that " +
+			"no longer exists, as one that was purged from the trash or never created (FR-OFF-04 AC5). An entity " +
+			"in the trash exists, and its state says that it is deleted. To make the change anyway, make it again " +
+			"on the current state, as a new command with an ID of its own and the current revisions."},
 	{CodeInviteExpired, http.StatusGone, i18n.K("error.invite_expired"),
 		"The invitation has expired: it lasts 14 days from when it was made, sent anew, or emailed (PRD " +
 			"FR-TEN-02 AC1). An owner or admin of the workspace sends it anew."},

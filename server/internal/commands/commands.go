@@ -1,0 +1,652 @@
+// Package commands is the command pipeline (PRD §5.7, §10.2, §10.4, ADR-004,
+// ADR-006): the one write path of a project's content. Every change of
+// content is a typed command, declared once in a Registry with its payload's
+// type, the operation of the permission matrix that it needs, the limits of
+// the plan that it adds to, its inverse, and the kinds of entity that it
+// touches, and the web app, the API, the importer, and the offline replay
+// all send the same commands, so that one validation and one authorisation
+// hold them all.
+//
+// A batch of commands is applied to one project, atomically, by Apply, in
+// the order of the steps of §10.2: its commands are decoded strictly and
+// validated against their payloads' schemas, before the database is read;
+// the actor's roles are resolved (§5.5), and each command's operation is
+// authorised by the role that its scope names; the project's row is locked,
+// so that the project's batches are applied one at a time; the workspace's
+// limits are checked for what the batch adds (FR-ENT-01); every expected
+// revision of the batch's commands is checked against the project as it is
+// before the batch, which is what the client authored the batch against, and
+// a stale one refuses the whole batch with the entities' current state
+// (FR-API-03 AC3); and the commands are applied, in order, in one
+// transaction. A batch that applies is appended to the project's operation
+// log with the project's next seq, its inverse, and the entities that it
+// changed, and each of its commands is recorded in applied_command, which
+// keeps it recognised for as long as the project exists. The audit entries
+// and the jobs of its commands are written in the same transaction
+// (Tx.Audit, Tx.Enqueue), and once it commits, the Notifier is told its seq
+// (§10.2 step 7). A batch that does not apply changes nothing at all
+// (FR-API-03 AC2).
+//
+// Token scopes join the authorisation with API tokens (plan item 26), and
+// the idempotency of command IDs and the multi-batch form with the command
+// endpoint (plan item 28).
+package commands
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"maps"
+	"math"
+	"slices"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
+	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+)
+
+var (
+	// ErrNotFound is returned for a batch of a project that does not exist,
+	// or on which the actor's effective role is none, as it is for a user who
+	// is not a member of its workspace, or a guest without a grant on it
+	// (§5.5), so that nothing tells them that it exists (FR-TEN-04 AC6), and
+	// for one of a project whose workspace's deletion is pending, which
+	// blocks every access to the workspace at once (FR-TEN-05 AC1).
+	ErrNotFound = errors.New("commands: no such project, or the user has no role on it")
+	// ErrInsufficientRole is returned for a batch with a command whose
+	// operation the actor's role does not allow (§5.6), and ErrOwnerRequired
+	// for one whose operation only an owner may do, as package authz decides.
+	ErrInsufficientRole = authz.ErrInsufficientRole
+	ErrOwnerRequired    = authz.ErrOwnerRequired
+)
+
+// Ref names an entity: its kind and its ID.
+type Ref struct {
+	Kind ids.Kind
+	ID   ids.UUID
+}
+
+// Revision is an entity's revision.
+type Revision struct {
+	Ref
+	Rev int64
+}
+
+// Command is a command of a batch, as a client sends it (FR-API-03).
+type Command struct {
+	// ID is the client's ID of the command, unique within the project, by
+	// which a command that was applied stays recognised.
+	ID      ids.UUID
+	Type    Type
+	Payload json.RawMessage
+	// ExpectedRev holds, for each entity that the client authored the
+	// command against, the revision that it had then (ADR-006). It may name
+	// any entity that the command changes or refers to, of a kind that it
+	// touches (Spec.Touches), and the batch applies only if every one of them
+	// still has that revision before the batch: a revision is the one that
+	// the client read, not one that an earlier command of the batch gives,
+	// and an entity that the batch creates has none to expect.
+	ExpectedRev map[Ref]int64
+}
+
+// Actor is who applies a batch.
+type Actor struct {
+	UserID ids.UUID
+	// TokenID is the API token that the user acts with, or zero for a
+	// session (FR-AUTH-04).
+	TokenID ids.UUID
+	// Client is what the audit log records of the client.
+	Client audit.Client
+}
+
+// Result is what a batch that applied did.
+type Result struct {
+	// Seq is the batch's seq: the project's sequence number after it.
+	Seq int64
+	// Revisions are the entities that the batch changed, with their
+	// revisions after it, in the order of their first change.
+	Revisions []Revision
+}
+
+// RevisionConflictError is a batch with commands whose expected revisions
+// of entities are not the entities' revisions any more (PRD §5.7, ADR-006,
+// FR-API-03 AC3). It applies nothing. The API answers it with 409
+// revision_conflict.
+type RevisionConflictError struct {
+	// Conflicts are every command's entities whose revisions are not the
+	// expected ones, in the order of the commands, and of each command's
+	// entities by their kinds and IDs. An entity that several commands
+	// expect a revision of that it does not have is in it once for each.
+	Conflicts []Conflict
+}
+
+func (e *RevisionConflictError) Error() string {
+	return fmt.Sprintf("commands: the batch's commands expect %d revisions that their entities no longer have",
+		len(e.Conflicts))
+}
+
+// Conflict is an entity whose revision is not the one that a command
+// expected.
+type Conflict struct {
+	// Command is the index of the command in the batch, and CommandID and
+	// Type are its.
+	Command   int
+	CommandID ids.UUID
+	Type      Type
+	Ref
+	Expected int64
+	// Exists says whether the entity still exists. One that does has the
+	// revision Current, and the state State, encoded as JSON as its kind's
+	// Entity.States gives it. One that does not, as one that was purged from
+	// the trash, has neither: the client's "target deleted" (FR-OFF-04 AC5).
+	// An entity in the trash still exists.
+	Exists  bool
+	Current int64
+	State   json.RawMessage
+}
+
+// DB runs a transaction of the application login, as *database.DB does.
+type DB interface {
+	InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
+}
+
+// Enqueuer enqueues jobs in a transaction, as *jobs.Queue does.
+type Enqueuer interface {
+	Enqueue(ctx context.Context, tx pgx.Tx, args jobs.Args, opts *jobs.EnqueueOptions) (jobs.Enqueued, error)
+}
+
+// Notifier is told of each batch that applies, once it has committed, with
+// its project and its seq (§10.2 step 7). The real-time hub (plan item 52)
+// tells the project's sockets of it; until then, nothing is told. Its
+// context carries the values of Apply's, but not its cancellation, because
+// the batch has committed whatever becomes of the request that sent it, as
+// when its client goes away at that moment.
+type Notifier interface {
+	Committed(ctx context.Context, projectID ids.UUID, seq int64)
+}
+
+// Options configure a Pipeline.
+type Options struct {
+	// Registry holds the types of command, or nil for none.
+	Registry *Registry
+	// Policy resolves the roles.
+	Policy role.Policy
+	// Entitlements check the workspaces' limits. It is required, because a
+	// pipeline without it would let every command past its workspace's plan.
+	Entitlements *entitlements.Service
+	// Jobs is the job queue of the commands' jobs (Tx.Enqueue), or nil for
+	// none.
+	Jobs Enqueuer
+	// Notifier is told of the batches that apply, or nil for nothing.
+	Notifier Notifier
+}
+
+// Pipeline applies batches of commands.
+type Pipeline struct {
+	db       DB
+	registry *Registry
+	policy   role.Policy
+	ent      *entitlements.Service
+	jobs     Enqueuer
+	notifier Notifier
+	metrics  *metrics
+}
+
+// New returns a Pipeline that applies the commands of opts.Registry in db. It
+// panics if opts.Entitlements is nil.
+func New(db DB, opts Options) *Pipeline {
+	if opts.Entitlements == nil {
+		panic("commands: a pipeline needs the entitlements that check its commands' limits")
+	}
+	reg := opts.Registry
+	if reg == nil {
+		reg = NewRegistry()
+	}
+	return &Pipeline{db: db, registry: reg, policy: opts.Policy, ent: opts.Entitlements, jobs: opts.Jobs,
+		notifier: opts.Notifier, metrics: newMetrics(reg.Types())}
+}
+
+// Collector returns the pipeline's metrics (PRD NFR-OBS-02).
+func (p *Pipeline) Collector() prometheus.Collector {
+	return p.metrics
+}
+
+// Apply applies the batch of commands to the project projectID, as the actor
+// asks, atomically, and returns what it did (FR-API-03). It returns an
+// *InvalidError if the batch is not valid; ErrNotFound if the project does not
+// exist, its workspace's deletion is pending, or the actor's effective role
+// on it is none; ErrInsufficientRole or ErrOwnerRequired if the actor's role
+// does not allow a command's operation; an *entitlements.LimitError if the
+// batch would take the workspace past a limit of its plan; a
+// *RevisionConflictError if a command's expected revision is stale; and an
+// error that wraps a command's own if a command refuses the batch. Whatever
+// it returns but a Result, it changes nothing.
+func (p *Pipeline) Apply(ctx context.Context, actor Actor, projectID ids.UUID, batch []Command) (Result, error) {
+	start := time.Now()
+	cmds, err := p.registry.decode(batch)
+	var res Result
+	if err == nil {
+		res, err = p.apply(ctx, actor, projectID, cmds)
+	}
+	p.metrics.observe(cmds, err, time.Since(start))
+	if err != nil {
+		return Result{}, err
+	}
+	if p.notifier != nil {
+		p.notifier.Committed(context.WithoutCancel(ctx), projectID, res.Seq)
+	}
+	return res, nil
+}
+
+// apply applies the decoded commands cmds.
+func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, cmds []decoded) (Result, error) {
+	workspaceID, err := p.workspaceOf(ctx, actor.UserID, projectID)
+	if err != nil {
+		return Result{}, err
+	}
+	var res Result
+	err = p.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
+		q := queries.New(tx)
+		// workspaceOf found the workspace active in a transaction of its own,
+		// so the batch's reads it again, before the roles, so that a deletion
+		// requested in between refuses the batch as well, and with 404,
+		// whatever the actor's role would allow (FR-TEN-05 AC1).
+		if err := activeWorkspace(ctx, q, workspaceID); err != nil {
+			return err
+		}
+		roles, err := p.roles(ctx, q, actor.UserID, workspaceID, projectID)
+		if err != nil {
+			return err
+		}
+		for _, c := range cmds {
+			if err := authz.Check(roles[c.spec.capability.Scope()], c.spec.capability); err != nil {
+				return err
+			}
+		}
+		// The lock is taken once the actor is authorised, so that nobody
+		// without a role on the project can hold up its batches. It is the
+		// only row that the batch locks before its commands apply: roles says
+		// why the membership and the grant that authorise the batch are not.
+		seq, err := q.LockProjectSeq(ctx, queries.LockProjectSeqParams{WorkspaceID: nullUUID(workspaceID),
+			ID: nullUUID(projectID)})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("commands: lock the project: %w", err)
+		}
+		// The batch may have waited for the lock for as long as the project's
+		// other batches took, and a deletion requested meanwhile refuses it
+		// too, rather than letting it apply. The read is a statement of its
+		// own, which sees what committed while the batch waited, as the lock's
+		// own statement does not.
+		if err := activeWorkspace(ctx, q, workspaceID); err != nil {
+			return err
+		}
+		t := &Tx{tx: tx, pipeline: p, actor: actor, project: projectID, workspace: workspaceID, at: map[Ref]int{},
+			revs: map[Ref]int64{}}
+		res, err = p.applyLocked(ctx, q, t, cmds, seq)
+		// Each later read is a statement of its own too, so a deletion
+		// requested once the read above is done is seen by the next read that
+		// only an active workspace answers, as the read of its plan with plans
+		// enforced, which then finds no row, and would fail the batch as a 500.
+		// A batch that fails for want of a row is refused as above if its
+		// workspace is no longer active.
+		if errors.Is(err, pgx.ErrNoRows) && errors.Is(activeWorkspace(ctx, q, workspaceID), ErrNotFound) {
+			return ErrNotFound
+		}
+		return err
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	return res, nil
+}
+
+// applyLocked applies the decoded commands cmds in t, the batch's
+// transaction, once it holds the lock of the project, whose seq is seq: it
+// checks the limits and the revisions, applies the commands, and records the
+// batch.
+func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded, seq int64) (Result,
+	error) {
+	if err := p.checkLimits(ctx, t.tx, t.workspace, cmds); err != nil {
+		return Result{}, err
+	}
+	if err := p.checkRevs(ctx, t, cmds); err != nil {
+		return Result{}, err
+	}
+	// A batch with a command that cannot be undone has no inverse, so none of
+	// its commands' inverses is computed, only to be dropped.
+	inverses := make([][]logStep, len(cmds))
+	undoable := !slices.ContainsFunc(cmds, func(c decoded) bool { return c.spec.inverse == nil })
+	for i, c := range cmds {
+		if undoable {
+			steps, err := c.spec.inverse(ctx, t, c.payload)
+			if err == nil {
+				inverses[i], err = p.registry.checkSteps(steps)
+			}
+			if err != nil {
+				return Result{}, fmt.Errorf("commands: the inverse of command %d (%s): %w", i, c.spec.typ, err)
+			}
+		}
+		// Only Apply reports changes (Tx.Changed): neither the reads of the
+		// revisions nor an inverse, which only reads.
+		t.current = c.spec
+		err := c.spec.apply(ctx, t, c.payload)
+		t.current = nil
+		if err != nil {
+			return Result{}, fmt.Errorf("commands: command %d (%s): %w", i, c.spec.typ, err)
+		}
+	}
+	res := Result{Seq: seq + 1, Revisions: slices.Clone(t.changed)}
+	if err := p.record(ctx, q, t, cmds, res, inverses, undoable); err != nil {
+		return Result{}, err
+	}
+	return res, nil
+}
+
+// workspaceOf returns the workspace of the project, through the context
+// bootstrap (§5.4), or ErrNotFound if there is no such project, or if its
+// workspace's deletion is pending (FR-TEN-05 AC1), which the batch's own
+// transaction checks again, before the roles and once it holds the project's
+// lock.
+func (p *Pipeline) workspaceOf(ctx context.Context, userID, projectID ids.UUID) (ids.UUID, error) {
+	var ws pgtype.UUID
+	err := p.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
+		var err error
+		ws, err = queries.New(tx).ProjectWorkspace(ctx, nullUUID(projectID))
+		return err
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return ids.UUID{}, ErrNotFound
+	case err != nil:
+		return ids.UUID{}, fmt.Errorf("commands: find the project's workspace: %w", err)
+	}
+	return ws.Bytes, nil
+}
+
+// activeWorkspace returns ErrNotFound unless the workspace is active, as it is
+// not once its deletion is pending (FR-TEN-05 AC1).
+func activeWorkspace(ctx context.Context, q *queries.Queries, workspaceID ids.UUID) error {
+	if _, err := q.Workspace(ctx, nullUUID(workspaceID)); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return fmt.Errorf("commands: read the workspace: %w", err)
+	}
+	return nil
+}
+
+// roles returns the role that the user acts with for each scope of
+// operation (§5.5): their effective role on the project for a
+// project-scoped one, and their role in its workspace for a workspace-scoped
+// one. It returns ErrNotFound if the effective role is none. It reads
+// whether the user is an instance admin only if the policy lets an instance
+// admin act as owner, because otherwise the answer changes nothing.
+//
+// It locks neither the user's membership nor their grant on the project, so
+// a change of either that commits once it has read them, as while the batch
+// waits for the project's lock, is ordered after the batch that they
+// authorised. Locked FOR SHARE, they would make a removal or a role change,
+// which locks the membership FOR UPDATE while it holds the workspace's row,
+// wait for the member's batches, and PostgreSQL grants a share lock at once
+// even while such a lock waits, so a member who kept batches in flight, one
+// overlapping the next, would put off their own removal for as long as they
+// sent them, and every change of the workspace's members and settings, which
+// waits for the workspace's row, with it.
+func (p *Pipeline) roles(ctx context.Context, q *queries.Queries, userID, workspaceID, projectID ids.UUID) (
+	map[authz.Scope]role.Role, error) {
+	member, grant := role.None, role.None
+	m, err := q.MembershipOf(ctx, queries.MembershipOfParams{WorkspaceID: nullUUID(workspaceID),
+		UserID: nullUUID(userID)})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+	case err != nil:
+		return nil, fmt.Errorf("commands: read the membership: %w", err)
+	default:
+		member = role.Role(m.Role)
+		g, err := q.ProjectGrantRole(ctx, queries.ProjectGrantRoleParams{WorkspaceID: nullUUID(workspaceID),
+			MembershipID: m.ID, ProjectID: nullUUID(projectID)})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+		case err != nil:
+			return nil, fmt.Errorf("commands: read the project grant: %w", err)
+		default:
+			grant = role.Role(g)
+		}
+	}
+	admin := false
+	if p.policy.InstanceAdminAccess {
+		admin, err = q.InstanceAdmin(ctx, nullUUID(userID))
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			// The account is no longer active.
+			return nil, ErrNotFound
+		case err != nil:
+			return nil, fmt.Errorf("commands: read the account: %w", err)
+		}
+	}
+	effective := p.policy.Effective(admin, member, grant)
+	if effective == role.None {
+		return nil, ErrNotFound
+	}
+	return map[authz.Scope]role.Role{authz.Project: effective, authz.Workspace: p.policy.Workspace(admin, member)},
+		nil
+}
+
+// checkLimits checks, with the entitlements, each limit of the workspace's
+// plan that the batch adds to, for what all of its commands add together, so
+// that a batch whose commands each fit, but not all of them, is refused
+// (FR-ENT-01). It returns an *entitlements.LimitError for the first limit, in
+// the order of the commands, that the batch would take the workspace past.
+func (p *Pipeline) checkLimits(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, cmds []decoded) error {
+	keys, adds := batchAdds(cmds)
+	for _, key := range keys {
+		if err := p.ent.Check(ctx, tx, workspaceID, key, adds[key]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// batchAdds returns the limits that the commands cmds add to, in the order of
+// the commands, and how much all of them add to each. A sum past what an
+// int64 holds would wrap around, as to an amount that adds nothing, which
+// entitlements.Check allows without reading the usage, so a sum that would
+// pass math.MaxInt64 stays there, more than any quota, whatever the commands
+// after it take away, and one that would pass math.MinInt64 is held at it.
+func batchAdds(cmds []decoded) ([]entitlements.LimitKey, map[entitlements.LimitKey]int64) {
+	var keys []entitlements.LimitKey
+	adds := map[entitlements.LimitKey]int64{}
+	for _, c := range cmds {
+		for i, key := range c.spec.limits {
+			sum, ok := adds[key]
+			if !ok {
+				keys = append(keys, key)
+			}
+			switch a := c.adds[i]; {
+			case sum == math.MaxInt64:
+			case a > 0 && sum > math.MaxInt64-a:
+				adds[key] = math.MaxInt64
+			case a < 0 && sum < math.MinInt64-a:
+				adds[key] = math.MinInt64
+			default:
+				adds[key] = sum + a
+			}
+		}
+	}
+	return keys, adds
+}
+
+// checkRevs returns a *RevisionConflictError if an entity that a command of
+// cmds expects a revision of does not have it, before any command applies,
+// and records the revisions that it reads (Tx.Changed). It reads the
+// revisions of each kind's entities with one call of the kind's Revs, and
+// the states of the stale ones with one call of its States, each of which
+// asks for each entity once, however many commands expect a revision of it,
+// so that a batch over many entities costs a query of each kind rather than
+// one of each entity, while it holds the project's lock.
+func (p *Pipeline) checkRevs(ctx context.Context, t *Tx, cmds []decoded) error {
+	byKind := map[ids.Kind][]ids.UUID{}
+	asked := map[Ref]bool{}
+	for _, c := range cmds {
+		for ref := range c.ExpectedRev {
+			if !asked[ref] {
+				asked[ref] = true
+				byKind[ref.Kind] = append(byKind[ref.Kind], ref.ID)
+			}
+		}
+	}
+	// No command has applied yet, so the revisions that the batch has seen
+	// (Tx.revs) are the ones that it reads here, of the entities that exist.
+	for _, kind := range slices.Sorted(maps.Keys(byKind)) {
+		revs, err := p.registry.entities[kind].Revs(ctx, t, byKind[kind])
+		if err != nil {
+			return fmt.Errorf("commands: read the revisions of the %s entities: %w", kind, err)
+		}
+		// An ID that the batch did not ask for is not one of its entities.
+		for _, id := range byKind[kind] {
+			if rev, ok := revs[id]; ok {
+				t.revs[Ref{Kind: kind, ID: id}] = rev
+			}
+		}
+	}
+	var conflicts []Conflict
+	stale := map[ids.Kind][]ids.UUID{}
+	states := map[Ref]json.RawMessage{}
+	for i, c := range cmds {
+		for _, ref := range sortedRefs(c.ExpectedRev) {
+			expected := c.ExpectedRev[ref]
+			rev, found := t.revs[ref]
+			if found && rev == expected {
+				continue
+			}
+			conflicts = append(conflicts, Conflict{Command: i, CommandID: c.ID, Type: c.spec.typ, Ref: ref,
+				Expected: expected, Exists: found, Current: rev})
+			if _, ok := states[ref]; found && !ok {
+				states[ref] = nil
+				stale[ref.Kind] = append(stale[ref.Kind], ref.ID)
+			}
+		}
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+	for _, kind := range slices.Sorted(maps.Keys(stale)) {
+		got, err := p.registry.entities[kind].States(ctx, t, stale[kind])
+		if err != nil {
+			return fmt.Errorf("commands: read the states of the %s entities: %w", kind, err)
+		}
+		for _, id := range stale[kind] {
+			ref := Ref{Kind: kind, ID: id}
+			s, ok := got[id]
+			if !ok {
+				return fmt.Errorf("commands: %s has a revision but no state", encodeRef(ref))
+			}
+			if states[ref], err = json.Marshal(s); err != nil {
+				return fmt.Errorf("commands: encode the state of %s: %w", encodeRef(ref), err)
+			}
+		}
+	}
+	for i, c := range conflicts {
+		conflicts[i].State = states[c.Ref]
+	}
+	return &RevisionConflictError{Conflicts: conflicts}
+}
+
+// The operation log's JSON (PRD §5.3).
+type (
+	// logCommand is a command of the operation's payload.
+	logCommand struct {
+		CommandID string          `json:"command_id"`
+		Type      Type            `json:"type"`
+		Payload   json.RawMessage `json:"payload"`
+	}
+	// logStep is a command of the operation's inverse, with its payload as
+	// checkSteps encoded it to check it.
+	logStep struct {
+		Type    Type            `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	// logRef is an entity of the operation's entity_refs, with its revision
+	// after the batch.
+	logRef struct {
+		Kind string `json:"kind"`
+		ID   string `json:"id"`
+		Rev  int64  `json:"rev"`
+	}
+)
+
+// record appends the batch of the commands cmds, which res says what they
+// did, to the project's operation log, records each command as applied, and
+// sets the project's seq. inverses are the commands' inverses, and undoable
+// says whether every command has one.
+func (p *Pipeline) record(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded, res Result,
+	inverses [][]logStep, undoable bool) error {
+	commandIDs := make([]pgtype.UUID, len(cmds))
+	payload := make([]logCommand, len(cmds))
+	for i, c := range cmds {
+		commandIDs[i] = nullUUID(c.ID)
+		payload[i] = logCommand{CommandID: c.ID.String(), Type: c.spec.typ, Payload: c.encoded}
+	}
+	typ := batchType
+	if len(cmds) == 1 {
+		typ = string(cmds[0].spec.typ)
+	}
+	// Undoing the batch undoes its commands from the last to the first.
+	var inverse []byte
+	if undoable {
+		steps := []logStep{}
+		for i := len(inverses) - 1; i >= 0; i-- {
+			steps = append(steps, inverses[i]...)
+		}
+		var err error
+		if inverse, err = json.Marshal(steps); err != nil {
+			return fmt.Errorf("commands: encode the inverse: %w", err)
+		}
+	}
+	refs := make([]logRef, len(res.Revisions))
+	for i, r := range res.Revisions {
+		refs[i] = logRef{Kind: r.Kind.String(), ID: r.ID.String(), Rev: r.Rev}
+	}
+	encodedPayload, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("commands: encode the payload: %w", err)
+	}
+	encodedRefs, err := json.Marshal(refs)
+	if err != nil {
+		return fmt.Errorf("commands: encode the entity refs: %w", err)
+	}
+	ws, project := nullUUID(t.workspace), nullUUID(t.project)
+	if err := q.InsertOperation(ctx, queries.InsertOperationParams{ID: nullUUID(ids.New()), WorkspaceID: ws,
+		ProjectID: project, Seq: res.Seq, CommandIds: commandIDs, ActorUserID: nullUUID(t.actor.UserID),
+		ActorTokenID: nullUUID(t.actor.TokenID), Type: typ, Payload: encodedPayload, Inverse: inverse,
+		EntityRefs: encodedRefs}); err != nil {
+		return fmt.Errorf("commands: append the operation: %w", err)
+	}
+	if err := q.InsertAppliedCommands(ctx, queries.InsertAppliedCommandsParams{WorkspaceID: ws, ProjectID: project,
+		Seq: res.Seq, CommandIds: commandIDs}); err != nil {
+		return fmt.Errorf("commands: record the applied commands: %w", err)
+	}
+	if err := q.SetProjectSeq(ctx, queries.SetProjectSeqParams{Seq: res.Seq, WorkspaceID: ws,
+		ID: project}); err != nil {
+		return fmt.Errorf("commands: set the project's seq: %w", err)
+	}
+	return nil
+}
+
+// nullUUID returns id as a uuid column, null if id is zero.
+func nullUUID(id ids.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: id != (ids.UUID{})}
+}
