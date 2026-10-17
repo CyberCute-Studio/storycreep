@@ -81,9 +81,10 @@ func count(t *testing.T, admin *pgx.Conn, sql string, args ...any) int {
 // TestDefaultPolicy checks the server's limits, which docs/error-codes.md,
 // docs/configuration.md, and the descriptions of the API's operations state:
 // a lock after 10 failed sign-ins in a row, for a minute, doubling up to 15
-// minutes, with failures forgotten after a day, and 20 requests a minute of
-// the auth bucket for an IP address, and 10 for an account and an email
-// address.
+// minutes, with failures forgotten after a day, 20 requests a minute of the
+// auth bucket for an IP address, and 10 for an account and an email address,
+// and 10 invitation emails an hour to an email address, which nothing else
+// limits.
 //
 // Verifies: NFR-SEC-06
 func TestDefaultPolicy(t *testing.T) {
@@ -98,6 +99,10 @@ func TestDefaultPolicy(t *testing.T) {
 	auth := p.Rates[Auth]
 	if auth.Period != time.Minute || auth.Limits[IP] != 20 || auth.Limits[User] != 10 || auth.Limits[Email] != 10 {
 		t.Errorf("the auth bucket is %+v", auth)
+	}
+	invites := p.Rates[InviteEmail]
+	if invites.Period != time.Hour || len(invites.Limits) != 1 || invites.Limits[Email] != 10 {
+		t.Errorf("the invite_email bucket is %+v", invites)
 	}
 	for _, b := range []Bucket{Auth, Read, Write, Export, Connect} {
 		r, ok := p.Rates[b]
@@ -344,6 +349,87 @@ func TestTakeCommitsWithoutFlush(t *testing.T) {
 	}
 	if setting != "off" {
 		t.Errorf("synchronous_commit is %s once a request is counted, want off", setting)
+	}
+}
+
+// TestTakeTx checks that a request counted in a transaction of the caller's
+// counts only if the transaction commits, and leaves the transaction's
+// commit waiting for the disk, as the caller's other changes need. The
+// test's database server waits for no commit at all, so the transaction asks
+// it to wait first.
+//
+// Verifies: NFR-SEC-06
+func TestTakeTx(t *testing.T) {
+	t.Parallel()
+	l, db, _ := setup(t)
+	ctx := context.Background()
+	jo := UserID(ids.New())
+	rollBack := errors.New("roll back")
+	var setting string
+	err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SET LOCAL synchronous_commit = on"); err != nil {
+			return err
+		}
+		if d, err := l.TakeTx(ctx, tx, Read, jo); err != nil || d.Limit != 2 || d.Remaining != 1 {
+			t.Errorf("the request counted in the transaction: %+v, %v; want the user's limit of 2 with 1 left", d,
+				err)
+		}
+		if err := tx.QueryRow(ctx, "SELECT current_setting('synchronous_commit')").Scan(&setting); err != nil {
+			return err
+		}
+		return rollBack
+	})
+	if !errors.Is(err, rollBack) {
+		t.Fatal(err)
+	}
+	if setting != "on" {
+		t.Errorf("synchronous_commit is %s once a request is counted in the caller's transaction, want on", setting)
+	}
+	if d, err := l.Take(ctx, Read, jo); err != nil || d.Remaining != 1 {
+		t.Errorf("a request after the transaction rolled back: %+v, %v; want 1 left, the other uncounted", d, err)
+	}
+	if err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		_, err := l.TakeTx(ctx, tx, Read, jo)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var limited *LimitError
+	if _, err := l.Take(ctx, Read, jo); !errors.As(err, &limited) || limited.Decision.Limit != 2 {
+		t.Errorf("a request after the transaction committed: %v; want the user's limit of 2 used up", err)
+	}
+}
+
+// TestTurn checks that the requests that a key's limit refuses take turns in
+// the windows that follow, as many in each as the limit allows, in the order
+// in which they were refused, while each could be retried once the window
+// ends.
+//
+// Verifies: NFR-SEC-06
+func TestTurn(t *testing.T) {
+	t.Parallel()
+	l, _, _ := setup(t)
+	ctx := context.Background()
+	jo := UserID(ids.New())
+	for range 2 {
+		if _, err := l.Take(ctx, Read, jo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The user's limit is 2 an hour, so the first two requests that it
+	// refuses wait for this hour to end, the next two for the next, and the
+	// fifth for the one after.
+	for i, after := range []time.Duration{0, 0, time.Hour, time.Hour, 2 * time.Hour} {
+		_, err := l.Take(ctx, Read, jo)
+		var limited *LimitError
+		if !errors.As(err, &limited) {
+			t.Fatalf("request %d over the limit: %v; want it refused", i+1, err)
+		}
+		if turn := limited.Turn(); turn <= after || turn > after+time.Hour || limited.RetryAfter() > time.Hour {
+			t.Errorf("request %d over the limit: its turn is in %v, and it may be retried in %v; want its turn "+
+				"after %v and within an hour of then, and a retry within the hour", i+1, turn, limited.RetryAfter(),
+				after)
+		}
 	}
 }
 

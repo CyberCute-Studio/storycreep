@@ -13,9 +13,10 @@
 // the database for 7 days with the error of each attempt. Work that meets a
 // failure that no attempt would mend ends its job at once instead, which is
 // then cancelled (Cancel), and stays as long, with its error. Discarded and
-// cancelled are the dead-letter states (AC3). The server runs the workers in
-// its own process, unless it is told not to, so that a deployment can run
-// them on instances of their own (AC4).
+// cancelled are the dead-letter states (AC3). Work that has to wait, as for a
+// rate limit, puts its job off instead (Snooze), which spends no attempt.
+// The server runs the workers in its own process, unless it is told not to,
+// so that a deployment can run them on instances of their own (AC4).
 //
 // Delivery is at least once. An instance that stops without finishing a job,
 // as when its process is killed, leaves the job running in the database, and
@@ -131,8 +132,9 @@ func NewRegistry() *Registry {
 // attempt. The exception is a stopping server that cancels ctx (Queue.Stop):
 // work that returns ctx's error then, or an error that wraps it, is attempted
 // again later without the attempt counting, so return the error with %w. The
-// other exception is an error of Cancel, which ends the job without another
-// attempt. Register panics if kind T has a worker already.
+// other exceptions are an error of Cancel, which ends the job without another
+// attempt, and one of Snooze, which puts the job off without the attempt
+// counting. Register panics if kind T has a worker already.
 func Register[T Args](r *Registry, work func(ctx context.Context, job *Job[T]) error) {
 	var args T
 	river.AddWorker(r.workers, river.WorkFunc(func(ctx context.Context, j *river.Job[T]) error {

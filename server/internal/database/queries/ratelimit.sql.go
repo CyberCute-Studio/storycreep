@@ -167,7 +167,8 @@ func (q *Queries) RateLimitKey(ctx context.Context) ([]byte, error) {
 
 const takeRateLimit = `-- name: TakeRateLimit :many
 WITH no_flush AS (
-    SELECT set_config('synchronous_commit', 'off', true)
+    SELECT set_config('synchronous_commit',
+        CASE WHEN $4::boolean THEN current_setting('synchronous_commit') ELSE 'off' END, true)
 )
 INSERT INTO rate_limit AS r (bucket, key, window_start, window_end, hits)
 SELECT
@@ -189,6 +190,7 @@ type TakeRateLimitParams struct {
 	Bucket string
 	Period pgtype.Interval
 	Keys   [][]byte
+	Flush  bool
 }
 
 type TakeRateLimitRow struct {
@@ -212,9 +214,16 @@ type TakeRateLimitRow struct {
 // uncounted. It changes the setting in no_flush, whose one row the insert
 // reads, so that a request spends no round trip on it: set_config is
 // volatile, so PostgreSQL does not fold no_flush away, and runs it once the
-// insert reads it, before the commit, which reads the setting.
+// insert reads it, before the commit, which reads the setting. With flush,
+// it sets the setting to what it is, so that a transaction that changes
+// other rows too, which a crash must not lose, commits as it would have.
 func (q *Queries) TakeRateLimit(ctx context.Context, arg TakeRateLimitParams) ([]TakeRateLimitRow, error) {
-	rows, err := q.db.Query(ctx, takeRateLimit, arg.Bucket, arg.Period, arg.Keys)
+	rows, err := q.db.Query(ctx, takeRateLimit,
+		arg.Bucket,
+		arg.Period,
+		arg.Keys,
+		arg.Flush,
+	)
 	if err != nil {
 		return nil, err
 	}

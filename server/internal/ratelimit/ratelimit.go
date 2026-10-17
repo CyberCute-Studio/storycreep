@@ -6,10 +6,11 @@
 // export, or connect), separately for each key that makes them: the
 // client's IP address, the signed-in user, or the email address that a
 // request names. One bucket counts no request but email that the instance
-// sends: the invitations that it emails an address (InviteEmail). Each bucket counts in fixed windows of time, of the same
-// length for every key, and allows each kind of key a number of requests in
-// a window (Policy). A request is allowed only if none of its keys has used
-// up its limit, and counts against all of them either way.
+// sends: the invitations that it emails an address (InviteEmail). Each
+// bucket counts in fixed windows of time, of the same length for every key,
+// and allows each kind of key a number of requests in a window (Policy). A
+// request is allowed only if none of its keys has used up its limit, and
+// counts against all of them either way.
 //
 // The counters are rows in PostgreSQL, and every server of an instance
 // counts in the same rows, with the database's clock, so the limits hold
@@ -249,6 +250,10 @@ type LimitError struct {
 	Bucket Bucket
 	// Decision is the state of the key that refused it.
 	Decision Decision
+	// over is how many requests of that key its window has refused, this
+	// one included, and period is the length of the bucket's windows.
+	over   int
+	period time.Duration
 }
 
 func (e *LimitError) Error() string {
@@ -259,6 +264,22 @@ func (e *LimitError) Error() string {
 // RetryAfter is how long until the request would be allowed.
 func (e *LimitError) RetryAfter() time.Duration {
 	return e.Decision.Reset
+}
+
+// Turn is how long until the request's turn, if the requests of the key that
+// its limit refuses were each allowed in a later window, as many in each as
+// the limit allows, in the order in which they were refused: until the
+// window ends for the first Limit of them that it refuses, until the window
+// after it ends for the next Limit, and so on. Work that a limit refuses and
+// that waits for its turn, as a job that snoozes does, rather than for the
+// window to end, is tried again a window's worth at a time, about in the
+// order in which it was refused, instead of all at once when the window ends,
+// to be refused again but for Limit of it.
+func (e *LimitError) Turn() time.Duration {
+	if e.over <= 0 || e.Decision.Limit <= 0 {
+		return e.Decision.Reset
+	}
+	return e.Decision.Reset + time.Duration((e.over-1)/e.Decision.Limit)*e.period
 }
 
 // LockedError is the error of a sign-in with an email address that is
@@ -293,6 +314,50 @@ type counted struct {
 // is hidden. It panics on a bucket or a key that the policy does not limit,
 // which is a mistake in the code that calls it.
 func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decision, error) {
+	rate, cs := l.counted(bucket, keys)
+	if len(cs) == 0 {
+		return Decision{}, nil
+	}
+	var rows []queries.TakeRateLimitRow
+	err := l.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		// The commit need not wait for the disk, which TakeRateLimit tells it
+		// in the same statement: a crash of the database would lose only a
+		// few requests' counts, and a limit lets a few more requests through
+		// then.
+		var err error
+		cs, rows, err = l.count(ctx, queries.New(tx), bucket, rate, cs, false)
+		return err
+	})
+	if err != nil {
+		return Decision{}, err
+	}
+	return decide(bucket, rate, cs, rows)
+}
+
+// TakeTx counts a request as Take does, but in tx, a transaction of the
+// caller's, so that the request is counted, allowed or refused, only if tx
+// commits, with whatever else tx changes, whose commit waits for the disk as
+// it would have. The counters of keys stay locked until tx ends, so a
+// transaction that counts a key waits for any other that has counted it to
+// end, and a caller that locks rows of its own as well locks them before it
+// counts, as every caller that counts those keys does, so that none waits
+// for another that waits for it.
+func (l *Limiter) TakeTx(ctx context.Context, tx pgx.Tx, bucket Bucket, keys ...Key) (Decision, error) {
+	rate, cs := l.counted(bucket, keys)
+	if len(cs) == 0 {
+		return Decision{}, nil
+	}
+	cs, rows, err := l.count(ctx, queries.New(tx), bucket, rate, cs, true)
+	if err != nil {
+		return Decision{}, err
+	}
+	return decide(bucket, rate, cs, rows)
+}
+
+// counted returns the rate of bucket, and the keys that a request of it
+// counts against, with their limits. It panics on a bucket or a key that
+// the policy does not limit.
+func (l *Limiter) counted(bucket Bucket, keys []Key) (Rate, []counted) {
 	rate, ok := l.policy.Rates[bucket]
 	if !ok {
 		panic(fmt.Sprintf("ratelimit: the bucket %q has no rate", bucket))
@@ -305,53 +370,55 @@ func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decisio
 		}
 		cs[i] = counted{Key: k, limit: limit}
 	}
-	if len(cs) == 0 {
-		return Decision{}, nil
-	}
-	var rows []queries.TakeRateLimitRow
-	err := l.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-		q := queries.New(tx)
-		for i := range cs {
-			var err error
-			if cs[i].hash, err = l.hash(ctx, q, cs[i].Key); err != nil {
-				return err
-			}
-		}
-		// Two requests that share keys lock their rows in the same order. A
-		// key given twice counts once, because one statement cannot change a
-		// row twice.
-		slices.SortFunc(cs, func(a, b counted) int { return bytes.Compare(a.hash, b.hash) })
-		cs = slices.CompactFunc(cs, func(a, b counted) bool { return bytes.Equal(a.hash, b.hash) })
-		hashes := make([][]byte, len(cs))
-		for i, c := range cs {
-			hashes[i] = c.hash
-		}
-		// Every request of a key counts in the key's one row, so the requests
-		// of a key wait for each other's commits. The commit need not wait for
-		// the disk, which TakeRateLimit tells it in the same statement: a crash
-		// of the database would lose only a few requests' counts, and a limit
-		// lets a few more requests through then.
+	return rate, cs
+}
+
+// count counts a request in bucket, whose rate is rate, against each of cs,
+// with q, a transaction's queries, and returns cs with their hashes, each
+// key once, and their counters. Unless flush is set, the transaction then
+// commits without waiting for the disk (TakeRateLimit).
+func (l *Limiter) count(ctx context.Context, q *queries.Queries, bucket Bucket, rate Rate, cs []counted,
+	flush bool) ([]counted, []queries.TakeRateLimitRow, error) {
+	for i := range cs {
 		var err error
-		rows, err = q.TakeRateLimit(ctx, queries.TakeRateLimitParams{Bucket: string(bucket),
-			Period: database.Interval(rate.Period), Keys: hashes})
-		if err != nil {
-			return fmt.Errorf("ratelimit: count the request: %w", err)
+		if cs[i].hash, err = l.hash(ctx, q, cs[i].Key); err != nil {
+			return nil, nil, err
 		}
-		return nil
-	})
-	if err != nil {
-		return Decision{}, err
 	}
+	// Two requests that share keys lock their rows in the same order. A key
+	// given twice counts once, because one statement cannot change a row
+	// twice.
+	slices.SortFunc(cs, func(a, b counted) int { return bytes.Compare(a.hash, b.hash) })
+	cs = slices.CompactFunc(cs, func(a, b counted) bool { return bytes.Equal(a.hash, b.hash) })
+	hashes := make([][]byte, len(cs))
+	for i, c := range cs {
+		hashes[i] = c.hash
+	}
+	// Every request of a key counts in the key's one row, so the requests of
+	// a key wait for each other's commits.
+	rows, err := q.TakeRateLimit(ctx, queries.TakeRateLimitParams{Bucket: string(bucket),
+		Period: database.Interval(rate.Period), Keys: hashes, Flush: flush})
+	if err != nil {
+		return nil, nil, fmt.Errorf("ratelimit: count the request: %w", err)
+	}
+	return cs, rows, nil
+}
+
+// decide returns what Take returns for a request in bucket, whose rate is
+// rate, that count counted against cs, with their counters rows.
+func decide(bucket Bucket, rate Rate, cs []counted, rows []queries.TakeRateLimitRow) (Decision, error) {
 	var told, refused *Decision
+	over := 0
 	for _, c := range cs {
 		i := slices.IndexFunc(rows, func(r queries.TakeRateLimitRow) bool { return bytes.Equal(r.Key, c.hash) })
 		if i < 0 {
 			return Decision{}, errors.New("ratelimit: a key was not counted")
 		}
-		d := Decision{Limit: c.limit, Remaining: max(0, c.limit-int(rows[i].Hits)),
+		hits := int(rows[i].Hits)
+		d := Decision{Limit: c.limit, Remaining: max(0, c.limit-hits),
 			Reset: rows[i].WindowEnd.Time.Sub(rows[i].Now.Time)}
-		if int(rows[i].Hits) > c.limit && (refused == nil || d.Reset > refused.Reset) {
-			refused = &d
+		if hits > c.limit && (refused == nil || d.Reset > refused.Reset) {
+			refused, over = &d, hits-c.limit
 		}
 		if !c.hidden && (told == nil || cmp.Or(cmp.Compare(d.Remaining, told.Remaining),
 			cmp.Compare(told.Reset, d.Reset)) < 0) {
@@ -359,7 +426,7 @@ func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decisio
 		}
 	}
 	if refused != nil {
-		return *refused, &LimitError{Bucket: bucket, Decision: *refused}
+		return *refused, &LimitError{Bucket: bucket, Decision: *refused, over: over, period: rate.Period}
 	}
 	if told == nil {
 		return Decision{}, nil

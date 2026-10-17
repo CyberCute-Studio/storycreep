@@ -71,8 +71,13 @@ const emailInviteAttempts = 36
 // the invitation, so that it either sends before the request, which then
 // sees when, or finds itself replaced.
 func (s *Service) enqueue(ctx context.Context, tx pgx.Tx, id, inviteID, request ids.UUID, address string) error {
-	if s.queue == nil {
+	switch {
+	case s.queue == nil:
 		return errors.New("invite: the Service has no job queue to email an invitation with")
+	case s.limits == nil:
+		// The job would fail every attempt, after the request had been
+		// answered.
+		return errNoLimits
 	}
 	opts := &jobs.EnqueueOptions{MaxAttempts: emailInviteAttempts}
 	due, err := queries.New(tx).InviteEmailDue(ctx, queries.InviteEmailDueParams{
@@ -130,28 +135,32 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 // the SMTP server refuses the email for good (email.JobError). An email that
 // would take the address over the limit of invitation emails of all
 // workspaces together (ratelimit.InviteEmail) is put off, with the
-// invitation as it was, until the limit's window ends (jobs.Snooze), which
-// spends none of the job's attempts; the invitation's admins see only that
-// it is still to be emailed. The limit counts each email that the job tries
-// to send, whether or not the SMTP server takes it. The job reads the SMTP
-// settings, as it does the invitation, on the workers' pool that it carries,
-// db.
+// invitation as it was, until its turn (ratelimit.LimitError.Turn), the end
+// of the limit's window for the first emails that the window puts off, and
+// the end of a later one for those after them, so that the emails that the
+// limit puts off are tried again about in the order in which it put them
+// off, a window's worth at a time; the job is snoozed (jobs.Snooze), which
+// spends none of its attempts, and the invitation's admins see only that it
+// is still to be emailed. The limit counts each email that the job tries to
+// send, whether or not the SMTP server takes it, and each that it puts off.
+// The job reads the SMTP settings, and the invitation, and counts the email,
+// on the workers' pool that it carries, db, one connection at a time.
 func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUID) error {
 	if s.email == nil {
 		return nil
-	}
-	if s.limits == nil {
-		return errors.New("invite: the Service has no Limits to count the invitations that it emails")
 	}
 	mailer := s.email.WithDB(db)
 	settings, configured, err := mailer.Settings(ctx)
 	if err != nil || !configured {
 		return err
 	}
+	if s.limits == nil {
+		return errNoLimits
+	}
 	value, hash := account.NewSecret()
 	var row queries.LockInviteToSendRow
 	found := false
-	var over *ratelimit.LimitError
+	var putOff *ratelimit.LimitError
 	scope := database.Scope{WorkspaceID: id}
 	err = db.InTx(ctx, scope, func(tx pgx.Tx) error {
 		q := queries.New(tx)
@@ -164,12 +173,14 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 		if err != nil {
 			return err
 		}
-		// The limit is counted while the invitation is locked, so that the
-		// email that it lets through is the one that this attempt sends. An
-		// email over it changes nothing, and is put off.
-		if _, err := s.limits.Take(ctx, ratelimit.InviteEmail, ratelimit.EmailAddress(row.Email)); err != nil {
-			if errors.As(err, &over) {
-				return errPutOff
+		// The email is counted in the transaction that locks the invitation
+		// and gives it the email's hash, so that the count commits only with
+		// the email that this attempt sends, or with an email that the limit
+		// puts off, which changes nothing else, and commits so that the
+		// emails put off after it wait for their turns after its own.
+		if _, err := s.limits.TakeTx(ctx, tx, ratelimit.InviteEmail, ratelimit.EmailAddress(row.Email)); err != nil {
+			if errors.As(err, &putOff) {
+				return nil
 			}
 			return err
 		}
@@ -177,11 +188,11 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 		return q.SetInviteHash(ctx, queries.SetInviteHashParams{TokenHash: hash,
 			Lifetime: database.Interval(Lifetime), WorkspaceID: nullUUID(id), ID: nullUUID(inviteID)})
 	})
-	if errors.Is(err, errPutOff) {
-		return jobs.Snooze(over.RetryAfter())
-	}
 	if err != nil {
 		return fmt.Errorf("invite: prepare the invitation's email: %w", err)
+	}
+	if putOff != nil {
+		return jobs.Snooze(putOff.Turn() + turnMargin)
 	}
 	if !found {
 		return nil
@@ -219,9 +230,17 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 // once its own context has ended.
 const unmarkTimeout = 10 * time.Second
 
-// errPutOff rolls back the transaction of a job whose email the limit of
-// invitation emails puts off.
-var errPutOff = errors.New("invite: the address has been emailed as many invitations as it may be for now")
+// turnMargin is how long after its turn a job whose email the limit of
+// invitation emails put off is attempted again. The turn is measured by the
+// database's clock, which counts the limit's windows, and River schedules
+// the job by the clock of the worker, which may be a little behind it, and
+// a job that it woke before its window began would be put off again, behind
+// the emails that the limit put off meanwhile.
+const turnMargin = 5 * time.Second
+
+// errNoLimits is the error of a Service that emails invitations without
+// Limits to count them with.
+var errNoLimits = errors.New("invite: the Service has no Limits to count the invitations that it emails")
 
 // inviteEmail returns the email of an invitation with the role r, with the
 // secret value, to the address address, in locale, a BCP 47 tag, or the

@@ -32,8 +32,12 @@
 // an address 10 invitations an hour at most, from all workspaces together
 // (ratelimit.InviteEmail), so that an account that owns many workspaces
 // cannot flood an inbox either: the job of an email over that limit is put
-// off until the address may be emailed again, and tells no one why, so that
-// no workspace learns that others invited the address.
+// off until its turn in a later hour, and no answer says why, so that
+// inviting an address does not tell a workspace that others invited it. An
+// account that fills the limit with invitations of workspaces of its own
+// can still tell, from how many of them are emailed within the hour, that
+// other workspaces used some of it, as any limit of an address alone lets
+// whoever fills it tell.
 // The email names no one and nothing but the instance and the role, never
 // the workspace or the inviting user, whose names their users chose, so that
 // an account cannot put text of its own in email that the instance sends to

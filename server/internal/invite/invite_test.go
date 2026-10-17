@@ -354,26 +354,16 @@ func TestEmailsWaitForResendInterval(t *testing.T) {
 	}
 }
 
-// awaitWindow waits, if less than need is left of the window of period that
-// the database's clock is in, until the next window starts, so that what a
-// test counts in a rate limit falls in one window.
-func awaitWindow(t *testing.T, f *fixture, period, need time.Duration) {
-	t.Helper()
-	var now time.Time
-	if err := f.d.Admin(t).QueryRow(context.Background(), "SELECT now()").Scan(&now); err != nil {
-		t.Fatal(err)
-	}
-	if left := period - time.Duration(now.UnixNano()%int64(period)); left < need {
-		time.Sleep(left + time.Second)
-	}
-}
-
 // TestEmailsLimitedAcrossWorkspaces checks that the invitations of several
 // workspaces, each of which emails the address once, together email it only
 // as often in an hour as the limit of invitation emails allows, as their
-// case does not change the address, and that the job of the next one is put
-// off until the hour ends, without spending an attempt, and leaves the
-// invitation as it was, while another address is emailed all the same.
+// case does not change the address, and that the job of each email over the
+// limit leaves its invitation as it was and is put off until its turn: the
+// end of the hour for the first two that the hour puts off, as the limit is
+// two, and the end of the next hour for the third, while another address is
+// emailed all the same.
+//
+// Verifies: NFR-SEC-06
 func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -384,12 +374,13 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 	policy.Rates[ratelimit.InviteEmail] = ratelimit.Rate{Period: time.Hour,
 		Limits: map[ratelimit.Kind]int{ratelimit.Email: 2}}
 	f.limits = ratelimit.New(f.db, policy)
-	awaitWindow(t, f, time.Hour, time.Minute)
+	f.d.AwaitWindow(t, time.Hour, time.Minute)
 
 	type job struct{ workspace, invite, request ids.UUID }
 	var jobs []job
 	owner := f.owner
-	for i, address := range []string{"hana@example.com", "Hana@Example.com", "HANA@example.com"} {
+	for i, address := range []string{"hana@example.com", "Hana@Example.com", "HANA@example.com",
+		"hana@EXAMPLE.com", "HaNa@example.com"} {
 		ws := f.workspace
 		if i > 0 {
 			owner = f.addUser(t, fmt.Sprintf("owner%d@example.com", i))
@@ -416,20 +407,29 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 	}
 	server.Wait(t, 2, 10*time.Second)
 
-	last := jobs[2]
-	err := f.send(ctx, f.db, last.workspace, last.invite, last.request)
-	var snooze *rivertype.JobSnoozeError
-	if !errors.As(err, &snooze) || snooze.Duration <= 0 || snooze.Duration > time.Hour {
-		t.Errorf("the third workspace's email: %v, want it put off until the hour ends", err)
+	for i, j := range jobs[2:] {
+		// The first two that the hour puts off wait for the hour to end, and
+		// the third for the next one.
+		least, most := turnMargin, time.Hour+turnMargin
+		if i == 2 {
+			least, most = most, most+time.Hour
+		}
+		err := f.send(ctx, f.db, j.workspace, j.invite, j.request)
+		var snooze *rivertype.JobSnoozeError
+		if !errors.As(err, &snooze) || snooze.Duration <= least || snooze.Duration > most {
+			t.Errorf("the email of workspace %d: %v, want it put off for more than %v and at most %v", i+2, err,
+				least, most)
+		}
+		if n := f.count(t, `SELECT count(*) FROM invite WHERE id = $1 AND token_hash IS NULL AND sent_at IS NULL
+			AND email_request = $2`, j.invite, j.request); n != 1 {
+			t.Errorf("the invitation of workspace %d, whose email was put off, changed", i+2)
+		}
 	}
 	if got := server.Messages(); len(got) != 2 {
 		t.Errorf("%d invitations were emailed, want 2", len(got))
 	}
-	if n := f.count(t, `SELECT count(*) FROM invite WHERE id = $1 AND token_hash IS NULL AND sent_at IS NULL
-		AND email_request = $2`, last.invite, last.request); n != 1 {
-		t.Errorf("the invitation whose email was put off changed")
-	}
 
+	last := jobs[len(jobs)-1]
 	other, err := f.Create(ctx, owner, last.workspace, Request{Email: "jo@example.com", Role: role.Viewer},
 		audit.Client{})
 	if err != nil {
