@@ -172,7 +172,9 @@ const inviteEmailLimitDoc = " The instance also emails a mailbox 10 invitations 
 	"(UTC), from all workspaces together, counting the addresses that differ only in a +tag, as " +
 	"jo+work@example.com and jo@example.com, in how their domain is written, as in full-width letters, or, at " +
 	"Gmail, in dots, as one. The email of an invitation over that limit is not sent, and the invitation stays " +
-	"without a link, its sent_at empty; send it anew later."
+	"without a link, its sent_at empty; send it anew later. An email counts once, in the hour that the instance " +
+	"first tries to send it, so that one sent again after a failure, as while the SMTP server is down, counts " +
+	"nothing more."
 
 // manageMembersDoc says, in the description of an operation that manages a
 // workspace's members or invitations, who may.

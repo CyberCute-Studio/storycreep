@@ -291,11 +291,23 @@ func envelopeAddress(address string, smtpUTF8 bool) (string, error) {
 	if at < 0 || !isASCII(address[:at]) {
 		return "", errors.New("has a local part outside ASCII, which only SMTPUTF8 carries")
 	}
-	domain, err := idna.Lookup.ToASCII(address[at+1:])
+	domain, err := ASCIIDomain(address[at+1:])
 	if err != nil {
 		return "", errors.New("has a domain outside ASCII that has no ASCII form")
 	}
 	return address[:at+1] + domain, nil
+}
+
+// ASCIIDomain returns domain, the domain of an email address, in the ASCII
+// form that the instance sends email to where the SMTP server takes no other
+// (envelopeAddress): IDNA's lookup form (UTS #46), which maps the other forms
+// of a letter, such as a full-width one, to the letter, in lower case, and
+// the ideographic and full-width full stops to dots, and writes a label
+// outside ASCII as its xn-- form. For a domain that has no such form, as one
+// with a label that IDNA refuses, it returns an error, with the domain mapped
+// as far as IDNA maps it.
+func ASCIIDomain(domain string) (string, error) {
+	return idna.Lookup.ToASCII(domain)
 }
 
 // isASCII reports whether s is ASCII.

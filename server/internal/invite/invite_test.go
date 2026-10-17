@@ -361,10 +361,10 @@ func TestEmailsWaitForResendInterval(t *testing.T) {
 // is emailed to the domain of its ASCII letter, changes the mailbox: the
 // job of the next one sends nothing, ends, cancelled with the limit as its
 // error, and leaves the invitation without a link, as one not emailed, even
-// when an earlier attempt of the job failed before it counted the email. A
-// retry of a job whose earlier attempt gave the invitation its link, and so
-// counted its email, is not counted again, and another mailbox is emailed
-// all the same.
+// when an earlier attempt of the job failed before it counted the email. The
+// retry of a job whose earlier attempt counted its email, gave the
+// invitation its link, and then failed to send it, does not count it again,
+// and another mailbox is emailed all the same.
 //
 // Verifies: NFR-SEC-06
 func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
@@ -398,6 +398,23 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 		}
 		queued = append(queued, job{ws, inv.ID, f.queue.request(t), owner})
 	}
+
+	// The first job's first attempt counts the email, gives the invitation
+	// its link, and meets a full mailbox, which may empty, so the job is
+	// attempted again. The retry finds the link, and sends without counting
+	// the email again, which leaves the limit's second email to the second
+	// job.
+	full := emailtest.Start(t, emailtest.Options{RefuseRecipients: "552 5.2.2 %s: Mailbox full"})
+	fullSettings := full.Settings(config.SMTPNone, "Storycreep <noreply@example.com>")
+	mailer := f.email
+	f.email = email.New(nil, email.Options{SMTP: &fullSettings, Hostname: "storycreep.example.com"})
+	first := queued[0]
+	err := f.send(ctx, f.db, first.workspace, first.invite, first.request)
+	var cancelled *river.JobCancelError
+	if err == nil || errors.As(err, &cancelled) {
+		t.Fatalf("the attempt that met a full mailbox: %v, want it failed, to be attempted again", err)
+	}
+	f.email = mailer
 	for _, j := range queued[:2] {
 		if err := f.send(ctx, f.db, j.workspace, j.invite, j.request); err != nil {
 			t.Fatal(err)
@@ -414,9 +431,8 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 	if err := f.send(ended, f.db, over.workspace, over.invite, over.request); err == nil {
 		t.Errorf("an attempt without a database succeeded")
 	}
-	err := f.send(ctx, f.db, over.workspace, over.invite, over.request)
+	err = f.send(ctx, f.db, over.workspace, over.invite, over.request)
 	var limited *ratelimit.LimitError
-	var cancelled *river.JobCancelError
 	if !errors.As(err, &limited) || !errors.As(err, &cancelled) {
 		t.Errorf("the job of an email over the limit: %v, want it cancelled with the limit", err)
 	}
@@ -431,19 +447,6 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 		t.Errorf("the invitation over the limit has a link")
 	}
 
-	// A retry of the first job, as after an email that the SMTP server did
-	// not take, or an attempt that the server's stop cut off, finds the link
-	// that its earlier attempt gave the invitation, and sends without
-	// counting, although the mailbox is over the limit.
-	first := queued[0]
-	if _, err := f.d.Admin(t).Exec(ctx, "UPDATE invite SET sent_at = NULL WHERE id = $1", first.invite); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.send(ctx, f.db, first.workspace, first.invite, first.request); err != nil {
-		t.Fatal(err)
-	}
-	server.Wait(t, 3, 10*time.Second)
-
 	other, err := f.Create(ctx, over.owner, over.workspace, Request{Email: "jo@example.com", Role: role.Viewer},
 		audit.Client{})
 	if err != nil {
@@ -452,8 +455,8 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 	if err := f.send(ctx, f.db, over.workspace, other.ID, f.queue.request(t)); err != nil {
 		t.Errorf("the email of another mailbox: %v", err)
 	}
-	if got := server.Wait(t, 4, 10*time.Second); len(got[3].To) != 1 || got[3].To[0] != "jo@example.com" {
-		t.Errorf("the fourth email is to %v, want jo@example.com", got[3].To)
+	if got := server.Wait(t, 3, 10*time.Second); len(got[2].To) != 1 || got[2].To[0] != "jo@example.com" {
+		t.Errorf("the third email is to %v, want jo@example.com", got[2].To)
 	}
 }
 

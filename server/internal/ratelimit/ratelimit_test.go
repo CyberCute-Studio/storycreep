@@ -111,11 +111,12 @@ func TestDefaultPolicy(t *testing.T) {
 }
 
 // TestMailbox checks that the addresses that differ only in a subaddress,
-// in how their domain is written, as in full-width letters or as its xn--
-// labels, or, at Gmail, in the dots of the local part or in its domain, are
-// one mailbox's key, while a local part that starts with + keeps it, the
-// dots of another service's addresses tell them apart, and a domain without
-// an ASCII form stays as it is.
+// in how their domain is written, as in full-width letters, as its xn--
+// labels, or with a full stop at its end, which registration takes when it
+// is not ASCII's, or, at Gmail, in the dots of the local part or in its
+// domain, are one mailbox's key, while a local part that starts with +
+// keeps it, and the dots of another service's addresses tell them apart. A
+// domain without an ASCII form is mapped as far as IDNA maps it.
 func TestMailbox(t *testing.T) {
 	for address, want := range map[string]string{
 		"jo@example.com":             "jo@example.com",
@@ -135,6 +136,19 @@ func TestMailbox(t *testing.T) {
 		"jo+work@sub.gmail.com":      "jo@sub.gmail.com",
 		"j.o+work@gmail.com.example": "j.o@gmail.com.example",
 		"not an address":             "not an address",
+		// The ideographic and full-width full stops are dots, and one at
+		// an end leaves a dot there, which the IDNA form keeps, and servers
+		// drop.
+		"jo@example。com":         "jo@example.com",
+		"jo@example.com．":        "jo@example.com",
+		"jo@example.com。｡":       "jo@example.com",
+		"jo@．example.com":        "jo@example.com",
+		"j.o.h@gmail.com．":       "joh@gmail.com",
+		"j.o@gmail.com.example．": "j.o@gmail.com.example",
+		// A label that IDNA refuses, here for its hyphens, leaves the
+		// domain mapped all the same.
+		"jo@ａb--cd.example":  "jo@ab--cd.example",
+		"jo@ａb--cd.example．": "jo@ab--cd.example",
 	} {
 		if got := Mailbox(address); got != EmailAddress(want) {
 			t.Errorf("Mailbox(%q) is %+v, want the key of %q", address, got, want)
@@ -247,6 +261,47 @@ func TestTake(t *testing.T) {
 		}()
 		_, _ = l.Take(ctx, Read, EmailAddress("jo@example.com"))
 	}()
+}
+
+// countingDB is a DB that counts the transactions that it runs.
+type countingDB struct {
+	DB
+	n atomic.Int32
+}
+
+func (c *countingDB) InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
+	c.n.Add(1)
+	return c.DB.InTx(ctx, scope, fn)
+}
+
+// TestTakeOn checks that TakeOn counts in a transaction on the pool that it
+// is given, as a job counts on the workers' pool that it carries, rather
+// than on the Limiter's own, and in the same counters as Take.
+func TestTakeOn(t *testing.T) {
+	t.Parallel()
+	d := newDatabase(t)
+	l := New(d.Open(t), testPolicy())
+	workers := &countingDB{DB: d.Open(t)}
+	ctx := context.Background()
+	jo := UserID(ids.New())
+
+	if got, err := l.TakeOn(ctx, workers, Read, jo); err != nil || got.Limit != 2 || got.Remaining != 1 {
+		t.Fatalf("the first request, on the workers' pool: %+v, %v; want the user's limit of 2 with 1 left", got,
+			err)
+	}
+	if n := workers.n.Load(); n != 1 {
+		t.Errorf("TakeOn ran %d transactions on the pool that it was given, want 1", n)
+	}
+	if got, err := l.Take(ctx, Read, jo); err != nil || got.Remaining != 0 {
+		t.Fatalf("the second request, on the Limiter's pool: %+v, %v; want none left", got, err)
+	}
+	var limited *LimitError
+	if _, err := l.TakeOn(ctx, workers, Read, jo); !errors.As(err, &limited) || limited.Decision.Limit != 2 {
+		t.Errorf("the third request, on the workers' pool: %v; want the user's limit used up", err)
+	}
+	if n := workers.n.Load(); n != 2 {
+		t.Errorf("Take ran on the pool that TakeOn was given: %d transactions there, want 2", n)
+	}
 }
 
 // concurrently makes n calls of try at once, the even ones with first and the

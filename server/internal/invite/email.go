@@ -145,18 +145,20 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 // does not count the email, because an earlier attempt of the job, which
 // counted it, gave it that link: so the retries of an email that an SMTP
 // server that is down refused, or that the server's stop cut off, do not
-// use up the mailbox's limit. An attempt that failed, or was cut off,
-// before it gave the invitation its link, as one that failed before its
-// count, leaves the email to be counted by the next, whatever its number,
-// so that no email goes uncounted but one sent again: a retry sends
-// uncounted an email that the SMTP server took although its attempt
-// failed, as when the server's reply to it was lost, or the instance
-// stopped before the job was recorded as done, as the work of any job may
-// run twice (package jobs). The count is made before the invitation
-// is locked to be sent, in a transaction of its own, so that no lock of the
-// invitation waits on it; an invitation that is sent anew or closed in
-// between counted its email to no use, and so did an attempt cut off
-// between its count and its link, whose next attempt counts the email
+// use up the mailbox's limit, though a retry in a later hour than the
+// attempt that counted the email sends it past that hour's limit, as when
+// a server that was down for hours takes email again. An attempt that
+// failed, or was cut off, before it gave the invitation its link, as one
+// that failed before its count, leaves the email to be counted by the
+// next, whatever its number, so that no email goes uncounted but one sent
+// again: a retry sends uncounted an email that the SMTP server took
+// although its attempt failed, as when the server's reply to it was lost,
+// or the instance stopped before the job was recorded as done, as the work
+// of any job may run twice (package jobs). The count is made before the
+// invitation is locked to be sent, in a transaction of its own, so that no
+// lock of the invitation waits on it; an invitation that is sent anew or
+// closed in between counted its email to no use, and so did an attempt cut
+// off between its count and its link, whose next attempt counts the email
 // again. The job reads the SMTP settings, as it does the invitation, and
 // counts the email, on the workers' pool that it carries, db, one
 // connection at a time.

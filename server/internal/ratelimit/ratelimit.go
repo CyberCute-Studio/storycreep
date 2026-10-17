@@ -44,10 +44,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"golang.org/x/net/idna"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/email"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
@@ -81,7 +81,11 @@ const (
 	// or closed between its count and its sending, whose replacement counts
 	// again; and that of an attempt cut off between its count and the link
 	// that it gives the invitation, whose next attempt counts the email
-	// again.
+	// again. An email counts once, in the window of the attempt that counts
+	// it, so that the retries that send it after that attempt failed, as
+	// while the SMTP server is down, count nothing: once a server that was
+	// down for hours takes email again, a mailbox may be sent the emails
+	// that those hours counted in one window.
 	InviteEmail Bucket = "invite_email"
 )
 
@@ -95,10 +99,11 @@ const (
 	IP Kind = "ip"
 	// User counts a signed-in user.
 	User Kind = "user"
-	// Email counts an email address that a registration names, whether or
-	// not it belongs to an account, or the mailbox that an invitation is
-	// emailed to (Mailbox). Signing in does not count it: the lock of an
-	// address after failed sign-ins limits those (BeginLogin).
+	// Email counts an email address that a registration or a request for a
+	// link that resets a password names, whether or not it belongs to an
+	// account, or the mailbox that an invitation is emailed to (Mailbox).
+	// Signing in does not count it: the lock of an address after failed
+	// sign-ins limits those (BeginLogin).
 	Email Kind = "email"
 )
 
@@ -148,27 +153,31 @@ func EmailAddress(email string) Key {
 // part from its first + on, which most mail services deliver to the
 // mailbox of the rest (RFC 5233), unless the local part starts with it,
 // with its domain in the ASCII form that package email sends to where a
-// server takes no other (IDNA's lookup, which maps a letter's other forms,
-// such as a full-width one, to the letter, and writes a domain outside
-// ASCII as its xn-- labels), so that the spellings of one domain, which
-// the address's account and invitations tell apart, are one, and, at
-// Gmail, whose gmail.com and googlemail.com are one, without the dots of
-// its local part, which Gmail ignores. A domain that has no such form, as
-// an address literal, stays as it is. Two mailboxes that only a subaddress
-// or the dots tell apart, where a service does not deliver so, share the
-// key.
-func Mailbox(email string) Key {
-	at := strings.LastIndexByte(email, '@')
+// server takes no other (email.ASCIIDomain, which maps a letter's other
+// forms, such as a full-width one, to the letter, and writes a domain
+// outside ASCII as its xn-- labels), and without the dots at its ends, as
+// the one that a full stop at its end, such as a full-width one, leaves,
+// which servers drop, so that the spellings of one domain, which the
+// address's account and invitations tell apart, are one, and, at Gmail,
+// whose gmail.com and googlemail.com are one, without the dots of its local
+// part, which Gmail ignores. A domain that has no such form, as an address
+// literal, or one with a label that IDNA refuses, is mapped as far as IDNA
+// maps it, so that its spellings are one all the same. Two mailboxes that
+// only a subaddress or the dots tell apart, where a service does not
+// deliver so, share the key.
+func Mailbox(address string) Key {
+	at := strings.LastIndexByte(address, '@')
 	if at < 0 {
-		return EmailAddress(email)
+		return EmailAddress(address)
 	}
-	local, domain := email[:at], email[at+1:]
+	local, domain := address[:at], address[at+1:]
 	if i := strings.IndexByte(local, '+'); i > 0 {
 		local = local[:i]
 	}
-	if ascii, err := idna.Lookup.ToASCII(domain); err == nil {
-		domain = ascii
+	if mapped, _ := email.ASCIIDomain(domain); mapped != "" {
+		domain = mapped
 	}
+	domain = strings.Trim(domain, ".")
 	if strings.EqualFold(domain, "gmail.com") || strings.EqualFold(domain, "googlemail.com") {
 		local, domain = strings.ReplaceAll(local, ".", ""), "gmail.com"
 	}
@@ -338,11 +347,11 @@ func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decisio
 	return l.TakeOn(ctx, l.db, bucket, keys...)
 }
 
-// TakeOn is Take in a transaction of its own on db, another pool of the
-// Limiter's database than the one that it was made with, as a job counts on
-// the workers' pool that it carries (package jobs). db must reach the same
-// database: the Limiter reads the key of the hash once, in whichever pool it
-// first counts.
+// TakeOn is Take in a transaction of its own on db, which may be another
+// pool of the Limiter's database than the one that it was made with, which
+// Take counts on, as a job counts on the workers' pool that it carries
+// (package jobs). db must reach the same database: the Limiter reads the key
+// of the hash once, in whichever pool it first counts.
 func (l *Limiter) TakeOn(ctx context.Context, db DB, bucket Bucket, keys ...Key) (Decision, error) {
 	rate, ok := l.policy.Rates[bucket]
 	if !ok {
