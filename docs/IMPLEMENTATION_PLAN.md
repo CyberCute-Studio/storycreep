@@ -255,7 +255,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-AUTH-03 AC1–AC5 pass. Invite links are covered in item 19, and the instance-admin screen in item 114.
 
 ### 19. Invitations and membership
-**Status:** todo · **Depends on:** 18
+**Status:** done ([#21](https://github.com/CyberCute-Studio/storycreep/pull/21)) · **Depends on:** 18
 **PRD:** FR-TEN-02, FR-AUTH-03 (invite links), FR-TEN-03 (AC4 for invitations and member removal)
 - Email and link invites with a role and a 14-day expiry. Revoke and resend. In no-SMTP mode, the copyable link goes to the inviting admin, and so does a link invite's in either mode (N27).
 - Invite, member list, and member-removal routes. Accepting an invite creates or links an account: a signed-in user accepts with the link, and someone without an account registers with it, under the `invite` and `open` signup policies (N27). Members can be removed. The last owner cannot be removed or demoted.
