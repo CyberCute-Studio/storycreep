@@ -135,7 +135,7 @@ func (t *Tx) AddUsage(key usage.Key, delta int64) error {
 		return errors.New("commands: AddUsage is called outside a command's Apply")
 	case !key.Known():
 		return fmt.Errorf("commands: %s adds to %q, which is not a key of usage", t.current.typ, key)
-	case delta > 0 && slices.Contains(entitlements.LimitKeys(), entitlements.LimitKey(key)) &&
+	case delta > 0 && entitlements.LimitKey(key).Checked() &&
 		!slices.Contains(t.current.limits, entitlements.LimitKey(key)):
 		return fmt.Errorf("commands: %s adds to %s, a limit of the plans that it does not declare, so nothing "+
 			"checked it", t.current.typ, key)
@@ -161,8 +161,7 @@ func (t *Tx) AddUsage(key usage.Key, delta int64) error {
 func (t *Tx) recordUsage(ctx context.Context) error {
 	for _, key := range t.usageKeys {
 		limit := entitlements.LimitKey(key)
-		if added := t.usage[key]; added > 0 && slices.Contains(entitlements.LimitKeys(), limit) &&
-			added > t.checked[limit] {
+		if added := t.usage[key]; added > 0 && limit.Checked() && added > t.checked[limit] {
 			return fmt.Errorf("commands: the batch adds %d to %s, but its commands declared %d, which is all that "+
 				"the limit was checked for", added, key, t.checked[limit])
 		}

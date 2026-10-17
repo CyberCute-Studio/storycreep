@@ -36,8 +36,8 @@ func (reconciliation) Kind() string { return "usage_reconciliation" }
 
 // RegisterJobs registers the jobs of usage metering in r: the rollup, which
 // runs every 5 minutes, and the reconciliation, which runs every hour, each
-// for at most passBudget, which reaches every workspace of all but the
-// largest instances.
+// starting workspaces' work for at most passBudget, which reaches every
+// workspace of all but the largest instances.
 func RegisterJobs(r *jobs.Registry) {
 	jobs.Register(r, func(ctx context.Context, job *jobs.Job[rollup]) error {
 		return RollUp(ctx, job.DB)
@@ -52,15 +52,16 @@ func RegisterJobs(r *jobs.Registry) {
 
 // RollUp folds every workspace's deltas into its counters, each workspace's
 // in a transaction of its own (§5.4), or those of the workspaces that it
-// reaches in passBudget, from one picked at random on (eachWorkspace). In
-// each, it deletes the deltas that it can see and adds their sum for each key
-// to the key's counter, so that the workspace's usage stays the same in every
-// snapshot, before and after the transaction commits. A delta whose change
-// has not committed is invisible to it, and stays for the next run. Two runs
-// that fold one workspace at once fold each delta once: the second waits for
-// the first's delete, and finds the deltas gone. So it is safe to repeat.
+// reaches in passBudget, going on from one picked at random (eachWorkspace).
+// In each, it deletes the deltas that it can see and adds their sum for each
+// key to the key's counter, so that the workspace's usage stays the same in
+// every snapshot, before and after the transaction commits. A delta whose
+// change has not committed is invisible to it, and stays for the next run.
+// Two runs that fold one workspace at once fold each delta once: the second
+// waits for the first's delete, and finds the deltas gone. So it is safe to
+// repeat.
 func RollUp(ctx context.Context, db DB) error {
-	return eachWorkspace(ctx, db, within(passBudget), func(workspaceID ids.UUID) error {
+	return eachWorkspace(ctx, db, workspacePage, within(passBudget), func(workspaceID ids.UUID) error {
 		return db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
 			q := queries.New(tx)
 			sums, err := q.FoldUsageDeltas(ctx, nullUUID(workspaceID))
@@ -98,8 +99,8 @@ var drifts = map[Key]func(q *queries.Queries, ctx context.Context, workspaceID p
 
 // Reconcile corrects every workspace's usage of each key that a recount can
 // count (drifts), or that of the workspaces that it reaches in passBudget,
-// from one picked at random on (eachWorkspace), each workspace's key in a
-// transaction of its own (§5.4), and returns how many keys it corrected. In
+// going on from one picked at random (eachWorkspace), each workspace's key in
+// a transaction of its own (§5.4), and returns how many keys it corrected. In
 // each, it takes the lock of the workspace's key, so that two runs never
 // correct one drift twice, and reads the count and the usage in one
 // statement, and so in one snapshot, in which every change that it sees has
@@ -108,7 +109,7 @@ var drifts = map[Key]func(q *queries.Queries, ctx context.Context, workspaceID p
 // it is safe to repeat.
 func Reconcile(ctx context.Context, db DB) (int, error) {
 	corrected := 0
-	err := eachWorkspace(ctx, db, within(passBudget), func(workspaceID ids.UUID) error {
+	err := eachWorkspace(ctx, db, workspacePage, within(passBudget), func(workspaceID ids.UUID) error {
 		for _, key := range keys {
 			drift := drifts[key]
 			if drift == nil {

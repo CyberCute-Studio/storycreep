@@ -222,7 +222,7 @@ func TestUsageBodyKeys(t *testing.T) {
 	t.Parallel()
 	var us []workspace.Usage
 	for _, k := range usage.Keys() {
-		limited := slices.Contains(entitlements.LimitKeys(), entitlements.LimitKey(k))
+		limited := entitlements.LimitKey(k).Checked()
 		us = append(us, workspace.Usage{Key: k, Used: 1, Limited: limited, Quota: entitlements.AtMost(3)})
 	}
 	b, err := newUsageBody(us)

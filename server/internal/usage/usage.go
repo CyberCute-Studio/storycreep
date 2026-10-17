@@ -35,8 +35,8 @@
 // row-level security (§5.4). A job has a minute to run (package jobs), which
 // an instance with many workspaces would need more than to work on all of
 // them, so a run stops starting workspaces once it has run for passBudget,
-// and starts at a workspace picked at random, going on past the last to the
-// first, so that the workspaces that one run does not reach, another does.
+// and goes on from a workspace picked at random, past the last to the first,
+// so that the workspaces that one run does not reach, another does.
 package usage
 
 import (
@@ -186,7 +186,8 @@ type DB interface {
 	InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
 }
 
-// workspacePage is how many workspaces' IDs the jobs read at once.
+// workspacePage is how many workspaces' IDs the jobs read at once
+// (eachWorkspace).
 const workspacePage = 1000
 
 // passBudget is how long a run of a job of usage starts workspaces' work for.
@@ -204,13 +205,15 @@ func within(budget time.Duration) func() bool {
 }
 
 // eachWorkspace calls fn with the ID of each workspace, whatever its status,
-// for as long as more reports that the run has time left: from a workspace
-// picked at random on, in the order of their IDs, and then from the first up
-// to that one, so that it calls fn once for every workspace if more lets it,
-// and a run that ends earlier leaves others than the last run did. It goes on
-// past a workspace that fn fails for, and returns the errors of all of them,
-// but stops at once when ctx ends.
-func eachWorkspace(ctx context.Context, db DB, more func() bool, fn func(workspaceID ids.UUID) error) error {
+// for as long as more reports that the run has time left, reading the IDs
+// pageSize at a time: in the order of their IDs, from the one after a
+// workspace picked at random to the last, and then from the first to the one
+// picked, so that it calls fn once for every workspace if more lets it, and a
+// run that ends earlier leaves others than the last run did. It goes on past
+// a workspace that fn fails for, and returns the errors of all of them, but
+// stops at once when ctx ends.
+func eachWorkspace(ctx context.Context, db DB, pageSize int32, more func() bool,
+	fn func(workspaceID ids.UUID) error) error {
 	var start pgtype.UUID
 	err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		var err error
@@ -228,7 +231,7 @@ func eachWorkspace(ctx context.Context, db DB, more func() bool, fn func(workspa
 	}
 	var errs []error
 	for _, span := range []queries.WorkspaceIDsParams{{After: start}, {Through: start}} {
-		span.MaxRows = workspacePage
+		span.MaxRows = pageSize
 		for {
 			var page []pgtype.UUID
 			err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
@@ -250,7 +253,7 @@ func eachWorkspace(ctx context.Context, db DB, more func() bool, fn func(workspa
 					errs = append(errs, err)
 				}
 			}
-			if len(page) < workspacePage {
+			if len(page) < int(pageSize) {
 				break
 			}
 			span.After = page[len(page)-1]

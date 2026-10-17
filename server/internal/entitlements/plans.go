@@ -49,6 +49,12 @@ func LimitKeys() []LimitKey {
 	return slices.Clone(limitKeys)
 }
 
+// Checked reports whether k is one of the limits that the server checks
+// (LimitKeys), as a key of usage that names one is.
+func (k LimitKey) Checked() bool {
+	return slices.Contains(limitKeys, k)
+}
+
 // Feature names a feature flag of the plans, as the plan file does.
 type Feature string
 

@@ -249,7 +249,7 @@ func Register[P any](r *Registry, s Spec[P]) {
 	}
 	keys := make([]entitlements.LimitKey, len(s.Limits))
 	for i, l := range s.Limits {
-		if !slices.Contains(entitlements.LimitKeys(), l.Key) {
+		if !l.Key.Checked() {
 			fail("%q is not a limit that the plan file checks", l.Key)
 		}
 		if slices.Contains(keys[:i], l.Key) {

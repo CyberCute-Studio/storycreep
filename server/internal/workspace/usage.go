@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"context"
-	"slices"
 
 	"github.com/jackc/pgx/v5"
 
@@ -51,7 +50,7 @@ func (s *Service) Usage(ctx context.Context, userID, id ids.UUID) ([]Usage, erro
 		}
 		for _, key := range usage.Keys() {
 			u := Usage{Key: key, Used: used[key]}
-			if l := entitlements.LimitKey(key); slices.Contains(entitlements.LimitKeys(), l) {
+			if l := entitlements.LimitKey(key); l.Checked() {
 				if u.Quota, err = s.ent.Limit(ctx, tx, id, l); err != nil {
 					return err
 				}
