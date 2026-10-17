@@ -415,6 +415,49 @@ func (q *Queries) RevokeInvite(ctx context.Context, arg RevokeInviteParams) erro
 	return err
 }
 
+const revokeMemberInvites = `-- name: RevokeMemberInvites :many
+UPDATE invite SET revoked_at = now(), updated_at = now()
+WHERE workspace_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL
+    AND (created_by = $2 OR email = (SELECT u.email FROM "user" u WHERE u.id = $2))
+RETURNING id, email, role
+`
+
+type RevokeMemberInvitesParams struct {
+	WorkspaceID pgtype.UUID
+	UserID      pgtype.UUID
+}
+
+type RevokeMemberInvitesRow struct {
+	ID    pgtype.UUID
+	Email pgtype.Text
+	Role  string
+}
+
+// RevokeMemberInvites revokes the open invitations of the workspace, expired
+// or not, that the user user_id made, or that are to the user's address, as
+// citext compares them, as the removal of the user's membership does
+// (package workspace), so that no link that the user holds lets them back
+// in, and returns them.
+func (q *Queries) RevokeMemberInvites(ctx context.Context, arg RevokeMemberInvitesParams) ([]RevokeMemberInvitesRow, error) {
+	rows, err := q.db.Query(ctx, revokeMemberInvites, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RevokeMemberInvitesRow
+	for rows.Next() {
+		var i RevokeMemberInvitesRow
+		if err := rows.Scan(&i.ID, &i.Email, &i.Role); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setInviteHash = `-- name: SetInviteHash :exec
 UPDATE invite SET token_hash = $1, sent_at = now(), expires_at = now() + $2::interval,
     updated_at = now()

@@ -466,6 +466,12 @@ func TestMembersIsolation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := isolationtest.New(t, dbtest.New(t), isolationtest.Tables)
+	// The fixture's memberships are owners', so that counting the owners has
+	// one to count.
+	if _, err := f.Admin().Exec(ctx, "UPDATE membership SET role = 'owner' WHERE id = ANY($1)",
+		[]ids.UUID{f.A.Rows["membership"], f.B.Rows["membership"]}); err != nil {
+		t.Fatal(err)
+	}
 	member := func(w *isolationtest.Workspace) ids.UUID {
 		var id ids.UUID
 		if err := f.Admin().QueryRow(ctx, `SELECT user_id FROM membership WHERE id = $1`,
@@ -496,6 +502,15 @@ func TestMembersIsolation(t *testing.T) {
 			_, err := queries.New(tx).LockMembershipByID(ctx, queries.LockMembershipByIDParams{
 				WorkspaceID: nullUUID(target.ID), ID: nullUUID(target.Rows["membership"])})
 			return found(target, err)
+		}},
+		{Name: "count the other owners", Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) (
+			[]ids.UUID, error) {
+			n, err := queries.New(tx).CountOtherOwners(ctx, queries.CountOtherOwnersParams{
+				WorkspaceID: nullUUID(target.ID), ID: nullUUID(ids.New())})
+			if n > 0 {
+				return []ids.UUID{target.Rows["membership"]}, err
+			}
+			return nil, err
 		}},
 		{Name: "a user's membership", Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) (
 			[]ids.UUID, error) {

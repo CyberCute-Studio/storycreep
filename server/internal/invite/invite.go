@@ -10,7 +10,10 @@
 // is accepting an invitation to an address with an account of another
 // address, while a link invitation may be accepted by any account (AC3). An
 // address has one open invitation of a workspace at most: one that has been
-// neither accepted nor revoked.
+// neither accepted nor revoked. Removing a member revokes the workspace's
+// open invitations that the member made, and those to the member's address
+// (workspace.Service.RemoveMember), so that no link that they hold lets them
+// back in.
 //
 // The link holds the invitation's secret, made as a session's is, and the
 // database holds only its SHA-256 hash, so that whoever reads the database
@@ -48,6 +51,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -61,7 +65,6 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
-	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
@@ -120,12 +123,6 @@ type DB interface {
 	InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
 }
 
-// Enqueuer enqueues a job in the transaction of the change that needs it, as
-// *jobs.Queue does.
-type Enqueuer interface {
-	Enqueue(ctx context.Context, tx pgx.Tx, args jobs.Args, opts *jobs.EnqueueOptions) (jobs.Enqueued, error)
-}
-
 // Options configure a Service.
 type Options struct {
 	// Workspaces resolves the roles that users act with in workspaces, and
@@ -136,9 +133,10 @@ type Options struct {
 	// Email sends the instance's email, or is nil for an instance that sends
 	// none, as in tests.
 	Email *email.Service
-	// Queue enqueues the jobs that email invitations. It must be set where
+	// Queue enqueues the jobs that email invitations, in the transaction of
+	// the change that needs them, as *jobs.Queue does. It must be set where
 	// Email is.
-	Queue Enqueuer
+	Queue account.Enqueuer
 	// PublicURL is the instance's URL, which links open.
 	PublicURL config.PublicURL
 }
@@ -149,7 +147,7 @@ type Service struct {
 	workspaces *workspace.Service
 	accounts   *account.Service
 	email      *email.Service
-	queue      Enqueuer
+	queue      account.Enqueuer
 	publicURL  config.PublicURL
 }
 
@@ -333,11 +331,7 @@ func (in Request) check() (Invite, error) {
 			errs = append(errs, input.FieldError{Field: "email", Message: msg})
 		}
 	}
-	valid := false
-	for _, r := range roles {
-		valid = valid || in.Role == r
-	}
-	if !valid {
+	if !slices.Contains(roles, in.Role) {
 		errs = append(errs, input.FieldError{Field: "role",
 			Message: "is not one of owner, admin, editor, commenter, viewer, and guest"})
 	}
@@ -523,11 +517,14 @@ func (s *Service) workspaceOf(ctx context.Context, userID ids.UUID, value secret
 	var id ids.UUID
 	err := s.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
 		row, err := queries.New(tx).ResolveInvite(ctx, hash)
-		if errors.Is(err, pgx.ErrNoRows) {
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
 			return ErrTokenInvalid
+		case err != nil:
+			return fmt.Errorf("invite: find the workspace of the link's invitation: %w", err)
 		}
 		id = row.Bytes
-		return err
+		return nil
 	})
 	return id, hash, err
 }
@@ -536,9 +533,9 @@ func (s *Service) workspaceOf(ctx context.Context, userID ids.UUID, value secret
 // hash, locked until tx ends, a transaction of the workspace, with whether
 // the account with the address address may accept it, or "" for none, or
 // the error that using it is answered with: ErrTokenInvalid, ErrRevoked,
-// ErrAccepted, or ErrExpired, in that order. An invitation that the user
-// acceptedBy accepted is returned with ErrAccepted, so that the caller can
-// tell it.
+// ErrAccepted, or ErrExpired, in that order. An invitation that has been
+// accepted is returned with ErrAccepted, with the account that accepted it
+// in its row's AcceptedBy, so that the caller can tell its own acceptance.
 func hold(ctx context.Context, tx pgx.Tx, id ids.UUID, hash []byte, address string) (held, error) {
 	row, err := queries.New(tx).LockInviteByHash(ctx, queries.LockInviteByHashParams{
 		Email: pgtype.Text{String: address, Valid: address != ""}, WorkspaceID: nullUUID(id), TokenHash: hash})

@@ -89,6 +89,17 @@ HAVING max(sent_at) + @resend_interval::interval > now();
 -- its link is still told apart from one that does not exist.
 UPDATE invite SET revoked_at = now(), updated_at = now() WHERE workspace_id = @workspace_id AND id = @id;
 
+-- name: RevokeMemberInvites :many
+-- RevokeMemberInvites revokes the open invitations of the workspace, expired
+-- or not, that the user user_id made, or that are to the user's address, as
+-- citext compares them, as the removal of the user's membership does
+-- (package workspace), so that no link that the user holds lets them back
+-- in, and returns them.
+UPDATE invite SET revoked_at = now(), updated_at = now()
+WHERE workspace_id = @workspace_id AND accepted_at IS NULL AND revoked_at IS NULL
+    AND (created_by = @user_id OR email = (SELECT u.email FROM "user" u WHERE u.id = @user_id))
+RETURNING id, email, role;
+
 -- name: LockInviteByHash :one
 -- LockInviteByHash returns the invitation of the workspace whose secret has
 -- the SHA-256 hash token_hash, if its workspace is active, with the

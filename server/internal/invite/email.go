@@ -112,7 +112,9 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 // invitation's link was not emailed after all, and is made again later, with
 // a new secret, which replaces the one that the failed attempt may have
 // sent, so that only the latest email's link works, unless the SMTP server
-// refuses the email for good (email.JobError). The job reads the SMTP
+// refuses the email for good (email.JobError). An attempt that cannot record
+// that counts as failed, however it ended, so that the next attempt sends
+// the email. The job reads the SMTP
 // settings, as it does the invitation, on the workers' pool that it
 // carries, db.
 func (s *Service) send(ctx context.Context, db DB, id, inviteID ids.UUID, firstAttempt bool) error {
@@ -162,7 +164,13 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID ids.UUID, firstA
 			return queries.New(tx).UnmarkInviteSent(uctx, queries.UnmarkInviteSentParams{WorkspaceID: nullUUID(id),
 				ID: nullUUID(inviteID), TokenHash: hash})
 		}); unmark != nil {
-			err = errors.Join(err, fmt.Errorf("invite: record that the invitation was not emailed: %w", unmark))
+			// The invitation still looks emailed, by this attempt. The error
+			// wraps neither the context's error nor a refusal for good, so
+			// the attempt counts, even when the server is stopping, and the
+			// next attempt, which is not the job's first, sends the email
+			// rather than take this attempt's for another job's
+			// (LockInviteToSend).
+			return fmt.Errorf("%v; invite: record that the invitation was not emailed: %v", err, unmark)
 		}
 		return email.JobError(ctx, err)
 	}

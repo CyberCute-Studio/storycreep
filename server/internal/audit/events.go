@@ -69,9 +69,11 @@ const (
 	ActionMembershipRoleChange Action = "membership.role_change"
 	// ActionMembershipRemove is the removal of a member from a workspace by
 	// one of its owners or admins (FR-TEN-02), its actor, which ends the
-	// membership and its project grants. It belongs to the workspace, its
-	// subject is the membership, its metadata's user_id names the member,
-	// and its role the role that the membership had.
+	// membership and its project grants, and revokes the workspace's open
+	// invitations that the member made or that are to the member's address
+	// (ActionInviteRevoke). It belongs to the workspace, its subject is the
+	// membership, its metadata's user_id names the member, and its role the
+	// role that the membership had.
 	ActionMembershipRemove Action = "membership.remove"
 	// ActionInviteCreate is the invitation of an address, or of whoever holds
 	// a link, to join a workspace with the role that its metadata's role
@@ -87,7 +89,11 @@ const (
 	ActionInviteResend Action = "invite.resend"
 	// ActionInviteRevoke is the revocation of an invitation by an owner or
 	// admin of its workspace, after which its link is refused (FR-TEN-02
-	// AC1). Its metadata's role and kind are the invitation's.
+	// AC1). Its metadata's role and kind are the invitation's. An invitation
+	// that the removal of a member revokes, because the member made it or it
+	// is to the member's address, has the removal's actor, and its
+	// metadata's membership_id names the removed membership
+	// (ActionMembershipRemove).
 	ActionInviteRevoke Action = "invite.revoke"
 	// ActionInviteAccept is the acceptance of an invitation by the user who
 	// accepts it, its actor, who joins the workspace (ActionMembershipCreate)
@@ -163,7 +169,7 @@ var events = []eventSpec{
 	{action: ActionInviteResend, inWorkspace: true, subject: "invite", results: []Result{ResultSuccess},
 		metadata: []string{"role", "kind", "emailed"}},
 	{action: ActionInviteRevoke, inWorkspace: true, subject: "invite", results: []Result{ResultSuccess},
-		metadata: []string{"role", "kind"}},
+		metadata: []string{"role", "kind", "membership_id"}},
 	{action: ActionInviteAccept, inWorkspace: true, subject: "invite", results: []Result{ResultSuccess},
 		metadata: []string{"role", "kind", "membership_id", "new_account"}},
 	{action: ActionInstanceAdminGrant, subject: "user", results: []Result{ResultSuccess}},

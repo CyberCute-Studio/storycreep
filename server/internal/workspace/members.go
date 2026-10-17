@@ -20,9 +20,11 @@ import (
 // and roles, guests included, and its owners and admins see their email
 // addresses too, which managing them needs. An owner or admin removes a
 // member, themselves included, and only an owner removes an owner (§5.6),
-// and never the workspace's last owner whose account is active (AC2). A user
-// joins a workspace by accepting an invitation (package invite, Join), or
-// through the operator (Grant).
+// and never the workspace's last owner whose account is active (AC2).
+// Removing a member revokes the workspace's open invitations that the member
+// made, and those to the member's address, so that no link that they hold
+// lets them back in. A user joins a workspace by accepting an invitation
+// (package invite, Join), or through the operator (Grant).
 
 var (
 	// ErrOwnerRequired is returned for an operation that only an owner of
@@ -116,8 +118,11 @@ func (s *Service) Members(ctx context.Context, userID, id, after ids.UUID, limit
 }
 
 // RemoveMember removes the membership membershipID from the workspace id,
-// and with it the membership's project grants, which the user userID asks
-// for, as client, and records that in the audit log. It returns ErrNotFound
+// and with it the membership's project grants, and revokes the workspace's
+// open invitations that the member made, or that are to the member's
+// address, expired or not, so that no link that they hold lets them back in,
+// which the user userID asks for, as client, and records all of that in the
+// audit log. It returns ErrNotFound
 // if the workspace does not exist, the user's role in it is none, or it has
 // no such membership, ErrInsufficientRole unless the user's role is owner or
 // admin, ErrOwnerRequired if the membership is an owner's and the user's
@@ -169,10 +174,32 @@ func (s *Service) RemoveMember(ctx context.Context, userID, id, membershipID ids
 			ID: nullUUID(membershipID)}); err != nil {
 			return fmt.Errorf("workspace: remove the membership: %w", err)
 		}
-		return audit.Record(ctx, tx, audit.Entry{Action: audit.ActionMembershipRemove, WorkspaceID: id,
+		if err := audit.Record(ctx, tx, audit.Entry{Action: audit.ActionMembershipRemove, WorkspaceID: id,
 			ActorUserID: userID, SubjectID: membershipID, Result: audit.ResultSuccess, IP: client.IP,
 			UserAgent: client.UserAgent, Metadata: map[string]any{"role": target.Role,
-				"user_id": ids.UUID(target.UserID.Bytes).String()}})
+				"user_id": ids.UUID(target.UserID.Bytes).String()}}); err != nil {
+			return err
+		}
+		revoked, err := q.RevokeMemberInvites(ctx, queries.RevokeMemberInvitesParams{WorkspaceID: nullUUID(id),
+			UserID: target.UserID})
+		if err != nil {
+			return fmt.Errorf("workspace: revoke the member's invitations: %w", err)
+		}
+		for _, inv := range revoked {
+			// The kinds of invitation are package invite's: email, to an
+			// address, and link, to whoever holds the link.
+			kind := "link"
+			if inv.Email.Valid {
+				kind = "email"
+			}
+			if err := audit.Record(ctx, tx, audit.Entry{Action: audit.ActionInviteRevoke, WorkspaceID: id,
+				ActorUserID: userID, SubjectID: inv.ID.Bytes, Result: audit.ResultSuccess, IP: client.IP,
+				UserAgent: client.UserAgent, Metadata: map[string]any{"role": inv.Role, "kind": kind,
+					"membership_id": membershipID.String()}}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 

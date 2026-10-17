@@ -194,7 +194,8 @@ var codes = []codeSpec{
 		"The invitation has expired: it lasts 14 days from when it was made, sent anew, or emailed (PRD " +
 			"FR-TEN-02 AC1). An owner or admin of the workspace sends it anew."},
 	{CodeInviteRevoked, http.StatusGone, i18n.K("error.invite_revoked"),
-		"An owner or admin of the workspace revoked the invitation, which no longer works (PRD FR-TEN-02 AC1)."},
+		"An owner or admin of the workspace revoked the invitation, or removed the member who made it or whom it " +
+			"invites, which revokes it, and it no longer works (PRD FR-TEN-02 AC1)."},
 	{CodeInviteAccepted, http.StatusGone, i18n.K("error.invite_accepted"),
 		"The invitation has been accepted already, and an invitation is accepted once. Its link answers so to " +
 			"anyone but the account that accepted it, while that account is still a member, and an owner or admin " +

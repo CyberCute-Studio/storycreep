@@ -227,7 +227,9 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 		Path:        "/api/v1/workspaces/{workspace_id}/members/{membership_id}",
 		Summary:     "Remove a member from a workspace",
 		Description: "Removes a membership of a workspace, and with it the member's project grants there; the " +
-			"account stays as it was. Only an owner removes an owner, and an admin is answered with 403 " +
+			"account stays as it was. It also revokes the workspace's open invitations, expired or not, that the " +
+			"member made, and those to the member's address, so that no link that they hold lets them back in. " +
+			"Only an owner removes an owner, and an admin is answered with 403 " +
 			"owner_required. A workspace keeps an owner whose account is active, so removing its last one is " +
 			"answered with 409 last_owner (FR-TEN-02 AC2). An owner or an admin may remove themselves, as long as " +
 			"the workspace keeps an owner." + manageMembersDoc + " So is a membership that the workspace does not " +

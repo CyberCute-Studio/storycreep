@@ -402,6 +402,48 @@ func TestOwnerRequired(t *testing.T) {
 	}
 }
 
+// TestRemoveRevokesInvites checks that removing a member revokes the
+// workspace's open invitations that the member made, and those to the
+// member's address, so that neither lets them back in, and records each
+// revocation with the removal's actor and membership, while the other
+// invitations stay open.
+func TestRemoveRevokesInvites(t *testing.T) {
+	t.Parallel()
+	s, d, owner, ws := inviteServer(t, "open", nil)
+	ada := newNamedAccount(t, s.main, "ada@example.com", "Ada")
+	join(t, d, ada, ws, "admin")
+	adas := linkToken(t, createInvite(t, s.main, ada, ws, "", "admin").URL)
+	hana := newNamedAccount(t, s.main, "hana@example.com", "Hana")
+	hanas := linkToken(t, createInvite(t, s.main, owner, ws, "HANA@example.com", "editor").URL)
+	// hana joins another way, so the invitation to her address stays open.
+	join(t, d, hana, ws, "viewer")
+	jo := createInvite(t, s.main, owner, ws, "jo@example.com", "viewer")
+
+	members := membersOf(t, s.main, owner, ws)
+	removed := map[string]string{}
+	for name, si := range map[string]signedIn{"ada": ada, "hana": hana} {
+		removed[name] = membershipOf(t, members, si)
+		if res := call(s.main, http.MethodDelete, membersPath(ws)+"/"+removed[name], nil,
+			owner.header(true)); res.status != http.StatusNoContent {
+			t.Fatalf("remove %s: %d %s", name, res.status, res.body)
+		}
+	}
+	wantCode(t, "the removed admin accepts the invitation that she made", acceptInvite(t, s.main, ada, adas),
+		http.StatusGone, api.CodeInviteRevoked)
+	wantCode(t, "the removed member accepts the invitation to her address", acceptInvite(t, s.main, hana, hanas),
+		http.StatusGone, api.CodeInviteRevoked)
+	if got := invitesOf(t, s.main, owner, ws); len(got) != 1 || got[0].ID != jo.ID {
+		t.Errorf("the open invitations are %+v, want jo's alone", got)
+	}
+	for name, membership := range removed {
+		if n := countRows(t, d, `SELECT count(*) FROM audit_entry WHERE action = 'invite.revoke'
+			AND actor_user_id = $1::uuid AND metadata->>'membership_id' = $2`,
+			decode(t, ids.User, owner.body.UserID).String(), decode(t, ids.Membership, membership).String()); n != 1 {
+			t.Errorf("the removal of %s revoked %d invitations, want 1", name, n)
+		}
+	}
+}
+
 // TestMembersAndInvitesByRole checks who may do what with a workspace's
 // members and invitations: every member with a role lists the members, and
 // only owners and admins see their email addresses; only owners and admins

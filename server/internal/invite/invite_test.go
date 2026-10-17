@@ -353,10 +353,12 @@ func TestIsolation(t *testing.T) {
 	// The fixture's invitations are link invitations; the queries of an
 	// invitation to an address need one.
 	// They are emailed too, so that when the workspace may next email their
-	// addresses has an answer.
+	// addresses has an answer, and made by the workspace's user, whose
+	// removal revokes them.
 	for _, w := range []*isolationtest.Workspace{f.A, f.B} {
-		if _, err := f.Admin().Exec(ctx, "UPDATE invite SET email = $1, sent_at = now() WHERE id = $2",
-			address(w), w.Rows["invite"]); err != nil {
+		if _, err := f.Admin().Exec(ctx,
+			"UPDATE invite SET email = $1, sent_at = now(), created_by = $3 WHERE id = $2", address(w),
+			w.Rows["invite"], w.UserID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -440,6 +442,16 @@ func TestIsolation(t *testing.T) {
 			ws, id := key(target)
 			return nil, queries.New(tx).RevokeInvite(ctx, queries.RevokeInviteParams{WorkspaceID: nullUUID(ws),
 				ID: nullUUID(id)})
+		}},
+		{Name: "revoke a removed member's invitations", Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			rows, err := queries.New(tx).RevokeMemberInvites(ctx, queries.RevokeMemberInvitesParams{
+				WorkspaceID: nullUUID(target.ID), UserID: nullUUID(target.UserID)})
+			var out []ids.UUID
+			for _, r := range rows {
+				out = append(out, r.ID.Bytes)
+			}
+			return out, err
 		}},
 		{Name: "accept an invitation", Blind: true, Run: func(ctx context.Context, tx pgx.Tx,
 			target *isolationtest.Workspace) ([]ids.UUID, error) {
