@@ -148,7 +148,11 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 // use up the mailbox's limit. An attempt that failed, or was cut off,
 // before it gave the invitation its link, as one that failed before its
 // count, leaves the email to be counted by the next, whatever its number,
-// so that no email goes uncounted. The count is made before the invitation
+// so that no email goes uncounted but one sent again: a retry sends
+// uncounted an email that the SMTP server took although its attempt
+// failed, as when the server's reply to it was lost, or the instance
+// stopped before the job was recorded as done, as the work of any job may
+// run twice (package jobs). The count is made before the invitation
 // is locked to be sent, in a transaction of its own, so that no lock of the
 // invitation waits on it; an invitation that is sent anew or closed in
 // between counted its email to no use, and so did an attempt cut off
@@ -171,21 +175,11 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 	scope := database.Scope{WorkspaceID: id}
 	params := queries.LockInviteToSendParams{WorkspaceID: nullUUID(id), ID: nullUUID(inviteID),
 		EmailRequest: nullUUID(request)}
-	var pending queries.LockInviteToSendRow
-	toSend := false
-	err = db.InTx(ctx, scope, func(tx pgx.Tx) error {
-		var err error
-		pending, err = queries.New(tx).LockInviteToSend(ctx, params)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		toSend = err == nil
-		return err
-	})
+	pending, found, err := lockToSend(ctx, db, scope, params, nil)
 	switch {
 	case err != nil:
 		return fmt.Errorf("invite: read the invitation to email: %w", err)
-	case !toSend:
+	case !found:
 		// Nothing to send, so nothing to count.
 		return nil
 	}
@@ -201,19 +195,7 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 		}
 	}
 	value, hash := account.NewSecret()
-	var row queries.LockInviteToSendRow
-	found := false
-	err = db.InTx(ctx, scope, func(tx pgx.Tx) error {
-		q := queries.New(tx)
-		var err error
-		row, err = q.LockInviteToSend(ctx, params)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		found = true
+	row, found, err := lockToSend(ctx, db, scope, params, func(q *queries.Queries) error {
 		return q.SetInviteHash(ctx, queries.SetInviteHashParams{TokenHash: hash,
 			Lifetime: database.Interval(Lifetime), WorkspaceID: nullUUID(id), ID: nullUUID(inviteID)})
 	})
@@ -250,6 +232,38 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 		return email.JobError(ctx, err)
 	}
 	return nil
+}
+
+// lockToSend reads what the email of the invitation of params needs, if it
+// has an email to send (LockInviteToSend), in a transaction of scope, on db,
+// and runs then, unless it is nil, in the same transaction, with the
+// invitation locked. It reports whether the invitation has an email to
+// send. The lock makes even a read that changes nothing wait for a change
+// of the invitation that is under way, as its being sent anew, and see what
+// it changed, so that the job counts no email of an invitation that the
+// change replaces.
+func lockToSend(ctx context.Context, db DB, scope database.Scope, params queries.LockInviteToSendParams,
+	then func(q *queries.Queries) error) (row queries.LockInviteToSendRow, found bool, err error) {
+	err = db.InTx(ctx, scope, func(tx pgx.Tx) error {
+		q := queries.New(tx)
+		var err error
+		row, err = q.LockInviteToSend(ctx, params)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return nil
+		case err != nil:
+			return err
+		}
+		found = true
+		if then == nil {
+			return nil
+		}
+		return then(q)
+	})
+	if err != nil {
+		return queries.LockInviteToSendRow{}, false, err
+	}
+	return row, found, nil
 }
 
 // unmarkTimeout is how long a job whose email failed has to record that,

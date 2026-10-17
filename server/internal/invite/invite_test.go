@@ -357,12 +357,14 @@ func TestEmailsWaitForResendInterval(t *testing.T) {
 // TestEmailsLimitedAcrossWorkspaces checks that the invitations of several
 // workspaces, each of which emails the address once, together email it only
 // as often in an hour as the limit of invitation emails allows, as neither
-// their case nor a +tag changes the mailbox: the job of the next one sends
-// nothing, ends, cancelled with the limit as its error, and leaves the
-// invitation without a link, as one not emailed, even when an earlier
-// attempt of the job failed before it counted the email. A retry of a job
-// whose earlier attempt gave the invitation its link, and so counted its
-// email, is not counted again, and another mailbox is emailed all the same.
+// their case, nor a +tag, nor a full-width letter of their domain, which
+// is emailed to the domain of its ASCII letter, changes the mailbox: the
+// job of the next one sends nothing, ends, cancelled with the limit as its
+// error, and leaves the invitation without a link, as one not emailed, even
+// when an earlier attempt of the job failed before it counted the email. A
+// retry of a job whose earlier attempt gave the invitation its link, and so
+// counted its email, is not counted again, and another mailbox is emailed
+// all the same.
 //
 // Verifies: NFR-SEC-06
 func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
@@ -379,7 +381,7 @@ func TestEmailsLimitedAcrossWorkspaces(t *testing.T) {
 
 	type job struct{ workspace, invite, request, owner ids.UUID }
 	var queued []job
-	for i, address := range []string{"hana@example.com", "Hana@Example.com", "HANA+studio@example.com"} {
+	for i, address := range []string{"hana@example.com", "Hana@Example.com", "HANA+studio@\uff45xample.com"} {
 		ws, owner := f.workspace, f.owner
 		if i > 0 {
 			owner = f.addUser(t, fmt.Sprintf("owner%d@example.com", i))

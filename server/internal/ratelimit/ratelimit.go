@@ -44,6 +44,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"golang.org/x/net/idna"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
@@ -146,10 +147,16 @@ func EmailAddress(email string) Key {
 // address are: the address without its subaddress, the part of its local
 // part from its first + on, which most mail services deliver to the
 // mailbox of the rest (RFC 5233), unless the local part starts with it,
-// and, at Gmail, whose gmail.com and googlemail.com are one, without the
-// dots of its local part, which Gmail ignores. Two mailboxes that only a
-// subaddress or the dots tell apart, where a service does not deliver so,
-// share the key.
+// with its domain in the ASCII form that package email sends to where a
+// server takes no other (IDNA's lookup, which maps a letter's other forms,
+// such as a full-width one, to the letter, and writes a domain outside
+// ASCII as its xn-- labels), so that the spellings of one domain, which
+// the address's account and invitations tell apart, are one, and, at
+// Gmail, whose gmail.com and googlemail.com are one, without the dots of
+// its local part, which Gmail ignores. A domain that has no such form, as
+// an address literal, stays as it is. Two mailboxes that only a subaddress
+// or the dots tell apart, where a service does not deliver so, share the
+// key.
 func Mailbox(email string) Key {
 	at := strings.LastIndexByte(email, '@')
 	if at < 0 {
@@ -158,6 +165,9 @@ func Mailbox(email string) Key {
 	local, domain := email[:at], email[at+1:]
 	if i := strings.IndexByte(local, '+'); i > 0 {
 		local = local[:i]
+	}
+	if ascii, err := idna.Lookup.ToASCII(domain); err == nil {
+		domain = ascii
 	}
 	if strings.EqualFold(domain, "gmail.com") || strings.EqualFold(domain, "googlemail.com") {
 		local, domain = strings.ReplaceAll(local, ".", ""), "gmail.com"
@@ -284,7 +294,7 @@ type LimitError struct {
 }
 
 func (e *LimitError) Error() string {
-	return fmt.Sprintf("ratelimit: the %s limit of %d requests is used up for %v", e.Bucket, e.Decision.Limit,
+	return fmt.Sprintf("ratelimit: the %s bucket's limit of %d is used up for %v", e.Bucket, e.Decision.Limit,
 		e.Decision.Reset)
 }
 

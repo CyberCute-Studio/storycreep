@@ -111,19 +111,26 @@ func TestDefaultPolicy(t *testing.T) {
 }
 
 // TestMailbox checks that the addresses that differ only in a subaddress,
-// or, at Gmail, in the dots of the local part or in its domain, are one
-// mailbox's key, while a local part that starts with + keeps it, and the
-// dots of another service's addresses tell them apart.
+// in how their domain is written, as in full-width letters or as its xn--
+// labels, or, at Gmail, in the dots of the local part or in its domain, are
+// one mailbox's key, while a local part that starts with + keeps it, the
+// dots of another service's addresses tell them apart, and a domain without
+// an ASCII form stays as it is.
 func TestMailbox(t *testing.T) {
 	for address, want := range map[string]string{
 		"jo@example.com":             "jo@example.com",
 		"jo+work@example.com":        "jo@example.com",
-		"jo+work+late@Example.com":   "jo@Example.com",
+		"jo+work+late@Example.com":   "jo@example.com",
 		"jo+@example.com":            "jo@example.com",
 		"+jo@example.com":            "+jo@example.com",
 		"j.o@example.com":            "j.o@example.com",
+		"jo@\uff45xample.com":        "jo@example.com",
+		"jo@B\u00dcCHER.example":     "jo@xn--bcher-kva.example",
+		"jo@xn--bcher-kva.example":   "jo@xn--bcher-kva.example",
+		"jo@[192.0.2.1]":             "jo@[192.0.2.1]",
 		"j.o+work@gmail.com":         "jo@gmail.com",
 		"J.O@GoogleMail.com":         "JO@gmail.com",
+		"j.o@\uff47\uff4dail.com":    "jo@gmail.com",
 		"žofie.k+x@GMAIL.COM":        "žofiek@gmail.com",
 		"jo+work@sub.gmail.com":      "jo@sub.gmail.com",
 		"j.o+work@gmail.com.example": "j.o@gmail.com.example",

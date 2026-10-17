@@ -29,9 +29,10 @@
 // anything, so that sending an invitation anew again and again cannot flood
 // an inbox, even when the jobs of the earlier requests are retried, as once
 // an SMTP server that was down takes email again. The instance also emails
-// a mailbox 10 invitations an hour at most, from all workspaces together,
-// counting the addresses that differ only in a +tag, or, at Gmail, in dots,
-// as one (ratelimit.InviteEmail, ratelimit.Mailbox), so that an account
+// a mailbox 10 invitations at most in each clock hour (UTC), from all
+// workspaces together, counting the addresses that differ only in a +tag,
+// in how their domain is written, or, at Gmail, in dots, as one
+// (ratelimit.InviteEmail, ratelimit.Mailbox), so that an account
 // that owns many workspaces, or invites many addresses of one mailbox,
 // cannot flood an inbox either. The email of an invitation over that limit
 // is not sent: the invitation stays without a link, as one not emailed, and

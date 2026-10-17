@@ -168,10 +168,11 @@ type registerWithInviteInput struct {
 // inviteEmailLimitDoc says, in the description of an operation that emails
 // an invitation, what the limit of invitation emails to a mailbox, from all
 // workspaces together, does (ratelimit.InviteEmail, ratelimit.Mailbox).
-const inviteEmailLimitDoc = " The instance also emails a mailbox 10 invitations an hour at most, from all " +
-	"workspaces together, counting the addresses that differ only in a +tag, as jo+work@example.com and " +
-	"jo@example.com, or, at Gmail, in dots, as one. The email of an invitation over that limit is not sent, and " +
-	"the invitation stays without a link, its sent_at empty; send it anew later."
+const inviteEmailLimitDoc = " The instance also emails a mailbox 10 invitations at most in each clock hour " +
+	"(UTC), from all workspaces together, counting the addresses that differ only in a +tag, as " +
+	"jo+work@example.com and jo@example.com, in how their domain is written, as in full-width letters, or, at " +
+	"Gmail, in dots, as one. The email of an invitation over that limit is not sent, and the invitation stays " +
+	"without a link, its sent_at empty; send it anew later."
 
 // manageMembersDoc says, in the description of an operation that manages a
 // workspace's members or invitations, who may.
