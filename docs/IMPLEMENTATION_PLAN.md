@@ -285,7 +285,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-ENT-01 AC2–AC4 and FR-ENT-03 AC1 pass. Each enforcement site adds its own FR-ENT-01 AC1 test as it lands; item 117 completes AC1 with a check over every key in the plan file.
 
 ### 22. Command pipeline core
-**Status:** todo · **Depends on:** 8, 12, 20, 21
+**Status:** done ([#25](https://github.com/CyberCute-Studio/storycreep/pull/25)) · **Depends on:** 8, 12, 20, 21
 **PRD:** §5.7, §10.2, §10.4, ADR-004, ADR-006, FR-API-03 (atomicity, revisions)
 - A command registry: name, payload type, required capability, limit keys, inverse, and touched entity kinds.
 - Pipeline steps: strict payload validation → authorisation (role × capability; token scopes are added in item 26) → entitlements → apply in one transaction.
