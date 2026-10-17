@@ -447,7 +447,8 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 		Summary:     "Register an account with an invitation",
 		Description: "Creates an account, as POST /api/v1/auth/register does, and accepts an invitation with its " +
 			"link as the new account, which joins the invitation's workspace with its role, under the invite and " +
-			"the open signup policies. Under closed, the answer is 403 signup_closed, whatever the request holds, " +
+			"the open signup policies. Until first-run setup has completed, the answer is 403 setup_required, " +
+			"whatever the policy. Under closed, the answer is 403 signup_closed, whatever the request holds, " +
 			"and only an account that exists already accepts an invitation, with POST /api/v1/invites/accept. An " +
 			"invitation to an address registers that address, and another is answered with 403 " +
 			"invite_email_mismatch (FR-TEN-02 AC3)." + inviteStateDoc + " The fields are checked as POST " +

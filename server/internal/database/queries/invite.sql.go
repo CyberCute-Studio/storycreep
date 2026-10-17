@@ -147,8 +147,7 @@ func (q *Queries) InviteEmailDue(ctx context.Context, arg InviteEmailDueParams) 
 
 const lockInvite = `-- name: LockInvite :one
 SELECT
-    id, email, role, expires_at, (CASE WHEN token_hash IS NOT NULL THEN sent_at END)::timestamptz AS sent_at,
-    created_by, created_at,
+    id, email, role, created_by, created_at,
     (accepted_at IS NOT NULL)::boolean AS accepted,
     (revoked_at IS NOT NULL)::boolean AS revoked
 FROM invite
@@ -165,18 +164,16 @@ type LockInviteRow struct {
 	ID        pgtype.UUID
 	Email     pgtype.Text
 	Role      string
-	ExpiresAt pgtype.Timestamptz
-	SentAt    pgtype.Timestamptz
 	CreatedBy pgtype.UUID
 	CreatedAt pgtype.Timestamptz
 	Accepted  bool
 	Revoked   bool
 }
 
-// LockInvite returns an invitation of the workspace, with when the job
-// emailed the link that it has, as OpenInvites does, and whether it has been
-// accepted or revoked, and locks it against changes until the transaction
-// ends, so that a change of it and its acceptance run one after the other.
+// LockInvite returns an invitation of the workspace, with whether it has
+// been accepted or revoked, and locks it against changes until the
+// transaction ends, so that a change of it and its acceptance run one after
+// the other.
 func (q *Queries) LockInvite(ctx context.Context, arg LockInviteParams) (LockInviteRow, error) {
 	row := q.db.QueryRow(ctx, lockInvite, arg.WorkspaceID, arg.ID)
 	var i LockInviteRow
@@ -184,8 +181,6 @@ func (q *Queries) LockInvite(ctx context.Context, arg LockInviteParams) (LockInv
 		&i.ID,
 		&i.Email,
 		&i.Role,
-		&i.ExpiresAt,
-		&i.SentAt,
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.Accepted,

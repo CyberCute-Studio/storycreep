@@ -58,13 +58,12 @@ ORDER BY id
 LIMIT @max_rows;
 
 -- name: LockInvite :one
--- LockInvite returns an invitation of the workspace, with when the job
--- emailed the link that it has, as OpenInvites does, and whether it has been
--- accepted or revoked, and locks it against changes until the transaction
--- ends, so that a change of it and its acceptance run one after the other.
+-- LockInvite returns an invitation of the workspace, with whether it has
+-- been accepted or revoked, and locks it against changes until the
+-- transaction ends, so that a change of it and its acceptance run one after
+-- the other.
 SELECT
-    id, email, role, expires_at, (CASE WHEN token_hash IS NOT NULL THEN sent_at END)::timestamptz AS sent_at,
-    created_by, created_at,
+    id, email, role, created_by, created_at,
     (accepted_at IS NOT NULL)::boolean AS accepted,
     (revoked_at IS NOT NULL)::boolean AS revoked
 FROM invite

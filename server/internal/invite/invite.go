@@ -411,7 +411,8 @@ func (s *Service) List(ctx context.Context, userID, id, after ids.UUID, limit in
 // lock returns the invitation inviteID of the workspace id, whose
 // transaction tx is, and locks it, or ErrNotFound if there is none, and then
 // ErrAccepted if it has been accepted. revoked says whether it has been
-// revoked.
+// revoked. The invitation has neither its expiry nor when it was emailed,
+// which the change that locks it replaces.
 func lock(ctx context.Context, tx pgx.Tx, id, inviteID ids.UUID) (inv Invite, revoked bool, err error) {
 	row, err := queries.New(tx).LockInvite(ctx, queries.LockInviteParams{WorkspaceID: nullUUID(id),
 		ID: nullUUID(inviteID)})
@@ -424,8 +425,7 @@ func lock(ctx context.Context, tx pgx.Tx, id, inviteID ids.UUID) (inv Invite, re
 		return Invite{}, false, ErrAccepted
 	}
 	return Invite{ID: row.ID.Bytes, Email: row.Email.String, Role: role.Role(row.Role),
-		ExpiresAt: row.ExpiresAt.Time, SentAt: row.SentAt.Time, CreatedBy: row.CreatedBy.Bytes,
-		CreatedAt: row.CreatedAt.Time}, row.Revoked, nil
+		CreatedBy: row.CreatedBy.Bytes, CreatedAt: row.CreatedAt.Time}, row.Revoked, nil
 }
 
 // Resend sends the invitation inviteID of the workspace id anew, as the user
@@ -469,7 +469,8 @@ func (s *Service) Resend(ctx context.Context, userID, id, inviteID ids.UUID, cli
 		if err != nil {
 			return fmt.Errorf("invite: renew the invitation: %w", err)
 		}
-		inv.ExpiresAt, inv.SentAt = expires.Time, time.Time{}
+		// The new link was not emailed yet, so the invitation has no SentAt.
+		inv.ExpiresAt = expires.Time
 		if emailed {
 			if err := s.enqueue(ctx, tx, id, inv.ID, l.request, inv.Email); err != nil {
 				return err

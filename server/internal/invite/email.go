@@ -178,10 +178,14 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 				ID: nullUUID(inviteID), TokenHash: hash})
 		}); unmark != nil {
 			// The invitation still looks emailed, by this attempt. The error
-			// wraps no refusal for good, so the job is not cancelled, and its
-			// next attempt, unless a later request has sent the invitation
-			// anew by then, sends the email again and records how that went.
-			return fmt.Errorf("%v; invite: record that the invitation was not emailed: %v", err, unmark)
+			// does not wrap the email's, so that a refusal for good does not
+			// cancel the job: its next attempt, unless a later request has
+			// sent the invitation anew by then, sends the email again and
+			// records how that went. It still carries the context's error,
+			// so that an attempt that the server's stop cut off does not
+			// count.
+			return email.JobError(ctx, fmt.Errorf("%v; invite: record that the invitation was not emailed: %v",
+				err, unmark))
 		}
 		return email.JobError(ctx, err)
 	}

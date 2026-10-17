@@ -133,8 +133,9 @@ var codes = []codeSpec{
 			"registers an account with an invitation's link."},
 	{CodeSetupRequired, http.StatusForbidden, i18n.K("error.setup_required"),
 		"The instance's first-run setup has not completed, so `POST /api/v1/auth/register` creates no " +
-			"account, whatever the signup policy and whatever the request holds, so that the first account is " +
-			"always the owner that setup creates (PRD FR-ADMIN-02 AC4). `POST /api/v1/setup` completes it."},
+			"account, and nor does `POST /api/v1/invites/register`, whatever the signup policy and whatever the " +
+			"request holds, so that the first account is always the owner that setup creates (PRD FR-ADMIN-02 " +
+			"AC4). `POST /api/v1/setup` completes it."},
 	{CodeInvalidSetupCode, http.StatusForbidden, i18n.K("error.invalid_setup_code"),
 		"`POST /api/v1/setup` was given a setup code that is not the instance's, so setup stays pending. The " +
 			"server writes the code to its log while setup is pending (PRD FR-ADMIN-02)."},

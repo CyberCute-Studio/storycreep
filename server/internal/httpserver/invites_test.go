@@ -582,7 +582,8 @@ func TestInviteConflicts(t *testing.T) {
 // address of an account that exists answers the same, leaves the account
 // and the invitation as they were, and the account then accepts the
 // invitation itself. A link invitation needs an address. Under the closed
-// policy, an invitation registers no account, whatever the request holds.
+// policy, an invitation registers no account, whatever the request holds,
+// and nor does it before first-run setup has completed, whatever the policy.
 //
 // Verifies: FR-AUTH-01/AC1
 func TestRegisterWithInvite(t *testing.T) {
@@ -656,6 +657,9 @@ func TestRegisterWithInvite(t *testing.T) {
 	closed, _, _, _ := inviteServer(t, "closed", nil)
 	wantCode(t, "register under closed", call(closed.main, http.MethodPost, registerInvitePath, []byte("{}"), nil),
 		http.StatusForbidden, api.CodeSignupClosed)
+	pending, _ := pendingServer(t, inviteEnv("open", nil))
+	wantCode(t, "register before setup", call(pending.main, http.MethodPost, registerInvitePath, []byte("{}"), nil),
+		http.StatusForbidden, api.CodeSetupRequired)
 }
 
 // TestEmailedInvite checks that an instance that sends email emails the link
