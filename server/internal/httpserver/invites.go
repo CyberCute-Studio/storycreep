@@ -61,7 +61,7 @@ type inviteBody struct {
 	Kind      string     `json:"kind" enum:"email,link" doc:"Whom it invites: email, the address of email, which the account that accepts it must have, or link, whoever holds its link"`
 	Email     string     `json:"email,omitempty" doc:"The invited address, of an invitation of the kind email"`
 	Role      string     `json:"role" enum:"owner,admin,editor,commenter,viewer,guest" doc:"The role that accepting it gives in the workspace"`
-	Status    string     `json:"status" enum:"pending,expired" doc:"pending while it may be accepted, and expired once it has expired, until it is sent anew"`
+	Status    string     `json:"status" enum:"pending,expired" doc:"pending until it expires, and expired from then until it is sent anew. A pending invitation is accepted with its link once it has one: one that the instance emails has none until its email is sent, as sent_at says."`
 	ExpiresAt time.Time  `json:"expires_at" doc:"When it expires: 14 days after it was made, sent anew, or emailed"`
 	SentAt    *time.Time `json:"sent_at,omitempty" doc:"When the instance emailed its link, which then lasts its 14 days from then. Without it, no email holds its current link: the instance sends no email, the invitation is a link invitation, or its email is still to be sent, or could not be sent, as to an address that the SMTP server refuses."`
 	CreatedBy string     `json:"created_by,omitempty" doc:"The ID of the account that made it, unless that account was deleted"`

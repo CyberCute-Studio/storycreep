@@ -75,7 +75,7 @@ export interface InviteBody {
   role: "owner" | "admin" | "editor" | "commenter" | "viewer" | "guest";
   /** When the instance emailed its link, which then lasts its 14 days from then. Without it, no email holds its current link: the instance sends no email, the invitation is a link invitation, or its email is still to be sent, or could not be sent, as to an address that the SMTP server refuses. */
   sent_at?: string;
-  /** pending while it may be accepted, and expired once it has expired, until it is sent anew */
+  /** pending until it expires, and expired from then until it is sent anew. A pending invitation is accepted with its link once it has one: one that the instance emails has none until its email is sent, as sent_at says. */
   status: "pending" | "expired";
   /** Its link, which opens the web app's page that accepts it, with its token in the URL's fragment. It is here only in the answer that made the invitation or sent it anew, and only when the instance does not email it: for a link invitation, and for every invitation on an instance that sends no email. Whoever holds it can accept the invitation, so give it only to the person invited. The database holds no copy, and sending the invitation anew gives a new link, in place of this one. */
   url?: string;

@@ -293,8 +293,9 @@ func TestInviteExpiredOrRevoked(t *testing.T) {
 
 // TestInviteEmailMismatch checks that an invitation to an address is refused
 // to an account of another address, and to a registration of another
-// address, and stays open for its own, while a link invitation is accepted
-// by any account.
+// address, though one of an address that registration refuses is answered
+// as registering it without an invitation is, and stays open for its own,
+// while a link invitation is accepted by any account.
 //
 // Verifies: FR-TEN-02/AC3
 func TestInviteEmailMismatch(t *testing.T) {
@@ -307,6 +308,14 @@ func TestInviteEmailMismatch(t *testing.T) {
 		api.CodeInviteEmailMismatch)
 	wantCode(t, "register another address with it", registerWithInvite(t, s.main, token, "mo@example.com"),
 		http.StatusForbidden, api.CodeInviteEmailMismatch)
+	// An address that registration refuses, here for a character that is
+	// not printed, is answered as POST /api/v1/auth/register answers it.
+	res := registerWithInvite(t, s.main, token, "ha​na@example.com")
+	wantCode(t, "register an address that registration refuses", res, http.StatusUnprocessableEntity,
+		api.CodeValidationFailed)
+	if !strings.Contains(string(res.body), "body.email") {
+		t.Errorf("registering an address that registration refuses names no field: %s", res.body)
+	}
 	if got := workspacesOf(t, s.main, jo); len(got) != 1 {
 		t.Errorf("jo belongs to %+v, want his personal workspace alone", got)
 	}
@@ -653,8 +662,10 @@ func TestRegisterWithInvite(t *testing.T) {
 // of an invitation to an address, which names the instance and the role but
 // not the workspace, and gives no link as text then, that sending the
 // invitation anew emails a new link, in place of the old one, 10 minutes
-// after the last email at the earliest, and that a link invitation gives its
-// link as text, as it is emailed to no one.
+// after the last email at the earliest, that registering with the emailed
+// link joins the workspace and emails the new account a link that verifies
+// its address, and that a link invitation gives its link as text, as it is
+// emailed to no one.
 func TestEmailedInvite(t *testing.T) {
 	t.Parallel()
 	server := emailtest.Start(t, emailtest.Options{})
@@ -707,7 +718,24 @@ func TestEmailedInvite(t *testing.T) {
 	wantCode(t, "use the replaced link", lookupInvite(t, s.main, first.Token(t)), http.StatusBadRequest,
 		api.CodeTokenInvalid)
 	second := invitations(2)[1]
-	hana := newNamedAccount(t, s.main, "hana@example.com", "Hana")
+	// hana registers with the emailed link, in a transaction of the
+	// workspace, which also emails her account a link that verifies its
+	// address, as registering without an invitation does.
+	if res := registerWithInvite(t, s.main, second.Token(t), ""); res.status != http.StatusAccepted {
+		t.Fatalf("register with the emailed invitation: %d %s", res.status, res.body)
+	}
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if slices.ContainsFunc(server.Messages(), func(m emailtest.Message) bool {
+			return slices.Equal(m.To, []string{"hana@example.com"}) &&
+				strings.Contains(m.Body(t), "/app/verify-email#token=")
+		}) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the account registered with the invitation was emailed no link that verifies its address")
+		}
+	}
+	hana := signIn(t, s.main, "hana@example.com")
 	if m := accepted(t, acceptInvite(t, s.main, hana, second.Token(t))); m.Role != "commenter" {
 		t.Errorf("hana's membership is %+v", m)
 	}

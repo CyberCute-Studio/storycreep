@@ -21,6 +21,14 @@ ALTER TABLE invite
 	-- the invitation anew to be emailed keeps it, so that the next email to
 	-- the address waits 10 minutes after it.
 	ADD COLUMN sent_at timestamptz,
+	-- The request that last asked for the invitation's link to be emailed,
+	-- by making it or sending it anew, whose job alone emails it, so that
+	-- the jobs of the requests before it, which may still wait or be
+	-- retried, as while the SMTP server is down, send nothing; or null if
+	-- the request that gave the invitation the link that it has gave that
+	-- link as text. It is an identifier that the request makes and the job's
+	-- arguments hold, and grants nothing.
+	ADD COLUMN email_request uuid,
 	-- The account that accepted the invitation, which accepting it again
 	-- answers as done, or null until it is accepted, or once the account is
 	-- deleted.

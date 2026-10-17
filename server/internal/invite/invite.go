@@ -25,7 +25,10 @@
 // days from then. A workspace emails an address one invitation in
 // ResendInterval at most: the job of an invitation made or sent anew sooner
 // after the last email to its address waits until ResendInterval has passed,
-// so that sending an invitation anew again and again cannot flood an inbox.
+// and only the job of the latest request to email an invitation sends
+// anything, so that sending an invitation anew again and again cannot flood
+// an inbox, even when the jobs of the earlier requests are retried, as once
+// an SMTP server that was down takes email again.
 // The email names no one and nothing but the instance and the role, never
 // the workspace or the inviting user, whose names their users chose, so that
 // an account cannot put text of its own in email that the instance sends to
@@ -273,11 +276,12 @@ func (s *Service) Create(ctx context.Context, userID, id ids.UUID, in Request, c
 		if err := refuseMember(ctx, q, id, inv.Email); err != nil {
 			return err
 		}
-		hash, holder := s.textLink(&inv, userID, emailed)
+		l := s.newLink(&inv, userID, emailed)
 		inv.ID, inv.CreatedBy = ids.New(), userID
 		row, err := q.InsertInvite(ctx, queries.InsertInviteParams{ID: nullUUID(inv.ID), WorkspaceID: nullUUID(id),
-			Email: pgtype.Text{String: inv.Email, Valid: inv.Email != ""}, Role: string(inv.Role), TokenHash: hash,
-			Lifetime: database.Interval(Lifetime), CreatedBy: nullUUID(userID), LinkHolder: holder})
+			Email: pgtype.Text{String: inv.Email, Valid: inv.Email != ""}, Role: string(inv.Role), TokenHash: l.hash,
+			Lifetime: database.Interval(Lifetime), CreatedBy: nullUUID(userID), LinkHolder: nullUUID(l.holder),
+			EmailRequest: nullUUID(l.request)})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrExists
 		}
@@ -286,7 +290,7 @@ func (s *Service) Create(ctx context.Context, userID, id ids.UUID, in Request, c
 		}
 		inv.ExpiresAt, inv.CreatedAt = row.ExpiresAt.Time, row.CreatedAt.Time
 		if emailed {
-			if err := s.enqueue(ctx, tx, id, inv.ID, inv.Email); err != nil {
+			if err := s.enqueue(ctx, tx, id, inv.ID, l.request, inv.Email); err != nil {
 				return err
 			}
 		}
@@ -298,18 +302,30 @@ func (s *Service) Create(ctx context.Context, userID, id ids.UUID, in Request, c
 	return inv, nil
 }
 
-// textLink gives the invitation inv a new link, as its URL, which the user
+// link is what a request that gives an invitation a new link records of it.
+type link struct {
+	// hash is the SHA-256 hash of the secret of a link given as text, and
+	// holder the user who is given it, the invitation's link holder, whose
+	// removal from the workspace revokes the invitation
+	// (workspace.Service.RemoveMember), or neither for a link that is
+	// emailed.
+	hash   []byte
+	holder ids.UUID
+	// request is the request to email the link, whose job alone emails it
+	// (send), or zero for a link given as text.
+	request ids.UUID
+}
+
+// newLink gives the invitation inv a new link, as its URL, which the user
 // userID is given as text, unless emailed says that the instance emails it,
-// and returns the hash of the link's secret, and the user, as the
-// invitation's link holder, whose removal from the workspace revokes the
-// invitation (workspace.Service.RemoveMember), or neither if it is emailed.
-func (s *Service) textLink(inv *Invite, userID ids.UUID, emailed bool) ([]byte, pgtype.UUID) {
+// and returns what the invitation records of it.
+func (s *Service) newLink(inv *Invite, userID ids.UUID, emailed bool) link {
 	if emailed {
-		return nil, pgtype.UUID{}
+		return link{request: ids.New()}
 	}
 	value, hash := account.NewSecret()
 	inv.URL = secret.New(linkURL(s.publicURL, value))
-	return hash, nullUUID(userID)
+	return link{hash: hash, holder: userID}
 }
 
 // refuseMember returns workspace.ErrAlreadyMember if the address email
@@ -446,16 +462,16 @@ func (s *Service) Resend(ctx context.Context, userID, id, inviteID ids.UUID, cli
 			return err
 		}
 		emailed := configured && inv.Email != ""
-		hash, holder := s.textLink(&inv, userID, emailed)
-		expires, err := queries.New(tx).RenewInvite(ctx, queries.RenewInviteParams{TokenHash: hash,
-			LinkHolder: holder, Lifetime: database.Interval(Lifetime), WorkspaceID: nullUUID(id),
-			ID: nullUUID(inviteID)})
+		l := s.newLink(&inv, userID, emailed)
+		expires, err := queries.New(tx).RenewInvite(ctx, queries.RenewInviteParams{TokenHash: l.hash,
+			LinkHolder: nullUUID(l.holder), EmailRequest: nullUUID(l.request), Lifetime: database.Interval(Lifetime),
+			WorkspaceID: nullUUID(id), ID: nullUUID(inviteID)})
 		if err != nil {
 			return fmt.Errorf("invite: renew the invitation: %w", err)
 		}
 		inv.ExpiresAt, inv.SentAt = expires.Time, time.Time{}
 		if emailed {
-			if err := s.enqueue(ctx, tx, id, inv.ID, inv.Email); err != nil {
+			if err := s.enqueue(ctx, tx, id, inv.ID, l.request, inv.Email); err != nil {
 				return err
 			}
 		}
@@ -673,7 +689,8 @@ func (s *Service) accept(ctx context.Context, tx pgx.Tx, h held, userID ids.UUID
 // (account.Service.CheckInvitedSignup), then ErrTokenInvalid, ErrRevoked,
 // ErrAccepted, or ErrExpired for an invitation that cannot be accepted,
 // ErrEmailMismatch for one to another address than reg.Email, and the
-// errors of RegisterInvited for a registration that is not valid, and adds
+// errors of RegisterInvited for a registration that is not valid, as one
+// whose address registration refuses, whatever the invitation's, and adds
 // nothing then.
 func (s *Service) Register(ctx context.Context, value secret.Value, reg account.Registration,
 	client audit.Client) error {
@@ -685,10 +702,11 @@ func (s *Service) Register(ctx context.Context, value secret.Value, reg account.
 		return err
 	}
 	address := account.CanonicalEmail(reg.Email)
-	if account.CheckEmail(address) != "" {
-		// No account has an address that registration refuses: an
-		// invitation to an address is to another one then, and
-		// RegisterInvited refuses it for a link invitation.
+	// An address that registration refuses is no invitation's either, and
+	// RegisterInvited answers it as Register does, with input.FieldErrors,
+	// rather than as another address than the invitation's.
+	malformed := reg.Email != "" && account.CheckEmail(address) != ""
+	if malformed {
 		address = ""
 	}
 	err = s.db.InTx(ctx, database.Scope{WorkspaceID: id}, func(tx pgx.Tx) error {
@@ -698,7 +716,7 @@ func (s *Service) Register(ctx context.Context, value secret.Value, reg account.
 			return err
 		case reg.Email == "" && h.row.Email.Valid:
 			reg.Email = h.row.Email.String
-		case !h.row.EmailMatches:
+		case !h.row.EmailMatches && !malformed:
 			return ErrEmailMismatch
 		}
 		return nil

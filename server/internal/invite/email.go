@@ -39,6 +39,10 @@ type emailInvite struct {
 	// invitation's.
 	Workspace string `json:"workspace"`
 	Invite    string `json:"invite"`
+	// Request is the ID of the request that asked for the email, which the
+	// invitation records until a later request replaces it, and which grants
+	// nothing.
+	Request string `json:"request"`
 }
 
 func (emailInvite) Kind() string { return "email_invite" }
@@ -46,24 +50,26 @@ func (emailInvite) Kind() string { return "email_invite" }
 // emailInviteAttempts is how many times the job tries to email an
 // invitation: with the queue's backoff, which waits an hour at most between
 // attempts, over about a day, as the job that emails an account's link does.
-// An attempt sends nothing once the invitation has been accepted or revoked,
-// or has expired.
+// An attempt sends nothing once the invitation has been accepted, revoked,
+// or sent anew, or has expired.
 const emailInviteAttempts = 36
 
-// enqueue enqueues the job that emails the link of the invitation inviteID
-// of the workspace id to the address address, in tx. The job is due once
-// ResendInterval has passed since the workspace last emailed an invitation
-// to the address, or at once if it has passed (InviteEmailDue), so that
-// sending an invitation anew again and again, or revoking it and inviting
-// the address again, cannot flood the address's inbox. Each request
-// enqueues its own job, even while an earlier one still waits or runs, whose
-// email may hold a link that the request has replaced: whichever job sends
-// last sends the link that works, and a job that finds the invitation
-// emailed within ResendInterval, by another of its jobs that ran before,
-// sends none on its first attempt (send), even when the invitation has been
-// sent anew since, because that request's own job emails it once
-// ResendInterval has passed.
-func (s *Service) enqueue(ctx context.Context, tx pgx.Tx, id, inviteID ids.UUID, address string) error {
+// enqueue enqueues the job of the request request that emails the link of
+// the invitation inviteID of the workspace id to the address address, in tx,
+// the transaction that records the request in the invitation. The job is due
+// once ResendInterval has passed since the workspace last emailed an
+// invitation to the address, or at once if it has passed (InviteEmailDue),
+// so that sending an invitation anew again and again, or revoking it and
+// inviting the address again, cannot flood the address's inbox. Each request
+// enqueues its own job, even while the job of an earlier one still waits, is
+// retried, or runs, but only the job of the latest request sends anything
+// (send): the earlier ones find the invitation sent anew, or closed, as the
+// job of a revoked invitation does. A job that ran before the request was
+// made recorded when it emailed the address, which the request's job waits
+// ResendInterval after, and one that runs while the request is made locks
+// the invitation, so that it either sends before the request, which then
+// sees when, or finds itself replaced.
+func (s *Service) enqueue(ctx context.Context, tx pgx.Tx, id, inviteID, request ids.UUID, address string) error {
 	if s.queue == nil {
 		return errors.New("invite: the Service has no job queue to email an invitation with")
 	}
@@ -78,7 +84,8 @@ func (s *Service) enqueue(ctx context.Context, tx pgx.Tx, id, inviteID ids.UUID,
 	default:
 		opts.At = due.Time
 	}
-	_, err = s.queue.Enqueue(ctx, tx, emailInvite{Workspace: id.String(), Invite: inviteID.String()}, opts)
+	_, err = s.queue.Enqueue(ctx, tx, emailInvite{Workspace: id.String(), Invite: inviteID.String(),
+		Request: request.String()}, opts)
 	return err
 }
 
@@ -95,31 +102,34 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 		if err != nil {
 			return fmt.Errorf("invite: the job's invitation %q is not a UUID: %w", job.Args.Invite, err)
 		}
-		return s.send(ctx, job.DB, id, inviteID, job.Attempt <= 1)
+		request, err := ids.ParseUUID(job.Args.Request)
+		if err != nil {
+			return fmt.Errorf("invite: the job's request %q is not a UUID: %w", job.Args.Request, err)
+		}
+		return s.send(ctx, job.DB, id, inviteID, request)
 	})
 }
 
-// send is the work of the job that emails the link of the invitation
-// inviteID of the workspace id: it makes the link's secret, holds its hash
-// in the invitation, which then expires Lifetime from now, and sends the
-// email to the invited address, in the preferred locale of the account that
-// the address belongs to, if any, and else in the workspace's default
-// locale. An invitation that has been accepted or revoked, or has expired,
-// as one asked to be emailed longer ago than Lifetime has, or whose
+// send is the work of the job of the request request that emails the link of
+// the invitation inviteID of the workspace id: it makes the link's secret,
+// holds its hash in the invitation, which then expires Lifetime from now,
+// and sends the email to the invited address, in the preferred locale of the
+// account that the address belongs to, if any, and else in the workspace's
+// default locale. An invitation that has been accepted or revoked, or has
+// expired, as one asked to be emailed longer ago than Lifetime has, or whose
 // workspace's deletion is pending, is sent no email, and nor is any on an
-// instance that no longer sends email. Nor is the invitation on the job's
-// first attempt, firstAttempt, if it was emailed within ResendInterval, as
-// by another of its jobs, which waited for the same moment, or was due at
-// once before that one sent its email (enqueue). An attempt that fails to
-// send the email records that the invitation's link was not emailed after
-// all, and is made again later, with a new secret, which replaces the one
-// that the failed attempt may have sent, so that only the latest email's
-// link works, unless the SMTP server refuses the email for good
-// (email.JobError). An attempt that cannot record that counts as failed,
-// however it ended, so that the next attempt sends the email. The job reads
+// instance that no longer sends email. Nor is one that a later request has
+// sent anew, whose own job emails it (enqueue), so that however many of a
+// request's attempts fail, as while the SMTP server is down, and however
+// often the invitation is sent anew meanwhile, the address is sent one email
+// once the server takes email again. An attempt that fails to send the email
+// records that the invitation's link was not emailed after all, and is made
+// again later, with a new secret, which replaces the one that the failed
+// attempt may have sent, so that only the latest email's link works, unless
+// the SMTP server refuses the email for good (email.JobError). The job reads
 // the SMTP settings, as it does the invitation, on the workers' pool that it
 // carries, db.
-func (s *Service) send(ctx context.Context, db DB, id, inviteID ids.UUID, firstAttempt bool) error {
+func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUID) error {
 	if s.email == nil {
 		return nil
 	}
@@ -136,7 +146,7 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID ids.UUID, firstA
 		q := queries.New(tx)
 		var err error
 		row, err = q.LockInviteToSend(ctx, queries.LockInviteToSendParams{WorkspaceID: nullUUID(id),
-			ID: nullUUID(inviteID), FirstAttempt: firstAttempt, ResendInterval: database.Interval(ResendInterval)})
+			ID: nullUUID(inviteID), EmailRequest: nullUUID(request)})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -157,9 +167,10 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID ids.UUID, firstA
 	if err := mailer.Deliver(ctx, settings, msg); err != nil {
 		err = fmt.Errorf("invite: email the invitation: %w", err)
 		// No email holds the link, so the invitation's admins see that it
-		// is still to be emailed, or never was, and the next attempt is not
-		// taken for another job's. That holds even when the job's context
-		// has ended, as when the server stops.
+		// is still to be emailed, or never was, and the email of a request
+		// to send it anew does not wait for this one (InviteEmailDue). That
+		// holds even when the job's context has ended, as when the server
+		// stops.
 		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unmarkTimeout)
 		defer cancel()
 		if unmark := db.InTx(uctx, scope, func(tx pgx.Tx) error {
@@ -167,11 +178,9 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID ids.UUID, firstA
 				ID: nullUUID(inviteID), TokenHash: hash})
 		}); unmark != nil {
 			// The invitation still looks emailed, by this attempt. The error
-			// wraps neither the context's error nor a refusal for good, so
-			// the attempt counts, even when the server is stopping, and the
-			// next attempt, which is not the job's first, sends the email
-			// rather than take this attempt's for another job's
-			// (LockInviteToSend).
+			// wraps no refusal for good, so the job is not cancelled, and its
+			// next attempt, unless a later request has sent the invitation
+			// anew by then, sends the email again and records how that went.
 			return fmt.Errorf("%v; invite: record that the invitation was not emailed: %v", err, unmark)
 		}
 		return email.JobError(ctx, err)

@@ -51,23 +51,24 @@ func (q *Queries) AddressIsMember(ctx context.Context, arg AddressIsMemberParams
 
 const insertInvite = `-- name: InsertInvite :one
 
-INSERT INTO invite (id, workspace_id, email, role, token_hash, expires_at, created_by, link_holder)
+INSERT INTO invite (id, workspace_id, email, role, token_hash, expires_at, created_by, link_holder, email_request)
 VALUES ($1, $2, $3, $4, $5, now() + $6::interval,
-    $7, $8)
+    $7, $8, $9)
 ON CONFLICT (workspace_id, email) WHERE email IS NOT NULL AND accepted_at IS NULL AND revoked_at IS NULL
 DO NOTHING
 RETURNING expires_at, created_at
 `
 
 type InsertInviteParams struct {
-	ID          pgtype.UUID
-	WorkspaceID pgtype.UUID
-	Email       pgtype.Text
-	Role        string
-	TokenHash   []byte
-	Lifetime    pgtype.Interval
-	CreatedBy   pgtype.UUID
-	LinkHolder  pgtype.UUID
+	ID           pgtype.UUID
+	WorkspaceID  pgtype.UUID
+	Email        pgtype.Text
+	Role         string
+	TokenHash    []byte
+	Lifetime     pgtype.Interval
+	CreatedBy    pgtype.UUID
+	LinkHolder   pgtype.UUID
+	EmailRequest pgtype.UUID
 }
 
 type InsertInviteRow struct {
@@ -92,12 +93,17 @@ type InsertInviteRow struct {
 // sent it anew gave its link to as text, while the invitation has that link,
 // so that removing the account's membership revokes the invitation
 // (RevokeMemberInvites).
+//
+// email_request is the request that last asked for the invitation's link to
+// be emailed, whose job alone emails it (LockInviteToSend), so that a job of
+// an earlier request, which a later one superseded, sends nothing, however
+// often it is retried.
 // InsertInvite adds an invitation that expires after lifetime: to the
 // address email, or a link invitation without one, with the SHA-256 hash of
 // its secret, whose link the account link_holder is given as text, or
-// without one, which the job that emails its link adds. It adds nothing, and
-// returns no row, if the address has an open invitation of the workspace
-// already, without failing the transaction.
+// without one, which the job of the request email_request that emails its
+// link adds. It adds nothing, and returns no row, if the address has an open
+// invitation of the workspace already, without failing the transaction.
 func (q *Queries) InsertInvite(ctx context.Context, arg InsertInviteParams) (InsertInviteRow, error) {
 	row := q.db.QueryRow(ctx, insertInvite,
 		arg.ID,
@@ -108,6 +114,7 @@ func (q *Queries) InsertInvite(ctx context.Context, arg InsertInviteParams) (Ins
 		arg.Lifetime,
 		arg.CreatedBy,
 		arg.LinkHolder,
+		arg.EmailRequest,
 	)
 	var i InsertInviteRow
 	err := row.Scan(&i.ExpiresAt, &i.CreatedAt)
@@ -254,17 +261,15 @@ SELECT
 FROM invite i
 JOIN workspace w ON w.id = i.workspace_id AND w.status = 'active'
 LEFT JOIN "user" u ON u.email = i.email
-WHERE i.workspace_id = $1 AND i.id = $2
+WHERE i.workspace_id = $1 AND i.id = $2 AND i.email_request = $3
     AND i.email IS NOT NULL AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()
-    AND (NOT $3::boolean OR i.sent_at IS NULL OR i.sent_at <= now() - $4::interval)
 FOR UPDATE OF i
 `
 
 type LockInviteToSendParams struct {
-	WorkspaceID    pgtype.UUID
-	ID             pgtype.UUID
-	FirstAttempt   bool
-	ResendInterval pgtype.Interval
+	WorkspaceID  pgtype.UUID
+	ID           pgtype.UUID
+	EmailRequest pgtype.UUID
 }
 
 type LockInviteToSendRow struct {
@@ -274,25 +279,19 @@ type LockInviteToSendRow struct {
 }
 
 // LockInviteToSend returns what the email of an invitation's link needs, if
-// the invitation is to an address, is open, its workspace is active, and it
-// has not expired, which an invitation that was asked to be emailed longer
-// ago than its lifetime has, and, for a job's first attempt, if no job
-// emailed the invitation in the last resend_interval, as another job of the
-// invitation that ran just before did, whether or not the invitation has
-// been sent anew since, which the job of that request emails once the
-// interval has passed (InviteEmailDue): the address, the role, and the
-// locale that the email is written in, the preferred locale of the account
-// that the address belongs to, if it has one, and else the workspace's
-// default locale, as a BCP 47 tag, or null if neither has one. It locks the
-// invitation, so that the job that sends it and a use of it run one after
-// the other.
+// the invitation is to an address, is open, its workspace is active, it has
+// not expired, which an invitation that was asked to be emailed longer ago
+// than its lifetime has, and the request email_request is the one that last
+// asked for it to be emailed, so that the job of a request that a later one
+// superseded sends nothing, while the job of the latest request is due once
+// the workspace may email the address again (InviteEmailDue): the address,
+// the role, and the locale that the email is written in, the preferred
+// locale of the account that the address belongs to, if it has one, and else
+// the workspace's default locale, as a BCP 47 tag, or null if neither has
+// one. It locks the invitation, so that the job that sends it and a use of
+// it, or its being sent anew, run one after the other.
 func (q *Queries) LockInviteToSend(ctx context.Context, arg LockInviteToSendParams) (LockInviteToSendRow, error) {
-	row := q.db.QueryRow(ctx, lockInviteToSend,
-		arg.WorkspaceID,
-		arg.ID,
-		arg.FirstAttempt,
-		arg.ResendInterval,
-	)
+	row := q.db.QueryRow(ctx, lockInviteToSend, arg.WorkspaceID, arg.ID, arg.EmailRequest)
 	var i LockInviteToSendRow
 	err := row.Scan(&i.Email, &i.Role, &i.Locale)
 	return i, err
@@ -362,31 +361,34 @@ func (q *Queries) OpenInvites(ctx context.Context, arg OpenInvitesParams) ([]Ope
 const renewInvite = `-- name: RenewInvite :one
 UPDATE invite SET token_hash = $1::bytea,
     sent_at = CASE WHEN $1::bytea IS NULL THEN sent_at END,
-    link_holder = $2::uuid,
-    expires_at = now() + $3::interval, updated_at = now()
-WHERE workspace_id = $4 AND id = $5
+    link_holder = $2::uuid, email_request = $3::uuid,
+    expires_at = now() + $4::interval, updated_at = now()
+WHERE workspace_id = $5 AND id = $6
 RETURNING expires_at
 `
 
 type RenewInviteParams struct {
-	TokenHash   []byte
-	LinkHolder  pgtype.UUID
-	Lifetime    pgtype.Interval
-	WorkspaceID pgtype.UUID
-	ID          pgtype.UUID
+	TokenHash    []byte
+	LinkHolder   pgtype.UUID
+	EmailRequest pgtype.UUID
+	Lifetime     pgtype.Interval
+	WorkspaceID  pgtype.UUID
+	ID           pgtype.UUID
 }
 
 // RenewInvite gives an invitation a new secret, whose SHA-256 hash is
 // token_hash, and whose link the account link_holder is given as text, or
-// none until the job that emails its link adds one, in place of the one that
-// its link held, which no longer works, and makes it expire lifetime from
-// now. It keeps when the job last emailed the invitation for the email to
-// come, and forgets it for a link given as text. It returns when the
-// invitation expires.
+// none until the job of the request email_request that emails its link adds
+// one, in place of the one that its link held, which no longer works, and
+// makes it expire lifetime from now. It keeps when the job last emailed the
+// invitation for the email to come, and forgets it for a link given as text.
+// The jobs of earlier requests to email it send nothing from then on. It
+// returns when the invitation expires.
 func (q *Queries) RenewInvite(ctx context.Context, arg RenewInviteParams) (pgtype.Timestamptz, error) {
 	row := q.db.QueryRow(ctx, renewInvite,
 		arg.TokenHash,
 		arg.LinkHolder,
+		arg.EmailRequest,
 		arg.Lifetime,
 		arg.WorkspaceID,
 		arg.ID,

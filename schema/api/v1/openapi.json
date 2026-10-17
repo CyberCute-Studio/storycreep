@@ -210,7 +210,7 @@
             "type": "string"
           },
           "status": {
-            "description": "pending while it may be accepted, and expired once it has expired, until it is sent anew",
+            "description": "pending until it expires, and expired from then until it is sent anew. A pending invitation is accepted with its link once it has one: one that the instance emails has none until its email is sent, as sent_at says.",
             "enum": [
               "pending",
               "expired"

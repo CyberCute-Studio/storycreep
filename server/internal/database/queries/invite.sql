@@ -15,17 +15,22 @@
 -- sent it anew gave its link to as text, while the invitation has that link,
 -- so that removing the account's membership revokes the invitation
 -- (RevokeMemberInvites).
+--
+-- email_request is the request that last asked for the invitation's link to
+-- be emailed, whose job alone emails it (LockInviteToSend), so that a job of
+-- an earlier request, which a later one superseded, sends nothing, however
+-- often it is retried.
 
 -- name: InsertInvite :one
 -- InsertInvite adds an invitation that expires after lifetime: to the
 -- address email, or a link invitation without one, with the SHA-256 hash of
 -- its secret, whose link the account link_holder is given as text, or
--- without one, which the job that emails its link adds. It adds nothing, and
--- returns no row, if the address has an open invitation of the workspace
--- already, without failing the transaction.
-INSERT INTO invite (id, workspace_id, email, role, token_hash, expires_at, created_by, link_holder)
+-- without one, which the job of the request email_request that emails its
+-- link adds. It adds nothing, and returns no row, if the address has an open
+-- invitation of the workspace already, without failing the transaction.
+INSERT INTO invite (id, workspace_id, email, role, token_hash, expires_at, created_by, link_holder, email_request)
 VALUES (@id, @workspace_id, sqlc.narg(email), @role, sqlc.narg(token_hash), now() + @lifetime::interval,
-    @created_by, sqlc.narg(link_holder))
+    @created_by, sqlc.narg(link_holder), sqlc.narg(email_request))
 ON CONFLICT (workspace_id, email) WHERE email IS NOT NULL AND accepted_at IS NULL AND revoked_at IS NULL
 DO NOTHING
 RETURNING expires_at, created_at;
@@ -69,14 +74,15 @@ FOR UPDATE;
 -- name: RenewInvite :one
 -- RenewInvite gives an invitation a new secret, whose SHA-256 hash is
 -- token_hash, and whose link the account link_holder is given as text, or
--- none until the job that emails its link adds one, in place of the one that
--- its link held, which no longer works, and makes it expire lifetime from
--- now. It keeps when the job last emailed the invitation for the email to
--- come, and forgets it for a link given as text. It returns when the
--- invitation expires.
+-- none until the job of the request email_request that emails its link adds
+-- one, in place of the one that its link held, which no longer works, and
+-- makes it expire lifetime from now. It keeps when the job last emailed the
+-- invitation for the email to come, and forgets it for a link given as text.
+-- The jobs of earlier requests to email it send nothing from then on. It
+-- returns when the invitation expires.
 UPDATE invite SET token_hash = sqlc.narg(token_hash)::bytea,
     sent_at = CASE WHEN sqlc.narg(token_hash)::bytea IS NULL THEN sent_at END,
-    link_holder = sqlc.narg(link_holder)::uuid,
+    link_holder = sqlc.narg(link_holder)::uuid, email_request = sqlc.narg(email_request)::uuid,
     expires_at = now() + @lifetime::interval, updated_at = now()
 WHERE workspace_id = @workspace_id AND id = @id
 RETURNING expires_at;
@@ -137,27 +143,25 @@ WHERE workspace_id = @workspace_id AND id = @id;
 
 -- name: LockInviteToSend :one
 -- LockInviteToSend returns what the email of an invitation's link needs, if
--- the invitation is to an address, is open, its workspace is active, and it
--- has not expired, which an invitation that was asked to be emailed longer
--- ago than its lifetime has, and, for a job's first attempt, if no job
--- emailed the invitation in the last resend_interval, as another job of the
--- invitation that ran just before did, whether or not the invitation has
--- been sent anew since, which the job of that request emails once the
--- interval has passed (InviteEmailDue): the address, the role, and the
--- locale that the email is written in, the preferred locale of the account
--- that the address belongs to, if it has one, and else the workspace's
--- default locale, as a BCP 47 tag, or null if neither has one. It locks the
--- invitation, so that the job that sends it and a use of it run one after
--- the other.
+-- the invitation is to an address, is open, its workspace is active, it has
+-- not expired, which an invitation that was asked to be emailed longer ago
+-- than its lifetime has, and the request email_request is the one that last
+-- asked for it to be emailed, so that the job of a request that a later one
+-- superseded sends nothing, while the job of the latest request is due once
+-- the workspace may email the address again (InviteEmailDue): the address,
+-- the role, and the locale that the email is written in, the preferred
+-- locale of the account that the address belongs to, if it has one, and else
+-- the workspace's default locale, as a BCP 47 tag, or null if neither has
+-- one. It locks the invitation, so that the job that sends it and a use of
+-- it, or its being sent anew, run one after the other.
 SELECT
     i.email::text AS email, i.role,
     COALESCE(u.locale, w.settings->>'default_locale') AS locale
 FROM invite i
 JOIN workspace w ON w.id = i.workspace_id AND w.status = 'active'
 LEFT JOIN "user" u ON u.email = i.email
-WHERE i.workspace_id = @workspace_id AND i.id = @id
+WHERE i.workspace_id = @workspace_id AND i.id = @id AND i.email_request = @email_request
     AND i.email IS NOT NULL AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()
-    AND (NOT @first_attempt::boolean OR i.sent_at IS NULL OR i.sent_at <= now() - @resend_interval::interval)
 FOR UPDATE OF i;
 
 -- name: SetInviteHash :exec
