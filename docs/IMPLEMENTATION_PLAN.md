@@ -276,7 +276,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### Milestone C — Content core
 
 ### 21. Entitlement layer and limit errors
-**Status:** todo · **Depends on:** 16
+**Status:** done ([#23](https://github.com/CyberCute-Studio/storycreep/pull/23)) · **Depends on:** 16
 **PRD:** FR-ENT-01, FR-ENT-03 (server), ADR-010
 - One declarative plan file with plans `unlimited`, `free`, `team`, and `studio`. It defines exactly the keys from ADR-010 (limits `members`, `projects`, `storage_bytes`, `snapshot_retention`; flags `collaboration`, `sso`, `audit_export`), with placeholder values. `snapshot_retention` is marked inert until FR-SNAP-06 (N9). Boards, nodes, and API requests are metered (item 23) but have no limit key (N14).
 - A single `Check` / `Limit` API. Self-hosted mode resolves to unlimited, with optional instance caps (N28).
