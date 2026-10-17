@@ -392,19 +392,24 @@ func TestEachWorkspace(t *testing.T) {
 	}
 }
 
+// usageLocks selects the advisory locks of usage in the test's own database.
+// pg_locks shows those of the whole server, which the tests that run at once
+// share, each in a database of its own, and whose reconciliation takes locks
+// of usage too.
+const usageLocks = "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = $1 " +
+	"AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+
 // advisoryWaits returns how many sessions wait for an advisory lock of
 // usage.
 func (f *fixture) advisoryWaits(t *testing.T) int64 {
 	t.Helper()
-	return f.count(t, "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND classid = $1",
-		database.UsageLock)
+	return f.count(t, usageLocks+" AND NOT granted", database.UsageLock)
 }
 
 // advisoryLocks returns how many advisory locks of usage are held.
 func (f *fixture) advisoryLocks(t *testing.T) int64 {
 	t.Helper()
-	return f.count(t, "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted AND classid = $1",
-		database.UsageLock)
+	return f.count(t, usageLocks+" AND granted", database.UsageLock)
 }
 
 // meter reads the usage of key through the meter in tx.

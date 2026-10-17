@@ -42,7 +42,8 @@ import (
 // enforces the members limit of the workspace's plan: creating a workspace,
 // which adds its owner, Grant, and Join all add a membership through it.
 // Inviting someone does not check the limit, so that a workspace at its limit
-// can still invite, as after a member leaves; accepting does.
+// can still invite, as after a member leaves; accepting does, and so does
+// registering with a link invitation's link (CheckRoom).
 
 var (
 	// ErrOwnerRequired is returned for an operation that only an owner of
@@ -446,20 +447,33 @@ func (s *Service) Join(ctx context.Context, tx pgx.Tx, id, userID ids.UUID, r ro
 	return mid, nil
 }
 
+// CheckRoom returns an *entitlements.LimitError if the workspace id, whose
+// transaction tx is, has as many members as its plan allows (FR-ENT-01), and
+// nil if it has room for one more. It is the members limit's one check, which
+// addMembership makes before it adds a membership, and package invite before
+// it registers an account with the link of a link invitation, which any
+// address may register with, so that a full workspace's link, which stays
+// open, adds no account. For a limit that is a number, it holds the lock of
+// the workspace's members until tx ends (package usage), so a transaction
+// that only asks, as package invite's, ends soon after.
+func (s *Service) CheckRoom(ctx context.Context, tx pgx.Tx, id ids.UUID) error {
+	return s.ent.Check(ctx, tx, id, entitlements.Members, 1)
+}
+
 // addMembership makes the user userID a member of the workspace id, whose
 // transaction tx is, with the role r, invited by the user invitedBy, or by
 // nobody if it is zero, and returns the new membership's ID. It is the one
 // site that enforces the members limit (FR-ENT-01 AC1): it checks the limit
-// first, which, counted exactly, holds the lock of the workspace's members
-// until tx ends (package usage), so that two memberships added at once cannot
-// both pass it, and records the new member in the workspace's usage, so that
-// the next check counts it (FR-ENT-02). It returns an *entitlements.LimitError
-// if the workspace has as many members as its plan allows, and
-// ErrAlreadyMember if the user is a member already, as one that a
-// transaction added meanwhile, and adds nothing then.
+// first (CheckRoom), which, counted exactly, holds the lock of the
+// workspace's members until tx ends (package usage), so that two memberships
+// added at once cannot both pass it, and records the new member in the
+// workspace's usage, so that the next check counts it (FR-ENT-02). It
+// returns an *entitlements.LimitError if the workspace has as many members as
+// its plan allows, and ErrAlreadyMember if the user is a member already, as
+// one that a transaction added meanwhile, and adds nothing then.
 func (s *Service) addMembership(ctx context.Context, tx pgx.Tx, id, userID ids.UUID, r role.Role,
 	invitedBy ids.UUID) (ids.UUID, error) {
-	if err := s.ent.Check(ctx, tx, id, entitlements.Members, 1); err != nil {
+	if err := s.CheckRoom(ctx, tx, id); err != nil {
 		return ids.UUID{}, err
 	}
 	mid := ids.New()

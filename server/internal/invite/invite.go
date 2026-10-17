@@ -69,10 +69,14 @@
 // plan counts (FR-ENT-01), so a workspace that has as many members as its
 // plan allows refuses it: Accept returns an *entitlements.LimitError, and
 // leaves the invitation open, for when a member leaves. Registering with the
-// link of such a workspace adds the new account all the same, but leaves the
-// invitation open, as an address with an account does, so that its answer
-// still does not tell whether the address has one; the account is refused
-// when it accepts once it signs in.
+// link of such a workspace's invitation to an address adds the new account
+// all the same, but leaves the invitation open, as an address with an
+// account does, so that its answer still does not tell whether the address
+// has one; the account is refused when it accepts once it signs in. A link
+// invitation registers any address, so one that stayed open so would add
+// account after account, which the invite signup policy keeps to one for
+// each invitation: registering with it is refused with the LimitError
+// instead, whatever the address, so that the answer does not tell either.
 package invite
 
 import (
@@ -714,17 +718,21 @@ func (s *Service) accept(ctx context.Context, tx pgx.Tx, h held, userID ids.UUID
 // Register adds no account, leaves the invitation open, and returns nil all
 // the same, once it has checked the invitation and hashed the password as
 // for a new account, so that its caller answers the same (FR-AUTH-01 AC1);
-// the account accepts the invitation once it signs in. A new account is
-// added without accepting the invitation, which stays open in the same way,
-// if the workspace has as many members as its plan allows (FR-ENT-01), so
-// that the answer is the same then too. It returns account.ErrSetupRequired
-// or account.ErrSignupClosed unless the signup policy lets an invitation
-// create an account (account.Service.CheckInvitedSignup), then
-// ErrTokenInvalid, ErrRevoked, ErrAccepted, or ErrExpired for an invitation
-// that cannot be accepted, ErrEmailMismatch for one to another address than
-// reg.Email, and the errors of RegisterInvited for a registration that is not
-// valid, as one whose address registration refuses, whatever the
-// invitation's, and adds nothing then.
+// the account accepts the invitation once it signs in. For an invitation to
+// an address, a new account is added without accepting the invitation, which
+// stays open in the same way, if the workspace has as many members as its
+// plan allows (FR-ENT-01), so that the answer is the same then too. A link
+// invitation, which registers any address, and so would register account
+// after account while it stayed open, is refused then, whatever the address.
+// It returns account.ErrSetupRequired or account.ErrSignupClosed unless the
+// signup policy lets an invitation create an account
+// (account.Service.CheckInvitedSignup), then ErrTokenInvalid, ErrRevoked,
+// ErrAccepted, or ErrExpired for an invitation that cannot be accepted,
+// ErrEmailMismatch for one to another address than reg.Email, an
+// *entitlements.LimitError for a link invitation to a workspace that has as
+// many members as its plan allows, and the errors of RegisterInvited for a
+// registration that is not valid, as one whose address registration refuses,
+// whatever the invitation's, and adds nothing then.
 func (s *Service) Register(ctx context.Context, value secret.Value, reg account.Registration,
 	client audit.Client) error {
 	if err := s.accounts.CheckInvitedSignup(ctx); err != nil {
@@ -751,6 +759,13 @@ func (s *Service) Register(ctx context.Context, value secret.Value, reg account.
 			reg.Email = h.row.Email.String
 		case !h.row.EmailMatches && !malformed:
 			return ErrEmailMismatch
+		case !h.row.Email.Valid:
+			// A link invitation that a full workspace leaves open would
+			// register any address, again and again, so the workspace is
+			// asked for room before the address is looked at, and a full one
+			// refuses every address alike, which tells nothing of whether the
+			// address has an account (FR-AUTH-01 AC1).
+			return s.workspaces.CheckRoom(ctx, tx, id)
 		}
 		return nil
 	})
@@ -771,7 +786,9 @@ func (s *Service) Register(ctx context.Context, value secret.Value, reg account.
 		// a refusal leaves nothing of the acceptance to undo. Refusing the
 		// registration would tell that the address has no account, whose
 		// registration would otherwise have been answered 202, so the account
-		// stays, and is refused when it accepts once it signs in.
+		// stays, and is refused when it accepts once it signs in. A link
+		// invitation had room when it was checked above, so its workspace has
+		// filled up since, and the next registration with it is refused there.
 		var limit *entitlements.LimitError
 		if err := s.accept(ctx, tx, h, userID, true, client); !errors.As(err, &limit) {
 			return err

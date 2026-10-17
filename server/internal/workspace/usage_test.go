@@ -139,12 +139,15 @@ func TestMembersLimitTakesTurns(t *testing.T) {
 	case err := <-firstDone:
 		t.Fatalf("the first acceptance: %v", err)
 	}
-	// waits returns how many sessions wait for a lock of usage.
+	// waits returns how many sessions wait for a lock of usage in the test's
+	// own database, of the many that pg_locks shows, one for each test that
+	// runs at once.
 	admin := d.Admin(t)
 	waits := func() int {
 		var n int
 		if err := admin.QueryRow(ctx, "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted "+
-			"AND classid = $1", database.UsageLock).Scan(&n); err != nil {
+			"AND classid = $1 AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+			database.UsageLock).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n

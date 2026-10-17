@@ -178,8 +178,9 @@ var keys = []key{
 			"limit that the key does not name stays unlimited. A change that would take a workspace past a cap is " +
 			"refused with 409 `limit_exceeded`, whose details name the limit, the workspace's usage, and the cap, " +
 			"and which offers no upgrade. For `members`, which counts guests too, that is accepting an invitation " +
-			"to a workspace that has as many members as the cap allows, and `storycreep grant-role`, which then " +
-			"fails; registering with the link of such an invitation adds the account, which accepts the " +
+			"to a workspace that has as many members as the cap allows, `storycreep grant-role`, which then " +
+			"fails, and registering with the link of a link invitation, which any address may register with; " +
+			"registering with the link of an invitation to an address adds the account, which accepts the " +
 			"invitation once a member has left. Inviting someone is not such a change, because it adds no member. " +
 			"`projects` and `storage_bytes` limit nothing yet: each applies once the change that adds to it checks " +
 			"it, creating a project and uploading a file. A workspace that is past a cap already, as after the cap " +

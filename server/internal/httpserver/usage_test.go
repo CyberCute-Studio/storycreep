@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 	"net/http"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -87,6 +88,71 @@ func TestMembersLimitThroughInvitations(t *testing.T) {
 	if m := accepted(t, acceptInvite(t, s.main, bo, emailed)); m.ID != ws || m.Role != "commenter" {
 		t.Errorf("bo's membership, once a member has left, is %+v", m)
 	}
+	if got := readUsage(t, s.main, admin, ws)["members"]; got["used"] != 2.0 || got["limit"] != 2.0 {
+		t.Errorf("the usage of members is %v, want 2 of 2", got)
+	}
+}
+
+// TestMembersLimitLinkRegistration checks that registering with the link of
+// a link invitation, which any address may register with, to a workspace
+// that has as many members as STORYCREEP_WORKSPACE_LIMITS caps it at is
+// refused with 409 limit_exceeded, which adds no account, and is answered
+// alike for an address that has an account, so that under the invite signup
+// policy a link that the full workspace keeps open does not register one
+// account after another, and that once a member has left, the link registers
+// an account that joins the workspace.
+//
+// Verifies: FR-ENT-01/AC1, FR-AUTH-01/AC1
+func TestMembersLimitLinkRegistration(t *testing.T) {
+	t.Parallel()
+	s, d, admin, ws := inviteServer(t, "invite", map[string]string{"STORYCREEP_WORKSPACE_LIMITS": "members=2"})
+	first := linkToken(t, createInvite(t, s.main, admin, ws, "", "editor").URL)
+	if res := registerWithInvite(t, s.main, first, "jo@example.com"); res.status != http.StatusAccepted {
+		t.Fatalf("register jo with a link: %d %s, want 202", res.status, res.body)
+	}
+	link := linkToken(t, createInvite(t, s.main, admin, ws, "", "viewer").URL)
+
+	// refusal returns the error of an answer, without its request ID, which
+	// is each request's own.
+	refusal := func(res response) api.ErrorBody {
+		t.Helper()
+		var env struct {
+			Error api.ErrorBody `json:"error"`
+		}
+		if err := json.Unmarshal(res.body, &env); err != nil {
+			t.Fatalf("not an envelope: %s", res.body)
+		}
+		env.Error.RequestID = ""
+		return env.Error
+	}
+	accounts := countAccounts(t, d)
+	var want api.ErrorBody
+	// Two new addresses, and the owner's, which has an account.
+	for i, email := range []string{"al@example.com", "bo@example.com", "admin@example.com"} {
+		res := registerWithInvite(t, s.main, link, email)
+		wantMembersLimit(t, "register "+email+" with the link of a full workspace", res, 2)
+		if got := refusal(res); i == 0 {
+			want = got
+		} else if !reflect.DeepEqual(got, want) {
+			t.Errorf("register %s with the link of a full workspace: %+v, and a new address: %+v", email, got, want)
+		}
+	}
+	if n := countAccounts(t, d); n != accounts {
+		t.Errorf("registering with the link of a full workspace left %d accounts, want %d", n, accounts)
+	}
+	if got := invitesOf(t, s.main, admin, ws); len(got) != 1 {
+		t.Errorf("the full workspace has %d open invitations, want the link's", len(got))
+	}
+
+	jo := signIn(t, s.main, "jo@example.com")
+	if res := call(s.main, http.MethodDelete, memberPath(ws, membershipOf(t, membersOf(t, s.main, admin, ws), jo)),
+		nil, admin.header(true)); res.status != http.StatusNoContent {
+		t.Fatalf("remove jo: %d %s", res.status, res.body)
+	}
+	if res := registerWithInvite(t, s.main, link, "al@example.com"); res.status != http.StatusAccepted {
+		t.Fatalf("register with the link once a member has left: %d %s, want 202", res.status, res.body)
+	}
+	membershipOf(t, membersOf(t, s.main, admin, ws), signIn(t, s.main, "al@example.com"))
 	if got := readUsage(t, s.main, admin, ws)["members"]; got["used"] != 2.0 || got["limit"] != 2.0 {
 		t.Errorf("the usage of members is %v, want 2 of 2", got)
 	}
