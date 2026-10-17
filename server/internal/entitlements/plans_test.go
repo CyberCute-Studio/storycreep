@@ -53,17 +53,32 @@ func TestPlanFile(t *testing.T) {
 // Verifies: FR-ENT-01/AC3
 func TestOnePlanFile(t *testing.T) {
 	root := filepath.Join("..", "..")
+	// The loader embeds the file, and names it when it cannot load it.
+	loader := filepath.Join("internal", "entitlements", "plans.go")
 	fset := token.NewFileSet()
+	var files int
+	var sawLoader bool
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && (d.Name() == "testdata" || strings.HasPrefix(d.Name(), ".")) {
+		// The root's name, "..", starts with a dot too, but it is no hidden
+		// directory.
+		if d.IsDir() && path != root && (d.Name() == "testdata" || strings.HasPrefix(d.Name(), ".")) {
 			return filepath.SkipDir
 		}
 		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if rel == loader {
+			sawLoader = true
+			return nil
+		}
+		files++
 		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		if err != nil {
 			return err
@@ -77,7 +92,7 @@ func TestOnePlanFile(t *testing.T) {
 		})
 		for _, group := range file.Comments {
 			for _, c := range group.List {
-				if strings.HasPrefix(c.Text, "//go:embed") && mentions(c.Text) && filepath.Base(path) != "plans.go" {
+				if strings.HasPrefix(c.Text, "//go:embed") && mentions(c.Text) {
 					t.Errorf("%s: embeds plans.json", fset.Position(c.Pos()))
 				}
 			}
@@ -86,6 +101,11 @@ func TestOnePlanFile(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A walk that skipped the server's code would pass without a word.
+	if !sawLoader || files == 0 {
+		t.Errorf("the walk found the loader %v, and %d other Go files; want the loader and the server's code",
+			sawLoader, files)
 	}
 }
 
@@ -242,7 +262,21 @@ func TestLoadRefuses(t *testing.T) {
 		}), "a limit is a whole number of at least 0"},
 		{"null", edit(func(doc map[string]any) {
 			plan(doc, "free")["limits"].(map[string]any)["projects"] = nil
-		}), "a limit is a whole number of at least 0"},
+		}), `the value of the key "projects" is null`},
+		// encoding/json would read a null feature as one that the plan lacks.
+		{"a null feature", edit(func(doc map[string]any) {
+			plan(doc, "studio")["features"].(map[string]any)["sso"] = nil
+		}), `the value of the key "sso" is null`},
+		{"a null element", edit(func(doc map[string]any) {
+			doc["features"] = append(doc["features"].([]any), nil)
+		}), "a value is null"},
+		// encoding/json would match these keys to the fields of another case,
+		// keeping the last of "features" and "Features".
+		{"a key of another case", bytes.Replace(planFile, []byte(`"plans": [`),
+			[]byte(`"Features": ["collaboration", "sso", "audit_export"], "plans": [`), 1),
+			`the key "Features" is not lowercase`},
+		{"a field of another case", bytes.Replace(planFile, []byte(`"billable": true`), []byte(`"Billable": true`), 1),
+			`the key "Billable" is not lowercase`},
 		{"another word", edit(func(doc map[string]any) {
 			plan(doc, "free")["limits"].(map[string]any)["projects"] = "infinite"
 		}), "a limit is a whole number of at least 0"},

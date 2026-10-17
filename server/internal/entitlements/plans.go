@@ -141,8 +141,8 @@ func (q *Quota) UnmarshalJSON(b []byte) error {
 		*q = NoLimit
 		return nil
 	}
-	// A JSON number has no sign but a minus, which strconv rejects here as
-	// it does a fraction or an exponent.
+	// A JSON number's only sign is a minus, which strconv accepts and n < 0
+	// refuses; strconv refuses a fraction or an exponent itself.
 	n, err := strconv.ParseInt(string(b), 10, 64)
 	if err != nil || n < 0 {
 		return fmt.Errorf(`a limit is a whole number of at least 0, or "%s", not %s`, Unlimited, b)
@@ -246,14 +246,14 @@ type fileJSON struct {
 }
 
 // Load reads a plan file, or explains why it is not one that the server can
-// use. A plan file is one JSON object, with no field that fileJSON lacks and
-// no key twice in an object. Its limits that are not inert are exactly the
-// ones that the server checks, and its features the ones it knows. Every plan
-// gives every limit a quota and says whether it has every feature, and the
-// file has an unlimited plan, which limits nothing and has every feature,
-// and a free plan.
+// use. A plan file is one JSON object, with no field that fileJSON lacks, no
+// key twice in an object, no key that is not lowercase, and no null. Its
+// limits that are not inert are exactly the ones that the server checks, and
+// its features the ones it knows. Every plan gives every limit a quota and
+// says whether it has every feature, and the file has an unlimited plan,
+// which limits nothing and has every feature, and a free plan.
 func Load(data []byte) (*PlanFile, error) {
-	if err := uniqueKeys(data); err != nil {
+	if err := strictJSON(data); err != nil {
 		return nil, err
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
@@ -343,26 +343,38 @@ func Load(data []byte) (*PlanFile, error) {
 	return f, nil
 }
 
-// duplicateKeyError is a key that appears twice in a JSON object.
-type duplicateKeyError string
+// strictError is a problem of a plan file that encoding/json would let
+// through without a word.
+type strictError string
 
-func (e duplicateKeyError) Error() string {
-	return fmt.Sprintf("the key %q appears more than once in an object", string(e))
+func (e strictError) Error() string {
+	return string(e)
 }
 
-// uniqueKeys explains why the JSON in data has an object with a key twice,
-// whose last value encoding/json would keep without a word, or returns nil if
-// it has none. It leaves every other problem, such as a syntax error, to the
-// decoder, which reports it with its offset.
-func uniqueKeys(data []byte) error {
+// strictJSON explains why the JSON in data has what encoding/json would read
+// without a word, or returns nil if it has none: an object with a key twice,
+// of which encoding/json would keep the last value; a key that is not
+// lowercase ASCII letters, digits, _, and $, as every key of the plan file
+// is, which encoding/json would match to a field of another case, so that
+// "Limits" and "limits" would be one; or a null, which it would read as false
+// or "", as a feature that a plan lacks. It leaves every other problem, such
+// as a syntax error, to the decoder, which reports it with its offset.
+func strictJSON(data []byte) error {
 	d := json.NewDecoder(bytes.NewReader(data))
-	var value func() error
-	value = func() error {
+	// value reads a value, the value of the key key, or of no key if key is
+	// "", as an element of an array is.
+	var value func(key string) error
+	value = func(key string) error {
 		tok, err := d.Token()
 		if err != nil {
 			return err
 		}
 		switch tok {
+		case nil:
+			if key == "" {
+				return strictError("a value is null, which a plan file never holds")
+			}
+			return strictError(fmt.Sprintf("the value of the key %q is null, which a plan file never holds", key))
 		case json.Delim('{'):
 			seen := map[string]bool{}
 			for d.More() {
@@ -372,17 +384,21 @@ func uniqueKeys(data []byte) error {
 				}
 				// The decoder has checked that a key is a string.
 				key, _ := tok.(string)
+				if !lowercaseKey(key) {
+					return strictError(fmt.Sprintf("the key %q is not lowercase ASCII letters, digits, _, and $, "+
+						"as every key of a plan file is", key))
+				}
 				if seen[key] {
-					return duplicateKeyError(key)
+					return strictError(fmt.Sprintf("the key %q appears more than once in an object", key))
 				}
 				seen[key] = true
-				if err := value(); err != nil {
+				if err := value(key); err != nil {
 					return err
 				}
 			}
 		case json.Delim('['):
 			for d.More() {
-				if err := value(); err != nil {
+				if err := value(""); err != nil {
 					return err
 				}
 			}
@@ -393,11 +409,20 @@ func uniqueKeys(data []byte) error {
 		_, err = d.Token()
 		return err
 	}
-	var dup duplicateKeyError
-	if err := value(); errors.As(err, &dup) {
+	var strict strictError
+	if err := value(""); errors.As(err, &strict) {
 		return err
 	}
 	return nil
+}
+
+// lowercaseKey reports whether key is lowercase ASCII letters, digits, _, and
+// $, as the fields of fileJSON and every key of a plan are, so that only one
+// spelling of it matches a field.
+func lowercaseKey(key string) bool {
+	return key != "" && !strings.ContainsFunc(key, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' && r != '$'
+	})
 }
 
 // wellFormedKey reports whether key is lowercase ASCII letters, digits, and

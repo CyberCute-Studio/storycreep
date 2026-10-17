@@ -197,10 +197,11 @@ var codes = []codeSpec{
 			"of its plan, or a cap that the instance puts on every workspace (`STORYCREEP_WORKSPACE_LIMITS`). " +
 			"`details.key` names the limit, as the plan file does, such as `members`, `projects`, or " +
 			"`storage_bytes`; `details.usage` is how much of it the workspace uses, and `details.limit` the most " +
-			"that it may use (FR-ENT-03 AC1). Where the instance bills for plans, as in hosted mode, and another " +
-			"plan allows more, `details.upgrade_url` is the page that offers the plans. A self-hosted instance " +
-			"never sends it (FR-ENT-03 AC2). A workspace past a limit already, as after its plan changed, keeps " +
-			"what it has, but cannot add more."},
+			"that it may use (FR-ENT-03 AC1). `details.upgrade_url` is the public site's page that offers the " +
+			"plans, `/pricing`, where the instance both bills for plans and serves the public site, as hosted mode " +
+			"does unless `STORYCREEP_PUBLIC_SITE` is `off`, the limit is the plan's rather than a cap of the " +
+			"instance, and another plan allows more. A self-hosted instance never sends it (FR-ENT-03 AC2). A " +
+			"workspace past a limit already, as after its plan changed, keeps what it has, but cannot add more."},
 	{CodeInviteExpired, http.StatusGone, i18n.K("error.invite_expired"),
 		"The invitation has expired: it lasts 14 days from when it was made, sent anew, or emailed (PRD " +
 			"FR-TEN-02 AC1). An owner or admin of the workspace sends it anew."},

@@ -132,10 +132,10 @@ func TestSelfHostedEntitlements(t *testing.T) {
 	}
 }
 
-// TestHostedEntitlements checks that a hosted server gives a new workspace
-// the free plan, and each workspace the limits and features that the plan
-// file gives its plan, and offers an upgrade on its pricing page, unless it
-// serves no public site.
+// TestHostedEntitlements checks that a hosted server gives the workspaces
+// that it creates the free plan, and each workspace the limits and features
+// that the plan file gives its plan, and offers an upgrade on its pricing
+// page, unless it serves no public site.
 //
 // Verifies: FR-ENT-01/AC3
 func TestHostedEntitlements(t *testing.T) {
@@ -143,6 +143,19 @@ func TestHostedEntitlements(t *testing.T) {
 	ctx := context.Background()
 	if plan := s.entitlements.NewWorkspacePlan(); plan != entitlements.Free {
 		t.Errorf("a new workspace has the plan %s, want free", plan)
+	}
+	// A workspace that the server creates has it. Hosted mode creates one
+	// only for a verified address (FR-AUTH-03).
+	jo := newNamedAccount(t, s.main, "jo@example.com", "Jo")
+	if _, err := d.Admin(t).Exec(ctx, `UPDATE "user" SET email_verified_at = now() WHERE id = $1`,
+		decode(t, ids.User, jo.body.UserID)); err != nil {
+		t.Fatal(err)
+	}
+	res := send(s.main, http.MethodPost, workspacesPath, jsonBody(t, map[string]string{"name": "Harbour"}), "",
+		jo.header(true))
+	if plan := planOf(t, d, decode(t, ids.Workspace, workspaceFrom(t, res, http.StatusCreated).ID)); plan !=
+		entitlements.Free {
+		t.Errorf("a workspace that the server created has the plan %s, want free", plan)
 	}
 	for _, p := range entitlements.Default().Plans() {
 		ws := addPlanWorkspace(t, d, p.Key)

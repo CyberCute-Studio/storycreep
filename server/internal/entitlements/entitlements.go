@@ -60,8 +60,13 @@ func (e *LimitError) Error() string {
 }
 
 // A Meter reads how much of a limit a workspace uses (FR-ENT-02), in the
-// transaction of the change that would add to it, so that the check and the
-// change see the same usage.
+// transaction of the change that would add to it. The transaction alone does
+// not keep two changes that run at once from both passing Check against the
+// same usage, so for a limit that FR-ENT-02 counts exactly, as members and
+// projects, Usage also serializes the workspace's changes of that limit until
+// the transaction ends, as with a per-workspace advisory lock. A limit that
+// it counts approximately, storage_bytes, may be passed by the changes that
+// are in flight at once.
 type Meter interface {
 	Usage(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, key LimitKey) (int64, error)
 }
@@ -88,8 +93,8 @@ type Options struct {
 	// to where another plan would raise the limit, or "" for none, as where
 	// the instance does not bill for plans (FR-ENT-03 AC2).
 	UpgradeURL string
-	// Meter reads the workspaces' usage. Without one, a limit that has a
-	// quota cannot be checked or read, and Check and Usage fail for it.
+	// Meter reads the workspaces' usage. Without one, Usage fails for every
+	// limit, and Check for a limit that has a quota.
 	Meter Meter
 	// Plans are the plans, or nil for plans.json's (Default).
 	Plans *PlanFile
