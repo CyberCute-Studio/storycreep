@@ -165,44 +165,6 @@ func (q *Queries) RateLimitKey(ctx context.Context) ([]byte, error) {
 	return key, err
 }
 
-const reserveRateLimit = `-- name: ReserveRateLimit :one
-INSERT INTO rate_limit AS r (bucket, key, window_start, window_end, hits)
-VALUES ($1::text, $2::bytea, now(), now() + $3::interval, 1)
-ON CONFLICT (bucket, key) DO UPDATE SET
-    window_start = CASE WHEN r.window_end <= now() THEN now() ELSE r.window_start END,
-    window_end = greatest(r.window_end, now()) + $3::interval,
-    hits = CASE WHEN r.window_end <= now() THEN 1 ELSE r.hits + 1 END
-RETURNING r.window_end, now()::timestamptz AS now
-`
-
-type ReserveRateLimitParams struct {
-	Bucket  string
-	Key     []byte
-	Spacing pgtype.Interval
-}
-
-type ReserveRateLimitRow struct {
-	WindowEnd pgtype.Timestamptz
-	Now       pgtype.Timestamptz
-}
-
-// ReserveRateLimit takes a turn for a request of a key in a bucket that paces
-// the requests of a key rather than counting them in windows (package
-// ratelimit's ReserveTx). The key's row holds, as window_end, when the turns
-// that the key has taken run out, one in each spacing: the request's turn is
-// spacing after the last one taken, or after now if they have run out, and
-// it returns when the turns now run out. A row whose turns have run out
-// holds none, as no row does, and the rate limit cleanup job deletes it.
-// window_start is when the row's turns began to be taken, and hits how many
-// were. It leaves synchronous_commit as it is, so that the transaction that
-// it runs in, which changes other rows too, commits as it would have.
-func (q *Queries) ReserveRateLimit(ctx context.Context, arg ReserveRateLimitParams) (ReserveRateLimitRow, error) {
-	row := q.db.QueryRow(ctx, reserveRateLimit, arg.Bucket, arg.Key, arg.Spacing)
-	var i ReserveRateLimitRow
-	err := row.Scan(&i.WindowEnd, &i.Now)
-	return i, err
-}
-
 const takeRateLimit = `-- name: TakeRateLimit :many
 WITH no_flush AS (
     SELECT set_config('synchronous_commit', 'off', true)

@@ -98,11 +98,6 @@ type InsertInviteRow struct {
 // be emailed, whose job alone emails it (LockInviteToSend), so that a job of
 // an earlier request, which a later one superseded, sends nothing, however
 // often it is retried.
-//
-// email_turn is the turn that the invitation's email took in the queue of
-// invitation emails to its address, from all workspaces together (package
-// ratelimit's InviteEmail), which the jobs of its requests wait for, while
-// the email waits for it.
 // InsertInvite adds an invitation that expires after lifetime: to the
 // address email, or a link invitation without one, with the SHA-256 hash of
 // its secret, whose link the account link_holder is given as text, or
@@ -127,34 +122,24 @@ func (q *Queries) InsertInvite(ctx context.Context, arg InsertInviteParams) (Ins
 }
 
 const inviteEmailDue = `-- name: InviteEmailDue :one
-SELECT (max(greatest(sent_at, CASE WHEN id <> $1 THEN email_turn END)) + $2::interval)::timestamptz
-    AS due
+SELECT (max(sent_at) + $1::interval)::timestamptz AS due
 FROM invite
-WHERE workspace_id = $3 AND email = $4
-HAVING max(greatest(sent_at, CASE WHEN id <> $1 THEN email_turn END)) + $2::interval > now()
+WHERE workspace_id = $2 AND email = $3
+HAVING max(sent_at) + $1::interval > now()
 `
 
 type InviteEmailDueParams struct {
-	ID             pgtype.UUID
 	ResendInterval pgtype.Interval
 	WorkspaceID    pgtype.UUID
 	Email          pgtype.Text
 }
 
-// InviteEmailDue returns when the workspace may next email its invitation id
-// to the address email: resend_interval after the job last emailed one of the
-// workspace's invitations to it, revoked and accepted ones included, or after
-// the turn that the email of another of them took in the address's queue
-// (email_turn), as one revoked while its email waited did, so that the
-// workspace's invitations to the address hold one turn at a time; and no row
-// if that time has passed, or no job has emailed one or taken a turn.
+// InviteEmailDue returns when the workspace may next email an invitation to
+// the address email: resend_interval after the job last emailed one of the
+// workspace's invitations to it, revoked and accepted ones included, and no
+// row if that time has passed, or no job has emailed one.
 func (q *Queries) InviteEmailDue(ctx context.Context, arg InviteEmailDueParams) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, inviteEmailDue,
-		arg.ID,
-		arg.ResendInterval,
-		arg.WorkspaceID,
-		arg.Email,
-	)
+	row := q.db.QueryRow(ctx, inviteEmailDue, arg.ResendInterval, arg.WorkspaceID, arg.Email)
 	var due pgtype.Timestamptz
 	err := row.Scan(&due)
 	return due, err
@@ -267,8 +252,7 @@ func (q *Queries) LockInviteByHash(ctx context.Context, arg LockInviteByHashPara
 const lockInviteToSend = `-- name: LockInviteToSend :one
 SELECT
     i.email::text AS email, i.role,
-    COALESCE(u.locale, w.settings->>'default_locale') AS locale,
-    i.email_turn, now()::timestamptz AS now
+    COALESCE(u.locale, w.settings->>'default_locale') AS locale
 FROM invite i
 JOIN workspace w ON w.id = i.workspace_id AND w.status = 'active'
 LEFT JOIN "user" u ON u.email = i.email
@@ -284,11 +268,9 @@ type LockInviteToSendParams struct {
 }
 
 type LockInviteToSendRow struct {
-	Email     string
-	Role      string
-	Locale    pgtype.Text
-	EmailTurn pgtype.Timestamptz
-	Now       pgtype.Timestamptz
+	Email  string
+	Role   string
+	Locale pgtype.Text
 }
 
 // LockInviteToSend returns what the email of an invitation's link needs, if
@@ -301,20 +283,12 @@ type LockInviteToSendRow struct {
 // the role, and the locale that the email is written in, the preferred
 // locale of the account that the address belongs to, if it has one, and else
 // the workspace's default locale, as a BCP 47 tag, or null if neither has
-// one; and the turn that the email took in the address's queue, if it waits
-// for one (email_turn), with the database's clock, which the turn is of. It
-// locks the invitation, so that the job that sends it and a use of it, or its
-// being sent anew, run one after the other.
+// one. It locks the invitation, so that the job that sends it and a use of
+// it, or its being sent anew, run one after the other.
 func (q *Queries) LockInviteToSend(ctx context.Context, arg LockInviteToSendParams) (LockInviteToSendRow, error) {
 	row := q.db.QueryRow(ctx, lockInviteToSend, arg.WorkspaceID, arg.ID, arg.EmailRequest)
 	var i LockInviteToSendRow
-	err := row.Scan(
-		&i.Email,
-		&i.Role,
-		&i.Locale,
-		&i.EmailTurn,
-		&i.Now,
-	)
+	err := row.Scan(&i.Email, &i.Role, &i.Locale)
 	return i, err
 }
 
@@ -382,7 +356,6 @@ func (q *Queries) OpenInvites(ctx context.Context, arg OpenInvitesParams) ([]Ope
 const renewInvite = `-- name: RenewInvite :one
 UPDATE invite SET token_hash = $1::bytea,
     sent_at = CASE WHEN $1::bytea IS NULL THEN sent_at END,
-    email_turn = CASE WHEN $1::bytea IS NULL THEN email_turn END,
     link_holder = $2::uuid, email_request = $3::uuid,
     expires_at = now() + $4::interval, updated_at = now()
 WHERE workspace_id = $5 AND id = $6
@@ -403,10 +376,9 @@ type RenewInviteParams struct {
 // none until the job of the request email_request that emails its link adds
 // one, in place of the one that its link held, which no longer works, and
 // makes it expire lifetime from now. It keeps when the job last emailed the
-// invitation, and the turn that its email waits for, if any, for the email
-// to come, and forgets both for a link given as text. The jobs of earlier
-// requests to email it send nothing from then on. It returns when the
-// invitation expires.
+// invitation for the email to come, and forgets it for a link given as text.
+// The jobs of earlier requests to email it send nothing from then on. It
+// returns when the invitation expires.
 func (q *Queries) RenewInvite(ctx context.Context, arg RenewInviteParams) (pgtype.Timestamptz, error) {
 	row := q.db.QueryRow(ctx, renewInvite,
 		arg.TokenHash,
@@ -498,27 +470,8 @@ func (q *Queries) RevokeMemberInvites(ctx context.Context, arg RevokeMemberInvit
 	return items, nil
 }
 
-const setInviteEmailTurn = `-- name: SetInviteEmailTurn :exec
-UPDATE invite SET email_turn = now() + $1::interval, updated_at = now()
-WHERE workspace_id = $2 AND id = $3
-`
-
-type SetInviteEmailTurnParams struct {
-	Wait        pgtype.Interval
-	WorkspaceID pgtype.UUID
-	ID          pgtype.UUID
-}
-
-// SetInviteEmailTurn records the turn that the email of an invitation took
-// in its address's queue, wait from now, until which it waits, and for which
-// the jobs of later requests to email it wait too, rather than take another.
-func (q *Queries) SetInviteEmailTurn(ctx context.Context, arg SetInviteEmailTurnParams) error {
-	_, err := q.db.Exec(ctx, setInviteEmailTurn, arg.Wait, arg.WorkspaceID, arg.ID)
-	return err
-}
-
 const setInviteHash = `-- name: SetInviteHash :exec
-UPDATE invite SET token_hash = $1, sent_at = now(), link_holder = NULL, email_turn = NULL,
+UPDATE invite SET token_hash = $1, sent_at = now(), link_holder = NULL,
     expires_at = now() + $2::interval, updated_at = now()
 WHERE workspace_id = $3 AND id = $4
 `
@@ -535,7 +488,6 @@ type SetInviteHashParams struct {
 // earlier attempt of the job sent, or that a link given as text held, records
 // that the job emails it now, and makes it expire lifetime from now, so that
 // the link lasts as long as the email says, however late the job sends it.
-// The email no longer waits for a turn.
 func (q *Queries) SetInviteHash(ctx context.Context, arg SetInviteHashParams) error {
 	_, err := q.db.Exec(ctx, setInviteHash,
 		arg.TokenHash,

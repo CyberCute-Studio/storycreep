@@ -13,10 +13,9 @@
 // the database for 7 days with the error of each attempt. Work that meets a
 // failure that no attempt would mend ends its job at once instead, which is
 // then cancelled (Cancel), and stays as long, with its error. Discarded and
-// cancelled are the dead-letter states (AC3). Work that has to wait, as for a
-// rate limit, puts its job off instead (Snooze), which spends no attempt.
-// The server runs the workers in its own process, unless it is told not to,
-// so that a deployment can run them on instances of their own (AC4).
+// cancelled are the dead-letter states (AC3). The server runs the workers in
+// its own process, unless it is told not to, so that a deployment can run
+// them on instances of their own (AC4).
 //
 // Delivery is at least once. An instance that stops without finishing a job,
 // as when its process is killed, leaves the job running in the database, and
@@ -132,9 +131,8 @@ func NewRegistry() *Registry {
 // attempt. The exception is a stopping server that cancels ctx (Queue.Stop):
 // work that returns ctx's error then, or an error that wraps it, is attempted
 // again later without the attempt counting, so return the error with %w. The
-// other exceptions are an error of Cancel, which ends the job without another
-// attempt, and one of Snooze, which puts the job off without the attempt
-// counting. Register panics if kind T has a worker already.
+// other exception is an error of Cancel, which ends the job without another
+// attempt. Register panics if kind T has a worker already.
 func Register[T Args](r *Registry, work func(ctx context.Context, job *Job[T]) error) {
 	var args T
 	river.AddWorker(r.workers, river.WorkFunc(func(ctx context.Context, j *river.Job[T]) error {
@@ -164,15 +162,6 @@ type cancelError struct{ err error }
 func (e cancelError) Error() string { return e.err.Error() }
 
 func (e cancelError) Unwrap() error { return river.JobCancel(e.err) }
-
-// Snooze returns the error of work that puts its job off for d, at least
-// zero: the job is attempted again once d has passed, and the attempt does
-// not count, so that a job can be put off however often, as one that waits
-// for a rate limit to let it through does. The storycreep_job_attempts_total
-// counter counts the attempt as snoozed.
-func Snooze(d time.Duration) error {
-	return river.JobSnooze(max(d, 0))
-}
 
 // Periodic makes the server enqueue a job with args every interval, which
 // is at least a second. The instance that River elects as the leader among

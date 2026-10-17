@@ -283,36 +283,6 @@ func TestCancelledJob(t *testing.T) {
 	}
 }
 
-// TestSnoozedJob checks that a job whose work returns an error of Snooze is
-// attempted again, as often as it is snoozed, without spending its
-// attempts: one with a single attempt, snoozed twice, completes on its third
-// run, which is still its first attempt.
-func TestSnoozedJob(t *testing.T) {
-	t.Parallel()
-	d := dbtest.New(t)
-	reg := NewRegistry()
-	attempts := make(chan int, 3)
-	Register(reg, func(_ context.Context, job *Job[failArgs]) error {
-		attempts <- job.Attempt
-		if len(attempts) < 3 {
-			return Snooze(-time.Second)
-		}
-		return nil
-	})
-	q, db := open(t, d, reg, true)
-
-	e := enqueue(t, q, db, failArgs{}, &EnqueueOptions{MaxAttempts: 1})
-	job := waitForState(t, q, e.ID, rivertype.JobStateCompleted)
-	for range 3 {
-		if a := receive(t, attempts); a != 1 {
-			t.Errorf("a run of the snoozed job was its attempt %d, want 1", a)
-		}
-	}
-	if job.Attempt != 1 || len(job.Errors) != 0 {
-		t.Errorf("the job was attempted %d times, with the errors %+v; want once, with none", job.Attempt, job.Errors)
-	}
-}
-
 // TestBackoff checks the retry policy: the wait doubles with each failure,
 // from a second up to an hour, give or take 10%, and the failures are counted
 // by the job's errors.

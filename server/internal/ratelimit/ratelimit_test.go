@@ -23,13 +23,11 @@ func TestMain(m *testing.M) {
 }
 
 // testPolicy is the server's policy, but with small limits of the read
-// bucket, in windows of an hour, which a test does not outlast, and of the
-// invitation emails to an address: 2 at once, and then one every 30 minutes.
+// bucket, in windows of an hour, which a test does not outlast.
 func testPolicy() Policy {
 	p := DefaultPolicy()
 	p.Rates[Read] = Rate{Period: time.Hour, Limits: map[Kind]int{IP: 3, User: 2}}
 	p.Rates[Auth] = Rate{Period: time.Hour, Limits: map[Kind]int{IP: 20, User: 10, Email: 2}}
-	p.Rates[InviteEmail] = Rate{Period: time.Hour, Limits: map[Kind]int{Email: 2}, Paced: true}
 	return p
 }
 
@@ -83,10 +81,9 @@ func count(t *testing.T, admin *pgx.Conn, sql string, args ...any) int {
 // TestDefaultPolicy checks the server's limits, which docs/error-codes.md,
 // docs/configuration.md, and the descriptions of the API's operations state:
 // a lock after 10 failed sign-ins in a row, for a minute, doubling up to 15
-// minutes, with failures forgotten after a day, 20 requests a minute of the
-// auth bucket for an IP address, and 10 for an account and an email address,
-// and invitation emails to an email address paced at 10 at once, and then
-// one every 6 minutes, which nothing else limits.
+// minutes, with failures forgotten after a day, and 20 requests a minute of
+// the auth bucket for an IP address, and 10 for an account and an email
+// address.
 //
 // Verifies: NFR-SEC-06
 func TestDefaultPolicy(t *testing.T) {
@@ -102,9 +99,8 @@ func TestDefaultPolicy(t *testing.T) {
 	if auth.Period != time.Minute || auth.Limits[IP] != 20 || auth.Limits[User] != 10 || auth.Limits[Email] != 10 {
 		t.Errorf("the auth bucket is %+v", auth)
 	}
-	invites := p.Rates[InviteEmail]
-	if invites.Period != time.Hour || len(invites.Limits) != 1 || invites.Limits[Email] != 10 || !invites.Paced {
-		t.Errorf("the invite_email bucket is %+v", invites)
+	if r := p.Rates[InviteEmail]; r.Period != time.Hour || len(r.Limits) != 1 || r.Limits[Email] != 10 {
+		t.Errorf("the invite_email bucket is %+v, want 10 an hour for each email address alone", r)
 	}
 	for _, b := range []Bucket{Auth, Read, Write, Export, Connect} {
 		r, ok := p.Rates[b]
@@ -351,98 +347,6 @@ func TestTakeCommitsWithoutFlush(t *testing.T) {
 	}
 	if setting != "off" {
 		t.Errorf("synchronous_commit is %s once a request is counted, want off", setting)
-	}
-}
-
-// TestReserveTx checks that a bucket that paces the requests of a key lets
-// as many go at once as its limit, and gives each after them a turn after
-// the last one taken, one in each Period/limit, in the order in which they
-// took them, however the address is spelt, that a turn is taken only if the
-// caller's transaction commits, whose commit it leaves waiting for the disk,
-// and that another key has a queue of its own. The test's database server
-// waits for no commit at all, so the transaction asks it to wait first.
-//
-// Verifies: NFR-SEC-06
-func TestReserveTx(t *testing.T) {
-	t.Parallel()
-	l, db, _ := setup(t)
-	ctx := context.Background()
-	// reserve takes a turn for address in a transaction that commits, or
-	// rolls back if rollBack is set, and returns how long until the turn.
-	rollBack := errors.New("roll back")
-	reserve := func(address string, back bool) time.Duration {
-		t.Helper()
-		var wait time.Duration
-		err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-			var err error
-			if wait, err = l.ReserveTx(ctx, tx, InviteEmail, EmailAddress(address)); err != nil {
-				return err
-			}
-			if back {
-				return rollBack
-			}
-			return nil
-		})
-		if back && !errors.Is(err, rollBack) || !back && err != nil {
-			t.Fatal(err)
-		}
-		return wait
-	}
-	// The test policy lets an address have 2 at once, and then one every 30
-	// minutes.
-	for i, address := range []string{"jo@example.com", "Jo@example.com"} {
-		if wait := reserve(address, false); wait != 0 {
-			t.Errorf("request %d of the address waits %v, want none", i+1, wait)
-		}
-	}
-	if wait := reserve("JO@example.com", true); wait <= 29*time.Minute || wait > 30*time.Minute {
-		t.Errorf("the third request, rolled back, waits %v, want about 30 minutes", wait)
-	}
-	for i, want := range []time.Duration{30 * time.Minute, time.Hour, 90 * time.Minute} {
-		if wait := reserve("jo@EXAMPLE.com", false); wait <= want-time.Minute || wait > want {
-			t.Errorf("request %d of the address waits %v, want about %v, its turn after the last", i+3, wait,
-				want)
-		}
-	}
-	if wait := reserve("mo@example.com", false); wait != 0 {
-		t.Errorf("another address waits %v, want none", wait)
-	}
-
-	var setting string
-	if err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SET LOCAL synchronous_commit = on"); err != nil {
-			return err
-		}
-		if _, err := l.ReserveTx(ctx, tx, InviteEmail, EmailAddress("mo@example.com")); err != nil {
-			return err
-		}
-		return tx.QueryRow(ctx, "SELECT current_setting('synchronous_commit')").Scan(&setting)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if setting != "on" {
-		t.Errorf("synchronous_commit is %s once a turn is taken in the caller's transaction, want on", setting)
-	}
-
-	for name, call := range map[string]func(){
-		"taking a turn in a bucket that counts in windows": func() {
-			_ = db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
-				_, err := l.ReserveTx(ctx, tx, Read, UserID(ids.New()))
-				return err
-			})
-		},
-		"counting a request of a bucket that paces them": func() {
-			_, _ = l.Take(ctx, InviteEmail, EmailAddress("jo@example.com"))
-		},
-	} {
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Errorf("%s did not panic", name)
-				}
-			}()
-			call()
-		}()
 	}
 }
 

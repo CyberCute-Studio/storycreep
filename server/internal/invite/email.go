@@ -59,11 +59,9 @@ const emailInviteAttempts = 36
 // the invitation inviteID of the workspace id to the address address, in tx,
 // the transaction that records the request in the invitation. The job is due
 // once ResendInterval has passed since the workspace last emailed an
-// invitation to the address, or since the turn that the email of another of
-// its invitations to the address took (send), or at once if both have passed
-// (InviteEmailDue), so that sending an invitation anew again and again, or
-// revoking it and inviting the address again, can neither flood the
-// address's inbox nor take turn after turn in its queue. Each request
+// invitation to the address, or at once if it has passed (InviteEmailDue),
+// so that sending an invitation anew again and again, or revoking it and
+// inviting the address again, cannot flood the address's inbox. Each request
 // enqueues its own job, even while the job of an earlier one still waits, is
 // retried, or runs, but only the job of the latest request sends anything
 // (send): the earlier ones find the invitation sent anew, or closed, as the
@@ -82,7 +80,7 @@ func (s *Service) enqueue(ctx context.Context, tx pgx.Tx, id, inviteID, request 
 		return errNoLimits
 	}
 	opts := &jobs.EnqueueOptions{MaxAttempts: emailInviteAttempts}
-	due, err := queries.New(tx).InviteEmailDue(ctx, queries.InviteEmailDueParams{ID: nullUUID(inviteID),
+	due, err := queries.New(tx).InviteEmailDue(ctx, queries.InviteEmailDueParams{
 		ResendInterval: database.Interval(ResendInterval), WorkspaceID: nullUUID(id),
 		Email: pgtype.Text{String: address, Valid: true}})
 	switch {
@@ -114,7 +112,7 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 		if err != nil {
 			return fmt.Errorf("invite: the job's request %q is not a UUID: %w", job.Args.Request, err)
 		}
-		return s.send(ctx, job.DB, id, inviteID, request)
+		return s.send(ctx, job.DB, id, inviteID, request, job.Attempt)
 	})
 }
 
@@ -134,26 +132,22 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 // records that the invitation's link was not emailed after all, and is made
 // again later, with a new secret, which replaces the one that the failed
 // attempt may have sent, so that only the latest email's link works, unless
-// the SMTP server refuses the email for good (email.JobError). The email
-// takes a turn in the queue of invitation emails to its address, from all
-// workspaces together (ratelimit.InviteEmail), which lets 10 go at once, and
-// then one every 6 minutes, in the order in which they took their turns. An
-// email whose turn is to come is put off until then, with the invitation as
-// it was but for the turn, which it records (email_turn): the job is
-// snoozed (jobs.Snooze), which spends none of its attempts, and the
-// invitation's admins see only that it is still to be emailed. When the turn
-// comes, the job of the invitation's latest request sends the email without
-// taking another, as it does when the invitation has been sent anew
-// meanwhile, so that the invitation keeps its place and holds one turn
-// however often it is sent anew; a job that its worker wakes before the turn,
-// as by a clock a little behind the database's, waits again for what is
-// left of it. An invitation that is revoked, or expires, before its turn
-// takes its turn to no use. The queue counts each email that the job tries
-// to send, whether or not the SMTP server takes it, and a failed one takes a
-// new turn when its job tries again. The job reads the SMTP settings, and the
-// invitation, and takes the email's turn, on the workers' pool that it
+// the SMTP server refuses the email for good (email.JobError).
+//
+// The first attempt of a job that has an email to send counts it against
+// its address's limit of invitation emails from all workspaces together
+// (ratelimit.InviteEmail), and sends nothing if the address is over it: the
+// job ends, and the invitation stays without a link, which its admins see
+// as still to be emailed, and send anew later. The later attempts of a job
+// whose first one counted its email do not count it again, so that the
+// retries of an email that an SMTP server that is down refused do not use
+// up the address's limit. The count is made before the invitation is
+// locked to be sent, in a transaction of its own, so that no lock of the
+// invitation waits on it; an invitation that is sent anew or closed in
+// between counted its email to no use. The job reads the SMTP settings, as
+// it does the invitation, and counts the email, on the workers' pool that it
 // carries, db, one connection at a time.
-func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUID) error {
+func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUID, attempt int) error {
 	if s.email == nil {
 		return nil
 	}
@@ -165,42 +159,47 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 	if s.limits == nil {
 		return errNoLimits
 	}
+	scope := database.Scope{WorkspaceID: id}
+	params := queries.LockInviteToSendParams{WorkspaceID: nullUUID(id), ID: nullUUID(inviteID),
+		EmailRequest: nullUUID(request)}
+	if attempt <= 1 {
+		var address string
+		err := db.InTx(ctx, scope, func(tx pgx.Tx) error {
+			row, err := queries.New(tx).LockInviteToSend(ctx, params)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			address = row.Email
+			return err
+		})
+		switch {
+		case err != nil:
+			return fmt.Errorf("invite: read the invitation to email: %w", err)
+		case address == "":
+			// Nothing to send, so nothing to count.
+			return nil
+		}
+		var over *ratelimit.LimitError
+		_, err = s.limits.TakeOn(ctx, db, ratelimit.InviteEmail, ratelimit.EmailAddress(address))
+		switch {
+		case errors.As(err, &over):
+			return nil
+		case err != nil:
+			return fmt.Errorf("invite: count the invitation's email: %w", err)
+		}
+	}
 	value, hash := account.NewSecret()
 	var row queries.LockInviteToSendRow
 	found := false
-	var wait time.Duration
-	scope := database.Scope{WorkspaceID: id}
 	err = db.InTx(ctx, scope, func(tx pgx.Tx) error {
 		q := queries.New(tx)
 		var err error
-		row, err = q.LockInviteToSend(ctx, queries.LockInviteToSendParams{WorkspaceID: nullUUID(id),
-			ID: nullUUID(inviteID), EmailRequest: nullUUID(request)})
+		row, err = q.LockInviteToSend(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
-		}
-		if row.EmailTurn.Valid {
-			// The email took its turn already, which this attempt waits for
-			// if it is still to come, and else sends the email in.
-			wait = row.EmailTurn.Time.Sub(row.Now.Time)
-		} else {
-			// The turn is taken in the transaction that locks the invitation
-			// and gives it the email's hash, or records the turn, so that
-			// it is taken only with the email that this attempt sends, or
-			// with the turn that the invitation holds from then on.
-			wait, err = s.limits.ReserveTx(ctx, tx, ratelimit.InviteEmail, ratelimit.EmailAddress(row.Email))
-			if err != nil {
-				return err
-			}
-			if wait > 0 {
-				return q.SetInviteEmailTurn(ctx, queries.SetInviteEmailTurnParams{Wait: database.Interval(wait),
-					WorkspaceID: nullUUID(id), ID: nullUUID(inviteID)})
-			}
-		}
-		if wait > 0 {
-			return nil
 		}
 		found = true
 		return q.SetInviteHash(ctx, queries.SetInviteHashParams{TokenHash: hash,
@@ -210,9 +209,6 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 		return fmt.Errorf("invite: prepare the invitation's email: %w", err)
 	}
 	if !found {
-		if wait > 0 {
-			return jobs.Snooze(wait + turnMargin)
-		}
 		return nil
 	}
 	msg := inviteEmail(s.publicURL, row.Locale.String, row.Role, value, row.Email)
@@ -248,16 +244,9 @@ func (s *Service) send(ctx context.Context, db DB, id, inviteID, request ids.UUI
 // once its own context has ended.
 const unmarkTimeout = 10 * time.Second
 
-// turnMargin is how long after its turn a job whose email waits for its turn
-// in the address's queue is attempted again. The turn is of the database's
-// clock, and River schedules the job by the clock of the worker, which may
-// be a little behind it, and a job that it woke before the turn would only
-// wait again, for what is left of it.
-const turnMargin = 5 * time.Second
-
 // errNoLimits is the error of a Service that emails invitations without
-// Limits to pace them with.
-var errNoLimits = errors.New("invite: the Service has no Limits to pace the invitations that it emails")
+// Limits to count them with.
+var errNoLimits = errors.New("invite: the Service has no Limits to count the invitations that it emails")
 
 // inviteEmail returns the email of an invitation with the role r, with the
 // secret value, to the address address, in locale, a BCP 47 tag, or the

@@ -48,25 +48,6 @@ ON CONFLICT (bucket, key) DO UPDATE SET
     window_end = greatest(r.window_end, excluded.window_end)
 RETURNING r.key, r.hits, r.window_end, now()::timestamptz AS now;
 
--- name: ReserveRateLimit :one
--- ReserveRateLimit takes a turn for a request of a key in a bucket that paces
--- the requests of a key rather than counting them in windows (package
--- ratelimit's ReserveTx). The key's row holds, as window_end, when the turns
--- that the key has taken run out, one in each spacing: the request's turn is
--- spacing after the last one taken, or after now if they have run out, and
--- it returns when the turns now run out. A row whose turns have run out
--- holds none, as no row does, and the rate limit cleanup job deletes it.
--- window_start is when the row's turns began to be taken, and hits how many
--- were. It leaves synchronous_commit as it is, so that the transaction that
--- it runs in, which changes other rows too, commits as it would have.
-INSERT INTO rate_limit AS r (bucket, key, window_start, window_end, hits)
-VALUES (@bucket::text, @key::bytea, now(), now() + @spacing::interval, 1)
-ON CONFLICT (bucket, key) DO UPDATE SET
-    window_start = CASE WHEN r.window_end <= now() THEN now() ELSE r.window_start END,
-    window_end = greatest(r.window_end, now()) + @spacing::interval,
-    hits = CASE WHEN r.window_end <= now() THEN 1 ELSE r.hits + 1 END
-RETURNING r.window_end, now()::timestamptz AS now;
-
 -- name: BeginLoginAttempt :one
 -- BeginLoginAttempt counts a sign-in attempt with an email address as a
 -- failure, until ClearLoginAttempts says that it succeeded, unless the

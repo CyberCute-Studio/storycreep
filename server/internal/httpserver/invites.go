@@ -166,14 +166,11 @@ type registerWithInviteInput struct {
 }
 
 // inviteEmailLimitDoc says, in the description of an operation that emails
-// an invitation, how the pace of invitation emails to an address, from all
-// workspaces together, puts the email off (ratelimit.InviteEmail).
-const inviteEmailLimitDoc = " The instance also paces the invitations that it emails an address, from all " +
-	"workspaces together: 10 at once, and then one every 6 minutes. The email of an invitation over that pace " +
-	"takes a turn after those that wait already, and is sent then, in the order of the turns, and the " +
-	"invitation's sent_at stays empty until then. Sending the invitation anew keeps its turn, and gives it 14 " +
-	"days more; one that expires before its turn is not emailed. A workspace whose invitation is revoked while " +
-	"its email waits emails the address no other invitation until 10 minutes after that turn."
+// an invitation, what the limit of invitation emails to an address, from all
+// workspaces together, does (ratelimit.InviteEmail).
+const inviteEmailLimitDoc = " The instance also emails an address 10 invitations an hour at most, from all " +
+	"workspaces together. The email of an invitation over that limit is not sent, and the invitation stays " +
+	"without a link, its sent_at empty; send it anew later."
 
 // manageMembersDoc says, in the description of an operation that manages a
 // workspace's members or invitations, who may.
@@ -280,11 +277,12 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			"is sent, and the answer holds no link. A workspace emails an address one invitation in 10 minutes at " +
 			"most, so the email of an invitation made sooner after the workspace last emailed the address, as " +
 			"after revoking an invitation that was emailed and inviting the address again, is sent once those 10 " +
-			"minutes have passed." + inviteEmailLimitDoc + " On an instance that sends no email, and for a link " +
-			"invitation on every instance, the answer's url is the link, which the signed-in user gives the " +
-			"person invited; the server keeps no copy of it. The email names the instance and the role, but " +
-			"neither the workspace nor who invites, which the page that the link opens shows instead (POST " +
-			"/api/v1/invites/lookup)." + csrfDoc + authLimitDoc,
+			"minutes have passed." + inviteEmailLimitDoc + " Otherwise, and for a link invitation on every " +
+			"instance, the " +
+			"answer's url is the link, which the signed-in user gives the person invited; the server keeps no " +
+			"copy of it. The email names the instance and the role, but neither the workspace nor who invites, " +
+			"which the page that the link opens shows instead (POST /api/v1/invites/lookup)." + csrfDoc +
+			authLimitDoc,
 		Tags:          []string{"Members"},
 		DefaultStatus: http.StatusCreated,
 		Middlewares:   huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
@@ -354,8 +352,8 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			"working at once. As when it was made, the new link is emailed, or is the answer's url, and an email " +
 			"waits until 10 minutes have passed since the workspace last emailed the address, so sending an " +
 			"invitation anew again and again emails it once in 10 minutes at most, with the latest link." +
-			inviteEmailLimitDoc + " Only an owner sends an invitation as owner anew, and an admin is answered with " +
-			"403 owner_required." +
+			inviteEmailLimitDoc + " Only an owner sends an invitation as owner anew, and an admin is answered " +
+			"with 403 owner_required." +
 			manageMembersDoc + " So is an invitation that the workspace does not have. One that has been accepted " +
 			"is answered with 410 invite_accepted, one that has been revoked with 410 invite_revoked, and one to " +
 			"an address that belongs to a member of the workspace by now with 409 already_member." + csrfDoc +
