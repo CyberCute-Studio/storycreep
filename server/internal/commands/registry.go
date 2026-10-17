@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"regexp"
 	"slices"
@@ -351,9 +352,10 @@ type Problem struct {
 // InvalidError is a batch that the pipeline refuses before it reads the
 // database, because it is not one that it can apply: it has no commands, or
 // a command whose ID is missing or used twice, whose type is not registered,
-// whose payload does not match its type's schema or Check, or whose
-// ExpectedRev names an entity of a kind that the command does not touch, or a
-// revision that no entity has. The API answers it with validation_failed.
+// whose payload does not match its type's schema or Check, or holds a NUL
+// character, which no text may hold, or whose ExpectedRev names an entity of
+// a kind that the command does not touch, or a revision that no entity has.
+// The API answers it with validation_failed.
 type InvalidError struct {
 	Problems []Problem
 }
@@ -381,7 +383,8 @@ type decoded struct {
 	payload any
 	// encoded is the payload as the operation log keeps it: re-encoded from
 	// the decoded payload, so that it holds what the command was applied
-	// with, in its fields' order.
+	// with. The log's jsonb keeps an object's keys in an order of its own,
+	// not in this encoding's.
 	encoded []byte
 	adds    []int64
 }
@@ -446,7 +449,10 @@ func (r *Registry) decode(batch []Command) ([]decoded, error) {
 
 // validate returns what is wrong with the payload raw under the schema, with
 // each field's location in the payload, as name or items[2].id, or "" for
-// the payload itself.
+// the payload itself, and a string that holds a NUL character, which the
+// schema allows, but neither the operation log's jsonb nor a text column can
+// hold, so that the batch is refused as invalid rather than fail on its
+// write.
 func (r *Registry) validate(schema *huma.Schema, raw []byte) input.FieldErrors {
 	var v any
 	if len(raw) > 0 {
@@ -465,7 +471,40 @@ func (r *Registry) validate(schema *huma.Schema, raw []byte) input.FieldErrors {
 			out = append(out, input.FieldError{Message: err.Error()})
 		}
 	}
+	if at, ok := nulAt(v, ""); ok {
+		out = append(out, input.FieldError{Field: at, Message: "holds a NUL character, which no text may hold"})
+	}
 	return out
+}
+
+// nulAt returns where in the JSON value v, which is at, as name or
+// items[2].id, a string holds a NUL character, or the object whose key does,
+// or ok false if none does.
+func nulAt(v any, at string) (where string, ok bool) {
+	switch v := v.(type) {
+	case string:
+		return at, strings.ContainsRune(v, 0)
+	case []any:
+		for i, e := range v {
+			if where, ok := nulAt(e, fmt.Sprintf("%s[%d]", at, i)); ok {
+				return where, true
+			}
+		}
+	case map[string]any:
+		for _, k := range slices.Sorted(maps.Keys(v)) {
+			if strings.ContainsRune(k, 0) {
+				return at, true
+			}
+			field := k
+			if at != "" {
+				field = at + "." + k
+			}
+			if where, ok := nulAt(v[k], field); ok {
+				return where, true
+			}
+		}
+	}
+	return "", false
 }
 
 // checkSteps returns the steps of an inverse as the operation log keeps

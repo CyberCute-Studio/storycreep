@@ -22,9 +22,9 @@ import (
 // apply, with every problem of every command, each at its command and field:
 // no commands, a command ID that is missing or used twice, a type that is not
 // registered, a payload that its schema does not allow, whose field names are
-// matched exactly (PRD FR-API-01 AC2), or that its type's Check refuses, and
-// an expected revision of an entity of a kind that the command does not
-// touch, or that no entity has.
+// matched exactly (PRD FR-API-01 AC2), or that its type's Check refuses, a
+// payload with a NUL character, and an expected revision of an entity of a
+// kind that the command does not touch, or that no entity has.
 func TestDecodeRefusesInvalidBatches(t *testing.T) {
 	r := noteRegistry()
 	if _, err := r.decode(nil); !hasProblem(err, -1, "") {
@@ -55,6 +55,7 @@ func TestDecodeRefusesInvalidBatches(t *testing.T) {
 		{ID: ids.New(), Type: noteCreate, Payload: raw(`{"id": `)},
 		{ID: ids.New(), Type: noteUpdate, Payload: raw(valid), ExpectedRev: map[Ref]int64{board: 1, note: 0}},
 		{ID: ids.New(), Type: noteMisreport, Payload: raw(fmt.Sprintf(`{"id": %q, "mode": "other"}`, id))},
+		{ID: ids.New(), Type: noteCreate, Payload: raw(fmt.Sprintf(`{"id": %q, "body": "a\u0000b"}`, id))},
 	}
 	_, err := r.decode(batch)
 	var invalid *InvalidError
@@ -84,6 +85,9 @@ func TestDecodeRefusesInvalidBatches(t *testing.T) {
 		{13, "expected_rev." + encodeRef(board)},
 		{13, "expected_rev." + encodeRef(note)},
 		{14, "payload.mode"},
+		// The schema allows a NUL character, which the operation log's jsonb
+		// cannot hold.
+		{15, "payload.body"},
 	} {
 		if !hasProblem(err, want.command, want.field) {
 			t.Errorf("no problem of command %d's %s in %v", want.command, want.field, invalid.Problems)
@@ -105,6 +109,35 @@ func TestDecodeRefusesInvalidBatches(t *testing.T) {
 	}
 	if !sameJSON(t, cmds[0].encoded, valid) || !slices.Equal(cmds[0].adds, []int64{1}) {
 		t.Errorf("the command encodes as %s, and adds %v", cmds[0].encoded, cmds[0].adds)
+	}
+}
+
+// TestNulAt checks that a NUL character is found wherever a payload holds it,
+// in a string or in an object's key, at the location that the schema would
+// give a problem there, and that an escaped backslash before u0000 is not
+// one.
+func TestNulAt(t *testing.T) {
+	for raw, want := range map[string]string{
+		`"a\u0000"`: "",
+		`{"items": [{"id": "x"}, {"id": "\u0000"}]}`: "items[1].id",
+		`{"by_name": {"a\u0000": 1}}`:                "by_name",
+	} {
+		var v any
+		if err := json.Unmarshal([]byte(raw), &v); err != nil {
+			t.Fatal(err)
+		}
+		if where, ok := nulAt(v, ""); !ok || where != want {
+			t.Errorf("nulAt(%s) = %q, %v, want %q", raw, where, ok, want)
+		}
+	}
+	for _, raw := range []string{`{"a": "\\u0000"}`, `[1, true, null, "b"]`} {
+		var v any
+		if err := json.Unmarshal([]byte(raw), &v); err != nil {
+			t.Fatal(err)
+		}
+		if where, ok := nulAt(v, ""); ok {
+			t.Errorf("nulAt(%s) finds a NUL character at %q", raw, where)
+		}
 	}
 }
 

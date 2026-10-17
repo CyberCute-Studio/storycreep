@@ -261,10 +261,8 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		// so the batch's reads it again, before the roles, so that a deletion
 		// requested in between refuses the batch as well, and with 404,
 		// whatever the actor's role would allow (FR-TEN-05 AC1).
-		if _, err := q.Workspace(ctx, nullUUID(workspaceID)); errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		} else if err != nil {
-			return fmt.Errorf("commands: read the workspace: %w", err)
+		if err := activeWorkspace(ctx, q, workspaceID); err != nil {
+			return err
 		}
 		roles, err := p.roles(ctx, q, actor.UserID, workspaceID, projectID)
 		if err != nil {
@@ -276,7 +274,12 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 			}
 		}
 		// The lock is taken once the actor is authorised, so that nobody
-		// without a role on the project can hold up its batches.
+		// without a role on the project can hold up its batches, and so after
+		// the membership and the grant that authorise them, which the batch
+		// locks first: a change that locks the project's row and then its
+		// grants, as deleting the project does through their foreign key,
+		// would deadlock with a batch that waits for the lock, so it deletes or
+		// locks the grants first (N30).
 		seq, err := q.LockProjectSeq(ctx, queries.LockProjectSeqParams{WorkspaceID: nullUUID(workspaceID),
 			ID: nullUUID(projectID)})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -284,6 +287,15 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		}
 		if err != nil {
 			return fmt.Errorf("commands: lock the project: %w", err)
+		}
+		// The batch may have waited for the lock for as long as the project's
+		// other batches took, and a deletion requested meanwhile refuses it
+		// too, rather than letting it apply, or, with plans enforced, fail on
+		// the read of the plan of a workspace that is no longer active. The
+		// read is a statement of its own, which sees what committed while the
+		// batch waited, as the lock's own statement does not.
+		if err := activeWorkspace(ctx, q, workspaceID); err != nil {
+			return err
 		}
 		if err := p.checkLimits(ctx, tx, workspaceID, cmds); err != nil {
 			return err
@@ -328,7 +340,8 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 // workspaceOf returns the workspace of the project, through the context
 // bootstrap (§5.4), or ErrNotFound if there is no such project, or if its
 // workspace's deletion is pending (FR-TEN-05 AC1), which the batch's own
-// transaction checks again.
+// transaction checks again, before the roles and once it holds the project's
+// lock.
 func (p *Pipeline) workspaceOf(ctx context.Context, userID, projectID ids.UUID) (ids.UUID, error) {
 	var ws pgtype.UUID
 	err := p.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
@@ -343,6 +356,17 @@ func (p *Pipeline) workspaceOf(ctx context.Context, userID, projectID ids.UUID) 
 		return ids.UUID{}, fmt.Errorf("commands: find the project's workspace: %w", err)
 	}
 	return ws.Bytes, nil
+}
+
+// activeWorkspace returns ErrNotFound unless the workspace is active, as it is
+// not once its deletion is pending (FR-TEN-05 AC1).
+func activeWorkspace(ctx context.Context, q *queries.Queries, workspaceID ids.UUID) error {
+	if _, err := q.Workspace(ctx, nullUUID(workspaceID)); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return fmt.Errorf("commands: read the workspace: %w", err)
+	}
+	return nil
 }
 
 // roles returns the role that the user acts with for each scope of

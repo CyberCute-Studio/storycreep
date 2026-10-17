@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -454,7 +456,9 @@ func TestRoles(t *testing.T) {
 // TestNotFound checks that a batch of a project that does not exist, of
 // another workspace's project, or of a project of a workspace whose deletion
 // is pending, which blocks every access to it at once, its owners' too
-// (FR-TEN-05 AC1), is told that the project does not exist.
+// (FR-TEN-05 AC1), is told that the project does not exist, even when the
+// deletion is requested once the batch has begun: between its two
+// transactions, or while it waits for the project's lock.
 func TestNotFound(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -502,6 +506,46 @@ func TestNotFound(t *testing.T) {
 	}
 	if db.calls != 2 {
 		t.Errorf("the pipeline opened %d transactions, want 2", db.calls)
+	}
+
+	// So does a deletion requested while the batch waits for the project's
+	// lock, after its transaction has read the workspace and the roles.
+	waiting, waitingProject := ids.New(), ids.New()
+	w.exec(t, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Waiting', $2, 'unlimited')", waiting,
+		"waiting-"+waiting.String()[:8])
+	w.exec(t, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", waitingProject, waiting)
+	w.exec(t, "INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'owner')", ids.New(),
+		waiting, w.users[ownerUser])
+	holder := w.d.Admin(t)
+	hold := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := holder.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	hold("BEGIN")
+	hold("SELECT seq FROM project WHERE id = $1 FOR NO KEY UPDATE", waitingProject)
+	_, id = newNote()
+	batch := []Command{command(t, noteCreate, notePayload{ID: id, Body: "waited"}, nil)}
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.Apply(ctx, w.as(ownerUser), waitingProject, batch)
+		done <- err
+	}()
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(10 * time.Millisecond) {
+		if w.count(t, "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "+
+			"AND wait_event_type = 'Lock'") > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			hold("ROLLBACK")
+			t.Fatalf("the batch does not wait for the project's lock: %v", <-done)
+		}
+	}
+	hold("UPDATE workspace SET status = 'pending_deletion', deleted_at = now() WHERE id = $1", waiting)
+	hold("COMMIT")
+	if err := <-done; !errors.Is(err, ErrNotFound) {
+		t.Errorf("a deletion requested while the batch waits for the lock: %v, want ErrNotFound", err)
 	}
 	if got := w.written(t); got != (written{}) {
 		t.Errorf("the refused batches wrote %+v", got)
@@ -698,6 +742,24 @@ func TestChanged(t *testing.T) {
 	}
 }
 
+// TestEnqueueNeedsAQueue checks that a command that enqueues a job, in a
+// pipeline without a job queue, refuses its batch, which then changes
+// nothing, rather than apply without the job.
+func TestEnqueueNeedsAQueue(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	p := w.pipeline(t, func(o *Options) { o.Jobs = nil })
+	_, id := newNote()
+	_, err := p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteCreate, notePayload{ID: id, Body: "queued"}, nil)})
+	if err == nil || !strings.Contains(err.Error(), "no job queue") {
+		t.Errorf("Apply: %v, want the batch refused for want of a job queue", err)
+	}
+	if got := w.written(t); got != (written{}) {
+		t.Errorf("the refused batch wrote %+v", got)
+	}
+}
+
 // TestConcurrentBatches checks that batches applied to one project at once
 // are applied one at a time, each with a seq of its own, without a gap.
 func TestConcurrentBatches(t *testing.T) {
@@ -706,12 +768,17 @@ func TestConcurrentBatches(t *testing.T) {
 	p := w.pipeline(t, nil)
 	const n = 8
 	seqs := make([]int64, n)
+	// The batches are made here, because command may call t.Fatal, which
+	// only the test's goroutine may.
+	batches := make([][]Command, n)
+	for i := range batches {
+		_, id := newNote()
+		batches[i] = []Command{command(t, noteCreate, notePayload{ID: id, Body: "racing"}, nil)}
+	}
 	var wg sync.WaitGroup
 	for i := range n {
 		wg.Go(func() {
-			_, id := newNote()
-			res, err := p.Apply(ctx, w.as(editorUser), w.project,
-				[]Command{command(t, noteCreate, notePayload{ID: id, Body: "racing"}, nil)})
+			res, err := p.Apply(ctx, w.as(editorUser), w.project, batches[i])
 			if err != nil {
 				t.Error(err)
 			}
