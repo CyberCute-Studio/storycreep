@@ -115,12 +115,13 @@ var codes = []codeSpec{
 			"password stays as it was."},
 	{CodeInsufficientRole, http.StatusForbidden, i18n.K("error.insufficient_role"),
 		"The signed-in user's role in the workspace does not allow the operation, as only an `owner` or an " +
-			"`admin` changes a workspace's settings, invites, or removes members (PRD §5.6). A user whose role in the " +
-			"workspace is none, as one who is not a member or is a `guest`, is answered with `not_found` instead, so " +
-			"that the answer does not tell that the workspace exists (PRD §5.5)."},
+			"`admin` changes a workspace's settings, invites, removes members, or changes their roles (PRD §5.6). A " +
+			"user whose role in the workspace is none, as one who is not a member or is a `guest`, is answered with " +
+			"`not_found` instead, so that the answer does not tell that the workspace exists (PRD §5.5)."},
 	{CodeOwnerRequired, http.StatusForbidden, i18n.K("error.owner_required"),
-		"Only an `owner` of the workspace may do this, and the signed-in user is an `admin`: invite someone as " +
-			"`owner`, send such an invitation anew, or remove an owner (PRD §5.6, FR-TEN-03 AC4)."},
+		"Only an `owner` of the workspace may do this, and the signed-in user is an `admin`: grant the role " +
+			"`owner`, by a role change or an invitation, send an invitation as `owner` anew, or demote or remove an " +
+			"owner (PRD §5.6, FR-TEN-03 AC4)."},
 	{CodeSignupClosed, http.StatusForbidden, i18n.K("error.signup_closed"),
 		"The instance's signup policy is `closed`, so `POST /api/v1/auth/register` creates no account, " +
 			"whatever the request holds (PRD FR-AUTH-01 AC3), and nor does `POST /api/v1/invites/register`, with an " +
@@ -182,8 +183,8 @@ var codes = []codeSpec{
 			"names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeLastOwner, http.StatusConflict, i18n.K("error.last_owner"),
 		"The change would leave the workspace without an owner whose account is active, and a workspace keeps one " +
-			"(PRD FR-TEN-02 AC2): its last owner cannot be removed. An owner whose account's deletion is pending " +
-			"does not count (FR-GDPR-02). Make another member an owner first."},
+			"(PRD FR-TEN-02 AC2): its last owner cannot be removed or demoted. An owner whose account's deletion is " +
+			"pending does not count (FR-GDPR-02). Make another member an owner first."},
 	{CodeAlreadyMember, http.StatusConflict, i18n.K("error.already_member"),
 		"The account is a member of the workspace already: the one that an invitation's email address belongs " +
 			"to, or the signed-in user, who accepts an invitation of a workspace that they belong to, which then " +

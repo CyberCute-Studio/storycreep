@@ -438,14 +438,17 @@ func (q *Queries) RevokeInvite(ctx context.Context, arg RevokeInviteParams) erro
 const revokeMemberInvites = `-- name: RevokeMemberInvites :many
 UPDATE invite SET revoked_at = now(), updated_at = now()
 WHERE workspace_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL
-    AND (created_by = $2 OR link_holder = $2
-        OR email = (SELECT u.email FROM "user" u WHERE u.id = $2))
+    AND role = ANY($2::text[])
+    AND (created_by = $3 OR link_holder = $3
+        OR ($4::boolean AND email = (SELECT u.email FROM "user" u WHERE u.id = $3)))
 RETURNING id, email, role
 `
 
 type RevokeMemberInvitesParams struct {
 	WorkspaceID pgtype.UUID
+	Roles       []string
 	UserID      pgtype.UUID
+	Addressed   bool
 }
 
 type RevokeMemberInvitesRow struct {
@@ -455,13 +458,20 @@ type RevokeMemberInvitesRow struct {
 }
 
 // RevokeMemberInvites revokes the open invitations of the workspace, expired
-// or not, that the user user_id made, whose link the user was last given as
-// text (link_holder), as by sending one anew, or that are to the user's
-// address, as citext compares them, as the removal of the user's membership
-// does (package workspace), so that no link that the user holds lets them
-// back in, and returns them.
+// or not, whose role is one of roles, that the user user_id made, whose link
+// the user was last given as text (link_holder), as by sending one anew, or,
+// if addressed is set, that are to the user's address, as citext compares
+// them, and returns them. The removal of the user's membership revokes them
+// all, those to the address included, so that no link that the user holds
+// lets them back in, and a change of its role those of the roles that the
+// new role may not give (package workspace).
 func (q *Queries) RevokeMemberInvites(ctx context.Context, arg RevokeMemberInvitesParams) ([]RevokeMemberInvitesRow, error) {
-	rows, err := q.db.Query(ctx, revokeMemberInvites, arg.WorkspaceID, arg.UserID)
+	rows, err := q.db.Query(ctx, revokeMemberInvites,
+		arg.WorkspaceID,
+		arg.Roles,
+		arg.UserID,
+		arg.Addressed,
+	)
 	if err != nil {
 		return nil, err
 	}

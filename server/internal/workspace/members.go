@@ -4,34 +4,43 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 )
 
-// Members (PRD FR-TEN-02): every member of a workspace with a role in it,
-// which a guest's is not (§5.5), lists its members, with their display names
-// and roles, guests included, and its owners and admins see their email
-// addresses too, which managing them needs. An owner or admin removes a
-// member, themselves included, and only an owner removes an owner (§5.6),
-// and never the workspace's last owner whose account is active (AC2).
+// Members (PRD FR-TEN-02, FR-TEN-03): every member of a workspace with a
+// role in it, which a guest's is not (§5.5), lists its members, with their
+// display names and roles, guests included, and its owners and admins see
+// their email addresses too, which managing them needs. An owner or admin
+// removes a member, themselves included, and changes a member's role, for
+// the roles up to admin, and only an owner grants the owner role, or demotes
+// or removes an owner (§5.6, as package authz decides), and never so that
+// the workspace has no owner whose account is active (FR-TEN-02 AC2).
 // Removing a member revokes the workspace's open invitations that the member
 // made, those whose link the member was last given as text, as by sending
 // one anew, and those to the member's address, so that no link that they
-// hold lets them back in. A user joins a workspace by accepting an invitation
+// hold lets them back in. Changing a member's role revokes those that the
+// member made or was last given the link of whose role the new role may not
+// give (authz.Ungrantable), so that no link that they hold gives what their
+// role no longer may. A user joins a workspace by accepting an invitation
 // (package invite, Join), or through the operator (Grant).
 
 var (
 	// ErrOwnerRequired is returned for an operation that only an owner of
-	// the workspace may do, asked for by an admin: removing an owner, or
-	// inviting someone as owner (§5.6, FR-TEN-03 AC4).
-	ErrOwnerRequired = errors.New("workspace: only an owner of the workspace may do it")
+	// the workspace may do, asked for by an admin: granting the owner role,
+	// by a role change or an invitation, or demoting or removing an owner
+	// (§5.6, FR-TEN-03 AC4), as package authz decides.
+	ErrOwnerRequired = authz.ErrOwnerRequired
 	// ErrAlreadyMember is returned by Join for a user who is a member of the
 	// workspace already.
 	ErrAlreadyMember = errors.New("workspace: the user is a member of the workspace already")
@@ -88,8 +97,9 @@ func (s *Service) authorize(ctx context.Context, tx pgx.Tx, userID, id ids.UUID,
 // order of their memberships' IDs: the first, if after is zero, or else
 // those after the membership after, for the user userID. A member's email
 // address is there only if the role that the user acts with in the
-// workspace is owner or admin. It returns ErrNotFound if the workspace does
-// not exist, or the user's role in it is none.
+// workspace allows authz.ManageMembers: owner or admin. It returns
+// ErrNotFound if the workspace does not exist, or the user's role in it is
+// none.
 func (s *Service) Members(ctx context.Context, userID, id, after ids.UUID, limit int) ([]Member, error) {
 	var out []Member
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: id, UserID: userID}, func(tx pgx.Tx) error {
@@ -97,6 +107,10 @@ func (s *Service) Members(ctx context.Context, userID, id, after ids.UUID, limit
 		if err != nil {
 			return err
 		}
+		if err := authz.Check(r, authz.ListMembers); err != nil {
+			return err
+		}
+		addresses := authz.Allows(r, authz.ManageMembers)
 		rows, err := queries.New(tx).WorkspaceMembers(ctx, queries.WorkspaceMembersParams{WorkspaceID: nullUUID(id),
 			After: nullUUID(after), MaxRows: int32(min(limit, 1<<20))})
 		if err != nil {
@@ -105,7 +119,7 @@ func (s *Service) Members(ctx context.Context, userID, id, after ids.UUID, limit
 		for _, row := range rows {
 			m := Member{MembershipID: row.ID.Bytes, UserID: row.UserID.Bytes, Role: role.Role(row.Role),
 				DisplayName: row.DisplayName, JoinedAt: row.JoinedAt.Time}
-			if r.AtLeast(role.Admin) {
+			if addresses {
 				m.Email = row.Email
 			}
 			out = append(out, m)
@@ -116,6 +130,47 @@ func (s *Service) Members(ctx context.Context, userID, id, after ids.UUID, limit
 		return nil, err
 	}
 	return out, nil
+}
+
+// manageMember locks the workspace id, whose transaction q's is, and the
+// membership of the user userID, whose role must allow authz.ManageMembers,
+// and returns that role, for an operation on a member that the user asks
+// for. The workspace's lock serializes the changes of its owners, so that two
+// cannot each remove or demote one of its last two owners. It returns
+// ErrNotFound if the workspace does not exist or the user's role in it is
+// none, and ErrInsufficientRole if the role does not allow it.
+func (s *Service) manageMember(ctx context.Context, q *queries.Queries, userID, id ids.UUID) (role.Role, error) {
+	if _, err := q.LockWorkspace(ctx, nullUUID(id)); errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	} else if err != nil {
+		return "", fmt.Errorf("workspace: read the workspace: %w", err)
+	}
+	member, err := q.LockMembershipRole(ctx, queries.LockMembershipRoleParams{WorkspaceID: nullUUID(id),
+		UserID: nullUUID(userID)})
+	r, err := s.resolve(ctx, q, userID, member, err)
+	if err != nil {
+		return "", err
+	}
+	if err := authz.Check(r, authz.ManageMembers); err != nil {
+		return "", err
+	}
+	return r, nil
+}
+
+// lockTarget returns the member and the role of the membership membershipID
+// of the workspace id, whose transaction q's is, and locks it, or
+// ErrNotFound if the workspace has no such membership.
+func lockTarget(ctx context.Context, q *queries.Queries, id, membershipID ids.UUID) (
+	queries.LockMembershipByIDRow, error) {
+	target, err := q.LockMembershipByID(ctx, queries.LockMembershipByIDParams{WorkspaceID: nullUUID(id),
+		ID: nullUUID(membershipID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return target, ErrNotFound
+	}
+	if err != nil {
+		return target, fmt.Errorf("workspace: read the membership: %w", err)
+	}
+	return target, nil
 }
 
 // RemoveMember removes the membership membershipID from the workspace id,
@@ -134,41 +189,20 @@ func (s *Service) Members(ctx context.Context, userID, id, after ids.UUID, limit
 func (s *Service) RemoveMember(ctx context.Context, userID, id, membershipID ids.UUID, client audit.Client) error {
 	return s.db.InTx(ctx, database.Scope{WorkspaceID: id, UserID: userID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		// The lock serializes the changes of a workspace's owners, so that
-		// two removals cannot each remove one of its last two owners.
-		if _, err := q.LockWorkspace(ctx, nullUUID(id)); errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		} else if err != nil {
-			return fmt.Errorf("workspace: read the workspace: %w", err)
-		}
-		member, err := q.LockMembershipRole(ctx, queries.LockMembershipRoleParams{WorkspaceID: nullUUID(id),
-			UserID: nullUUID(userID)})
-		r, err := s.resolve(ctx, q, userID, member, err)
+		r, err := s.manageMember(ctx, q, userID, id)
 		if err != nil {
 			return err
 		}
-		if !r.AtLeast(role.Admin) {
-			return ErrInsufficientRole
-		}
-		target, err := q.LockMembershipByID(ctx, queries.LockMembershipByIDParams{WorkspaceID: nullUUID(id),
-			ID: nullUUID(membershipID)})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
+		target, err := lockTarget(ctx, q, id, membershipID)
 		if err != nil {
-			return fmt.Errorf("workspace: read the membership: %w", err)
+			return err
 		}
 		if role.Role(target.Role) == role.Owner {
-			if r != role.Owner {
-				return ErrOwnerRequired
+			if err := authz.Check(r, authz.ManageOwners); err != nil {
+				return err
 			}
-			others, err := q.CountOtherOwners(ctx, queries.CountOtherOwnersParams{WorkspaceID: nullUUID(id),
-				ID: nullUUID(membershipID)})
-			if err != nil {
-				return fmt.Errorf("workspace: count the owners: %w", err)
-			}
-			if others == 0 {
-				return ErrLastOwner
+			if err := keepOwner(ctx, q, id, membershipID); err != nil {
+				return err
 			}
 		}
 		// The invitations are revoked while the membership still exists, and
@@ -179,7 +213,7 @@ func (s *Service) RemoveMember(ctx context.Context, userID, id, membershipID ids
 		// deleted, the acceptance would wait for this transaction, which
 		// would wait for the invitation, and the two would deadlock.
 		revoked, err := q.RevokeMemberInvites(ctx, queries.RevokeMemberInvitesParams{WorkspaceID: nullUUID(id),
-			UserID: target.UserID})
+			Roles: roleNames(role.Memberships()), UserID: target.UserID, Addressed: true})
 		if err != nil {
 			return fmt.Errorf("workspace: revoke the member's invitations: %w", err)
 		}
@@ -193,22 +227,177 @@ func (s *Service) RemoveMember(ctx context.Context, userID, id, membershipID ids
 				"user_id": ids.UUID(target.UserID.Bytes).String()}}); err != nil {
 			return err
 		}
-		for _, inv := range revoked {
-			// The kinds of invitation are package invite's: email, to an
-			// address, and link, to whoever holds the link.
-			kind := "link"
-			if inv.Email.Valid {
-				kind = "email"
-			}
-			if err := audit.Record(ctx, tx, audit.Entry{Action: audit.ActionInviteRevoke, WorkspaceID: id,
-				ActorUserID: userID, SubjectID: inv.ID.Bytes, Result: audit.ResultSuccess, IP: client.IP,
-				UserAgent: client.UserAgent, Metadata: map[string]any{"role": inv.Role, "kind": kind,
-					"membership_id": membershipID.String()}}); err != nil {
+		return recordRevoked(ctx, tx, id, userID, membershipID, client, revoked)
+	})
+}
+
+// ChangeRole changes the role of the membership membershipID of the
+// workspace id to r, which the user userID asks for, as client, and returns
+// the member, with their email address. It revokes the workspace's open
+// invitations, expired or not, that the member made or was last given the
+// link of as text, as by sending one anew, whose role r may not give
+// (authz.Ungrantable): every one, if r does not manage members, and those as
+// owner, if r is admin, so that no link that they hold gives what their role
+// no longer may. It records all of that in the audit log. A membership that
+// has r already stays as it is. It returns ErrNotFound if the workspace does
+// not exist, the user's role in it is none, or it has no such membership,
+// ErrInsufficientRole unless the user's role is owner or admin,
+// input.FieldErrors if r is not a role of a membership (role.Memberships),
+// ErrOwnerRequired if r is owner or the membership is an owner's, and the
+// user's role is admin (§5.6, FR-TEN-03 AC4), and ErrLastOwner if the
+// workspace would have no other owner whose account is active (FR-TEN-02
+// AC2), and changes nothing then. An owner or admin may change their own
+// role, as long as the workspace keeps an owner.
+func (s *Service) ChangeRole(ctx context.Context, userID, id, membershipID ids.UUID, r role.Role,
+	client audit.Client) (Member, error) {
+	var m Member
+	err := s.db.InTx(ctx, database.Scope{WorkspaceID: id, UserID: userID}, func(tx pgx.Tx) error {
+		q := queries.New(tx)
+		actor, err := s.manageMember(ctx, q, userID, id)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(role.Memberships(), r) {
+			return input.FieldErrors{{Field: "role",
+				Message: "is not one of owner, admin, editor, commenter, viewer, and guest"}}
+		}
+		target, err := lockTarget(ctx, q, id, membershipID)
+		if err != nil {
+			return err
+		}
+		previous := role.Role(target.Role)
+		if err := authz.CheckGrant(actor, r); err != nil {
+			return err
+		}
+		if previous == role.Owner {
+			if err := authz.Check(actor, authz.ManageOwners); err != nil {
 				return err
 			}
 		}
+		if err := setRole(ctx, tx, roleChange{workspaceID: id, membershipID: membershipID,
+			userID: target.UserID.Bytes, previous: previous, role: r, actor: userID, client: client}); err != nil {
+			return err
+		}
+		row, err := q.WorkspaceMember(ctx, queries.WorkspaceMemberParams{WorkspaceID: nullUUID(id),
+			ID: nullUUID(membershipID)})
+		if err != nil {
+			return fmt.Errorf("workspace: read the member: %w", err)
+		}
+		m = Member{MembershipID: row.ID.Bytes, UserID: row.UserID.Bytes, Role: role.Role(row.Role),
+			DisplayName: row.DisplayName, Email: row.Email, JoinedAt: row.JoinedAt.Time}
 		return nil
 	})
+	if err != nil {
+		return Member{}, err
+	}
+	return m, nil
+}
+
+// roleChange is a change of a membership's role.
+type roleChange struct {
+	workspaceID, membershipID ids.UUID
+	// userID is the member.
+	userID ids.UUID
+	// previous is the membership's role, and role the one that it gets.
+	previous, role role.Role
+	// actor is the user who asks for the change, as client, or zero for the
+	// operator (Grant).
+	actor  ids.UUID
+	client audit.Client
+}
+
+// setRole makes the change c in tx, a transaction of c's workspace, which
+// holds the lock of the workspace, which serializes the changes of its
+// owners, and of the membership. It changes the membership's role, records
+// that in the audit log, and revokes the member's invitations that the new
+// role may not give, as ChangeRole says, and does nothing if the membership
+// has the role already. It returns ErrLastOwner if the membership is an
+// owner's and the workspace would have no other owner whose account is
+// active, and changes nothing then.
+func setRole(ctx context.Context, tx pgx.Tx, c roleChange) error {
+	if c.previous == c.role {
+		return nil
+	}
+	q := queries.New(tx)
+	if c.previous == role.Owner {
+		if err := keepOwner(ctx, q, c.workspaceID, c.membershipID); err != nil {
+			return err
+		}
+	}
+	// The invitations are revoked before the membership changes, as a
+	// removal revokes them before it deletes it. An acceptance by the member
+	// locks its invitation first and then adds a membership, which conflicts
+	// with theirs: while theirs is only locked, the acceptance is refused at
+	// once (ErrAlreadyMember) and lets the invitation go, but once it is
+	// changed, the acceptance would wait for this transaction, which would
+	// wait for the invitation, and the two would deadlock.
+	var revoked []queries.RevokeMemberInvitesRow
+	if ungrantable := authz.Ungrantable(c.role); len(ungrantable) > 0 {
+		var err error
+		revoked, err = q.RevokeMemberInvites(ctx, queries.RevokeMemberInvitesParams{
+			WorkspaceID: nullUUID(c.workspaceID), Roles: roleNames(ungrantable), UserID: nullUUID(c.userID)})
+		if err != nil {
+			return fmt.Errorf("workspace: revoke the member's invitations: %w", err)
+		}
+	}
+	if err := q.UpdateMembershipRole(ctx, queries.UpdateMembershipRoleParams{Role: string(c.role),
+		WorkspaceID: nullUUID(c.workspaceID), ID: nullUUID(c.membershipID)}); err != nil {
+		return fmt.Errorf("workspace: change the membership's role: %w", err)
+	}
+	if err := audit.Record(ctx, tx, audit.Entry{Action: audit.ActionMembershipRoleChange,
+		WorkspaceID: c.workspaceID, ActorUserID: c.actor, SubjectID: c.membershipID, Result: audit.ResultSuccess,
+		IP: c.client.IP, UserAgent: c.client.UserAgent,
+		Metadata: map[string]any{"role": c.role, "previous_role": c.previous}}); err != nil {
+		return err
+	}
+	return recordRevoked(ctx, tx, c.workspaceID, c.actor, c.membershipID, c.client, revoked)
+}
+
+// keepOwner returns ErrLastOwner if the workspace id, whose transaction q's
+// is, has no owner whose account is active besides the membership
+// membershipID, which is an owner's, so that it keeps one (FR-TEN-02 AC2).
+func keepOwner(ctx context.Context, q *queries.Queries, id, membershipID ids.UUID) error {
+	others, err := q.CountOtherOwners(ctx, queries.CountOtherOwnersParams{WorkspaceID: nullUUID(id),
+		ID: nullUUID(membershipID)})
+	if err != nil {
+		return fmt.Errorf("workspace: count the owners: %w", err)
+	}
+	if others == 0 {
+		return ErrLastOwner
+	}
+	return nil
+}
+
+// recordRevoked records in the audit log the revocation of each invitation
+// of revoked, of the workspace id, whose transaction tx is, which the
+// removal or the role change of the membership membershipID revoked, as the
+// user actor asked, or the operator if actor is zero, as client.
+func recordRevoked(ctx context.Context, tx pgx.Tx, id, actor, membershipID ids.UUID, client audit.Client,
+	revoked []queries.RevokeMemberInvitesRow) error {
+	for _, inv := range revoked {
+		// The kinds of invitation are package invite's: email, to an
+		// address, and link, to whoever holds the link.
+		kind := "link"
+		if inv.Email.Valid {
+			kind = "email"
+		}
+		if err := audit.Record(ctx, tx, audit.Entry{Action: audit.ActionInviteRevoke, WorkspaceID: id,
+			ActorUserID: actor, SubjectID: inv.ID.Bytes, Result: audit.ResultSuccess, IP: client.IP,
+			UserAgent: client.UserAgent, Metadata: map[string]any{"role": inv.Role, "kind": kind,
+				"membership_id": membershipID.String()}}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// roleNames returns the roles as the database holds them.
+func roleNames(roles []role.Role) []string {
+	names := make([]string, len(roles))
+	for i, r := range roles {
+		names[i] = string(r)
+	}
+	return names
 }
 
 // Join makes the user userID a member of the workspace id, whose transaction

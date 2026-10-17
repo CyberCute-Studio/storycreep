@@ -589,16 +589,25 @@ func TestIsolation(t *testing.T) {
 			return nil, queries.New(tx).RevokeInvite(ctx, queries.RevokeInviteParams{WorkspaceID: nullUUID(ws),
 				ID: nullUUID(id)})
 		}},
-		{Name: "revoke a removed member's invitations", Run: func(ctx context.Context, tx pgx.Tx,
-			target *isolationtest.Workspace) ([]ids.UUID, error) {
-			rows, err := queries.New(tx).RevokeMemberInvites(ctx, queries.RevokeMemberInvitesParams{
-				WorkspaceID: nullUUID(target.ID), UserID: nullUUID(target.UserID)})
-			var out []ids.UUID
-			for _, r := range rows {
-				out = append(out, r.ID.Bytes)
-			}
-			return out, err
-		}},
+	} {
+		f.Check(t, op)
+	}
+	// A removal revokes the member's invitations and those to their address,
+	// and a role change only the member's.
+	for _, addressed := range []bool{true, false} {
+		f.Check(t, isolationtest.Op{Name: fmt.Sprintf("revoke a member's invitations, addressed %v", addressed),
+			Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
+				rows, err := queries.New(tx).RevokeMemberInvites(ctx, queries.RevokeMemberInvitesParams{
+					WorkspaceID: nullUUID(target.ID), Roles: []string{"owner", "admin", "editor", "commenter",
+						"viewer", "guest"}, UserID: nullUUID(target.UserID), Addressed: addressed})
+				var out []ids.UUID
+				for _, r := range rows {
+					out = append(out, r.ID.Bytes)
+				}
+				return out, err
+			}})
+	}
+	for _, op := range []isolationtest.Op{
 		{Name: "accept an invitation", Blind: true, Run: func(ctx context.Context, tx pgx.Tx,
 			target *isolationtest.Workspace) ([]ids.UUID, error) {
 			ws, id := key(target)

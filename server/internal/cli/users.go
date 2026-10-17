@@ -182,10 +182,6 @@ func createUserError(err error) error {
 // instance admin.
 const instanceAdminRole = "instance-admin"
 
-// workspaceRoles are the roles of a membership, which grant-role gives in a
-// workspace.
-var workspaceRoles = []role.Role{role.Owner, role.Admin, role.Editor, role.Commenter, role.Viewer, role.Guest}
-
 var grantRole = &command{
 	name:    "grant-role",
 	summary: "Give an account a role in a workspace, or make it an instance admin",
@@ -197,8 +193,12 @@ A workspace role, owner, admin, editor, commenter, viewer, or guest, is
 given in the workspace whose slug is the third argument: the account becomes
 a member of the workspace with the role, or its membership's role changes to
 it. A workspace keeps an owner, so the role of its last owner whose account
-is active changes only to owner. The workspace's audit log records the
-change.
+is active changes only to owner. A change of the role also revokes the
+workspace's open invitations that the account made, or was last given the
+link of as text, whose role the new role may not give: every one, for a role
+below admin, and those as owner, for admin, so that no link that it holds
+gives what its role no longer may. The workspace's audit log records the
+change, and each invitation that it revokes.
 
 The role instance-admin, without a workspace, makes the account an instance
 admin, who will manage the instance on the instance-admin screens, and, while
@@ -230,7 +230,7 @@ account that has the role already stays as it is.
 		}
 		r := role.Role(name)
 		switch {
-		case !slices.Contains(workspaceRoles, r):
+		case !slices.Contains(role.Memberships(), r):
 			return usageError{fmt.Sprintf("unknown role %q; a role is owner, admin, editor, commenter, viewer, "+
 				"guest, or instance-admin", name)}
 		case revoke:

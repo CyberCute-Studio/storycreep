@@ -49,25 +49,10 @@ type CountOtherOwnersParams struct {
 // CountOtherOwners returns how many owners the workspace has, besides the
 // membership id, whose accounts are active: the owners that would be left
 // for the rule that a workspace keeps an owner (PRD FR-TEN-02 AC2) if that
-// membership were no longer an owner's (CountOwners).
+// membership were no longer an owner's. An owner whose account's deletion is
+// pending does not count (FR-GDPR-02 AC4).
 func (q *Queries) CountOtherOwners(ctx context.Context, arg CountOtherOwnersParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countOtherOwners, arg.WorkspaceID, arg.ID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countOwners = `-- name: CountOwners :one
-SELECT count(*) FROM membership m JOIN "user" u ON u.id = m.user_id
-WHERE m.workspace_id = $1 AND m.role = 'owner' AND u.status = 'active'
-`
-
-// CountOwners returns how many owners the workspace has whose accounts are
-// active, which are the ones that count for the rule that a workspace keeps
-// an owner (PRD FR-TEN-02 AC2): an owner whose account's deletion is pending
-// does not (FR-GDPR-02 AC4).
-func (q *Queries) CountOwners(ctx context.Context, workspaceID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countOwners, workspaceID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -485,6 +470,44 @@ func (q *Queries) WorkspaceBySlug(ctx context.Context, slug string) (pgtype.UUID
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const workspaceMember = `-- name: WorkspaceMember :one
+SELECT m.id, m.user_id, m.role, m.joined_at, u.display_name, u.email::text AS email
+FROM membership m
+JOIN "user" u ON u.id = m.user_id
+WHERE m.workspace_id = $1 AND m.id = $2
+`
+
+type WorkspaceMemberParams struct {
+	WorkspaceID pgtype.UUID
+	ID          pgtype.UUID
+}
+
+type WorkspaceMemberRow struct {
+	ID          pgtype.UUID
+	UserID      pgtype.UUID
+	Role        string
+	JoinedAt    pgtype.Timestamptz
+	DisplayName string
+	Email       string
+}
+
+// WorkspaceMember returns a membership of the workspace, with its member's
+// display name and email address, as WorkspaceMembers does, and no row if the
+// workspace has no such membership.
+func (q *Queries) WorkspaceMember(ctx context.Context, arg WorkspaceMemberParams) (WorkspaceMemberRow, error) {
+	row := q.db.QueryRow(ctx, workspaceMember, arg.WorkspaceID, arg.ID)
+	var i WorkspaceMemberRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Role,
+		&i.JoinedAt,
+		&i.DisplayName,
+		&i.Email,
+	)
+	return i, err
 }
 
 const workspaceMembers = `-- name: WorkspaceMembers :many

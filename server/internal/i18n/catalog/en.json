@@ -30,7 +30,7 @@
   "error.invite_expired": "This invitation has expired. Ask the workspace's admin to send it again.",
   "error.invite_required": "Registration on this server needs an invitation.",
   "error.invite_revoked": "This invitation has been revoked.",
-  "error.last_owner": "A workspace keeps an owner, so its last owner cannot be removed. Make another member an owner first.",
+  "error.last_owner": "A workspace keeps an owner, so its last owner cannot be removed or demoted. Make another member an owner first.",
   "error.method_not_allowed": "The method is not allowed for this resource.",
   "error.not_found": "The resource does not exist.",
   "error.not_ready": "The server is not ready.",

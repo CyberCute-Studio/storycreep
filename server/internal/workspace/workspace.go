@@ -24,8 +24,9 @@
 // role.Policy.Workspace, from whether the user is an instance admin and
 // their membership. A user whose role is none, as one who is not a member,
 // or a guest, is told that the workspace does not exist (ErrNotFound), so
-// that nothing tells them that it does (FR-TEN-04 AC6); its settings need
-// owner or admin (§5.6).
+// that nothing tells them that it does (FR-TEN-04 AC6). Package authz
+// decides what the role allows (§5.6): changing the settings needs owner or
+// admin.
 package workspace
 
 import (
@@ -47,6 +48,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
@@ -69,8 +71,8 @@ var (
 	// member, or is a guest (§5.5).
 	ErrNotFound = errors.New("workspace: no such workspace, or the user has no role in it")
 	// ErrInsufficientRole is returned when the user's role in the workspace
-	// does not allow the operation.
-	ErrInsufficientRole = errors.New("workspace: the user's role in the workspace does not allow it")
+	// does not allow the operation (§5.6), as package authz decides.
+	ErrInsufficientRole = authz.ErrInsufficientRole
 	// ErrSlugTaken is returned for a slug that another workspace has.
 	ErrSlugTaken = errors.New("workspace: another workspace has the slug")
 	// ErrLastOwner is returned for a change that would leave a workspace
@@ -625,8 +627,8 @@ func (s *Service) Update(ctx context.Context, userID, id ids.UUID, p Patch) (Wor
 		if r, err = s.resolve(ctx, q, userID, member, err); err != nil {
 			return err
 		}
-		if !r.AtLeast(role.Admin) {
-			return ErrInsufficientRole
+		if err := authz.Check(r, authz.ManageWorkspaceSettings); err != nil {
+			return err
 		}
 		w = s.workspace(row.ID, row.Name, row.Slug, row.Settings, row.CreatedAt, row.UpdatedAt)
 		changed, err := w.apply(p)
@@ -742,7 +744,8 @@ func (s *Service) BySlug(ctx context.Context, slug string) (ids.UUID, error) {
 // Grant gives the user userID the role r in the workspace id, for the
 // operator's storycreep grant-role (FR-ADMIN-06), whoever the operator is,
 // so only the operator's commands may call it: it makes the user a member
-// with the role, or changes the role of their membership to it, and records
+// with the role, or changes the role of their membership to it, as
+// ChangeRole does, the invitations that it revokes included, and records
 // that in the audit log, without an actor. It returns the role that the
 // membership had before, or role.None if the user was not a member, and
 // leaves a membership that has r already as it is. It returns ErrNotFound if
@@ -753,8 +756,8 @@ func (s *Service) Grant(ctx context.Context, id, userID ids.UUID, r role.Role) (
 	previous := role.None
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: id}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		// The lock serializes the grants of a workspace, so that two cannot
-		// each demote one of its last two owners.
+		// The lock serializes the changes of a workspace's owners, so that two
+		// cannot each demote one of its last two owners.
 		_, err := q.LockWorkspace(ctx, nullUUID(id))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
@@ -764,7 +767,6 @@ func (s *Service) Grant(ctx context.Context, id, userID ids.UUID, r role.Role) (
 		}
 		m, err := q.LockMembership(ctx, queries.LockMembershipParams{WorkspaceID: nullUUID(id),
 			UserID: nullUUID(userID)})
-		entry := audit.Entry{WorkspaceID: id, Result: audit.ResultSuccess, Metadata: map[string]any{"role": r}}
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			mid := ids.New()
@@ -772,31 +774,14 @@ func (s *Service) Grant(ctx context.Context, id, userID ids.UUID, r role.Role) (
 				WorkspaceID: nullUUID(id), UserID: nullUUID(userID), Role: string(r)}); err != nil {
 				return fmt.Errorf("workspace: add the membership: %w", err)
 			}
-			entry.Action, entry.SubjectID = audit.ActionMembershipCreate, mid
+			return audit.Record(ctx, tx, audit.Entry{Action: audit.ActionMembershipCreate, WorkspaceID: id,
+				SubjectID: mid, Result: audit.ResultSuccess, Metadata: map[string]any{"role": r}})
 		case err != nil:
 			return fmt.Errorf("workspace: read the membership: %w", err)
-		case m.Role == string(r):
-			previous = r
-			return nil
-		default:
-			previous = role.Role(m.Role)
-			if previous == role.Owner {
-				owners, err := q.CountOwners(ctx, nullUUID(id))
-				if err != nil {
-					return fmt.Errorf("workspace: count the owners: %w", err)
-				}
-				if owners <= 1 {
-					return ErrLastOwner
-				}
-			}
-			if err := q.UpdateMembershipRole(ctx, queries.UpdateMembershipRoleParams{Role: string(r),
-				WorkspaceID: nullUUID(id), ID: m.ID}); err != nil {
-				return fmt.Errorf("workspace: change the membership's role: %w", err)
-			}
-			entry.Action, entry.SubjectID = audit.ActionMembershipRoleChange, m.ID.Bytes
-			entry.Metadata["previous_role"] = previous
 		}
-		return audit.Record(ctx, tx, entry)
+		previous = role.Role(m.Role)
+		return setRole(ctx, tx, roleChange{workspaceID: id, membershipID: m.ID.Bytes, userID: userID,
+			previous: previous, role: r})
 	})
 	if err != nil {
 		return "", err
