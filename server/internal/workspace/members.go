@@ -60,11 +60,11 @@ type Member struct {
 }
 
 // Authorize returns the role that the user userID acts with in the workspace
-// id, whose transaction tx is, and locks the user's membership, and their
-// account if they act as an instance admin, against changes until tx ends,
-// so that a change of the role, the membership's removal, or the end of
-// their instance admin role waits for the operation that the role
-// authorises, as Update does.
+// id, whose transaction tx is, and locks the user's membership, and, while
+// the policy lets an instance admin act as owner, their account, whether or
+// not they are one, against changes until tx ends, so that a change of the
+// role, the membership's removal, or the end of their instance admin role
+// waits for the operation that the role authorises, as Update does.
 // It returns ErrNotFound if the workspace does not exist, or the user's role
 // in it is none.
 func (s *Service) Authorize(ctx context.Context, tx pgx.Tx, userID, id ids.UUID) (role.Role, error) {

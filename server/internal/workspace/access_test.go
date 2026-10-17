@@ -5,7 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
@@ -165,44 +168,102 @@ func TestRecordAccess(t *testing.T) {
 	}
 }
 
+// TestRecordAccessRetries checks that a start with InstanceAdminAccess off
+// whose revocation fails leaves the capability that the instance recorded as
+// it was, so that the next start revokes the invitations that it left open.
+//
+// Verifies: FR-TEN-02/AC4
+func TestRecordAccessRetries(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, d := newService(t, role.Policy{})
+	admin := addUser(t, d, "Admin")
+	if _, err := d.Admin(t).Exec(ctx, `UPDATE "user" SET is_instance_admin = true WHERE id = $1`, admin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Admin(t).Exec(ctx, `UPDATE instance SET instance_admin_access = true`); err != nil {
+		t.Fatal(err)
+	}
+	inv := addInvite(t, d, addWorkspace(t, d, "harbour"), admin, admin, role.Owner)
+	// A trigger, which the superuser adds, makes every revocation fail.
+	if _, err := d.Admin(t).Exec(ctx, `
+		CREATE FUNCTION fail_revocation() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'the revocation fails';
+		END
+		$$;
+		CREATE TRIGGER fail_revocation BEFORE UPDATE ON invite
+			FOR EACH ROW EXECUTE FUNCTION fail_revocation()`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.RecordAccess(ctx); err == nil || accessState(t, d) != "true" || revoked(t, d, inv) {
+		t.Errorf("a start whose revocation fails = %d, %v, recorded %s, revoked %v; want an error, true, and false",
+			n, err, accessState(t, d), revoked(t, d, inv))
+	}
+	if _, err := d.Admin(t).Exec(ctx, `DROP TRIGGER fail_revocation ON invite`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.RecordAccess(ctx); err != nil || n != 1 || accessState(t, d) != "false" || !revoked(t, d, inv) {
+		t.Errorf("the next start = %d, %v, recorded %s, revoked %v", n, err, accessState(t, d), revoked(t, d, inv))
+	}
+}
+
 // TestAccessWaitsForRevocation checks that an operation that an instance
 // admin's role authorises, while InstanceAdminAccess is on, locks the
 // account, so that it waits for a change of the account that makes it no
 // longer an instance admin, and is then refused, rather than act on the role
 // that the account had: an invitation that it made then would escape the
-// revocation that follows the change.
+// revocation that follows the change. It tries a change of the workspace's
+// settings, and the authorisation that making or resending an invitation
+// takes (package invite).
 func TestAccessWaitsForRevocation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s, d := newService(t, role.Policy{InstanceAdminAccess: true})
-	owner, admin := addUser(t, d, "Owner"), addUser(t, d, "Admin")
+	owner := addUser(t, d, "Owner")
 	w, err := s.Create(ctx, owner, Settings{Name: "Harbour"}, audit.Client{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Admin(t).Exec(ctx, `UPDATE "user" SET is_instance_admin = true WHERE id = $1`, admin); err != nil {
-		t.Fatal(err)
-	}
-	tx, err := d.Admin(t).Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `UPDATE "user" SET is_instance_admin = false WHERE id = $1`, admin); err != nil {
-		t.Fatal(err)
-	}
 	name := "Renamed"
-	updated := make(chan error, 1)
-	go func() {
-		_, _, err := s.Update(ctx, admin, w.ID, Patch{Name: &name})
-		updated <- err
-	}()
-	dbtest.AwaitWaiter(t, tx, updated, "the instance admin's change of the settings")
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-updated; !errors.Is(err, ErrNotFound) {
-		t.Errorf("the change of an instance admin who no longer is one: %v, want ErrNotFound", err)
+	for _, c := range []struct {
+		name string
+		// op is the operation, which the instance admin admin asks for.
+		op func(admin ids.UUID) error
+	}{
+		{"the instance admin's change of the settings", func(admin ids.UUID) error {
+			_, _, err := s.Update(ctx, admin, w.ID, Patch{Name: &name})
+			return err
+		}},
+		{"the instance admin's authorisation of an invitation", func(admin ids.UUID) error {
+			return s.db.InTx(ctx, database.Scope{WorkspaceID: w.ID, UserID: admin}, func(tx pgx.Tx) error {
+				_, err := s.Authorize(ctx, tx, admin, w.ID)
+				return err
+			})
+		}},
+	} {
+		admin := addUser(t, d, "Admin")
+		if _, err := d.Admin(t).Exec(ctx, `UPDATE "user" SET is_instance_admin = true WHERE id = $1`,
+			admin); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := d.Admin(t).Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := tx.Exec(ctx, `UPDATE "user" SET is_instance_admin = false WHERE id = $1`, admin); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- c.op(admin) }()
+		dbtest.AwaitWaiter(t, tx, done, c.name)
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; !errors.Is(err, ErrNotFound) {
+			t.Errorf("%s, once it is no longer one: %v, want ErrNotFound", c.name, err)
+		}
 	}
 	if n := count(t, d, `SELECT count(*) FROM workspace WHERE name = 'Renamed'`); n != 0 {
 		t.Errorf("the former instance admin renamed the workspace")

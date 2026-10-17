@@ -93,10 +93,14 @@ func (s *Service) revokeAccessInvitesIn(ctx context.Context, id ids.UUID, users 
 			case err != nil:
 				return fmt.Errorf("workspace: read the membership: %w", err)
 			}
-			// The role without instance admin access, by the membership alone.
-			r := role.Policy{}.Workspace(false, role.Role(member))
+			// The role without instance admin access, by the membership alone,
+			// which, for an owner, may give every invitation's.
+			ungrantable := authz.Ungrantable(role.Policy{}.Workspace(false, role.Role(member)))
+			if len(ungrantable) == 0 {
+				continue
+			}
 			rows, err := q.RevokeMemberInvites(ctx, queries.RevokeMemberInvitesParams{WorkspaceID: nullUUID(id),
-				Roles: roleNames(authz.Ungrantable(r)), UserID: nullUUID(user)})
+				Roles: roleNames(ungrantable), UserID: nullUUID(user)})
 			if err != nil {
 				return fmt.Errorf("workspace: revoke the invitations: %w", err)
 			}
@@ -121,11 +125,13 @@ func (s *Service) revokeAccessInvitesIn(ctx context.Context, id ids.UUID, users 
 // revokes every instance admin's invitations that RevokeAccessInvites would,
 // and returns how many it revoked. Only then does it record that the
 // capability is off, so that a start that fails to revoke them all leaves
-// the next start to try again. A server that still runs with the capability
-// on, while another starts with it off, as in a rolling restart that turns
-// it off, can make such invitations after that start revoked the others; the
-// operator's grant-role revokes them, for an account that it makes no longer
-// an instance admin.
+// the next start to try again. A server that runs with the capability on
+// while another starts with it off, as in a rolling restart that turns it
+// off, or one that starts with it on during the other's revocation, whose
+// record the other's then replaces, can make such invitations after that
+// start revoked the others, and no later start revokes them; the operator's
+// grant-role revokes them, for an account that it makes no longer an
+// instance admin.
 func (s *Service) RecordAccess(ctx context.Context) (int, error) {
 	if s.policy.InstanceAdminAccess {
 		err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {

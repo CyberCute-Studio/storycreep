@@ -198,7 +198,9 @@ var codes = []codeSpec{
 	{CodeInviteRevoked, http.StatusGone, i18n.K("error.invite_revoked"),
 		"An owner or admin of the workspace revoked the invitation, or removed the member who made it, who was " +
 			"last given its link as text, as by sending it anew, or whom it invites, which revokes it, and it no " +
-			"longer works (PRD FR-TEN-02 AC1)."},
+			"longer works (PRD FR-TEN-02 AC1). A change of the role of the account that made it or was last given " +
+			"its link, or the end of that account's instance admin access (PRD §5.5), revokes it too, once the role " +
+			"that the account is left with in the workspace may not give the invitation's (FR-TEN-02 AC4)."},
 	{CodeInviteAccepted, http.StatusGone, i18n.K("error.invite_accepted"),
 		"The invitation has been accepted already, and an invitation is accepted once. Reading it with its link, " +
 			"or registering with it, answers so, and so does accepting it, but for the account that accepted it, " +

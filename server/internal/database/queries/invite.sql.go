@@ -91,8 +91,9 @@ type InsertInviteRow struct {
 //
 // link_holder is the account that the request that made the invitation or
 // sent it anew gave its link to as text, while the invitation has that link,
-// so that removing the account's membership revokes the invitation
-// (RevokeMemberInvites).
+// so that removing the account's membership revokes the invitation, as does
+// a change of its role, or the end of its instance admin access, that leaves
+// it a role that may not give the invitation's (RevokeMemberInvites).
 //
 // email_request is the request that last asked for the invitation's link to
 // be emailed, whose job alone emails it (LockInviteToSend), so that a job of
@@ -463,8 +464,10 @@ type RevokeMemberInvitesRow struct {
 // if addressed is set, that are to the user's address, as citext compares
 // them, and returns them. The removal of the user's membership revokes them
 // all, those to the address included, so that no link that the user holds
-// lets them back in, and a change of its role those of the roles that the
-// new role may not give (package workspace).
+// lets them back in, a change of its role those of the roles that the new
+// role may not give, and the end of the user's instance admin access, in
+// every workspace, those of the roles that the user's membership may not
+// give (package workspace).
 func (q *Queries) RevokeMemberInvites(ctx context.Context, arg RevokeMemberInvitesParams) ([]RevokeMemberInvitesRow, error) {
 	rows, err := q.db.Query(ctx, revokeMemberInvites,
 		arg.WorkspaceID,

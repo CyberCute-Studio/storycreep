@@ -335,8 +335,9 @@ const (
 	setupUnattendedMessage = "completed first-run setup unattended, with the STORYCREEP_SETUP_ keys"
 	setupIgnoredMessage    = "first-run setup has completed, so the server ignores the STORYCREEP_SETUP_ keys; " +
 		"remove them from the configuration, STORYCREEP_SETUP_OWNER_PASSWORD above all"
-	accessEndedMessage = "STORYCREEP_INSTANCE_ADMIN_ACCESS is off, after a server last started with it on, so the " +
-		"server revoked the instance admins' invitations that their own roles may not give"
+	accessEndedMessage = "STORYCREEP_INSTANCE_ADMIN_ACCESS is off, and a server last started with it on, or none " +
+		"had recorded how it started, so the server revoked the instance admins' invitations that their own roles " +
+		"may not give"
 )
 
 // setupStep is the setup step of startup (PRD FR-ADMIN-02), which the server
