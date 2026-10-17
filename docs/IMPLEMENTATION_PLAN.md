@@ -274,7 +274,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-TEN-03 AC1 and AC3 pass for the current operation set, and AC2 and AC4 pass. Item 117 completes AC1 and AC3 over every MVP operation and mutating route.
 
 ### 20a. End of instance-admin access revokes its invitations
-**Status:** todo · **Depends on:** 20
+**Status:** done ([#24](https://github.com/CyberCute-Studio/storycreep/pull/24)) · **Depends on:** 20
 **PRD:** §5.5 (the end of `InstanceAdminAccess`), FR-TEN-02 (AC4), FR-ADMIN-06 (`grant-role --revoke`)
 - When an account stops being an instance admin by `grant-role --revoke`, and when a server starts with `InstanceAdminAccess` off after a server last started with it on, which the instance records, every workspace's open invitations that an instance admin made or was last given the link of as text, whose role its own role there may not give, are revoked, one workspace per transaction, and audited without an actor (N29).
 - An operation that an instance admin's access authorises locks the account, so that a revocation waits for it.
