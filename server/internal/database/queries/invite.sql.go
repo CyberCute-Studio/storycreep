@@ -51,9 +51,9 @@ func (q *Queries) AddressIsMember(ctx context.Context, arg AddressIsMemberParams
 
 const insertInvite = `-- name: InsertInvite :one
 
-INSERT INTO invite (id, workspace_id, email, role, token_hash, expires_at, created_by)
+INSERT INTO invite (id, workspace_id, email, role, token_hash, expires_at, created_by, link_holder)
 VALUES ($1, $2, $3, $4, $5, now() + $6::interval,
-    $7)
+    $7, $8)
 ON CONFLICT (workspace_id, email) WHERE email IS NOT NULL AND accepted_at IS NULL AND revoked_at IS NULL
 DO NOTHING
 RETURNING expires_at, created_at
@@ -67,6 +67,7 @@ type InsertInviteParams struct {
 	TokenHash   []byte
 	Lifetime    pgtype.Interval
 	CreatedBy   pgtype.UUID
+	LinkHolder  pgtype.UUID
 }
 
 type InsertInviteRow struct {
@@ -86,11 +87,17 @@ type InsertInviteRow struct {
 // email waits for the resend interval after it (InviteEmailDue), but the
 // invitation's admins see it only while the link that the invitation has is
 // the one that was emailed then: while its token_hash is set.
+//
+// link_holder is the account that the request that made the invitation or
+// sent it anew gave its link to as text, while the invitation has that link,
+// so that removing the account's membership revokes the invitation
+// (RevokeMemberInvites).
 // InsertInvite adds an invitation that expires after lifetime: to the
 // address email, or a link invitation without one, with the SHA-256 hash of
-// its secret, or without one, which the job that emails its link adds. It
-// adds nothing, and returns no row, if the address has an open invitation of
-// the workspace already, without failing the transaction.
+// its secret, whose link the account link_holder is given as text, or
+// without one, which the job that emails its link adds. It adds nothing, and
+// returns no row, if the address has an open invitation of the workspace
+// already, without failing the transaction.
 func (q *Queries) InsertInvite(ctx context.Context, arg InsertInviteParams) (InsertInviteRow, error) {
 	row := q.db.QueryRow(ctx, insertInvite,
 		arg.ID,
@@ -100,6 +107,7 @@ func (q *Queries) InsertInvite(ctx context.Context, arg InsertInviteParams) (Ins
 		arg.TokenHash,
 		arg.Lifetime,
 		arg.CreatedBy,
+		arg.LinkHolder,
 	)
 	var i InsertInviteRow
 	err := row.Scan(&i.ExpiresAt, &i.CreatedAt)
@@ -353,27 +361,31 @@ func (q *Queries) OpenInvites(ctx context.Context, arg OpenInvitesParams) ([]Ope
 const renewInvite = `-- name: RenewInvite :one
 UPDATE invite SET token_hash = $1::bytea,
     sent_at = CASE WHEN $1::bytea IS NULL THEN sent_at END,
-    expires_at = now() + $2::interval, updated_at = now()
-WHERE workspace_id = $3 AND id = $4
+    link_holder = $2::uuid,
+    expires_at = now() + $3::interval, updated_at = now()
+WHERE workspace_id = $4 AND id = $5
 RETURNING expires_at
 `
 
 type RenewInviteParams struct {
 	TokenHash   []byte
+	LinkHolder  pgtype.UUID
 	Lifetime    pgtype.Interval
 	WorkspaceID pgtype.UUID
 	ID          pgtype.UUID
 }
 
 // RenewInvite gives an invitation a new secret, whose SHA-256 hash is
-// token_hash, or none until the job that emails its link adds one, in place
-// of the one that its link held, which no longer works, and makes it expire
-// lifetime from now. It keeps when the job last emailed the invitation for
-// the email to come, and forgets it for a link given as text. It returns
-// when the invitation expires.
+// token_hash, and whose link the account link_holder is given as text, or
+// none until the job that emails its link adds one, in place of the one that
+// its link held, which no longer works, and makes it expire lifetime from
+// now. It keeps when the job last emailed the invitation for the email to
+// come, and forgets it for a link given as text. It returns when the
+// invitation expires.
 func (q *Queries) RenewInvite(ctx context.Context, arg RenewInviteParams) (pgtype.Timestamptz, error) {
 	row := q.db.QueryRow(ctx, renewInvite,
 		arg.TokenHash,
+		arg.LinkHolder,
 		arg.Lifetime,
 		arg.WorkspaceID,
 		arg.ID,
@@ -418,7 +430,8 @@ func (q *Queries) RevokeInvite(ctx context.Context, arg RevokeInviteParams) erro
 const revokeMemberInvites = `-- name: RevokeMemberInvites :many
 UPDATE invite SET revoked_at = now(), updated_at = now()
 WHERE workspace_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL
-    AND (created_by = $2 OR email = (SELECT u.email FROM "user" u WHERE u.id = $2))
+    AND (created_by = $2 OR link_holder = $2
+        OR email = (SELECT u.email FROM "user" u WHERE u.id = $2))
 RETURNING id, email, role
 `
 
@@ -434,10 +447,11 @@ type RevokeMemberInvitesRow struct {
 }
 
 // RevokeMemberInvites revokes the open invitations of the workspace, expired
-// or not, that the user user_id made, or that are to the user's address, as
-// citext compares them, as the removal of the user's membership does
-// (package workspace), so that no link that the user holds lets them back
-// in, and returns them.
+// or not, that the user user_id made, whose link the user was last given as
+// text (link_holder), as by sending one anew, or that are to the user's
+// address, as citext compares them, as the removal of the user's membership
+// does (package workspace), so that no link that the user holds lets them
+// back in, and returns them.
 func (q *Queries) RevokeMemberInvites(ctx context.Context, arg RevokeMemberInvitesParams) ([]RevokeMemberInvitesRow, error) {
 	rows, err := q.db.Query(ctx, revokeMemberInvites, arg.WorkspaceID, arg.UserID)
 	if err != nil {
@@ -459,8 +473,8 @@ func (q *Queries) RevokeMemberInvites(ctx context.Context, arg RevokeMemberInvit
 }
 
 const setInviteHash = `-- name: SetInviteHash :exec
-UPDATE invite SET token_hash = $1, sent_at = now(), expires_at = now() + $2::interval,
-    updated_at = now()
+UPDATE invite SET token_hash = $1, sent_at = now(), link_holder = NULL,
+    expires_at = now() + $2::interval, updated_at = now()
 WHERE workspace_id = $3 AND id = $4
 `
 
@@ -473,9 +487,9 @@ type SetInviteHashParams struct {
 
 // SetInviteHash gives an invitation the SHA-256 hash of its secret, which the
 // email that the job sends holds, in place of the hash of any secret that an
-// earlier attempt of the job sent, records that the job emails it now, and
-// makes it expire lifetime from now, so that the link lasts as long as the
-// email says, however late the job sends it.
+// earlier attempt of the job sent, or that a link given as text held, records
+// that the job emails it now, and makes it expire lifetime from now, so that
+// the link lasts as long as the email says, however late the job sends it.
 func (q *Queries) SetInviteHash(ctx context.Context, arg SetInviteHashParams) error {
 	_, err := q.db.Exec(ctx, setInviteHash,
 		arg.TokenHash,

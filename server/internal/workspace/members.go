@@ -22,8 +22,9 @@ import (
 // member, themselves included, and only an owner removes an owner (§5.6),
 // and never the workspace's last owner whose account is active (AC2).
 // Removing a member revokes the workspace's open invitations that the member
-// made, and those to the member's address, so that no link that they hold
-// lets them back in. A user joins a workspace by accepting an invitation
+// made, those whose link the member was last given as text, as by sending
+// one anew, and those to the member's address, so that no link that they
+// hold lets them back in. A user joins a workspace by accepting an invitation
 // (package invite, Join), or through the operator (Grant).
 
 var (
@@ -119,15 +120,15 @@ func (s *Service) Members(ctx context.Context, userID, id, after ids.UUID, limit
 
 // RemoveMember removes the membership membershipID from the workspace id,
 // and with it the membership's project grants, and revokes the workspace's
-// open invitations that the member made, or that are to the member's
-// address, expired or not, so that no link that they hold lets them back in,
-// which the user userID asks for, as client, and records all of that in the
-// audit log. It returns ErrNotFound
-// if the workspace does not exist, the user's role in it is none, or it has
-// no such membership, ErrInsufficientRole unless the user's role is owner or
-// admin, ErrOwnerRequired if the membership is an owner's and the user's
-// role is admin (§5.6), and ErrLastOwner if the workspace would have no
-// other owner whose account is active (FR-TEN-02 AC2), and removes nothing
+// open invitations that the member made, whose link the member was last
+// given as text, or that are to the member's address, expired or not, so
+// that no link that they hold lets them back in, which the user userID asks
+// for, as client, and records all of that in the audit log. It returns
+// ErrNotFound if the workspace does not exist, the user's role in it is none,
+// or it has no such membership, ErrInsufficientRole unless the user's role is
+// owner or admin, ErrOwnerRequired if the membership is an owner's and the
+// user's role is admin (§5.6), and ErrLastOwner if the workspace would have
+// no other owner whose account is active (FR-TEN-02 AC2), and removes nothing
 // then. An owner or admin may remove their own membership, as long as the
 // workspace keeps an owner.
 func (s *Service) RemoveMember(ctx context.Context, userID, id, membershipID ids.UUID, client audit.Client) error {

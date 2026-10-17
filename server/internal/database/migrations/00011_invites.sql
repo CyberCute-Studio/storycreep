@@ -25,8 +25,16 @@ ALTER TABLE invite
 	-- answers as done, or null until it is accepted, or once the account is
 	-- deleted.
 	ADD COLUMN accepted_by uuid REFERENCES "user" ON DELETE SET NULL,
-	ADD CONSTRAINT invite_accepted_by_when_accepted CHECK (accepted_by IS NULL OR accepted_at IS NOT NULL);
+	ADD CONSTRAINT invite_accepted_by_when_accepted CHECK (accepted_by IS NULL OR accepted_at IS NOT NULL),
+	-- The account that the invitation's link was last given to as text, by
+	-- the request that made the invitation or sent it anew, or null if no
+	-- request gave the link that it has, as when a job emailed it, or once
+	-- the account is deleted. Removing that account's membership revokes the
+	-- invitation, as it does the invitations that the account made, so that
+	-- no link that the account holds lets it back in.
+	ADD COLUMN link_holder uuid REFERENCES "user" ON DELETE SET NULL;
 CREATE INDEX invite_accepted_by ON invite (accepted_by);
+CREATE INDEX invite_link_holder ON invite (link_holder);
 
 -- An address has one open invitation of a workspace at most: one that has
 -- been neither accepted nor revoked, whether or not it has expired, which

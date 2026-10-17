@@ -11,9 +11,10 @@
 // address, while a link invitation may be accepted by any account (AC3). An
 // address has one open invitation of a workspace at most: one that has been
 // neither accepted nor revoked. Removing a member revokes the workspace's
-// open invitations that the member made, and those to the member's address
-// (workspace.Service.RemoveMember), so that no link that they hold lets them
-// back in.
+// open invitations that the member made, those whose link the member was
+// last given as text, as by sending one anew, and those to the member's
+// address (workspace.Service.RemoveMember), so that no link that they hold
+// lets them back in.
 //
 // The link holds the invitation's secret, made as a session's is, and the
 // database holds only its SHA-256 hash, so that whoever reads the database
@@ -272,16 +273,11 @@ func (s *Service) Create(ctx context.Context, userID, id ids.UUID, in Request, c
 		if err := refuseMember(ctx, q, id, inv.Email); err != nil {
 			return err
 		}
-		var hash []byte
-		if !emailed {
-			var value secret.Value
-			value, hash = account.NewSecret()
-			inv.URL = secret.New(linkURL(s.publicURL, value))
-		}
+		hash, holder := s.textLink(&inv, userID, emailed)
 		inv.ID, inv.CreatedBy = ids.New(), userID
 		row, err := q.InsertInvite(ctx, queries.InsertInviteParams{ID: nullUUID(inv.ID), WorkspaceID: nullUUID(id),
 			Email: pgtype.Text{String: inv.Email, Valid: inv.Email != ""}, Role: string(inv.Role), TokenHash: hash,
-			Lifetime: database.Interval(Lifetime), CreatedBy: nullUUID(userID)})
+			Lifetime: database.Interval(Lifetime), CreatedBy: nullUUID(userID), LinkHolder: holder})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrExists
 		}
@@ -300,6 +296,20 @@ func (s *Service) Create(ctx context.Context, userID, id ids.UUID, in Request, c
 		return Invite{}, err
 	}
 	return inv, nil
+}
+
+// textLink gives the invitation inv a new link, as its URL, which the user
+// userID is given as text, unless emailed says that the instance emails it,
+// and returns the hash of the link's secret, and the user, as the
+// invitation's link holder, whose removal from the workspace revokes the
+// invitation (workspace.Service.RemoveMember), or neither if it is emailed.
+func (s *Service) textLink(inv *Invite, userID ids.UUID, emailed bool) ([]byte, pgtype.UUID) {
+	if emailed {
+		return nil, pgtype.UUID{}
+	}
+	value, hash := account.NewSecret()
+	inv.URL = secret.New(linkURL(s.publicURL, value))
+	return hash, nullUUID(userID)
 }
 
 // refuseMember returns workspace.ErrAlreadyMember if the address email
@@ -436,14 +446,10 @@ func (s *Service) Resend(ctx context.Context, userID, id, inviteID ids.UUID, cli
 			return err
 		}
 		emailed := configured && inv.Email != ""
-		var hash []byte
-		if !emailed {
-			var value secret.Value
-			value, hash = account.NewSecret()
-			inv.URL = secret.New(linkURL(s.publicURL, value))
-		}
+		hash, holder := s.textLink(&inv, userID, emailed)
 		expires, err := queries.New(tx).RenewInvite(ctx, queries.RenewInviteParams{TokenHash: hash,
-			Lifetime: database.Interval(Lifetime), WorkspaceID: nullUUID(id), ID: nullUUID(inviteID)})
+			LinkHolder: holder, Lifetime: database.Interval(Lifetime), WorkspaceID: nullUUID(id),
+			ID: nullUUID(inviteID)})
 		if err != nil {
 			return fmt.Errorf("invite: renew the invitation: %w", err)
 		}

@@ -403,16 +403,24 @@ func TestOwnerRequired(t *testing.T) {
 }
 
 // TestRemoveRevokesInvites checks that removing a member revokes the
-// workspace's open invitations that the member made, and those to the
-// member's address, so that neither lets them back in, and records each
-// revocation with the removal's actor and membership, while the other
-// invitations stay open.
+// workspace's open invitations that the member made, those whose link the
+// member was given by sending them anew, and those to the member's address,
+// so that none lets them back in, and records each revocation with the
+// removal's actor and membership, while the other invitations stay open.
 func TestRemoveRevokesInvites(t *testing.T) {
 	t.Parallel()
 	s, d, owner, ws := inviteServer(t, "open", nil)
 	ada := newNamedAccount(t, s.main, "ada@example.com", "Ada")
 	join(t, d, ada, ws, "admin")
 	adas := linkToken(t, createInvite(t, s.main, ada, ws, "", "admin").URL)
+	// The owner's link invitation, whose new link ada takes by sending it
+	// anew.
+	owners := createInvite(t, s.main, owner, ws, "", "editor")
+	res := call(s.main, http.MethodPost, invitesPath(ws)+"/"+owners.ID+"/resend", nil, ada.header(true))
+	var resent inviteBody
+	if res.status != http.StatusOK || json.Unmarshal(res.body, &resent) != nil {
+		t.Fatalf("ada sends the owner's invitation anew: %d %s", res.status, res.body)
+	}
 	hana := newNamedAccount(t, s.main, "hana@example.com", "Hana")
 	hanas := linkToken(t, createInvite(t, s.main, owner, ws, "HANA@example.com", "editor").URL)
 	// hana joins another way, so the invitation to her address stays open.
@@ -430,16 +438,19 @@ func TestRemoveRevokesInvites(t *testing.T) {
 	}
 	wantCode(t, "the removed admin accepts the invitation that she made", acceptInvite(t, s.main, ada, adas),
 		http.StatusGone, api.CodeInviteRevoked)
+	wantCode(t, "the removed admin accepts the invitation that she sent anew", acceptInvite(t, s.main, ada,
+		linkToken(t, resent.URL)), http.StatusGone, api.CodeInviteRevoked)
 	wantCode(t, "the removed member accepts the invitation to her address", acceptInvite(t, s.main, hana, hanas),
 		http.StatusGone, api.CodeInviteRevoked)
 	if got := invitesOf(t, s.main, owner, ws); len(got) != 1 || got[0].ID != jo.ID {
 		t.Errorf("the open invitations are %+v, want jo's alone", got)
 	}
-	for name, membership := range removed {
-		if n := countRows(t, d, `SELECT count(*) FROM audit_entry WHERE action = 'invite.revoke'
+	for name, want := range map[string]int{"ada": 2, "hana": 1} {
+		n := countRows(t, d, `SELECT count(*) FROM audit_entry WHERE action = 'invite.revoke'
 			AND actor_user_id = $1::uuid AND metadata->>'membership_id' = $2`,
-			decode(t, ids.User, owner.body.UserID).String(), decode(t, ids.Membership, membership).String()); n != 1 {
-			t.Errorf("the removal of %s revoked %d invitations, want 1", name, n)
+			decode(t, ids.User, owner.body.UserID).String(), decode(t, ids.Membership, removed[name]).String())
+		if n != want {
+			t.Errorf("the removal of %s revoked %d invitations, want %d", name, n, want)
 		}
 	}
 }

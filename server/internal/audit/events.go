@@ -70,10 +70,11 @@ const (
 	// ActionMembershipRemove is the removal of a member from a workspace by
 	// one of its owners or admins (FR-TEN-02), its actor, which ends the
 	// membership and its project grants, and revokes the workspace's open
-	// invitations that the member made or that are to the member's address
-	// (ActionInviteRevoke). It belongs to the workspace, its subject is the
-	// membership, its metadata's user_id names the member, and its role the
-	// role that the membership had.
+	// invitations that the member made, whose link the member was last given
+	// as text, or that are to the member's address (ActionInviteRevoke). It
+	// belongs to the workspace, its subject is the membership, its metadata's
+	// user_id names the member, and its role the role that the membership
+	// had.
 	ActionMembershipRemove Action = "membership.remove"
 	// ActionInviteCreate is the invitation of an address, or of whoever holds
 	// a link, to join a workspace with the role that its metadata's role
@@ -90,10 +91,10 @@ const (
 	// ActionInviteRevoke is the revocation of an invitation by an owner or
 	// admin of its workspace, after which its link is refused (FR-TEN-02
 	// AC1). Its metadata's role and kind are the invitation's. An invitation
-	// that the removal of a member revokes, because the member made it or it
-	// is to the member's address, has the removal's actor, and its
-	// metadata's membership_id names the removed membership
-	// (ActionMembershipRemove).
+	// that the removal of a member revokes, because the member made it, was
+	// last given its link as text, or has the address that it invites, has
+	// the removal's actor, and its metadata's membership_id names the removed
+	// membership (ActionMembershipRemove).
 	ActionInviteRevoke Action = "invite.revoke"
 	// ActionInviteAccept is the acceptance of an invitation by the user who
 	// accepts it, its actor, who joins the workspace (ActionMembershipCreate)
