@@ -15,11 +15,12 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 )
 
-// Members (PRD FR-TEN-02): every member of a workspace lists its members,
-// with their display names and roles, guests included, and its owners and
-// admins see their email addresses too, which managing them needs. An owner
-// or admin removes a member, and only an owner removes an owner (§5.6), and
-// never the workspace's last owner whose account is active (AC2). A user
+// Members (PRD FR-TEN-02): every member of a workspace with a role in it,
+// which a guest's is not (§5.5), lists its members, with their display names
+// and roles, guests included, and its owners and admins see their email
+// addresses too, which managing them needs. An owner or admin removes a
+// member, themselves included, and only an owner removes an owner (§5.6),
+// and never the workspace's last owner whose account is active (AC2). A user
 // joins a workspace by accepting an invitation (package invite, Join), or
 // through the operator (Grant).
 
@@ -52,11 +53,28 @@ type Member struct {
 // It returns ErrNotFound if the workspace does not exist, or the user's role
 // in it is none.
 func (s *Service) Authorize(ctx context.Context, tx pgx.Tx, userID, id ids.UUID) (role.Role, error) {
+	return s.authorize(ctx, tx, userID, id, true)
+}
+
+// Role returns the role that the user userID acts with in the workspace id,
+// whose transaction tx is, as Authorize does, but without locking the
+// membership, for an operation that only reads, as Get does.
+func (s *Service) Role(ctx context.Context, tx pgx.Tx, userID, id ids.UUID) (role.Role, error) {
+	return s.authorize(ctx, tx, userID, id, false)
+}
+
+// authorize is Authorize if lock is set, and else Role.
+func (s *Service) authorize(ctx context.Context, tx pgx.Tx, userID, id ids.UUID, lock bool) (role.Role, error) {
 	q := queries.New(tx)
 	if _, err := q.Workspace(ctx, nullUUID(id)); errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	} else if err != nil {
 		return "", fmt.Errorf("workspace: read the workspace: %w", err)
+	}
+	if !lock {
+		member, err := q.MembershipRole(ctx, queries.MembershipRoleParams{WorkspaceID: nullUUID(id),
+			UserID: nullUUID(userID)})
+		return s.resolve(ctx, q, userID, member, err)
 	}
 	member, err := q.LockMembershipRole(ctx, queries.LockMembershipRoleParams{WorkspaceID: nullUUID(id),
 		UserID: nullUUID(userID)})
@@ -65,16 +83,15 @@ func (s *Service) Authorize(ctx context.Context, tx pgx.Tx, userID, id ids.UUID)
 
 // Members returns at most limit of the members of the workspace id, in the
 // order of their memberships' IDs: the first, if after is zero, or else
-// those after the membership after, for the user userID, and the role that
-// the user acts with in the workspace. A member's email address is there
-// only if that role is owner or admin. It returns ErrNotFound if the
-// workspace does not exist, or the user's role in it is none.
-func (s *Service) Members(ctx context.Context, userID, id, after ids.UUID, limit int) ([]Member, role.Role, error) {
+// those after the membership after, for the user userID. A member's email
+// address is there only if the role that the user acts with in the
+// workspace is owner or admin. It returns ErrNotFound if the workspace does
+// not exist, or the user's role in it is none.
+func (s *Service) Members(ctx context.Context, userID, id, after ids.UUID, limit int) ([]Member, error) {
 	var out []Member
-	var r role.Role
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: id, UserID: userID}, func(tx pgx.Tx) error {
-		var err error
-		if r, err = s.Authorize(ctx, tx, userID, id); err != nil {
+		r, err := s.Role(ctx, tx, userID, id)
+		if err != nil {
 			return err
 		}
 		rows, err := queries.New(tx).WorkspaceMembers(ctx, queries.WorkspaceMembersParams{WorkspaceID: nullUUID(id),
@@ -93,9 +110,9 @@ func (s *Service) Members(ctx context.Context, userID, id, after ids.UUID, limit
 		return nil
 	})
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return out, r, nil
+	return out, nil
 }
 
 // RemoveMember removes the membership membershipID from the workspace id,
@@ -106,8 +123,8 @@ func (s *Service) Members(ctx context.Context, userID, id, after ids.UUID, limit
 // admin, ErrOwnerRequired if the membership is an owner's and the user's
 // role is admin (§5.6), and ErrLastOwner if the workspace would have no
 // other owner whose account is active (FR-TEN-02 AC2), and removes nothing
-// then. A user may remove their own membership, as long as the workspace
-// keeps an owner.
+// then. An owner or admin may remove their own membership, as long as the
+// workspace keeps an owner.
 func (s *Service) RemoveMember(ctx context.Context, userID, id, membershipID ids.UUID, client audit.Client) error {
 	return s.db.InTx(ctx, database.Scope{WorkspaceID: id, UserID: userID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)

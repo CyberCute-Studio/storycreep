@@ -4,6 +4,12 @@
 -- auth_resolve_invite (§5.4), and then reads the invitation in a transaction
 -- of that workspace. An invitation is open until it is accepted or revoked,
 -- and works while it is open and has not expired.
+--
+-- sent_at is when the job last emailed a link of the invitation. It stays
+-- when the invitation is sent anew to be emailed again, so that the next
+-- email waits for the resend interval after it (InviteEmailDue), but the
+-- invitation's admins see it only while the link that the invitation has is
+-- the one that was emailed then: while its token_hash is set.
 
 -- name: InsertInvite :one
 -- InsertInvite adds an invitation that expires after lifetime: to the
@@ -29,8 +35,11 @@ SELECT EXISTS (
 -- name: OpenInvites :many
 -- OpenInvites returns the invitations of the workspace that are open, expired
 -- or not, in the order of their IDs, after the invitation after, or from the
--- first if after is null.
-SELECT id, email, role, expires_at, (expires_at <= now())::boolean AS expired, sent_at, created_by, created_at
+-- first if after is null, each with when the job emailed the link that it
+-- has, or null if no email holds that link.
+SELECT
+    id, email, role, expires_at, (expires_at <= now())::boolean AS expired,
+    (CASE WHEN token_hash IS NOT NULL THEN sent_at END)::timestamptz AS sent_at, created_by, created_at
 FROM invite
 WHERE workspace_id = @workspace_id AND accepted_at IS NULL AND revoked_at IS NULL
     AND (sqlc.narg(after)::uuid IS NULL OR id > sqlc.narg(after)::uuid)
@@ -38,11 +47,13 @@ ORDER BY id
 LIMIT @max_rows;
 
 -- name: LockInvite :one
--- LockInvite returns an invitation of the workspace, and whether it has been
+-- LockInvite returns an invitation of the workspace, with when the job
+-- emailed the link that it has, as OpenInvites does, and whether it has been
 -- accepted or revoked, and locks it against changes until the transaction
 -- ends, so that a change of it and its acceptance run one after the other.
 SELECT
-    id, email, role, expires_at, sent_at, created_by, created_at,
+    id, email, role, expires_at, (CASE WHEN token_hash IS NOT NULL THEN sent_at END)::timestamptz AS sent_at,
+    created_by, created_at,
     (accepted_at IS NOT NULL)::boolean AS accepted,
     (revoked_at IS NOT NULL)::boolean AS revoked
 FROM invite
@@ -53,11 +64,24 @@ FOR UPDATE;
 -- RenewInvite gives an invitation a new secret, whose SHA-256 hash is
 -- token_hash, or none until the job that emails its link adds one, in place
 -- of the one that its link held, which no longer works, and makes it expire
--- lifetime from now. It returns when the invitation expires.
-UPDATE invite SET token_hash = sqlc.narg(token_hash), sent_at = NULL, expires_at = now() + @lifetime::interval,
-    updated_at = now()
+-- lifetime from now. It keeps when the job last emailed the invitation for
+-- the email to come, and forgets it for a link given as text. It returns
+-- when the invitation expires.
+UPDATE invite SET token_hash = sqlc.narg(token_hash)::bytea,
+    sent_at = CASE WHEN sqlc.narg(token_hash)::bytea IS NULL THEN sent_at END,
+    expires_at = now() + @lifetime::interval, updated_at = now()
 WHERE workspace_id = @workspace_id AND id = @id
 RETURNING expires_at;
+
+-- name: InviteEmailDue :one
+-- InviteEmailDue returns when the workspace may next email an invitation to
+-- the address email: resend_interval after the job last emailed one of the
+-- workspace's invitations to it, revoked and accepted ones included, and no
+-- row if that time has passed, or no job has emailed one.
+SELECT (max(sent_at) + @resend_interval::interval)::timestamptz AS due
+FROM invite
+WHERE workspace_id = @workspace_id AND email = @email
+HAVING max(sent_at) + @resend_interval::interval > now();
 
 -- name: RevokeInvite :exec
 -- RevokeInvite revokes an invitation, which accepting then answers as
@@ -94,11 +118,14 @@ WHERE workspace_id = @workspace_id AND id = @id;
 -- LockInviteToSend returns what the email of an invitation's link needs, if
 -- the invitation is to an address, is open, its workspace is active, and it
 -- has not expired, which an invitation that was asked to be emailed longer
--- ago than its lifetime has: the address, the role, and the locale that the
--- email is written in, the preferred locale of the account that the address
--- belongs to, if it has one, and else the workspace's default locale, as a
--- BCP 47 tag, or null if neither has one. It locks the invitation, so that
--- the job that sends it and a use of it run one after the other.
+-- ago than its lifetime has, and, for a job's first attempt, if the link
+-- that the invitation has was not emailed in the last resend_interval, as by
+-- another job of the invitation that ran just before: the address, the role,
+-- and the locale that the email is written in, the preferred locale of the
+-- account that the address belongs to, if it has one, and else the
+-- workspace's default locale, as a BCP 47 tag, or null if neither has one.
+-- It locks the invitation, so that the job that sends it and a use of it run
+-- one after the other.
 SELECT
     i.email::text AS email, i.role,
     COALESCE(u.locale, w.settings->>'default_locale') AS locale
@@ -107,17 +134,26 @@ JOIN workspace w ON w.id = i.workspace_id AND w.status = 'active'
 LEFT JOIN "user" u ON u.email = i.email
 WHERE i.workspace_id = @workspace_id AND i.id = @id
     AND i.email IS NOT NULL AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()
+    AND (NOT @first_attempt::boolean OR i.token_hash IS NULL OR i.sent_at IS NULL
+        OR i.sent_at <= now() - @resend_interval::interval)
 FOR UPDATE OF i;
 
 -- name: SetInviteHash :exec
 -- SetInviteHash gives an invitation the SHA-256 hash of its secret, which the
 -- email that the job sends holds, in place of the hash of any secret that an
--- earlier attempt of the job sent, records that the job made the email then,
--- and makes it expire lifetime from now, so that the link lasts as long as
--- the email says, however late the job sends it.
+-- earlier attempt of the job sent, records that the job emails it now, and
+-- makes it expire lifetime from now, so that the link lasts as long as the
+-- email says, however late the job sends it.
 UPDATE invite SET token_hash = @token_hash, sent_at = now(), expires_at = now() + @lifetime::interval,
     updated_at = now()
 WHERE workspace_id = @workspace_id AND id = @id;
+
+-- name: UnmarkInviteSent :exec
+-- UnmarkInviteSent records that the email of the invitation's link whose
+-- secret has the SHA-256 hash token_hash was not sent after all, unless the
+-- invitation has another link by now.
+UPDATE invite SET sent_at = NULL, updated_at = now()
+WHERE workspace_id = @workspace_id AND id = @id AND token_hash = @token_hash;
 
 -- name: ResolveInvite :one
 -- ResolveInvite returns the workspace of the invitation whose secret has the

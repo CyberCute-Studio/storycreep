@@ -151,11 +151,14 @@ type Link struct {
 	Email string
 }
 
-// linkURL returns the URL of a link of kind k with the secret value, on the
-// instance at u.
-func linkURL(u config.PublicURL, k LinkKind, value secret.Value) string {
+// LinkURL returns the URL of a link with the secret value, on the instance at
+// u, which opens the web app's page at path, with the secret in its
+// fragment, which a browser does not send to the server, so that no log of a
+// request holds it: a link of kind k opens k.path(), and an invitation's
+// (package invite) the page that accepts it.
+func LinkURL(u config.PublicURL, path string, value secret.Value) string {
 	l := u.URL()
-	l.Path = k.path()
+	l.Path = path
 	l.Fragment = "token=" + value.Reveal()
 	return l.String()
 }
@@ -362,7 +365,7 @@ func linkEmail(u config.PublicURL, kind LinkKind, locale string, value secret.Va
 	}
 	l := i18n.Default().Localizer(tag)
 	to := mail.Address{Address: address}
-	args := i18n.Args{"site": u.URL().Host, "url": linkURL(u, kind, value)}
+	args := i18n.Args{"site": u.URL().Host, "url": LinkURL(u, kind.path(), value)}
 	if kind == LinkPasswordReset {
 		args["minutes"] = int(PasswordResetLifetime / time.Minute)
 		return email.Message{To: to,
@@ -606,8 +609,8 @@ func issueLink(ctx context.Context, tx pgx.Tx, u config.PublicURL, kind LinkKind
 		Metadata: map[string]any{"kind": string(kind)}}); err != nil {
 		return Link{}, err
 	}
-	return Link{Kind: kind, URL: secret.New(linkURL(u, kind, value)), ExpiresAt: expires.Time, Email: stored.Email},
-		nil
+	return Link{Kind: kind, URL: secret.New(LinkURL(u, kind.path(), value)), ExpiresAt: expires.Time,
+		Email: stored.Email}, nil
 }
 
 // cleanUpEmailTokens deletes the tokens that have expired, in batches, each

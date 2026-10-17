@@ -469,7 +469,7 @@ func TestMembersAndInvitesByRole(t *testing.T) {
 // address of a member, a second open one to an address, as citext compares
 // them, until the first is revoked, and one whose fields are not valid; and
 // that accepting an invitation of a workspace that the user belongs to
-// already is refused, and leaves the invitation open.
+// already is refused, as is sending it anew, and leaves the invitation open.
 func TestInviteConflicts(t *testing.T) {
 	t.Parallel()
 	s, d, admin, ws := inviteServer(t, "open", nil)
@@ -500,6 +500,8 @@ func TestInviteConflicts(t *testing.T) {
 	join(t, d, hana, ws, "viewer")
 	wantCode(t, "accept an invitation as a member", acceptInvite(t, s.main, hana, linkToken(t, second.URL)),
 		http.StatusConflict, api.CodeAlreadyMember)
+	wantCode(t, "send a member's invitation anew", call(s.main, http.MethodPost,
+		invitesPath(ws)+"/"+second.ID+"/resend", nil, admin.header(true)), http.StatusConflict, api.CodeAlreadyMember)
 	if got := invitesOf(t, s.main, admin, ws); len(got) != 1 || got[0].ID != second.ID {
 		t.Errorf("the open invitations are %+v, want the second one", got)
 	}
@@ -597,8 +599,9 @@ func TestRegisterWithInvite(t *testing.T) {
 // TestEmailedInvite checks that an instance that sends email emails the link
 // of an invitation to an address, which names the instance and the role but
 // not the workspace, and gives no link as text then, that sending the
-// invitation anew emails a new link, in place of the old one, and that a
-// link invitation gives its link as text, as it is emailed to no one.
+// invitation anew emails a new link, in place of the old one, 10 minutes
+// after the last email at the earliest, and that a link invitation gives its
+// link as text, as it is emailed to no one.
 func TestEmailedInvite(t *testing.T) {
 	t.Parallel()
 	server := emailtest.Start(t, emailtest.Options{})
@@ -636,6 +639,12 @@ func TestEmailedInvite(t *testing.T) {
 		t.Errorf("the open invitations are %+v, want the emailed one", got)
 	}
 
+	// The first email was sent 10 minutes ago, as far as the server can
+	// tell, so the new link is emailed at once.
+	if _, err := d.Admin(t).Exec(context.Background(),
+		"UPDATE invite SET sent_at = sent_at - interval '10 minutes'"); err != nil {
+		t.Fatal(err)
+	}
 	res := call(s.main, http.MethodPost, invitesPath(ws)+"/"+inv.ID+"/resend", nil, admin.header(true))
 	var renewed inviteBody
 	if res.status != http.StatusOK || json.Unmarshal(res.body, &renewed) != nil || renewed.URL != "" ||
@@ -656,6 +665,19 @@ func TestEmailedInvite(t *testing.T) {
 	}
 	if n := countRows(t, d, "SELECT count(*) FROM river_job WHERE kind = 'email_invite'"); n != 2 {
 		t.Errorf("%d invitation emails were enqueued, want 2", n)
+	}
+
+	// An invitation sent anew at once after its email is emailed again only
+	// 10 minutes after it.
+	jo := createInvite(t, s.main, admin, ws, "jo@example.com", "viewer")
+	invitations(3)
+	if res := call(s.main, http.MethodPost, invitesPath(ws)+"/"+jo.ID+"/resend", nil,
+		admin.header(true)); res.status != http.StatusOK {
+		t.Fatalf("send jo's invitation anew: %d %s", res.status, res.body)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM river_job WHERE kind = 'email_invite' AND state = 'scheduled'
+		AND scheduled_at > now() + interval '9 minutes'`); n != 1 {
+		t.Errorf("%d invitation emails wait 10 minutes, want the one sent anew at once", n)
 	}
 }
 

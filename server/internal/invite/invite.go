@@ -18,24 +18,30 @@
 // link of an invitation to an address, by a job, which makes the secret when
 // it sends it, so that neither the request nor the job's arguments hold the
 // secret, as an emailed link of package account does; the link lasts its 14
-// days from then. The email names no one and nothing but the instance and
-// the role, never the workspace or the inviting user, whose names their
-// users chose, so that an account cannot put text of its own in email that
-// the instance sends to any address it likes. An instance that sends no
-// email gives the link of every invitation, as text, to the admin who makes
-// it or sends it anew (FR-AUTH-03 AC1), and so does every instance for a
-// link invitation, which has no address to email: an invitation grants only
-// access to the workspace, which its admins control anyway.
+// days from then. A workspace emails an address one invitation in
+// ResendInterval at most: the job of an invitation made or sent anew sooner
+// after the last email to its address waits until ResendInterval has passed,
+// so that sending an invitation anew again and again cannot flood an inbox.
+// The email names no one and nothing but the instance and the role, never
+// the workspace or the inviting user, whose names their users chose, so that
+// an account cannot put text of its own in email that the instance sends to
+// any address it likes. An instance that sends no email gives the link of
+// every invitation, as text, to the admin who makes it or sends it anew
+// (FR-AUTH-03 AC1), and so does every instance for a link invitation, which
+// has no address to email: an invitation grants only access to the
+// workspace, which its admins control anyway.
 //
 // A signed-in user accepts an invitation with its link (Accept), and joins
 // the workspace with its role. Someone without an account registers one with
 // the link instead (Register), which accepts the invitation in the
 // transaction that adds the account, under the invite and open signup
 // policies; under closed, nobody registers, and only an account that exists
-// already accepts an invitation. Registering does the same work, and answers
-// the same, whether or not the address has an account already, as registering
-// without an invitation does (FR-AUTH-01 AC1), and leaves the invitation
-// open then, for the account to accept once it signs in.
+// already accepts an invitation. Registering answers the same whether or not
+// the address has an account already, as registering without an invitation
+// does (FR-AUTH-01 AC1): it checks the invitation and hashes the password
+// either way, but only a new account joins the workspace, and an address
+// with an account leaves the invitation open, for the account to accept
+// once it signs in.
 package invite
 
 import (
@@ -64,6 +70,11 @@ import (
 // Lifetime is how long an invitation lasts from when it is made, sent anew,
 // or emailed (FR-TEN-02).
 const Lifetime = 14 * 24 * time.Hour
+
+// ResendInterval is the least time between two emails of a workspace's
+// invitations to one address, as between two emails of one kind of link to
+// an account (account.ResendInterval).
+const ResendInterval = account.ResendInterval
 
 // Kind is whom an invitation invites.
 type Kind string
@@ -173,7 +184,13 @@ type Invite struct {
 
 // Kind returns whom the invitation invites.
 func (i Invite) Kind() Kind {
-	if i.Email == "" {
+	return kindOf(i.Email)
+}
+
+// kindOf returns the kind of an invitation to the address email, or of a
+// link invitation if it is "".
+func kindOf(email string) Kind {
+	if email == "" {
 		return KindLink
 	}
 	return KindEmail
@@ -194,9 +211,15 @@ var roles = []role.Role{role.Owner, role.Admin, role.Editor, role.Commenter, rol
 // whose transaction tx is, which must be owner or admin to manage its
 // invitations, or the error of package workspace that refuses them:
 // ErrNotFound if the workspace does not exist, or the user's role in it is
-// none, and ErrInsufficientRole otherwise.
-func (s *Service) manage(ctx context.Context, tx pgx.Tx, userID, id ids.UUID) (role.Role, error) {
-	r, err := s.workspaces.Authorize(ctx, tx, userID, id)
+// none, and ErrInsufficientRole otherwise. It locks the user's membership
+// until tx ends (workspace.Service.Authorize) unless the operation only
+// reads.
+func (s *Service) manage(ctx context.Context, tx pgx.Tx, userID, id ids.UUID, reads bool) (role.Role, error) {
+	authorize := s.workspaces.Authorize
+	if reads {
+		authorize = s.workspaces.Role
+	}
+	r, err := authorize(ctx, tx, userID, id)
 	switch {
 	case err != nil:
 		return "", err
@@ -219,15 +242,16 @@ func (s *Service) configured(ctx context.Context) (bool, error) {
 // to the workspace id with the role in.Role, as the user userID asks, as
 // client, and records that in the audit log. On an instance that sends
 // email, an invitation to an address is emailed, by a job that the
-// transaction enqueues; otherwise the invitation's URL is its link, which
-// the user gives the invited person. It returns workspace.ErrNotFound if the
-// workspace does not exist, or the user's role in it is none,
-// workspace.ErrInsufficientRole unless the role is owner or admin,
-// workspace.ErrOwnerRequired for an invitation as owner unless it is owner,
-// then input.FieldErrors if the address or the role is not one that an
-// invitation takes, workspace.ErrAlreadyMember if the address belongs to a
-// member of the workspace, and ErrExists if it has an open invitation of the
-// workspace, and invites no one then.
+// transaction enqueues, which waits until ResendInterval has passed since
+// the workspace last emailed the address; otherwise the invitation's URL is
+// its link, which the user gives the invited person. It returns
+// workspace.ErrNotFound if the workspace does not exist, or the user's role
+// in it is none, workspace.ErrInsufficientRole unless the role is owner or
+// admin, workspace.ErrOwnerRequired for an invitation as owner unless it is
+// owner, then input.FieldErrors if the address or the role is not one that
+// an invitation takes, workspace.ErrAlreadyMember if the address belongs to
+// a member of the workspace, and ErrExists if it has an open invitation of
+// the workspace, and invites no one then.
 func (s *Service) Create(ctx context.Context, userID, id ids.UUID, in Request, client audit.Client) (Invite, error) {
 	configured, err := s.configured(ctx)
 	if err != nil {
@@ -235,7 +259,7 @@ func (s *Service) Create(ctx context.Context, userID, id ids.UUID, in Request, c
 	}
 	var inv Invite
 	err = s.db.InTx(ctx, database.Scope{WorkspaceID: id, UserID: userID}, func(tx pgx.Tx) error {
-		r, err := s.manage(ctx, tx, userID, id)
+		r, err := s.manage(ctx, tx, userID, id, false)
 		if err != nil {
 			return err
 		}
@@ -247,15 +271,8 @@ func (s *Service) Create(ctx context.Context, userID, id ids.UUID, in Request, c
 		}
 		emailed := configured && inv.Email != ""
 		q := queries.New(tx)
-		if inv.Email != "" {
-			member, err := q.AddressIsMember(ctx, queries.AddressIsMemberParams{WorkspaceID: nullUUID(id),
-				Email: inv.Email})
-			switch {
-			case err != nil:
-				return fmt.Errorf("invite: read whether the address is a member's: %w", err)
-			case member:
-				return workspace.ErrAlreadyMember
-			}
+		if err := refuseMember(ctx, q, id, inv.Email); err != nil {
+			return err
 		}
 		var hash []byte
 		if !emailed {
@@ -275,7 +292,7 @@ func (s *Service) Create(ctx context.Context, userID, id ids.UUID, in Request, c
 		}
 		inv.ExpiresAt, inv.CreatedAt = row.ExpiresAt.Time, row.CreatedAt.Time
 		if emailed {
-			if err := s.enqueue(ctx, tx, id, inv.ID); err != nil {
+			if err := s.enqueue(ctx, tx, id, inv.ID, inv.Email); err != nil {
 				return err
 			}
 		}
@@ -285,6 +302,23 @@ func (s *Service) Create(ctx context.Context, userID, id ids.UUID, in Request, c
 		return Invite{}, err
 	}
 	return inv, nil
+}
+
+// refuseMember returns workspace.ErrAlreadyMember if the address email
+// belongs to a member of the workspace id, whose transaction q's is, and nil
+// if it does not, or is "", as for a link invitation.
+func refuseMember(ctx context.Context, q *queries.Queries, id ids.UUID, email string) error {
+	if email == "" {
+		return nil
+	}
+	member, err := q.AddressIsMember(ctx, queries.AddressIsMemberParams{WorkspaceID: nullUUID(id), Email: email})
+	switch {
+	case err != nil:
+		return fmt.Errorf("invite: read whether the address is a member's: %w", err)
+	case member:
+		return workspace.ErrAlreadyMember
+	}
+	return nil
 }
 
 // check returns the invitation that the request makes, with its address as
@@ -336,7 +370,7 @@ func record(ctx context.Context, tx pgx.Tx, action audit.Action, id, userID ids.
 func (s *Service) List(ctx context.Context, userID, id, after ids.UUID, limit int) ([]Invite, error) {
 	var out []Invite
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: id, UserID: userID}, func(tx pgx.Tx) error {
-		if _, err := s.manage(ctx, tx, userID, id); err != nil {
+		if _, err := s.manage(ctx, tx, userID, id, true); err != nil {
 			return err
 		}
 		rows, err := queries.New(tx).OpenInvites(ctx, queries.OpenInvitesParams{WorkspaceID: nullUUID(id),
@@ -380,8 +414,9 @@ func lock(ctx context.Context, tx pgx.Tx, id, inviteID ids.UUID) (inv Invite, re
 // expire Lifetime from now, and emails the new link, or gives it as the
 // invitation's URL, as Create does. It returns the errors of Create's
 // workspace and role, then ErrNotFound if the workspace has no such
-// invitation, ErrAccepted if it has been accepted, and ErrRevoked if it has
-// been revoked, and changes nothing then.
+// invitation, ErrAccepted if it has been accepted, ErrRevoked if it has been
+// revoked, and workspace.ErrAlreadyMember if its address belongs to a member
+// of the workspace by now, and changes nothing then.
 func (s *Service) Resend(ctx context.Context, userID, id, inviteID ids.UUID, client audit.Client) (Invite, error) {
 	configured, err := s.configured(ctx)
 	if err != nil {
@@ -389,7 +424,7 @@ func (s *Service) Resend(ctx context.Context, userID, id, inviteID ids.UUID, cli
 	}
 	var inv Invite
 	err = s.db.InTx(ctx, database.Scope{WorkspaceID: id, UserID: userID}, func(tx pgx.Tx) error {
-		r, err := s.manage(ctx, tx, userID, id)
+		r, err := s.manage(ctx, tx, userID, id, false)
 		if err != nil {
 			return err
 		}
@@ -402,6 +437,9 @@ func (s *Service) Resend(ctx context.Context, userID, id, inviteID ids.UUID, cli
 			return ErrRevoked
 		case inv.Role == role.Owner && r != role.Owner:
 			return workspace.ErrOwnerRequired
+		}
+		if err := refuseMember(ctx, queries.New(tx), id, inv.Email); err != nil {
+			return err
 		}
 		emailed := configured && inv.Email != ""
 		var hash []byte
@@ -417,7 +455,7 @@ func (s *Service) Resend(ctx context.Context, userID, id, inviteID ids.UUID, cli
 		}
 		inv.ExpiresAt, inv.SentAt = expires.Time, time.Time{}
 		if emailed {
-			if err := s.enqueue(ctx, tx, id, inv.ID); err != nil {
+			if err := s.enqueue(ctx, tx, id, inv.ID, inv.Email); err != nil {
 				return err
 			}
 		}
@@ -436,7 +474,7 @@ func (s *Service) Resend(ctx context.Context, userID, id, inviteID ids.UUID, cli
 // workspace has no such invitation, and ErrAccepted if it has been accepted.
 func (s *Service) Revoke(ctx context.Context, userID, id, inviteID ids.UUID, client audit.Client) error {
 	return s.db.InTx(ctx, database.Scope{WorkspaceID: id, UserID: userID}, func(tx pgx.Tx) error {
-		if _, err := s.manage(ctx, tx, userID, id); err != nil {
+		if _, err := s.manage(ctx, tx, userID, id, false); err != nil {
 			return err
 		}
 		inv, revoked, err := lock(ctx, tx, id, inviteID)
@@ -459,6 +497,11 @@ type Preview struct {
 	// Email is the invited address, or "" for a link invitation.
 	Email     string
 	ExpiresAt time.Time
+}
+
+// Kind returns whom the invitation invites.
+func (p Preview) Kind() Kind {
+	return kindOf(p.Email)
 }
 
 // held is an invitation that a link's token found, in a transaction of its
@@ -606,13 +649,9 @@ func (s *Service) accept(ctx context.Context, tx pgx.Tx, h held, userID ids.UUID
 		WorkspaceID: nullUUID(h.workspaceID), ID: h.row.ID}); err != nil {
 		return fmt.Errorf("invite: accept the invitation: %w", err)
 	}
-	kind := KindLink
-	if h.row.Email.Valid {
-		kind = KindEmail
-	}
 	return audit.Record(ctx, tx, audit.Entry{Action: audit.ActionInviteAccept, WorkspaceID: h.workspaceID,
 		ActorUserID: userID, SubjectID: inviteID, Result: audit.ResultSuccess, IP: client.IP,
-		UserAgent: client.UserAgent, Metadata: map[string]any{"role": r, "kind": kind,
+		UserAgent: client.UserAgent, Metadata: map[string]any{"role": r, "kind": kindOf(h.row.Email.String),
 			"membership_id": mid.String(), "new_account": newAccount}})
 }
 
@@ -623,8 +662,9 @@ func (s *Service) accept(ctx context.Context, tx pgx.Tx, h held, userID ids.UUID
 // the account; otherwise it must be that address, as citext compares them,
 // or anything for a link invitation. If the address has an account already,
 // Register adds no account, leaves the invitation open, and returns nil all
-// the same, after the same work, so that its caller answers the same
-// (FR-AUTH-01 AC1); the account accepts the invitation once it signs in. It
+// the same, once it has checked the invitation and hashed the password as
+// for a new account, so that its caller answers the same (FR-AUTH-01 AC1);
+// the account accepts the invitation once it signs in. It
 // returns account.ErrSetupRequired or account.ErrSignupClosed unless the
 // signup policy lets an invitation create an account
 // (account.Service.CheckInvitedSignup), then ErrTokenInvalid, ErrRevoked,
@@ -643,8 +683,9 @@ func (s *Service) Register(ctx context.Context, value secret.Value, reg account.
 	}
 	address := account.CanonicalEmail(reg.Email)
 	if account.CheckEmail(address) != "" {
-		// RegisterInvited refuses the address, once the invitation is
-		// checked.
+		// No account has an address that registration refuses: an
+		// invitation to an address is to another one then, and
+		// RegisterInvited refuses it for a link invitation.
 		address = ""
 	}
 	err = s.db.InTx(ctx, database.Scope{WorkspaceID: id}, func(tx pgx.Tx) error {

@@ -15,15 +15,17 @@
 ALTER TABLE invite
 	ALTER COLUMN token_hash DROP NOT NULL,
 	ADD CONSTRAINT invite_link_has_secret CHECK (token_hash IS NOT NULL OR email IS NOT NULL),
-	-- When the job last emailed the invitation's link, which then lasts its
-	-- 14 days from then, or null if no job has emailed its current link, as
-	-- for a link taken as text.
+	-- When the job last emailed a link of the invitation, which then lasts
+	-- its 14 days from then, or null if no job has, or its email could not be
+	-- sent, or the invitation's link has been taken as text since. Sending
+	-- the invitation anew to be emailed keeps it, so that the next email to
+	-- the address waits 10 minutes after it.
 	ADD COLUMN sent_at timestamptz,
 	-- The account that accepted the invitation, which accepting it again
 	-- answers as done, or null until it is accepted, or once the account is
 	-- deleted.
 	ADD COLUMN accepted_by uuid REFERENCES "user" ON DELETE SET NULL,
-	ADD CONSTRAINT invite_accepted_by CHECK (accepted_by IS NULL OR accepted_at IS NOT NULL);
+	ADD CONSTRAINT invite_accepted_by_when_accepted CHECK (accepted_by IS NULL OR accepted_at IS NOT NULL);
 CREATE INDEX invite_accepted_by ON invite (accepted_by);
 
 -- An address has one open invitation of a workspace at most: one that has

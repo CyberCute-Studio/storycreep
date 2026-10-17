@@ -63,7 +63,7 @@ type inviteBody struct {
 	Role      string     `json:"role" enum:"owner,admin,editor,commenter,viewer,guest" doc:"The role that accepting it gives in the workspace"`
 	Status    string     `json:"status" enum:"pending,expired" doc:"pending while it may be accepted, and expired once it has expired, until it is sent anew"`
 	ExpiresAt time.Time  `json:"expires_at" doc:"When it expires: 14 days after it was made, sent anew, or emailed"`
-	SentAt    *time.Time `json:"sent_at,omitempty" doc:"When the instance emailed its link, which then lasts its 14 days from then. Without it, no email holds its current link: the instance sends no email, the invitation is a link invitation, or its email is still to be sent."`
+	SentAt    *time.Time `json:"sent_at,omitempty" doc:"When the instance emailed its link, which then lasts its 14 days from then. Without it, no email holds its current link: the instance sends no email, the invitation is a link invitation, or its email is still to be sent, or could not be sent, as to an address that the SMTP server refuses."`
 	CreatedBy string     `json:"created_by,omitempty" doc:"The ID of the account that made it, unless that account was deleted"`
 	CreatedAt time.Time  `json:"created_at" doc:"When it was made"`
 	URL       string     `json:"url,omitempty" doc:"Its link, which opens the web app's page that accepts it, with its token in the URL's fragment. It is here only in the answer that made the invitation or sent it anew, and only when the instance does not email it: for a link invitation, and for every invitation on an instance that sends no email. Whoever holds it can accept the invitation, so give it only to the person invited. The database holds no copy, and sending the invitation anew gives a new link, in place of this one."`
@@ -203,7 +203,7 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 		if err != nil {
 			return nil, err
 		}
-		members, _, err := workspaces.Members(ctx, cur.session.UserID, id, after, in.Fetch())
+		members, err := workspaces.Members(ctx, cur.session.UserID, id, after, in.Fetch())
 		if err != nil {
 			return nil, memberError(err)
 		}
@@ -229,8 +229,9 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 		Description: "Removes a membership of a workspace, and with it the member's project grants there; the " +
 			"account stays as it was. Only an owner removes an owner, and an admin is answered with 403 " +
 			"owner_required. A workspace keeps an owner whose account is active, so removing its last one is " +
-			"answered with 409 last_owner (FR-TEN-02 AC2). A member may remove themselves, as long as the workspace " +
-			"keeps an owner." + manageMembersDoc + " So is a membership that the workspace does not have." + csrfDoc,
+			"answered with 409 last_owner (FR-TEN-02 AC2). An owner or an admin may remove themselves, as long as " +
+			"the workspace keeps an owner." + manageMembersDoc + " So is a membership that the workspace does not " +
+			"have." + csrfDoc,
 		Tags:          []string{"Members"},
 		DefaultStatus: http.StatusNoContent,
 	}, func(ctx context.Context, in *removeMemberInput) (*struct{}, error) {
@@ -263,7 +264,10 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			"is answered with 409 already_member, and one that has an open invitation of the workspace already, " +
 			"expired or not, with 409 invite_exists. On an instance that sends email, as GET /api/v1/instance " +
 			"says, an invitation to an address is emailed, with a link that lasts its 14 days from when the email " +
-			"is sent, and the answer holds no link. Otherwise, and for a link invitation on every instance, the " +
+			"is sent, and the answer holds no link. A workspace emails an address one invitation in 10 minutes at " +
+			"most, so the email of an invitation made sooner after the workspace last emailed the address, as " +
+			"after revoking an invitation that was emailed and inviting the address again, is sent once those 10 " +
+			"minutes have passed. Otherwise, and for a link invitation on every instance, the " +
 			"answer's url is the link, which the signed-in user gives the person invited; the server keeps no " +
 			"copy of it. The email names the instance and the role, but neither the workspace nor who invites, " +
 			"which the page that the link opens shows instead (POST /api/v1/invites/lookup)." + csrfDoc +
@@ -334,10 +338,14 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 		Path:        "/api/v1/workspaces/{workspace_id}/invites/{invite_id}/resend",
 		Summary:     "Send an invitation anew",
 		Description: "Gives an open invitation, expired or not, a new link and 14 days more. The old link stops " +
-			"working at once. As when it was made, the new link is emailed, or is the answer's url. Only an owner " +
-			"sends an invitation as owner anew, and an admin is answered with 403 owner_required." + manageMembersDoc +
-			" So is an invitation that the workspace does not have. One that has been accepted is answered with 410 " +
-			"invite_accepted, and one that has been revoked with 410 invite_revoked." + csrfDoc + authLimitDoc,
+			"working at once. As when it was made, the new link is emailed, or is the answer's url, and an email " +
+			"waits until 10 minutes have passed since the workspace last emailed the address, so sending an " +
+			"invitation anew again and again emails it once in 10 minutes at most, with the latest link. Only an " +
+			"owner sends an invitation as owner anew, and an admin is answered with 403 owner_required." +
+			manageMembersDoc + " So is an invitation that the workspace does not have. One that has been accepted " +
+			"is answered with 410 invite_accepted, one that has been revoked with 410 invite_revoked, and one to " +
+			"an address that belongs to a member of the workspace by now with 409 already_member." + csrfDoc +
+			authLimitDoc,
 		Tags:        []string{"Members"},
 		Middlewares: huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
 	}, func(ctx context.Context, in *inviteActionInput) (*inviteOutput, error) {
@@ -398,11 +406,7 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 		if err != nil {
 			return nil, memberError(err)
 		}
-		kind := invite.KindEmail
-		if p.Email == "" {
-			kind = invite.KindLink
-		}
-		return &invitePreviewOutput{Body: invitePreviewBody{WorkspaceName: p.WorkspaceName, Kind: string(kind),
+		return &invitePreviewOutput{Body: invitePreviewBody{WorkspaceName: p.WorkspaceName, Kind: string(p.Kind()),
 			Email: p.Email, Role: string(p.Role), ExpiresAt: p.ExpiresAt}}, nil
 	})
 

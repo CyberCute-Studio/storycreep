@@ -424,7 +424,7 @@ func TestRemoveKeepsAnOwner(t *testing.T) {
 	if _, err := s.Grant(ctx, w.ID, second, role.Owner); err != nil {
 		t.Fatal(err)
 	}
-	members, _, err := s.Members(ctx, first, w.ID, ids.UUID{}, 10)
+	members, err := s.Members(ctx, first, w.ID, ids.UUID{}, 10)
 	if err != nil || len(members) != 2 {
 		t.Fatalf("Members = %+v, %v", members, err)
 	}

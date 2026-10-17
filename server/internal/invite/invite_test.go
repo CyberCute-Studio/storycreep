@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/text/language"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
@@ -44,19 +45,32 @@ var testPublicURL = func() config.PublicURL {
 	return c.PublicURL
 }()
 
-// queueSpy records the jobs that a Service enqueues, instead of enqueueing
-// them.
+// queueSpy records the jobs that a Service enqueues, and their options,
+// instead of enqueueing them.
 type queueSpy struct {
 	mu   sync.Mutex
 	jobs []jobs.Args
+	opts []jobs.EnqueueOptions
 }
 
-func (q *queueSpy) Enqueue(_ context.Context, _ pgx.Tx, args jobs.Args, _ *jobs.EnqueueOptions) (jobs.Enqueued,
+func (q *queueSpy) Enqueue(_ context.Context, _ pgx.Tx, args jobs.Args, opts *jobs.EnqueueOptions) (jobs.Enqueued,
 	error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.jobs = append(q.jobs, args)
+	q.opts = append(q.opts, *opts)
 	return jobs.Enqueued{}, nil
+}
+
+// last returns the options of the last job that was enqueued.
+func (q *queueSpy) last(t *testing.T) jobs.EnqueueOptions {
+	t.Helper()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.opts) == 0 {
+		t.Fatal("no job was enqueued")
+	}
+	return q.opts[len(q.opts)-1]
 }
 
 // fixture is a Service on a database of its own, with a workspace whose
@@ -193,7 +207,7 @@ func TestSendSkipsClosedInvites(t *testing.T) {
 	for i, state := range []string{"revoked_at = now()", "expires_at = now() - interval '1 second'",
 		"accepted_at = now()"} {
 		id := add(fmt.Sprintf("closed%d@example.com", i), state)
-		if err := f.send(ctx, f.db, f.workspace, id); err != nil {
+		if err := f.send(ctx, f.db, f.workspace, id, true); err != nil {
 			t.Errorf("%s: %v", state, err)
 		}
 	}
@@ -201,7 +215,7 @@ func TestSendSkipsClosedInvites(t *testing.T) {
 		t.Errorf("%d emails for closed invitations", len(got))
 	}
 	open := add("hana@example.com", "")
-	if err := f.send(ctx, f.db, f.workspace, open); err != nil {
+	if err := f.send(ctx, f.db, f.workspace, open, true); err != nil {
 		t.Fatal(err)
 	}
 	got := server.Wait(t, 1, 10*time.Second)
@@ -225,11 +239,103 @@ func TestSendSkipsClosedInvites(t *testing.T) {
 		VALUES ($1, $2, 'jo@example.com', 'viewer', now() + interval '1 hour')`, id, quiet.workspace); err != nil {
 		t.Fatal(err)
 	}
-	if err := quiet.send(ctx, quiet.db, quiet.workspace, id); err != nil {
+	if err := quiet.send(ctx, quiet.db, quiet.workspace, id, true); err != nil {
 		t.Errorf("send without email: %v", err)
 	}
 	if n := quiet.count(t, "SELECT count(*) FROM invite WHERE token_hash IS NOT NULL"); n != 0 {
 		t.Errorf("an instance without email gave an invitation a link")
+	}
+}
+
+// TestEmailsWaitForResendInterval checks that a workspace emails an address
+// one invitation in ResendInterval at most: a second job of an invitation
+// whose link was just emailed sends nothing on its first attempt, though a
+// retry of a failed attempt does, and the job of an invitation sent anew, or
+// of a new invitation to the address once the emailed one is revoked, is due
+// ResendInterval after the last email. The invitation's admins see when its
+// link was emailed only while it has that link.
+func TestEmailsWaitForResendInterval(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	server := emailtest.Start(t, emailtest.Options{})
+	settings := server.Settings(config.SMTPNone, "Storycreep <noreply@example.com>")
+	f := newFixture(t, email.New(nil, email.Options{SMTP: &settings, Hostname: "storycreep.example.com"}))
+	inv, err := f.Create(ctx, f.owner, f.workspace, Request{Email: "hana@example.com", Role: role.Viewer},
+		audit.Client{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if at := f.queue.last(t).At; !at.IsZero() {
+		t.Errorf("the first email of the address is due at %v, want at once", at)
+	}
+	if err := f.send(ctx, f.db, f.workspace, inv.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	server.Wait(t, 1, 10*time.Second)
+	if err := f.send(ctx, f.db, f.workspace, inv.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.Messages(); len(got) != 1 {
+		t.Errorf("a second job of the invitation sent %d emails, want none", len(got)-1)
+	}
+	if err := f.send(ctx, f.db, f.workspace, inv.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	server.Wait(t, 2, 10*time.Second)
+	sentAt := func() time.Time {
+		var sent time.Time
+		if err := f.d.Admin(t).QueryRow(ctx, "SELECT max(sent_at) FROM invite WHERE email = 'hana@example.com'").Scan(
+			&sent); err != nil {
+			t.Fatal(err)
+		}
+		return sent
+	}
+	due := sentAt().Add(ResendInterval)
+
+	if _, err := f.Resend(ctx, f.owner, f.workspace, inv.ID, audit.Client{}); err != nil {
+		t.Fatal(err)
+	}
+	if at := f.queue.last(t).At; !at.Equal(due) {
+		t.Errorf("the email of the invitation sent anew is due at %v, want %v", at, due)
+	}
+	list, err := f.List(ctx, f.owner, f.workspace, ids.UUID{}, 10)
+	if err != nil || len(list) != 1 || !list[0].SentAt.IsZero() {
+		t.Errorf("the invitations are %+v, %v, want the one sent anew, without when it was emailed", list, err)
+	}
+	if err := f.Revoke(ctx, f.owner, f.workspace, inv.ID, audit.Client{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Create(ctx, f.owner, f.workspace, Request{Email: "Hana@example.com", Role: role.Editor},
+		audit.Client{}); err != nil {
+		t.Fatal(err)
+	}
+	if at := f.queue.last(t).At; !at.Equal(due) {
+		t.Errorf("the email of a new invitation to the address is due at %v, want %v", at, due)
+	}
+}
+
+// TestRefusedEmailIsNotSent checks that an invitation whose email the SMTP
+// server refuses for good is not shown as emailed, and that its job ends.
+func TestRefusedEmailIsNotSent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	server := emailtest.Start(t, emailtest.Options{RefuseRecipients: emailtest.RefuseUnknown})
+	settings := server.Settings(config.SMTPNone, "Storycreep <noreply@example.com>")
+	f := newFixture(t, email.New(nil, email.Options{SMTP: &settings, Hostname: "storycreep.example.com"}))
+	inv, err := f.Create(ctx, f.owner, f.workspace, Request{Email: "nobody@example.com", Role: role.Viewer},
+		audit.Client{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.send(ctx, f.db, f.workspace, inv.ID, true); !email.Permanent(err) {
+		t.Errorf("send to a refused address: %v, want the refusal for good, which ends the job", err)
+	}
+	if n := f.count(t, "SELECT count(*) FROM invite WHERE id = $1 AND sent_at IS NULL", inv.ID); n != 1 {
+		t.Errorf("the refused invitation is recorded as emailed")
+	}
+	if list, err := f.List(ctx, f.owner, f.workspace, ids.UUID{}, 10); err != nil || len(list) != 1 ||
+		!list[0].SentAt.IsZero() {
+		t.Errorf("the invitations are %+v, %v, want the refused one, without when it was emailed", list, err)
 	}
 }
 
@@ -243,11 +349,14 @@ func TestIsolation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := isolationtest.New(t, dbtest.New(t), isolationtest.Tables)
+	address := func(w *isolationtest.Workspace) string { return w.Rows["invite"].String() + "@example.com" }
 	// The fixture's invitations are link invitations; the queries of an
 	// invitation to an address need one.
+	// They are emailed too, so that when the workspace may next email their
+	// addresses has an answer.
 	for _, w := range []*isolationtest.Workspace{f.A, f.B} {
-		if _, err := f.Admin().Exec(ctx, "UPDATE invite SET email = $1 WHERE id = $2",
-			w.Rows["invite"].String()+"@example.com", w.Rows["invite"]); err != nil {
+		if _, err := f.Admin().Exec(ctx, "UPDATE invite SET email = $1, sent_at = now() WHERE id = $2",
+			address(w), w.Rows["invite"]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -344,6 +453,19 @@ func TestIsolation(t *testing.T) {
 			return nil, queries.New(tx).SetInviteHash(ctx, queries.SetInviteHashParams{
 				TokenHash: isolationtest.TokenHash(), Lifetime: database.Interval(Lifetime), WorkspaceID: nullUUID(ws),
 				ID: nullUUID(id)})
+		}},
+		{Name: "record that an invitation was not emailed", Blind: true, Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			ws, id := key(target)
+			return nil, queries.New(tx).UnmarkInviteSent(ctx, queries.UnmarkInviteSentParams{WorkspaceID: nullUUID(ws),
+				ID: nullUUID(id), TokenHash: hash(target)})
+		}},
+		{Name: "when an address may next be emailed", Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			_, err := queries.New(tx).InviteEmailDue(ctx, queries.InviteEmailDueParams{
+				ResendInterval: database.Interval(ResendInterval), WorkspaceID: nullUUID(target.ID),
+				Email: pgtype.Text{String: address(target), Valid: true}})
+			return found(target, err)
 		}},
 		{Name: "a new invitation", Denied: true, Run: func(ctx context.Context, tx pgx.Tx,
 			target *isolationtest.Workspace) ([]ids.UUID, error) {
