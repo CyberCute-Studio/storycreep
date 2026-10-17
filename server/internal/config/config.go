@@ -27,6 +27,7 @@ import (
 
 	"golang.org/x/text/language"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -68,6 +69,10 @@ type Config struct {
 	// from the STORYCREEP_SETUP_ keys, or nil if the configuration has none
 	// (PRD FR-ADMIN-02).
 	Setup *UnattendedSetup
+	// WorkspaceLimits are the caps on the limits of every workspace, from
+	// STORYCREEP_WORKSPACE_LIMITS, or nil if the configuration sets none
+	// (PRD FR-ENT-01).
+	WorkspaceLimits entitlements.Caps
 	// SMTP is the SMTP server that the instance sends its email through,
 	// from STORYCREEP_SMTP_URL and STORYCREEP_SMTP_FROM, which overrides the
 	// one that first-run setup chose, or nil if the configuration sets none

@@ -38,6 +38,12 @@ SELECT is_instance_admin FROM "user" WHERE id = @id AND status = 'active';
 -- Workspace returns a workspace.
 SELECT id, name, slug, settings, created_at, updated_at FROM workspace WHERE id = @id AND status = 'active';
 
+-- name: WorkspacePlan :one
+-- WorkspacePlan returns the plan of a workspace, which sets its limits and
+-- features while entitlements are enforced (package entitlements, PRD
+-- FR-ENT-01).
+SELECT plan_key FROM workspace WHERE id = @id AND status = 'active';
+
 -- name: LockWorkspace :one
 -- LockWorkspace returns a workspace, and locks its row against changes until
 -- the transaction ends, so that the transaction can change it from what it

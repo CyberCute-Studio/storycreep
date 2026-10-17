@@ -16,6 +16,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/invite"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
@@ -36,6 +37,8 @@ type server struct {
 	metricsOff  string
 	// accounts keeps the accounts and their sessions.
 	accounts *account.Service
+	// entitlements answers what the workspaces' plans allow.
+	entitlements *entitlements.Service
 	// workspaces keeps the workspaces.
 	workspaces *workspace.Service
 	// invites keeps the workspaces' invitations.
@@ -59,9 +62,10 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		ready:   &readiness{log: log},
 		metrics: newMetrics(),
 	}
+	s.entitlements = entitlements.New(entitlementOptions(cfg))
 	s.workspaces = workspace.New(readyDB{s.ready}, workspace.Options{
 		Policy:        role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
-		PlanKey:       planKey(cfg.Capabilities),
+		PlanKey:       s.entitlements.NewWorkspacePlan(),
 		DefaultLocale: cfg.DefaultLocale,
 		// An instance that always sends email can require a verified
 		// address (FR-AUTH-03).
@@ -165,16 +169,6 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 			})))
 	}
 	return s
-}
-
-// planKey returns the plan of a new workspace (PRD FR-ENT-01): unlimited
-// while entitlements are not enforced, as in self-hosted mode, and the free
-// plan otherwise.
-func planKey(c config.Capabilities) string {
-	if c.EnforceEntitlements {
-		return "free"
-	}
-	return "unlimited"
 }
 
 // statusBody is the body of /healthz and /readyz.

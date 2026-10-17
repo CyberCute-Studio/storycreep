@@ -8,6 +8,7 @@ import (
 
 	"golang.org/x/text/language"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
@@ -167,6 +168,34 @@ var keys = []key{
 		},
 		capability:      "InstanceAdminAccess",
 		capabilityLimit: "self-hosted only",
+	},
+	{
+		name: "STORYCREEP_WORKSPACE_LIMITS",
+		doc: "Caps on what each workspace may use (PRD FR-ENT-01). Self-hosted mode gives every workspace the " +
+			"unlimited plan, so without this key no workspace has a limit. Each entry is a limit and a whole number " +
+			"from 1 to 9007199254740991, joined by `=`: `members`, the most members that a workspace may have, " +
+			"`projects`, the most projects, and `storage_bytes`, the most bytes that its stored files may take up. A " +
+			"limit that the key does not name stays unlimited. No change checks a cap yet, so for now the key limits " +
+			"nothing: a cap applies once the change that adds to its limit checks it, `members` first, with usage " +
+			"metering (PRD FR-ENT-02). From then, a change that would take a workspace past a cap, such as accepting " +
+			"an invitation to a workspace that has as many members as the cap allows, is refused with 409 " +
+			"`limit_exceeded`, whose details name the limit, the workspace's usage, and the cap, and which offers " +
+			"no upgrade. Inviting someone is not such a change, because it adds no member. A workspace that is past " +
+			"a cap already, as after the cap is lowered, keeps what it has, but cannot add more. Hosted mode, where " +
+			"each workspace's plan sets its limits, refuses the key.",
+		valuesDoc: "Limits and whole numbers joined by `=`, separated by commas, such as `members=20, projects=50`",
+		parse: func(c *Config, v string) error {
+			if c.mode == modeHosted {
+				return errors.New("hosted mode limits each workspace by its plan; remove the setting")
+			}
+			caps, err := entitlements.ParseCaps(v)
+			if err != nil {
+				return err
+			}
+			c.WorkspaceLimits = caps
+			return nil
+		},
+		effective: func(c *Config) string { return c.WorkspaceLimits.String() },
 	},
 	{
 		name: "STORYCREEP_SMTP_URL",

@@ -1,0 +1,56 @@
+{
+  "$comment": "The plans of the entitlement layer (PRD FR-ENT-01, ADR-010), the one file that the server, the pricing page, and the tests read them from. Every limit holds a whole number from 0 to 9007199254740991, the largest that a JavaScript client reads exactly, or \"unlimited\". The numbers are placeholders until Phase 3 sets them (PRD §12.4, D1), and nothing outside this file names them, so changing one needs no change of code. A limit with inert_until is checked by no code until the requirement that it names lands (FR-ENT-01 AC1).",
+  "limits": [
+    { "key": "members", "billable": true },
+    { "key": "projects" },
+    { "key": "storage_bytes" },
+    { "key": "snapshot_retention", "inert_until": "FR-SNAP-06" }
+  ],
+  "features": ["collaboration", "sso", "audit_export"],
+  "plans": [
+    {
+      "key": "unlimited",
+      "limits": {
+        "members": "unlimited",
+        "projects": "unlimited",
+        "storage_bytes": "unlimited",
+        "snapshot_retention": "unlimited"
+      },
+      "features": { "collaboration": true, "sso": true, "audit_export": true }
+    },
+    {
+      "key": "free",
+      "limits": {
+        "members": 1,
+        "projects": 3,
+        "storage_bytes": 104857600,
+        "snapshot_retention": 5
+      },
+      "features": {
+        "collaboration": false,
+        "sso": false,
+        "audit_export": false
+      }
+    },
+    {
+      "key": "team",
+      "limits": {
+        "members": "unlimited",
+        "projects": "unlimited",
+        "storage_bytes": 10737418240,
+        "snapshot_retention": 50
+      },
+      "features": { "collaboration": true, "sso": false, "audit_export": true }
+    },
+    {
+      "key": "studio",
+      "limits": {
+        "members": "unlimited",
+        "projects": "unlimited",
+        "storage_bytes": 107374182400,
+        "snapshot_retention": 500
+      },
+      "features": { "collaboration": true, "sso": true, "audit_export": true }
+    }
+  ]
+}

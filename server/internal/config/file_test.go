@@ -40,6 +40,7 @@ func TestFile(t *testing.T) {
 		{"STORYCREEP_PUBLIC_SITE", "on", path + ":5"},
 		{"STORYCREEP_SIGNUP", "invite", path + ":4"},
 		{"STORYCREEP_INSTANCE_ADMIN_ACCESS", "off", SourceDefault},
+		{"STORYCREEP_WORKSPACE_LIMITS", "", SourceUnset},
 		{"STORYCREEP_SMTP_URL", "", SourceUnset},
 		{"STORYCREEP_SMTP_FROM", "", SourceUnset},
 		{"STORYCREEP_SETUP_OWNER_EMAIL", "", SourceUnset},

@@ -51,6 +51,7 @@ const (
 	CodeLastOwner             Code = "last_owner"
 	CodeAlreadyMember         Code = "already_member"
 	CodeInviteExists          Code = "invite_exists"
+	CodeLimitExceeded         Code = "limit_exceeded"
 	CodeInviteExpired         Code = "invite_expired"
 	CodeInviteRevoked         Code = "invite_revoked"
 	CodeInviteAccepted        Code = "invite_accepted"
@@ -192,6 +193,16 @@ var codes = []codeSpec{
 	{CodeInviteExists, http.StatusConflict, i18n.K("error.invite_exists"),
 		"The email address has an open invitation of the workspace already, one that has been neither accepted " +
 			"nor revoked, whether or not it has expired. Send that one anew, or revoke it first."},
+	{CodeLimitExceeded, http.StatusConflict, i18n.K("error.limit_exceeded"),
+		"The change would take the workspace past one of its limits, so it is not made (PRD FR-ENT-03): a limit " +
+			"of its plan, or a cap that the instance puts on every workspace (`STORYCREEP_WORKSPACE_LIMITS`). " +
+			"`details.key` names the limit, as the plan file does, such as `members`, `projects`, or " +
+			"`storage_bytes`; `details.usage` is how much of it the workspace uses, and `details.limit` the most " +
+			"that it may use (FR-ENT-03 AC1). `details.upgrade_url` is the public site's page that offers the " +
+			"plans, `/pricing`, where the instance both bills for plans and serves the public site, as hosted mode " +
+			"does unless `STORYCREEP_PUBLIC_SITE` is `off`, the limit is the plan's rather than a cap of the " +
+			"instance, and another plan allows more. A self-hosted instance never sends it (FR-ENT-03 AC2). A " +
+			"workspace past a limit already, as after its plan changed, keeps what it has, but cannot add more."},
 	{CodeInviteExpired, http.StatusGone, i18n.K("error.invite_expired"),
 		"The invitation has expired: it lasts 14 days from when it was made, sent anew, or emailed (PRD " +
 			"FR-TEN-02 AC1). An owner or admin of the workspace sends it anew."},
