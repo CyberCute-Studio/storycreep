@@ -198,9 +198,10 @@ var codes = []codeSpec{
 			"last given its link as text, as by sending it anew, or whom it invites, which revokes it, and it no " +
 			"longer works (PRD FR-TEN-02 AC1)."},
 	{CodeInviteAccepted, http.StatusGone, i18n.K("error.invite_accepted"),
-		"The invitation has been accepted already, and an invitation is accepted once. Its link answers so to " +
-			"anyone but the account that accepted it, while that account is still a member, and an owner or admin " +
-			"of the workspace can neither revoke it nor send it anew."},
+		"The invitation has been accepted already, and an invitation is accepted once. Reading it with its link, " +
+			"or registering with it, answers so, and so does accepting it, but for the account that accepted it, " +
+			"which `POST /api/v1/invites/accept` answers with its membership again while it is still a member. An " +
+			"owner or admin of the workspace can neither revoke it nor send it anew."},
 	{CodeMethodNotAllowed, http.StatusMethodNotAllowed, i18n.K("error.method_not_allowed"),
 		"A route matches the path, but not the method. The `Allow` header lists the methods it takes."},
 	{CodeRequestTimeout, http.StatusRequestTimeout, i18n.K("error.request_timeout"),

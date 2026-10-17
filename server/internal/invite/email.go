@@ -57,10 +57,12 @@ const emailInviteAttempts = 36
 // sending an invitation anew again and again, or revoking it and inviting
 // the address again, cannot flood the address's inbox. Each request
 // enqueues its own job, even while an earlier one still waits or runs, whose
-// email may hold a link that the request has replaced: whichever job runs
-// last sends the link that works, and a job that finds the invitation's link
-// emailed within ResendInterval, by another of its jobs that ran just
-// before, sends none (send).
+// email may hold a link that the request has replaced: whichever job sends
+// last sends the link that works, and a job that finds the invitation
+// emailed within ResendInterval, by another of its jobs that ran before,
+// sends none on its first attempt (send), even when the invitation has been
+// sent anew since, because that request's own job emails it once
+// ResendInterval has passed.
 func (s *Service) enqueue(ctx context.Context, tx pgx.Tx, id, inviteID ids.UUID, address string) error {
 	if s.queue == nil {
 		return errors.New("invite: the Service has no job queue to email an invitation with")
@@ -106,16 +108,16 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 // as one asked to be emailed longer ago than Lifetime has, or whose
 // workspace's deletion is pending, is sent no email, and nor is any on an
 // instance that no longer sends email. Nor is the invitation on the job's
-// first attempt, firstAttempt, if the link that it has was emailed within
-// ResendInterval, as by another of its jobs, which waited for the same
-// moment (enqueue). An attempt that fails to send the email records that the
-// invitation's link was not emailed after all, and is made again later, with
-// a new secret, which replaces the one that the failed attempt may have
-// sent, so that only the latest email's link works, unless the SMTP server
-// refuses the email for good (email.JobError). An attempt that cannot record
-// that counts as failed, however it ended, so that the next attempt sends
-// the email. The job reads the SMTP
-// settings, as it does the invitation, on the workers' pool that it
+// first attempt, firstAttempt, if it was emailed within ResendInterval, as
+// by another of its jobs, which waited for the same moment, or was due at
+// once before that one sent its email (enqueue). An attempt that fails to
+// send the email records that the invitation's link was not emailed after
+// all, and is made again later, with a new secret, which replaces the one
+// that the failed attempt may have sent, so that only the latest email's
+// link works, unless the SMTP server refuses the email for good
+// (email.JobError). An attempt that cannot record that counts as failed,
+// however it ended, so that the next attempt sends the email. The job reads
+// the SMTP settings, as it does the invitation, on the workers' pool that it
 // carries, db.
 func (s *Service) send(ctx context.Context, db DB, id, inviteID ids.UUID, firstAttempt bool) error {
 	if s.email == nil {

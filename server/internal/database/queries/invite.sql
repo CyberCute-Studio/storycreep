@@ -139,14 +139,16 @@ WHERE workspace_id = @workspace_id AND id = @id;
 -- LockInviteToSend returns what the email of an invitation's link needs, if
 -- the invitation is to an address, is open, its workspace is active, and it
 -- has not expired, which an invitation that was asked to be emailed longer
--- ago than its lifetime has, and, for a job's first attempt, if the link
--- that the invitation has was not emailed in the last resend_interval, as by
--- another job of the invitation that ran just before: the address, the role,
--- and the locale that the email is written in, the preferred locale of the
--- account that the address belongs to, if it has one, and else the
--- workspace's default locale, as a BCP 47 tag, or null if neither has one.
--- It locks the invitation, so that the job that sends it and a use of it run
--- one after the other.
+-- ago than its lifetime has, and, for a job's first attempt, if no job
+-- emailed the invitation in the last resend_interval, as another job of the
+-- invitation that ran just before did, whether or not the invitation has
+-- been sent anew since, which the job of that request emails once the
+-- interval has passed (InviteEmailDue): the address, the role, and the
+-- locale that the email is written in, the preferred locale of the account
+-- that the address belongs to, if it has one, and else the workspace's
+-- default locale, as a BCP 47 tag, or null if neither has one. It locks the
+-- invitation, so that the job that sends it and a use of it run one after
+-- the other.
 SELECT
     i.email::text AS email, i.role,
     COALESCE(u.locale, w.settings->>'default_locale') AS locale
@@ -155,8 +157,7 @@ JOIN workspace w ON w.id = i.workspace_id AND w.status = 'active'
 LEFT JOIN "user" u ON u.email = i.email
 WHERE i.workspace_id = @workspace_id AND i.id = @id
     AND i.email IS NOT NULL AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()
-    AND (NOT @first_attempt::boolean OR i.token_hash IS NULL OR i.sent_at IS NULL
-        OR i.sent_at <= now() - @resend_interval::interval)
+    AND (NOT @first_attempt::boolean OR i.sent_at IS NULL OR i.sent_at <= now() - @resend_interval::interval)
 FOR UPDATE OF i;
 
 -- name: SetInviteHash :exec

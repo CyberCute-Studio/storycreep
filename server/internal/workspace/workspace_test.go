@@ -457,6 +457,74 @@ func TestRemoveKeepsAnOwner(t *testing.T) {
 	}
 }
 
+// TestRemoveWhileAccepting checks that removing a member while they accept
+// an invitation that the removal revokes ends without a deadlock. The
+// acceptance locks its invitation and then adds a membership (package
+// invite), which the member's membership refuses at once, because the
+// removal deletes it only after it has revoked the invitation, which it
+// waits for the acceptance to let go of.
+func TestRemoveWhileAccepting(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, d := newService(t, role.Policy{})
+	owner, member := addUser(t, d, "Owner"), addUser(t, d, "Member")
+	w, err := s.Create(ctx, owner, Settings{Name: "Harbour"}, audit.Client{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Grant(ctx, w.ID, member, role.Editor); err != nil {
+		t.Fatal(err)
+	}
+	// An open invitation to the member's address, from before they joined.
+	invite := ids.New()
+	if _, err := d.Admin(t).Exec(ctx, `INSERT INTO invite (id, workspace_id, email, role, token_hash, expires_at)
+		SELECT $1, $2, u.email, 'viewer', $3, now() + interval '1 day' FROM "user" u WHERE u.id = $4`,
+		invite, w.ID, isolationtest.TokenHash(), member); err != nil {
+		t.Fatal(err)
+	}
+	var membership ids.UUID
+	if err := d.Admin(t).QueryRow(ctx, `SELECT id FROM membership WHERE workspace_id = $1 AND user_id = $2`, w.ID,
+		member).Scan(&membership); err != nil {
+		t.Fatal(err)
+	}
+
+	// The member's acceptance, as package invite makes it: it locks the
+	// invitation, and then adds the membership.
+	tx, err := d.Admin(t).Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM invite WHERE id = $1 FOR UPDATE`, invite); err != nil {
+		t.Fatal(err)
+	}
+	removed := make(chan error, 1)
+	go func() {
+		removed <- s.RemoveMember(ctx, owner, w.ID, membership, audit.Client{})
+	}()
+	dbtest.AwaitWaiter(t, tx, removed, "the removal")
+	tag, err := tx.Exec(ctx, `INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'viewer')
+		ON CONFLICT (user_id, workspace_id) DO NOTHING`, ids.New(), w.ID, member)
+	if err != nil {
+		t.Fatalf("the acceptance adds the membership: %v", err)
+	}
+	if tag.RowsAffected() != 0 {
+		t.Errorf("the acceptance added a membership beside the member's")
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-removed; err != nil {
+		t.Fatalf("RemoveMember: %v", err)
+	}
+	if n := count(t, d, `SELECT count(*) FROM invite WHERE id = $1 AND revoked_at IS NOT NULL`, invite); n != 1 {
+		t.Errorf("the invitation to the removed member's address is open")
+	}
+	if n := count(t, d, `SELECT count(*) FROM membership WHERE id = $1`, membership); n != 0 {
+		t.Errorf("the membership was not removed")
+	}
+}
+
 // TestMembersIsolation tries the queries of a workspace's members from
 // another workspace's transaction, where row-level security must keep them
 // from reading, changing, or adding a membership (NFR-SEC-01).

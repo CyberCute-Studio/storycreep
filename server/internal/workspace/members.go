@@ -171,6 +171,18 @@ func (s *Service) RemoveMember(ctx context.Context, userID, id, membershipID ids
 				return ErrLastOwner
 			}
 		}
+		// The invitations are revoked while the membership still exists, and
+		// only then is it deleted. An acceptance by the member locks its
+		// invitation first and then adds a membership, which conflicts with
+		// theirs: while theirs is only locked, the acceptance is refused at
+		// once (ErrAlreadyMember) and lets the invitation go, but once it is
+		// deleted, the acceptance would wait for this transaction, which
+		// would wait for the invitation, and the two would deadlock.
+		revoked, err := q.RevokeMemberInvites(ctx, queries.RevokeMemberInvitesParams{WorkspaceID: nullUUID(id),
+			UserID: target.UserID})
+		if err != nil {
+			return fmt.Errorf("workspace: revoke the member's invitations: %w", err)
+		}
 		if err := q.DeleteMembership(ctx, queries.DeleteMembershipParams{WorkspaceID: nullUUID(id),
 			ID: nullUUID(membershipID)}); err != nil {
 			return fmt.Errorf("workspace: remove the membership: %w", err)
@@ -180,11 +192,6 @@ func (s *Service) RemoveMember(ctx context.Context, userID, id, membershipID ids
 			UserAgent: client.UserAgent, Metadata: map[string]any{"role": target.Role,
 				"user_id": ids.UUID(target.UserID.Bytes).String()}}); err != nil {
 			return err
-		}
-		revoked, err := q.RevokeMemberInvites(ctx, queries.RevokeMemberInvitesParams{WorkspaceID: nullUUID(id),
-			UserID: target.UserID})
-		if err != nil {
-			return fmt.Errorf("workspace: revoke the member's invitations: %w", err)
 		}
 		for _, inv := range revoked {
 			// The kinds of invitation are package invite's: email, to an

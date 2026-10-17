@@ -250,10 +250,11 @@ func TestSendSkipsClosedInvites(t *testing.T) {
 // TestEmailsWaitForResendInterval checks that a workspace emails an address
 // one invitation in ResendInterval at most: a second job of an invitation
 // whose link was just emailed sends nothing on its first attempt, though a
-// retry of a failed attempt does, and the job of an invitation sent anew, or
-// of a new invitation to the address once the emailed one is revoked, is due
-// ResendInterval after the last email. The invitation's admins see when its
-// link was emailed only while it has that link.
+// retry of a failed attempt does, and nor does a job of it that was due at
+// once before the last email, once it is sent anew; the job of an invitation
+// sent anew, or of a new invitation to the address once the emailed one is
+// revoked, is due ResendInterval after the last email. The invitation's
+// admins see when its link was emailed only while it has that link.
 func TestEmailsWaitForResendInterval(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -297,6 +298,17 @@ func TestEmailsWaitForResendInterval(t *testing.T) {
 	}
 	if at := f.queue.last(t).At; !at.Equal(due) {
 		t.Errorf("the email of the invitation sent anew is due at %v, want %v", at, due)
+	}
+	// A job that was due at once before the last email, as one of a request
+	// made just before it, sends nothing on its first attempt, although the
+	// invitation sent anew has no link yet: the job that sending it anew
+	// enqueued emails it when it is due.
+	if err := f.send(ctx, f.db, f.workspace, inv.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.Messages(); len(got) != 2 {
+		t.Errorf("a job of the invitation sent anew emailed it %d times within the interval, want none",
+			len(got)-2)
 	}
 	list, err := f.List(ctx, f.owner, f.workspace, ids.UUID{}, 10)
 	if err != nil || len(list) != 1 || !list[0].SentAt.IsZero() {
