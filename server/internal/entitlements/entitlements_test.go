@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -169,6 +171,44 @@ func TestRefusedKeys(t *testing.T) {
 		!errors.Is(err, failing.err) {
 		t.Errorf("Check with a failing meter = %v, want its error", err)
 	}
+
+	// A plan file without the unlimited plan, which Load never returns, is an
+	// error rather than a plan that allows nothing.
+	s = entitlements.New(entitlements.Options{Plans: &entitlements.PlanFile{}})
+	if _, err := s.Enabled(ctx, nil, ws, entitlements.SSO); err == nil ||
+		!strings.Contains(err.Error(), "no unlimited plan") {
+		t.Errorf("Enabled with a plan file without the unlimited plan = %v, want an error that says so", err)
+	}
+}
+
+// TestCheckAddingNothing checks that a change that adds nothing to a limit,
+// or takes from it, passes Check without a read of the usage, even where the
+// workspace is past its quota already, so that it keeps what it has.
+func TestCheckAddingNothing(t *testing.T) {
+	ctx := context.Background()
+	ws := ids.New()
+	m := &meter{usage: map[entitlements.LimitKey]int64{entitlements.Members: 10}}
+	caps := entitlements.Caps{entitlements.Members: 3}
+	for _, s := range []*entitlements.Service{
+		entitlements.New(entitlements.Options{Caps: caps, Meter: m}),
+		// Without a meter too, which a quota that is a number needs otherwise.
+		entitlements.New(entitlements.Options{Caps: caps}),
+	} {
+		for _, adding := range []int64{0, -1} {
+			if err := s.Check(ctx, nil, ws, entitlements.Members, adding); err != nil {
+				t.Errorf("Check(members, %d) past the cap = %v, want nil", adding, err)
+			}
+		}
+	}
+	if m.reads != 0 {
+		t.Errorf("a check of adding nothing read the usage %d times", m.reads)
+	}
+	// The Service keeps its own copy of the caps it was given.
+	s := entitlements.New(entitlements.Options{Caps: caps, Meter: m})
+	caps[entitlements.Members] = 100
+	if q, err := s.Limit(ctx, nil, ws, entitlements.Members); err != nil || q != entitlements.AtMost(3) {
+		t.Errorf("Limit(members) after the caps given changed = %v, %v; want the cap of 3", q, err)
+	}
 }
 
 // addWorkspace adds a workspace with the plan to the database, and returns
@@ -192,11 +232,50 @@ func inTx(t *testing.T, db *database.DB, ws ids.UUID, fn func(tx pgx.Tx) error) 
 	}
 }
 
+// quotaCase is a plan and a limit whose quota is a number, max, or has ok
+// false where the plan file has no such case.
+type quotaCase struct {
+	plan string
+	key  entitlements.LimitKey
+	max  int64
+	ok   bool
+}
+
+// quotaCases returns the first plan and limit of the plan file whose quota
+// is a number that another plan exceeds, which upgrading would raise, and the
+// first whose quota is a number that no other plan exceeds. The unlimited
+// plan is neither, nor is it another plan: no workspace upgrades to it.
+func quotaCases(plans *entitlements.PlanFile) (raisable, top quotaCase) {
+	for _, p := range plans.Plans() {
+		if p.Key == entitlements.Unlimited {
+			continue
+		}
+		for _, key := range entitlements.LimitKeys() {
+			n, limited := p.Quota(key).Max()
+			if !limited {
+				continue
+			}
+			exceeded := slices.ContainsFunc(plans.Plans(), func(o entitlements.Plan) bool {
+				m, limited := o.Quota(key).Max()
+				return o.Key != entitlements.Unlimited && (!limited || m > n)
+			})
+			c := quotaCase{plan: p.Key, key: key, max: n, ok: true}
+			switch {
+			case exceeded && !raisable.ok:
+				raisable = c
+			case !exceeded && !top.ok:
+				top = c
+			}
+		}
+	}
+	return raisable, top
+}
+
 // TestEnforcedPlans checks that, while entitlements are enforced, as in
 // hosted mode, each workspace has the plan that its row names, with the
-// quotas and features that the plan file gives it, capped by the instance's
-// caps, and that a refused change links to the upgrade page only where
-// upgrading would raise its plan's limit.
+// quotas and features that the plan file gives it, and usage reads against
+// them, capped by the instance's caps, and that a refused change links to the
+// upgrade page only where upgrading would raise its plan's limit.
 //
 // Verifies: FR-ENT-01/AC3
 func TestEnforcedPlans(t *testing.T) {
@@ -216,6 +295,27 @@ func TestEnforcedPlans(t *testing.T) {
 				if q, err := s.Limit(ctx, tx, ws, key); err != nil || q != p.Quota(key) {
 					t.Errorf("%s: Limit(%s) = %v, %v; want the plan file's %v", p.Key, key, q, err, p.Quota(key))
 				}
+				// A usage read carries the plan's quota, and the soft warning
+				// at a quota that is a number, but not well below it, nor at
+				// any usage of a quota that is not (FR-ENT-03).
+				type usageCase struct {
+					used  int64
+					warns bool
+				}
+				cases := []usageCase{{used: 1 << 40}}
+				if n, limited := p.Quota(key).Max(); limited {
+					cases = []usageCase{{used: n, warns: true}}
+					if n > 0 {
+						cases = append(cases, usageCase{used: 0})
+					}
+				}
+				for _, c := range cases {
+					m.usage = map[entitlements.LimitKey]int64{key: c.used}
+					want := entitlements.Usage{Key: key, Used: c.used, Quota: p.Quota(key), Warning: c.warns}
+					if got, err := s.Usage(ctx, tx, ws, key); err != nil || got != want {
+						t.Errorf("%s: Usage(%s) at %d = %+v, %v; want %+v", p.Key, key, c.used, got, err, want)
+					}
+				}
 			}
 			for _, f := range plans.Features() {
 				if ok, err := s.Enabled(ctx, tx, ws, f); err != nil || ok != p.Has(f) {
@@ -226,56 +326,58 @@ func TestEnforcedPlans(t *testing.T) {
 		})
 	}
 
-	// A workspace at the free plan's limit of members may upgrade to a plan
-	// that has more, and one at the studio plan's limit of storage, the
-	// largest, may not.
-	free, _ := plans.Plan(entitlements.Free)
-	members, _ := free.Quota(entitlements.Members).Max()
-	studio, _ := plans.Plan("studio")
-	storage, limited := studio.Quota(entitlements.StorageBytes).Max()
-	if !limited {
-		t.Fatalf("the studio plan does not limit storage, which this test needs")
+	// A workspace at a plan's quota of a limit that another plan allows more
+	// of may upgrade, unless the instance offers no upgrade, and one at a
+	// quota that no plan exceeds may not. The plan file's numbers are
+	// placeholders, so the cases come from it, and one that it lacks is
+	// skipped.
+	noUpgrade := entitlements.New(entitlements.Options{Enforce: true, Meter: m})
+	raisable, top := quotaCases(plans)
+	if raisable.ok {
+		m.usage = map[entitlements.LimitKey]int64{raisable.key: raisable.max}
+		ws := addWorkspace(t, d, raisable.plan)
+		inTx(t, db, ws, func(tx pgx.Tx) error {
+			e := limitError(t, s.Check(ctx, tx, ws, raisable.key, 1))
+			if *e != (entitlements.LimitError{Key: raisable.key, Usage: raisable.max, Limit: raisable.max,
+				UpgradeURL: testUpgradeURL}) {
+				t.Errorf("Check(%s) on the %s plan = %+v, want an upgrade link", raisable.key, raisable.plan, e)
+			}
+			if e := limitError(t, noUpgrade.Check(ctx, tx, ws, raisable.key, 1)); e.UpgradeURL != "" {
+				t.Errorf("an instance without an upgrade page links to %q", e.UpgradeURL)
+			}
+			return nil
+		})
+	} else {
+		t.Log("no plan has a quota that another plan exceeds, so no refusal links to the upgrade page")
 	}
-	m.usage = map[entitlements.LimitKey]int64{entitlements.Members: members, entitlements.StorageBytes: storage}
-	ws := addWorkspace(t, d, entitlements.Free)
-	inTx(t, db, ws, func(tx pgx.Tx) error {
-		e := limitError(t, s.Check(ctx, tx, ws, entitlements.Members, 1))
-		if *e != (entitlements.LimitError{Key: entitlements.Members, Usage: members, Limit: members,
-			UpgradeURL: testUpgradeURL}) {
-			t.Errorf("Check(members) on the free plan = %+v", e)
-		}
-		return nil
-	})
-	ws = addWorkspace(t, d, "studio")
-	inTx(t, db, ws, func(tx pgx.Tx) error {
-		e := limitError(t, s.Check(ctx, tx, ws, entitlements.StorageBytes, 1))
-		if e.UpgradeURL != "" || e.Usage != storage || e.Limit != storage {
-			t.Errorf("Check(storage_bytes) on the studio plan = %+v, want no upgrade link", e)
-		}
-		return nil
-	})
+	if top.ok {
+		m.usage = map[entitlements.LimitKey]int64{top.key: top.max}
+		ws := addWorkspace(t, d, top.plan)
+		inTx(t, db, ws, func(tx pgx.Tx) error {
+			e := limitError(t, s.Check(ctx, tx, ws, top.key, 1))
+			if e.UpgradeURL != "" || e.Usage != top.max || e.Limit != top.max {
+				t.Errorf("Check(%s) on the %s plan, which no plan exceeds, = %+v, want no upgrade link", top.key,
+					top.plan, e)
+			}
+			return nil
+		})
+	} else {
+		t.Log("every quota that is a number has a plan that exceeds it, so every refusal links to the upgrade page")
+	}
 
 	// The instance's caps apply on top of the plan, and a refusal that the
-	// cap makes offers no upgrade, nor does one where the instance offers
-	// none.
+	// cap makes offers no upgrade. The team plan, as every paid plan, does
+	// not limit members, which it bills for (TestPlanFileShape).
 	capped := entitlements.New(entitlements.Options{Enforce: true, Meter: m, UpgradeURL: testUpgradeURL,
 		Caps: entitlements.Caps{entitlements.Members: 1}})
-	noUpgrade := entitlements.New(entitlements.Options{Enforce: true, Meter: m})
 	m.usage = map[entitlements.LimitKey]int64{entitlements.Members: 1}
-	ws = addWorkspace(t, d, "team")
+	ws := addWorkspace(t, d, "team")
 	inTx(t, db, ws, func(tx pgx.Tx) error {
 		if q, err := capped.Limit(ctx, tx, ws, entitlements.Members); err != nil || q != entitlements.AtMost(1) {
 			t.Errorf("Limit(members) of a capped team workspace = %v, %v; want the cap", q, err)
 		}
 		if e := limitError(t, capped.Check(ctx, tx, ws, entitlements.Members, 1)); e.UpgradeURL != "" {
 			t.Errorf("a refusal by the cap links to %q", e.UpgradeURL)
-		}
-		return nil
-	})
-	ws = addWorkspace(t, d, entitlements.Free)
-	inTx(t, db, ws, func(tx pgx.Tx) error {
-		if e := limitError(t, noUpgrade.Check(ctx, tx, ws, entitlements.Members, 1)); e.UpgradeURL != "" {
-			t.Errorf("an instance without an upgrade page links to %q", e.UpgradeURL)
 		}
 		return nil
 	})

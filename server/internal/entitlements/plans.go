@@ -75,6 +75,12 @@ const (
 	Free = "free"
 )
 
+// maxQuota is the largest number that the plan file or a cap may give a
+// limit, 2^53 - 1: the largest whole number that every JSON client, as a
+// JavaScript one, reads exactly, so that the limit that an answer of
+// limit_exceeded carries is the one that applies.
+const maxQuota int64 = 1<<53 - 1
+
 // A Quota is how much of a limit a workspace may use: at most a number, or
 // any amount.
 type Quota struct {
@@ -134,8 +140,8 @@ func (q Quota) String() string {
 	return strconv.FormatInt(q.max, 10)
 }
 
-// UnmarshalJSON reads a limit of a plan: a whole number of at least 0, or
-// the string "unlimited".
+// UnmarshalJSON reads a limit of a plan: a whole number from 0 to maxQuota,
+// or the string "unlimited".
 func (q *Quota) UnmarshalJSON(b []byte) error {
 	if string(b) == `"`+Unlimited+`"` {
 		*q = NoLimit
@@ -144,8 +150,8 @@ func (q *Quota) UnmarshalJSON(b []byte) error {
 	// A JSON number's only sign is a minus, which strconv accepts and n < 0
 	// refuses; strconv refuses a fraction or an exponent itself.
 	n, err := strconv.ParseInt(string(b), 10, 64)
-	if err != nil || n < 0 {
-		return fmt.Errorf(`a limit is a whole number of at least 0, or "%s", not %s`, Unlimited, b)
+	if err != nil || n < 0 || n > maxQuota {
+		return fmt.Errorf(`a limit is a whole number from 0 to %d, or "%s", not %s`, maxQuota, Unlimited, b)
 	}
 	*q = AtMost(n)
 	return nil
@@ -282,8 +288,8 @@ func Load(data []byte) (*PlanFile, error) {
 		}
 	}
 	if !sameSet(active, limitKeys) {
-		return nil, fmt.Errorf("the limits that are not inert are %s, but the server checks %s", list(active),
-			list(limitKeys))
+		return nil, fmt.Errorf("the limits that are not inert are %s, but the server checks %s", list(active, ""),
+			list(limitKeys, ""))
 	}
 	for i, feature := range in.Features {
 		if !wellFormedKey(string(feature)) {
@@ -296,7 +302,8 @@ func Load(data []byte) (*PlanFile, error) {
 		f.features = append(f.features, feature)
 	}
 	if !sameSet(f.features, features) {
-		return nil, fmt.Errorf("the features are %s, but the server knows %s", list(f.features), list(features))
+		return nil, fmt.Errorf("the features are %s, but the server knows %s", list(f.features, ""),
+			list(features, ""))
 	}
 
 	for i, p := range in.Plans {
@@ -313,11 +320,11 @@ func Load(data []byte) (*PlanFile, error) {
 		}
 		if keys := slices.Collect(maps.Keys(p.Limits)); !sameSet(keys, declared) {
 			return nil, fmt.Errorf("plans[%d] (%s): the limits are %s, but the file declares %s", i, p.Key,
-				list(keys), list(declared))
+				list(keys, ""), list(declared, ""))
 		}
 		if keys := slices.Collect(maps.Keys(p.Features)); !sameSet(keys, f.features) {
 			return nil, fmt.Errorf("plans[%d] (%s): the features are %s, but the file declares %s", i, p.Key,
-				list(keys), list(f.features))
+				list(keys, ""), list(f.features, ""))
 		}
 		f.plans = append(f.plans, Plan{Key: p.Key, limits: p.Limits, features: p.Features})
 	}
@@ -426,14 +433,10 @@ func lowercaseKey(key string) bool {
 }
 
 // wellFormedKey reports whether key is lowercase ASCII letters, digits, and
-// _, starting with a letter, as every key of the plan file is.
+// _, starting with a letter, as every key of the plan file is: a
+// lowercaseKey without $ that starts with a letter.
 func wellFormedKey(key string) bool {
-	if key == "" || key[0] < 'a' || key[0] > 'z' {
-		return false
-	}
-	return !strings.ContainsFunc(key, func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_'
-	})
+	return lowercaseKey(key) && key[0] >= 'a' && key[0] <= 'z' && !strings.Contains(key, "$")
 }
 
 // sameSet reports whether a and b hold the same elements, each as many
@@ -446,15 +449,22 @@ func sameSet[T cmp.Ordered](a, b []T) bool {
 }
 
 // list writes keys for an error, sorted, so that a map's keys read the same
-// each time.
-func list[T ~string](keys []T) string {
+// each time, and separated by commas, with the conjunction conj, such as
+// "or", before the last if conj is not "", as in "members, projects, or
+// storage_bytes". It writes no keys as "none".
+func list[T ~string](keys []T, conj string) string {
 	s := make([]string, len(keys))
 	for i, k := range keys {
 		s[i] = string(k)
 	}
 	slices.Sort(s)
-	if len(s) == 0 {
+	switch {
+	case len(s) == 0:
 		return "none"
+	case conj == "" || len(s) == 1:
+		return strings.Join(s, ", ")
+	case len(s) == 2:
+		return s[0] + " " + conj + " " + s[1]
 	}
-	return strings.Join(s, ", ")
+	return strings.Join(s[:len(s)-1], ", ") + ", " + conj + " " + s[len(s)-1]
 }

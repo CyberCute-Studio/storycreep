@@ -293,24 +293,29 @@ func TestLimitExceeded(t *testing.T) {
 // TestLimitExceededHasOneSource checks that limitExceededError is the only
 // code that answers with limit_exceeded, so that every such answer carries
 // the limit's key, usage, and limit: outside the registry of error codes,
-// no other code of the server names the code.
+// no other code of the server, under server/, names the code.
 //
 // Verifies: FR-ENT-03/AC1
 func TestLimitExceededHasOneSource(t *testing.T) {
-	root := filepath.Join("..")
-	allowed := []string{filepath.Join("api", "errors.go"), filepath.Join("httpserver", "entitlements.go")}
+	root := filepath.Join("..", "..")
+	allowed := []string{filepath.Join("internal", "api", "errors.go"),
+		filepath.Join("internal", "httpserver", "entitlements.go")}
 	fset := token.NewFileSet()
-	var found []string
+	var found, visitedAllowed []string
+	var files int
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && d.Name() == "testdata" {
+		// The root's name, "..", starts with a dot too, but it is no hidden
+		// directory.
+		if d.IsDir() && path != root && (d.Name() == "testdata" || strings.HasPrefix(d.Name(), ".")) {
 			return filepath.SkipDir
 		}
 		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
+		files++
 		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			return err
@@ -318,6 +323,9 @@ func TestLimitExceededHasOneSource(t *testing.T) {
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
+		}
+		if slices.Contains(allowed, rel) {
+			visitedAllowed = append(visitedAllowed, rel)
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch n := n.(type) {
@@ -337,6 +345,11 @@ func TestLimitExceededHasOneSource(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A walk that skipped the server's code would pass without a word.
+	if files == 0 || len(visitedAllowed) != len(allowed) {
+		t.Errorf("the walk read %d Go files, and of the files that may name the code, %v; want the server's code, "+
+			"and %v", files, visitedAllowed, allowed)
 	}
 	if len(found) > 0 {
 		t.Errorf("code outside limitExceededError answers with limit_exceeded: %v", found)

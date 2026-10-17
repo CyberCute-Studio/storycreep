@@ -13,10 +13,10 @@ import (
 // without a cap is as the workspace's plan has it.
 type Caps map[LimitKey]int64
 
-// ParseCaps reads caps written as limits and whole numbers of at least 1,
-// joined by = and separated by commas, with white space around each, as in
-// "members=20, projects=50". Each limit is one that the server checks, and
-// is named once.
+// ParseCaps reads caps written as limits and whole numbers from 1 to
+// maxQuota, joined by = and separated by commas, with white space around
+// each, as in "members=20, projects=50". Each limit is one that the server
+// checks, and is named once.
 func ParseCaps(s string) (Caps, error) {
 	caps := Caps{}
 	for i, entry := range strings.Split(s, ",") {
@@ -30,22 +30,23 @@ func ParseCaps(s string) (Caps, error) {
 			if spec, ok := Default().limit(l); ok && spec.InertUntil != "" {
 				return nil, fmt.Errorf("entry %d names %s, which nothing checks yet, so it cannot be capped", i+1, l)
 			}
-			return nil, fmt.Errorf("entry %d names no limit; the limits are %s", i+1, orList(limitKeys))
+			return nil, fmt.Errorf("entry %d names no limit; the limits are %s", i+1, list(limitKeys, "or"))
 		}
 		if _, ok := caps[l]; ok {
 			return nil, fmt.Errorf("entry %d names %s again", i+1, l)
 		}
 		n, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || n < 1 || strings.ContainsAny(value, "+-") {
+		if err != nil || n < 1 || n > maxQuota || strings.ContainsAny(value, "+-") {
 			return nil, fmt.Errorf("entry %d caps %s at a value that is not a whole number from 1 to %d", i+1, l,
-				int64(1<<63-1))
+				maxQuota)
 		}
 		caps[l] = n
 	}
 	return caps, nil
 }
 
-// String returns c as ParseCaps reads it, in the order of the plan file.
+// String returns c as ParseCaps reads it, in the order of the limits that
+// the server checks (LimitKeys).
 func (c Caps) String() string {
 	var entries []string
 	for _, l := range limitKeys {
@@ -64,22 +65,4 @@ func (f *PlanFile) limit(key LimitKey) (Limit, bool) {
 		return Limit{}, false
 	}
 	return f.limits[i], true
-}
-
-// orList writes keys as a list whose last two are joined by "or", in their
-// order.
-func orList(keys []LimitKey) string {
-	s := make([]string, len(keys))
-	for i, k := range keys {
-		s[i] = string(k)
-	}
-	switch len(s) {
-	case 0:
-		return ""
-	case 1:
-		return s[0]
-	case 2:
-		return s[0] + " or " + s[1]
-	}
-	return strings.Join(s[:len(s)-1], ", ") + ", or " + s[len(s)-1]
 }

@@ -316,7 +316,8 @@ func TestInvalidValues(t *testing.T) {
 		{"STORYCREEP_WORKSPACE_LIMITS", "Members=5", "entry 1 names no limit"},
 		{"STORYCREEP_WORKSPACE_LIMITS", "snapshot_retention=3", "entry 1 names snapshot_retention, which nothing checks yet, so it cannot be capped"},
 		{"STORYCREEP_WORKSPACE_LIMITS", "members=5, members=6", "entry 2 names members again"},
-		{"STORYCREEP_WORKSPACE_LIMITS", "members=0", "entry 1 caps members at a value that is not a whole number from 1 to 9223372036854775807"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "members=0", "entry 1 caps members at a value that is not a whole number from 1 to 9007199254740991"},
+		{"STORYCREEP_WORKSPACE_LIMITS", "storage_bytes=9007199254740992", "entry 1 caps storage_bytes at a value that is not a whole number from 1 to 9007199254740991"},
 		{"STORYCREEP_WORKSPACE_LIMITS", "projects=+3", "entry 1 caps projects at a value that is not a whole number"},
 		{"STORYCREEP_WORKSPACE_LIMITS", "projects=-3", "entry 1 caps projects at a value that is not a whole number"},
 		{"STORYCREEP_WORKSPACE_LIMITS", "projects=2.5", "entry 1 caps projects at a value that is not a whole number"},
@@ -528,8 +529,8 @@ func TestTrustedProxies(t *testing.T) {
 
 // TestWorkspaceLimits checks that STORYCREEP_WORKSPACE_LIMITS caps the
 // limits that it names, with white space around its entries, and shows them
-// in the order of the plan file, and that its reference names every limit
-// that the server checks, which are the ones it takes.
+// in the order of the limits that the server checks, and that its reference
+// names every limit that the server checks, which are the ones it takes.
 func TestWorkspaceLimits(t *testing.T) {
 	if c := mustLoad(t, withRequired(nil)); c.WorkspaceLimits != nil {
 		t.Errorf("the default is %v, want no caps", c.WorkspaceLimits)
@@ -542,7 +543,7 @@ func TestWorkspaceLimits(t *testing.T) {
 		t.Errorf("WorkspaceLimits = %v, want %v", c.WorkspaceLimits, want)
 	}
 	if e := entry(t, c, "STORYCREEP_WORKSPACE_LIMITS"); e.Value != "members=20, storage_bytes=1073741824" {
-		t.Errorf("the entry shows %q, want the caps in the order of the plan file", e.Value)
+		t.Errorf("the entry shows %q, want the caps in the order of the limits that the server checks", e.Value)
 	}
 	i := slices.IndexFunc(keys, func(k key) bool { return k.name == "STORYCREEP_WORKSPACE_LIMITS" })
 	for _, l := range entitlements.LimitKeys() {

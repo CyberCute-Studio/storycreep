@@ -28,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -115,8 +116,10 @@ func New(opts Options) *Service {
 	if plans == nil {
 		plans = Default()
 	}
-	return &Service{enforce: opts.Enforce, caps: opts.Caps, upgrade: opts.UpgradeURL, meter: opts.Meter,
-		plans: plans}
+	// The caps are copied, so that the Service does not share the map of the
+	// configuration that it was given.
+	return &Service{enforce: opts.Enforce, caps: maps.Clone(opts.Caps), upgrade: opts.UpgradeURL,
+		meter: opts.Meter, plans: plans}
 }
 
 // NewWorkspacePlan returns the plan of a new workspace: the free plan while
@@ -131,7 +134,10 @@ func (s *Service) NewWorkspacePlan() string {
 // plan returns the plan of the workspace, which the transaction tx reads.
 func (s *Service) plan(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID) (Plan, error) {
 	if !s.enforce {
-		p, _ := s.plans.Plan(Unlimited)
+		p, ok := s.plans.Plan(Unlimited)
+		if !ok {
+			return Plan{}, fmt.Errorf("entitlements: the plan file has no %s plan", Unlimited)
+		}
 		return p, nil
 	}
 	key, err := queries.New(tx).WorkspacePlan(ctx, pgtype.UUID{Bytes: workspaceID, Valid: true})
@@ -214,10 +220,11 @@ func (s *Service) Usage(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, ke
 	return Usage{Key: key, Used: used, Quota: q, Warning: q.Warns(used)}, nil
 }
 
-// Check returns nil if the workspace may add adding to its usage of key, in
-// the transaction tx of the change that adds it, and a *LimitError if that
-// would take the workspace past its quota of key (FR-ENT-03). A quota of any
-// amount is not checked against usage, so it costs no read of the Meter.
+// Check returns nil if a change may add the amount adding to the workspace's
+// usage of key, and a *LimitError if that would take the workspace past its
+// quota of key (FR-ENT-03). It runs in the transaction tx of that change.
+// Adding nothing, or less, is always allowed, and a quota of any amount is
+// not checked against usage, so neither costs a read of the Meter.
 func (s *Service) Check(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, key LimitKey, adding int64) error {
 	q, fromPlan, err := s.quota(ctx, tx, workspaceID, key)
 	if err != nil {

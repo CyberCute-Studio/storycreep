@@ -256,10 +256,14 @@ func TestLoadRefuses(t *testing.T) {
 			[]byte(`"members": 1, "members": 2,`), 1), `the key "members" appears more than once`},
 		{"a negative limit", edit(func(doc map[string]any) {
 			plan(doc, "free")["limits"].(map[string]any)["projects"] = -1
-		}), "a limit is a whole number of at least 0"},
+		}), "a limit is a whole number from 0 to 9007199254740991"},
 		{"a fraction", edit(func(doc map[string]any) {
 			plan(doc, "free")["limits"].(map[string]any)["projects"] = 2.5
-		}), "a limit is a whole number of at least 0"},
+		}), "a limit is a whole number from 0 to 9007199254740991"},
+		// A JavaScript client would read a larger number inexactly.
+		{"a limit past 2^53 - 1", edit(func(doc map[string]any) {
+			plan(doc, "free")["limits"].(map[string]any)["storage_bytes"] = json.Number("9007199254740992")
+		}), "a limit is a whole number from 0 to 9007199254740991, or \"unlimited\", not 9007199254740992"},
 		{"null", edit(func(doc map[string]any) {
 			plan(doc, "free")["limits"].(map[string]any)["projects"] = nil
 		}), `the value of the key "projects" is null`},
@@ -279,7 +283,7 @@ func TestLoadRefuses(t *testing.T) {
 			`the key "Billable" is not lowercase`},
 		{"another word", edit(func(doc map[string]any) {
 			plan(doc, "free")["limits"].(map[string]any)["projects"] = "infinite"
-		}), "a limit is a whole number of at least 0"},
+		}), "a limit is a whole number from 0 to 9007199254740991"},
 		{"a missing limit", edit(func(doc map[string]any) {
 			delete(plan(doc, "team")["limits"].(map[string]any), "storage_bytes")
 		}), "plans[2] (team): the limits are members, projects, snapshot_retention, but the file declares"},
@@ -389,6 +393,12 @@ func TestQuota(t *testing.T) {
 	if AtMost(-1) != AtMost(0) {
 		t.Errorf("AtMost(-1) = %v, want AtMost(0)", AtMost(-1))
 	}
+	// The plan file's largest limit is 2^53 - 1, which a JavaScript client
+	// reads exactly.
+	var q Quota
+	if err := q.UnmarshalJSON([]byte("9007199254740991")); err != nil || q != AtMost(1<<53-1) {
+		t.Errorf("UnmarshalJSON(2^53 - 1) = %v, %v", q, err)
+	}
 	if NoLimit.min(AtMost(5)) != AtMost(5) || AtMost(5).min(NoLimit) != AtMost(5) ||
 		AtMost(5).min(AtMost(3)) != AtMost(3) || NoLimit.min(NoLimit) != NoLimit {
 		t.Errorf("min does not return the smaller quota")
@@ -404,17 +414,18 @@ func firstWarning(q Quota) int64 {
 }
 
 // TestParseCaps checks that caps are read, whatever the white space around
-// their entries, and written in the order of the plan file.
+// their entries, up to 2^53 - 1, which a JavaScript client reads exactly, and
+// written in the order of the limits that the server checks.
 func TestParseCaps(t *testing.T) {
-	caps, err := ParseCaps(" storage_bytes=1073741824 ,projects = 2,members=9223372036854775807")
+	caps, err := ParseCaps(" storage_bytes=1073741824 ,projects = 2,members=9007199254740991")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Caps{StorageBytes: 1073741824, Projects: 2, Members: 1<<63 - 1}
+	want := Caps{StorageBytes: 1073741824, Projects: 2, Members: 1<<53 - 1}
 	if !maps.Equal(caps, want) {
 		t.Errorf("ParseCaps = %v, want %v", caps, want)
 	}
-	if got := caps.String(); got != "members=9223372036854775807, projects=2, storage_bytes=1073741824" {
+	if got := caps.String(); got != "members=9007199254740991, projects=2, storage_bytes=1073741824" {
 		t.Errorf("String() = %q", got)
 	}
 	if again, err := ParseCaps(caps.String()); err != nil || !maps.Equal(again, caps) {
