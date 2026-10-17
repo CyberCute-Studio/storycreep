@@ -55,9 +55,11 @@ const (
 	// personal workspace (FR-ADMIN-02).
 	ActionWorkspaceCreate Action = "workspace.create"
 	// ActionMembershipCreate is a user's becoming a member of a workspace,
-	// as the operator's storycreep grant-role makes them (FR-ADMIN-06), with
-	// the role that its metadata's role names. It belongs to that workspace,
-	// and its subject is the membership. An entry without an actor is the
+	// as the operator's storycreep grant-role makes them (FR-ADMIN-06), or
+	// their acceptance of an invitation, which its metadata's invite_id names
+	// (FR-TEN-02), with the role that its metadata's role names. It belongs
+	// to that workspace, and its subject is the membership. Its actor is the
+	// user who accepted the invitation, and an entry without an actor is the
 	// operator's, who acts through the command line.
 	ActionMembershipCreate Action = "membership.create"
 	// ActionMembershipRoleChange is a change of a membership's role, from
@@ -65,6 +67,41 @@ const (
 	// belongs to the membership's workspace, and its subject is the
 	// membership.
 	ActionMembershipRoleChange Action = "membership.role_change"
+	// ActionMembershipRemove is the removal of a member from a workspace by
+	// one of its owners or admins (FR-TEN-02), its actor, which ends the
+	// membership and its project grants, and revokes the workspace's open
+	// invitations that the member made, whose link the member was last given
+	// as text, or that are to the member's address (ActionInviteRevoke). It
+	// belongs to the workspace, its subject is the membership, its metadata's
+	// user_id names the member, and its role the role that the membership
+	// had.
+	ActionMembershipRemove Action = "membership.remove"
+	// ActionInviteCreate is the invitation of an address, or of whoever holds
+	// a link, to join a workspace with the role that its metadata's role
+	// names (FR-TEN-02), by an owner or admin of the workspace, its actor. Its
+	// metadata's kind says which: email or link, and its emailed whether the
+	// instance emails the invitation's link, rather than give it to the actor
+	// as text. It belongs to the workspace, and its subject is the
+	// invitation. An entry never holds the invited address (§9.6).
+	ActionInviteCreate Action = "invite.create"
+	// ActionInviteResend is the renewal of an invitation by an owner or admin
+	// of its workspace, which gives it a new link, in place of the old one,
+	// and 14 days more, with the metadata of ActionInviteCreate.
+	ActionInviteResend Action = "invite.resend"
+	// ActionInviteRevoke is the revocation of an invitation by an owner or
+	// admin of its workspace, after which its link is refused (FR-TEN-02
+	// AC1). Its metadata's role and kind are the invitation's. An invitation
+	// that the removal of a member revokes, because the member made it, was
+	// last given its link as text, or has the address that it invites, has
+	// the removal's actor, and its metadata's membership_id names the removed
+	// membership (ActionMembershipRemove).
+	ActionInviteRevoke Action = "invite.revoke"
+	// ActionInviteAccept is the acceptance of an invitation by the user who
+	// accepts it, its actor, who joins the workspace (ActionMembershipCreate)
+	// with the membership that its metadata's membership_id names. Its
+	// metadata's role and kind are the invitation's, and its new_account
+	// says whether the acceptance created the user's account.
+	ActionInviteAccept Action = "invite.accept"
 	// ActionInstanceAdminGrant makes an account an instance admin, as the
 	// operator's storycreep create-user --instance-admin and grant-role do,
 	// and ActionInstanceAdminRevoke makes it no longer one, as grant-role
@@ -123,9 +160,19 @@ var events = []eventSpec{
 	{action: ActionWorkspaceCreate, inWorkspace: true, subject: "workspace", results: []Result{ResultSuccess},
 		metadata: []string{"personal"}},
 	{action: ActionMembershipCreate, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
-		metadata: []string{"role"}},
+		metadata: []string{"role", "invite_id"}},
 	{action: ActionMembershipRoleChange, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
 		metadata: []string{"role", "previous_role"}},
+	{action: ActionMembershipRemove, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
+		metadata: []string{"role", "user_id"}},
+	{action: ActionInviteCreate, inWorkspace: true, subject: "invite", results: []Result{ResultSuccess},
+		metadata: []string{"role", "kind", "emailed"}},
+	{action: ActionInviteResend, inWorkspace: true, subject: "invite", results: []Result{ResultSuccess},
+		metadata: []string{"role", "kind", "emailed"}},
+	{action: ActionInviteRevoke, inWorkspace: true, subject: "invite", results: []Result{ResultSuccess},
+		metadata: []string{"role", "kind", "membership_id"}},
+	{action: ActionInviteAccept, inWorkspace: true, subject: "invite", results: []Result{ResultSuccess},
+		metadata: []string{"role", "kind", "membership_id", "new_account"}},
 	{action: ActionInstanceAdminGrant, subject: "user", results: []Result{ResultSuccess}},
 	{action: ActionInstanceAdminRevoke, subject: "user", results: []Result{ResultSuccess}},
 }

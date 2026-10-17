@@ -382,6 +382,7 @@ func (s *server) setupStep(ctx context.Context) error {
 func (s *server) serverJobs() *jobs.Registry {
 	r := jobs.NewRegistry()
 	s.accounts.RegisterJobs(r)
+	s.invites.RegisterJobs(r)
 	s.limits.RegisterJobs(r)
 	return r
 }

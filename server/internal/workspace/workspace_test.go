@@ -406,3 +406,203 @@ func TestGrantKeepsAnOwner(t *testing.T) {
 		t.Errorf("BySlug of no workspace: %v", err)
 	}
 }
+
+// TestRemoveKeepsAnOwner checks that of two owners who each remove
+// themselves at once, one is removed, and the other is told that they are
+// the last owner, so that the workspace keeps one.
+//
+// Verifies: FR-TEN-02/AC2
+func TestRemoveKeepsAnOwner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, d := newService(t, role.Policy{})
+	first, second := addUser(t, d, "First"), addUser(t, d, "Second")
+	w, err := s.Create(ctx, first, Settings{Name: "Harbour"}, audit.Client{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Grant(ctx, w.ID, second, role.Owner); err != nil {
+		t.Fatal(err)
+	}
+	members, err := s.Members(ctx, first, w.ID, ids.UUID{}, 10)
+	if err != nil || len(members) != 2 {
+		t.Fatalf("Members = %+v, %v", members, err)
+	}
+	results := make(chan error, len(members))
+	var start sync.WaitGroup
+	start.Add(1)
+	for _, m := range members {
+		go func() {
+			start.Wait()
+			results <- s.RemoveMember(ctx, m.UserID, w.ID, m.MembershipID, audit.Client{})
+		}()
+	}
+	start.Done()
+	var removed, refused int
+	for range members {
+		switch err := <-results; {
+		case err == nil:
+			removed++
+		case errors.Is(err, ErrLastOwner):
+			refused++
+		default:
+			t.Errorf("RemoveMember: %v", err)
+		}
+	}
+	if removed != 1 || refused != 1 {
+		t.Errorf("%d owners were removed and %d refused, want 1 and 1", removed, refused)
+	}
+	if n := count(t, d, `SELECT count(*) FROM membership WHERE workspace_id = $1 AND role = 'owner'`, w.ID); n != 1 {
+		t.Errorf("the workspace has %d owners, want 1", n)
+	}
+}
+
+// TestRemoveWhileAccepting checks that removing a member while they accept
+// an invitation that the removal revokes ends without a deadlock. The
+// acceptance locks its invitation and then adds a membership (package
+// invite), which the member's membership refuses at once, because the
+// removal deletes it only after it has revoked the invitation, which it
+// waits for the acceptance to let go of.
+func TestRemoveWhileAccepting(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, d := newService(t, role.Policy{})
+	owner, member := addUser(t, d, "Owner"), addUser(t, d, "Member")
+	w, err := s.Create(ctx, owner, Settings{Name: "Harbour"}, audit.Client{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Grant(ctx, w.ID, member, role.Editor); err != nil {
+		t.Fatal(err)
+	}
+	// An open invitation to the member's address, from before they joined.
+	invite := ids.New()
+	if _, err := d.Admin(t).Exec(ctx, `INSERT INTO invite (id, workspace_id, email, role, token_hash, expires_at)
+		SELECT $1, $2, u.email, 'viewer', $3, now() + interval '1 day' FROM "user" u WHERE u.id = $4`,
+		invite, w.ID, isolationtest.TokenHash(), member); err != nil {
+		t.Fatal(err)
+	}
+	var membership ids.UUID
+	if err := d.Admin(t).QueryRow(ctx, `SELECT id FROM membership WHERE workspace_id = $1 AND user_id = $2`, w.ID,
+		member).Scan(&membership); err != nil {
+		t.Fatal(err)
+	}
+
+	// The member's acceptance, as package invite makes it: it locks the
+	// invitation, and then adds the membership.
+	tx, err := d.Admin(t).Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM invite WHERE id = $1 FOR UPDATE`, invite); err != nil {
+		t.Fatal(err)
+	}
+	removed := make(chan error, 1)
+	go func() {
+		removed <- s.RemoveMember(ctx, owner, w.ID, membership, audit.Client{})
+	}()
+	dbtest.AwaitWaiter(t, tx, removed, "the removal")
+	tag, err := tx.Exec(ctx, `INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'viewer')
+		ON CONFLICT (user_id, workspace_id) DO NOTHING`, ids.New(), w.ID, member)
+	if err != nil {
+		t.Fatalf("the acceptance adds the membership: %v", err)
+	}
+	if tag.RowsAffected() != 0 {
+		t.Errorf("the acceptance added a membership beside the member's")
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-removed; err != nil {
+		t.Fatalf("RemoveMember: %v", err)
+	}
+	if n := count(t, d, `SELECT count(*) FROM invite WHERE id = $1 AND revoked_at IS NOT NULL`, invite); n != 1 {
+		t.Errorf("the invitation to the removed member's address is open")
+	}
+	if n := count(t, d, `SELECT count(*) FROM membership WHERE id = $1`, membership); n != 0 {
+		t.Errorf("the membership was not removed")
+	}
+}
+
+// TestMembersIsolation tries the queries of a workspace's members from
+// another workspace's transaction, where row-level security must keep them
+// from reading, changing, or adding a membership (NFR-SEC-01).
+//
+// Verifies: NFR-SEC-01
+func TestMembersIsolation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := isolationtest.New(t, dbtest.New(t), isolationtest.Tables)
+	// The fixture's memberships are owners', so that counting the owners has
+	// one to count.
+	if _, err := f.Admin().Exec(ctx, "UPDATE membership SET role = 'owner' WHERE id = ANY($1)",
+		[]ids.UUID{f.A.Rows["membership"], f.B.Rows["membership"]}); err != nil {
+		t.Fatal(err)
+	}
+	member := func(w *isolationtest.Workspace) ids.UUID {
+		var id ids.UUID
+		if err := f.Admin().QueryRow(ctx, `SELECT user_id FROM membership WHERE id = $1`,
+			w.Rows["membership"]).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	found := func(target *isolationtest.Workspace, err error) ([]ids.UUID, error) {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return []ids.UUID{target.Rows["membership"]}, err
+	}
+	for _, op := range []isolationtest.Op{
+		{Name: "the members", Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) (
+			[]ids.UUID, error) {
+			rows, err := queries.New(tx).WorkspaceMembers(ctx, queries.WorkspaceMembersParams{
+				WorkspaceID: nullUUID(target.ID), MaxRows: 10})
+			var out []ids.UUID
+			for _, r := range rows {
+				out = append(out, r.ID.Bytes)
+			}
+			return out, err
+		}},
+		{Name: "lock a membership", Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) (
+			[]ids.UUID, error) {
+			_, err := queries.New(tx).LockMembershipByID(ctx, queries.LockMembershipByIDParams{
+				WorkspaceID: nullUUID(target.ID), ID: nullUUID(target.Rows["membership"])})
+			return found(target, err)
+		}},
+		{Name: "count the other owners", Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) (
+			[]ids.UUID, error) {
+			n, err := queries.New(tx).CountOtherOwners(ctx, queries.CountOtherOwnersParams{
+				WorkspaceID: nullUUID(target.ID), ID: nullUUID(ids.New())})
+			if n > 0 {
+				return []ids.UUID{target.Rows["membership"]}, err
+			}
+			return nil, err
+		}},
+		{Name: "a user's membership", Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) (
+			[]ids.UUID, error) {
+			_, err := queries.New(tx).MembershipOf(ctx, queries.MembershipOfParams{WorkspaceID: nullUUID(target.ID),
+				UserID: nullUUID(member(target))})
+			return found(target, err)
+		}},
+		{Name: "remove a membership", Blind: true, Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			return nil, queries.New(tx).DeleteMembership(ctx, queries.DeleteMembershipParams{
+				WorkspaceID: nullUUID(target.ID), ID: nullUUID(target.Rows["membership"])})
+		}},
+		{Name: "join a workspace", Denied: true, Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			user, err := isolationtest.NewUser(ctx, f.Admin())
+			if err != nil {
+				return nil, err
+			}
+			id := ids.New()
+			_, err = queries.New(tx).JoinWorkspace(ctx, queries.JoinWorkspaceParams{ID: nullUUID(id),
+				WorkspaceID: nullUUID(target.ID), UserID: nullUUID(user), Role: "viewer"})
+			return []ids.UUID{id}, err
+		}},
+	} {
+		f.Check(t, op)
+	}
+}

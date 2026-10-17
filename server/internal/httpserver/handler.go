@@ -17,6 +17,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/invite"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/setup"
@@ -37,6 +38,8 @@ type server struct {
 	accounts *account.Service
 	// workspaces keeps the workspaces.
 	workspaces *workspace.Service
+	// invites keeps the workspaces' invitations.
+	invites *invite.Service
 	// setups completes first-run setup.
 	setups *setup.Service
 	// unattended is the configuration's unattended first-run setup, or nil
@@ -93,6 +96,14 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 			return nil
 		},
 	})
+	s.invites = invite.New(readyDB{s.ready}, invite.Options{
+		Workspaces: s.workspaces,
+		Accounts:   s.accounts,
+		Email:      s.email,
+		Queue:      s.queue,
+		Limits:     s.limits,
+		PublicURL:  cfg.PublicURL,
+	})
 	s.setups = setup.New(readyDB{s.ready}, setup.Options{
 		Signup:        cfg.Capabilities.Signup,
 		SMTPFixed:     s.email.Fixed(),
@@ -121,6 +132,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerAccounts(s.main, s.accounts, s.limits)
 	registerSessions(s.main, s.accounts, s.limits, cookie)
 	registerWorkspaces(s.main, s.workspaces)
+	registerInvites(s.main, s.workspaces, s.invites, s.accounts, s.limits)
 	registerSetup(s.main, s.setups, s.limits)
 	registerEmail(s.main, s.accounts, s.limits)
 	registerDocument(s.main)

@@ -4,7 +4,8 @@
 // An account is registered with an email address, a display name, and a
 // password, once first-run setup has completed (FR-ADMIN-02), when the
 // instance's signup policy lets anyone register: with closed, nobody can, and
-// with invite, only an invitation creates an account (FR-TEN-02). The policy
+// with invite, only an invitation creates an account (FR-TEN-02), whose link
+// package invite registers it with (RegisterInvited). The policy
 // is the one that STORYCREEP_SIGNUP sets (the Signup capability), or else the
 // one that setup chose. Registering an address
 // that has an account already looks the same to the client as registering a
@@ -192,6 +193,38 @@ func (s *Service) Hasher() *Hasher {
 // reads a registration, so that it refuses one whatever the registration
 // holds (FR-AUTH-01 AC3, FR-ADMIN-02 AC4).
 func (s *Service) CheckSignup(ctx context.Context) error {
+	policy, err := s.signupPolicy(ctx)
+	switch {
+	case err != nil:
+		return err
+	case policy == config.SignupOpen:
+		return nil
+	case policy == config.SignupInvite:
+		return ErrInviteRequired
+	}
+	return ErrSignupClosed
+}
+
+// CheckInvitedSignup is CheckSignup for a registration that an invitation
+// lets through (RegisterInvited): it returns ErrSetupRequired until first-run
+// setup has completed, and then ErrSignupClosed if the signup policy is
+// closed, under which nobody registers, with an invitation or without, so
+// that only an account that exists already can accept one (FR-TEN-02). Under
+// invite and open, an invitation creates an account.
+func (s *Service) CheckInvitedSignup(ctx context.Context) error {
+	policy, err := s.signupPolicy(ctx)
+	switch {
+	case err != nil:
+		return err
+	case policy == config.SignupClosed:
+		return ErrSignupClosed
+	}
+	return nil
+}
+
+// signupPolicy returns the signup policy that applies, once first-run setup
+// has completed, or ErrSetupRequired until then.
+func (s *Service) signupPolicy(ctx context.Context) (config.SignupPolicy, error) {
 	var row queries.InstanceSetupRow
 	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		var err error
@@ -200,17 +233,11 @@ func (s *Service) CheckSignup(ctx context.Context) error {
 	})
 	switch {
 	case err != nil:
-		return fmt.Errorf("account: read the instance's setup: %w", err)
+		return "", fmt.Errorf("account: read the instance's setup: %w", err)
 	case !row.SetupCompleted:
-		return ErrSetupRequired
+		return "", ErrSetupRequired
 	}
-	switch s.signup.Resolve(config.SignupPolicy(row.SignupPolicy.String)) {
-	case config.SignupOpen:
-		return nil
-	case config.SignupInvite:
-		return ErrInviteRequired
-	}
-	return ErrSignupClosed
+	return s.signup.Resolve(config.SignupPolicy(row.SignupPolicy.String)), nil
 }
 
 // Registration is what an account is registered with.
@@ -238,6 +265,29 @@ func (s *Service) Register(ctx context.Context, r Registration) error {
 	if err := s.CheckSignup(ctx); err != nil {
 		return err
 	}
+	return s.register(ctx, r, database.Scope{}, nil)
+}
+
+// RegisterInvited registers an account as Register does, for a registration
+// that an invitation of the workspace workspaceID lets through whatever the
+// signup policy, whose caller checks the policy (CheckInvitedSignup) and the
+// invitation (package invite). The transaction that adds the account is a
+// transaction of that workspace, and calls join with the new account's ID,
+// so that the account joins the workspace with it; an error of join rolls
+// the account back, and RegisterInvited returns it. An address that has an
+// account already gets no new one, and join is not called, but the answer is
+// the same, as Register's is, so that it does not tell whether the address
+// has one. It returns input.FieldErrors, a *ratelimit.LimitError, and a
+// *PasswordError as Register does.
+func (s *Service) RegisterInvited(ctx context.Context, r Registration, workspaceID ids.UUID,
+	join func(ctx context.Context, tx pgx.Tx, userID ids.UUID) error) error {
+	return s.register(ctx, r, database.Scope{WorkspaceID: workspaceID}, join)
+}
+
+// register is Register past the signup policy, in a transaction of scope,
+// which calls join, if it is set, with the ID of the account that it adds.
+func (s *Service) register(ctx context.Context, r Registration, scope database.Scope,
+	join func(ctx context.Context, tx pgx.Tx, userID ids.UUID) error) error {
 	email, name, err := r.fields()
 	if err != nil {
 		return err
@@ -256,7 +306,7 @@ func (s *Service) Register(ctx context.Context, r Registration) error {
 	if err != nil {
 		return err
 	}
-	return s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+	return s.db.InTx(ctx, scope, func(tx pgx.Tx) error {
 		id := ids.New()
 		n, err := queries.New(tx).InsertUser(ctx, queries.InsertUserParams{
 			ID:           pgtype.UUID{Bytes: id, Valid: true},
@@ -264,9 +314,15 @@ func (s *Service) Register(ctx context.Context, r Registration) error {
 			PasswordHash: pgtype.Text{String: hash, Valid: true},
 			DisplayName:  name,
 		})
-		switch {
-		case err != nil:
+		if err != nil {
 			return fmt.Errorf("account: add the account: %w", err)
+		}
+		if n == 1 && join != nil {
+			if err := join(ctx, tx, id); err != nil {
+				return err
+			}
+		}
+		switch {
 		case !verify:
 			return nil
 		case n == 0:
@@ -350,11 +406,11 @@ func Insert(ctx context.Context, tx pgx.Tx, a Account) error {
 
 // fields returns the registration's email address and display name as an
 // account holds them, without the white space around them, and the address
-// in its canonical form (canonicalEmail), or input.FieldErrors.
+// in its canonical form (CanonicalEmail), or input.FieldErrors.
 func (r Registration) fields() (email, name string, err error) {
 	var errs input.FieldErrors
-	email = canonicalEmail(r.Email)
-	if msg := checkEmail(email); msg != "" {
+	email = CanonicalEmail(r.Email)
+	if msg := CheckEmail(email); msg != "" {
 		errs = append(errs, input.FieldError{Field: "email", Message: msg})
 	}
 	name = strings.TrimSpace(r.DisplayName)
@@ -367,7 +423,7 @@ func (r Registration) fields() (email, name string, err error) {
 	return email, name, nil
 }
 
-// canonicalEmail returns an email address as accounts hold it and look it
+// CanonicalEmail returns an email address as accounts hold it and look it
 // up: without the white space around it, and in Unicode normalization form
 // NFC, so that an address whose characters another keyboard or system
 // composes differently, such as ž typed as z and a combining caron, is the
@@ -379,18 +435,18 @@ func (r Registration) fields() (email, name string, err error) {
 // that the NFKC of a password changes, such as full-width letters, so the
 // address stays the one that mail is delivered to: NFC is the form that RFC
 // 6532 §3.1 recommends for mail.
-func canonicalEmail(email string) string {
+func CanonicalEmail(email string) string {
 	return norm.NFC.String(strings.TrimSpace(email))
 }
 
-// checkEmail says what is wrong with an email address, or returns "". It
+// CheckEmail says what is wrong with an email address, or returns "". It
 // takes an address alone, as in jo@example.com, without a name or angle
 // brackets, and without a quoted local part or a comment, which mail
 // delivery and people rarely handle. Nor does it take a space or a character
 // that is not printed, which net/mail accepts outside ASCII, such as U+200B
 // ZERO WIDTH SPACE or U+202E, which reverses the text after it, so that no
 // address looks like another account's.
-func checkEmail(email string) string {
+func CheckEmail(email string) string {
 	switch {
 	case email == "":
 		return "is empty"
@@ -423,8 +479,8 @@ func checkDisplayName(name string) string {
 // those parameters take: after a release changes them, the time of a failed
 // sign-in tells such an account from an address without one, until the
 // account's next sign-in replaces its hash. The address is looked up in its
-// canonical form (canonicalEmail), and one that registration would refuse
-// (checkEmail), which no account has, such as one with a NUL character, is
+// canonical form (CanonicalEmail), and one that registration would refuse
+// (CheckEmail), which no account has, such as one with a NUL character, is
 // not looked up at all.
 //
 // When the password matches a hash made with other parameters than the
@@ -469,14 +525,14 @@ func (s *Service) authenticate(ctx context.Context, email string, password secre
 }
 
 // credentials returns the credentials of the account that the email address
-// belongs to, in its canonical form (canonicalEmail), whatever the account's
+// belongs to, in its canonical form (CanonicalEmail), whatever the account's
 // status, and false if it belongs to none. An address that registration
-// would refuse (checkEmail), which no account has, such as one with a NUL
+// would refuse (CheckEmail), which no account has, such as one with a NUL
 // character, is not looked up at all.
 func (s *Service) credentials(ctx context.Context, email string) (queries.UserCredentialsRow, bool, error) {
 	var row queries.UserCredentialsRow
 	var found bool
-	if email = canonicalEmail(email); checkEmail(email) != "" {
+	if email = CanonicalEmail(email); CheckEmail(email) != "" {
 		return row, false, nil
 	}
 	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {

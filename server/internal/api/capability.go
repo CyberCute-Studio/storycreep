@@ -26,6 +26,10 @@ const (
 	// ManageWorkspaceSettings is changing a workspace's settings, which
 	// needs owner or admin (§5.6).
 	ManageWorkspaceSettings Capability = "workspace.settings"
+	// ManageMembers is inviting people to a workspace, its invitations, and
+	// removing its members, which needs owner or admin, and owner for an
+	// invitation as owner and for removing an owner (§5.6).
+	ManageMembers Capability = "workspace.members"
 	// ManageInstance is the instance-admin area (PRD FR-ADMIN-03), which
 	// needs a signed-in instance admin, whom the service checks (package
 	// account).
@@ -43,6 +47,7 @@ var capabilities = map[Capability]bool{
 	CreateWorkspace:         true,
 	ReadWorkspace:           true,
 	ManageWorkspaceSettings: true,
+	ManageMembers:           true,
 	ManageInstance:          true,
 }
 

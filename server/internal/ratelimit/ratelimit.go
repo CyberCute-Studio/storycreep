@@ -3,12 +3,14 @@
 // (PRD FR-AUTH-05, NFR-SEC-06, FR-API-04).
 //
 // A rate limit counts the requests of a kind, a bucket (auth, read, write,
-// export, or connect), separately for each key that makes them: the
-// client's IP address, the signed-in user, or the email address that a
-// request names. Each bucket counts in fixed windows of time, of the same
-// length for every key, and allows each kind of key a number of requests in
-// a window (Policy). A request is allowed only if none of its keys has used
-// up its limit, and counts against all of them either way.
+// export, connect, or invite_email), separately for each key that makes
+// them: the client's IP address, the signed-in user, or the email address
+// that a request names. Each bucket counts in fixed windows of time, of the
+// same length for every key, and allows each kind of key a number of
+// requests in a window (Policy). A request is allowed only if none of its
+// keys has used up its limit, and counts against all of them either way.
+// The invite_email bucket counts no request, but email that the instance
+// sends: the invitations that it emails a mailbox (InviteEmail, Mailbox).
 //
 // The counters are rows in PostgreSQL, and every server of an instance
 // counts in the same rows, with the database's clock, so the limits hold
@@ -45,6 +47,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/email"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
@@ -65,6 +68,25 @@ const (
 	Export Bucket = "export"
 	// Connect is the opening of a WebSocket connection.
 	Connect Bucket = "connect"
+	// InviteEmail is the email of an invitation, which the job that sends
+	// it counts against the mailbox that its address goes to (Mailbox),
+	// from every workspace together, so that no account, however many
+	// workspaces it owns, or addresses of one mailbox it invites, can make
+	// the instance flood an inbox with invitations (FR-TEN-02). A workspace
+	// emails an address one invitation in 10 minutes at most (package
+	// invite), so the limit is above the 6 that one workspace can send an
+	// address in an hour, and those do not reach it alone. Counts that send
+	// nothing still can: that of an email that the SMTP server did not take,
+	// after which a resend is due at once; that of an invitation sent anew
+	// or closed between its count and its sending, whose replacement counts
+	// again; and that of an attempt cut off between its count and the link
+	// that it gives the invitation, whose next attempt counts the email
+	// again. An email counts once, in the window of the attempt that counts
+	// it, so that the retries that send it after that attempt failed, as
+	// while the SMTP server is down, count nothing: once a server that was
+	// down for hours takes email again, a mailbox may be sent the emails
+	// that those hours counted in one window.
+	InviteEmail Bucket = "invite_email"
 )
 
 // Kind is what a key counts the requests of.
@@ -77,9 +99,11 @@ const (
 	IP Kind = "ip"
 	// User counts a signed-in user.
 	User Kind = "user"
-	// Email counts an email address that a registration names, whether or
-	// not it belongs to an account. Signing in does not count it: the lock
-	// of an address after failed sign-ins limits those (BeginLogin).
+	// Email counts an email address that a registration or a request for a
+	// link that resets a password names, whether or not it belongs to an
+	// account, or the mailbox that an invitation is emailed to (Mailbox).
+	// Signing in does not count it: the lock of an address after failed
+	// sign-ins limits those (BeginLogin).
 	Email Kind = "email"
 )
 
@@ -122,6 +146,44 @@ func EmailAddress(email string) Key {
 	return Key{kind: Email, value: email, hidden: true}
 }
 
+// Mailbox returns the key of the mailbox that an email address, as package
+// account holds it, goes to, as far as the address tells, so that the
+// addresses of one mailbox are one key, as EmailAddress's spellings of one
+// address are: the address without its subaddress, the part of its local
+// part from its first + on, which most mail services deliver to the
+// mailbox of the rest (RFC 5233), unless the local part starts with it,
+// with its domain in the ASCII form that package email sends to where a
+// server takes no other (email.ASCIIDomain, which maps a letter's other
+// forms, such as a full-width one, to the letter, and writes a domain
+// outside ASCII as its xn-- labels), and without the dots at its ends, as
+// the one that a full stop at its end, such as a full-width one, leaves,
+// which servers drop, so that the spellings of one domain, which the
+// address's account and invitations tell apart, are one, and, at Gmail,
+// whose gmail.com and googlemail.com are one, without the dots of its local
+// part, which Gmail ignores. A domain that has no such form, as an address
+// literal, or one with a label that IDNA refuses, is mapped as far as IDNA
+// maps it, so that its spellings are one all the same. Two mailboxes that
+// only a subaddress or the dots tell apart, where a service does not
+// deliver so, share the key.
+func Mailbox(address string) Key {
+	at := strings.LastIndexByte(address, '@')
+	if at < 0 {
+		return EmailAddress(address)
+	}
+	local, domain := address[:at], address[at+1:]
+	if i := strings.IndexByte(local, '+'); i > 0 {
+		local = local[:i]
+	}
+	if mapped, _ := email.ASCIIDomain(domain); mapped != "" {
+		domain = mapped
+	}
+	domain = strings.Trim(domain, ".")
+	if strings.EqualFold(domain, "gmail.com") || strings.EqualFold(domain, "googlemail.com") {
+		local, domain = strings.ReplaceAll(local, ".", ""), "gmail.com"
+	}
+	return EmailAddress(local + "@" + domain)
+}
+
 // Rate is how many requests a bucket allows each kind of key in a window.
 type Rate struct {
 	// Period is the length of the bucket's windows, which start at the
@@ -162,6 +224,8 @@ func DefaultPolicy() Policy {
 			Write:   {Period: time.Minute, Limits: map[Kind]int{IP: 600, User: 300}},
 			Export:  {Period: time.Hour, Limits: map[Kind]int{IP: 60, User: 30}},
 			Connect: {Period: time.Minute, Limits: map[Kind]int{IP: 60, User: 30}},
+			// Invitation emails are counted by the address alone.
+			InviteEmail: {Period: time.Hour, Limits: map[Kind]int{Email: 10}},
 		},
 		Lockout: Lockout{Failures: 10, First: time.Minute, Max: 15 * time.Minute, Forget: 24 * time.Hour},
 	}
@@ -239,7 +303,7 @@ type LimitError struct {
 }
 
 func (e *LimitError) Error() string {
-	return fmt.Sprintf("ratelimit: the %s limit of %d requests is used up for %v", e.Bucket, e.Decision.Limit,
+	return fmt.Sprintf("ratelimit: the %s bucket's limit of %d is used up for %v", e.Bucket, e.Decision.Limit,
 		e.Decision.Reset)
 }
 
@@ -280,6 +344,15 @@ type counted struct {
 // is hidden. It panics on a bucket or a key that the policy does not limit,
 // which is a mistake in the code that calls it.
 func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decision, error) {
+	return l.TakeOn(ctx, l.db, bucket, keys...)
+}
+
+// TakeOn is Take in a transaction of its own on db, which may be another
+// pool of the Limiter's database than the one that it was made with, which
+// Take counts on, as a job counts on the workers' pool that it carries
+// (package jobs). db must reach the same database: the Limiter reads the key
+// of the hash once, in whichever pool it first counts.
+func (l *Limiter) TakeOn(ctx context.Context, db DB, bucket Bucket, keys ...Key) (Decision, error) {
 	rate, ok := l.policy.Rates[bucket]
 	if !ok {
 		panic(fmt.Sprintf("ratelimit: the bucket %q has no rate", bucket))
@@ -296,7 +369,7 @@ func (l *Limiter) Take(ctx context.Context, bucket Bucket, keys ...Key) (Decisio
 		return Decision{}, nil
 	}
 	var rows []queries.TakeRateLimitRow
-	err := l.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+	err := db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
 		for i := range cs {
 			var err error

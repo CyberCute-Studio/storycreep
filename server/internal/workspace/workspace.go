@@ -17,6 +17,9 @@
 // as in hosted mode), a user must have verified their email address before
 // they can create a workspace, the personal one included (PRD FR-AUTH-03).
 //
+// A workspace's members are listed, and removed, in members.go, and a user
+// joins one by accepting an invitation (package invite, Join).
+//
 // Every operation on a workspace resolves the user's role in it with
 // role.Policy.Workspace, from whether the user is an instance admin and
 // their membership. A user whose role is none, as one who is not a member,

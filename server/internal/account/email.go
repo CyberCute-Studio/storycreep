@@ -151,11 +151,14 @@ type Link struct {
 	Email string
 }
 
-// linkURL returns the URL of a link of kind k with the secret value, on the
-// instance at u.
-func linkURL(u config.PublicURL, k LinkKind, value secret.Value) string {
+// LinkURL returns the URL of a link with the secret value, on the instance at
+// u, which opens the web app's page at path, with the secret in its
+// fragment, which a browser does not send to the server, so that no log of a
+// request holds it: a link of kind k opens k.path(), and an invitation's
+// (package invite) the page that accepts it.
+func LinkURL(u config.PublicURL, path string, value secret.Value) string {
 	l := u.URL()
-	l.Path = k.path()
+	l.Path = path
 	l.Fragment = "token=" + value.Reveal()
 	return l.String()
 }
@@ -239,8 +242,8 @@ func (s *Service) RequestPasswordReset(ctx context.Context, address string) erro
 	case !configured:
 		return ErrEmailNotConfigured
 	}
-	address = canonicalEmail(address)
-	if checkEmail(address) != "" {
+	address = CanonicalEmail(address)
+	if CheckEmail(address) != "" {
 		// No account has an address that registration would refuse, and one
 		// with a NUL character could not even be looked up.
 		address = ""
@@ -310,7 +313,7 @@ func (s *Service) sendLink(ctx context.Context, db DB, id ids.UUID) error {
 	if err != nil || !configured {
 		return err
 	}
-	value, hash := newSecret()
+	value, hash := NewSecret()
 	var row queries.LockEmailTokenToSendRow
 	found := false
 	err = db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
@@ -344,19 +347,7 @@ func (s *Service) sendLink(ctx context.Context, db DB, id ids.UUID) error {
 	}
 	msg := linkEmail(s.publicURL, LinkKind(row.Kind), row.Locale.String, value, row.Email)
 	if err := mailer.Deliver(ctx, settings, msg); err != nil {
-		switch {
-		case ctx.Err() != nil:
-			// The job's context ended: the server is stopping, and the
-			// attempt is made again without counting (jobs.Register), or the
-			// job's minute ran out, as when the database was slow to answer
-			// before the mailer's own, shorter timeout could end the send.
-			return fmt.Errorf("account: email the link: %w", errors.Join(ctx.Err(), err))
-		case email.Permanent(err):
-			// The server refuses the address for good, so no other attempt
-			// would send the email either.
-			return jobs.Cancel(fmt.Errorf("account: email the link: %w", err))
-		}
-		return fmt.Errorf("account: email the link: %w", err)
+		return email.JobError(ctx, fmt.Errorf("account: email the link: %w", err))
 	}
 	return nil
 }
@@ -374,7 +365,7 @@ func linkEmail(u config.PublicURL, kind LinkKind, locale string, value secret.Va
 	}
 	l := i18n.Default().Localizer(tag)
 	to := mail.Address{Address: address}
-	args := i18n.Args{"site": u.URL().Host, "url": linkURL(u, kind, value)}
+	args := i18n.Args{"site": u.URL().Host, "url": LinkURL(u, kind.path(), value)}
 	if kind == LinkPasswordReset {
 		args["minutes"] = int(PasswordResetLifetime / time.Minute)
 		return email.Message{To: to,
@@ -392,7 +383,7 @@ func linkEmail(u config.PublicURL, kind LinkKind, locale string, value secret.Va
 // ErrTokenInvalid, ErrTokenUsed, or ErrTokenExpired, in that order.
 func tokenState(ctx context.Context, tx pgx.Tx, value secret.Value, kind LinkKind) (queries.LockEmailTokenRow,
 	error) {
-	hash, ok := secretHash(value)
+	hash, ok := SecretHash(value)
 	if !ok {
 		return queries.LockEmailTokenRow{}, ErrTokenInvalid
 	}
@@ -426,7 +417,7 @@ func (s *Service) VerifyEmail(ctx context.Context, value secret.Value, client Cl
 	var userID ids.UUID
 	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		if hash, ok := secretHash(value); ok {
+		if hash, ok := SecretHash(value); ok {
 			if err := q.LockEmailTokenAccountByHash(ctx, hash); err != nil {
 				return fmt.Errorf("account: lock the link's account: %w", err)
 			}
@@ -601,7 +592,7 @@ func issueLink(ctx context.Context, tx pgx.Tx, u config.PublicURL, kind LinkKind
 	if kind == LinkVerification {
 		verified = pgtype.Text{String: stored.Email, Valid: true}
 	}
-	value, hash := newSecret()
+	value, hash := NewSecret()
 	expires, err := queries.New(tx).InsertEmailToken(ctx, queries.InsertEmailTokenParams{
 		ID:        nullUUID(ids.New()),
 		Kind:      string(kind),
@@ -618,8 +609,8 @@ func issueLink(ctx context.Context, tx pgx.Tx, u config.PublicURL, kind LinkKind
 		Metadata: map[string]any{"kind": string(kind)}}); err != nil {
 		return Link{}, err
 	}
-	return Link{Kind: kind, URL: secret.New(linkURL(u, kind, value)), ExpiresAt: expires.Time, Email: stored.Email},
-		nil
+	return Link{Kind: kind, URL: secret.New(LinkURL(u, kind.path(), value)), ExpiresAt: expires.Time,
+		Email: stored.Email}, nil
 }
 
 // cleanUpEmailTokens deletes the tokens that have expired, in batches, each
