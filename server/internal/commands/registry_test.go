@@ -15,6 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
 
 // TestDecodeRefusesInvalidBatches checks that a batch is refused before
@@ -160,8 +161,8 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 	apply := func(context.Context, *Tx, notePayload) error { return nil }
 	inverse := func(context.Context, *Tx, notePayload) ([]Step, error) { return nil, nil }
 	good := func() Spec[notePayload] {
-		return Spec[notePayload]{Type: "note.fine", Capability: authz.ListMembers, Touches: []ids.Kind{ids.Node},
-			Inverse: inverse, Apply: apply}
+		return Spec[notePayload]{Type: "note.fine", Capability: authz.ListMembers, Scope: scope.ProjectWrite,
+			Touches: []ids.Kind{ids.Node}, Inverse: inverse, Apply: apply}
 	}
 	for _, tt := range []struct {
 		name   string
@@ -172,6 +173,8 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 		{"a registered type", func(s *Spec[notePayload]) { s.Type = noteCreate }},
 		{"no capability", func(s *Spec[notePayload]) { s.Capability = "" }},
 		{"an unknown capability", func(s *Spec[notePayload]) { s.Capability = "project.everything" }},
+		{"no scope", func(s *Spec[notePayload]) { s.Scope = "" }},
+		{"an unknown scope", func(s *Spec[notePayload]) { s.Scope = "project:admin" }},
 		{"nothing touched", func(s *Spec[notePayload]) { s.Touches = nil }},
 		{"an unregistered entity", func(s *Spec[notePayload]) { s.Touches = []ids.Kind{ids.Board} }},
 		{"an entity twice", func(s *Spec[notePayload]) { s.Touches = []ids.Kind{ids.Node, ids.Node} }},
@@ -199,7 +202,7 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 	}
 	if !panics(func() {
 		Register(noteRegistry(), Spec[string]{Type: "note.text", Capability: authz.ListMembers,
-			Touches: []ids.Kind{ids.Node}, NonUndoable: true,
+			Scope: scope.ProjectWrite, Touches: []ids.Kind{ids.Node}, NonUndoable: true,
 			Apply: func(context.Context, *Tx, string) error { return nil }})
 	}) {
 		t.Error("Register accepts a payload that is not a struct")
@@ -258,7 +261,7 @@ type heldResolverPayload struct {
 // registerPayload registers a type of command whose payload is a P.
 func registerPayload[P any](t *testing.T) {
 	t.Helper()
-	Register(noteRegistry(), Spec[P]{Type: "note.payload", Capability: authz.ListMembers,
+	Register(noteRegistry(), Spec[P]{Type: "note.payload", Capability: authz.ListMembers, Scope: scope.ProjectWrite,
 		Touches: []ids.Kind{ids.Node}, NonUndoable: true, Apply: func(context.Context, *Tx, P) error { return nil }})
 }
 
@@ -276,10 +279,12 @@ func TestRegisterKeepsPackagesApart(t *testing.T) {
 	r := noteRegistry()
 	theirs, ours := Type("note.theirs"), Type("note.ours")
 	if panics(func() {
-		Register(r, Spec[input.FieldError]{Type: theirs, Capability: authz.ListMembers, Touches: []ids.Kind{ids.Node},
-			NonUndoable: true, Apply: func(context.Context, *Tx, input.FieldError) error { return nil }})
-		Register(r, Spec[FieldError]{Type: ours, Capability: authz.ListMembers, Touches: []ids.Kind{ids.Node},
-			NonUndoable: true, Apply: func(context.Context, *Tx, FieldError) error { return nil }})
+		Register(r, Spec[input.FieldError]{Type: theirs, Capability: authz.ListMembers, Scope: scope.ProjectWrite,
+			Touches: []ids.Kind{ids.Node}, NonUndoable: true,
+			Apply: func(context.Context, *Tx, input.FieldError) error { return nil }})
+		Register(r, Spec[FieldError]{Type: ours, Capability: authz.ListMembers, Scope: scope.ProjectWrite,
+			Touches: []ids.Kind{ids.Node}, NonUndoable: true,
+			Apply: func(context.Context, *Tx, FieldError) error { return nil }})
 	}) {
 		t.Fatal("Register refuses a payload whose type has the name of another package's")
 	}

@@ -385,15 +385,16 @@ func projectActor(ctx context.Context, projectID string) (ids.UUID, commands.Act
 func projectError(err error) error {
 	var fields input.FieldErrors
 	var invalid *commands.InvalidError
+	var insufficient *scope.InsufficientError
 	switch {
 	case errors.Is(err, project.ErrNotFound):
 		return api.NewError(api.CodeNotFound)
 	case errors.Is(err, project.ErrInsufficientRole):
 		return api.NewError(api.CodeInsufficientRole)
-	case errors.Is(err, commands.ErrInsufficientScope):
+	case errors.As(err, &insufficient):
 		// The route checks the scope that it needs before the pipeline does,
-		// which refuses only a batch that a route let past.
-		return insufficientScope(scope.ProjectWrite)
+		// which refuses only a batch with a command that needs another.
+		return insufficientScope(insufficient.Scope)
 	case errors.Is(err, commands.ErrOwnerRequired):
 		return api.NewError(api.CodeOwnerRequired)
 	case errors.Is(err, commands.ErrProjectArchived):

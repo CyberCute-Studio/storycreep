@@ -700,9 +700,10 @@ func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID id
 // authorise returns the project projectID, with the actor's effective role on
 // it, for a change of it that op, one of the project-scoped operations (P),
 // authorises, as the pipeline would apply its commands: it returns the
-// errors of Get, then commands.ErrInsufficientScope if the actor's API token
-// does not hold project:write, and the error of authz.Check if the role does
-// not allow op.
+// errors of Get, then commands.ErrInsufficientScope, as a
+// *scope.InsufficientError, if the actor's API token does not hold
+// project:write, which each of the project's commands needs (Register), and
+// the error of authz.Check if the role does not allow op.
 func (s *Service) authorise(ctx context.Context, actor commands.Actor, projectID ids.UUID, op authz.Operation) (
 	Visible, error) {
 	p, err := s.Get(ctx, actor, projectID)
@@ -710,7 +711,7 @@ func (s *Service) authorise(ctx context.Context, actor commands.Actor, projectID
 		return Visible{}, err
 	}
 	if !actor.Token.Allows(scope.ProjectWrite) {
-		return Visible{}, commands.ErrInsufficientScope
+		return Visible{}, &scope.InsufficientError{Scope: scope.ProjectWrite}
 	}
 	if err := authz.Check(p.Role, op); err != nil {
 		return Visible{}, err

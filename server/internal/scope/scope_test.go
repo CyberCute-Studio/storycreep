@@ -1,6 +1,7 @@
 package scope
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
@@ -43,7 +44,8 @@ func TestGrants(t *testing.T) {
 }
 
 // TestToken checks what a token covers and allows, and that a nil Token, a
-// request's session, is restricted by neither.
+// request's session, is restricted by neither, and that an
+// InsufficientError is ErrInsufficientScope.
 func TestToken(t *testing.T) {
 	ws, other, p, q := ids.New(), ids.New(), ids.New(), ids.New()
 	wide := &Token{ID: ids.New(), WorkspaceID: ws, Scopes: []Scope{ProjectRead}}
@@ -77,5 +79,10 @@ func TestToken(t *testing.T) {
 		t.Error("a session does not allow export:read")
 	case session.TokenID() != ids.UUID{} || wide.TokenID() != wide.ID:
 		t.Error("TokenID is wrong")
+	}
+	var insufficient *InsufficientError
+	if err := error(&InsufficientError{Scope: SnapshotWrite}); !errors.Is(err, ErrInsufficientScope) ||
+		!errors.As(err, &insufficient) || insufficient.Scope != SnapshotWrite {
+		t.Errorf("%v is not ErrInsufficientScope for snapshot:write", err)
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
 
 func init() {
@@ -54,6 +55,13 @@ type Spec[P any] struct {
 	// role on the project for a project-scoped operation, and their role in
 	// the workspace for a workspace-scoped one (§5.5).
 	Capability authz.Operation
+	// Scope is the scope that an API token needs for the command (PRD
+	// FR-AUTH-04), whatever its owner's role allows: project:write for a
+	// change of the draft, as every command of a project's content is, and
+	// snapshot:write for publishing a snapshot. A batch applied with a token
+	// that does not hold every command's scope is refused with an
+	// *scope.InsufficientError that names the first that it lacks.
+	Scope scope.Scope
 	// Touches are the kinds of entity that the command changes or refers to,
 	// each registered with RegisterEntity. A command's ExpectedRev may name
 	// an entity of these kinds only, and Apply reports a change of these
@@ -212,6 +220,7 @@ func RegisterEntity(r *Registry, e Entity) {
 type spec struct {
 	typ        Type
 	capability authz.Operation
+	scope      scope.Scope
 	touches    []ids.Kind
 	schema     *huma.Schema
 	limits     []entitlements.LimitKey
@@ -230,11 +239,11 @@ type spec struct {
 // Register registers the type of command s. It panics if s is not a
 // declaration that the pipeline can apply: a Type of the wrong form or one
 // that is registered already, a Capability that is not an operation of the
-// permission matrix, no Touches, a touched kind that is not registered or
-// twice, a limit that the plan file does not check or twice, both Inverse and
-// NonUndoable or neither, Trashed without Archived, no Apply, or a payload
-// that is not a struct, or that has a field with a default or a type that
-// resolves itself.
+// permission matrix, a Scope that is not a scope, no Touches, a touched kind
+// that is not registered or twice, a limit that the plan file does not check
+// or twice, both Inverse and NonUndoable or neither, Trashed without
+// Archived, no Apply, or a payload that is not a struct, or that has a field
+// with a default or a type that resolves itself.
 func Register[P any](r *Registry, s Spec[P]) {
 	fail := func(format string, args ...any) {
 		panic(fmt.Sprintf("commands: %s: ", s.Type) + fmt.Sprintf(format, args...))
@@ -247,6 +256,8 @@ func Register[P any](r *Registry, s Spec[P]) {
 		fail("the type is registered already")
 	case !s.Capability.Known():
 		fail("%q is not an operation of the permission matrix", s.Capability)
+	case !s.Scope.Known():
+		fail("%q is not a scope of an API token", s.Scope)
 	case len(s.Touches) == 0:
 		fail("a command touches at least one kind of entity")
 	case (s.Inverse != nil) == s.NonUndoable:
@@ -282,7 +293,7 @@ func Register[P any](r *Registry, s Spec[P]) {
 		}
 		keys[i] = l.Key
 	}
-	sp := &spec{typ: s.Type, capability: s.Capability, touches: slices.Clone(s.Touches),
+	sp := &spec{typ: s.Type, capability: s.Capability, scope: s.Scope, touches: slices.Clone(s.Touches),
 		schema: r.schemas.Schema(pt, true, ""), limits: keys,
 		adds: make([]func(context.Context, *Tx, any) (int64, error), len(s.Limits)), archived: s.Archived,
 		trashed: s.Trashed}

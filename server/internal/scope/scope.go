@@ -98,8 +98,23 @@ func Grants(held []Scope, needed Scope) bool {
 
 // ErrInsufficientScope is returned for an operation that an API token does
 // not hold the scope of, which the API answers with 403 insufficient_scope
-// (FR-AUTH-04 AC2).
+// (FR-AUTH-04 AC2), as an *InsufficientError that names the scope.
 var ErrInsufficientScope = errors.New("scope: the API token does not hold the scope that the operation needs")
+
+// InsufficientError is ErrInsufficientScope for an operation that needs the
+// scope Scope, which the API's answer names (details.scope).
+type InsufficientError struct {
+	Scope Scope
+}
+
+func (e *InsufficientError) Error() string {
+	return "scope: the API token does not hold " + string(e.Scope) + ", which the operation needs"
+}
+
+// Unwrap returns ErrInsufficientScope, so that errors.Is finds it.
+func (e *InsufficientError) Unwrap() error {
+	return ErrInsufficientScope
+}
 
 // Token is what an API token restricts its owner to, on a request that it
 // makes. A nil *Token is a request made with a session, which nothing

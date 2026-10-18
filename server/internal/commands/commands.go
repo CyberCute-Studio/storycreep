@@ -34,9 +34,10 @@
 // any other, and by the token on top (FR-AUTH-04, §5.6): a token that does
 // not cover the project, as one of another workspace, or one narrowed to
 // another project, is told that the project does not exist, before anything
-// of it is read (AC3), and one that does not hold project:write, which every
-// command of the draft needs, is refused with scope.ErrInsufficientScope
-// (AC2), whatever the owner's role.
+// of it is read (AC3), and one that does not hold the scope of every command
+// of the batch (Spec.Scope), as project:write for a change of the draft, is
+// refused with a *scope.InsufficientError that names the scope (AC2),
+// whatever the owner's role.
 //
 // The idempotency of command IDs and the multi-batch form join with the
 // command endpoint (plan item 28).
@@ -87,8 +88,9 @@ var (
 	// for one whose operation only an owner may do, as package authz decides.
 	ErrInsufficientRole = authz.ErrInsufficientRole
 	ErrOwnerRequired    = authz.ErrOwnerRequired
-	// ErrInsufficientScope is returned for a batch applied with an API token
-	// that does not hold project:write (FR-AUTH-04 AC2).
+	// ErrInsufficientScope is returned, as a *scope.InsufficientError that
+	// names the scope, for a batch applied with an API token that does not
+	// hold the scope of one of its commands (Spec.Scope, FR-AUTH-04 AC2).
 	ErrInsufficientScope = scope.ErrInsufficientScope
 )
 
@@ -249,7 +251,8 @@ func (p *Pipeline) Collector() prometheus.Collector {
 // exist, its workspace's deletion is pending, the actor's effective role on
 // it is none, or it is in the trash and a command does not apply there
 // (Spec.Trashed), or the actor's API token does not cover the project;
-// ErrInsufficientScope if the token does not hold project:write;
+// ErrInsufficientScope, as a *scope.InsufficientError, if the token does not
+// hold a command's scope (Spec.Scope);
 // ErrInsufficientRole or ErrOwnerRequired if the actor's role
 // does not allow a command's operation; ErrProjectArchived if the project is
 // archived and a command does not apply to it then (Spec.Archived); an
@@ -308,10 +311,12 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		if err != nil {
 			return err
 		}
-		// Every command changes the draft, which a token needs project:write
-		// for, whatever its owner's role allows.
-		if !actor.Token.Allows(scope.ProjectWrite) {
-			return ErrInsufficientScope
+		// A token needs the scope of each command, whatever its owner's role
+		// allows.
+		for _, c := range cmds {
+			if !actor.Token.Allows(c.spec.scope) {
+				return &scope.InsufficientError{Scope: c.spec.scope}
+			}
 		}
 		for _, c := range cmds {
 			if err := authz.Check(roles[c.spec.capability.Scope()], c.spec.capability); err != nil {

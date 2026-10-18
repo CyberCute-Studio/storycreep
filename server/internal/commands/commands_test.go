@@ -436,9 +436,11 @@ func TestAuthorisation(t *testing.T) {
 // TestTokenBatch checks that a batch applied with an API token is held to the
 // token (PRD FR-AUTH-04, §5.6): one of another workspace, or narrowed to
 // another project, is told that the project does not exist (AC3), one
-// without project:write is refused with ErrInsufficientScope whatever its
-// owner's role (AC2), and one that holds it does no more than its owner's
-// role allows; and that a refused batch changes nothing.
+// without the scope of each of the batch's commands, project:write for the
+// notes, snapshot:write for publishing, is refused with ErrInsufficientScope,
+// which names the scope that it lacks, whatever its owner's role (AC2), and
+// one that holds them does no more than its owner's role allows; and that a
+// refused batch changes nothing.
 //
 // Verifies: FR-AUTH-04/AC2, FR-AUTH-04/AC3
 func TestTokenBatch(t *testing.T) {
@@ -509,6 +511,36 @@ func TestTokenBatch(t *testing.T) {
 				w.exec(t, "UPDATE note SET deleted_at = NULL WHERE id = $1", x)
 			}
 		})
+	}
+
+	// Each command needs its own scope, which another does not imply.
+	for _, tt := range []struct {
+		held []scope.Scope
+		// lacks is the scope that the batch is refused for, if any.
+		lacks scope.Scope
+	}{
+		{write, scope.SnapshotWrite},
+		{[]scope.Scope{scope.SnapshotWrite}, scope.ProjectWrite},
+		{[]scope.Scope{scope.ProjectWrite, scope.SnapshotWrite}, ""},
+	} {
+		actor := Actor{UserID: w.users[ownerUser], Token: &scope.Token{ID: ids.New(), WorkspaceID: w.ws,
+			Scopes: tt.held}}
+		before := w.written(t)
+		_, err := p.Apply(ctx, actor, w.project, []Command{
+			command(t, noteUpdate, notePayload{ID: xID, Body: "published"}, nil),
+			command(t, notePublish, noteIDPayload{ID: xID}, nil)})
+		var insufficient *scope.InsufficientError
+		switch {
+		case tt.lacks == "" && err != nil:
+			t.Errorf("publishing with %v: %v", tt.held, err)
+		case tt.lacks == "":
+		case !errors.As(err, &insufficient) || !errors.Is(err, ErrInsufficientScope) || insufficient.Scope != tt.lacks:
+			t.Errorf("publishing with %v: %v, want it refused for want of %s", tt.held, err, tt.lacks)
+		default:
+			if after := w.written(t); after != before {
+				t.Errorf("the batch refused for want of %s wrote %+v, where there was %+v", tt.lacks, after, before)
+			}
+		}
 	}
 }
 
