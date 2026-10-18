@@ -34,6 +34,7 @@ const (
 	CodeWrongPassword         Code = "wrong_password"
 	CodeInsufficientRole      Code = "insufficient_role"
 	CodeOwnerRequired         Code = "owner_required"
+	CodeOwnerNotGrantable     Code = "owner_not_grantable"
 	CodeSignupClosed          Code = "signup_closed"
 	CodeInviteRequired        Code = "invite_required"
 	CodeSetupRequired         Code = "setup_required"
@@ -122,13 +123,20 @@ var codes = []codeSpec{
 			"invites, removes members, or changes their roles, and creates, deletes, or restores its projects; an " +
 			"operation of a project by their role on the project, their grant on it or else their role in its " +
 			"workspace (§5.5), as only an `owner` or an `admin` of the project changes its name, description, or " +
-			"settings, or archives it. A user who has no role in the workspace or on the project that the route " +
+			"settings, or archives it. A project grant never authorises an operation of the workspace, as a " +
+			"`viewer`'s `admin` grant on a project lets them neither delete it nor manage its grants (FR-TEN-04 " +
+			"AC4). A user who has no role in the workspace or on the project that the route " +
 			"names, as one who is not a member of the workspace, or a `guest` without a grant on the project, is " +
 			"answered with `not_found` instead, so that the answer does not tell that it exists (§5.5)."},
 	{CodeOwnerRequired, http.StatusForbidden, i18n.K("error.owner_required"),
 		"Only an `owner` of the workspace may do this, and the signed-in user is an `admin`: grant the role " +
-			"`owner`, by a role change or an invitation, send an invitation as `owner` anew, or demote or remove an " +
-			"owner (PRD §5.6, FR-TEN-03 AC4)."},
+			"`owner`, by a role change or an invitation, send an invitation as `owner` anew, demote or remove an " +
+			"owner, or set or remove an owner's grant on a project, which would replace their role there (PRD §5.6, " +
+			"FR-TEN-03 AC4, FR-TEN-04)."},
+	{CodeOwnerNotGrantable, http.StatusBadRequest, i18n.K("error.owner_not_grantable"),
+		"A project grant was asked for with the role `owner`, which is a role of the workspace alone (PRD " +
+			"FR-TEN-04 AC5): a grant is `admin`, `editor`, `commenter`, or `viewer`. Nothing changes. " +
+			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeSignupClosed, http.StatusForbidden, i18n.K("error.signup_closed"),
 		"The instance's signup policy is `closed`, so `POST /api/v1/auth/register` creates no account, " +
 			"whatever the request holds (PRD FR-AUTH-01 AC3), and nor does `POST /api/v1/invites/register`, with an " +

@@ -41,6 +41,13 @@ func Memberships() []Role {
 	return []Role{Owner, Admin, Editor, Commenter, Viewer, Guest}
 }
 
+// Grants returns the roles that a project grant can have (FR-TEN-04): those
+// that allow something but owner, which is a role of the workspace alone,
+// from the most to the least that they allow.
+func Grants() []Role {
+	return []Role{Admin, Editor, Commenter, Viewer}
+}
+
 // rank orders the roles that allow something: owner > admin > editor >
 // commenter > viewer (§5.6). Guest, None, and any other value rank 0.
 func rank(r Role) int {

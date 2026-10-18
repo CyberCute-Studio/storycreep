@@ -40,7 +40,9 @@ const (
 	// members' roles, for the roles up to admin (W).
 	ManageMembers Operation = "workspace.members.manage"
 	// ManageOwners is granting the owner role, by a role change or an
-	// invitation, and demoting or removing an owner (W).
+	// invitation, and demoting or removing an owner (W), which setting or
+	// removing an owner's grant on a project is too, because a grant replaces
+	// the owner's role there.
 	ManageOwners Operation = "workspace.owners.manage"
 	// ManageWorkspaceSettings is changing a workspace's settings (W): its
 	// name, slug, and default locale, and later its retention and 2FA policy,
@@ -51,6 +53,10 @@ const (
 	// its trash, listing its trash, and restoring them from it (W, "Create/
 	// delete projects").
 	ManageProjects Operation = "workspace.projects"
+	// ManageProjectGrants is listing, setting, and removing the members'
+	// grants on a workspace's projects (W, FR-TEN-04), which the workspace
+	// role authorises, never a grant.
+	ManageProjectGrants Operation = "workspace.grants"
 	// ReadProject is reading a project's content (P), which every role that
 	// allows anything allows.
 	ReadProject Operation = "project.read"
@@ -105,6 +111,7 @@ var matrix = map[Operation]rule{
 	ManageOwners:            {scope: Workspace, least: role.Owner, denied: ErrOwnerRequired},
 	ManageWorkspaceSettings: {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
 	ManageProjects:          {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
+	ManageProjectGrants:     {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
 	ReadProject:             {scope: Project, least: role.Viewer, denied: ErrInsufficientRole},
 	ChangeProjectSettings:   {scope: Project, least: role.Admin, denied: ErrInsufficientRole},
 }

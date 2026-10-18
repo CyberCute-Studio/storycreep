@@ -191,6 +191,52 @@
         ],
         "type": "object"
       },
+      "GrantBody": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "description": "When the grant was given",
+            "format": "date-time",
+            "type": "string"
+          },
+          "membership_id": {
+            "description": "The ID of the membership that has the grant",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "The ID of the project",
+            "type": "string"
+          },
+          "role": {
+            "description": "The member's role on the project, which replaces their role in the workspace there, raising or lowering it. A guest acts only on the projects that they have a grant on.",
+            "enum": [
+              "admin",
+              "editor",
+              "commenter",
+              "viewer"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "When the grant was given, or its role last changed",
+            "format": "date-time",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "The ID of the member's account",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "membership_id",
+          "user_id",
+          "role",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "InstanceBody": {
         "additionalProperties": false,
         "properties": {
@@ -528,6 +574,29 @@
         },
         "required": [
           "used"
+        ],
+        "type": "object"
+      },
+      "PageGrantBody": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GrantBody"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
         ],
         "type": "object"
       },
@@ -1041,6 +1110,26 @@
           "expires_at",
           "idle_expires_at",
           "current"
+        ],
+        "type": "object"
+      },
+      "SetGrantBody": {
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "description": "The member's role on the project: admin, editor, commenter, or viewer. owner is a role of the workspace alone, and is answered with 400 owner_not_grantable.",
+            "enum": [
+              "owner",
+              "admin",
+              "editor",
+              "commenter",
+              "viewer"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
         ],
         "type": "object"
       },
@@ -3523,6 +3612,300 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/grants": {
+      "get": {
+        "description": "Lists the members' grants on a project, in the order of their memberships' IDs, oldest first. A member with a grant acts on the project with its role instead of their role in the workspace, and a guest acts only on the projects that they have one on. Only an owner or an admin of the project's workspace may, and anyone else with a role on the project, as a viewer or a guest with an admin grant on it, is answered with 403 insufficient_role: a grant never authorises an operation of the workspace (PRD FR-TEN-04 AC4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.",
+        "operationId": "listProjectGrants",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageGrantBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List a project's grants",
+        "tags": [
+          "Grants"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/grants/{membership_id}": {
+      "delete": {
+        "description": "Removes a member's grant on a project, after which they act on it with their role in the workspace, and a guest no longer acts on it at all. Only an owner sets or removes an owner's grant, which replaces their role on the project, and an admin is answered with 403 owner_required. Only an owner or an admin of the project's workspace may, and anyone else with a role on the project, as a viewer or a guest with an admin grant on it, is answered with 403 insufficient_role: a grant never authorises an operation of the workspace (PRD FR-TEN-04 AC4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a membership that the workspace does not have, or that has no grant on the project. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.",
+        "operationId": "removeProjectGrant",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ID of the membership whose grant to remove",
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "description": "The ID of the membership whose grant to remove",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Remove a member's grant on a project",
+        "tags": [
+          "Grants"
+        ]
+      },
+      "put": {
+        "description": "Gives a member of the project's workspace a role on the project, which replaces their role in the workspace there, raising or lowering it, and returns the grant: it adds the member's grant on the project, or changes its role. A grant that has the role already stays as it is. A grant is the only way that a guest acts on a project, and it applies only to the project's own operations: every operation of the workspace, as deleting the project or managing its grants, is still authorised by the member's role in the workspace. The role owner is answered with 400 owner_not_grantable (PRD FR-TEN-04 AC5). Only an owner sets or removes an owner's grant, which replaces their role on the project, and an admin is answered with 403 owner_required. Only an owner or an admin of the project's workspace may, and anyone else with a role on the project, as a viewer or a guest with an admin grant on it, is answered with 403 insufficient_role: a grant never authorises an operation of the workspace (PRD FR-TEN-04 AC4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a membership that the workspace does not have. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.",
+        "operationId": "setProjectGrant",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ID of the membership of the project's workspace whose grant to set",
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "description": "The ID of the membership of the project's workspace whose grant to set",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetGrantBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Set a member's grant on a project",
+        "tags": [
+          "Grants"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/restore": {
       "post": {
         "description": "Restores a project from its workspace's trash, as it was when it was deleted, within 30 days of its deletion; after that, it is answered with 404 not_found. A project that is not in the trash stays as it is. A restored project that is not archived counts towards the workspace's projects again: a workspace that has as many projects as its plan allows is answered with 409 limit_exceeded. Only an owner or an admin of the workspace may, and anyone else with a role on the project is answered with 403 insufficient_role. A project that does not exist, or on which the signed-in user's role is none, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.",
@@ -4924,6 +5307,117 @@
         "summary": "Change a member's role",
         "tags": [
           "Members"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/members/{membership_id}/grants": {
+      "get": {
+        "description": "Lists a member's grants on the workspace's projects that are not in its trash, in the order of the projects' IDs, oldest first. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a membership that the workspace does not have. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.",
+        "operationId": "listMemberGrants",
+        "parameters": [
+          {
+            "description": "The workspace's ID",
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "description": "The workspace's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ID of the membership whose grants to list",
+            "in": "path",
+            "name": "membership_id",
+            "required": true,
+            "schema": {
+              "description": "The ID of the membership whose grants to list",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageGrantBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List a member's grants",
+        "tags": [
+          "Grants"
         ]
       }
     },

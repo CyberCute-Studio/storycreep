@@ -237,7 +237,7 @@ func (s *Service) Create(ctx context.Context, userID, workspaceID ids.UUID, in S
 		if err != nil {
 			return err
 		}
-		a, err := s.access(ctx, q, userID, workspaceID)
+		a, err := s.access(ctx, q, userID, workspaceID, false)
 		if err != nil {
 			return err
 		}
@@ -413,11 +413,24 @@ type access struct {
 // workspaceID, what the user userID's roles are resolved from. It reads
 // whether the user is an instance admin only if the policy lets an instance
 // admin act as owner, because otherwise the answer changes nothing, and
-// returns ErrNotFound if it does and the account is no longer active.
-func (s *Service) access(ctx context.Context, q *queries.Queries, userID, workspaceID ids.UUID) (access, error) {
+// returns ErrNotFound if it does and the account is no longer active. If
+// lock is set, it locks the user's membership FOR SHARE until the
+// transaction ends, so that a change of its role, or its removal, waits for
+// the operation that the role authorises.
+func (s *Service) access(ctx context.Context, q *queries.Queries, userID, workspaceID ids.UUID, lock bool) (access,
+	error) {
 	a := access{member: role.None}
-	m, err := q.MembershipOf(ctx, queries.MembershipOfParams{WorkspaceID: nullUUID(workspaceID),
-		UserID: nullUUID(userID)})
+	var m queries.MembershipOfRow
+	var err error
+	if lock {
+		var locked queries.LockMembershipOfRow
+		locked, err = q.LockMembershipOf(ctx, queries.LockMembershipOfParams{WorkspaceID: nullUUID(workspaceID),
+			UserID: nullUUID(userID)})
+		m = queries.MembershipOfRow(locked)
+	} else {
+		m, err = q.MembershipOf(ctx, queries.MembershipOfParams{WorkspaceID: nullUUID(workspaceID),
+			UserID: nullUUID(userID)})
+	}
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 	case err != nil:
@@ -496,7 +509,7 @@ func (s *Service) Get(ctx context.Context, userID, projectID ids.UUID) (Visible,
 		if err != nil {
 			return fmt.Errorf("project: read the project: %w", err)
 		}
-		a, err := s.access(ctx, q, userID, workspaceID)
+		a, err := s.access(ctx, q, userID, workspaceID, false)
 		if err != nil {
 			return err
 		}
@@ -533,7 +546,7 @@ func (s *Service) List(ctx context.Context, userID, workspaceID, after ids.UUID,
 		if _, err := activeWorkspace(ctx, q, workspaceID); err != nil {
 			return err
 		}
-		a, err := s.access(ctx, q, userID, workspaceID)
+		a, err := s.access(ctx, q, userID, workspaceID, false)
 		if err != nil {
 			return err
 		}
@@ -573,7 +586,7 @@ func (s *Service) Trash(ctx context.Context, userID, workspaceID, after ids.UUID
 		if _, err := activeWorkspace(ctx, q, workspaceID); err != nil {
 			return err
 		}
-		a, err := s.access(ctx, q, userID, workspaceID)
+		a, err := s.access(ctx, q, userID, workspaceID, false)
 		if err != nil {
 			return err
 		}

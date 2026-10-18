@@ -34,6 +34,11 @@ type rolesFixture struct {
 	d  *dbtest.Database
 	ws string
 	as map[string]signedIn
+	// grants are the grants that each project that the fixture adds
+	// (project) gives the accounts of matrixRoles: the role of the grant of
+	// each account's membership, by the account's role in the workspace, as
+	// {"guest": "admin"}.
+	grants map[string]string
 }
 
 // newRolesFixture returns a server whose workspace has an account of each of
@@ -94,8 +99,8 @@ func (f *rolesFixture) invite(t *testing.T, role string) string {
 }
 
 // project adds a project to the workspace, as the superuser, archived or in
-// the trash as state says, if it is "archived" or "deleted", and returns its
-// ID.
+// the trash as state says, if it is "archived" or "deleted", with the
+// fixture's grants on it, and returns its ID.
 func (f *rolesFixture) project(t *testing.T, state string) string {
 	t.Helper()
 	id := ids.New()
@@ -107,7 +112,45 @@ func (f *rolesFixture) project(t *testing.T, state string) string {
 		id, decode(t, ids.Workspace, f.ws), state); err != nil {
 		t.Fatal(err)
 	}
-	return ids.Encode(ids.Project, id)
+	p := ids.Encode(ids.Project, id)
+	for r, g := range f.grants {
+		f.grant(t, f.membership(t, r), p, g)
+	}
+	return p
+}
+
+// membership returns the ID of the membership of the fixture's account of
+// the role r.
+func (f *rolesFixture) membership(t *testing.T, r string) string {
+	t.Helper()
+	var id ids.UUID
+	if err := f.d.Admin(t).QueryRow(context.Background(), `SELECT id FROM membership
+		WHERE workspace_id = $1 AND user_id = $2`, decode(t, ids.Workspace, f.ws),
+		decode(t, ids.User, f.as[r].body.UserID)).Scan(&id); err != nil {
+		t.Fatalf("the membership of the %s: %v", r, err)
+	}
+	return ids.Encode(ids.Membership, id)
+}
+
+// grant gives the membership the role on the project, as the superuser.
+func (f *rolesFixture) grant(t *testing.T, membership, project, role string) {
+	t.Helper()
+	if _, err := f.d.Admin(t).Exec(context.Background(), `INSERT INTO project_grant
+		(id, workspace_id, membership_id, project_id, role) VALUES ($1, $2, $3, $4, $5)`, ids.New(),
+		decode(t, ids.Workspace, f.ws), decode(t, ids.Membership, membership), decode(t, ids.Project, project),
+		role); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// grantedMember adds a member of the workspace with the role, as the
+// superuser, with a grant of grant on a project that it adds, and returns
+// the IDs of the project and of the membership.
+func (f *rolesFixture) grantedMember(t *testing.T, role, grant string) (project, membership string) {
+	t.Helper()
+	project, membership = f.project(t, ""), f.member(t, role)
+	f.grant(t, membership, project, grant)
+	return project, membership
 }
 
 // memberPath returns the path of the membership of the workspace ws.
@@ -151,6 +194,11 @@ type matrixOp struct {
 	// addresses, which a role that the row does not allow is refused by
 	// being shown the member list without them, rather than with 403.
 	addresses bool
+	// project says that the operation is a route of a project that it adds
+	// (rolesFixture.project), on which the fixture's grants give a guest a
+	// role, so that the project's routes no longer answer them with 404, as
+	// a route of the workspace does.
+	project bool
 }
 
 // permissionMatrix is §5.6, for the operations that exist so far: each row,
@@ -253,6 +301,22 @@ var permissionMatrix = []struct {
 					return call(f.s.main, http.MethodDelete, memberPath(f.ws, f.member(t, "owner")), nil,
 						si.header(true))
 				}},
+			// A grant replaces the owner's role on its project, which
+			// demotes them there.
+			{name: "give an owner a grant", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return setGrant(t, f.s.main, si, f.project(t, ""), f.member(t, "owner"), "viewer")
+				}},
+			{name: "change an owner's grant", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p, m := f.grantedMember(t, "owner", "viewer")
+					return setGrant(t, f.s.main, si, p, m, "admin")
+				}},
+			{name: "remove an owner's grant", project: true, success: http.StatusNoContent,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p, m := f.grantedMember(t, "owner", "viewer")
+					return call(f.s.main, http.MethodDelete, grantPath(p, m), nil, si.header(true))
+				}},
 		},
 	},
 	{
@@ -287,11 +351,11 @@ var permissionMatrix = []struct {
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, trashPath(f.ws), nil, si.header(false))
 				}},
-			{name: "delete a project", success: http.StatusNoContent,
+			{name: "delete a project", project: true, success: http.StatusNoContent,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodDelete, projectPath(f.project(t, "")), nil, si.header(true))
 				}},
-			{name: "restore a project", success: http.StatusOK,
+			{name: "restore a project", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodPost, projectPath(f.project(t, "deleted"))+"/restore", nil,
 						si.header(true))
@@ -299,10 +363,45 @@ var permissionMatrix = []struct {
 		},
 	},
 	{
+		row:     "Manage project grants",
+		op:      authz.ManageProjectGrants,
+		allowed: [5]bool{true, true, false, false, false},
+		ops: []matrixOp{
+			{name: "list a project's grants", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p, _ := f.grantedMember(t, "guest", "editor")
+					return call(f.s.main, http.MethodGet, grantsPath(p), nil, si.header(false))
+				}},
+			{name: "list a member's grants", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					_, m := f.grantedMember(t, "guest", "editor")
+					return call(f.s.main, http.MethodGet, memberGrantsPath(f.ws, m), nil, si.header(false))
+				}},
+			{name: "give a guest a grant", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return setGrant(t, f.s.main, si, f.project(t, ""), f.member(t, "guest"), "editor")
+				}},
+			{name: "raise a viewer to admin on a project", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return setGrant(t, f.s.main, si, f.project(t, ""), f.member(t, "viewer"), "admin")
+				}},
+			{name: "change a grant", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p, m := f.grantedMember(t, "editor", "viewer")
+					return setGrant(t, f.s.main, si, p, m, "commenter")
+				}},
+			{name: "remove a grant", project: true, success: http.StatusNoContent,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p, m := f.grantedMember(t, "admin", "viewer")
+					return call(f.s.main, http.MethodDelete, grantPath(p, m), nil, si.header(true))
+				}},
+		},
+	},
+	{
 		row:     "Read project content, run play mode, view dependencies",
 		op:      authz.ReadProject,
 		allowed: [5]bool{true, true, true, true, true},
-		ops: []matrixOp{{name: "read a project", success: http.StatusOK,
+		ops: []matrixOp{{name: "read a project", project: true, success: http.StatusOK,
 			do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 				return call(f.s.main, http.MethodGet, projectPath(f.project(t, "")), nil, si.header(false))
 			}}},
@@ -312,22 +411,22 @@ var permissionMatrix = []struct {
 		op:      authz.ChangeProjectSettings,
 		allowed: [5]bool{true, true, false, false, false},
 		ops: []matrixOp{
-			{name: "rename a project", success: http.StatusOK,
+			{name: "rename a project", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodPatch, projectPath(f.project(t, "")),
 						jsonBody(t, map[string]string{"name": "Harbour"}), si.header(true))
 				}},
-			{name: "raise publish_min_role", success: http.StatusOK,
+			{name: "raise publish_min_role", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodPatch, projectPath(f.project(t, "")),
 						jsonBody(t, map[string]string{"publish_min_role": "admin"}), si.header(true))
 				}},
-			{name: "archive a project", success: http.StatusOK,
+			{name: "archive a project", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodPost, projectPath(f.project(t, ""))+"/archive", nil,
 						si.header(true))
 				}},
-			{name: "unarchive a project", success: http.StatusOK,
+			{name: "unarchive a project", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodPost, projectPath(f.project(t, "archived"))+"/unarchive", nil,
 						si.header(true))
@@ -360,16 +459,6 @@ func TestPermissionMatrix(t *testing.T) {
 			for i, r := range matrixRoles {
 				res := op.do(t, f, f.as[r])
 				where := fmt.Sprintf("%s: %s, as %s", row.row, op.name, r)
-				if i < len(row.allowed) && row.allowed[i] {
-					shown, all := 0, 0
-					if op.addresses && res.status == op.success {
-						shown, all = addresses(t, res)
-					}
-					if res.status != op.success || shown != all {
-						t.Errorf("%s: %d %s, want %d", where, res.status, res.body, op.success)
-					}
-					continue
-				}
 				status, code := http.StatusForbidden, api.CodeInsufficientRole
 				switch {
 				case r == "guest" || r == "none":
@@ -377,16 +466,82 @@ func TestPermissionMatrix(t *testing.T) {
 				case r == "admin":
 					code = api.CodeOwnerRequired
 				}
-				if op.addresses && status == http.StatusForbidden {
-					// The role lists the members, without their addresses.
-					if shown, _ := addresses(t, res); res.status != http.StatusOK || shown != 0 {
-						t.Errorf("%s: %d, with %d addresses, want 200 without any", where, res.status, shown)
-					}
-					continue
-				}
-				wantCode(t, where, res, status, code)
+				wantAnswer(t, where, op, res, i < len(row.allowed) && row.allowed[i], status, code)
 			}
 		}
+	}
+}
+
+// wantAnswer checks res, the answer of the operation op, which where names:
+// op's success if allowed is set, and otherwise its refusal with status and
+// code, or, for seeing the members' email addresses, which a role is refused
+// with 403 by being shown the member list without them, that list.
+func wantAnswer(t *testing.T, where string, op matrixOp, res response, allowed bool, status int, code api.Code) {
+	t.Helper()
+	switch {
+	case allowed:
+		shown, all := 0, 0
+		if op.addresses && res.status == op.success {
+			shown, all = addresses(t, res)
+		}
+		if res.status != op.success || shown != all {
+			t.Errorf("%s: %d %s, want %d", where, res.status, res.body, op.success)
+		}
+	case op.addresses && status == http.StatusForbidden:
+		if shown, _ := addresses(t, res); res.status != http.StatusOK || shown != 0 {
+			t.Errorf("%s: %d, with %d addresses, want 200 without any", where, res.status, shown)
+		}
+	default:
+		wantCode(t, where, res, status, code)
+	}
+}
+
+// TestGrantAuthorizesNoWorkspaceOperation tries every operation of
+// permissionMatrix as a guest and as a viewer, each with an admin grant on
+// every project of the workspace, and checks that the grants give them the
+// operations of those projects that §5.6 gives an admin, and nothing of the
+// workspace: every operation that the workspace authorises (W) answers them
+// as it would without a grant, the viewer as its column of the row says, and
+// the guest, whose role in the workspace is none (§5.5), with 404, as the
+// workspace's routes answer every user whose role there is none, but for the
+// routes of a project, which the grant shows to them, which answer 403
+// insufficient_role. A later operation of the workspace joins this test with
+// its row of permissionMatrix (standing checklist).
+//
+// Verifies: FR-TEN-04/AC4
+func TestGrantAuthorizesNoWorkspaceOperation(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	f.grants = map[string]string{"guest": "admin", "viewer": "admin"}
+	x := f.project(t, "")
+	for _, r := range []string{"guest", "viewer"} {
+		if got := projectFrom(t, call(f.s.main, http.MethodGet, projectPath(x), nil, f.as[r].header(false)),
+			http.StatusOK); got.Role != "admin" {
+			t.Errorf("the %s's role on the granted project is %q, want admin", r, got.Role)
+		}
+	}
+	workspaceOps := 0
+	for _, row := range permissionMatrix {
+		for _, op := range row.ops {
+			for _, r := range []string{"guest", "viewer"} {
+				res := op.do(t, f, f.as[r])
+				where := fmt.Sprintf("%s: %s, as a %s with admin grants", row.row, op.name, r)
+				if row.op.Scope() == authz.Project {
+					wantAnswer(t, where, op, res, row.allowed[1], http.StatusForbidden, api.CodeInsufficientRole)
+					continue
+				}
+				workspaceOps++
+				status, code := http.StatusForbidden, api.CodeInsufficientRole
+				if r == "guest" && !op.project {
+					status, code = http.StatusNotFound, api.CodeNotFound
+				}
+				wantAnswer(t, where, op, res, r == "viewer" && row.allowed[4], status, code)
+			}
+		}
+	}
+	// Guard against a matrix that silently has no operation of the workspace.
+	if workspaceOps < 20 {
+		t.Errorf("the test tried %d operations of the workspace", workspaceOps)
 	}
 }
 
@@ -402,6 +557,7 @@ var viewerReads = map[api.Capability]bool{
 	api.ManageWorkspaceSettings: false,
 	api.ListProjects:            true,
 	api.ManageProjects:          false,
+	api.ManageProjectGrants:     false,
 	api.ReadProject:             true,
 	api.ChangeProjectSettings:   false,
 }
@@ -444,27 +600,24 @@ func sampleValue(t *testing.T, registry huma.Registry, s *huma.Schema) any {
 	return nil
 }
 
-// TestViewerReadsOnly walks every route of a workspace, whose role authorises
-// it (§5.6 W), and of a project, whose effective role authorises it (P), and
-// calls it as a viewer, with a valid value for each of its
-// parameters and a body that its schema accepts, so that the request
-// reaches the service. Each route that changes something is refused with 403
-// insufficient_role, and each that reads answers 200, unless §5.6 keeps the
-// read from viewers too (viewerReads), and nothing that the viewer did is in
-// the audit log. A route with a parameter that the test has no value for
-// fails, so that the route joins the test.
-//
-// Verifies: FR-TEN-03/AC3
-func TestViewerReadsOnly(t *testing.T) {
-	t.Parallel()
-	f := newRolesFixture(t)
-	viewer := f.as["viewer"]
-	params := map[string]string{
-		"workspace_id":  f.ws,
-		"membership_id": f.member(t, "editor"),
-		"invite_id":     f.invite(t, "editor"),
-		"project_id":    f.project(t, ""),
-	}
+// routeCall is a request of a route of a workspace or of a project, with a
+// valid value for each of its parameters and a body that its schema
+// accepts, so that it reaches the service.
+type routeCall struct {
+	route      api.Route
+	capability api.Capability
+	path       string
+	body       []byte
+}
+
+// routeCalls returns a call of every route of a workspace, whose role
+// authorises it (§5.6 W), and of a project, whose effective role authorises
+// it (P), of the fixture's server, in the order of the routes, with the
+// values of params for the parameters of their paths. It fails the test on
+// a route with a parameter that params has no value for, so that the route
+// joins the tests that walk them.
+func routeCalls(t *testing.T, f *rolesFixture, params map[string]string) []routeCall {
+	t.Helper()
 	doc := f.s.main.OpenAPI()
 	var routes []api.Route
 	for r := range f.s.main.Routes() {
@@ -473,9 +626,8 @@ func TestViewerReadsOnly(t *testing.T) {
 		}
 	}
 	slices.SortFunc(routes, func(a, b api.Route) int { return strings.Compare(a.String(), b.String()) })
-	var mutating, reads int
+	var out []routeCall
 	for _, r := range routes {
-		c := f.s.main.Routes()[r]
 		item := doc.Paths[r.Pattern]
 		if item == nil || operationsOf(item)[r.Method] == nil {
 			t.Errorf("%s is not in the OpenAPI document", r)
@@ -510,17 +662,59 @@ func TestViewerReadsOnly(t *testing.T) {
 			}
 			body = jsonBody(t, sampleValue(t, doc.Components.Schemas, mt.Schema))
 		}
-		res := call(f.s.main, r.Method, path, body, viewer.header(r.Method != http.MethodGet))
+		out = append(out, routeCall{route: r, capability: f.s.main.Routes()[r], path: path, body: body})
+	}
+	return out
+}
+
+// routeParams returns a value for each parameter of the paths of the
+// fixture's routes: its workspace, and a membership, an invitation, and a
+// project of it, which the fixture adds.
+func routeParams(t *testing.T, f *rolesFixture) map[string]string {
+	t.Helper()
+	return map[string]string{
+		"workspace_id":  f.ws,
+		"membership_id": f.member(t, "editor"),
+		"invite_id":     f.invite(t, "editor"),
+		"project_id":    f.project(t, ""),
+	}
+}
+
+// auditEntriesOf returns how many entries of the fixture's workspace's audit
+// log si's account is the actor of.
+func auditEntriesOf(t *testing.T, f *rolesFixture, si signedIn) int {
+	t.Helper()
+	return countRows(t, f.d, `SELECT count(*) FROM audit_entry WHERE actor_user_id = $1::uuid
+		AND workspace_id = $2::uuid`, decode(t, ids.User, si.body.UserID).String(),
+		decode(t, ids.Workspace, f.ws).String())
+}
+
+// TestViewerReadsOnly walks every route of a workspace and of a project
+// (routeCalls), and calls it as a viewer. Each route that changes something
+// is refused with 403 insufficient_role, and each that reads answers 200,
+// unless §5.6 keeps the read from viewers too (viewerReads), and nothing
+// that the viewer did is in the audit log. A route with a parameter that the
+// test has no value for fails, so that the route joins the test.
+//
+// Verifies: FR-TEN-03/AC3
+func TestViewerReadsOnly(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	viewer := f.as["viewer"]
+	var mutating, reads int
+	for _, c := range routeCalls(t, f, routeParams(t, f)) {
+		r := c.route
+		res := call(f.s.main, r.Method, c.path, c.body, viewer.header(r.Method != http.MethodGet))
 		if r.Method != http.MethodGet {
 			mutating++
 			wantCode(t, "a viewer's "+r.String(), res, http.StatusForbidden, api.CodeInsufficientRole)
 			continue
 		}
 		reads++
-		allowed, ok := viewerReads[c]
+		allowed, ok := viewerReads[c.capability]
 		switch {
 		case !ok:
-			t.Errorf("%s requires %s, which viewerReads does not name; add it", r, c)
+			t.Errorf("%s requires %s, which viewerReads does not name; add it", r, c.capability)
 		case allowed && res.status != http.StatusOK:
 			t.Errorf("a viewer's %s: %d %s, want 200", r, res.status, res.body)
 		case !allowed:
@@ -531,9 +725,43 @@ func TestViewerReadsOnly(t *testing.T) {
 	if mutating < 6 || reads < 3 {
 		t.Errorf("the test tried %d routes that change something and %d that read", mutating, reads)
 	}
-	if n := countRows(t, f.d, `SELECT count(*) FROM audit_entry WHERE actor_user_id = $1::uuid
-		AND workspace_id = $2::uuid`, decode(t, ids.User, viewer.body.UserID).String(),
-		decode(t, ids.Workspace, f.ws).String()); n != 0 {
+	if n := auditEntriesOf(t, f, viewer); n != 0 {
 		t.Errorf("the workspace's audit log has %d entries of the viewer, want none", n)
+	}
+}
+
+// TestNoRoleNotFound walks every route of a workspace and of a project
+// (routeCalls), and calls it as a signed-in user who is not a member of the
+// workspace, and as a guest without a grant, whose role in it is none
+// (§5.5): each route answers them with 404 not_found, never 403 or 500, so
+// that it does not tell that the workspace or the project exists, but for
+// the guest's list of the workspace's projects, which a membership allows,
+// and which shows them none. Nothing that either did is in the audit log.
+//
+// Verifies: FR-TEN-04/AC6
+func TestNoRoleNotFound(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	calls := routeCalls(t, f, routeParams(t, f))
+	if len(calls) < 9 {
+		t.Errorf("the test tried %d routes", len(calls))
+	}
+	for _, who := range []string{"none", "guest"} {
+		si := f.as[who]
+		for _, c := range calls {
+			r := c.route
+			res := call(f.s.main, r.Method, c.path, c.body, si.header(r.Method != http.MethodGet))
+			where := fmt.Sprintf("%s, as %s", r, who)
+			if who == "guest" && c.capability == api.ListProjects {
+				if got := projectIDs(t, f.s.main, si, c.path); len(got) != 0 {
+					t.Errorf("%s: lists %v, want none", where, got)
+				}
+				continue
+			}
+			wantCode(t, where, res, http.StatusNotFound, api.CodeNotFound)
+		}
+		if n := auditEntriesOf(t, f, si); n != 0 {
+			t.Errorf("the workspace's audit log has %d entries of the %s, want none", n, who)
+		}
 	}
 }

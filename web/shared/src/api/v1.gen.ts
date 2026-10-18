@@ -67,6 +67,21 @@ export interface ErrorEnvelope {
   error: ErrorBody;
 }
 
+export interface GrantBody {
+  /** When the grant was given */
+  created_at: string;
+  /** The ID of the membership that has the grant */
+  membership_id: string;
+  /** The ID of the project */
+  project_id: string;
+  /** The member's role on the project, which replaces their role in the workspace there, raising or lowering it. A guest acts only on the projects that they have a grant on. */
+  role: "admin" | "editor" | "commenter" | "viewer";
+  /** When the grant was given, or its role last changed */
+  updated_at: string;
+  /** The ID of the member's account */
+  user_id: string;
+}
+
 export interface InstanceBody {
   /** Whether the instance sends email, through the SMTP server of STORYCREEP_SMTP_URL or of first-run setup. Without it, a page says that email is not configured: the links that reset a password and verify an email address are not emailed, and an instance admin gives them out as text. */
   email_configured: boolean;
@@ -178,6 +193,12 @@ export interface MembershipBody {
 export interface MeteredUsageBody {
   /** How much the workspace uses */
   used: number;
+}
+
+export interface PageGrantBody {
+  items: Array<GrantBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
 }
 
 export interface PageInviteBody {
@@ -348,6 +369,11 @@ export interface SessionBody {
   last_seen_at: string;
   /** The User-Agent header of the client that its user signed in with */
   user_agent?: string;
+}
+
+export interface SetGrantBody {
+  /** The member's role on the project: admin, editor, commenter, or viewer. owner is a role of the workspace alone, and is answered with 400 owner_not_grantable. */
+  role: "owner" | "admin" | "editor" | "commenter" | "viewer";
 }
 
 export interface SetupBody {
@@ -842,6 +868,30 @@ export interface Operations {
     };
   };
   /**
+   * List a member's grants
+   *
+   * Lists a member's grants on the workspace's projects that are not in its trash, in the order of the projects' IDs, oldest first. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a membership that the workspace does not have. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
+   */
+  listMemberGrants: {
+    input: {
+      path: {
+        /** The ID of the membership whose grants to list */
+        membership_id: string;
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageGrantBody;
+    };
+  };
+  /**
    * List a workspace's members
    *
    * Lists the members of a workspace, guests included, in the order of their memberships' IDs, oldest first, with their display names and roles, to every member with a role in it. Only its owners and admins also see their email addresses. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
@@ -861,6 +911,28 @@ export interface Operations {
     };
     responses: {
       200: PageMemberBody;
+    };
+  };
+  /**
+   * List a project's grants
+   *
+   * Lists the members' grants on a project, in the order of their memberships' IDs, oldest first. A member with a grant acts on the project with its role instead of their role in the workspace, and a guest acts only on the projects that they have one on. Only an owner or an admin of the project's workspace may, and anyone else with a role on the project, as a viewer or a guest with an admin grant on it, is answered with 403 insufficient_role: a grant never authorises an operation of the workspace (PRD FR-TEN-04 AC4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
+   */
+  listProjectGrants: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageGrantBody;
     };
   };
   /**
@@ -1034,6 +1106,28 @@ export interface Operations {
     };
   };
   /**
+   * Remove a member's grant on a project
+   *
+   * Removes a member's grant on a project, after which they act on it with their role in the workspace, and a guest no longer acts on it at all. Only an owner sets or removes an owner's grant, which replaces their role on the project, and an admin is answered with 403 owner_required. Only an owner or an admin of the project's workspace may, and anyone else with a role on the project, as a viewer or a guest with an admin grant on it, is answered with 403 insufficient_role: a grant never authorises an operation of the workspace (PRD FR-TEN-04 AC4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a membership that the workspace does not have, or that has no grant on the project. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  removeProjectGrant: {
+    input: {
+      path: {
+        /** The ID of the membership whose grant to remove */
+        membership_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      204: undefined;
+    };
+  };
+  /**
    * Ask for a link that verifies the account's email address
    *
    * Emails a link that verifies the signed-in account's email address, which lasts 24 hours, and is used once with POST /api/v1/auth/verify-email. An address that is verified already is emailed nothing, and nor is one that was emailed such a link in the last 10 minutes that still works: the answer is the same, and the earlier link keeps working. Registering emails one too. An instance that sends no email answers 403 email_not_configured, whatever the request holds, as GET /api/v1/instance says it will. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, and reading, accepting, or registering with an invitation's link share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, and accepting one share one of 10 a minute for each account. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
@@ -1176,6 +1270,29 @@ export interface Operations {
     };
   };
   /**
+   * Set a member's grant on a project
+   *
+   * Gives a member of the project's workspace a role on the project, which replaces their role in the workspace there, raising or lowering it, and returns the grant: it adds the member's grant on the project, or changes its role. A grant that has the role already stays as it is. A grant is the only way that a guest acts on a project, and it applies only to the project's own operations: every operation of the workspace, as deleting the project or managing its grants, is still authorised by the member's role in the workspace. The role owner is answered with 400 owner_not_grantable (PRD FR-TEN-04 AC5). Only an owner sets or removes an owner's grant, which replaces their role on the project, and an admin is answered with 403 owner_required. Only an owner or an admin of the project's workspace may, and anyone else with a role on the project, as a viewer or a guest with an admin grant on it, is answered with 403 insufficient_role: a grant never authorises an operation of the workspace (PRD FR-TEN-04 AC4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a membership that the workspace does not have. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  setProjectGrant: {
+    input: {
+      path: {
+        /** The ID of the membership of the project's workspace whose grant to set */
+        membership_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: SetGrantBody;
+    };
+    responses: {
+      200: GrantBody;
+    };
+  };
+  /**
    * Unarchive a project
    *
    * Unarchives a project, which can then be changed again, and counts towards the workspace's projects again: a workspace that has as many projects as its plan allows is answered with 409 limit_exceeded. A project that is not archived stays as it is. Only an owner or an admin of the project may, and anyone else with a role on it is answered with 403 insufficient_role. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
@@ -1276,7 +1393,9 @@ export const routes = {
   issuePasswordResetLink: { method: "POST", path: "/api/v1/admin/password-reset-links" },
   issueVerificationLink: { method: "POST", path: "/api/v1/admin/verification-links" },
   listInvites: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/invites" },
+  listMemberGrants: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}/grants" },
   listMembers: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members" },
+  listProjectGrants: { method: "GET", path: "/api/v1/projects/{project_id}/grants" },
   listProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/projects" },
   listSessions: { method: "GET", path: "/api/v1/auth/sessions" },
   listTrashedProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/trash/projects" },
@@ -1287,6 +1406,7 @@ export const routes = {
   registerAccount: { method: "POST", path: "/api/v1/auth/register" },
   registerWithInvite: { method: "POST", path: "/api/v1/invites/register" },
   removeMember: { method: "DELETE", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}" },
+  removeProjectGrant: { method: "DELETE", path: "/api/v1/projects/{project_id}/grants/{membership_id}" },
   requestEmailVerification: { method: "POST", path: "/api/v1/auth/email-verification" },
   requestPasswordReset: { method: "POST", path: "/api/v1/auth/password-reset" },
   resendInvite: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/invites/{invite_id}/resend" },
@@ -1295,6 +1415,7 @@ export const routes = {
   revokeInvite: { method: "DELETE", path: "/api/v1/workspaces/{workspace_id}/invites/{invite_id}" },
   revokeOtherSessions: { method: "DELETE", path: "/api/v1/auth/sessions" },
   revokeSession: { method: "DELETE", path: "/api/v1/auth/sessions/{session_id}" },
+  setProjectGrant: { method: "PUT", path: "/api/v1/projects/{project_id}/grants/{membership_id}" },
   unarchiveProject: { method: "POST", path: "/api/v1/projects/{project_id}/unarchive" },
   updateProject: { method: "PATCH", path: "/api/v1/projects/{project_id}" },
   updateWorkspace: { method: "PATCH", path: "/api/v1/workspaces/{workspace_id}" },

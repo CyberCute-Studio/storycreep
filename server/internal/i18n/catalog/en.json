@@ -40,6 +40,7 @@
   "error.not_ready.migrations_pending": "The database has pending migrations, which storycreep migrate applies.",
   "error.not_ready.starting": "The server is starting.",
   "error.not_ready.stopping": "The server is stopping.",
+  "error.owner_not_grantable": "A project grant cannot make someone an owner. Choose admin, editor, commenter, or viewer.",
   "error.owner_required": "Only an owner of this workspace may do this.",
   "error.project_archived": "This project is archived, so it cannot be changed. Unarchive it first.",
   "error.rate_limited": "Too many requests. Try again later.",
