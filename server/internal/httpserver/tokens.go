@@ -110,12 +110,9 @@ type createTokenBody struct {
 
 // spec returns the token that b asks for.
 func (b createTokenBody) spec() apitoken.Spec {
-	s := apitoken.Spec{Name: b.Name, Scopes: make([]scope.Scope, len(b.Scopes))}
+	s := apitoken.Spec{Name: b.Name, Scopes: make([]scope.Scope, len(b.Scopes)), ExpiresAt: b.ExpiresAt}
 	for i, name := range b.Scopes {
 		s.Scopes[i] = scope.Scope(name)
-	}
-	if b.ExpiresAt != nil {
-		s.ExpiresAt = *b.ExpiresAt
 	}
 	return s
 }

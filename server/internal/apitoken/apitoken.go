@@ -113,9 +113,10 @@ type Spec struct {
 	Name string
 	// Scopes are the scopes that the token holds, at least one.
 	Scopes []scope.Scope
-	// ExpiresAt is when the token expires, or zero for a token that does
-	// not.
-	ExpiresAt time.Time
+	// ExpiresAt is when the token expires, or nil for a token that does not.
+	// The zero time is a time like any other, long past, so that no expiry
+	// that a client sends makes a token that never expires.
+	ExpiresAt *time.Time
 }
 
 // Credential is who makes a request with a valid token, and what the token
@@ -541,7 +542,9 @@ func hashOf(value secret.Value) ([]byte, bool) {
 
 // check returns spec as a token is made with it: its name without the white
 // space around it, and its scopes once each, in the order of scope.All, or
-// input.FieldErrors if a field of spec is not valid.
+// input.FieldErrors if a field of spec is not valid. It judges the expiry by
+// the server's clock, so that a request learns of every field that is not
+// valid at once, and insert judges it again by the database's.
 func check(spec Spec) (Spec, error) {
 	var errs input.FieldErrors
 	spec.Name = strings.TrimSpace(spec.Name)
@@ -560,8 +563,8 @@ func check(spec Spec) (Spec, error) {
 	case slices.ContainsFunc(spec.Scopes, func(s scope.Scope) bool { return !s.Known() }):
 		errs = append(errs, input.FieldError{Field: "scopes", Message: "holds a value that is not a scope"})
 	}
-	if !spec.ExpiresAt.IsZero() && !spec.ExpiresAt.After(time.Now()) {
-		errs = append(errs, input.FieldError{Field: "expires_at", Message: "is not in the future"})
+	if spec.ExpiresAt != nil && !spec.ExpiresAt.After(time.Now()) {
+		errs = append(errs, expiredField)
 	}
 	if len(errs) > 0 {
 		return Spec{}, errs
@@ -570,23 +573,34 @@ func check(spec Spec) (Spec, error) {
 	return spec, nil
 }
 
+// expiredField is the error of an expiry that is not in the future.
+var expiredField = input.FieldError{Field: "expires_at", Message: "is not in the future"}
+
 // insert adds a token of the workspace workspaceID for the user owner,
 // narrowed to the project projectID unless it is zero, with spec, which
 // check returned, and records that in the audit log with the actor, or none
-// if it is zero, in tx, and returns the token with its secret.
+// if it is zero, in tx, and returns the token with its secret. It returns
+// input.FieldErrors if the token would expire as it is made, by the
+// database's clock, which judges every use of it (TokenForUse), to the
+// microsecond that the database keeps, as when the server's clock is behind
+// it, and then tx must roll back, as it does when its function returns the
+// error.
 func insert(ctx context.Context, tx pgx.Tx, owner, workspaceID, projectID ids.UUID, spec Spec, actor ids.UUID,
 	client audit.Client) (Issued, error) {
 	value, hash := account.NewSecret()
 	id := ids.New()
 	var expires pgtype.Timestamptz
-	if !spec.ExpiresAt.IsZero() {
-		expires = pgtype.Timestamptz{Time: spec.ExpiresAt, Valid: true}
+	if spec.ExpiresAt != nil {
+		expires = pgtype.Timestamptz{Time: *spec.ExpiresAt, Valid: true}
 	}
 	created, err := queries.New(tx).InsertToken(ctx, queries.InsertTokenParams{ID: nullUUID(id),
 		WorkspaceID: nullUUID(workspaceID), UserID: nullUUID(owner), ProjectID: nullUUID(projectID), Name: spec.Name,
 		TokenHash: hash, Scopes: scope.Names(spec.Scopes), ExpiresAt: expires})
 	if err != nil {
 		return Issued{}, fmt.Errorf("apitoken: add the token: %w", err)
+	}
+	if created.ExpiresAt.Valid && !created.ExpiresAt.Time.After(created.CreatedAt.Time) {
+		return Issued{}, input.FieldErrors{expiredField}
 	}
 	// The expiry is the one that the database holds, to the microsecond, as
 	// the lists of tokens show it, rather than the one that spec asked for.

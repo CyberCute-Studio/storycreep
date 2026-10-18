@@ -100,6 +100,8 @@ func TestCreateToken(t *testing.T) {
 		{[]string{"--scopes", "project:read", "jo@example.com", "harbour", " "}, ExitFailure, "the token's name "},
 		{[]string{"--scopes", "project:read", "--expires", "2000-01-01T00:00:00Z", "jo@example.com", "harbour", "CI"},
 			ExitFailure, "the token's expiry is not in the future"},
+		{[]string{"--scopes", "project:read", "--expires", "0001-01-01T00:00:00Z", "jo@example.com", "harbour", "CI"},
+			ExitFailure, "the token's expiry is not in the future"},
 		{[]string{"--scopes", "project:admin", "jo@example.com", "harbour", "CI"}, ExitUsage,
 			`unknown scope "project:admin"`},
 		{[]string{"--scopes", " , ", "jo@example.com", "harbour", "CI"}, ExitUsage, "--scopes lists no scope"},

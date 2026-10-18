@@ -649,6 +649,10 @@ func TestTokenLifecycle(t *testing.T) {
 		{map[string]any{"name": "CI", "scopes": []string{"project:admin"}}, "body.scopes[0]"},
 		{map[string]any{"name": "CI", "scopes": []string{"project:read"},
 			"expires_at": time.Now().Add(-time.Minute)}, "body.expires_at"},
+		// The zero time of Go is an expiry like any other, long past, and no
+		// lack of one.
+		{map[string]any{"name": "CI", "scopes": []string{"project:read"}, "expires_at": "0001-01-01T00:00:00Z"},
+			"body.expires_at"},
 	} {
 		res := call(f.s.main, http.MethodPost, workspaceTokensPath(f.ws), jsonBody(t, c.body), editor.header(true))
 		wantProblem(t, fmt.Sprintf("making a token with %v", c.body), res, c.location)

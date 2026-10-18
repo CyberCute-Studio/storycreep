@@ -77,10 +77,12 @@ the expiry is not valid.
 			}
 		}
 		if v := inv.stringFlag("expires"); v != "" {
-			if spec.ExpiresAt, err = time.Parse(time.RFC3339, v); err != nil {
+			expires, err := time.Parse(time.RFC3339, v)
+			if err != nil {
 				return usageError{fmt.Sprintf("--expires %q is not a time in RFC 3339, such as 2027-01-31T00:00:00Z",
 					v)}
 			}
+			spec.ExpiresAt = &expires
 		}
 		db, err := openDatabase(ctx, inv)
 		if err != nil {
