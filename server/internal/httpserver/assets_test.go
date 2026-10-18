@@ -14,12 +14,17 @@ import (
 	"io/fs"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humachi"
+	"github.com/go-chi/chi/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
@@ -549,6 +554,73 @@ func TestUndecodableThumbnail(t *testing.T) {
 	}
 }
 
+// TestHoldSlot checks that the uploads take turns for their slots: one that
+// finds every slot held waits until one is free before the operation reads
+// its body, and one whose client goes away while it waits ends without
+// reaching the operation.
+func TestHoldSlot(t *testing.T) {
+	t.Parallel()
+	router := chi.NewMux()
+	hapi := humachi.New(router, huma.DefaultConfig("Test", "1"))
+	entered, release := make(chan string, 3), make(chan struct{})
+	huma.Register(hapi, huma.Operation{Method: http.MethodPost, Path: "/{name}",
+		Middlewares: huma.Middlewares{holdSlot(make(chan struct{}, 1))}},
+		func(_ context.Context, in *struct {
+			Name    string `path:"name"`
+			RawBody []byte
+		}) (*struct{}, error) {
+			entered <- in.Name
+			<-release
+			return nil, nil
+		})
+	post := func(ctx context.Context, name string) <-chan int {
+		done := make(chan int, 1)
+		go func() {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodPost, "/"+name,
+				strings.NewReader("file")))
+			done <- w.Code
+		}()
+		return done
+	}
+	first := post(context.Background(), "first")
+	if name := <-entered; name != "first" {
+		t.Fatalf("%s reached the operation first", name)
+	}
+	second := post(context.Background(), "second")
+	ctx, cancel := context.WithCancel(context.Background())
+	gone := post(ctx, "gone")
+	select {
+	case name := <-entered:
+		t.Fatalf("%s reached the operation while the slot was held", name)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	if code := <-gone; code != http.StatusInternalServerError {
+		t.Errorf("a request whose client went away while it waited: %d", code)
+	}
+	close(release)
+	if code := <-first; code != http.StatusNoContent {
+		t.Errorf("the first request: %d", code)
+	}
+	select {
+	case name := <-entered:
+		if name != "second" {
+			t.Errorf("%s reached the operation once the slot was free, want second", name)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the second request did not reach the operation once the slot was free")
+	}
+	if code := <-second; code != http.StatusNoContent {
+		t.Errorf("the second request: %d", code)
+	}
+	select {
+	case name := <-entered:
+		t.Errorf("%s reached the operation", name)
+	default:
+	}
+}
+
 // TestUploadAgainMendsItsFile checks that uploading a file that the project
 // has already, whose blob the store lost, as when files were not all copied
 // to a new store, stores the blob again, so that the asset is served again.
@@ -575,6 +647,56 @@ func TestUploadAgainMendsItsFile(t *testing.T) {
 	}
 	if res := content(); res.status != http.StatusOK || !bytes.Equal(res.body, data) {
 		t.Errorf("the file once it is uploaded again: %d, %d bytes", res.status, len(res.body))
+	}
+}
+
+// TestUploadAgainMendsItsThumbnail checks that uploading a file that the
+// project has already, whose thumbnail job ended without a thumbnail, as when
+// the store had lost the file when the job ran, enqueues the job again, which
+// then makes the thumbnail, while uploading it again while its job waits
+// enqueues no other.
+func TestUploadAgainMendsItsThumbnail(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, d, owner, ws := inviteServer(t, "open", map[string]string{"STORYCREEP_ASSET_STORAGE": dir})
+	p := createProject(t, s.main, owner, ws, "Lighthouse").ID
+	large := testPNG(t, 600, 300)
+	a := upload(t, s.main, owner, p, large, http.StatusCreated)
+	upload(t, s.main, owner, p, large, http.StatusOK)
+	jobsOf := func(state string) int {
+		return countRows(t, d, `SELECT count(*) FROM river_job WHERE kind = 'asset_thumbnail' AND state::text LIKE $1`,
+			state)
+	}
+	if n := jobsOf("%"); n != 1 {
+		t.Errorf("%d thumbnail jobs once the file is uploaded again while its job waits, want 1", n)
+	}
+	files := storedFiles(t, dir)
+	if len(files) != 1 {
+		t.Fatalf("the store holds %v, want the file", files)
+	}
+	if err := os.Remove(filepath.Join(dir, filepath.FromSlash(files[0]))); err != nil {
+		t.Fatal(err)
+	}
+	startWorkers(t, s, d)
+	for deadline := time.Now().Add(30 * time.Second); jobsOf("cancelled") != 1; {
+		if time.Now().After(deadline) {
+			t.Fatal("the thumbnail job of a file that the store lost did not end")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	upload(t, s.main, owner, p, large, http.StatusOK)
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		res := call(s.main, http.MethodGet, assetPath(p, a.ID)+"/thumbnail", nil, owner.header(false))
+		if cfg, err := png.DecodeConfig(bytes.NewReader(res.body)); err == nil && !bytes.Equal(res.body, large) {
+			if cfg.Width != asset.ThumbnailSide {
+				t.Errorf("the thumbnail is %d pixels wide, want %d", cfg.Width, asset.ThumbnailSide)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("uploading the file again made no thumbnail")
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

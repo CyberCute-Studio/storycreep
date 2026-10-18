@@ -84,7 +84,8 @@ func (s *Service) withDB(db *database.DB) *Service {
 // any transaction, and stores the thumbnail under the blob's lock, which the
 // orphan reconciliation takes too, so that it never deletes a thumbnail that
 // is about to be recorded, unless another job recorded one meanwhile. An
-// image that does not decode keeps no thumbnail of its own: it is recorded
+// image that does not decode, or whose decoding would take more memory than
+// a thumbnail may (Thumbnail), keeps no thumbnail of its own: it is recorded
 // as its own thumbnail, as a small image is, so that an upload of the same
 // content to another project shares that, rather than enqueue a job that
 // would fail the same way, and the job ends without another attempt. So it
@@ -179,6 +180,10 @@ func (s *Service) makeThumbnail(ctx context.Context, args thumbnailJob) error {
 var workspaceKey = regexp.MustCompile(`^[0-9a-f-]{36}/([0-9a-f]{64})\.(?:` +
 	strings.Join(slices.Sorted(maps.Values(extensions)), "|") + `|thumb\.png)$`)
 
+// errSpent stops the listing of a workspace's blobs once the run has spent
+// its budget.
+var errSpent = errors.New("asset: the run has spent its budget")
+
 // Reconcile deletes every blob of a workspace that no asset of the workspace
 // refers to, as its file or its thumbnail, as after the assets' project is
 // purged, or an upload stored its blob and failed, and returns how many it
@@ -189,10 +194,11 @@ var workspaceKey = regexp.MustCompile(`^[0-9a-f-]{36}/([0-9a-f]{64})\.(?:` +
 // blob and adds the row that refers to it, and the thumbnail job while it
 // stores a thumbnail and records it, and checks the rows again, so that it
 // never deletes a blob that a row is about to refer to. It starts no
-// workspace, and checks no blob, once it has run for sweep.Budget, going on
-// from a workspace picked at random (sweep.Workspaces), and it leaves alone a
-// key that this package would not write. So it is safe to repeat. The blobs of a workspace that no longer
-// exists are deleted with it (plan item 110).
+// workspace, and lists or checks no blob, once it has run for sweep.Budget,
+// going on from a workspace picked at random (sweep.Workspaces), and it
+// leaves alone a key that this package would not write. So it is safe to
+// repeat. The blobs of a workspace that no longer exists are deleted with it
+// (plan item 110).
 func (s *Service) Reconcile(ctx context.Context) (int, error) {
 	store, err := s.storage.Store(ctx)
 	if err != nil {
@@ -214,14 +220,22 @@ func (s *Service) Reconcile(ctx context.Context) (int, error) {
 			known[k] = true
 		}
 		// The blobs that no row referred to when the rows were read; each is
-		// checked again under its lock before it is deleted.
+		// checked again under its lock before it is deleted. The listing of
+		// a workspace of many blobs, which takes a request for each thousand
+		// of a bucket's, stops within the run's budget too.
 		var unreferenced []string
-		if err := store.List(ctx, workspaceID.String()+"/", func(i blob.Info) error {
+		switch err := store.List(ctx, workspaceID.String()+"/", func(i blob.Info) error {
+			if !more() {
+				return errSpent
+			}
 			if !known[i.Key] {
 				unreferenced = append(unreferenced, i.Key)
 			}
 			return nil
-		}); err != nil {
+		}); {
+		case errors.Is(err, errSpent):
+			return nil
+		case err != nil:
 			return fmt.Errorf("asset: list the blobs of workspace %s: %w", workspaceID, err)
 		}
 		for _, key := range unreferenced {

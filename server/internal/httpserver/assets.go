@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
@@ -29,6 +30,50 @@ const assetsPath = "/api/v1/projects/{project_id}/assets"
 // enough for the largest file that an instance may take, 50 MB, on a
 // connection of 1.5 Mbit/s.
 const uploadReadTimeout = 5 * time.Minute
+
+// uploadMemory is how many bytes of files the uploads in progress may hold
+// at once. An upload reads its file whole into memory, as the route's body,
+// so an instance runs as many at once as this holds files of the largest
+// size that it takes, and at least one, and each other upload waits for one
+// of them to end before its file is read (holdSlot), so that a burst of
+// large uploads, or many that send their files slowly, cannot make the
+// server run out of memory. A file takes up to about twice its size while it
+// arrives, and an SVG image another copy once it is sanitized.
+const uploadMemory = 256 << 20
+
+// uploadSlots returns how many uploads of files of at most maxBytes may hold
+// their files at once (uploadMemory).
+func uploadSlots(maxBytes int64) int {
+	return int(max(1, uploadMemory/maxBytes))
+}
+
+// holdSlot returns middleware for an operation that waits for a slot of
+// slots before the operation reads the request's body, and frees it once the
+// operation has answered, so that no more requests than slots has room for
+// read their bodies, and hold them, at once. A request whose context ends
+// while it waits, as when its client goes away, is answered with the
+// context's error.
+func holdSlot(slots chan struct{}) func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Context().Done():
+			r, w := humachi.Unwrap(ctx)
+			api.WriteError(w, r, ctx.Context().Err())
+			return
+		}
+		defer func() { <-slots }()
+		// select picks at random between a free slot and an ended context,
+		// and a request that nobody waits for would hold the slot from those
+		// who do.
+		if ctx.Context().Err() != nil {
+			r, w := humachi.Unwrap(ctx)
+			api.WriteError(w, r, ctx.Context().Err())
+			return
+		}
+		next(ctx)
+	}
+}
 
 // imageTypes are the types of the files that an upload takes and an asset is
 // served as, which the OpenAPI document names.
@@ -108,7 +153,8 @@ var fileDoc = " The answer depends on where the instance stores its files (STORY
 
 // registerAssets registers the routes of the projects' assets (PRD
 // FR-ASSET-01, FR-ASSET-02): uploading one, whose file is at most maxBytes,
-// reading one, and serving its file and its thumbnail.
+// as many at once as uploadMemory holds, reading one, and serving its file
+// and its thumbnail.
 func registerAssets(m *api.Mux, assets *asset.Service, maxBytes int64) {
 	// checkUpload refuses an upload that the project would refuse whatever
 	// its file holds before the route reads the file, so that a request that
@@ -150,14 +196,16 @@ func registerAssets(m *api.Mux, assets *asset.Service, maxBytes int64) {
 			"in its storage: an upload that would take the workspace past its plan's storage_bytes is answered " +
 			"with 413 storage_limit_exceeded, with the workspace's usage and limit. Only an owner, an admin, or an " +
 			"editor of the project may upload, and anyone else with a role on it is answered with 403 " +
-			"insufficient_role, before the file is read." + projectNotFoundDoc + tokenNotFoundDoc + archivedDoc +
-			tokenChangeDoc(scope.ProjectWrite),
+			"insufficient_role, before the file is read. The server reads only so many files at once, so an " +
+			"upload may wait for others to end before its file is read." + projectNotFoundDoc + tokenNotFoundDoc +
+			archivedDoc + tokenChangeDoc(scope.ProjectWrite),
 		Tags:            []string{"Assets"},
 		DefaultStatus:   http.StatusCreated,
 		RequestBody:     uploadBody,
 		MaxBodyBytes:    maxBytes,
 		BodyReadTimeout: uploadReadTimeout,
-		Middlewares:     huma.Middlewares{checkUpload},
+		// A request that the guard refuses takes no slot.
+		Middlewares: huma.Middlewares{checkUpload, holdSlot(make(chan struct{}, uploadSlots(maxBytes)))},
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The project's asset of the same file, which it has already",
 				Content: map[string]*huma.MediaType{"application/json": {Schema: assetSchema}}},

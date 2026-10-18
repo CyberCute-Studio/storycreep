@@ -31,6 +31,16 @@ var decoders = map[string]func([]byte) (image.Image, error){
 	MimeWebP: func(b []byte) (image.Image, error) { return webp.Decode(bytes.NewReader(b)) },
 }
 
+// maxDecodeBytes is the most memory that making a thumbnail may take, besides
+// the file itself (decodeBytes): enough for an image of MaxPixels pixels in
+// the encodings that photos and drawings are mostly saved in, a baseline
+// JPEG, a progressive one whose colours are subsampled 4:2:0, a PNG of up to
+// 16 bits a channel, or a WebP, and not for one in an encoding whose decoder
+// takes two or three times as much for each pixel, as a progressive JPEG
+// whose colours are not subsampled, or an interlaced PNG of 16 bits a
+// channel, which is then its own thumbnail.
+const maxDecodeBytes = 256 << 20
+
 // Thumbnail returns the thumbnail of data, an image of the raster type mime,
 // as a PNG that fits in ThumbnailSide × ThumbnailSide, keeping the image's
 // proportions, or an error if data does not decode, as an animated WebP,
@@ -39,10 +49,13 @@ var decoders = map[string]func([]byte) (image.Image, error){
 // thumbnail of a photo that a phone took on its side is upright, as the
 // photo is, and a GIF image is its first frame, where it is on the image's
 // screen, as a browser shows it first. It checks the image's size again
-// before it decodes it, as an upload did. A decoded image takes up to 8
-// bytes for each of MaxPixels pixels until it is scaled, after which only
-// the thumbnail is left of it, so the job that calls Thumbnail makes one
-// thumbnail at a time in a process (jobs.Serial).
+// before it decodes it, as an upload did, and returns an error, without
+// decoding it, for an image whose decoding would take more than
+// maxDecodeBytes, as its header says (decodeBytes), so that a small file
+// cannot make the server hold a huge image. A decoded image is held until it
+// is scaled, after which only the thumbnail is left of it, so the job that
+// calls Thumbnail makes one thumbnail at a time in a process (jobs.Serial),
+// which bounds the memory that the thumbnails take.
 func Thumbnail(data []byte, mime string) ([]byte, error) {
 	decode, ok := decoders[mime]
 	if !ok {
@@ -54,6 +67,10 @@ func Thumbnail(data []byte, mime string) ([]byte, error) {
 	}
 	if img.Mime != mime {
 		return nil, fmt.Errorf("asset: the file is %s, not %s", img.Mime, mime)
+	}
+	if n := decodeBytes(img); n > maxDecodeBytes {
+		return nil, fmt.Errorf("asset: decoding the image would take %d MiB of memory, and a thumbnail may take %d MiB",
+			n>>20, maxDecodeBytes>>20)
 	}
 	// A GIF's first frame may cover only part of the image's screen, which
 	// the thumbnail shows whole, as Sniff read its size from the header.
@@ -73,6 +90,135 @@ func Thumbnail(data []byte, mime string) ([]byte, error) {
 		return nil, fmt.Errorf("asset: encode the thumbnail: %w", err)
 	}
 	return out.Bytes(), nil
+}
+
+// decodeBytes returns about how many bytes of memory making the thumbnail of
+// img, an image of a raster type that Sniff returned, takes, besides the file
+// itself, as the decoders of the standard library and of golang.org/x/image
+// allocate it: the decoded image, and what its decoder holds besides, which
+// depend on how it is encoded as well as on its size, as its header says,
+// and the buffer that scaling it to its thumbnail takes. A header that it
+// cannot read is counted as the format's costliest encoding would be.
+func decodeBytes(img Image) int64 {
+	w, h := int64(img.Width), int64(img.Height)
+	// Scaling takes 32 bytes for each pixel of the thumbnail's width for each
+	// row of the image, which is as many for each pixel of the image's
+	// shorter side as the thumbnail's longer side has pixels.
+	n := 32 * ThumbnailSide * min(w, h)
+	switch img.Mime {
+	case MimeJPEG:
+		b, ok := jpegDecodeBytes(img.Data)
+		if !ok {
+			// 4 components, each of 1 byte and of a coefficient of 4 bytes
+			// for each pixel, and the 4 bytes of the CMYK image.
+			b = 24 * w * h
+		}
+		return n + b
+	case MimePNG:
+		return n + pngDecodeBytes(img.Data, w*h)
+	case MimeGIF:
+		// The first frame's index of each pixel.
+		return n + w*h
+	}
+	// A WebP image: a lossless one's pixels, of 4 bytes, in the decoder's
+	// buffer and in the image, or a lossy one's 1.5 bytes and its alpha's
+	// pixels, which are decoded as a lossless image is.
+	return n + 8*w*h
+}
+
+// jpegDecodeBytes returns how many bytes image/jpeg allocates to decode the
+// JPEG file data, as its frame's header says, and true, or false if no
+// frame's header of a type that it decodes precedes the image data. Each of
+// the image's components takes a byte for each of its samples, a
+// progressive image's a coefficient of 4 bytes for each too, which the
+// decoder keeps between its scans, and an image of 4 components, which is
+// CMYK, or of 3 that are RGB rather than YCbCr, is converted to an image of 4
+// bytes for each pixel.
+func jpegDecodeBytes(data []byte) (int64, bool) {
+	var jfif, adobeRGB, found, progressive bool
+	var width, height, n int64
+	var comps [4]struct {
+		id   byte
+		h, v int64
+	}
+	jpegSegments(data, func(marker byte, s []byte) bool {
+		switch marker {
+		case 0xe0:
+			jfif = jfif || bytes.HasPrefix(s, []byte("JFIF\x00"))
+		case 0xee:
+			// An Adobe segment whose transform is 0 says that 3 components
+			// are RGB.
+			if len(s) >= 12 && bytes.HasPrefix(s, []byte("Adobe")) {
+				adobeRGB = s[11] == 0
+			}
+		case 0xc0, 0xc1, 0xc2:
+			if len(s) < 6 {
+				return false
+			}
+			height, width, n = int64(s[1])<<8|int64(s[2]), int64(s[3])<<8|int64(s[4]), int64(s[5])
+			if n != 1 && n != 3 && n != 4 || int64(len(s)) < 6+3*n {
+				return false
+			}
+			for i := range n {
+				c := &comps[i]
+				c.id, c.h, c.v = s[6+3*i], max(1, int64(s[7+3*i]>>4)), max(1, int64(s[7+3*i]&0x0f))
+			}
+			if n == 1 {
+				// A single component is coded in blocks of 8 × 8, whatever
+				// its sampling says.
+				comps[0].h, comps[0].v = 1, 1
+			}
+			found, progressive = true, marker == 0xc2
+			return false
+		}
+		return true
+	})
+	if !found {
+		return 0, false
+	}
+	// The blocks of 8 × 8 samples of each component, in the minimum coded
+	// units that cover the image, whose size the first component's sampling
+	// gives.
+	mx, my := (width+8*comps[0].h-1)/(8*comps[0].h), (height+8*comps[0].v-1)/(8*comps[0].v)
+	var blocks int64
+	for _, c := range comps[:n] {
+		blocks += mx * my * c.h * c.v
+	}
+	perBlock := int64(64)
+	if progressive {
+		perBlock += 64 * 4
+	}
+	total := blocks * perBlock
+	rgb := !jfif && (adobeRGB || comps[0].id == 'R' && comps[1].id == 'G' && comps[2].id == 'B')
+	if n == 4 || n == 3 && rgb {
+		total += 4 * width * height
+	}
+	return total, true
+}
+
+// pngDecodeBytes returns how many bytes image/png allocates to decode the PNG
+// file data of the given number of pixels, as its header says: a byte for
+// each pixel of a paletted image, 4 for one of up to 8 bits a channel, which
+// is decoded as RGBA, as a grey image with a transparent colour is, and 8
+// for one of 16 bits, and twice as much for an interlaced image, whose passes
+// are decoded each into an image of its own before they are merged. A header
+// that it cannot read is counted as an interlaced image of 16 bits a channel.
+func pngDecodeBytes(data []byte, pixels int64) int64 {
+	if len(data) < 29 || string(data[12:16]) != "IHDR" {
+		return 16 * pixels
+	}
+	depth, colorType, interlaced := data[24], data[25], data[28] != 0
+	perPixel := int64(4)
+	switch {
+	case colorType == 3:
+		perPixel = 1
+	case depth == 16:
+		perPixel = 8
+	}
+	if interlaced {
+		perPixel *= 2
+	}
+	return perPixel * pixels
 }
 
 // scaled decodes data with decode and returns the image scaled to fit in

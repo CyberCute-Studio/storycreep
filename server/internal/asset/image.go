@@ -3,7 +3,6 @@ package asset
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"image"
 	"image/gif"
@@ -35,10 +34,11 @@ var extensions = map[string]string{
 }
 
 // The bounds of an image that an upload takes. An image is decoded whole to
-// make its thumbnail (Thumbnail), which takes up to 8 bytes of memory for
-// each of its pixels, so a small file that claims a huge image cannot make
-// the server decode one: an image of more than MaxPixels pixels, or wider or
-// taller than MaxSide, is refused.
+// make its thumbnail (Thumbnail), which takes memory for each of its pixels,
+// so a small file that claims a huge image cannot make the server decode one:
+// an image of more than MaxPixels pixels, or wider or taller than MaxSide, is
+// refused. How much memory each pixel takes depends on how the image is
+// encoded too, so Thumbnail checks that as well (maxDecodeBytes).
 const (
 	MaxPixels = 25_000_000
 	MaxSide   = 16384
@@ -150,12 +150,27 @@ var exifTag = []byte("Exif\x00\x00")
 // says none, or data is not a JPEG file whose segments read up to it. Only
 // the segments before the image data are read, as EXIF is among them.
 func jpegOrientation(data []byte) int {
+	o := 1
+	jpegSegments(data, func(marker byte, segment []byte) bool {
+		if marker == 0xe1 && bytes.HasPrefix(segment, exifTag) {
+			o = tiffOrientation(segment[len(exifTag):])
+			return false
+		}
+		return true
+	})
+	return o
+}
+
+// jpegSegments calls fn with the marker and the data of each segment of the
+// JPEG file data that precedes its image data, in order, until fn returns
+// false, or a segment does not read, or data is not a JPEG file.
+func jpegSegments(data []byte, fn func(marker byte, segment []byte) bool) {
 	if len(data) < 2 || data[0] != 0xff || data[1] != 0xd8 {
-		return 1
+		return
 	}
 	for i := 2; i+4 <= len(data); {
 		if data[i] != 0xff {
-			return 1
+			return
 		}
 		marker := data[i+1]
 		switch {
@@ -164,23 +179,19 @@ func jpegOrientation(data []byte) int {
 			i++
 			continue
 		case marker == 0xda || marker == 0xd9:
-			// The image data, or the end of the file: no EXIF data follows.
-			return 1
+			// The image data, or the end of the file.
+			return
 		case marker >= 0xd0 && marker <= 0xd8 || marker == 0x01:
 			// A marker without a segment.
 			i += 2
 			continue
 		}
 		end := i + 2 + int(binary.BigEndian.Uint16(data[i+2:]))
-		if end < i+4 || end > len(data) {
-			return 1
-		}
-		if segment := data[i+4 : end]; marker == 0xe1 && bytes.HasPrefix(segment, exifTag) {
-			return tiffOrientation(segment[len(exifTag):])
+		if end < i+4 || end > len(data) || !fn(marker, data[i+4:end]) {
+			return
 		}
 		i = end
 	}
-	return 1
 }
 
 // tiffOrientation returns the orientation, tag 0x0112, of the first image
@@ -243,9 +254,3 @@ func checkSize(width, height int) error {
 // errNotImage is the ImageError of a file that is none of the types.
 var errNotImage = &ImageError{Reason: ReasonType,
 	Detail: "it is not a PNG, JPEG, GIF, WebP, or SVG image, as its content shows"}
-
-// IsImageError reports whether err is an *ImageError.
-func IsImageError(err error) bool {
-	var e *ImageError
-	return errors.As(err, &e)
-}

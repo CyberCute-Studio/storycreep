@@ -168,16 +168,24 @@ func (s *S3) SignedURL(ctx context.Context, key string, ttl time.Duration, conte
 }
 
 // s3Error returns ErrNotFound for an error that says that the object does
-// not exist, and the error, with the key, otherwise.
+// not exist, and the error, with the key, otherwise. Amazon S3 answers a
+// request of an object that does not exist with 403 Forbidden, rather than
+// 404, when the keys may not list the bucket, which they must, so the error
+// of a 403 says so, as the operator who reads it in the log needs to know.
 func s3Error(key string, err error) error {
 	var noKey *types.NoSuchKey
 	var notFound *types.NotFound
 	var api smithy.APIError
+	var res interface{ HTTPStatusCode() int }
 	switch {
 	case errors.As(err, &noKey), errors.As(err, &notFound):
 		return ErrNotFound
 	case errors.As(err, &api) && (api.ErrorCode() == "NoSuchKey" || api.ErrorCode() == "NotFound"):
 		return ErrNotFound
+	case errors.As(err, &res) && res.HTTPStatusCode() == http.StatusForbidden:
+		return fmt.Errorf("blob: read %s from the bucket, which refused it: S3 refuses a request of an object that "+
+			"does not exist, rather than answer that it does not, when the keys may not list the bucket, which they "+
+			"must: %w", key, err)
 	}
 	return fmt.Errorf("blob: read %s from the bucket: %w", key, err)
 }

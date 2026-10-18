@@ -4,14 +4,21 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/blob"
 	"github.com/CyberCute-Studio/storycreep/server/internal/blob/blobtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
 // TestMain stops MinIO, if the tests started it, once they are done.
@@ -38,6 +45,32 @@ func TestLocal(t *testing.T) {
 // Verifies: FR-ASSET-01/AC1
 func TestS3(t *testing.T) {
 	blobtest.Suite(t, blob.OpenS3(blobtest.S3(t), blob.S3Options{}))
+}
+
+// TestS3Forbidden checks that the S3 driver does not take an object that the
+// bucket refuses for one that does not exist, and that its error says that
+// the keys must be allowed to list the bucket, without which Amazon S3
+// refuses a request of an object that does not exist, rather than answer
+// that it does not.
+func TestS3Forbidden(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := blob.OpenS3(config.S3{Host: u.Hostname(), Port: port, Security: config.S3None, Bucket: "assets",
+		Region: "us-east-1", AccessKeyID: "key", SecretAccessKey: secret.New("secret")}, blob.S3Options{})
+	if _, err := store.Stat(context.Background(), "ws/a.png"); err == nil || errors.Is(err, blob.ErrNotFound) ||
+		!strings.Contains(err.Error(), "may not list the bucket") {
+		t.Errorf("Stat of an object that the bucket refuses: %v", err)
+	}
 }
 
 // TestLocalStaysInItsDirectory checks that the local driver reads, lists,

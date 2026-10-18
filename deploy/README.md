@@ -106,7 +106,7 @@ The URL is over HTTPS, on port 443 unless it names another. Percent-encode the k
 
 A file is stored under `{workspace}/{sha256}.{ext}`, the same key in the volume and in a bucket, so switching from one to the other is a matter of copying the files, with their paths as their keys, and then setting `STORYCREEP_ASSET_STORAGE`: the server copies nothing itself. Back up the volume or the bucket with the database. Once no asset refers to a file any longer, as after its project is deleted for good, an hourly job deletes it, and its thumbnail.
 
-An upload takes PNG, JPEG, GIF, WebP, and SVG images of at most `STORYCREEP_ASSET_MAX_BYTES`, and tells their type from their content. An SVG file is stored without its scripts and its references to anything outside it.
+An upload takes PNG, JPEG, GIF, WebP, and SVG images of at most `STORYCREEP_ASSET_MAX_BYTES`, and tells their type from their content. An SVG file is stored without its scripts and its references to anything outside it. The server holds an upload's file in memory while it checks and stores it, and the uploads in progress take turns for 256 MiB of files, so that a burst of them waits rather than takes more. It makes the thumbnails one at a time, and decodes no image whose decoding would take more than 256 MiB of memory, which is then its own thumbnail.
 
 ### API tokens
 

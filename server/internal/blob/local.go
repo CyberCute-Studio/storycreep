@@ -55,7 +55,10 @@ func (l *Local) Close() error {
 
 // Put writes data to a new file next to the key's, syncs it, and renames it
 // to the key's, which replaces the old file at once, so that a reader opens
-// either file whole.
+// either file whole, and then syncs the file's directory, and each directory
+// above it, so that once Put returns, the file survives a crash of the host
+// under its key, as the row of an asset that a transaction commits next
+// expects.
 func (l *Local) Put(ctx context.Context, key string, data []byte, _ string) (err error) {
 	if err := CheckKey(key); err != nil {
 		return err
@@ -90,7 +93,16 @@ func (l *Local) Put(ctx context.Context, key string, data []byte, _ string) (err
 	if err = l.root.Rename(tmp, key); err != nil {
 		return fmt.Errorf("blob: store %s: %w", key, err)
 	}
-	return nil
+	// The directory holds the file's new name, and its parent the
+	// directory's, if MkdirAll created it.
+	for d := dir; ; d = path.Dir(d) {
+		if err = syncDir(l.root, d); err != nil {
+			return fmt.Errorf("blob: store %s: sync its directory: %w", key, err)
+		}
+		if d == "." {
+			return nil
+		}
+	}
 }
 
 // Open opens the key's file.

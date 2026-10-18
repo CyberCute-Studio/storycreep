@@ -208,8 +208,10 @@ func uploadable(p project.Visible) error {
 // actor's role, the project's state, and the storage, and stores the blob
 // again in the rare case that the orphan reconciliation deleted it in
 // between, before the lock was taken. An upload of a file that the project
-// has already stores its blob again too if the store lost it, so that
-// uploading the file again mends its asset.
+// has already stores its blob again too if the store lost it, and enqueues
+// the job of its thumbnail again if it needs one and has none, as when the
+// job ran out of attempts while the store did not answer, or found no file,
+// so that uploading the file again mends its asset.
 func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID ids.UUID, data []byte) (Asset, bool,
 	error) {
 	workspaceID, err := s.projects.ActorWorkspace(ctx, actor, projectID)
@@ -248,6 +250,15 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		return Asset{}, false, err
 	}
 	if st.found {
+		if st.thumbless && needsThumbnail(img) {
+			// The job that the asset's upload enqueued may still wait, which
+			// keeps an equal job from being enqueued (enqueueThumbnail).
+			if err := s.db.InTx(ctx, scope, func(tx pgx.Tx) error {
+				return s.enqueueThumbnail(ctx, tx, workspaceID, st.id)
+			}); err != nil {
+				return Asset{}, false, err
+			}
+		}
 		return st.asset, false, nil
 	}
 	var out Asset
@@ -327,9 +338,8 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 			}
 		}
 		if thumbnail {
-			if _, err := s.queue.Enqueue(ctx, tx, thumbnailJob{WorkspaceID: workspaceID.String(),
-				AssetID: ids.UUID(row.ID.Bytes).String()}, &jobs.EnqueueOptions{MaxAttempts: thumbnailAttempts}); err != nil {
-				return fmt.Errorf("asset: enqueue the thumbnail's job: %w", err)
+			if err := s.enqueueThumbnail(ctx, tx, workspaceID, ids.UUID(row.ID.Bytes)); err != nil {
+				return err
 			}
 		}
 		out, created = assetOf(row), true
@@ -341,11 +351,25 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 	return out, created, nil
 }
 
+// enqueueThumbnail enqueues the job that makes the thumbnail of the asset
+// assetID of the workspace in tx, unless an equal job waits or runs, which
+// makes the thumbnail already.
+func (s *Service) enqueueThumbnail(ctx context.Context, tx pgx.Tx, workspaceID, assetID ids.UUID) error {
+	if _, err := s.queue.Enqueue(ctx, tx, thumbnailJob{WorkspaceID: workspaceID.String(), AssetID: assetID.String()},
+		&jobs.EnqueueOptions{MaxAttempts: thumbnailAttempts, Unique: true}); err != nil {
+		return fmt.Errorf("asset: enqueue the thumbnail's job: %w", err)
+	}
+	return nil
+}
+
 // stored is what checkStorage finds of an upload's file in its workspace.
 type stored struct {
-	// asset is the project's asset of the file, if found is set.
-	asset Asset
-	found bool
+	// asset is the project's asset of the file, and id its ID, if found is
+	// set, and thumbless is set if the asset has no thumbnail yet.
+	asset     Asset
+	id        ids.UUID
+	found     bool
+	thumbless bool
 	// referenced is set if an asset of the workspace refers to the file's
 	// blob, which then counts towards its storage_bytes already.
 	referenced bool
@@ -362,7 +386,8 @@ func (s *Service) checkStorage(ctx context.Context, tx pgx.Tx, workspaceID, proj
 		ProjectID: nullUUID(projectID), Sha256: sum})
 	switch {
 	case err == nil:
-		return stored{asset: assetOf(existing), found: true, referenced: true}, nil
+		return stored{asset: assetOf(existing), id: existing.ID.Bytes, found: true,
+			thumbless: !existing.ThumbnailKey.Valid, referenced: true}, nil
 	case !errors.Is(err, pgx.ErrNoRows):
 		return stored{}, fmt.Errorf("asset: read the project's assets: %w", err)
 	}

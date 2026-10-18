@@ -10,6 +10,7 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -167,17 +168,37 @@ func TestJPEGOrientation(t *testing.T) {
 	}
 }
 
-// pngOf returns a PNG file of a header that says width × height, and
-// nothing else.
+// pngOf returns a PNG file of a header that says width × height, of RGBA
+// of 8 bits a channel, and nothing else.
 func pngOf(width, height int) []byte {
+	return pngWith(width, height, 8, 6, false)
+}
+
+// pngWith returns a PNG file of a header that says width × height, of the
+// depth and the colour type, interlaced if interlaced is set, and nothing
+// else, but a palette of one colour and an empty data chunk if the type is
+// paletted.
+func pngWith(width, height int, depth, colorType byte, interlaced bool) []byte {
 	var b bytes.Buffer
 	b.WriteString("\x89PNG\r\n\x1a\n")
+	interlace := byte(0)
+	if interlaced {
+		interlace = 1
+	}
 	ihdr := []byte{0, 0, 0, 13, 'I', 'H', 'D', 'R',
 		byte(width >> 24), byte(width >> 16), byte(width >> 8), byte(width),
-		byte(height >> 24), byte(height >> 16), byte(height >> 8), byte(height), 8, 6, 0, 0, 0}
+		byte(height >> 24), byte(height >> 16), byte(height >> 8), byte(height), depth, colorType, 0, 0, interlace}
 	b.Write(ihdr)
 	sum := crc(ihdr[4:])
 	b.Write([]byte{byte(sum >> 24), byte(sum >> 16), byte(sum >> 8), byte(sum)})
+	if colorType == 3 {
+		// The header of a paletted image decodes at its first data chunk.
+		for _, chunk := range [][]byte{{0, 0, 0, 3, 'P', 'L', 'T', 'E', 9, 9, 9}, {0, 0, 0, 0, 'I', 'D', 'A', 'T'}} {
+			b.Write(chunk)
+			sum := crc(chunk[4:])
+			b.Write([]byte{byte(sum >> 24), byte(sum >> 16), byte(sum >> 8), byte(sum)})
+		}
+	}
 	return b.Bytes()
 }
 
@@ -265,6 +286,93 @@ func TestThumbnail(t *testing.T) {
 		color.NRGBAModel.Convert(upright.At(64, 236)).(color.NRGBA)
 	if top.R < 200 || top.B > 60 || bottom.B < 200 || bottom.R > 60 {
 		t.Errorf("the thumbnail is %v at the top and %v at the bottom, want red and blue", top, bottom)
+	}
+}
+
+// The segments that say how a JPEG file's components are coded: JFIF, whose
+// 3 components are YCbCr, and Adobe's, whose transform 0 makes them RGB.
+var (
+	jfifSegment     = []byte("\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00")
+	adobeRGBSegment = []byte("\xff\xee\x00\x0eAdobe\x00\x64\x00\x00\x00\x00\x00")
+)
+
+// jpegHeader returns a JPEG file of the segments app, and then a frame's
+// header of the marker sof, of width × height pixels, whose components have
+// the identifiers and the samplings of comps, and a scan's header, at which
+// the header decodes, and nothing else.
+func jpegHeader(app []byte, sof byte, width, height int, comps ...[2]byte) []byte {
+	b := append([]byte{0xff, 0xd8}, app...)
+	b = append(b, 0xff, sof, 0, byte(8+3*len(comps)), 8, byte(height>>8), byte(height), byte(width>>8), byte(width),
+		byte(len(comps)))
+	for _, c := range comps {
+		b = append(b, c[0], c[1], 0)
+	}
+	return append(b, 0xff, 0xda, 0, 8, 1, comps[0][0], 0, 0, 63, 0)
+}
+
+// TestDecodeBytes checks the memory that making a thumbnail takes, as an
+// image's header says, against what the decoders allocate for each encoding,
+// and that Thumbnail decodes no image that would take more than
+// maxDecodeBytes, while a photo of nearly MaxPixels pixels, saved as a
+// progressive JPEG whose colours are subsampled, takes less.
+func TestDecodeBytes(t *testing.T) {
+	const side = 5000
+	// Scaling an image of side × side pixels to its thumbnail.
+	scale := int64(32 * ThumbnailSide * side)
+	all := [2]byte{1, 0x11}
+	cmyk := jpegHeader(adobeRGBSegment, 0xc2, side, side, all, [2]byte{2, 0x11}, [2]byte{3, 0x11}, [2]byte{4, 0x11})
+	rgb := [][2]byte{{'R', 0x11}, {'G', 0x11}, {'B', 0x11}}
+	for _, tt := range []struct {
+		name string
+		mime string
+		data []byte
+		want int64
+	}{
+		// 625 × 625 blocks of each of 4 components, of 64 samples and 64
+		// coefficients of 4 bytes, and the CMYK image.
+		{"a progressive CMYK JPEG", MimeJPEG, cmyk, 4*625*625*(64+256) + 4*side*side + scale},
+		{"a baseline YCbCr JPEG", MimeJPEG, jpegHeader(jfifSegment, 0xc0, side, side, all, [2]byte{2, 0x11},
+			[2]byte{3, 0x11}), 3*625*625*64 + scale},
+		{"a baseline JPEG whose Adobe segment says RGB", MimeJPEG, jpegHeader(adobeRGBSegment, 0xc0, side, side,
+			all, [2]byte{2, 0x11}, [2]byte{3, 0x11}), 3*625*625*64 + 4*side*side + scale},
+		{"a baseline JPEG whose components are R, G, and B", MimeJPEG, jpegHeader(nil, 0xc0, side, side, rgb...),
+			3*625*625*64 + 4*side*side + scale},
+		{"a grey JPEG, whose sampling is ignored", MimeJPEG, jpegHeader(jfifSegment, 0xc0, side, side,
+			[2]byte{1, 0x22}), 625*625*64 + scale},
+		// Junk before a segment, which image/jpeg skips, but this reader does
+		// not, counts as the costliest encoding.
+		{"a JPEG whose header does not read", MimeJPEG, jpegHeader(append(slices.Clone(jfifSegment), 0), 0xc0,
+			side, side, all), 24*side*side + scale},
+		{"an RGBA PNG", MimePNG, pngWith(side, side, 8, 6, false), 4*side*side + scale},
+		{"a paletted PNG", MimePNG, pngWith(side, side, 8, 3, false), side*side + scale},
+		{"a grey PNG of 16 bits", MimePNG, pngWith(side, side, 16, 0, false), 8*side*side + scale},
+		{"an interlaced RGBA PNG of 16 bits", MimePNG, pngWith(side, side, 16, 6, true), 16*side*side + scale},
+		{"a GIF", MimeGIF, []byte("GIF89a\x88\x13\x88\x13\x00\x00\x00"), side*side + scale},
+	} {
+		img, err := Sniff(tt.data)
+		if err != nil || img.Mime != tt.mime {
+			t.Errorf("%s: %s, %v", tt.name, img.Mime, err)
+			continue
+		}
+		if got := decodeBytes(img); got != tt.want {
+			t.Errorf("%s: %d bytes, want %d", tt.name, got, tt.want)
+		}
+	}
+
+	if _, err := Thumbnail(cmyk, MimeJPEG); err == nil || !strings.Contains(err.Error(), "MiB of memory") {
+		t.Errorf("a progressive CMYK JPEG of %d pixels: %v, want no thumbnail for its memory", side*side, err)
+	}
+	// A photo of 24 million pixels, whose colours are subsampled 4:2:0: 375
+	// × 250 units of 4 blocks of luma and 2 of chroma.
+	photo, err := Sniff(jpegHeader(jfifSegment, 0xc2, 6000, 4000, [2]byte{1, 0x22}, [2]byte{2, 0x11},
+		[2]byte{3, 0x11}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := decodeBytes(photo), int64(375*250*6*(64+256)+32*ThumbnailSide*4000); got != want ||
+		got > maxDecodeBytes {
+		t.Errorf("a progressive photo of 24 million pixels: %d bytes, want %d, at most %d", got, want,
+			maxDecodeBytes)
 	}
 }
 
