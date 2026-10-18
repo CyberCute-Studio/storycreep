@@ -345,6 +345,54 @@ func TestGrantRole(t *testing.T) {
 	}
 }
 
+// TestGrantRoleMembersLimit checks that grant-role adds no member past the
+// members limit that STORYCREEP_WORKSPACE_LIMITS caps every workspace at, and
+// says what the workspace uses of the limit, while a role change, which adds
+// no member, still works.
+//
+// Verifies: FR-ENT-01/AC1
+func TestGrantRoleMembersLimit(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	env := databaseEnv(d)
+	env["STORYCREEP_WORKSPACE_LIMITS"] = "members=2"
+	for _, email := range []string{"owner@example.com", "jo@example.com", "al@example.com"} {
+		if code, _, stderr := runWithInput(t, env, testPassword, "create-user", email, "Someone"); code != ExitOK {
+			t.Fatalf("create-user %s: exit %d, stderr %q", email, code, stderr)
+		}
+	}
+	if _, err := d.Admin(t).Exec(context.Background(), `
+		INSERT INTO workspace (id, name, slug, plan_key) VALUES ('0192f5c4-0000-7000-8000-0000000000aa', 'Harbour',
+			'harbour', 'unlimited')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		args []string
+		code int
+		want string
+	}{
+		{[]string{"owner@example.com", "owner", "harbour"}, ExitOK, "owner@example.com is now a member of harbour"},
+		{[]string{"jo@example.com", "viewer", "harbour"}, ExitOK, "jo@example.com is now a member of harbour"},
+		{[]string{"al@example.com", "viewer", "harbour"}, ExitFailure,
+			"harbour has 2 members, and its limit is 2, so al@example.com cannot join it"},
+		{[]string{"jo@example.com", "editor", "harbour"}, ExitOK, "jo@example.com is now an editor of harbour"},
+	} {
+		code, stdout, stderr := runWithInput(t, env, "", append([]string{"grant-role"}, c.args...)...)
+		out := stdout
+		if c.code != ExitOK {
+			out = stderr
+		}
+		if code != c.code || !strings.Contains(out, c.want) {
+			t.Errorf("%q: exit %d, stdout %q, stderr %q; want %d and %q", c.args, code, stdout, stderr, c.code,
+				c.want)
+		}
+	}
+	members := query(t, d, `SELECT u.email FROM membership m JOIN "user" u ON u.id = m.user_id ORDER BY u.email`)
+	if want := []string{"jo@example.com", "owner@example.com"}; !slices.Equal(members, want) {
+		t.Errorf("the members are %q, want %q", members, want)
+	}
+}
+
 // TestUserCommandsHelp checks the help of create-user, grant-role, and
 // reset-password.
 //

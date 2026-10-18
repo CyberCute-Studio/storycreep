@@ -49,6 +49,12 @@ func LimitKeys() []LimitKey {
 	return slices.Clone(limitKeys)
 }
 
+// Checked reports whether k is one of the limits that the server checks
+// (LimitKeys), as a key of usage that names one is.
+func (k LimitKey) Checked() bool {
+	return slices.Contains(limitKeys, k)
+}
+
 // Feature names a feature flag of the plans, as the plan file does.
 type Feature string
 
@@ -256,8 +262,9 @@ type fileJSON struct {
 // key twice in an object, no key that is not lowercase, and no null. Its
 // limits that are not inert are exactly the ones that the server checks, and
 // its features the ones it knows. Every plan gives every limit a quota and
-// says whether it has every feature, and the file has an unlimited plan,
-// which limits nothing and has every feature, and a free plan.
+// says whether it has every feature, and allows at least one member, the
+// owner, and the file has an unlimited plan, which limits nothing and has
+// every feature, and a free plan.
 func Load(data []byte) (*PlanFile, error) {
 	if err := strictJSON(data); err != nil {
 		return nil, err
@@ -325,6 +332,13 @@ func Load(data []byte) (*PlanFile, error) {
 		if keys := slices.Collect(maps.Keys(p.Features)); !sameSet(keys, f.features) {
 			return nil, fmt.Errorf("plans[%d] (%s): the features are %s, but the file declares %s", i, p.Key,
 				list(keys, ""), list(f.features, ""))
+		}
+		// A new workspace's owner is its first member, whom the members limit
+		// counts (package workspace), so a plan without one could create no
+		// workspace, nor give an account its personal one.
+		if !p.Limits[Members].Allows(0, 1) {
+			return nil, fmt.Errorf("plans[%d] (%s): %s is 0, but every workspace has its owner, who is a member", i,
+				p.Key, Members)
 		}
 		f.plans = append(f.plans, Plan{Key: p.Key, limits: p.Limits, features: p.Features})
 	}

@@ -12,11 +12,6 @@ INSERT INTO workspace (id, name, slug, plan_key, settings)
 VALUES (@id, @name, @slug, @plan_key, @settings)
 ON CONFLICT (slug) DO NOTHING;
 
--- name: InsertMembership :exec
--- InsertMembership adds a user's membership of the workspace of the
--- transaction.
-INSERT INTO membership (id, workspace_id, user_id, role) VALUES (@id, @workspace_id, @user_id, @role);
-
 -- name: ClaimPersonalWorkspace :one
 -- ClaimPersonalWorkspace marks that the active account's sign-in gives it its
 -- personal workspace, and returns its display name, which names the
@@ -150,10 +145,11 @@ WHERE m.workspace_id = @workspace_id AND m.role = 'owner' AND u.status = 'active
 DELETE FROM membership WHERE workspace_id = @workspace_id AND id = @id;
 
 -- name: JoinWorkspace :execrows
--- JoinWorkspace makes a user a member of the workspace with a role, as
--- accepting an invitation of the user invited_by does, unless the user is a
--- member already, which it reports as no row, without failing the
--- transaction.
+-- JoinWorkspace makes a user a member of the workspace with a role, invited
+-- by the user invited_by, or by nobody if it is null, as the workspace's
+-- owner is, unless the user is a member already, which it reports as no row,
+-- without failing the transaction. Package workspace adds every membership
+-- with it, where it checks the members limit (FR-ENT-01).
 INSERT INTO membership (id, workspace_id, user_id, role, invited_by)
 VALUES (@id, @workspace_id, @user_id, @role, @invited_by)
 ON CONFLICT (user_id, workspace_id) DO NOTHING;

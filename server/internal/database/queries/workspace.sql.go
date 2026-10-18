@@ -74,29 +74,6 @@ func (q *Queries) DeleteMembership(ctx context.Context, arg DeleteMembershipPara
 	return err
 }
 
-const insertMembership = `-- name: InsertMembership :exec
-INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, $4)
-`
-
-type InsertMembershipParams struct {
-	ID          pgtype.UUID
-	WorkspaceID pgtype.UUID
-	UserID      pgtype.UUID
-	Role        string
-}
-
-// InsertMembership adds a user's membership of the workspace of the
-// transaction.
-func (q *Queries) InsertMembership(ctx context.Context, arg InsertMembershipParams) error {
-	_, err := q.db.Exec(ctx, insertMembership,
-		arg.ID,
-		arg.WorkspaceID,
-		arg.UserID,
-		arg.Role,
-	)
-	return err
-}
-
 const insertWorkspace = `-- name: InsertWorkspace :execrows
 
 INSERT INTO workspace (id, name, slug, plan_key, settings)
@@ -161,10 +138,11 @@ type JoinWorkspaceParams struct {
 	InvitedBy   pgtype.UUID
 }
 
-// JoinWorkspace makes a user a member of the workspace with a role, as
-// accepting an invitation of the user invited_by does, unless the user is a
-// member already, which it reports as no row, without failing the
-// transaction.
+// JoinWorkspace makes a user a member of the workspace with a role, invited
+// by the user invited_by, or by nobody if it is null, as the workspace's
+// owner is, unless the user is a member already, which it reports as no row,
+// without failing the transaction. Package workspace adds every membership
+// with it, where it checks the members limit (FR-ENT-01).
 func (q *Queries) JoinWorkspace(ctx context.Context, arg JoinWorkspaceParams) (int64, error) {
 	result, err := q.db.Exec(ctx, joinWorkspace,
 		arg.ID,

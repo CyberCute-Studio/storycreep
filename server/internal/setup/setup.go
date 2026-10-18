@@ -49,6 +49,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
@@ -460,8 +461,10 @@ func CheckUnattended(u *config.UnattendedSetup, locale language.Tag) error {
 	if err != nil {
 		return err
 	}
-	// Checking the request reads nothing from the database.
-	s := &Service{locale: locale, workspaces: workspace.New(nil, workspace.Options{})}
+	// Checking the request reads nothing from the database, and adds no
+	// member, whose limit the entitlements would check.
+	s := &Service{locale: locale, workspaces: workspace.New(nil,
+		workspace.Options{Entitlements: entitlements.New(entitlements.Options{})})}
 	if _, err := s.check(context.Background(), req); err != nil {
 		return configError(err)
 	}

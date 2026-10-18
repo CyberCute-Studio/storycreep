@@ -18,9 +18,11 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
 func TestMain(m *testing.M) {
@@ -32,7 +34,8 @@ func TestMain(m *testing.M) {
 func newService(t *testing.T, policy role.Policy) (*Service, *dbtest.Database) {
 	t.Helper()
 	d := dbtest.New(t)
-	return New(d.Open(t), Options{Policy: policy, PlanKey: "unlimited", DefaultLocale: language.English}), d
+	return New(d.Open(t), Options{Policy: policy, PlanKey: "unlimited", DefaultLocale: language.English,
+		Entitlements: entitlements.New(entitlements.Options{Meter: usage.Meter{}})}), d
 }
 
 // addUser adds an active account with the display name, as the superuser,
@@ -217,7 +220,7 @@ func TestEmailVerified(t *testing.T) {
 	for _, required := range []bool{false, true} {
 		d := dbtest.New(t)
 		s := New(d.Open(t), Options{PlanKey: "unlimited", DefaultLocale: language.English,
-			RequireVerifiedEmail: required})
+			RequireVerifiedEmail: required, Entitlements: entitlements.New(entitlements.Options{Meter: usage.Meter{}})})
 		user := addUser(t, d, "Jo")
 		if err := s.EnsurePersonal(ctx, user, audit.Client{}); err != nil {
 			t.Fatal(err)
@@ -362,8 +365,9 @@ func TestIsolation(t *testing.T) {
 				return nil, err
 			}
 			id := ids.New()
-			return []ids.UUID{id}, queries.New(tx).InsertMembership(ctx, queries.InsertMembershipParams{
-				ID: nullUUID(id), WorkspaceID: nullUUID(target.ID), UserID: nullUUID(user), Role: "viewer"})
+			_, err = queries.New(tx).JoinWorkspace(ctx, queries.JoinWorkspaceParams{ID: nullUUID(id),
+				WorkspaceID: nullUUID(target.ID), UserID: nullUUID(user), Role: "viewer"})
+			return []ids.UUID{id}, err
 		},
 	})
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/invite"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
@@ -489,10 +490,11 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 		Description: "Accepts an invitation with its link as the signed-in user, who joins its workspace with its " +
 			"role, and returns the membership. An invitation to an address that is not the account's is answered " +
 			"with 403 invite_email_mismatch (FR-TEN-02 AC3), while a link invitation may be accepted by any " +
-			"account. A user who is a member of the workspace already is answered with 409 already_member, and the " +
-			"invitation stays open. Accepting again an invitation that the user accepted, as registering with it " +
-			"does, returns the membership again, while the user is still a member." + inviteStateDoc + csrfDoc +
-			authLimitDoc,
+			"account. A user who is a member of the workspace already is answered with 409 already_member, and a " +
+			"workspace that has as many members, guests included, as its plan, or STORYCREEP_WORKSPACE_LIMITS on " +
+			"a self-hosted instance, allows with 409 limit_exceeded, and the invitation stays open either way. " +
+			"Accepting again an invitation that the user accepted, as registering with it does, returns the " +
+			"membership again, while the user is still a member." + inviteStateDoc + csrfDoc + authLimitDoc,
 		Tags:        []string{"Members"},
 		Middlewares: huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
 	}, func(ctx context.Context, in *acceptInviteInput) (*acceptedInviteOutput, error) {
@@ -519,12 +521,17 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			"whatever the policy. Under closed, the answer is 403 signup_closed, whatever the request holds, " +
 			"and only an account that exists already accepts an invitation, with POST /api/v1/invites/accept. An " +
 			"invitation to an address registers that address, and another is answered with 403 " +
-			"invite_email_mismatch (FR-TEN-02 AC3)." + inviteStateDoc + " The fields are checked as POST " +
-			"/api/v1/auth/register checks them, with its errors. Otherwise the answer is 202 without a body, " +
-			"whether or not the address has an account already, so that it does not tell whether an address has " +
-			"one: an account that exists stays as it was, and the invitation stays open for it. The client then " +
-			"signs in, and accepts the invitation with POST /api/v1/invites/accept, which returns the membership " +
-			"either way." + authLimitDoc,
+			"invite_email_mismatch (FR-TEN-02 AC3)." + inviteStateDoc + " A link invitation, which registers any " +
+			"address, to a workspace that has as many members as it may have, as POST /api/v1/invites/accept " +
+			"says, is answered with 409 limit_exceeded, whatever the address, for as long as the workspace is " +
+			"full, so that its link, which stays open, does not register one account after another. The fields " +
+			"are checked as POST /api/v1/auth/register checks them, with its errors. Otherwise the answer is 202 " +
+			"without a body, whether or not the address has an account already, so that it does not tell whether " +
+			"an address has one: an account that exists stays as it was, and the invitation stays open for it. " +
+			"So it does for a new account, which joins no workspace, if the workspace of an invitation to an " +
+			"address is full. The client then signs in, and accepts the invitation with POST " +
+			"/api/v1/invites/accept, which returns the membership either way, or answers 409 limit_exceeded while " +
+			"the workspace is full." + authLimitDoc,
 		Tags:          []string{"Members"},
 		DefaultStatus: http.StatusAccepted,
 		// The policy is checked before the body is read, so that a
@@ -557,9 +564,15 @@ func inviteIDs(in *inviteActionInput) (id, inviteID ids.UUID, err error) {
 
 // memberError returns the error that the API answers err with, an error of
 // a workspace's members or invitations, of packages workspace, invite, and
-// account, or err itself if it is none of them.
+// account, or err itself if it is none of them. Accepting an invitation adds
+// a member, which a workspace with as many members as its plan, or the
+// instance's cap, allows refuses with limit_exceeded (FR-ENT-01), as it does
+// registering with a link invitation's link.
 func memberError(err error) error {
+	var limit *entitlements.LimitError
 	switch {
+	case errors.As(err, &limit):
+		return limitExceededError(err)
 	case errors.Is(err, workspace.ErrOwnerRequired):
 		return api.NewError(api.CodeOwnerRequired)
 	case errors.Is(err, workspace.ErrLastOwner):

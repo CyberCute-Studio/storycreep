@@ -275,17 +275,20 @@ func (s *Service) Register(ctx context.Context, r Registration) error {
 // transaction of that workspace, and calls join with the new account's ID,
 // so that the account joins the workspace with it; an error of join rolls
 // the account back, and RegisterInvited returns it. An address that has an
-// account already gets no new one, and join is not called, but the answer is
-// the same, as Register's is, so that it does not tell whether the address
-// has one. It returns input.FieldErrors, a *ratelimit.LimitError, and a
-// *PasswordError as Register does.
+// account already gets no new one, and join is called with the zero ID, in
+// the same transaction, so that the caller checks the invitation again, and
+// refuses it, alike for both, and the answer is otherwise the same, as
+// Register's is, so that it does not tell whether the address has one. It
+// returns input.FieldErrors, a *ratelimit.LimitError, and a *PasswordError as
+// Register does.
 func (s *Service) RegisterInvited(ctx context.Context, r Registration, workspaceID ids.UUID,
 	join func(ctx context.Context, tx pgx.Tx, userID ids.UUID) error) error {
 	return s.register(ctx, r, database.Scope{WorkspaceID: workspaceID}, join)
 }
 
 // register is Register past the signup policy, in a transaction of scope,
-// which calls join, if it is set, with the ID of the account that it adds.
+// which calls join, if it is set, with the ID of the account that it adds,
+// or the zero ID if the address has one already.
 func (s *Service) register(ctx context.Context, r Registration, scope database.Scope,
 	join func(ctx context.Context, tx pgx.Tx, userID ids.UUID) error) error {
 	email, name, err := r.fields()
@@ -317,21 +320,22 @@ func (s *Service) register(ctx context.Context, r Registration, scope database.S
 		if err != nil {
 			return fmt.Errorf("account: add the account: %w", err)
 		}
-		if n == 1 && join != nil {
+		if n == 0 {
+			// The address has an account, which stays as it was.
+			id = ids.UUID{}
+		}
+		if join != nil {
 			if err := join(ctx, tx, id); err != nil {
 				return err
 			}
 		}
-		switch {
-		case !verify:
+		if !verify {
 			return nil
-		case n == 0:
-			// The address has an account, which is emailed nothing, but the
-			// token and the job are added all the same, without the account,
-			// and the job deletes the token, so that the work does not tell
-			// whether the address has one.
-			id = ids.UUID{}
 		}
+		// An address that has an account is emailed nothing, but the token
+		// and the job are added all the same, without the account, and the
+		// job deletes the token, so that the work does not tell whether the
+		// address has one.
 		return s.enqueueLink(ctx, tx, LinkVerification, id, email)
 	})
 }

@@ -135,6 +135,13 @@ func TestPlanFileShape(t *testing.T) {
 	if got := f.Limits(); !slices.Equal(got, want) {
 		t.Errorf("limits = %+v, want %+v", got, want)
 	}
+	// The limits that the server checks are the file's that are not inert,
+	// and a key that the plans only meter is none of them.
+	for _, l := range append(f.Limits(), Limit{Key: "boards"}) {
+		if got, want := l.Key.Checked(), l.Key != "boards" && l.InertUntil == ""; got != want {
+			t.Errorf("%s: Checked is %v, want %v", l.Key, got, want)
+		}
+	}
 	if got, want := f.Features(), []Feature{"collaboration", "sso", "audit_export"}; !slices.Equal(got, want) {
 		t.Errorf("features = %v, want %v", got, want)
 	}
@@ -290,6 +297,11 @@ func TestLoadRefuses(t *testing.T) {
 		{"an undeclared limit", edit(func(doc map[string]any) {
 			plan(doc, "team")["limits"].(map[string]any)["boards"] = 5
 		}), "plans[2] (team): the limits are boards,"},
+		// Every workspace has its owner, so a plan without a member could
+		// create none.
+		{"no member", edit(func(doc map[string]any) {
+			plan(doc, "team")["limits"].(map[string]any)["members"] = 0
+		}), "plans[2] (team): members is 0, but every workspace has its owner"},
 		{"a missing feature", edit(func(doc map[string]any) {
 			delete(plan(doc, "studio")["features"].(map[string]any), "sso")
 		}), "plans[3] (studio): the features are audit_export, collaboration, but the file declares"},

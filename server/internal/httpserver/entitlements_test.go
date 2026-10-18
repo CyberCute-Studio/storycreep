@@ -126,7 +126,7 @@ func TestSelfHostedEntitlements(t *testing.T) {
 			}
 		}
 	})
-	if opts := entitlementOptions(loadConfig(t, env)); opts.UpgradeURL != "" || opts.Enforce {
+	if opts := EntitlementOptions(loadConfig(t, env)); opts.UpgradeURL != "" || opts.Enforce {
 		t.Errorf("self-hosted entitlements enforce plans (%v) or offer an upgrade at %q", opts.Enforce,
 			opts.UpgradeURL)
 	}
@@ -172,7 +172,7 @@ func TestHostedEntitlements(t *testing.T) {
 			}
 		})
 	}
-	if opts := entitlementOptions(loadConfig(t, hostedEntitlements)); !opts.Enforce ||
+	if opts := EntitlementOptions(loadConfig(t, hostedEntitlements)); !opts.Enforce ||
 		opts.UpgradeURL != "https://storycreep.example.com/pricing" {
 		t.Errorf("hosted entitlements: enforce %v, upgrade at %q", opts.Enforce, opts.UpgradeURL)
 	}
@@ -180,7 +180,7 @@ func TestHostedEntitlements(t *testing.T) {
 	for k, v := range hostedEntitlements {
 		noSite[k] = v
 	}
-	if opts := entitlementOptions(loadConfig(t, noSite)); opts.UpgradeURL != "" {
+	if opts := EntitlementOptions(loadConfig(t, noSite)); opts.UpgradeURL != "" {
 		t.Errorf("a hosted server without a public site offers an upgrade at %q", opts.UpgradeURL)
 	}
 }
@@ -238,7 +238,7 @@ func TestLimitExceeded(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := dbtest.New(t)
-			opts := entitlementOptions(loadConfig(t, tt.env))
+			opts := EntitlementOptions(loadConfig(t, tt.env))
 			opts.Meter = tt.usage
 			s := entitlements.New(opts)
 			ws := addPlanWorkspace(t, d, tt.plan)

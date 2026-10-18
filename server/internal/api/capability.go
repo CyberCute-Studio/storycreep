@@ -29,8 +29,8 @@ const (
 	// ListMembers is listing a workspace's members and their roles, which
 	// needs a role in it other than none (§5.6).
 	ListMembers Capability = "workspace.members.list"
-	// ManageWorkspaceSettings is changing a workspace's settings, which
-	// needs owner or admin (§5.6).
+	// ManageWorkspaceSettings is changing a workspace's settings, and reading
+	// its usage, which its settings show, which needs owner or admin (§5.6).
 	ManageWorkspaceSettings Capability = "workspace.settings"
 	// ManageMembers is inviting people to a workspace, its invitations,
 	// removing its members, and changing their roles, which needs owner or

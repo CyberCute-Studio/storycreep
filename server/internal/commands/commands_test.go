@@ -28,6 +28,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
 // operationRow is a row of the operation log, as the superuser reads it.
@@ -860,6 +861,76 @@ func TestChanged(t *testing.T) {
 	}
 	if got := w.written(t); got.seq != 1 {
 		t.Errorf("the refused batches left the seq %d", got.seq)
+	}
+}
+
+// deltas returns the workspace's deltas of usage that no rollup has folded,
+// each as its key and its delta.
+func (w *world) deltas(t *testing.T) []string {
+	t.Helper()
+	rows, err := w.admin.Query(context.Background(),
+		"SELECT format('%s %s', key, delta) FROM usage_delta WHERE workspace_id = $1 ORDER BY key", w.ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+// meter returns a command that adds delta to the usage of key.
+func meter(t *testing.T, key usage.Key, delta int64) Command {
+	t.Helper()
+	return command(t, noteMeter, meterPayload{Key: string(key), Delta: delta}, nil)
+}
+
+// TestUsage checks that what a batch's commands add to the workspace's usage
+// is recorded with the batch, as one delta of each key that it changes, and
+// not at all for a batch that does not apply, and that a command may add to
+// no limit of the plans that it does not declare, nor outside its Apply, and
+// a batch no more to a limit than its commands declared, which is all that
+// the limit was checked for (FR-ENT-02).
+func TestUsage(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	p := w.pipeline(t, nil)
+	_, id := newNote()
+	// undeclared adds delta to the usage of key, declaring that it adds
+	// nothing to the projects limit.
+	undeclared := func(key usage.Key, delta int64) Command {
+		return command(t, noteMeter, meterPayload{Key: string(key), Delta: delta, Undeclared: true}, nil)
+	}
+	for _, b := range []struct {
+		name  string
+		batch []Command
+		fails string
+	}{
+		{"one delta of each key", []Command{meter(t, usage.Nodes, 2), meter(t, usage.Projects, 1),
+			meter(t, usage.Nodes, 3), meter(t, usage.StorageBytes, -5)}, ""},
+		{"deltas that add up to nothing", []Command{meter(t, usage.Boards, 2), meter(t, usage.Boards, -2)}, ""},
+		{"a refused batch", []Command{meter(t, usage.Nodes, 4),
+			command(t, noteFail, notePayload{ID: id, Body: "x"}, nil)}, "refuses"},
+		{"a limit that the command does not declare", []Command{meter(t, usage.StorageBytes, 1)}, "does not declare"},
+		{"a key that is not one", []Command{meter(t, "retired_things", 1)}, "not a key of usage"},
+		{"more than 64 bits", []Command{meter(t, usage.Nodes, math.MaxInt64), meter(t, usage.Nodes, 1)},
+			"does not fit in 64 bits"},
+		{"more to a limit than declared", []Command{meter(t, usage.Projects, 1), undeclared(usage.Projects, 1)},
+			"the batch adds 2 to projects, but its commands declared 1"},
+		{"to a limit, what the batch takes away", []Command{meter(t, usage.Projects, -1),
+			undeclared(usage.Projects, 1)}, ""},
+	} {
+		_, err := p.Apply(ctx, w.as(editorUser), w.project, b.batch)
+		if b.fails == "" && err != nil || b.fails != "" && (err == nil || !strings.Contains(err.Error(), b.fails)) {
+			t.Errorf("%s: %v, want %q", b.name, err, b.fails)
+		}
+	}
+	if got, want := w.deltas(t), []string{"nodes 5", "projects 1", "storage_bytes -5"}; !slices.Equal(got, want) {
+		t.Errorf("the batches recorded the deltas %q, want %q", got, want)
+	}
+	if err := (&Tx{}).AddUsage(usage.Nodes, 1); err == nil {
+		t.Error("AddUsage outside a command's Apply succeeded")
 	}
 }
 

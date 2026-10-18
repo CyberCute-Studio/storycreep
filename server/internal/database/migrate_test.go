@@ -230,6 +230,27 @@ func TestMigrateWaitsForTheLock(t *testing.T) {
 		t.Errorf("Migrate said %d times that it waits for the lock, want once", n)
 	}
 
+	// The Migrate that finished released the lock by closing its connection,
+	// whose session the server ends a moment later, so a Migrate right after
+	// it may find the lock held still, as CI's runners have. The lock is free
+	// once another session can take it.
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		var free bool
+		if err := holder.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", database.MigrationLock).
+			Scan(&free); err != nil {
+			t.Fatal(err)
+		}
+		if free {
+			if _, err := holder.Exec(ctx, "SELECT pg_advisory_unlock($1)", database.MigrationLock); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the migration lock is still held after Migrate finished")
+		}
+	}
+
 	// With the lock free, Migrate takes it without saying that it waits.
 	_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{
 		Waiting: func() { t.Errorf("Migrate said that it waits for a lock that no one holds") },

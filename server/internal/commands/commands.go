@@ -22,10 +22,10 @@
 // log with the project's next seq, its inverse, and the entities that it
 // changed, and each of its commands is recorded in applied_command, which
 // keeps it recognised for as long as the project exists. The audit entries
-// and the jobs of its commands are written in the same transaction
-// (Tx.Audit, Tx.Enqueue), and once it commits, the Notifier is told its seq
-// (§10.2 step 7). A batch that does not apply changes nothing at all
-// (FR-API-03 AC2).
+// and the jobs of its commands, and what they add to the workspace's usage,
+// are written in the same transaction (Tx.Audit, Tx.Enqueue, Tx.AddUsage),
+// and once it commits, the Notifier is told its seq (§10.2 step 7). A batch
+// that does not apply changes nothing at all (FR-API-03 AC2).
 //
 // Token scopes join the authorisation with API tokens (plan item 26), and
 // the idempotency of command IDs and the multi-batch form with the command
@@ -54,6 +54,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
 var (
@@ -295,7 +296,7 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 			return err
 		}
 		t := &Tx{tx: tx, pipeline: p, actor: actor, project: projectID, workspace: workspaceID, at: map[Ref]int{},
-			revs: map[Ref]int64{}}
+			revs: map[Ref]int64{}, usage: map[usage.Key]int64{}}
 		res, err = p.applyLocked(ctx, q, t, cmds, seq)
 		// Each later read is a statement of its own too, so a deletion
 		// requested once the read above is done is seen by the next read that
@@ -320,9 +321,11 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 // batch.
 func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded, seq int64) (Result,
 	error) {
-	if err := p.checkLimits(ctx, t.tx, t.workspace, cmds); err != nil {
+	checked, err := p.checkLimits(ctx, t.tx, t.workspace, cmds)
+	if err != nil {
 		return Result{}, err
 	}
+	t.checked = checked
 	if err := p.checkRevs(ctx, t, cmds); err != nil {
 		return Result{}, err
 	}
@@ -348,6 +351,9 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		if err != nil {
 			return Result{}, fmt.Errorf("commands: command %d (%s): %w", i, c.spec.typ, err)
 		}
+	}
+	if err := t.recordUsage(ctx); err != nil {
+		return Result{}, err
 	}
 	res := Result{Seq: seq + 1, Revisions: slices.Clone(t.changed)}
 	if err := p.record(ctx, q, t, cmds, res, inverses, undoable); err != nil {
@@ -448,16 +454,19 @@ func (p *Pipeline) roles(ctx context.Context, q *queries.Queries, userID, worksp
 // checkLimits checks, with the entitlements, each limit of the workspace's
 // plan that the batch adds to, for what all of its commands add together, so
 // that a batch whose commands each fit, but not all of them, is refused
-// (FR-ENT-01). It returns an *entitlements.LimitError for the first limit, in
-// the order of the commands, that the batch would take the workspace past.
-func (p *Pipeline) checkLimits(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, cmds []decoded) error {
+// (FR-ENT-01), and returns what it checked each limit for, which the batch's
+// usage may not pass (Tx.recordUsage). It returns an *entitlements.LimitError
+// for the first limit, in the order of the commands, that the batch would take
+// the workspace past.
+func (p *Pipeline) checkLimits(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, cmds []decoded) (
+	map[entitlements.LimitKey]int64, error) {
 	keys, adds := batchAdds(cmds)
 	for _, key := range keys {
 		if err := p.ent.Check(ctx, tx, workspaceID, key, adds[key]); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return adds, nil
 }
 
 // batchAdds returns the limits that the commands cmds add to, in the order of

@@ -60,10 +60,26 @@
 // policies; under closed, nobody registers, and only an account that exists
 // already accepts an invitation. Registering answers the same whether or not
 // the address has an account already, as registering without an invitation
-// does (FR-AUTH-01 AC1): it checks the invitation and hashes the password
-// either way, but only a new account joins the workspace, and an address
-// with an account leaves the invitation open, for the account to accept
-// once it signs in.
+// does (FR-AUTH-01 AC1): it checks the invitation, and again in the
+// transaction that adds the account, and hashes the password either way, but
+// only a new account joins the workspace, and an address with an account
+// leaves the invitation open, for the account to accept once it signs in.
+//
+// Accepting makes a membership, which the members limit of the workspace's
+// plan counts (FR-ENT-01), so a workspace that has as many members as its
+// plan allows refuses it: Accept returns an *entitlements.LimitError, and
+// leaves the invitation open, for when a member leaves. Registering with the
+// link of such a workspace's invitation to an address adds the new account
+// all the same, but leaves the invitation open, as an address with an
+// account does, so that its answer still does not tell whether the address
+// has one; the account is refused when it accepts once it signs in. A link
+// invitation registers any address, so one that stayed open so would add
+// account after account, which the invite signup policy keeps to one for
+// each invitation: registering with it is refused with the LimitError
+// instead, whatever the address, so that the answer does not tell either,
+// both before the password is hashed and again in the transaction that adds
+// the account, under the lock of the workspace's members, so that a
+// registration that the workspace fills up during is refused too.
 package invite
 
 import (
@@ -83,6 +99,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
@@ -627,9 +644,11 @@ func (s *Service) Lookup(ctx context.Context, value secret.Value) (Preview, erro
 // invitation that cannot be accepted, ErrEmailMismatch for one to another
 // address than the user's account's (FR-TEN-02 AC3), and
 // workspace.ErrAlreadyMember if the user is a member of the workspace
-// already, which leaves the invitation open. An invitation that the user
-// accepted already, as registering with it does, returns the user's
-// membership again, while the user is still a member.
+// already, and an *entitlements.LimitError if the workspace has as many
+// members as its plan allows (FR-ENT-01), which both leave the invitation
+// open. An invitation that the user accepted already, as registering with it
+// does, returns the user's membership again, while the user is still a
+// member.
 func (s *Service) Accept(ctx context.Context, userID ids.UUID, value secret.Value, client audit.Client) (
 	workspace.Membership, error) {
 	id, hash, err := s.workspaceOf(ctx, userID, value)
@@ -679,7 +698,7 @@ func (s *Service) accept(ctx context.Context, tx pgx.Tx, h held, userID ids.UUID
 	client audit.Client) error {
 	inviteID := ids.UUID(h.row.ID.Bytes)
 	r := role.Role(h.row.Role)
-	mid, err := workspace.Join(ctx, tx, h.workspaceID, userID, r, h.row.CreatedBy.Bytes, inviteID, client)
+	mid, err := s.workspaces.Join(ctx, tx, h.workspaceID, userID, r, h.row.CreatedBy.Bytes, inviteID, client)
 	if err != nil {
 		return err
 	}
@@ -700,17 +719,27 @@ func (s *Service) accept(ctx context.Context, tx pgx.Tx, h held, userID ids.UUID
 // the account; otherwise it must be that address, as citext compares them,
 // or anything for a link invitation. If the address has an account already,
 // Register adds no account, leaves the invitation open, and returns nil all
-// the same, once it has checked the invitation and hashed the password as
+// the same, once it has checked the invitation, before and again in the
+// transaction that would have added the account, and hashed the password as
 // for a new account, so that its caller answers the same (FR-AUTH-01 AC1);
-// the account accepts the invitation once it signs in. It
+// the account accepts the invitation once it signs in. For an invitation to
+// an address, a new account is added without accepting the invitation, which
+// stays open in the same way, if the workspace has as many members as its
+// plan allows (FR-ENT-01), so that the answer is the same then too. A link
+// invitation, which registers any address, and so would register account
+// after account while it stayed open, is refused then, whatever the address,
+// before the password is hashed, and again under the lock of the
+// workspace's members in the transaction that would add the account, so that
+// registrations that the workspace fills up during add none either. It
 // returns account.ErrSetupRequired or account.ErrSignupClosed unless the
 // signup policy lets an invitation create an account
 // (account.Service.CheckInvitedSignup), then ErrTokenInvalid, ErrRevoked,
 // ErrAccepted, or ErrExpired for an invitation that cannot be accepted,
-// ErrEmailMismatch for one to another address than reg.Email, and the
-// errors of RegisterInvited for a registration that is not valid, as one
-// whose address registration refuses, whatever the invitation's, and adds
-// nothing then.
+// ErrEmailMismatch for one to another address than reg.Email, an
+// *entitlements.LimitError for a link invitation to a workspace that has as
+// many members as its plan allows, and the errors of RegisterInvited for a
+// registration that is not valid, as one whose address registration refuses,
+// whatever the invitation's, and adds nothing then.
 func (s *Service) Register(ctx context.Context, value secret.Value, reg account.Registration,
 	client audit.Client) error {
 	if err := s.accounts.CheckInvitedSignup(ctx); err != nil {
@@ -737,6 +766,15 @@ func (s *Service) Register(ctx context.Context, value secret.Value, reg account.
 			reg.Email = h.row.Email.String
 		case !h.row.EmailMatches && !malformed:
 			return ErrEmailMismatch
+		case !h.row.Email.Valid:
+			// A link invitation that a full workspace leaves open would
+			// register any address, again and again, so the workspace is
+			// asked for room before the address is looked at, and a full one
+			// refuses every address alike, which tells nothing of whether the
+			// address has an account (FR-AUTH-01 AC1). This answers before the
+			// password is hashed; the transaction that adds the account asks
+			// again.
+			return s.workspaces.CheckRoom(ctx, tx, id)
 		}
 		return nil
 	})
@@ -744,8 +782,10 @@ func (s *Service) Register(ctx context.Context, value secret.Value, reg account.
 		return err
 	}
 	return s.accounts.RegisterInvited(ctx, reg, id, func(ctx context.Context, tx pgx.Tx, userID ids.UUID) error {
-		// The invitation may have changed since it was checked, and the
-		// account is new, so it is a member of no workspace yet.
+		// The invitation may have changed since it was checked, as by being
+		// accepted or revoked meanwhile, and it is checked again whether or
+		// not the address has an account, so that the answer does not tell
+		// which (FR-AUTH-01 AC1).
 		h, err := hold(ctx, tx, id, hash, account.CanonicalEmail(reg.Email))
 		switch {
 		case err != nil:
@@ -753,7 +793,33 @@ func (s *Service) Register(ctx context.Context, value secret.Value, reg account.
 		case !h.row.EmailMatches:
 			return ErrEmailMismatch
 		}
-		return s.accept(ctx, tx, h, userID, true, client)
+		// The workspace may have filled up since it was asked for room above,
+		// and a link invitation is refused then as it was there, whatever the
+		// address. The check holds the lock of the workspace's members until
+		// the account commits, so no membership that another change adds can
+		// come between them, and none of the registrations that the link let
+		// through at once adds an account once the workspace is full.
+		link := !h.row.Email.Valid
+		if userID == (ids.UUID{}) {
+			// The address has an account, which stays as it was, and accepts
+			// the invitation once it signs in.
+			if link {
+				return s.workspaces.CheckRoom(ctx, tx, id)
+			}
+			return nil
+		}
+		// The account is new, so it is a member of no workspace yet. The
+		// workspace checks its members limit before it adds anything, so a
+		// refusal leaves nothing of the acceptance to undo. Refusing the
+		// registration with an invitation to an address would tell that the
+		// address has no account, whose registration would otherwise have
+		// been answered 202, so the account stays, and is refused when it
+		// accepts once it signs in.
+		var limit *entitlements.LimitError
+		if err := s.accept(ctx, tx, h, userID, true, client); !errors.As(err, &limit) || link {
+			return err
+		}
+		return nil
 	})
 }
 
