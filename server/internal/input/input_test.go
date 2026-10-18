@@ -30,3 +30,24 @@ func TestCheckText(t *testing.T) {
 		}
 	}
 }
+
+// TestLineFeeds checks that a line break written as CR LF, or as a CR alone,
+// becomes a line feed, which CheckText then takes, and that the rest of the
+// text stays as it was.
+func TestLineFeeds(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		"":                           "",
+		"one line":                   "one line",
+		"Elara\r\nwaits\rat the\n\r": "Elara\nwaits\nat the\n\n",
+		"\r\n\r\n\tharbour":          "\n\n\tharbour",
+	} {
+		got := LineFeeds(in)
+		if got != want {
+			t.Errorf("LineFeeds(%q) = %q, want %q", in, got, want)
+		}
+		if msg := CheckText(got, 40); msg != "" {
+			t.Errorf("CheckText(LineFeeds(%q)) = %q, want it taken", in, msg)
+		}
+	}
+}

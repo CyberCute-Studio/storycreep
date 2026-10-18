@@ -117,10 +117,14 @@ var codes = []codeSpec{
 		"`POST /api/v1/auth/password` was given a current password that is not the account's, so the " +
 			"password stays as it was."},
 	{CodeInsufficientRole, http.StatusForbidden, i18n.K("error.insufficient_role"),
-		"The signed-in user's role in the workspace does not allow the operation, as only an `owner` or an " +
-			"`admin` changes a workspace's settings, invites, removes members, or changes their roles (PRD §5.6). A " +
-			"user whose role in the workspace is none, as one who is not a member or is a `guest`, is answered with " +
-			"`not_found` instead, so that the answer does not tell that the workspace exists (PRD §5.5)."},
+		"The signed-in user's role does not allow the operation (PRD §5.6). An operation of a workspace is " +
+			"allowed by the user's role in the workspace, as only an `owner` or an `admin` changes its settings, " +
+			"invites, removes members, or changes their roles, and creates, deletes, or restores its projects; an " +
+			"operation of a project by their role on the project, their grant on it or else their role in its " +
+			"workspace (§5.5), as only an `owner` or an `admin` of the project changes its name, description, or " +
+			"settings, or archives it. A user who has no role in the workspace or on the project that the route " +
+			"names, as one who is not a member of the workspace, or a `guest` without a grant on the project, is " +
+			"answered with `not_found` instead, so that the answer does not tell that it exists (§5.5)."},
 	{CodeOwnerRequired, http.StatusForbidden, i18n.K("error.owner_required"),
 		"Only an `owner` of the workspace may do this, and the signed-in user is an `admin`: grant the role " +
 			"`owner`, by a role change or an invitation, send an invitation as `owner` anew, or demote or remove an " +
@@ -178,9 +182,10 @@ var codes = []codeSpec{
 			"names, and only an account with that address may accept it (PRD FR-TEN-02 AC3). A link invitation, " +
 			"which is to no address, may be accepted by whoever holds its link."},
 	{CodeNotFound, http.StatusNotFound, i18n.K("error.not_found"),
-		"No route matches the path, or the resource it names does not exist, or the signed-in user's role in " +
-			"it, or in its workspace, is none, as it is for a user who is not a member of the workspace, so that " +
-			"the answer does not tell that it exists (PRD §5.5, FR-TEN-04 AC6)."},
+		"No route matches the path, or the resource it names does not exist, or is in its workspace's trash, as " +
+			"a deleted project is to every route but the one that restores it (PRD FR-PROJ-01 AC3), or the " +
+			"signed-in user's role in it, or in its workspace, is none, as it is for a user who is not a member of " +
+			"the workspace, so that the answer does not tell that it exists (PRD §5.5, FR-TEN-04 AC6)."},
 	{CodeSlugTaken, http.StatusConflict, i18n.K("error.slug_taken"),
 		"Another workspace has the slug, which is unique on the instance (PRD FR-TEN-01 AC3). `details.errors` " +
 			"names the field, with its `location` and a `message`, as for `validation_failed`."},

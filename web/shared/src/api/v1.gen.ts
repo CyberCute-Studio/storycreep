@@ -37,7 +37,7 @@ export interface CreateInviteBody {
 export interface CreateProjectBody {
   /** The locale of the project's text, as a BCP 47 tag of a language, such as en or cs-CZ, which the project keeps in its canonical form. Without it, the workspace's default locale. */
   default_locale?: string;
-  /** The project's description, of at most 2000 characters, without control characters but line feeds and tabs. White space around it is removed. Without it, the project has none. */
+  /** The project's description, of at most 2000 characters, without control characters but line feeds and tabs. White space around it is removed, and a line break written as CR LF, or as a CR alone, is kept as a line feed. Without it, the project has none. */
   description?: string;
   /** The project's name, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls, and line separators among them. White space around it is removed. */
   name: string;
@@ -866,7 +866,7 @@ export interface Operations {
   /**
    * List a workspace's projects
    *
-   * Lists the workspace's projects that are not in its trash, archived ones included, in the order of their IDs, oldest first, each with the role that the signed-in user acts with on it. A guest is shown only the projects granted to them. A workspace that does not exist, or of which the signed-in user is not a member, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
+   * Lists the workspace's projects that are not in its trash, archived ones included, in the order of their IDs, oldest first, each with the role that the signed-in user acts with on it. A guest is shown only the projects granted to them. A workspace that does not exist, or of which the signed-in user is neither a member nor an instance admin who acts as its owner, as with STORYCREEP_INSTANCE_ADMIN_ACCESS on, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
    */
   listProjects: {
     input: {

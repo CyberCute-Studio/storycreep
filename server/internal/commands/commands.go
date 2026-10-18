@@ -64,9 +64,11 @@ var (
 	// ErrNotFound is returned for a batch of a project that does not exist,
 	// or on which the actor's effective role is none, as it is for a user who
 	// is not a member of its workspace, or a guest without a grant on it
-	// (§5.5), so that nothing tells them that it exists (FR-TEN-04 AC6), and
-	// for one of a project whose workspace's deletion is pending, which
-	// blocks every access to the workspace at once (FR-TEN-05 AC1).
+	// (§5.5), so that nothing tells them that it exists (FR-TEN-04 AC6), for
+	// one of a project in the trash with a command that does not apply there
+	// (Spec.Trashed), and for one of a project whose workspace's deletion is
+	// pending, which blocks every access to the workspace at once (FR-TEN-05
+	// AC1).
 	ErrNotFound = errors.New("commands: no such project, or the user has no role on it")
 	// ErrProjectArchived is returned for a batch of an archived project with
 	// a command that does not apply to an archived project (Spec.Archived),

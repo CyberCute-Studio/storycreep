@@ -505,7 +505,8 @@ func TestProjectRevisionConflict(t *testing.T) {
 // TestGuestSeesGrantedProjects checks that a guest, who has no role in the
 // workspace, lists only the projects granted to them, each with the grant's
 // role, and that a direct URL to another project is answered with 404, as is
-// the list to a user who is not a member at all.
+// the list to a user who is not a member at all, while a change of the
+// granted project that the grant's role does not allow is answered with 403.
 //
 // Verifies: FR-TEN-04/AC2
 func TestGuestSeesGrantedProjects(t *testing.T) {
@@ -531,6 +532,12 @@ func TestGuestSeesGrantedProjects(t *testing.T) {
 	}
 	wantCode(t, "a guest reads a project not granted to them", call(s.main, http.MethodGet, projectPath(hidden.ID),
 		nil, guest.header(false)), http.StatusNotFound, api.CodeNotFound)
+	// The guest's role on the granted project, which tells them that it
+	// exists, does not allow changing its settings, which is refused with 403
+	// rather than 404.
+	wantCode(t, "a guest with an editor grant renames the project", call(s.main, http.MethodPatch,
+		projectPath(granted.ID), jsonBody(t, map[string]string{"name": "Renamed"}), guest.header(true)),
+		http.StatusForbidden, api.CodeInsufficientRole)
 	if got := projectIDs(t, s.main, owner, projectsPath(ws)); len(got) != 2 {
 		t.Errorf("the owner lists %v, want both projects", got)
 	}
@@ -541,7 +548,8 @@ func TestGuestSeesGrantedProjects(t *testing.T) {
 
 // TestProjectFields checks that a project's fields are refused with 422
 // validation_failed, naming the field, when their values are not valid, and
-// that nothing changes then.
+// that nothing changes then, and that a description's line breaks are kept
+// as line feeds however the client writes them.
 func TestProjectFields(t *testing.T) {
 	t.Parallel()
 	s, _, owner, ws := inviteServer(t, "open", nil)
@@ -586,6 +594,19 @@ func TestProjectFields(t *testing.T) {
 		if got.Entry.BoardID != entry["board_id"] || got.Entry.NodeID != entry["node_id"] {
 			t.Errorf("the entry is %+v, want %v", got.Entry, entry)
 		}
+	}
+	// A description's line breaks written as CR LF, or as a CR alone, are kept
+	// as line feeds, when the project is created and when it is changed.
+	crlf := projectFrom(t, call(s.main, http.MethodPost, projectsPath(ws), jsonBody(t, map[string]string{
+		"name": "Lighthouse", "description": "Elara waits\r\nat the harbour\r\n"}), owner.header(true)),
+		http.StatusCreated)
+	if crlf.Description != "Elara waits\nat the harbour" {
+		t.Errorf("a description created with CR LF is %q", crlf.Description)
+	}
+	if got := projectFrom(t, call(s.main, http.MethodPatch, projectPath(crlf.ID),
+		jsonBody(t, map[string]string{"description": "Elara waits\rat the lighthouse"}), owner.header(true)),
+		http.StatusOK); got.Description != "Elara waits\nat the lighthouse" {
+		t.Errorf("a description changed with a CR is %q", got.Description)
 	}
 }
 

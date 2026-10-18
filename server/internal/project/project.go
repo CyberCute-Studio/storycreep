@@ -223,18 +223,17 @@ type Settings struct {
 // admin (§5.6), then input.FieldErrors if a field of in is not valid, and an
 // *entitlements.LimitError if the workspace has as many projects as its plan
 // allows (FR-ENT-01), and creates nothing then. The name and the description
-// lose the white space around them.
+// lose the white space around them, and the description's line breaks are
+// written as line feeds (input.LineFeeds).
 func (s *Service) Create(ctx context.Context, userID, workspaceID ids.UUID, in Settings, client audit.Client) (
 	Visible, error) {
+	in.Description = input.LineFeeds(in.Description)
 	var out Visible
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: userID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		ws, err := q.Workspace(ctx, nullUUID(workspaceID))
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
+		ws, err := activeWorkspace(ctx, q, workspaceID)
 		if err != nil {
-			return fmt.Errorf("project: read the workspace: %w", err)
+			return err
 		}
 		a, err := s.access(ctx, q, userID, workspaceID)
 		if err != nil {
@@ -306,6 +305,20 @@ func check(in Settings, locale string) (settings, error) {
 		return settings{}, errs
 	}
 	return settings{DefaultLocale: locale, PublishMinRole: PublishEditor}, nil
+}
+
+// activeWorkspace returns the workspace workspaceID, read in q's transaction,
+// or ErrNotFound if it does not exist or its deletion is pending (FR-TEN-05
+// AC1).
+func activeWorkspace(ctx context.Context, q *queries.Queries, workspaceID ids.UUID) (queries.WorkspaceRow, error) {
+	ws, err := q.Workspace(ctx, nullUUID(workspaceID))
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return queries.WorkspaceRow{}, ErrNotFound
+	case err != nil:
+		return queries.WorkspaceRow{}, fmt.Errorf("project: read the workspace: %w", err)
+	}
+	return ws, nil
 }
 
 // workspaceLocale returns the default locale of a workspace whose settings
@@ -464,10 +477,8 @@ func (s *Service) Get(ctx context.Context, userID, projectID ids.UUID) (Visible,
 	var out Visible
 	err = s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: userID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		if _, err := q.Workspace(ctx, nullUUID(workspaceID)); errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		} else if err != nil {
-			return fmt.Errorf("project: read the workspace: %w", err)
+		if _, err := activeWorkspace(ctx, q, workspaceID); err != nil {
+			return err
 		}
 		row, err := q.Project(ctx, queries.ProjectParams{WorkspaceID: nullUUID(workspaceID), ID: nullUUID(projectID)})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -510,10 +521,8 @@ func (s *Service) List(ctx context.Context, userID, workspaceID, after ids.UUID,
 	var out []Visible
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: userID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		if _, err := q.Workspace(ctx, nullUUID(workspaceID)); errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		} else if err != nil {
-			return fmt.Errorf("project: read the workspace: %w", err)
+		if _, err := activeWorkspace(ctx, q, workspaceID); err != nil {
+			return err
 		}
 		a, err := s.access(ctx, q, userID, workspaceID)
 		if err != nil {
@@ -552,10 +561,8 @@ func (s *Service) Trash(ctx context.Context, userID, workspaceID, after ids.UUID
 	var out []Project
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: userID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		if _, err := q.Workspace(ctx, nullUUID(workspaceID)); errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		} else if err != nil {
-			return fmt.Errorf("project: read the workspace: %w", err)
+		if _, err := activeWorkspace(ctx, q, workspaceID); err != nil {
+			return err
 		}
 		a, err := s.access(ctx, q, userID, workspaceID)
 		if err != nil {
@@ -597,7 +604,8 @@ type Patch struct {
 
 // Update changes the project projectID as p says, which the actor asks for,
 // in one batch of commands (Register), and returns the project. The name and
-// the description lose the white space around them, and the default locale
+// the description lose the white space around them, the description's line
+// breaks are written as line feeds (input.LineFeeds), and the default locale
 // takes its canonical form. It returns ErrNotFound if the project does not
 // exist, is in the trash, or the actor's effective role on it is none,
 // ErrInsufficientRole unless the role is owner or admin (§5.6), then
@@ -617,7 +625,7 @@ func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID id
 		steps = append(steps, commands.Step{Type: Rename, Payload: renamePayload{Name: name}})
 	}
 	if p.Description != nil {
-		description := strings.TrimSpace(*p.Description)
+		description := strings.TrimSpace(input.LineFeeds(*p.Description))
 		if msg := checkDescription(description); msg != "" {
 			errs = append(errs, input.FieldError{Field: "description", Message: msg})
 		}

@@ -600,7 +600,8 @@ func TestNotFound(t *testing.T) {
 // one that does not exist, whatever the actor's role, so that a refusal of
 // the role does not tell that it exists; a project whose time in the trash
 // has passed refuses every batch so; and a batch that waits for the lock of
-// a project that another transaction archives meanwhile is refused too.
+// a project that another transaction archives, or deletes to the trash,
+// meanwhile is refused too.
 //
 // Verifies: FR-PROJ-01/AC2
 func TestProjectStates(t *testing.T) {
@@ -653,10 +654,9 @@ func TestProjectStates(t *testing.T) {
 	w.exec(t, "UPDATE project SET hard_delete_after = now() - interval '1 second' WHERE id = $1", w.project)
 	try("revive a project whose time in the trash has passed", ownerUser, ErrNotFound, revive)
 
-	// A project that another transaction archives while a batch waits for
-	// its lock refuses the batch.
-	w.exec(t, "UPDATE project SET archived_at = NULL, deleted_at = NULL, hard_delete_after = NULL WHERE id = $1",
-		w.project)
+	// A project that another transaction archives, or deletes to the trash,
+	// while a batch waits for its lock refuses the batch, as the project's
+	// state once the batch holds the lock says.
 	holder := w.d.Admin(t)
 	hold := func(sql string, args ...any) {
 		t.Helper()
@@ -664,21 +664,32 @@ func TestProjectStates(t *testing.T) {
 			t.Fatalf("%s: %v", sql, err)
 		}
 	}
-	hold("BEGIN")
-	hold("UPDATE project SET archived_at = now() WHERE id = $1", w.project)
-	done := make(chan error, 1)
-	go func() {
-		update.ID = ids.New()
-		_, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{update})
-		done <- err
-	}()
-	if !w.waitsForALock(t) {
-		hold("ROLLBACK")
-		t.Fatalf("the batch does not wait for the project's lock: %v", <-done)
-	}
-	hold("COMMIT")
-	if err := <-done; !errors.Is(err, ErrProjectArchived) {
-		t.Errorf("a batch that waited while the project was archived: %v, want ErrProjectArchived", err)
+	for _, c := range []struct {
+		what, change string
+		want         error
+	}{
+		{"archived", "archived_at = now()", ErrProjectArchived},
+		{"deleted to the trash", "deleted_at = now(), hard_delete_after = now() + interval '1 day'", ErrNotFound},
+	} {
+		w.exec(t, "UPDATE project SET archived_at = NULL, deleted_at = NULL, hard_delete_after = NULL "+
+			"WHERE id = $1", w.project)
+		hold("BEGIN")
+		hold("UPDATE project SET "+c.change+" WHERE id = $1", w.project)
+		done := make(chan error, 1)
+		batch := []Command{update}
+		batch[0].ID = ids.New()
+		go func() {
+			_, err := p.Apply(ctx, w.as(ownerUser), w.project, batch)
+			done <- err
+		}()
+		if !w.waitsForALock(t) {
+			hold("ROLLBACK")
+			t.Fatalf("the batch does not wait for the project's lock: %v", <-done)
+		}
+		hold("COMMIT")
+		if err := <-done; !errors.Is(err, c.want) {
+			t.Errorf("a batch that waited while the project was %s: %v, want %v", c.what, err, c.want)
+		}
 	}
 }
 

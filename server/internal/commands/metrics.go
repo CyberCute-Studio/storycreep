@@ -49,12 +49,11 @@ func newMetrics(types []Type) *metrics {
 		batches: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "storycreep_command_batches_total",
 			Help: "Batches of commands that this instance's pipeline finished, by result: applied; invalid, refused " +
-				"before the database was read; not_found, for a project that does not exist, whose workspace is " +
-				"being deleted, or that the actor has no role on; denied, by the actor's role; over_limit, past a " +
-				"limit of the workspace's plan; " +
-				"revision_conflict, made against a revision that an entity no longer has; archived, a change of an " +
-				"archived project, which is read-only; or rejected, refused by a command or failed. Only an applied " +
-				"batch changes anything.",
+				"before the database was read; not_found, for a project that does not exist, is in the trash, whose " +
+				"workspace is being deleted, or that the actor has no role on; denied, by the actor's role; " +
+				"over_limit, past a limit of the workspace's plan; revision_conflict, made against a revision that an " +
+				"entity no longer has; archived, a change of an archived project, which is read-only; or rejected, " +
+				"refused by a command or failed. Only an applied batch changes anything.",
 		}, []string{"result"}),
 		commands: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "storycreep_commands_applied_total",

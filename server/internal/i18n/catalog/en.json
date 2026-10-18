@@ -11,7 +11,7 @@
   "error.email_not_configured": "This server does not send email. Ask an instance admin for the link instead.",
   "error.email_unverified": "Verify your email address first, with the link that was emailed to you.",
   "error.instance_admin_required": "Only an instance admin may do this.",
-  "error.insufficient_role": "Your role in this workspace does not allow this.",
+  "error.insufficient_role": "Your role does not allow this.",
   "error.internal_error": "An internal error occurred.",
   "error.invalid_credentials": "The email address or the password is wrong.",
   "error.invalid_cursor": "The pagination cursor is invalid.",
