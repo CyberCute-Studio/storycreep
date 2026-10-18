@@ -461,6 +461,29 @@ func TestGuard(t *testing.T) {
 		http.StatusOK || !ran {
 		t.Errorf("a request that the guard lets through: %d %s, the operation ran: %t", res.status, res.body, ran)
 	}
+
+	// GuardRequest reads the parameters of the request's path.
+	Register(m, Public, huma.Operation{
+		OperationID: "getItem",
+		Method:      http.MethodGet,
+		Path:        "/items/{id}",
+		Middlewares: huma.Middlewares{GuardRequest(func(ctx huma.Context) error {
+			if ctx.Param("id") == "locked" {
+				return NewError(CodeNotFound)
+			}
+			return nil
+		})},
+	}, func(context.Context, *struct {
+		ID string `path:"id"`
+	}) (*struct{}, error) {
+		return &struct{}{}, nil
+	})
+	if res := serve(m, http.MethodGet, "/items/locked", "", nil); res.envelope(t).Code != CodeNotFound {
+		t.Errorf("an item that the guard refuses: %d %s", res.status, res.body)
+	}
+	if res := serve(m, http.MethodGet, "/items/open", "", nil); res.status >= 400 {
+		t.Errorf("an item that the guard lets through: %d %s", res.status, res.body)
+	}
 }
 
 type callerKey struct{}

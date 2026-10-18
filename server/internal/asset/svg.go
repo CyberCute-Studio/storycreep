@@ -36,9 +36,13 @@ import (
 //
 // It drops comments, processing instructions, and the document type, and
 // reads only the entities of the document type's internal subset whose values
-// are text, as Illustrator declares the namespaces with, so that a file that
-// refers to an external entity, or nests entities, is not well-formed to it.
-// The file must be UTF-8, and its root an svg element of SVG's namespace.
+// are text, as Illustrator declares the namespaces and the styles with, so
+// that a file that refers to an external entity, or nests entities, is not
+// well-formed to it, and it refuses a file whose references to its entities
+// would expand to more than maxSVGExpansion bytes in all, which the decoder
+// would otherwise expand in memory: a file of 3 MB holds a million
+// references to an entity of a kilobyte, a gigabyte in all. The file must be
+// UTF-8, and its root an svg element of SVG's namespace.
 
 const (
 	svgNamespace   = "http://www.w3.org/2000/svg"
@@ -49,11 +53,15 @@ const (
 // maxSVGDepth bounds how deeply an SVG's elements nest.
 const maxSVGDepth = 256
 
-// The bounds of the entities that an SVG's document type may declare.
+// The bounds of the entities that an SVG's document type may declare, and of
+// the bytes that the references to them may expand to in all: enough for a
+// drawing whose every element takes its style from an entity, as Illustrator
+// writes one, and little next to what an upload may hold.
 const (
 	maxSVGEntities      = 64
 	maxSVGEntityLength  = 1024
 	maxSVGEntityNameLen = 64
+	maxSVGExpansion     = 4 << 20
 )
 
 // svgElements are the elements that an SVG keeps: those of SVG 1.1 and SVG 2
@@ -127,7 +135,7 @@ func sanitizeSVG(data []byte) (Image, error) {
 			if rootSeen {
 				return Image{}, &ImageError{Reason: ReasonMalformed, Detail: "it has a document type inside its root"}
 			}
-			if err := declareEntities(d, t); err != nil {
+			if err := declareEntities(d, t, data); err != nil {
 				return Image{}, err
 			}
 		case xml.StartElement:
@@ -213,12 +221,14 @@ func startsAsSVG(data []byte) bool {
 	return string(name) == "svg"
 }
 
-// declareEntities adds to d's entities those that the document type dir
-// declares in its internal subset with values that are text, or returns an
-// *ImageError for a document type that declares more than that: an external
-// entity, a parameter entity, an entity whose value refers to another, or
-// too many or too long. Everything else of the document type is ignored.
-func declareEntities(d *xml.Decoder, dir xml.Directive) error {
+// declareEntities adds to d's entities those that the document type dir of
+// the file data declares in its internal subset with values that are text,
+// or returns an *ImageError for a document type that declares more than
+// that: an external entity, a parameter entity, an entity whose value refers
+// to another, or too many or too long, or whose references in data would
+// expand to more than maxSVGExpansion bytes in all. Everything else of the
+// document type is ignored.
+func declareEntities(d *xml.Decoder, dir xml.Directive, data []byte) error {
 	text := string(dir)
 	start := strings.IndexByte(text, '[')
 	if start < 0 {
@@ -238,7 +248,37 @@ func declareEntities(d *xml.Decoder, dir xml.Directive) error {
 		}
 		d.Entity[m[1]] = value
 	}
+	if len(d.Entity) > maxSVGEntities {
+		return malformed
+	}
+	if entityExpansion(data, d.Entity) > maxSVGExpansion {
+		return &ImageError{Reason: ReasonMalformed, Detail: fmt.Sprintf("the references to its entities expand "+
+			"to more than %d bytes in all", maxSVGExpansion)}
+	}
 	return nil
+}
+
+// entityExpansion returns how many bytes the references in data to the
+// entities expand to, or a number past maxSVGExpansion once they expand to
+// more. It counts every reference that data spells, &name;, wherever it is,
+// as in a comment, which the decoder does not expand, so it counts at least
+// what the decoder expands, and it reads data once: a name is at most
+// maxSVGEntityNameLen bytes, so it looks no further for the semicolon.
+func entityExpansion(data []byte, entities map[string]string) int {
+	n := 0
+	for rest := data; n <= maxSVGExpansion; {
+		i := bytes.IndexByte(rest, '&')
+		if i < 0 {
+			break
+		}
+		rest = rest[i+1:]
+		end := bytes.IndexByte(rest[:min(len(rest), maxSVGEntityNameLen+1)], ';')
+		if end < 0 {
+			continue
+		}
+		n += len(entities[string(rest[:end])])
+	}
+	return n
 }
 
 // writeStart writes the start tag of the element t, which is kept, with the

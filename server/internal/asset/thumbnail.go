@@ -2,7 +2,6 @@ package asset
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"image"
 	"image/gif"
@@ -18,13 +17,6 @@ import (
 // its own, scaled to fit, as a PNG, which keeps its transparency, and a
 // smaller one, or an SVG, which scales itself, is its own thumbnail.
 const ThumbnailSide = 256
-
-// decodeSlot lets one image at a time be decoded and scaled for a thumbnail
-// in the process, whatever the number of jobs that run at once, so that the
-// memory that a decoded image takes, up to 8 bytes for each of MaxPixels
-// pixels, is taken once: a job holds the slot until it has scaled the image,
-// after which only the thumbnail is left of it.
-var decodeSlot = make(chan struct{}, 1)
 
 // needsThumbnail reports whether img gets a thumbnail of its own.
 func needsThumbnail(img Image) bool {
@@ -45,9 +37,13 @@ var decoders = map[string]func([]byte) (image.Image, error){
 // which no decoder takes, does not. A JPEG image is turned and flipped as
 // its EXIF orientation says, as a browser shows the file itself, so that the
 // thumbnail of a photo that a phone took on its side is upright, as the
-// photo is. It checks the image's size again before it decodes it, as an
-// upload did, and waits for its turn to decode (decodeSlot) until ctx ends.
-func Thumbnail(ctx context.Context, data []byte, mime string) ([]byte, error) {
+// photo is, and a GIF image is its first frame, where it is on the image's
+// screen, as a browser shows it first. It checks the image's size again
+// before it decodes it, as an upload did. A decoded image takes up to 8
+// bytes for each of MaxPixels pixels until it is scaled, after which only
+// the thumbnail is left of it, so the job that calls Thumbnail makes one
+// thumbnail at a time in a process (jobs.Serial).
+func Thumbnail(data []byte, mime string) ([]byte, error) {
 	decode, ok := decoders[mime]
 	if !ok {
 		return nil, fmt.Errorf("asset: no thumbnail is made of %s", mime)
@@ -59,13 +55,13 @@ func Thumbnail(ctx context.Context, data []byte, mime string) ([]byte, error) {
 	if img.Mime != mime {
 		return nil, fmt.Errorf("asset: the file is %s, not %s", img.Mime, mime)
 	}
-	select {
-	case decodeSlot <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	// A GIF's first frame may cover only part of the image's screen, which
+	// the thumbnail shows whole, as Sniff read its size from the header.
+	var screen image.Rectangle
+	if mime == MimeGIF {
+		screen = image.Rect(0, 0, img.Width, img.Height)
 	}
-	dst, err := scaled(data, decode)
-	<-decodeSlot
+	dst, err := scaled(data, decode, screen)
 	if err != nil {
 		return nil, err
 	}
@@ -80,22 +76,33 @@ func Thumbnail(ctx context.Context, data []byte, mime string) ([]byte, error) {
 }
 
 // scaled decodes data with decode and returns the image scaled to fit in
-// ThumbnailSide × ThumbnailSide, keeping its proportions. The caller holds
-// decodeSlot, which the decoded image is dropped within.
-func scaled(data []byte, decode func([]byte) (image.Image, error)) (*image.NRGBA, error) {
+// ThumbnailSide × ThumbnailSide, keeping its proportions. A screen that is
+// not empty is a rectangle at the origin that holds the decoded image, as a
+// GIF's screen holds its first frame: the thumbnail is then of the screen,
+// with the decoded image scaled into its place on it, and the rest of it
+// transparent.
+func scaled(data []byte, decode func([]byte) (image.Image, error), screen image.Rectangle) (*image.NRGBA,
+	error) {
 	src, err := decode(data)
 	if err != nil {
 		return nil, fmt.Errorf("asset: decode the image: %w", err)
 	}
 	b := src.Bounds()
-	w, h := b.Dx(), b.Dy()
+	if screen.Empty() {
+		screen = b
+	}
+	sw, sh := screen.Dx(), screen.Dy()
+	w, h := sw, sh
 	if w > h {
 		w, h = ThumbnailSide, max(1, h*ThumbnailSide/w)
 	} else {
 		w, h = max(1, w*ThumbnailSide/h), ThumbnailSide
 	}
 	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
-	draw.CatmullRom.Scale(dst, dst.Bounds(), src, b, draw.Src, nil)
+	// Where the decoded image is on the screen, scaled as the screen is.
+	at := image.Rect((b.Min.X-screen.Min.X)*w/sw, (b.Min.Y-screen.Min.Y)*h/sh, (b.Max.X-screen.Min.X)*w/sw,
+		(b.Max.Y-screen.Min.Y)*h/sh)
+	draw.CatmullRom.Scale(dst, at, src, b, draw.Src, nil)
 	return dst, nil
 }
 

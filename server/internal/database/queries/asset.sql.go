@@ -258,9 +258,8 @@ func (q *Queries) SetThumbnail(ctx context.Context, arg SetThumbnailParams) erro
 	return err
 }
 
-const shareProject = `-- name: ShareProject :one
-SELECT (archived_at IS NOT NULL)::boolean AS archived, (deleted_at IS NOT NULL)::boolean AS deleted
-FROM project
+const shareProject = `-- name: ShareProject :exec
+SELECT FROM project
 WHERE workspace_id = $1 AND id = $2
 FOR SHARE
 `
@@ -270,19 +269,12 @@ type ShareProjectParams struct {
 	ID          pgtype.UUID
 }
 
-type ShareProjectRow struct {
-	Archived bool
-	Deleted  bool
-}
-
-// ShareProject returns whether the project is archived, and whether it is in
-// the trash, and locks its row FOR SHARE until the transaction ends, so that
-// neither changes until then, while an upload adds its asset.
-func (q *Queries) ShareProject(ctx context.Context, arg ShareProjectParams) (ShareProjectRow, error) {
-	row := q.db.QueryRow(ctx, shareProject, arg.WorkspaceID, arg.ID)
-	var i ShareProjectRow
-	err := row.Scan(&i.Archived, &i.Deleted)
-	return i, err
+// ShareProject locks the project's row FOR SHARE until the transaction ends,
+// so that it is neither archived nor moved to the trash until then, while an
+// upload adds its asset, which reads the project once it holds the lock.
+func (q *Queries) ShareProject(ctx context.Context, arg ShareProjectParams) error {
+	_, err := q.db.Exec(ctx, shareProject, arg.WorkspaceID, arg.ID)
+	return err
 }
 
 const storageDrift = `-- name: StorageDrift :one

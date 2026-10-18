@@ -71,12 +71,11 @@ SELECT (
         AND d.key = 'storage_bytes'), 0)
 )::bigint AS drift;
 
--- name: ShareProject :one
--- ShareProject returns whether the project is archived, and whether it is in
--- the trash, and locks its row FOR SHARE until the transaction ends, so that
--- neither changes until then, while an upload adds its asset.
-SELECT (archived_at IS NOT NULL)::boolean AS archived, (deleted_at IS NOT NULL)::boolean AS deleted
-FROM project
+-- name: ShareProject :exec
+-- ShareProject locks the project's row FOR SHARE until the transaction ends,
+-- so that it is neither archived nor moved to the trash until then, while an
+-- upload adds its asset, which reads the project once it holds the lock.
+SELECT FROM project
 WHERE workspace_id = @workspace_id AND id = @id
 FOR SHARE;
 

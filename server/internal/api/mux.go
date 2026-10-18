@@ -605,8 +605,15 @@ func limitWith(limiter RateLimiter, b Bucket) func(huma.Context, func(huma.Conte
 // request's parameters or body, so that it refuses the request whatever they
 // hold. If check returns nil, the operation goes on.
 func Guard(check func(context.Context) error) func(huma.Context, func(huma.Context)) {
+	return GuardRequest(func(ctx huma.Context) error { return check(ctx.Context()) })
+}
+
+// GuardRequest is Guard for a check that reads the request, as the
+// parameters of its path (huma.Context.Param), which the operation has not
+// read yet when the check runs.
+func GuardRequest(check func(huma.Context) error) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		if err := check(ctx.Context()); err != nil {
+		if err := check(ctx); err != nil {
 			r, w := humachi.Unwrap(ctx)
 			WriteError(w, r, err)
 			return

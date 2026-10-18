@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
@@ -115,18 +114,16 @@ func registerAssets(m *api.Mux, assets *asset.Service, maxBytes int64) {
 	// its file holds before the route reads the file, so that a request that
 	// may not upload does not send the server megabytes first, and is not
 	// told what the file would have been answered with.
-	checkUpload := func(ctx huma.Context, next func(huma.Context)) {
+	checkUpload := api.GuardRequest(func(ctx huma.Context) error {
 		id, actor, err := projectActor(ctx.Context(), ctx.Param("project_id"))
 		if err == nil {
 			err = assets.CheckUpload(ctx.Context(), actor, id)
 		}
 		if err != nil {
-			r, w := humachi.Unwrap(ctx)
-			api.WriteError(w, r, assetError(err))
-			return
+			return assetError(err)
 		}
-		next(ctx)
-	}
+		return nil
+	})
 	registry := m.OpenAPI().Components.Schemas
 	assetSchema := registry.Schema(reflect.TypeFor[asset.Asset](), true, "")
 	uploadBody := &huma.RequestBody{Required: true, Description: "The file, as it is, whatever its name: the server " +
@@ -264,7 +261,9 @@ func fileResponses() map[string]*huma.Response {
 
 // serveAsset answers a request of an asset's file, or of its thumbnail, once
 // the service has checked the actor's access, and before it reads anything
-// of the file.
+// of the file: with a redirect to the URL that the store signs, or else, for
+// the local driver, with 304 if the client has the file, whose tag the key
+// gives, without opening it, or with the file.
 func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, thumbnail bool) (
 	*huma.StreamResponse, error) {
 	pid, aid, actor, err := assetActor(ctx, in.ProjectID, in.AssetID)
@@ -278,26 +277,28 @@ func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, 
 	// The key is the content's hash, so its tag changes exactly with the
 	// file, as when the thumbnail is made.
 	etag := api.ETag([]byte(loc.Key))
-	served, err := assets.Serve(ctx, loc)
-	if err != nil {
+	url, signed, err := assets.SignedURL(ctx, loc)
+	switch {
+	case err != nil:
 		return nil, assetError(err)
-	}
-	if served.URL != "" {
+	case signed:
 		return &huma.StreamResponse{Body: func(hc huma.Context) {
 			hc.SetHeader("Content-Security-Policy", sandboxCSP)
-			hc.SetHeader("Location", served.URL)
+			hc.SetHeader("Location", url)
 			hc.SetHeader("Cache-Control", redirectCache)
 			hc.SetStatus(http.StatusFound)
 		}}, nil
-	}
-	if api.IfNoneMatch(in.IfNoneMatch, etag) {
-		_ = served.Body.Close()
+	case api.IfNoneMatch(in.IfNoneMatch, etag):
 		return nil, api.NotModifiedWith(etag, fileCache)
 	}
+	body, size, err := assets.Open(ctx, loc)
+	if err != nil {
+		return nil, assetError(err)
+	}
 	return &huma.StreamResponse{Body: func(hc huma.Context) {
-		defer served.Body.Close()
+		defer body.Close()
 		hc.SetHeader("Content-Type", loc.ContentType)
-		hc.SetHeader("Content-Length", strconv.FormatInt(served.Size, 10))
+		hc.SetHeader("Content-Length", strconv.FormatInt(size, 10))
 		hc.SetHeader("Content-Security-Policy", sandboxCSP)
 		hc.SetHeader("X-Content-Type-Options", "nosniff")
 		hc.SetHeader("Content-Disposition", asset.Disposition(loc))
@@ -307,7 +308,7 @@ func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, 
 		// The status and the headers are sent, so a failure from here on can
 		// only end the answer early, which the client sees as a body shorter
 		// than its Content-Length.
-		_, _ = io.Copy(hc.BodyWriter(), served.Body)
+		_, _ = io.Copy(hc.BodyWriter(), body)
 	}}, nil
 }
 

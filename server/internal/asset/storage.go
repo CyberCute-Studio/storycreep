@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/jackc/pgx/v5"
 
@@ -37,11 +38,12 @@ type Storage struct {
 	dir        string
 	httpClient *http.Client
 
-	mu sync.Mutex
-	// store is the final store, once there is one, and opened the stores
-	// opened before, by their settings, which Store reuses, so that it opens
-	// none twice.
-	store  blob.Store
+	// final is the final store, once there is one, which Store returns
+	// without taking mu, as every request of an asset's file reads it.
+	final atomic.Pointer[blob.Store]
+	// mu guards opened, the stores opened before the final one, by their
+	// settings, which Store reuses, so that it opens none twice.
+	mu     sync.Mutex
 	opened map[string]blob.Store
 }
 
@@ -78,10 +80,13 @@ func (s *Storage) Fixed() bool {
 // use. It returns an error if the store cannot be opened, as when the local
 // driver's directory cannot be created, and opens it again on the next call.
 func (s *Storage) Store(ctx context.Context) (blob.Store, error) {
+	if final := s.final.Load(); final != nil {
+		return *final, nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.store != nil {
-		return s.store, nil
+	if final := s.final.Load(); final != nil {
+		return *final, nil
 	}
 	settings, final, err := s.settings(ctx)
 	if err != nil {
@@ -104,7 +109,7 @@ func (s *Storage) Store(ctx context.Context) (blob.Store, error) {
 		s.opened[name] = store
 	}
 	if final {
-		s.store = store
+		s.final.Store(&store)
 	}
 	return store, nil
 }

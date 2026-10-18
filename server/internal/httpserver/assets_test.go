@@ -511,6 +511,44 @@ func TestThumbnailsAndOrphans(t *testing.T) {
 	}
 }
 
+// TestUndecodableThumbnail checks that an image whose header decodes, which
+// an upload takes, but whose pixels do not, gets no thumbnail of its own:
+// its job records it as its own thumbnail, which the route serves, and ends
+// without another attempt, and an upload of the same file to another
+// project shares that, rather than enqueue a job that would fail again.
+func TestUndecodableThumbnail(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, d, owner, ws := inviteServer(t, "open", map[string]string{"STORYCREEP_ASSET_STORAGE": dir})
+	p := createProject(t, s.main, owner, ws, "Lighthouse").ID
+	large := testPNG(t, 600, 300)
+	broken := large[:len(large)/2]
+	a := upload(t, s.main, owner, p, broken, http.StatusCreated)
+	startWorkers(t, s, d)
+	for deadline := time.Now().Add(30 * time.Second); countRows(t, d,
+		`SELECT count(*) FROM river_job WHERE kind = 'asset_thumbnail' AND state = 'cancelled'`) != 1; {
+		if time.Now().After(deadline) {
+			t.Fatal("the thumbnail job did not end")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	res := call(s.main, http.MethodGet, assetPath(p, a.ID)+"/thumbnail", nil, owner.header(false))
+	if res.status != http.StatusOK || !bytes.Equal(res.body, broken) {
+		t.Errorf("the thumbnail: %d, %d bytes, want the file", res.status, len(res.body))
+	}
+	cove := createProject(t, s.main, owner, ws, "Cove").ID
+	upload(t, s.main, owner, cove, broken, http.StatusCreated)
+	if n := countRows(t, d, `SELECT count(*) FROM river_job WHERE kind = 'asset_thumbnail'`); n != 1 {
+		t.Errorf("%d thumbnail jobs, want the first upload's alone", n)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM asset WHERE thumbnail_key = storage_key`); n != 2 {
+		t.Errorf("%d assets are their own thumbnails, want both", n)
+	}
+	if files := storedFiles(t, dir); len(files) != 1 {
+		t.Errorf("the store holds %v, want the file alone", files)
+	}
+}
+
 // TestUploadAgainMendsItsFile checks that uploading a file that the project
 // has already, whose blob the store lost, as when files were not all copied
 // to a new store, stores the blob again, so that the asset is served again.

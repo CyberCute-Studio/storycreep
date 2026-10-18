@@ -2,11 +2,11 @@ package asset
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"errors"
 	"image"
 	"image/color"
+	"image/color/palette"
 	"image/gif"
 	"image/jpeg"
 	"image/png"
@@ -201,7 +201,6 @@ func crc(b []byte) uint32 {
 // side, keeps the image's proportions, and is a PNG, and that an image that
 // does not decode, or whose type is not what the asset says, has none.
 func TestThumbnail(t *testing.T) {
-	ctx := context.Background()
 	for _, tt := range []struct {
 		width, height, wantW, wantH int
 	}{
@@ -209,7 +208,7 @@ func TestThumbnail(t *testing.T) {
 	} {
 		data := encoded(t, func(b *bytes.Buffer, i image.Image) error { return png.Encode(b, i) },
 			rgba(tt.width, tt.height))
-		thumb, err := Thumbnail(ctx, data, MimePNG)
+		thumb, err := Thumbnail(data, MimePNG)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -220,17 +219,17 @@ func TestThumbnail(t *testing.T) {
 		}
 	}
 	jpg := encoded(t, func(b *bytes.Buffer, i image.Image) error { return jpeg.Encode(b, i, nil) }, rgba(400, 400))
-	if _, err := Thumbnail(ctx, jpg, MimeJPEG); err != nil {
+	if _, err := Thumbnail(jpg, MimeJPEG); err != nil {
 		t.Errorf("a JPEG: %v", err)
 	}
-	if _, err := Thumbnail(ctx, jpg, MimePNG); err == nil {
+	if _, err := Thumbnail(jpg, MimePNG); err == nil {
 		t.Error("a JPEG said to be a PNG has a thumbnail")
 	}
 	truncated := jpg[:len(jpg)/2]
-	if _, err := Thumbnail(ctx, truncated, MimeJPEG); err == nil {
+	if _, err := Thumbnail(truncated, MimeJPEG); err == nil {
 		t.Error("a truncated JPEG has a thumbnail")
 	}
-	if _, err := Thumbnail(ctx, []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), MimeSVG); err == nil ||
+	if _, err := Thumbnail([]byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), MimeSVG); err == nil ||
 		!strings.Contains(err.Error(), "no thumbnail") {
 		t.Errorf("an SVG: %v", err)
 	}
@@ -251,7 +250,7 @@ func TestThumbnail(t *testing.T) {
 	photo := withOrientation(encoded(t, func(b *bytes.Buffer, i image.Image) error {
 		return jpeg.Encode(b, i, &jpeg.Options{Quality: 95})
 	}, side), 6, true)
-	thumb, err := Thumbnail(ctx, photo, MimeJPEG)
+	thumb, err := Thumbnail(photo, MimeJPEG)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,6 +265,44 @@ func TestThumbnail(t *testing.T) {
 		color.NRGBAModel.Convert(upright.At(64, 236)).(color.NRGBA)
 	if top.R < 200 || top.B > 60 || bottom.B < 200 || bottom.R > 60 {
 		t.Errorf("the thumbnail is %v at the top and %v at the bottom, want red and blue", top, bottom)
+	}
+}
+
+// TestGIFThumbnail checks that the thumbnail of a GIF image whose first
+// frame covers only part of the image's screen shows the whole screen, with
+// the frame in its place, scaled as the screen is, and the rest transparent,
+// rather than the frame stretched to fill it.
+func TestGIFThumbnail(t *testing.T) {
+	frame := image.NewPaletted(image.Rect(100, 500, 400, 600), palette.Plan9)
+	red := uint8(color.Palette(palette.Plan9).Index(color.RGBA{R: 255, A: 255}))
+	for i := range frame.Pix {
+		frame.Pix[i] = red
+	}
+	var b bytes.Buffer
+	if err := gif.EncodeAll(&b, &gif.GIF{Image: []*image.Paletted{frame}, Delay: []int{0},
+		Config: image.Config{Width: 1000, Height: 1000, ColorModel: color.Palette(palette.Plan9)}}); err != nil {
+		t.Fatal(err)
+	}
+	thumb, err := Thumbnail(b.Bytes(), MimeGIF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(thumb))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bounds := img.Bounds(); bounds.Dx() != ThumbnailSide || bounds.Dy() != ThumbnailSide {
+		t.Fatalf("the thumbnail is %d × %d, want %d × %d", bounds.Dx(), bounds.Dy(), ThumbnailSide, ThumbnailSide)
+	}
+	// The frame is at 25.6 to 102.4 across, and 128 to 153.6 down.
+	at := func(x, y int) color.NRGBA { return color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA) }
+	if c := at(64, 140); c.R < 200 || c.A != 255 {
+		t.Errorf("the frame's place is %v, want red", c)
+	}
+	for _, p := range []image.Point{{10, 10}, {200, 140}, {64, 200}} {
+		if c := at(p.X, p.Y); c.A != 0 {
+			t.Errorf("%v, outside the frame, is %v, want transparent", p, c)
+		}
 	}
 }
 
@@ -359,6 +396,14 @@ func TestSanitizeSVG(t *testing.T) {
 			w:    3, h: 4,
 		},
 		{
+			name: "Illustrator's styles",
+			in: `<!DOCTYPE svg [<!ENTITY st0 "fill:#FFFFFF;stroke:#000000;">]>` +
+				`<svg xmlns="http://www.w3.org/2000/svg"><rect style="&st0;"/><circle style="&st0;"/></svg>`,
+			keep: []string{`<rect style="fill:#FFFFFF;stroke:#000000;"></rect>`,
+				`<circle style="fill:#FFFFFF;stroke:#000000;"></circle>`},
+			drop: []string{"st0"},
+		},
+		{
 			name: "a prefixed root",
 			in:   `<s:svg xmlns:s="http://www.w3.org/2000/svg" width="100%"><s:g/></s:svg>`,
 			keep: []string{`<svg xmlns="http://www.w3.org/2000/svg" width="100%"><g></g></svg>`},
@@ -410,6 +455,10 @@ func TestSanitizeSVG(t *testing.T) {
 			`<svg xmlns="http://www.w3.org/2000/svg">&x;</svg>`, ReasonMalformed},
 		{"nested entities", `<!DOCTYPE svg [<!ENTITY a "1"><!ENTITY b "&a;&a;">]>` +
 			`<svg xmlns="http://www.w3.org/2000/svg">&b;</svg>`, ReasonMalformed},
+		// 5,000 references of 3 bytes to an entity of 1,000 expand to 5 MB.
+		{"entities that expand too far", `<!DOCTYPE svg [<!ENTITY a "` + strings.Repeat("A", 1000) + `">]>` +
+			`<svg xmlns="http://www.w3.org/2000/svg"><text>` + strings.Repeat("&a;", 5000) + `</text></svg>`,
+			ReasonMalformed},
 		{"too deep", `<svg xmlns="http://www.w3.org/2000/svg">` + strings.Repeat("<g>", maxSVGDepth) +
 			strings.Repeat("</g>", maxSVGDepth) + `</svg>`, ReasonMalformed},
 		{"another encoding", `<?xml version="1.0" encoding="ISO-8859-1"?><svg xmlns="http://www.w3.org/2000/svg"/>`,

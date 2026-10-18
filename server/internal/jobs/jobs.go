@@ -57,14 +57,19 @@ import (
 // that the URL, the login, or the database sets does not hide them.
 const schema = "public"
 
-// concurrency is how many jobs an instance's workers run at once.
+// concurrency is how many jobs of the kinds that are not serial an
+// instance's workers run at once, beside one job of each serial kind
+// (Serial).
 const concurrency = 4
 
-// poolSize is the size of the workers' pool: a connection for each job that
-// runs (Job.DB), one that River holds for LISTEN, and two for River's own
-// queries, which take jobs, finish them, and, on the leader, maintain the
-// queue.
-const poolSize = concurrency + 3
+// poolSize returns the size of the workers' pool of a registry that has
+// serial kinds of job that are serial (Serial): a connection for each job
+// that runs (Job.DB), one that River holds for LISTEN, and two for River's
+// own queries, which take jobs, finish them, and, on the leader, maintain
+// the queue.
+func poolSize(serial int) int32 {
+	return int32(concurrency + serial + 3)
+}
 
 // startTimeout is how long Start waits for the database to answer before it
 // starts the workers.
@@ -118,6 +123,8 @@ type Registry struct {
 	// River identifies them by.
 	periodic      []*river.PeriodicJob
 	periodicKinds []string
+	// serial are the serial kinds (Serial).
+	serial []string
 }
 
 // NewRegistry returns an empty registry.
@@ -181,11 +188,43 @@ func Periodic(r *Registry, interval time.Duration, args Args) {
 	case interval < time.Second:
 		panic(fmt.Sprintf("jobs: the periodic job %s runs every %s, more often than once a second", kind, interval))
 	}
-	opts := (&EnqueueOptions{Unique: true}).river()
 	r.periodic = append(r.periodic, river.NewPeriodicJob(river.PeriodicInterval(interval),
-		func() (river.JobArgs, *river.InsertOpts) { return args, opts },
+		func() (river.JobArgs, *river.InsertOpts) {
+			// The kind's queue is read once the registry is complete, which
+			// it is by the time that the job is first enqueued.
+			opts := (&EnqueueOptions{Unique: true}).river()
+			opts.Queue = queueOf(r.serial, kind)
+			return args, opts
+		},
 		&river.PeriodicJobOpts{ID: kind, RunOnStart: true}))
 	r.periodicKinds = append(r.periodicKinds, kind)
+}
+
+// Serial makes the jobs of args's kind run one at a time in each instance
+// that runs workers, on a queue of their own, named after the kind, whose
+// worker runs beside the others, so that they neither take a worker from the
+// other kinds' jobs nor wait for one: for work that takes much of the
+// instance's memory, as decoding a large image does, which two jobs must not
+// do at once in one process. Serial panics unless args's kind has a worker,
+// and if the kind is serial already.
+func Serial(r *Registry, args Args) {
+	kind := args.Kind()
+	switch {
+	case !slices.Contains(r.kinds, kind):
+		panic(fmt.Sprintf("jobs: the serial job %s has no worker; Register one first", kind))
+	case slices.Contains(r.serial, kind):
+		panic(fmt.Sprintf("jobs: the kind %s is serial already", kind))
+	}
+	r.serial = append(r.serial, kind)
+}
+
+// queueOf returns the name of the queue of River that the jobs of kind go
+// to: the kind's own if it is one of the serial kinds, or River's default.
+func queueOf(serial []string, kind string) string {
+	if slices.Contains(serial, kind) {
+		return kind
+	}
+	return river.QueueDefault
 }
 
 // EnqueueOptions are the options of a job.
@@ -259,10 +298,11 @@ type Options struct {
 type Queue struct {
 	client *river.Client[pgx.Tx]
 	log    *slog.Logger
-	// work is set if the queue runs jobs, and kinds are the kinds it has
-	// workers for.
-	work  bool
-	kinds []string
+	// work is set if the queue runs jobs, kinds are the kinds it has workers
+	// for, and serial those of them that run one at a time (Serial).
+	work   bool
+	kinds  []string
+	serial []string
 	// workers is the workers' pool, or nil if the queue runs no jobs.
 	workers *database.DB
 	metrics *metrics
@@ -295,7 +335,8 @@ func Open(ctx context.Context, db *database.DB, app config.DatabaseURL, opts Opt
 	if reg == nil {
 		reg = NewRegistry()
 	}
-	q := &Queue{log: log, work: opts.Work, kinds: slices.Clone(reg.kinds), hardStop: opts.hardStop}
+	q := &Queue{log: log, work: opts.Work, kinds: slices.Clone(reg.kinds), serial: slices.Clone(reg.serial),
+		hardStop: opts.hardStop}
 	if q.hardStop <= 0 {
 		q.hardStop = hardStopTimeout
 	}
@@ -324,15 +365,19 @@ func Open(ctx context.Context, db *database.DB, app config.DatabaseURL, opts Opt
 	pool := db.Pool()
 	if q.runsJobs() {
 		workers, err := database.OpenWith(ctx, app, func(c *pgxpool.Config) {
-			c.MaxConns = poolSize
-			c.MinConns = min(c.MinConns, poolSize)
-			c.MinIdleConns = min(c.MinIdleConns, poolSize)
+			size := poolSize(len(q.serial))
+			c.MaxConns = size
+			c.MinConns = min(c.MinConns, size)
+			c.MinIdleConns = min(c.MinIdleConns, size)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("open the job workers' pool: %w", err)
 		}
 		q.workers, pool = workers, workers.Pool()
 		cfg.Queues = map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: concurrency}}
+		for _, kind := range q.serial {
+			cfg.Queues[kind] = river.QueueConfig{MaxWorkers: 1}
+		}
 		cfg.PeriodicJobs = reg.periodic
 		// The jobs' work receives the workers' pool through its context,
 		// which Register's worker hands it in Job.DB.
@@ -353,7 +398,7 @@ func Open(ctx context.Context, db *database.DB, app config.DatabaseURL, opts Opt
 	q.client = client
 	// The count runs on the request pool, so that a scrape does not wait for
 	// the workers' connections, which poolSize leaves none of for it.
-	q.metrics = newMetrics(db.Pool(), q.kinds)
+	q.metrics = newMetrics(db.Pool(), q.kinds, append([]string{river.QueueDefault}, q.serial...))
 	return q, nil
 }
 
@@ -378,10 +423,18 @@ func (q *Queue) runsJobs() bool {
 }
 
 // Enqueue enqueues a job with args in tx, the transaction of the change that
-// needs the job, so that the job exists, and runs, only if tx commits. opts may
-// be nil. Enqueue returns an error if args's kind has no worker.
+// needs the job, so that the job exists, and runs, only if tx commits, on the
+// queue of its kind if the kind is serial (Serial). opts may be nil. Enqueue
+// returns an error if args's kind has no worker.
 func (q *Queue) Enqueue(ctx context.Context, tx pgx.Tx, args Args, opts *EnqueueOptions) (Enqueued, error) {
-	res, err := q.client.InsertTx(ctx, tx, args, opts.river())
+	insert := opts.river()
+	if queue := queueOf(q.serial, args.Kind()); queue != river.QueueDefault {
+		if insert == nil {
+			insert = &river.InsertOpts{}
+		}
+		insert.Queue = queue
+	}
+	res, err := q.client.InsertTx(ctx, tx, args, insert)
 	if err != nil {
 		return Enqueued{}, fmt.Errorf("enqueue a job of kind %s: %w", args.Kind(), err)
 	}
@@ -436,7 +489,8 @@ func (q *Queue) Start(ctx context.Context) error {
 		defer close(q.eventsDone)
 		q.metrics.observe(events)
 	}()
-	q.log.InfoContext(ctx, "the job workers started", "workers", concurrency, "kinds", q.kinds)
+	q.log.InfoContext(ctx, "the job workers started", "workers", concurrency+len(q.serial), "kinds", q.kinds,
+		"serial", q.serial)
 	return nil
 }
 

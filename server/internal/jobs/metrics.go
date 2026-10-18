@@ -53,17 +53,20 @@ var countedStates = []string{
 // instance's workers finished, and how long they took, and the jobs in the
 // database, which every instance counts alike.
 type metrics struct {
-	pool     *pgxpool.Pool
-	kinds    []string
+	pool  *pgxpool.Pool
+	kinds []string
+	// queues are the queues of River that the jobs go to (Serial).
+	queues   []string
 	attempts *prometheus.CounterVec
 	duration *prometheus.HistogramVec
 	jobs     *prometheus.Desc
 }
 
-func newMetrics(pool *pgxpool.Pool, kinds []string) *metrics {
+func newMetrics(pool *pgxpool.Pool, kinds, queues []string) *metrics {
 	return &metrics{
-		pool:  pool,
-		kinds: kinds,
+		pool:   pool,
+		kinds:  kinds,
+		queues: queues,
 		attempts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "storycreep_job_attempts_total",
 			Help: "Attempts at jobs that this instance's workers finished, by kind and outcome: completed; failed, " +
@@ -113,8 +116,8 @@ func (m *metrics) Collect(ch chan<- prometheus.Metric) {
 type queueState struct{ queue, state string }
 
 // count counts the jobs in countedStates, by queue and state. Every state of
-// the default queue is counted, so that a state without jobs is a zero rather
-// than a series that comes and goes.
+// each of the queues is counted, so that a state without jobs is a zero
+// rather than a series that comes and goes.
 func (m *metrics) count() (map[queueState]int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), countTimeout)
 	defer cancel()
@@ -127,8 +130,10 @@ func (m *metrics) count() (map[queueState]int64, error) {
 		return nil, err
 	}
 	counts := map[queueState]int64{}
-	for _, s := range countedStates {
-		counts[queueState{river.QueueDefault, s}] = 0
+	for _, queue := range m.queues {
+		for _, s := range countedStates {
+			counts[queueState{queue, s}] = 0
+		}
 	}
 	var key queueState
 	var n int64

@@ -204,11 +204,12 @@ func uploadable(p project.Visible) error {
 // It checks the upload in a transaction, then stores the blob outside any,
 // so that no connection of the pool, and no lock, waits for the store to
 // take a file of up to 50 MB, and then adds the asset in a transaction that
-// holds the blob's lock, which checks again what may have changed since, and
-// stores the blob again in the rare case that the orphan reconciliation
-// deleted it in between, before the lock was taken. An upload of a file
-// that the project has already stores its blob again too if the store lost
-// it, so that uploading the file again mends its asset.
+// holds the blob's lock, which checks again what may have changed since, the
+// actor's role, the project's state, and the storage, and stores the blob
+// again in the rare case that the orphan reconciliation deleted it in
+// between, before the lock was taken. An upload of a file that the project
+// has already stores its blob again too if the store lost it, so that
+// uploading the file again mends its asset.
 func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID ids.UUID, data []byte) (Asset, bool,
 	error) {
 	workspaceID, err := s.projects.ActorWorkspace(ctx, actor, projectID)
@@ -273,17 +274,20 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		if err := ensureBlob(ctx, store, key, img); err != nil {
 			return err
 		}
-		// The project is read again, under a lock that keeps it from being
-		// archived or deleted until the asset is added.
-		state, err := q.ShareProject(ctx, queries.ShareProjectParams{WorkspaceID: nullUUID(workspaceID),
-			ID: nullUUID(projectID)})
-		switch {
-		case errors.Is(err, pgx.ErrNoRows), err == nil && state.Deleted:
-			return project.ErrNotFound
-		case err != nil:
+		// The project is locked, so that it is neither archived nor deleted
+		// until the asset is added, and read again with the actor's role on
+		// it, which may have changed while the blob was stored, as the
+		// workspace's deletion may have begun.
+		if err := q.ShareProject(ctx, queries.ShareProjectParams{WorkspaceID: nullUUID(workspaceID),
+			ID: nullUUID(projectID)}); err != nil {
 			return fmt.Errorf("asset: lock the project: %w", err)
-		case state.Archived:
-			return commands.ErrProjectArchived
+		}
+		p, err := s.projects.GetIn(ctx, tx, actor, workspaceID, projectID)
+		if err != nil {
+			return err
+		}
+		if err := uploadable(p); err != nil {
+			return err
 		}
 		row := queries.Asset{ID: nullUUID(ids.New()), WorkspaceID: nullUUID(workspaceID),
 			ProjectID: nullUUID(projectID), Sha256: sum[:], Mime: img.Mime, Bytes: int64(len(img.Data)),
@@ -450,44 +454,47 @@ func (s *Service) Locate(ctx context.Context, actor commands.Actor, projectID, a
 	return out, nil
 }
 
-// Served is how a located file is served: from URL, which the store signed,
-// or else from Body, of Size bytes, which the caller closes.
-type Served struct {
-	URL  string
-	Body io.ReadCloser
-	Size int64
-}
-
-// Serve returns how to serve loc, which Locate returned once it had checked
-// the actor's access: a URL that the store signs for 5 minutes, with the
-// file's type and Content-Disposition fixed in it, or else the file itself.
-// It returns ErrNotFound if the store lost the file.
-func (s *Service) Serve(ctx context.Context, loc Located) (Served, error) {
+// SignedURL returns a URL of loc, which Locate returned once it had checked
+// the actor's access, that the store signs for 5 minutes, with the file's
+// type and Content-Disposition fixed in it, and true, or false if the store
+// signs none, as the local driver, whose files the server serves itself
+// (Open).
+func (s *Service) SignedURL(ctx context.Context, loc Located) (string, bool, error) {
 	store, err := s.storage.Store(ctx)
 	if err != nil {
-		return Served{}, err
+		return "", false, err
 	}
 	url, ok, err := store.SignedURL(ctx, loc.Key, SignedURLLifetime, loc.ContentType, Disposition(loc))
-	switch {
-	case err != nil:
-		return Served{}, fmt.Errorf("asset: %w", err)
-	case ok:
-		return Served{URL: url}, nil
+	if err != nil {
+		return "", false, fmt.Errorf("asset: %w", err)
+	}
+	return url, ok, nil
+}
+
+// Open returns the file of loc, which Locate returned once it had checked the
+// actor's access, which the caller closes, and its size in bytes. It returns
+// ErrNotFound if the store lost the file.
+func (s *Service) Open(ctx context.Context, loc Located) (io.ReadCloser, int64, error) {
+	store, err := s.storage.Store(ctx)
+	if err != nil {
+		return nil, 0, err
 	}
 	body, info, err := store.Open(ctx, loc.Key)
 	switch {
 	case errors.Is(err, blob.ErrNotFound):
-		return Served{}, ErrNotFound
+		return nil, 0, ErrNotFound
 	case err != nil:
-		return Served{}, fmt.Errorf("asset: %w", err)
+		return nil, 0, fmt.Errorf("asset: %w", err)
 	}
-	return Served{Body: body, Size: info.Size}, nil
+	return body, info.Size, nil
 }
 
 // Disposition returns the Content-Disposition of loc: inline for an image,
 // and an attachment for any other type, which a browser then saves rather
 // than shows (FR-ASSET-02 AC3), with a file name made of the asset's ID and
-// the extension of its key.
+// the extension of its key. Every type that an upload takes is an image, so
+// no asset is an attachment yet, but a type that a later change takes is
+// saved rather than shown unless the change says otherwise.
 func Disposition(loc Located) string {
 	kind := "attachment"
 	if strings.HasPrefix(loc.ContentType, "image/") {
