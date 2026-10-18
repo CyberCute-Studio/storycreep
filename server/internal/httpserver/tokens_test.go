@@ -513,13 +513,14 @@ func tokenIDs(t *testing.T, h http.Handler, si signedIn, path string) []string {
 
 // TestTokenLifecycle checks what making, listing, and revoking tokens does
 // (NFR-SEC-05): a token holds its scopes once each, in the order of the
-// PRD's table, with an optional expiry, after which it fails; the lists
-// show the workspace's owners and admins every member's tokens, and an
-// editor, or a guest with an editor's grant on a project, their own;
+// PRD's table, with an optional expiry, which its making, the lists, and the
+// audit log give alike, as the database holds it, and after which it fails;
+// the lists show the workspace's owners and admins every member's tokens,
+// and an editor, or a guest with an editor's grant on a project, their own;
 // revoking one makes it fail at once, and leaves it off the lists, and only
 // an owner or an admin revokes another member's. A field that its schema or
-// the service refuses is answered with 422, and a request that sends no
-// API token in its Authorization header is made with its session.
+// the service refuses is answered with 422, and a request that sends no API
+// token in its Authorization header is made with its session.
 //
 // Verifies: NFR-SEC-05, FR-TEN-07/AC2
 func TestTokenLifecycle(t *testing.T) {
@@ -666,6 +667,36 @@ func TestTokenLifecycle(t *testing.T) {
 		bearer(write.Secret)), http.StatusOK)
 	wantCode(t, "a session's change without its CSRF token", call(f.s.main, http.MethodPatch, projectPath(p),
 		jsonBody(t, map[string]string{"name": "Quay"}), owner.header(false)), http.StatusForbidden, api.CodeCSRFFailed)
+
+	// An expiry finer than the database's microseconds, in another offset,
+	// is answered as the database holds it, as the list and the audit log
+	// show it.
+	fine := time.Now().Add(time.Hour).Truncate(time.Second).Add(123456789 * time.Nanosecond).
+		In(time.FixedZone("", 2*60*60))
+	precise := createdToken(t, call(f.s.main, http.MethodPost, workspaceTokensPath(f.ws), jsonBody(t, map[string]any{
+		"name": "CI", "scopes": []string{"snapshot:read"}, "expires_at": fine}), owner.header(true)))
+	stored := fine.Truncate(time.Microsecond)
+	if precise.ExpiresAt == nil || !precise.ExpiresAt.Equal(stored) {
+		t.Errorf("the token made to expire at %v expires at %v, want %v", fine, precise.ExpiresAt, stored)
+	}
+	var page struct {
+		Items []APITokenBody `json:"items"`
+	}
+	if err := json.Unmarshal(call(f.s.main, http.MethodGet, workspaceTokensPath(f.ws), nil, owner.header(false)).body,
+		&page); err != nil {
+		t.Fatal(err)
+	}
+	for _, listed := range page.Items {
+		if listed.ID == precise.ID && (listed.ExpiresAt == nil || !listed.ExpiresAt.Equal(*precise.ExpiresAt)) {
+			t.Errorf("the list shows the token to expire at %v, and making it %v", listed.ExpiresAt,
+				precise.ExpiresAt)
+		}
+	}
+	if n := f.count(t, "SELECT count(*) FROM audit_entry WHERE action = 'token.create' AND subject_id = $1 "+
+		"AND metadata->>'expires_at' = $2", decode(t, ids.APIToken, precise.ID),
+		stored.UTC().Format(time.RFC3339Nano)); n != 1 {
+		t.Errorf("%d entries of the token's making record its expiry as %s", n, stored.UTC().Format(time.RFC3339Nano))
+	}
 }
 
 // TestTokenRateLimit checks that a request made with an API token counts

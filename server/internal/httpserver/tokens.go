@@ -77,13 +77,10 @@ type APITokenBody struct {
 
 func newAPITokenBody(t apitoken.Token) APITokenBody {
 	b := APITokenBody{ID: ids.Encode(ids.APIToken, t.ID), WorkspaceID: ids.Encode(ids.Workspace, t.WorkspaceID),
-		UserID: ids.Encode(ids.User, t.UserID), Name: t.Name, Scopes: make([]string, len(t.Scopes)),
+		UserID: ids.Encode(ids.User, t.UserID), Name: t.Name, Scopes: scope.Names(t.Scopes),
 		ExpiresAt: t.ExpiresAt, LastUsedAt: t.LastUsedAt, CreatedAt: t.CreatedAt}
 	if t.ProjectID != (ids.UUID{}) {
 		b.ProjectID = ids.Encode(ids.Project, t.ProjectID)
-	}
-	for i, s := range t.Scopes {
-		b.Scopes[i] = string(s)
 	}
 	return b
 }
@@ -107,7 +104,7 @@ type tokensOutput struct {
 type createTokenBody struct {
 	Name      string     `json:"name" maxLength:"100" doc:"The token's name, which says what it is for, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls, and line separators among them. White space around it is removed."`
 	Scopes    []string   `json:"scopes" nullable:"false" minItems:"1" enum:"snapshot:read,project:read,project:write,snapshot:write,export:read" doc:"The scopes that the token holds, one at least, each kept once: snapshot:read reads the published snapshots; project:read reads the draft too, and implies snapshot:read; project:write changes the draft, and implies project:read; snapshot:write publishes snapshots, and implies snapshot:read; and export:read is the authoring-data export, which no other scope implies. A token that must not see unreleased work, such as a CI job's that only pulls releases, holds snapshot:read alone."`
-	ExpiresAt *time.Time `json:"expires_at,omitempty" doc:"When the token expires, in RFC 3339, which must be in the future; without it, the token does not expire"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty" doc:"When the token expires, in RFC 3339, which must be in the future, and which the server keeps to the microsecond, as the answer gives it; without it, the token does not expire"`
 }
 
 // spec returns the token that b asks for.

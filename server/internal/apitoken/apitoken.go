@@ -568,16 +568,18 @@ func insert(ctx context.Context, tx pgx.Tx, owner, workspaceID, projectID ids.UU
 	}
 	created, err := queries.New(tx).InsertToken(ctx, queries.InsertTokenParams{ID: nullUUID(id),
 		WorkspaceID: nullUUID(workspaceID), UserID: nullUUID(owner), ProjectID: nullUUID(projectID), Name: spec.Name,
-		TokenHash: hash, Scopes: names(spec.Scopes), ExpiresAt: expires})
+		TokenHash: hash, Scopes: scope.Names(spec.Scopes), ExpiresAt: expires})
 	if err != nil {
 		return Issued{}, fmt.Errorf("apitoken: add the token: %w", err)
 	}
-	metadata := map[string]any{"user_id": owner.String(), "scopes": names(spec.Scopes)}
+	// The expiry is the one that the database holds, to the microsecond, as
+	// the lists of tokens show it, rather than the one that spec asked for.
+	metadata := map[string]any{"user_id": owner.String(), "scopes": scope.Names(spec.Scopes)}
 	if projectID != (ids.UUID{}) {
 		metadata["project_id"] = projectID.String()
 	}
-	if expires.Valid {
-		metadata["expires_at"] = spec.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	if created.ExpiresAt.Valid {
+		metadata["expires_at"] = created.ExpiresAt.Time.UTC().Format(time.RFC3339Nano)
 	}
 	if err := audit.Record(ctx, tx, audit.Entry{Action: audit.ActionTokenCreate, WorkspaceID: workspaceID,
 		ActorUserID: actor, SubjectID: id, Result: audit.ResultSuccess, IP: client.IP, UserAgent: client.UserAgent,
@@ -585,7 +587,7 @@ func insert(ctx context.Context, tx pgx.Tx, owner, workspaceID, projectID ids.UU
 		return Issued{}, err
 	}
 	t := Token{ID: id, WorkspaceID: workspaceID, UserID: owner, ProjectID: projectID, Name: spec.Name,
-		Scopes: spec.Scopes, ExpiresAt: timeOf(expires), CreatedAt: created.Time}
+		Scopes: spec.Scopes, ExpiresAt: timeOf(created.ExpiresAt), CreatedAt: created.CreatedAt.Time}
 	return Issued{Token: t, Secret: secret.New(Prefix + value.Reveal())}, nil
 }
 
@@ -593,8 +595,8 @@ func insert(ctx context.Context, tx pgx.Tx, owner, workspaceID, projectID ids.UU
 // not revoked, narrowed to the project projectID, or of the whole workspace
 // if it is zero, and locks it until q's transaction ends, or ErrNotFound if
 // there is no such token.
-func lockToken(ctx context.Context, q *queries.Queries, workspaceID, tokenID, projectID ids.UUID) (queries.ApiToken,
-	error) {
+func lockToken(ctx context.Context, q *queries.Queries, workspaceID, tokenID, projectID ids.UUID) (
+	queries.LockTokenRow, error) {
 	t, err := q.LockToken(ctx, queries.LockTokenParams{WorkspaceID: nullUUID(workspaceID), ID: nullUUID(tokenID),
 		ProjectID: nullUUID(projectID)})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -608,7 +610,7 @@ func lockToken(ctx context.Context, q *queries.Queries, workspaceID, tokenID, pr
 
 // revoke revokes the token t, which lockToken locked, which the user actor
 // asks for, as client, and records that in the audit log, in tx.
-func revoke(ctx context.Context, tx pgx.Tx, t queries.ApiToken, actor ids.UUID, client audit.Client) error {
+func revoke(ctx context.Context, tx pgx.Tx, t queries.LockTokenRow, actor ids.UUID, client audit.Client) error {
 	if err := queries.New(tx).RevokeToken(ctx, queries.RevokeTokenParams{WorkspaceID: t.WorkspaceID,
 		ID: t.ID}); err != nil {
 		return fmt.Errorf("apitoken: revoke the token: %w", err)
@@ -756,10 +758,11 @@ func liveProject(ctx context.Context, q *queries.Queries, workspaceID, projectID
 	return nil
 }
 
-// tokensOf returns the tokens that rows hold.
-func tokensOf(rows []queries.ApiToken) []Token {
+// tokensOf returns the tokens that rows, of a list of tokens, hold.
+func tokensOf[R queries.WorkspaceTokensRow | queries.ProjectTokensRow](rows []R) []Token {
 	out := make([]Token, len(rows))
-	for i, t := range rows {
+	for i, row := range rows {
+		t := queries.WorkspaceTokensRow(row)
 		out[i] = Token{ID: t.ID.Bytes, WorkspaceID: t.WorkspaceID.Bytes, UserID: t.UserID.Bytes,
 			ProjectID: t.ProjectID.Bytes, Name: t.Name, Scopes: scopesOf(t.Scopes), ExpiresAt: timeOf(t.ExpiresAt),
 			LastUsedAt: timeOf(t.LastUsedAt), CreatedAt: t.CreatedAt.Time}
@@ -772,15 +775,6 @@ func scopesOf(names []string) []scope.Scope {
 	out := make([]scope.Scope, len(names))
 	for i, n := range names {
 		out[i] = scope.Scope(n)
-	}
-	return out
-}
-
-// names returns the names of the scopes, as the database holds them.
-func names(scopes []scope.Scope) []string {
-	out := make([]string, len(scopes))
-	for i, s := range scopes {
-		out[i] = string(s)
 	}
 	return out
 }

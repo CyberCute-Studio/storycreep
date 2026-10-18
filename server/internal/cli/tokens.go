@@ -127,7 +127,7 @@ the expiry is not valid.
 		}
 		fmt.Fprintf(inv.stderr, "Made the API token %s of %s for %s, with the scopes %s. Its secret, which is "+
 			"shown only now, follows on standard output.\n", ids.Encode(ids.APIToken, issued.ID), where, email,
-			strings.Join(scopeNames(issued.Scopes), ", "))
+			strings.Join(scope.Names(issued.Scopes), ", "))
 		fmt.Fprintln(inv.stdout, issued.Secret.Reveal())
 		return nil
 	},
@@ -144,7 +144,7 @@ func parseScopes(list string) ([]scope.Scope, error) {
 			continue
 		case !s.Known():
 			return nil, usageError{fmt.Sprintf("unknown scope %q; a scope is %s", s,
-				strings.Join(scopeNames(scope.All()), ", "))}
+				strings.Join(scope.Names(scope.All()), ", "))}
 		case !slices.Contains(out, s):
 			out = append(out, s)
 		}
@@ -153,13 +153,4 @@ func parseScopes(list string) ([]scope.Scope, error) {
 		return nil, usageError{"--scopes lists no scope; a token holds one at least"}
 	}
 	return out, nil
-}
-
-// scopeNames returns the names of the scopes.
-func scopeNames(scopes []scope.Scope) []string {
-	out := make([]string, len(scopes))
-	for i, s := range scopes {
-		out[i] = string(s)
-	}
-	return out
 }

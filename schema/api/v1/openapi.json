@@ -195,7 +195,7 @@
         "additionalProperties": false,
         "properties": {
           "expires_at": {
-            "description": "When the token expires, in RFC 3339, which must be in the future; without it, the token does not expire",
+            "description": "When the token expires, in RFC 3339, which must be in the future, and which the server keeps to the microsecond, as the answer gives it; without it, the token does not expire",
             "format": "date-time",
             "type": "string"
           },

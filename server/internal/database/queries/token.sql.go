@@ -14,7 +14,7 @@ import (
 const insertToken = `-- name: InsertToken :one
 INSERT INTO api_token (id, workspace_id, user_id, project_id, name, token_hash, scopes, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING created_at
+RETURNING created_at, expires_at
 `
 
 type InsertTokenParams struct {
@@ -28,8 +28,14 @@ type InsertTokenParams struct {
 	ExpiresAt   pgtype.Timestamptz
 }
 
-// InsertToken adds a token, and returns when it was created.
-func (q *Queries) InsertToken(ctx context.Context, arg InsertTokenParams) (pgtype.Timestamptz, error) {
+type InsertTokenRow struct {
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
+// InsertToken adds a token, and returns when it was created and when it
+// expires, as the database holds it: to the microsecond.
+func (q *Queries) InsertToken(ctx context.Context, arg InsertTokenParams) (InsertTokenRow, error) {
 	row := q.db.QueryRow(ctx, insertToken,
 		arg.ID,
 		arg.WorkspaceID,
@@ -40,13 +46,13 @@ func (q *Queries) InsertToken(ctx context.Context, arg InsertTokenParams) (pgtyp
 		arg.Scopes,
 		arg.ExpiresAt,
 	)
-	var created_at pgtype.Timestamptz
-	err := row.Scan(&created_at)
-	return created_at, err
+	var i InsertTokenRow
+	err := row.Scan(&i.CreatedAt, &i.ExpiresAt)
+	return i, err
 }
 
 const lockToken = `-- name: LockToken :one
-SELECT id, workspace_id, user_id, project_id, name, token_hash, scopes, expires_at, last_used_at, revoked_at, created_at, updated_at FROM api_token
+SELECT id, workspace_id, user_id, project_id FROM api_token
 WHERE workspace_id = $1 AND id = $2 AND revoked_at IS NULL
     AND project_id IS NOT DISTINCT FROM $3::uuid
 FOR UPDATE
@@ -58,31 +64,31 @@ type LockTokenParams struct {
 	ProjectID   pgtype.UUID
 }
 
+type LockTokenRow struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	UserID      pgtype.UUID
+	ProjectID   pgtype.UUID
+}
+
 // LockToken returns the token that is not revoked, narrowed to the project
-// project_id, or of the whole workspace if it is null, and locks it until the
-// transaction ends, or no row if the workspace has no such token.
-func (q *Queries) LockToken(ctx context.Context, arg LockTokenParams) (ApiToken, error) {
+// project_id, or of the whole workspace if it is null, with its owner, and
+// locks it until the transaction ends, or no row if the workspace has no such
+// token.
+func (q *Queries) LockToken(ctx context.Context, arg LockTokenParams) (LockTokenRow, error) {
 	row := q.db.QueryRow(ctx, lockToken, arg.WorkspaceID, arg.ID, arg.ProjectID)
-	var i ApiToken
+	var i LockTokenRow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
 		&i.UserID,
 		&i.ProjectID,
-		&i.Name,
-		&i.TokenHash,
-		&i.Scopes,
-		&i.ExpiresAt,
-		&i.LastUsedAt,
-		&i.RevokedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const projectTokens = `-- name: ProjectTokens :many
-SELECT id, workspace_id, user_id, project_id, name, token_hash, scopes, expires_at, last_used_at, revoked_at, created_at, updated_at FROM api_token
+SELECT id, workspace_id, user_id, project_id, name, scopes, expires_at, last_used_at, created_at FROM api_token
 WHERE workspace_id = $1 AND project_id = $2 AND revoked_at IS NULL
     AND ($3::uuid IS NULL OR user_id = $3::uuid)
     AND ($4::uuid IS NULL OR id > $4::uuid)
@@ -98,11 +104,23 @@ type ProjectTokensParams struct {
 	MaxRows     int32
 }
 
+type ProjectTokensRow struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	UserID      pgtype.UUID
+	ProjectID   pgtype.UUID
+	Name        string
+	Scopes      []string
+	ExpiresAt   pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
 // ProjectTokens returns the tokens narrowed to the project that are not
 // revoked, expired ones included, those of the user user_id alone unless it
 // is null, in the order of their IDs, after the token after, or from the
-// first if after is null.
-func (q *Queries) ProjectTokens(ctx context.Context, arg ProjectTokensParams) ([]ApiToken, error) {
+// first if after is null, as WorkspaceTokens returns them.
+func (q *Queries) ProjectTokens(ctx context.Context, arg ProjectTokensParams) ([]ProjectTokensRow, error) {
 	rows, err := q.db.Query(ctx, projectTokens,
 		arg.WorkspaceID,
 		arg.ProjectID,
@@ -114,22 +132,19 @@ func (q *Queries) ProjectTokens(ctx context.Context, arg ProjectTokensParams) ([
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ApiToken
+	var items []ProjectTokensRow
 	for rows.Next() {
-		var i ApiToken
+		var i ProjectTokensRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkspaceID,
 			&i.UserID,
 			&i.ProjectID,
 			&i.Name,
-			&i.TokenHash,
 			&i.Scopes,
 			&i.ExpiresAt,
 			&i.LastUsedAt,
-			&i.RevokedAt,
 			&i.CreatedAt,
-			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -303,7 +318,7 @@ func (q *Queries) TouchToken(ctx context.Context, arg TouchTokenParams) error {
 }
 
 const workspaceTokens = `-- name: WorkspaceTokens :many
-SELECT id, workspace_id, user_id, project_id, name, token_hash, scopes, expires_at, last_used_at, revoked_at, created_at, updated_at FROM api_token
+SELECT id, workspace_id, user_id, project_id, name, scopes, expires_at, last_used_at, created_at FROM api_token
 WHERE workspace_id = $1 AND project_id IS NULL AND revoked_at IS NULL
     AND ($2::uuid IS NULL OR user_id = $2::uuid)
     AND ($3::uuid IS NULL OR id > $3::uuid)
@@ -318,11 +333,24 @@ type WorkspaceTokensParams struct {
 	MaxRows     int32
 }
 
+type WorkspaceTokensRow struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	UserID      pgtype.UUID
+	ProjectID   pgtype.UUID
+	Name        string
+	Scopes      []string
+	ExpiresAt   pgtype.Timestamptz
+	LastUsedAt  pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
 // WorkspaceTokens returns the workspace's tokens of the whole workspace that
 // are not revoked, expired ones included, those of the user user_id alone
 // unless it is null, in the order of their IDs, after the token after, or
-// from the first if after is null.
-func (q *Queries) WorkspaceTokens(ctx context.Context, arg WorkspaceTokensParams) ([]ApiToken, error) {
+// from the first if after is null, without the hashes of their secrets,
+// which nothing that lists them needs.
+func (q *Queries) WorkspaceTokens(ctx context.Context, arg WorkspaceTokensParams) ([]WorkspaceTokensRow, error) {
 	rows, err := q.db.Query(ctx, workspaceTokens,
 		arg.WorkspaceID,
 		arg.UserID,
@@ -333,22 +361,19 @@ func (q *Queries) WorkspaceTokens(ctx context.Context, arg WorkspaceTokensParams
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ApiToken
+	var items []WorkspaceTokensRow
 	for rows.Next() {
-		var i ApiToken
+		var i WorkspaceTokensRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkspaceID,
 			&i.UserID,
 			&i.ProjectID,
 			&i.Name,
-			&i.TokenHash,
 			&i.Scopes,
 			&i.ExpiresAt,
 			&i.LastUsedAt,
-			&i.RevokedAt,
 			&i.CreatedAt,
-			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

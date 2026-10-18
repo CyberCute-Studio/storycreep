@@ -63,6 +63,16 @@ func (s Scope) Known() bool {
 	return ok
 }
 
+// Names returns the names of the scopes, in their order, as the API and the
+// database write them.
+func Names(scopes []Scope) []string {
+	out := make([]string, len(scopes))
+	for i, s := range scopes {
+		out[i] = string(s)
+	}
+	return out
+}
+
 // Grants reports whether held, the scopes that a token holds, grant needed:
 // whether needed is one of them, or one of them implies it, directly or
 // through another. Nothing grants a scope that is not one, as "".

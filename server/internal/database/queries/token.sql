@@ -47,17 +47,19 @@ WHERE workspace_id = @workspace_id AND id = @id AND revoked_at IS NULL
     AND (last_used_at IS NULL OR last_used_at <= now() - interval '1 minute');
 
 -- name: InsertToken :one
--- InsertToken adds a token, and returns when it was created.
+-- InsertToken adds a token, and returns when it was created and when it
+-- expires, as the database holds it: to the microsecond.
 INSERT INTO api_token (id, workspace_id, user_id, project_id, name, token_hash, scopes, expires_at)
 VALUES (@id, @workspace_id, @user_id, sqlc.narg(project_id), @name, @token_hash, @scopes, sqlc.narg(expires_at))
-RETURNING created_at;
+RETURNING created_at, expires_at;
 
 -- name: WorkspaceTokens :many
 -- WorkspaceTokens returns the workspace's tokens of the whole workspace that
 -- are not revoked, expired ones included, those of the user user_id alone
 -- unless it is null, in the order of their IDs, after the token after, or
--- from the first if after is null.
-SELECT * FROM api_token
+-- from the first if after is null, without the hashes of their secrets,
+-- which nothing that lists them needs.
+SELECT id, workspace_id, user_id, project_id, name, scopes, expires_at, last_used_at, created_at FROM api_token
 WHERE workspace_id = @workspace_id AND project_id IS NULL AND revoked_at IS NULL
     AND (sqlc.narg(user_id)::uuid IS NULL OR user_id = sqlc.narg(user_id)::uuid)
     AND (sqlc.narg(after)::uuid IS NULL OR id > sqlc.narg(after)::uuid)
@@ -68,8 +70,8 @@ LIMIT @max_rows;
 -- ProjectTokens returns the tokens narrowed to the project that are not
 -- revoked, expired ones included, those of the user user_id alone unless it
 -- is null, in the order of their IDs, after the token after, or from the
--- first if after is null.
-SELECT * FROM api_token
+-- first if after is null, as WorkspaceTokens returns them.
+SELECT id, workspace_id, user_id, project_id, name, scopes, expires_at, last_used_at, created_at FROM api_token
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND revoked_at IS NULL
     AND (sqlc.narg(user_id)::uuid IS NULL OR user_id = sqlc.narg(user_id)::uuid)
     AND (sqlc.narg(after)::uuid IS NULL OR id > sqlc.narg(after)::uuid)
@@ -78,9 +80,10 @@ LIMIT @max_rows;
 
 -- name: LockToken :one
 -- LockToken returns the token that is not revoked, narrowed to the project
--- project_id, or of the whole workspace if it is null, and locks it until the
--- transaction ends, or no row if the workspace has no such token.
-SELECT * FROM api_token
+-- project_id, or of the whole workspace if it is null, with its owner, and
+-- locks it until the transaction ends, or no row if the workspace has no such
+-- token.
+SELECT id, workspace_id, user_id, project_id FROM api_token
 WHERE workspace_id = @workspace_id AND id = @id AND revoked_at IS NULL
     AND project_id IS NOT DISTINCT FROM sqlc.narg(project_id)::uuid
 FOR UPDATE;

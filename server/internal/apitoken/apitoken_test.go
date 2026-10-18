@@ -24,11 +24,11 @@ func uuid(id ids.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: id, Valid: true}
 }
 
-// idsOf returns the IDs of the tokens.
-func idsOf(rows []queries.ApiToken, err error) ([]ids.UUID, error) {
+// idsOf returns the IDs of the tokens of a list.
+func idsOf[R queries.WorkspaceTokensRow | queries.ProjectTokensRow](rows []R, err error) ([]ids.UUID, error) {
 	var out []ids.UUID
-	for _, t := range rows {
-		out = append(out, t.ID.Bytes)
+	for _, row := range rows {
+		out = append(out, queries.WorkspaceTokensRow(row).ID.Bytes)
 	}
 	return out, err
 }

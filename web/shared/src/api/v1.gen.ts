@@ -65,7 +65,7 @@ export interface CreateProjectBody {
 }
 
 export interface CreateTokenBody {
-  /** When the token expires, in RFC 3339, which must be in the future; without it, the token does not expire */
+  /** When the token expires, in RFC 3339, which must be in the future, and which the server keeps to the microsecond, as the answer gives it; without it, the token does not expire */
   expires_at?: string;
   /** The token's name, which says what it is for, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls, and line separators among them. White space around it is removed. */
   name: string;
