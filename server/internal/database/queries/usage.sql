@@ -66,6 +66,19 @@ SELECT (
         0)
 )::bigint AS drift;
 
+-- name: ProjectDrift :one
+-- ProjectDrift returns how many of the workspace's projects count towards its
+-- projects, those that are neither archived nor in the trash (FR-PROJ-01),
+-- less its usage of projects: what reconciliation adds to its usage so that
+-- the usage is the count again.
+SELECT (
+    (SELECT count(*) FROM project p
+        WHERE p.workspace_id = @workspace_id AND p.archived_at IS NULL AND p.deleted_at IS NULL)
+    - coalesce((SELECT c.value FROM usage_counter c WHERE c.workspace_id = @workspace_id AND c.key = 'projects'), 0)
+    - coalesce((SELECT sum(d.delta) FROM usage_delta d WHERE d.workspace_id = @workspace_id AND d.key = 'projects'),
+        0)
+)::bigint AS drift;
+
 -- name: WorkspaceIDs :many
 -- WorkspaceIDs returns the IDs of the workspaces after the workspace after,
 -- or from the first if after is null, up to and including the workspace

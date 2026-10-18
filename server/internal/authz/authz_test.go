@@ -24,7 +24,8 @@ var roles = []role.Role{role.Owner, role.Admin, role.Editor, role.Commenter, rol
 func TestMatrix(t *testing.T) {
 	t.Parallel()
 	const y, n = true, false
-	// want[op] is §5.6's row: owner, admin, editor, commenter, viewer.
+	// want[op] is §5.6's row: owner, admin, editor, commenter, viewer, and
+	// scopes[op] its Resolved by column.
 	want := map[Operation][5]bool{
 		// List members and their roles (W).
 		ListMembers: {y, y, y, y, y},
@@ -36,15 +37,26 @@ func TestMatrix(t *testing.T) {
 		ManageOwners: {y, n, n, n, n},
 		// Workspace settings, retention, 2FA policy (W).
 		ManageWorkspaceSettings: {y, y, n, n, n},
+		// Create/delete projects (W).
+		ManageProjects: {y, y, n, n, n},
+		// Read project content, run play mode, view dependencies (P).
+		ReadProject: {y, y, y, y, y},
+		// Change project settings, including publish_min_role (P).
+		ChangeProjectSettings: {y, y, n, n, n},
 	}
+	scopes := map[Operation]Scope{ReadProject: Project, ChangeProjectSettings: Project}
 	for _, op := range Operations() {
 		row, ok := want[op]
 		if !ok {
 			t.Errorf("%s has no row of §5.6 in the test", op)
 			continue
 		}
-		if op.Scope() != Workspace {
-			t.Errorf("%s is resolved by %q, want the workspace role (W)", op, op.Scope())
+		scope := Workspace
+		if s, ok := scopes[op]; ok {
+			scope = s
+		}
+		if op.Scope() != scope {
+			t.Errorf("%s is resolved by %q, want %q", op, op.Scope(), scope)
 		}
 		for i, r := range roles {
 			allowed := i < len(row) && row[i]
@@ -67,8 +79,8 @@ func TestMatrix(t *testing.T) {
 	if len(want) != len(Operations()) {
 		t.Errorf("the test has %d rows, and the matrix %d operations", len(want), len(Operations()))
 	}
-	if Operation("project.read").Known() || Allows(role.Owner, "project.read") ||
-		!errors.Is(Check(role.Owner, "project.read"), ErrInsufficientRole) {
+	if Operation("project.publish").Known() || Allows(role.Owner, "project.publish") ||
+		!errors.Is(Check(role.Owner, "project.publish"), ErrInsufficientRole) {
 		t.Errorf("an operation that is not in the matrix is allowed")
 	}
 }

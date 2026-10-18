@@ -107,8 +107,8 @@ func TestDecodeRefusesInvalidBatches(t *testing.T) {
 	if got, ok := cmds[0].payload.(notePayload); !ok || got != (notePayload{ID: id, Body: "fine"}) {
 		t.Errorf("the payload decodes as %#v", cmds[0].payload)
 	}
-	if !sameJSON(t, cmds[0].encoded, valid) || !slices.Equal(cmds[0].adds, []int64{1}) {
-		t.Errorf("the command encodes as %s, and adds %v", cmds[0].encoded, cmds[0].adds)
+	if !sameJSON(t, cmds[0].encoded, valid) {
+		t.Errorf("the command encodes as %s", cmds[0].encoded)
 	}
 }
 
@@ -183,6 +183,7 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 		}},
 		{"both inverse and non-undoable", func(s *Spec[notePayload]) { s.NonUndoable = true }},
 		{"neither inverse nor non-undoable", func(s *Spec[notePayload]) { s.Inverse = nil }},
+		{"in the trash but not archived", func(s *Spec[notePayload]) { s.Trashed = true }},
 		{"no apply", func(s *Spec[notePayload]) { s.Apply = nil }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -318,6 +319,7 @@ func TestResult(t *testing.T) {
 		ErrOwnerRequired:                      resultDenied,
 		&entitlements.LimitError{}:            resultOverLimit,
 		&RevisionConflictError{}:              resultRevisionConflict,
+		ErrProjectArchived:                    resultArchived,
 		fmt.Errorf("wrapped: %w", errRefused): resultRejected,
 	} {
 		if got := result(err); got != want {

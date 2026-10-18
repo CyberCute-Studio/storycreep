@@ -104,6 +104,30 @@
         ],
         "type": "object"
       },
+      "CreateProjectBody": {
+        "additionalProperties": false,
+        "properties": {
+          "default_locale": {
+            "description": "The locale of the project's text, as a BCP 47 tag of a language, such as en or cs-CZ, which the project keeps in its canonical form. Without it, the workspace's default locale.",
+            "maxLength": 64,
+            "type": "string"
+          },
+          "description": {
+            "description": "The project's description, of at most 2000 characters, without control characters but line feeds and tabs. White space around it is removed, and a line break written as CR LF, or as a CR alone, is kept as a line feed. Without it, the project has none.",
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "name": {
+            "description": "The project's name, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls, and line separators among them. White space around it is removed.",
+            "maxLength": 100,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "CreateWorkspaceBody": {
         "additionalProperties": false,
         "properties": {
@@ -576,6 +600,52 @@
         ],
         "type": "object"
       },
+      "PageProject": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Project"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "PageProjectBody": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectBody"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "PageSessionBody": {
         "additionalProperties": false,
         "properties": {
@@ -631,6 +701,204 @@
         "required": [
           "email"
         ],
+        "type": "object"
+      },
+      "Project": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "description": "When the project was archived, if it is: an archived project is read-only",
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the project was created",
+            "format": "date-time",
+            "type": "string"
+          },
+          "default_locale": {
+            "description": "The locale of the project's text, as a BCP 47 tag",
+            "type": "string"
+          },
+          "deleted_at": {
+            "description": "When the project was deleted to the trash, if it is there",
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "description": "The project's description, which may be empty",
+            "type": "string"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/ProjectEntry",
+            "description": "Where the game starts: the entry board, and the node on it"
+          },
+          "hard_delete_after": {
+            "description": "When a project in the trash is deleted for good, after which it cannot be restored",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "The project's ID",
+            "type": "string"
+          },
+          "name": {
+            "description": "The project's name",
+            "type": "string"
+          },
+          "publish_min_role": {
+            "description": "The least role that may publish the project's snapshots: editor, or admin once raised (PRD FR-SNAP-01 AC3)",
+            "enum": [
+              "editor",
+              "admin"
+            ],
+            "type": "string"
+          },
+          "rev": {
+            "description": "The project's revision, which every change of its name, description, settings, archiving, or deletion increments, and which a change expects with expected_rev",
+            "format": "int64",
+            "type": "integer"
+          },
+          "seq": {
+            "description": "The sequence number of the project's latest operation, 0 before its first",
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "description": "When the project last changed",
+            "format": "date-time",
+            "type": "string"
+          },
+          "workspace_id": {
+            "description": "The ID of the project's workspace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "description",
+          "default_locale",
+          "publish_min_role",
+          "entry",
+          "rev",
+          "seq",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ProjectBody": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "description": "When the project was archived, if it is: an archived project is read-only",
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the project was created",
+            "format": "date-time",
+            "type": "string"
+          },
+          "default_locale": {
+            "description": "The locale of the project's text, as a BCP 47 tag",
+            "type": "string"
+          },
+          "deleted_at": {
+            "description": "When the project was deleted to the trash, if it is there",
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "description": "The project's description, which may be empty",
+            "type": "string"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/ProjectEntry",
+            "description": "Where the game starts: the entry board, and the node on it"
+          },
+          "hard_delete_after": {
+            "description": "When a project in the trash is deleted for good, after which it cannot be restored",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "The project's ID",
+            "type": "string"
+          },
+          "name": {
+            "description": "The project's name",
+            "type": "string"
+          },
+          "publish_min_role": {
+            "description": "The least role that may publish the project's snapshots: editor, or admin once raised (PRD FR-SNAP-01 AC3)",
+            "enum": [
+              "editor",
+              "admin"
+            ],
+            "type": "string"
+          },
+          "rev": {
+            "description": "The project's revision, which every change of its name, description, settings, archiving, or deletion increments, and which a change expects with expected_rev",
+            "format": "int64",
+            "type": "integer"
+          },
+          "role": {
+            "description": "The role that the signed-in user acts with on the project: their grant on it, or else their role in its workspace, or owner for an instance admin when STORYCREEP_INSTANCE_ADMIN_ACCESS is on (PRD §5.5)",
+            "enum": [
+              "owner",
+              "admin",
+              "editor",
+              "commenter",
+              "viewer"
+            ],
+            "type": "string"
+          },
+          "seq": {
+            "description": "The sequence number of the project's latest operation, 0 before its first",
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "description": "When the project last changed",
+            "format": "date-time",
+            "type": "string"
+          },
+          "workspace_id": {
+            "description": "The ID of the project's workspace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "id",
+          "workspace_id",
+          "name",
+          "description",
+          "default_locale",
+          "publish_min_role",
+          "entry",
+          "rev",
+          "seq",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ProjectEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "board_id": {
+            "description": "The ID of the project's entry board, if it has one",
+            "type": "string"
+          },
+          "node_id": {
+            "description": "The ID of the entry node on the entry board, if it has one",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "RegisterBody": {
@@ -937,6 +1205,45 @@
         ],
         "type": "object"
       },
+      "UpdateProjectBody": {
+        "additionalProperties": false,
+        "properties": {
+          "default_locale": {
+            "description": "The new locale of the project's text, as a BCP 47 tag of a language",
+            "maxLength": 64,
+            "type": "string"
+          },
+          "description": {
+            "description": "The project's new description, as for POST /api/v1/workspaces/{workspace_id}/projects; empty for none",
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/ProjectEntry",
+            "description": "The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. Neither the board nor the node needs to exist yet."
+          },
+          "expected_rev": {
+            "description": "The project's revision that the change was made against. If the project has another, the answer is 409 revision_conflict, and nothing changes. Without it, the change is made whatever the revision. A body that names no field to change changes nothing, so it is answered with the project, whatever its revision.",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "description": "The project's new name, as for POST /api/v1/workspaces/{workspace_id}/projects",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "publish_min_role": {
+            "description": "The least role that may publish the project's snapshots: editor, or admin to keep editors from publishing (PRD FR-SNAP-01 AC3). A change is recorded in the audit log.",
+            "enum": [
+              "editor",
+              "admin"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "UpdateWorkspaceBody": {
         "additionalProperties": false,
         "properties": {
@@ -974,7 +1281,7 @@
           },
           "projects": {
             "$ref": "#/components/schemas/LimitUsageBody",
-            "description": "The workspace's projects"
+            "description": "The workspace's projects that count towards its limit: those that are neither archived nor in its trash"
           },
           "snapshots": {
             "$ref": "#/components/schemas/MeteredUsageBody",
@@ -2883,6 +3190,511 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}": {
+      "delete": {
+        "description": "Deletes a project to its workspace's trash, archived or not, where it stays for 30 days, and POST /api/v1/projects/{project_id}/restore restores it (PRD FR-PROJ-01 AC3). Then it is deleted for good, with all of its content. Meanwhile, every route of the project but that one answers it with 404 not_found, and it does not count towards the workspace's projects. Only an owner or an admin of the workspace may, and anyone else with a role on the project is answered with 403 insufficient_role. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.",
+        "operationId": "deleteProject",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Delete a project to the trash",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "get": {
+        "description": "Returns a project, with the role that the signed-in user acts with on it. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.",
+        "operationId": "getProject",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get a project",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "patch": {
+        "description": "Changes a project's name, description, default locale, publish_min_role, or entry, in one batch of the project's commands; a field that the body leaves out, or sets to null, stays as it is. Only an owner or an admin of the project may, and anyone else with a role on it is answered with 403 insufficient_role. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. A field whose value it does not allow is answered with 422 validation_failed. An archived project is read-only, and the change is answered with 409 project_archived. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.",
+        "operationId": "updateProject",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Change a project's name, description, or settings",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/archive": {
+      "post": {
+        "description": "Archives a project, which makes it read-only: every change of it but unarchiving, deleting, and restoring it is answered with 409 project_archived (PRD FR-PROJ-01 AC2). An archived project does not count towards the workspace's projects. Only an owner or an admin of the project may, and anyone else with a role on it is answered with 403 insufficient_role. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. A project that is archived already is answered with 409 project_archived. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.",
+        "operationId": "archiveProject",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Archive a project",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/restore": {
+      "post": {
+        "description": "Restores a project from its workspace's trash, as it was when it was deleted, within 30 days of its deletion; after that, it is answered with 404 not_found. A project that is not in the trash stays as it is. A restored project that is not archived counts towards the workspace's projects again: a workspace that has as many projects as its plan allows is answered with 409 limit_exceeded. Only an owner or an admin of the workspace may, and anyone else with a role on the project is answered with 403 insufficient_role. A project that does not exist, or on which the signed-in user's role is none, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.",
+        "operationId": "restoreProject",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Restore a project from the trash",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/unarchive": {
+      "post": {
+        "description": "Unarchives a project, which can then be changed again, and counts towards the workspace's projects again: a workspace that has as many projects as its plan allows is answered with 409 limit_exceeded. A project that is not archived stays as it is. Only an owner or an admin of the project may, and anyone else with a role on it is answered with 403 insufficient_role. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.",
+        "operationId": "unarchiveProject",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Unarchive a project",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
     "/api/v1/setup": {
       "get": {
         "description": "Tells a setup screen that the instance's first-run setup is pending, and whether it can choose the signup policy and the SMTP server. Once setup has completed, the answer is 404 not_found, for everyone, and stays so.",
@@ -4112,6 +4924,310 @@
         "summary": "Change a member's role",
         "tags": [
           "Members"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/projects": {
+      "get": {
+        "description": "Lists the workspace's projects that are not in its trash, archived ones included, in the order of their IDs, oldest first, each with the role that the signed-in user acts with on it. A guest is shown only the projects granted to them. A workspace that does not exist, or of which the signed-in user is neither a member nor an instance admin who acts as its owner, as with STORYCREEP_INSTANCE_ADMIN_ACCESS on, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.",
+        "operationId": "listProjects",
+        "parameters": [
+          {
+            "description": "The workspace's ID",
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "description": "The workspace's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageProjectBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List a workspace's projects",
+        "tags": [
+          "Projects"
+        ]
+      },
+      "post": {
+        "description": "Creates a project in the workspace. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. A name, a description, or a default locale that its field does not allow is answered with 422 validation_failed, and a workspace that has as many projects as its plan allows with 409 limit_exceeded; archived projects and those in the trash do not count. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.",
+        "operationId": "createProject",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace's ID",
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "description": "The workspace's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectBody"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "description": "The project's URL",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Create a project",
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/trash/projects": {
+      "get": {
+        "description": "Lists the workspace's projects that were deleted and can still be restored, in the order of their IDs, oldest first. A deleted project stays in the trash for 30 days, until its hard_delete_after, and is then deleted for good, with all of its content. Only an owner or an admin of the workspace may list them, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.",
+        "operationId": "listTrashedProjects",
+        "parameters": [
+          {
+            "description": "The workspace's ID",
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "description": "The workspace's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageProject"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many requests of its kind the client may make in a window of time, for its IP address or its account, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without a session or a CSRF token where the operation needs them, one that the signup policy refuses, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List the projects in a workspace's trash",
+        "tags": [
+          "Projects"
         ]
       }
     },

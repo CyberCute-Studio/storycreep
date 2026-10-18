@@ -49,6 +49,29 @@ func CheckName(name string, maxChars int) string {
 	return ""
 }
 
+// CheckText says what is wrong with a text of several lines that people are
+// shown, such as a project's description, or returns "". A text may be
+// empty, has at most maxChars characters, and no control character
+// (IsControl) but line feeds and tabs, which lay its lines out. The caller
+// writes its line breaks as line feeds first (LineFeeds).
+func CheckText(text string, maxChars int) string {
+	switch {
+	case utf8.RuneCountInString(text) > maxChars:
+		return fmt.Sprintf("is longer than %d characters", maxChars)
+	case strings.IndexFunc(text, func(r rune) bool { return r != '\n' && r != '\t' && IsControl(r) }) >= 0:
+		return "contains a control character"
+	}
+	return ""
+}
+
+// LineFeeds returns text with each line break that is written as CR LF, as
+// on Windows, or as a CR alone, written as a line feed, the one line break
+// that CheckText takes, so that such a text keeps its lines rather than being
+// refused for its control characters.
+func LineFeeds(text string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+}
+
 // Printed reports whether r is printed: a letter, a mark, a number,
 // punctuation, or a symbol, rather than a space, a control character, a
 // format character, such as U+200B ZERO WIDTH SPACE, or another character

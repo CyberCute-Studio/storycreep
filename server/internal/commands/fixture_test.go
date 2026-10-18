@@ -33,11 +33,11 @@ func TestMain(m *testing.M) {
 // to their own databases. Package ids knows it as a node, and the tests
 // write its ID so, as nd_….
 //
-// No operation of the permission matrix is about a project's content yet,
-// because each joins it with the requirement that adds it (plan item 20), so
-// the notes' commands need the matrix's workspace-scoped operations: listing
-// the members, which every role in the workspace may do, and changing the
-// workspace's settings, which owners and admins may.
+// The notes' commands need the operations of the permission matrix that
+// every role in the workspace may do, listing the members, and that owners
+// and admins may, changing the workspace's settings, which are
+// workspace-scoped, as no operation about a project's content that the
+// matrix has yet is (plan item 20).
 const noteSchema = `
 CREATE TABLE note (
 	id uuid PRIMARY KEY,
@@ -76,6 +76,12 @@ const (
 	// says, as creating a note would add to nodes. It declares the projects
 	// limit, and no other.
 	noteMeter Type = "note.meter"
+	// noteTouch changes nothing, and applies to an archived project too, as
+	// unarchiving one does, and noteRevive changes nothing either, and
+	// applies to an archived project and to one in the trash, as restoring
+	// one does.
+	noteTouch  Type = "note.touch"
+	noteRevive Type = "note.revive"
 )
 
 // errRefused is noteFail's refusal.
@@ -310,13 +316,23 @@ func noteRegistry() *Registry {
 	})
 	Register(r, Spec[meterPayload]{
 		Type: noteMeter, Capability: authz.ListMembers, Touches: touches, NonUndoable: true,
-		Limits: []Limit[meterPayload]{{Key: entitlements.Projects, Adds: func(p meterPayload) int64 {
+		Limits: []Limit[meterPayload]{{Key: entitlements.Projects, Adds: func(_ context.Context, _ *Tx,
+			p meterPayload) (int64, error) {
 			if p.Key == string(entitlements.Projects) && !p.Undeclared {
-				return p.Delta
+				return p.Delta, nil
 			}
-			return 0
+			return 0, nil
 		}}},
 		Apply: func(_ context.Context, tx *Tx, p meterPayload) error { return tx.AddUsage(usage.Key(p.Key), p.Delta) },
+	})
+	Register(r, Spec[noteIDPayload]{
+		Type: noteTouch, Capability: authz.ListMembers, Touches: touches, NonUndoable: true, Archived: true,
+		Apply: func(context.Context, *Tx, noteIDPayload) error { return nil },
+	})
+	Register(r, Spec[noteIDPayload]{
+		Type: noteRevive, Capability: authz.ListMembers, Touches: touches, NonUndoable: true, Archived: true,
+		Trashed: true,
+		Apply:   func(context.Context, *Tx, noteIDPayload) error { return nil },
 	})
 	return r
 }
@@ -434,7 +450,7 @@ func newWorld(t *testing.T) *world {
 	w.exec(t, noteSchema)
 	w.exec(t, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Harbour', $2, 'unlimited')", w.ws,
 		"harbour-"+w.ws.String()[:8])
-	w.exec(t, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", w.project, w.ws)
+	w.exec(t, "INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')", w.project, w.ws)
 	for name, membership := range map[string]string{ownerUser: "owner", adminUser: "admin", editorUser: "editor",
 		commenterUser: "commenter", viewerUser: "viewer", guestUser: "guest", grantedGuestUser: "guest",
 		grantedViewerUser: "viewer", instanceAdminUser: "", outsiderUser: ""} {

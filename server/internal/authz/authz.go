@@ -47,6 +47,17 @@ const (
 	// and reading its usage against its plan's limits, which its settings
 	// show (FR-ENT-02 AC2).
 	ManageWorkspaceSettings Operation = "workspace.settings"
+	// ManageProjects is creating a workspace's projects, deleting them to
+	// its trash, listing its trash, and restoring them from it (W, "Create/
+	// delete projects").
+	ManageProjects Operation = "workspace.projects"
+	// ReadProject is reading a project's content (P), which every role that
+	// allows anything allows.
+	ReadProject Operation = "project.read"
+	// ChangeProjectSettings is changing a project's settings (P): its name,
+	// description, default locale, entry board and node, and
+	// publish_min_role (FR-SNAP-01 AC3), and archiving and unarchiving it.
+	ChangeProjectSettings Operation = "project.settings"
 )
 
 // Scope is what an operation acts on, which says which role authorises it
@@ -93,6 +104,9 @@ var matrix = map[Operation]rule{
 	ManageMembers:           {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
 	ManageOwners:            {scope: Workspace, least: role.Owner, denied: ErrOwnerRequired},
 	ManageWorkspaceSettings: {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
+	ManageProjects:          {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
+	ReadProject:             {scope: Project, least: role.Viewer, denied: ErrInsufficientRole},
+	ChangeProjectSettings:   {scope: Project, least: role.Admin, denied: ErrInsufficientRole},
 }
 
 // Operations returns the operations of the matrix, in order of their names.

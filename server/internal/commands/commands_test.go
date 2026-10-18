@@ -27,6 +27,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
@@ -486,11 +487,11 @@ func TestNotFound(t *testing.T) {
 	otherProject := ids.New()
 	w.exec(t, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Other', $2, 'unlimited')", other,
 		"other-"+other.String()[:8])
-	w.exec(t, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", otherProject, other)
+	w.exec(t, "INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')", otherProject, other)
 	deleting, deletingProject := ids.New(), ids.New()
 	w.exec(t, "INSERT INTO workspace (id, name, slug, plan_key, status, deleted_at) "+
 		"VALUES ($1, 'Deleting', $2, 'unlimited', 'pending_deletion', now())", deleting, "deleting-"+deleting.String()[:8])
-	w.exec(t, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", deletingProject, deleting)
+	w.exec(t, "INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')", deletingProject, deleting)
 	w.exec(t, "INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'owner')", ids.New(),
 		deleting, w.users[ownerUser])
 	for name, project := range map[string]ids.UUID{"no project": ids.New(), "no ID": {},
@@ -510,7 +511,7 @@ func TestNotFound(t *testing.T) {
 	late, lateProject := ids.New(), ids.New()
 	w.exec(t, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Late', $2, 'unlimited')", late,
 		"late-"+late.String()[:8])
-	w.exec(t, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", lateProject, late)
+	w.exec(t, "INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')", lateProject, late)
 	w.exec(t, "INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'owner')", ids.New(), late,
 		w.users[ownerUser])
 	db := &betweenDB{DB: w.db, between: func() {
@@ -528,11 +529,13 @@ func TestNotFound(t *testing.T) {
 	}
 
 	// So does a deletion requested while the batch waits for the project's
-	// lock, after its transaction has read the workspace and the roles.
+	// lock, after its transaction has read the workspace and the roles, even
+	// with the project archived meanwhile, which would refuse the batch with
+	// ErrProjectArchived in an active workspace.
 	waiting, waitingProject := ids.New(), ids.New()
 	w.exec(t, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Waiting', $2, 'unlimited')", waiting,
 		"waiting-"+waiting.String()[:8])
-	w.exec(t, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", waitingProject, waiting)
+	w.exec(t, "INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')", waitingProject, waiting)
 	w.exec(t, "INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'owner')", ids.New(),
 		waiting, w.users[ownerUser])
 	holder := w.d.Admin(t)
@@ -556,6 +559,7 @@ func TestNotFound(t *testing.T) {
 		t.Fatalf("the batch does not wait for the project's lock: %v", <-done)
 	}
 	hold("UPDATE workspace SET status = 'pending_deletion', deleted_at = now() WHERE id = $1", waiting)
+	hold("UPDATE project SET archived_at = now() WHERE id = $1", waitingProject)
 	hold("COMMIT")
 	if err := <-done; !errors.Is(err, ErrNotFound) {
 		t.Errorf("a deletion requested while the batch waits for the lock: %v, want ErrNotFound", err)
@@ -567,7 +571,7 @@ func TestNotFound(t *testing.T) {
 	planned, plannedProject := ids.New(), ids.New()
 	w.exec(t, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Planned', $2, 'unlimited')", planned,
 		"planned-"+planned.String()[:8])
-	w.exec(t, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", plannedProject, planned)
+	w.exec(t, "INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')", plannedProject, planned)
 	w.exec(t, "INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'owner')", ids.New(),
 		planned, w.users[ownerUser])
 	read := false
@@ -589,6 +593,107 @@ func TestNotFound(t *testing.T) {
 	}
 	if got := w.written(t); got != (written{}) {
 		t.Errorf("the refused batches wrote %+v", got)
+	}
+}
+
+// TestProjectStates checks the batches of an archived project and of one in
+// the trash (FR-PROJ-01): an archived project refuses every batch with a
+// command that does not apply to an archived project with
+// ErrProjectArchived, to a role that its operation allows, and a project in
+// the trash refuses every batch with a command that does not apply there as
+// one that does not exist, whatever the actor's role, so that a refusal of
+// the role does not tell that it exists; a project whose time in the trash
+// has passed refuses every batch so; and a batch that waits for the lock of
+// a project that another transaction archives, or deletes to the trash,
+// meanwhile is refused too.
+//
+// Verifies: FR-PROJ-01/AC2
+func TestProjectStates(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	p := w.pipeline(t, nil)
+	_, note := newNote()
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteCreate, notePayload{ID: note, Body: "kept"}, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	update := command(t, noteUpdate, notePayload{ID: note, Body: "changed"}, nil)
+	touch := command(t, noteTouch, noteIDPayload{ID: note}, nil)
+	revive := command(t, noteRevive, noteIDPayload{ID: note}, nil)
+	remove := command(t, noteDelete, noteIDPayload{ID: note}, nil)
+	try := func(what, user string, want error, cmds ...Command) {
+		t.Helper()
+		for i := range cmds {
+			cmds[i].ID = ids.New()
+		}
+		if _, err := p.Apply(ctx, w.as(user), w.project, cmds); !errors.Is(err, want) {
+			t.Errorf("%s, as %s: %v, want %v", what, user, err, want)
+		}
+	}
+
+	w.exec(t, "UPDATE project SET archived_at = now() WHERE id = $1", w.project)
+	before := w.written(t)
+	try("change an archived project", ownerUser, ErrProjectArchived, update)
+	try("change an archived project", viewerUser, ErrProjectArchived, update)
+	try("delete a note of an archived project", viewerUser, ErrInsufficientRole, remove)
+	try("touch and change an archived project", ownerUser, ErrProjectArchived, touch, update)
+	if after := w.written(t); after != before {
+		t.Errorf("the refused batches wrote %+v, where there was %+v", after, before)
+	}
+	try("touch an archived project", viewerUser, nil, touch)
+
+	w.exec(t, "UPDATE project SET deleted_at = now(), hard_delete_after = now() + interval '1 day' WHERE id = $1",
+		w.project)
+	before = w.written(t)
+	try("change a project in the trash", ownerUser, ErrNotFound, update)
+	try("touch a project in the trash", ownerUser, ErrNotFound, touch)
+	try("delete a note of a project in the trash", viewerUser, ErrNotFound, remove)
+	try("revive and change a project in the trash", ownerUser, ErrNotFound, revive, update)
+	if after := w.written(t); after != before {
+		t.Errorf("the refused batches wrote %+v, where there was %+v", after, before)
+	}
+	try("revive a project in the trash", ownerUser, nil, revive)
+	try("revive a project in the trash", outsiderUser, ErrNotFound, revive)
+
+	w.exec(t, "UPDATE project SET hard_delete_after = now() - interval '1 second' WHERE id = $1", w.project)
+	try("revive a project whose time in the trash has passed", ownerUser, ErrNotFound, revive)
+
+	// A project that another transaction archives, or deletes to the trash,
+	// while a batch waits for its lock refuses the batch, as the project's
+	// state once the batch holds the lock says.
+	holder := w.d.Admin(t)
+	hold := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := holder.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	for _, c := range []struct {
+		what, change string
+		want         error
+	}{
+		{"archived", "archived_at = now()", ErrProjectArchived},
+		{"deleted to the trash", "deleted_at = now(), hard_delete_after = now() + interval '1 day'", ErrNotFound},
+	} {
+		w.exec(t, "UPDATE project SET archived_at = NULL, deleted_at = NULL, hard_delete_after = NULL "+
+			"WHERE id = $1", w.project)
+		hold("BEGIN")
+		hold("UPDATE project SET "+c.change+" WHERE id = $1", w.project)
+		done := make(chan error, 1)
+		batch := []Command{update}
+		batch[0].ID = ids.New()
+		go func() {
+			_, err := p.Apply(ctx, w.as(ownerUser), w.project, batch)
+			done <- err
+		}()
+		if !w.waitsForALock(t) {
+			hold("ROLLBACK")
+			t.Fatalf("the batch does not wait for the project's lock: %v", <-done)
+		}
+		hold("COMMIT")
+		if err := <-done; !errors.Is(err, c.want) {
+			t.Errorf("a batch that waited while the project was %s: %v, want %v", c.what, err, c.want)
+		}
 	}
 }
 
@@ -764,27 +869,37 @@ func TestLimits(t *testing.T) {
 func TestBatchAdds(t *testing.T) {
 	projects := &spec{limits: []entitlements.LimitKey{entitlements.Projects}}
 	both := &spec{limits: []entitlements.LimitKey{entitlements.StorageBytes, entitlements.Projects}}
-	adding := func(s *spec, adds ...int64) decoded { return decoded{spec: s, adds: adds} }
+	// adding is a command of the spec s that adds adds to its limits.
+	type adding struct {
+		s    *spec
+		adds []int64
+	}
 	for _, tt := range []struct {
 		name string
-		cmds []decoded
+		cmds []adding
 		keys []entitlements.LimitKey
 		want map[entitlements.LimitKey]int64
 	}{
-		{"none", []decoded{adding(&spec{})}, nil, map[entitlements.LimitKey]int64{}},
-		{"summed", []decoded{adding(projects, 2), adding(both, 5, 3), adding(projects, -1)},
+		{"none", []adding{{&spec{}, nil}}, nil, map[entitlements.LimitKey]int64{}},
+		{"summed", []adding{{projects, []int64{2}}, {both, []int64{5, 3}}, {projects, []int64{-1}}},
 			[]entitlements.LimitKey{entitlements.Projects, entitlements.StorageBytes},
 			map[entitlements.LimitKey]int64{entitlements.Projects: 4, entitlements.StorageBytes: 5}},
-		{"past the most", []decoded{adding(projects, math.MaxInt64-1), adding(projects, 2), adding(projects, -5)},
+		{"past the most", []adding{{projects, []int64{math.MaxInt64 - 1}}, {projects, []int64{2}},
+			{projects, []int64{-5}}},
 			[]entitlements.LimitKey{entitlements.Projects},
 			map[entitlements.LimitKey]int64{entitlements.Projects: math.MaxInt64}},
-		{"past the least", []decoded{adding(projects, math.MinInt64+1), adding(projects, -2), adding(projects, 3)},
+		{"past the least", []adding{{projects, []int64{math.MinInt64 + 1}}, {projects, []int64{-2}},
+			{projects, []int64{3}}},
 			[]entitlements.LimitKey{entitlements.Projects},
 			map[entitlements.LimitKey]int64{entitlements.Projects: math.MinInt64 + 3}},
 	} {
-		keys, adds := batchAdds(tt.cmds)
-		if !slices.Equal(keys, tt.keys) || !maps.Equal(adds, tt.want) {
-			t.Errorf("%s: %v, %v, want %v, %v", tt.name, keys, adds, tt.keys, tt.want)
+		cmds, adds := make([]decoded, len(tt.cmds)), make([][]int64, len(tt.cmds))
+		for i, c := range tt.cmds {
+			cmds[i], adds[i] = decoded{spec: c.s}, c.adds
+		}
+		keys, sums := batchAdds(cmds, adds)
+		if !slices.Equal(keys, tt.keys) || !maps.Equal(sums, tt.want) {
+			t.Errorf("%s: %v, %v, want %v, %v", tt.name, keys, sums, tt.keys, tt.want)
 		}
 	}
 }
@@ -792,7 +907,8 @@ func TestBatchAdds(t *testing.T) {
 // TestUndo checks that a batch with a command that cannot be undone has no
 // inverse, for which none of its commands' inverses is computed, and that a
 // command whose inverse could not be applied refuses a batch that can be
-// undone.
+// undone, with an error that does not pass for a problem of the batch's
+// payloads, which are valid.
 func TestUndo(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -811,8 +927,13 @@ func TestUndo(t *testing.T) {
 	for _, step := range []Type{"note.unknown", noteCreate} {
 		_, err := p.Apply(ctx, w.as(ownerUser), w.project,
 			[]Command{command(t, noteBadInverse, badInversePayload{ID: xID, Step: step}, map[Ref]int64{noteRef(x): 2})})
-		if err == nil {
+		var fields input.FieldErrors
+		switch {
+		case err == nil:
 			t.Errorf("a command undone by %s applies", step)
+		case errors.As(err, &fields):
+			t.Errorf("a command undone by %s is refused with the problems %v, as though the batch were not valid",
+				step, fields)
 		}
 	}
 	if after := w.written(t); after != before {
@@ -1057,6 +1178,7 @@ func TestMetrics(t *testing.T) {
 		`storycreep_command_batches_total{result="denied"}`:               1,
 		`storycreep_command_batches_total{result="rejected"}`:             1,
 		`storycreep_command_batches_total{result="over_limit"}`:           0,
+		`storycreep_command_batches_total{result="archived"}`:             0,
 		`storycreep_commands_applied_total{type="note.create"}`:           1,
 		`storycreep_commands_applied_total{type="note.update"}`:           1,
 		`storycreep_commands_applied_total{type="note.delete"}`:           0,

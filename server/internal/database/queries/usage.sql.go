@@ -161,6 +161,27 @@ func (q *Queries) MemberDrift(ctx context.Context, workspaceID pgtype.UUID) (int
 	return drift, err
 }
 
+const projectDrift = `-- name: ProjectDrift :one
+SELECT (
+    (SELECT count(*) FROM project p
+        WHERE p.workspace_id = $1 AND p.archived_at IS NULL AND p.deleted_at IS NULL)
+    - coalesce((SELECT c.value FROM usage_counter c WHERE c.workspace_id = $1 AND c.key = 'projects'), 0)
+    - coalesce((SELECT sum(d.delta) FROM usage_delta d WHERE d.workspace_id = $1 AND d.key = 'projects'),
+        0)
+)::bigint AS drift
+`
+
+// ProjectDrift returns how many of the workspace's projects count towards its
+// projects, those that are neither archived nor in the trash (FR-PROJ-01),
+// less its usage of projects: what reconciliation adds to its usage so that
+// the usage is the count again.
+func (q *Queries) ProjectDrift(ctx context.Context, workspaceID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, projectDrift, workspaceID)
+	var drift int64
+	err := row.Scan(&drift)
+	return drift, err
+}
+
 const randomWorkspaceID = `-- name: RandomWorkspaceID :one
 SELECT id FROM workspace ORDER BY random() LIMIT 1
 `

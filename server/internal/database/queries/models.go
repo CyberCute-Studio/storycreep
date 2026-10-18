@@ -3,3 +3,24 @@
 //   sqlc v1.31.1
 
 package queries
+
+import (
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+type Project struct {
+	ID              pgtype.UUID
+	WorkspaceID     pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	Seq             int64
+	Name            string
+	Description     string
+	Settings        []byte
+	Rev             int64
+	ArchivedAt      pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+	HardDeleteAfter pgtype.Timestamptz
+	CreatedBy       pgtype.UUID
+	UpdatedBy       pgtype.UUID
+}

@@ -21,6 +21,10 @@ const (
 	// the API answers with limit_exceeded.
 	resultOverLimit        = "over_limit"
 	resultRevisionConflict = "revision_conflict"
+	// resultArchived is a batch of an archived project that changes more than
+	// an archived project allows, which the API answers with
+	// project_archived.
+	resultArchived = "archived"
 	// resultRejected is a batch that a command refused, or that failed,
 	// which applied nothing.
 	resultRejected = "rejected"
@@ -28,7 +32,7 @@ const (
 
 // results are the results of a batch, which the metrics start at zero.
 var results = []string{resultApplied, resultInvalid, resultNotFound, resultDenied, resultOverLimit,
-	resultRevisionConflict, resultRejected}
+	resultRevisionConflict, resultArchived, resultRejected}
 
 // metrics are the pipeline's Prometheus metrics: the command throughput and
 // the conflict rate (PRD NFR-OBS-02). They label commands by their type,
@@ -45,11 +49,11 @@ func newMetrics(types []Type) *metrics {
 		batches: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "storycreep_command_batches_total",
 			Help: "Batches of commands that this instance's pipeline finished, by result: applied; invalid, refused " +
-				"before the database was read; not_found, for a project that does not exist, whose workspace is " +
-				"being deleted, or that the actor has no role on; denied, by the actor's role; over_limit, past a " +
-				"limit of the workspace's plan; " +
-				"revision_conflict, made against a revision that an entity no longer has; or rejected, refused by " +
-				"a command or failed. Only an applied batch changes anything.",
+				"before the database was read; not_found, for a project that does not exist, is in the trash, whose " +
+				"workspace is being deleted, or that the actor has no role on; denied, by the actor's role; " +
+				"over_limit, past a limit of the workspace's plan; revision_conflict, made against a revision that an " +
+				"entity no longer has; archived, a change of an archived project, which is read-only; or rejected, " +
+				"refused by a command or failed. Only an applied batch changes anything.",
 		}, []string{"result"}),
 		commands: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "storycreep_commands_applied_total",
@@ -135,6 +139,8 @@ func result(err error) string {
 		return resultOverLimit
 	case errors.As(err, &conflict):
 		return resultRevisionConflict
+	case errors.Is(err, ErrProjectArchived):
+		return resultArchived
 	}
 	return resultRejected
 }

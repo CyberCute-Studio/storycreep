@@ -85,7 +85,8 @@ type Statement struct {
 var Tables = []Table{
 	{Name: "project", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		id := ids.New()
-		return Statement{id, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", []any{id, w.ID}}, nil
+		return Statement{id, "INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')",
+			[]any{id, w.ID}}, nil
 	}},
 	{Name: "membership", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
 		// A user is a member of a workspace once.
@@ -100,7 +101,8 @@ var Tables = []Table{
 	{Name: "project_grant", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
 		// A membership has one grant per project.
 		project := ids.New()
-		if _, err := admin.Exec(ctx, "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", project, w.ID); err != nil {
+		if _, err := admin.Exec(ctx, "INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')",
+			project, w.ID); err != nil {
 			return Statement{}, fmt.Errorf("add a project: %w", err)
 		}
 		id := ids.New()

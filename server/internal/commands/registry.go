@@ -66,6 +66,17 @@ type Spec[P any] struct {
 	// pipeline refuses a batch that adds more to a limit than its commands'
 	// Adds say, which is all that it checked the limit for.
 	Limits []Limit[P]
+	// Archived says that the command applies to an archived project too, as
+	// unarchiving, deleting, and restoring it do. The pipeline refuses a batch
+	// of an archived project with any other command with ErrProjectArchived,
+	// because an archived project is read-only (PRD FR-PROJ-01 AC2).
+	Archived bool
+	// Trashed says that the command applies to a project in the trash too, as
+	// restoring it does. The pipeline refuses a batch of a project in the
+	// trash with any other command with ErrNotFound, as one of a project that
+	// does not exist, whoever sends it (FR-PROJ-01 AC3). A project in the
+	// trash may be archived too, so a command with Trashed needs Archived.
+	Trashed bool
 	// Check returns what is wrong with a payload that its schema cannot say,
 	// such as an identifier of the wrong type, with each field's name in the
 	// payload, as name or items[2].id, or nil. It reads nothing but p.
@@ -91,9 +102,13 @@ type Spec[P any] struct {
 // Limit is a limit of the workspace's plan that a command adds to.
 type Limit[P any] struct {
 	Key entitlements.LimitKey
-	// Adds returns how much of the limit the command with the payload p
-	// adds, or nil for 1.
-	Adds func(p P) int64
+	// Adds returns how much of the limit the command with the payload p adds,
+	// or nil for 1. The pipeline calls it in the batch's transaction, once it
+	// holds the project's lock, before any command of the batch applies, so
+	// that it reads the project as the batch finds it, as when unarchiving a
+	// project adds to the projects only if the project is archived. It only
+	// reads, so it reports no change (Tx.Changed).
+	Adds func(ctx context.Context, tx *Tx, p P) (int64, error)
 }
 
 // Step is a command of an inverse: its type and its payload, which encodes as
@@ -200,9 +215,13 @@ type spec struct {
 	touches    []ids.Kind
 	schema     *huma.Schema
 	limits     []entitlements.LimitKey
+	// adds return how much the command adds to each of limits, or nil for 1.
+	adds []func(ctx context.Context, tx *Tx, payload any) (int64, error)
+	// archived and trashed are Spec.Archived and Spec.Trashed.
+	archived, trashed bool
 	// decode decodes a payload that its schema allows, checks it, and
-	// returns it with how much it adds to each limit.
-	decode func(raw []byte) (payload any, adds []int64, problems input.FieldErrors)
+	// returns it.
+	decode func(raw []byte) (payload any, problems input.FieldErrors)
 	// inverse is nil for a command that cannot be undone.
 	inverse func(ctx context.Context, tx *Tx, payload any) ([]Step, error)
 	apply   func(ctx context.Context, tx *Tx, payload any) error
@@ -213,8 +232,9 @@ type spec struct {
 // that is registered already, a Capability that is not an operation of the
 // permission matrix, no Touches, a touched kind that is not registered or
 // twice, a limit that the plan file does not check or twice, both Inverse and
-// NonUndoable or neither, no Apply, or a payload that is not a struct, or that
-// has a field with a default or a type that resolves itself.
+// NonUndoable or neither, Trashed without Archived, no Apply, or a payload
+// that is not a struct, or that has a field with a default or a type that
+// resolves itself.
 func Register[P any](r *Registry, s Spec[P]) {
 	fail := func(format string, args ...any) {
 		panic(fmt.Sprintf("commands: %s: ", s.Type) + fmt.Sprintf(format, args...))
@@ -231,6 +251,11 @@ func Register[P any](r *Registry, s Spec[P]) {
 		fail("a command touches at least one kind of entity")
 	case (s.Inverse != nil) == s.NonUndoable:
 		fail("exactly one of Inverse and NonUndoable is set")
+	case s.Trashed && !s.Archived:
+		// A project in the trash may be archived too, and the pipeline would
+		// refuse a batch of it with ErrProjectArchived, which tells that the
+		// project exists, where any other batch of it is not found.
+		fail("a command that applies to a project in the trash applies to an archived one too (Archived)")
 	case s.Apply == nil:
 		fail("the command has no Apply")
 	case pt.Kind() != reflect.Struct:
@@ -258,8 +283,17 @@ func Register[P any](r *Registry, s Spec[P]) {
 		keys[i] = l.Key
 	}
 	sp := &spec{typ: s.Type, capability: s.Capability, touches: slices.Clone(s.Touches),
-		schema: r.schemas.Schema(pt, true, ""), limits: keys}
-	sp.decode = func(raw []byte) (any, []int64, input.FieldErrors) {
+		schema: r.schemas.Schema(pt, true, ""), limits: keys,
+		adds: make([]func(context.Context, *Tx, any) (int64, error), len(s.Limits)), archived: s.Archived,
+		trashed: s.Trashed}
+	for i, l := range s.Limits {
+		if l.Adds != nil {
+			sp.adds[i] = func(ctx context.Context, tx *Tx, payload any) (int64, error) {
+				return l.Adds(ctx, tx, payload.(P))
+			}
+		}
+	}
+	sp.decode = func(raw []byte) (any, input.FieldErrors) {
 		var p P
 		d := json.NewDecoder(bytes.NewReader(raw))
 		d.DisallowUnknownFields()
@@ -267,21 +301,14 @@ func Register[P any](r *Registry, s Spec[P]) {
 			// The schema allows the payload, so this is only a value that
 			// the schema cannot describe, such as an integer out of its
 			// type's range.
-			return nil, nil, input.FieldErrors{{Message: "does not decode: " + err.Error()}}
+			return nil, input.FieldErrors{{Message: "does not decode: " + err.Error()}}
 		}
 		if s.Check != nil {
 			if problems := s.Check(p); len(problems) > 0 {
-				return nil, nil, problems
+				return nil, problems
 			}
 		}
-		adds := make([]int64, len(s.Limits))
-		for i, l := range s.Limits {
-			adds[i] = 1
-			if l.Adds != nil {
-				adds[i] = l.Adds(p)
-			}
-		}
-		return p, adds, nil
+		return p, nil
 	}
 	if s.Inverse != nil {
 		sp.inverse = func(ctx context.Context, tx *Tx, payload any) ([]Step, error) {
@@ -391,7 +418,6 @@ type decoded struct {
 	// with. The log's jsonb keeps an object's keys in an order of its own,
 	// not in this encoding's.
 	encoded []byte
-	adds    []int64
 }
 
 // decode checks the batch, and returns its commands decoded, or an
@@ -431,9 +457,8 @@ func (r *Registry) decode(batch []Command) ([]decoded, error) {
 		}
 		fields := r.validate(s.schema, c.Payload)
 		var payload any
-		var adds []int64
 		if len(fields) == 0 {
-			payload, adds, fields = s.decode(c.Payload)
+			payload, fields = s.decode(c.Payload)
 		}
 		for _, f := range fields {
 			add(strings.TrimSuffix("payload."+f.Field, "."), f.Message)
@@ -446,7 +471,7 @@ func (r *Registry) decode(batch []Command) ([]decoded, error) {
 			add("payload", "does not encode: "+err.Error())
 			continue
 		}
-		out[i] = decoded{Command: c, spec: s, payload: payload, encoded: encoded, adds: adds}
+		out[i] = decoded{Command: c, spec: s, payload: payload, encoded: encoded}
 	}
 	if len(problems) > 0 {
 		return nil, &InvalidError{Problems: problems}
@@ -517,7 +542,10 @@ func nulAt(v any, at string) (where string, ok bool) {
 // checkSteps returns the steps of an inverse as the operation log keeps
 // them, each with its payload encoded once, or an error unless every step
 // is a registered type of command whose payload its schema and Check allow,
-// so that an undo can apply it.
+// so that an undo can apply it. A step that is not valid is the command's
+// failure, not the batch's, whose payloads are valid, so its error does not
+// wrap the step's input.FieldErrors, which a caller would take for problems
+// of the payloads that it sent.
 func (r *Registry) checkSteps(steps []Step) ([]logStep, error) {
 	out := make([]logStep, len(steps))
 	for i, st := range steps {
@@ -531,10 +559,10 @@ func (r *Registry) checkSteps(steps []Step) ([]logStep, error) {
 		}
 		problems := r.validate(s.schema, raw)
 		if len(problems) == 0 {
-			_, _, problems = s.decode(raw)
+			_, problems = s.decode(raw)
 		}
 		if len(problems) > 0 {
-			return nil, fmt.Errorf("step %d (%s) is not valid: %w", i, st.Type, problems)
+			return nil, fmt.Errorf("step %d (%s) is not valid: %v", i, st.Type, problems)
 		}
 		out[i] = logStep{Type: st.Type, Payload: raw}
 	}
