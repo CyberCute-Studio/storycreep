@@ -185,27 +185,47 @@ var guardedFirst = map[api.Route]api.Code{
 	{Method: http.MethodPost, Pattern: "/api/v1/setup"}:                   api.CodeNotFound,
 }
 
-// revocationRoutes are the routes with which a user finds and ends a
-// credential, which count in the auth bucket, in which no request made with
-// an API token counts, so that a token whose requests use up its owner's
-// limits of reading and of changing something cannot keep its owner from
-// revoking it (TestTokenCannotLockOutItsOwner).
-var revocationRoutes = []api.Route{
-	{Method: http.MethodPost, Pattern: "/api/v1/auth/logout"},
-	{Method: http.MethodGet, Pattern: "/api/v1/auth/sessions"},
-	{Method: http.MethodDelete, Pattern: "/api/v1/auth/sessions"},
-	{Method: http.MethodDelete, Pattern: "/api/v1/auth/sessions/{session_id}"},
-	{Method: http.MethodGet, Pattern: "/api/v1/workspaces/{workspace_id}/tokens"},
-	{Method: http.MethodDelete, Pattern: "/api/v1/workspaces/{workspace_id}/tokens/{token_id}"},
-	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/tokens"},
-	{Method: http.MethodDelete, Pattern: "/api/v1/projects/{project_id}/tokens/{token_id}"},
+// authRoutes are the routes that count in the auth bucket (plan notes N23,
+// N35), each of which authLimitDoc names, as the description of every one of
+// them says: signing in and the other requests about credentials, and
+// making, listing, and revoking API tokens, in which no request made with a
+// token counts, so that a token whose requests use up its owner's limits of
+// reading and of changing something cannot keep its owner from finding and
+// revoking it (TestTokenCannotLockOutItsOwner). Signing out and the routes of
+// sessions count in their methods' buckets, so that the sign-ins of the other
+// users of an IP address, and the account's other requests about
+// credentials, do not use up their limits. A change of this list changes what
+// authLimitDoc must say.
+var authRoutes = map[api.Route]bool{
+	{Method: http.MethodPost, Pattern: "/api/v1/auth/login"}:                                           true,
+	{Method: http.MethodPost, Pattern: "/api/v1/auth/register"}:                                        true,
+	{Method: http.MethodPost, Pattern: "/api/v1/auth/password"}:                                        true,
+	{Method: http.MethodPost, Pattern: "/api/v1/setup"}:                                                true,
+	{Method: http.MethodPost, Pattern: "/api/v1/auth/password-reset"}:                                  true,
+	{Method: http.MethodPost, Pattern: "/api/v1/auth/password-reset/confirm"}:                          true,
+	{Method: http.MethodPost, Pattern: "/api/v1/auth/email-verification"}:                              true,
+	{Method: http.MethodPost, Pattern: "/api/v1/auth/verify-email"}:                                    true,
+	{Method: http.MethodPost, Pattern: "/api/v1/admin/password-reset-links"}:                           true,
+	{Method: http.MethodPost, Pattern: "/api/v1/admin/verification-links"}:                             true,
+	{Method: http.MethodPost, Pattern: "/api/v1/workspaces/{workspace_id}/invites"}:                    true,
+	{Method: http.MethodPost, Pattern: "/api/v1/workspaces/{workspace_id}/invites/{invite_id}/resend"}: true,
+	{Method: http.MethodPost, Pattern: "/api/v1/invites/lookup"}:                                       true,
+	{Method: http.MethodPost, Pattern: "/api/v1/invites/accept"}:                                       true,
+	{Method: http.MethodPost, Pattern: "/api/v1/invites/register"}:                                     true,
+	{Method: http.MethodPost, Pattern: "/api/v1/workspaces/{workspace_id}/tokens"}:                     true,
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/tokens"}:                         true,
+	{Method: http.MethodGet, Pattern: "/api/v1/workspaces/{workspace_id}/tokens"}:                      true,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/tokens"}:                          true,
+	{Method: http.MethodDelete, Pattern: "/api/v1/workspaces/{workspace_id}/tokens/{token_id}"}:        true,
+	{Method: http.MethodDelete, Pattern: "/api/v1/projects/{project_id}/tokens/{token_id}"}:            true,
 }
 
 // TestEveryRouteRateLimited checks that a rate limit counts every route of
-// the API (PRD FR-API-04, NFR-SEC-06): each counts in the read bucket if it
-// is a GET, in the write bucket otherwise, or in the auth bucket, as the
-// routes that revoke credentials do (revocationRoutes), and only the health
-// and readiness probes, /version, and the pages count in none.
+// the API (PRD FR-API-04, NFR-SEC-06): each counts in the auth bucket if it
+// is one of authRoutes, and otherwise in the read bucket if it is a GET and
+// in the write bucket if it is not, and only the health and readiness
+// probes, /version, and the pages count in none. The description of each
+// route of the auth bucket says what its limit is (authLimitDoc).
 // With a policy that allows each key one request a minute, and a client and
 // an owner that have made theirs, every route answers 429 rate_limited, with
 // its bucket in details.bucket, and Retry-After (FR-API-04 AC3), but those
@@ -217,29 +237,35 @@ func TestEveryRouteRateLimited(t *testing.T) {
 	t.Parallel()
 	f := newRolesFixture(t)
 	buckets := f.s.main.Buckets()
+	doc := f.s.main.OpenAPI()
 	var unlimited []string
 	for r := range f.s.main.Routes() {
 		b, ok := buckets[r]
-		byMethod := api.BucketWrite
-		if r.Method == http.MethodGet {
-			byMethod = api.BucketRead
+		want := api.BucketWrite
+		switch {
+		case authRoutes[r]:
+			want = api.BucketAuth
+		case r.Method == http.MethodGet:
+			want = api.BucketRead
 		}
 		switch {
 		case !ok:
 			if !f.s.main.IsPage(r) {
 				unlimited = append(unlimited, r.String())
 			}
-		case b != byMethod && b != api.BucketAuth:
-			t.Errorf("%s counts in the %s bucket", r, b)
+		case b != want:
+			t.Errorf("%s counts in the %s bucket, want %s", r, b, want)
+		case b == api.BucketAuth && !strings.Contains(operationOf(doc, r).Description, authLimitDoc):
+			t.Errorf("the description of %s does not say what the auth bucket's limit is", r)
 		}
 	}
 	slices.Sort(unlimited)
 	if want := []string{"GET /healthz", "GET /readyz", "GET /version"}; !slices.Equal(unlimited, want) {
 		t.Errorf("no rate limit counts %q, want only %q and the pages", unlimited, want)
 	}
-	for _, r := range revocationRoutes {
-		if b := buckets[r]; b != api.BucketAuth {
-			t.Errorf("%s, which revokes a credential, counts in the %q bucket, want auth", r, b)
+	for r := range authRoutes {
+		if _, ok := f.s.main.Routes()[r]; !ok {
+			t.Errorf("authRoutes lists %s, which the server does not have", r)
 		}
 	}
 

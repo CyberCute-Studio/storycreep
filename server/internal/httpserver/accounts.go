@@ -46,11 +46,6 @@ type registerInput struct {
 	Body registerBody
 }
 
-// acceptedOutput is an answer of 202 without a body, of a registration,
-// which is rate-limited.
-type acceptedOutput struct {
-}
-
 // registerAccounts registers the routes of accounts (PRD FR-AUTH-01).
 func registerAccounts(m *api.Mux, accounts *account.Service) {
 	api.Register(m, api.Public, huma.Operation{
@@ -80,7 +75,7 @@ func registerAccounts(m *api.Mux, accounts *account.Service) {
 		Middlewares: huma.Middlewares{api.Guard(func(ctx context.Context) error {
 			return accountError(accounts.CheckSignup(ctx))
 		})},
-	}, func(ctx context.Context, in *registerInput) (*acceptedOutput, error) {
+	}, func(ctx context.Context, in *registerInput) (*struct{}, error) {
 		err := accounts.Register(ctx, account.Registration{
 			Email:       in.Body.Email,
 			DisplayName: in.Body.DisplayName,
@@ -89,7 +84,7 @@ func registerAccounts(m *api.Mux, accounts *account.Service) {
 		if err != nil {
 			return nil, accountError(err)
 		}
-		return &acceptedOutput{}, nil
+		return &struct{}{}, nil
 	}, api.RateLimit(api.BucketAuth))
 }
 

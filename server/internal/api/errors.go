@@ -313,14 +313,11 @@ var codes = []codeSpec{
 			"is locked, `POST /api/v1/auth/login` refuses every sign-in with it, even with the right password. Once " +
 			"the lock ends, the next sign-in is checked: one that succeeds forgets the failures, and one that fails " +
 			"locks the address again. The failures are forgotten a day after the last one. " +
-			"`details.bucket` is `auth` for signing in, registering, changing a password, completing first-run " +
-			"setup, asking for a link that resets a password or verifies an email address, using such a link, " +
-			"an instance admin's taking one as text, inviting someone to a workspace or sending an invitation " +
-			"anew, reading, accepting, or registering with an invitation's link, making, listing, and revoking an " +
-			"API token, signing out, and listing and revoking sessions, which no request made with an API token " +
-			"counts in, so that a token's requests cannot keep its owner from revoking it; `read` for every other " +
-			"request that reads, and `write` for every other that changes something, which every operation's " +
-			"description states the limits of."},
+			"`details.bucket` is `auth` for signing in and the other requests about credentials, among them " +
+			"making, listing, and revoking an API token, which the description of each operation that counts in it " +
+			"lists, and in which no request made with an API token counts, so that a token's requests cannot keep " +
+			"its owner from revoking it; `read` for every other request that reads; and `write` for every other " +
+			"that changes something. Every operation's description states its limits."},
 	{CodeInternal, http.StatusInternalServerError, i18n.K("error.internal_error"),
 		"The server failed. Its log has the cause, under the envelope's `request_id`."},
 	{CodeNotReady, http.StatusServiceUnavailable, i18n.K("error.not_ready"),

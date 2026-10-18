@@ -878,14 +878,15 @@ func TestTokenRateLimit(t *testing.T) {
 
 // TestTokenCannotLockOutItsOwner checks that a token whose requests use up
 // its owner's limits of reading and of changing something, as a leaked one
-// may, cannot keep its owner from finding and revoking it, nor from ending
-// their sessions: those requests count in the auth bucket, in which no
-// request made with a token counts (NFR-SEC-05, NFR-SEC-06). With a policy
-// that allows the owner and each token two reads and two changes an hour,
-// the token's requests are refused once they are over the limit, and so are
-// the owner's own reads and changes then, but the owner lists the tokens,
-// revokes this one, which then fails, lists the sessions, revokes the other
-// ones, and signs out.
+// may, cannot keep its owner from finding and revoking it: those requests
+// count in the auth bucket, in which no request made with a token counts
+// (NFR-SEC-05, NFR-SEC-06). Once it is revoked, the authenticator refuses
+// its requests before any limit counts them, so the owner's limits are whole
+// again when their window ends. With a policy that allows the owner and each
+// token two reads and two changes an hour, the token's requests are refused
+// once they are over the limit, and so are the owner's own reads and changes
+// then, but the owner lists the tokens and revokes this one, which then
+// fails.
 //
 // Verifies: NFR-SEC-05
 func TestTokenCannotLockOutItsOwner(t *testing.T) {
@@ -934,15 +935,6 @@ func TestTokenCannotLockOutItsOwner(t *testing.T) {
 	}
 	wantCode(t, "the revoked token", call(s.main, http.MethodGet, path, nil, bearer(leaked.Secret)),
 		http.StatusUnauthorized, api.CodeUnauthenticated)
-	if got := itemIDs(t, s.main, owner.header(false), sessionsPath); len(got) == 0 {
-		t.Error("the owner lists no session")
-	}
-	if res := call(s.main, http.MethodDelete, sessionsPath, nil, owner.header(true)); res.status != http.StatusOK {
-		t.Errorf("the owner revokes the other sessions: %d %s", res.status, res.body)
-	}
-	if res := call(s.main, http.MethodPost, logoutPath, nil, owner.header(true)); res.status != http.StatusNoContent {
-		t.Errorf("the owner signs out: %d %s", res.status, res.body)
-	}
 }
 
 // TestTokenCreationRateLimit checks that making API tokens shares the auth

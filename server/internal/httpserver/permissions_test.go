@@ -50,11 +50,11 @@ type rolesFixture struct {
 
 // newRolesFixture returns a server whose workspace has an account of each of
 // matrixRoles. The tests of the roles try every operation as each account,
-// many of which, as making, listing, and revoking tokens and sessions, count
-// in the auth bucket, whose limit of 10 a minute for each account would
-// refuse them, so the server's limiter allows each account 1,000 of them a
-// minute; the tests of the limits use servers of their own, or a policy of
-// their own.
+// many of which, as making, listing, and revoking tokens and inviting
+// someone, count in the auth bucket, whose limit of 10 a minute for each
+// account would refuse them, so the server's limiter allows each account
+// 1,000 of them a minute; the tests of the limits use servers of their own,
+// or a policy of their own.
 func newRolesFixture(t *testing.T) *rolesFixture {
 	t.Helper()
 	s, d, owner, ws := inviteServer(t, "open", nil)

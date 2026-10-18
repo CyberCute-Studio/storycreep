@@ -49,15 +49,15 @@ const (
 const authLimitDoc = " Signing in, registering, changing a password, completing first-run setup, asking for a link " +
 	"that resets a password or verifies an email address, using one, an instance admin's taking one as text, " +
 	"inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an " +
-	"invitation's link, making, listing, or revoking an API token, signing out, and listing or revoking sessions " +
-	"share a rate limit of 20 requests a minute for each IP address. " +
+	"invitation's link, and making, listing, or revoking an API token share a rate limit of 20 requests a minute " +
+	"for each IP address. " +
 	"Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 " +
 	"a minute for each email address, so that each counts against the other for the same address, and changing a " +
 	"password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a " +
-	"link as text, inviting someone, sending an invitation anew, accepting one, making, listing, or revoking an API " +
-	"token, signing out, and listing or revoking sessions share one of 10 a minute for each account. No request " +
-	"made with an API token counts against these, so that the requests of a token, which count against its owner's " +
-	"account too, cannot keep the owner from finding and revoking it. The " +
+	"link as text, inviting someone, sending an invitation anew, accepting one, and making, listing, or revoking an " +
+	"API token share one of 10 a minute for each account. No request made with an API token counts against these, " +
+	"so that the requests of a token, which count against its owner's account too, cannot keep the owner from " +
+	"finding and revoking it, after which no limit counts them. The " +
 	"RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over " +
 	"a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the " +
 	"limit that it is over, that of the email address included, and whose Retry-After header says how many seconds " +
@@ -109,10 +109,10 @@ func per(d time.Duration) string {
 // one, which it has before the limiter counts, and for the API token of a
 // request made with one, and sets the RateLimit headers of the answer, or
 // answers a request over the limit with rate_limited. A bucket of package
-// api is the bucket of package ratelimit of the same name, whose rate Doc
-// finds when the route is registered. It reads the server's Limiter at each
-// request, so that a test can give the server one with another policy before
-// it makes requests.
+// api is the bucket of package ratelimit of the same name, whose rate in the
+// server's Limiter Doc finds when the route is registered. It reads the
+// server's Limiter at each request, so that a test can give the server one
+// with another policy before it makes requests.
 type limiter struct {
 	s *server
 }
@@ -138,13 +138,13 @@ func (l limiter) Take(ctx huma.Context, b api.Bucket) error {
 	return nil
 }
 
-// Doc says what the server's default policy limits each bucket to, which is
-// the one that it counts with. It panics on a bucket that the policy has no
-// rate of, so that a route that counts in one fails when it is registered
-// rather than at its first request.
-func (limiter) Doc(b api.Bucket, callers api.Callers) string {
+// Doc says what the server's Limiter limits the bucket b to, which newServer
+// gives it before it registers the routes. It panics on a bucket that the
+// Limiter has no rate of, so that a route that counts in one fails when it is
+// registered rather than at its first request.
+func (l limiter) Doc(b api.Bucket, callers api.Callers) string {
 	bucket := ratelimit.Bucket(b)
-	rate, ok := ratelimit.DefaultPolicy().Rates[bucket]
+	rate, ok := l.s.limits.Rate(bucket)
 	switch {
 	case !ok:
 		panic(fmt.Sprintf("httpserver: the bucket %q has no rate limit", b))

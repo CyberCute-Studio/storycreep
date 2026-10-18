@@ -521,8 +521,12 @@ func (s *Service) Authenticate(ctx context.Context, value secret.Value, needed s
 		}
 		// The workspace's API requests are metered (FR-ENT-02, plan note
 		// N31): each that a token is accepted for counts, in the transaction
-		// that accepts it.
-		if err := usage.Record(ctx, tx, workspaceID, usage.APIRequests, 1); err != nil {
+		// that accepts it, which then commits without waiting for the disk,
+		// so that no request made with a token waits for it. The count is
+		// approximate, and the transaction writes nothing else but when the
+		// token was last used, which a crash of the database may lose too;
+		// a refusal's audit entry, above, waits for the disk.
+		if err := usage.RecordUnflushed(ctx, tx, workspaceID, usage.APIRequests, 1); err != nil {
 			return err
 		}
 		out = Credential{UserID: userID, Token: scope.Token{ID: id, WorkspaceID: workspaceID,

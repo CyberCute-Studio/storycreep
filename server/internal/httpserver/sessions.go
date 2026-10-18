@@ -339,7 +339,7 @@ func newSignedInBody(s account.Session, value secret.Value) signedInBody {
 }
 
 // signedInOutput answers a request that starts a session or gives it a new
-// secret, which are rate-limited.
+// secret.
 type signedInOutput struct {
 	SetCookie string `header:"Set-Cookie" doc:"The session cookie, which holds the session's secret: __Host-sc_session, Secure, when STORYCREEP_PUBLIC_URL is https, and sc_session otherwise, in either case HttpOnly, SameSite=Lax, for the path /, and expiring when the session ends at the latest"`
 	Body      signedInBody
@@ -508,7 +508,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 			return nil, err
 		}
 		return &clearedOutput{SetCookie: cookie.clear()}, nil
-	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
+	}, api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "listSessions",
@@ -543,7 +543,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 			out.Body.Items[i] = newSessionBody(s, cur.session.ID)
 		}
 		return out, nil
-	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
+	}, api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "revokeSession",
@@ -576,7 +576,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 			out.SetCookie = cookie.clear()
 		}
 		return out, nil
-	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
+	}, api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "revokeOtherSessions",
@@ -602,7 +602,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 			return nil, err
 		}
 		return &revokedOutput{Body: revokedBody{Revoked: n}}, nil
-	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
+	}, api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "changePassword",

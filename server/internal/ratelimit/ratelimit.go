@@ -36,6 +36,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"slices"
 	"strings"
@@ -58,8 +59,8 @@ type Bucket string
 const (
 	// Auth is signing in, registering, changing a password, resetting one,
 	// and the other requests about credentials, as creating, listing, and
-	// revoking an API token and signing out (FR-AUTH-05), which the
-	// descriptions of the API's operations list.
+	// revoking an API token (FR-AUTH-05), which the descriptions of the
+	// API's operations list.
 	Auth Bucket = "auth"
 	// Read is a request that reads.
 	Read Bucket = "read"
@@ -293,6 +294,15 @@ func New(db DB, policy Policy) *Limiter {
 		panic("ratelimit: " + err.Error())
 	}
 	return &Limiter{db: db, policy: policy}
+}
+
+// Rate returns the rate of the bucket b in the Limiter's policy, and false
+// if the policy has none, so that what the API says of a limit is what the
+// Limiter counts.
+func (l *Limiter) Rate(b Bucket) (Rate, bool) {
+	r, ok := l.policy.Rates[b]
+	r.Limits = maps.Clone(r.Limits)
+	return r, ok
 }
 
 // Decision is the state of the key that a request is told about in its

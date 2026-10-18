@@ -108,14 +108,45 @@ func (k Key) Exact() bool {
 // or takes -delta from it, in tx, the change's transaction, which is the
 // workspace's. Adding nothing records nothing.
 func Record(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, key Key, delta int64) error {
+	return record(ctx, tx, workspaceID, key, delta, false)
+}
+
+// RecordUnflushed records a delta as Record does, and makes tx commit without
+// waiting for the disk, as a rate limit's count does (package ratelimit), so
+// that a crash of the database may lose the last few hundred milliseconds of
+// such commits, the delta with whatever else tx writes. It is for a key that
+// is counted approximately, whose deltas come with requests that would each
+// wait for the disk otherwise, in a transaction that writes nothing else that
+// must outlive such a crash, as the API requests that package apitoken
+// records as it accepts a token. It refuses a key that is counted exactly
+// (Exact), whose limit's check needs every delta.
+func RecordUnflushed(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, key Key, delta int64) error {
+	if key.Exact() {
+		return fmt.Errorf("usage: %s is counted exactly, so its deltas wait for the disk", key)
+	}
+	return record(ctx, tx, workspaceID, key, delta, true)
+}
+
+// record records a delta for Record, or, if unflushed is set, for
+// RecordUnflushed.
+func record(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, key Key, delta int64, unflushed bool) error {
 	if !key.Known() {
 		return fmt.Errorf("usage: %q is not a key", key)
 	}
 	if delta == 0 {
 		return nil
 	}
-	if err := queries.New(tx).InsertUsageDelta(ctx, queries.InsertUsageDeltaParams{ID: nullUUID(ids.New()),
-		WorkspaceID: nullUUID(workspaceID), Key: string(key), Delta: delta}); err != nil {
+	q := queries.New(tx)
+	id, ws := nullUUID(ids.New()), nullUUID(workspaceID)
+	var err error
+	if unflushed {
+		err = q.InsertUnflushedUsageDelta(ctx, queries.InsertUnflushedUsageDeltaParams{ID: id, WorkspaceID: ws,
+			Key: string(key), Delta: delta})
+	} else {
+		err = q.InsertUsageDelta(ctx, queries.InsertUsageDeltaParams{ID: id, WorkspaceID: ws, Key: string(key),
+			Delta: delta})
+	}
+	if err != nil {
 		return fmt.Errorf("usage: record the change of %s: %w", key, err)
 	}
 	return nil

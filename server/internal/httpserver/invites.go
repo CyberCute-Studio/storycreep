@@ -528,13 +528,13 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 		Middlewares: huma.Middlewares{api.Guard(func(ctx context.Context) error {
 			return accountError(accounts.CheckInvitedSignup(ctx))
 		})},
-	}, func(ctx context.Context, in *registerWithInviteInput) (*acceptedOutput, error) {
+	}, func(ctx context.Context, in *registerWithInviteInput) (*struct{}, error) {
 		err := invites.Register(ctx, secret.New(in.Body.Token), account.Registration{Email: in.Body.Email,
 			DisplayName: in.Body.DisplayName, Password: secret.New(in.Body.Password)}, clientFrom(ctx))
 		if err != nil {
 			return nil, memberError(err)
 		}
-		return &acceptedOutput{}, nil
+		return &struct{}{}, nil
 	}, api.RateLimit(api.BucketAuth))
 }
 

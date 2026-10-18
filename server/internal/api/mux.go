@@ -336,7 +336,7 @@ func (m *Mux) Handle(c Capability, method, pattern string, h http.Handler) {
 	case c.Authenticated():
 		panic(fmt.Sprintf("api: %s %s requires %s, which needs an authenticated caller; register it with Register",
 			method, pattern, c))
-	case apiPath(pattern):
+	case IsAPIPath(pattern):
 		panic(fmt.Sprintf("api: %s %s is a route of the API, which a rate limit counts; register it with Register",
 			method, pattern))
 	}
@@ -403,12 +403,12 @@ type Bucket string
 // their own, which is no route's that Register registers.
 const (
 	// BucketAuth is signing in, registering, and the other requests about
-	// credentials that FR-AUTH-05 limits most, among them the requests with
-	// which a user finds and ends a credential: signing out, listing and
-	// revoking sessions, and listing and revoking API tokens. No route that
-	// takes an API token counts in it (Register), so that a token's
-	// requests, which count against its owner too, cannot use up the
-	// owner's limit of the requests that revoke the token.
+	// credentials that FR-AUTH-05 limits most, among them listing and
+	// revoking API tokens. No route that takes an API token counts in it
+	// (Register), so that a token's requests, which count against its owner
+	// too, cannot use up the owner's limit of the requests that find and
+	// revoke the token, after which no limit counts them: the Authenticator
+	// refuses a revoked token before the limit counts its request.
 	BucketAuth Bucket = "auth"
 	// BucketRead is a request that reads, which a GET or HEAD route counts
 	// in unless it says otherwise.
@@ -449,8 +449,9 @@ func Unlimited() Option {
 	return func(o *routeOptions) { o.unlimited = true }
 }
 
-// apiPath reports whether path is a route of the API, under /api/.
-func apiPath(path string) bool {
+// IsAPIPath reports whether path is the API's, under /api/, whose every
+// route a rate limit counts, and which needs the database.
+func IsAPIPath(path string) bool {
 	return path == "/api" || strings.HasPrefix(path, "/api/")
 }
 
@@ -498,7 +499,7 @@ func Register[I, O any](m *Mux, c Capability, op huma.Operation, handler func(co
 			"that it takes an API token with (TokenScope) nor that it is session-only (SessionOnly)", route, c))
 	case o.unlimited && o.bucket != "":
 		panic(fmt.Sprintf("api: %s is unlimited and counts in the %s bucket", route, o.bucket))
-	case o.unlimited && (apiPath(op.Path) || c != Public):
+	case o.unlimited && (IsAPIPath(op.Path) || c != Public):
 		panic(fmt.Sprintf("api: %s requires %s, and only a public route outside /api/ may be unlimited", route, c))
 	case o.bucket != "" && !o.bucket.Known():
 		panic(fmt.Sprintf("api: %s counts in the unknown bucket %q", route, o.bucket))

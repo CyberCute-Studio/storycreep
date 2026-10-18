@@ -75,11 +75,6 @@ type verifyEmailInput struct {
 	Body verifyEmailBody
 }
 
-// noContentOutput is an answer of 204 of an operation that the rate limit
-// counts.
-type noContentOutput struct {
-}
-
 // issueLinkBody is the body of the routes that issue a link as text.
 type issueLinkBody struct {
 	Email string `json:"email" maxLength:"254" doc:"The email address of the account, in any case"`
@@ -183,11 +178,11 @@ func registerEmail(m *api.Mux, accounts *account.Service) {
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusAccepted,
 		Middlewares:   huma.Middlewares{emailConfigured},
-	}, func(ctx context.Context, in *passwordResetInput) (*acceptedOutput, error) {
+	}, func(ctx context.Context, in *passwordResetInput) (*struct{}, error) {
 		if err := accounts.RequestPasswordReset(ctx, in.Body.Email); err != nil {
 			return nil, linkError(err, "")
 		}
-		return &acceptedOutput{}, nil
+		return &struct{}{}, nil
 	}, api.RateLimit(api.BucketAuth))
 
 	api.Register(m, api.Public, huma.Operation{
@@ -203,12 +198,12 @@ func registerEmail(m *api.Mux, accounts *account.Service) {
 			"weak_password, which leaves the link as it was.",
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusNoContent,
-	}, func(ctx context.Context, in *resetPasswordInput) (*noContentOutput, error) {
+	}, func(ctx context.Context, in *resetPasswordInput) (*struct{}, error) {
 		err := accounts.ResetPassword(ctx, secret.New(in.Body.Token), secret.New(in.Body.NewPassword), clientFrom(ctx))
 		if err != nil {
 			return nil, linkError(err, "body.new_password")
 		}
-		return &noContentOutput{}, nil
+		return &struct{}{}, nil
 	}, api.RateLimit(api.BucketAuth))
 
 	api.Register(m, api.Public, huma.Operation{
@@ -224,11 +219,11 @@ func registerEmail(m *api.Mux, accounts *account.Service) {
 			tokenErrorsDoc,
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusNoContent,
-	}, func(ctx context.Context, in *verifyEmailInput) (*noContentOutput, error) {
+	}, func(ctx context.Context, in *verifyEmailInput) (*struct{}, error) {
 		if err := accounts.VerifyEmail(ctx, secret.New(in.Body.Token), clientFrom(ctx)); err != nil {
 			return nil, linkError(err, "")
 		}
-		return &noContentOutput{}, nil
+		return &struct{}{}, nil
 	}, api.RateLimit(api.BucketAuth))
 
 	api.Register(m, api.OwnAccount, huma.Operation{
@@ -244,7 +239,7 @@ func registerEmail(m *api.Mux, accounts *account.Service) {
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusAccepted,
 		Middlewares:   huma.Middlewares{emailConfigured},
-	}, func(ctx context.Context, _ *CSRFInput) (*acceptedOutput, error) {
+	}, func(ctx context.Context, _ *CSRFInput) (*struct{}, error) {
 		cur, err := currentFrom(ctx)
 		if err != nil {
 			return nil, err
@@ -252,7 +247,7 @@ func registerEmail(m *api.Mux, accounts *account.Service) {
 		if err := accounts.RequestVerification(ctx, cur.session.UserID); err != nil {
 			return nil, linkError(err, "")
 		}
-		return &acceptedOutput{}, nil
+		return &struct{}{}, nil
 	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	for _, l := range []struct {
