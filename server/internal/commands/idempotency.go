@@ -55,15 +55,18 @@ type (
 	}
 	// refusal is the refusal of a batch that the batch and the state of its
 	// project decided (remembered): its reason, with the conflicts of a
-	// revision conflict, and the limit of a limit's.
+	// revision conflict and the states of their entities, and the limit of a
+	// limit's.
 	refusal struct {
 		Reason    string           `json:"reason"`
 		Conflicts []storedConflict `json:"conflicts,omitempty"`
+		States    []storedState    `json:"states,omitempty"`
 		Limit     *storedLimit     `json:"limit,omitempty"`
 	}
-	// storedConflict is a Conflict. Its State is the entity's state as the
-	// conflict encoded it, kept as a string so that the record gives it back
-	// as it was, where jsonb would order the keys of an object its own way.
+	// storedConflict is a Conflict, without its State, which the refusal's
+	// States hold, once for each entity, however many commands expected a
+	// revision of it, so that a batch of many commands that expect one
+	// entity's revision does not keep the entity's state once for each.
 	storedConflict struct {
 		Command   int    `json:"command"`
 		CommandID string `json:"command_id"`
@@ -73,7 +76,15 @@ type (
 		Expected  int64  `json:"expected"`
 		Exists    bool   `json:"exists"`
 		Current   int64  `json:"current,omitempty"`
-		State     string `json:"state,omitempty"`
+	}
+	// storedState is the state of an entity of a revision conflict that still
+	// exists, as its conflicts encoded it, kept as a string so that the record
+	// gives it back as it was, where jsonb would order the keys of an object
+	// its own way.
+	storedState struct {
+		Kind  string `json:"kind"`
+		ID    string `json:"id"`
+		State string `json:"state"`
 	}
 	// storedLimit is an *entitlements.LimitError.
 	storedLimit struct {
@@ -114,10 +125,16 @@ func refusalOf(err error) *refusal {
 			Limit: limit.Limit, UpgradeURL: limit.UpgradeURL}}
 	case errors.As(err, &conflict):
 		r := &refusal{Reason: reasonRevisionConflict, Conflicts: make([]storedConflict, len(conflict.Conflicts))}
+		stored := map[Ref]bool{}
 		for i, c := range conflict.Conflicts {
+			kind, id := c.Kind.String(), c.ID.String()
 			r.Conflicts[i] = storedConflict{Command: c.Command, CommandID: c.CommandID.String(), Type: c.Type,
-				Kind: c.Kind.String(), ID: c.ID.String(), Expected: c.Expected, Exists: c.Exists, Current: c.Current,
-				State: string(c.State)}
+				Kind: kind, ID: id, Expected: c.Expected, Exists: c.Exists, Current: c.Current}
+			// Every conflict of an entity has its one state (checkRevs).
+			if c.Exists && !stored[c.Ref] {
+				stored[c.Ref] = true
+				r.States = append(r.States, storedState{Kind: kind, ID: id, State: string(c.State)})
+			}
 		}
 		return r
 	}
@@ -136,6 +153,16 @@ func (r *refusal) err() (error, error) {
 		return &entitlements.LimitError{Key: r.Limit.Key, Usage: r.Limit.Usage, Limit: r.Limit.Limit,
 			UpgradeURL: r.Limit.UpgradeURL}, nil
 	case reasonRevisionConflict:
+		// Each entity's state is decoded once, and its conflicts share it,
+		// as those of the refusal that the record remembers did.
+		states := make(map[Ref]json.RawMessage, len(r.States))
+		for i, s := range r.States {
+			ref, err := parseRef(s.Kind, s.ID)
+			if err != nil {
+				return nil, fmt.Errorf("the entity of state %d: %w", i, err)
+			}
+			states[ref] = json.RawMessage(s.State)
+		}
 		conflict := &RevisionConflictError{Conflicts: make([]Conflict, len(r.Conflicts))}
 		for i, c := range r.Conflicts {
 			commandID, err := ids.ParseUUID(c.CommandID)
@@ -148,8 +175,12 @@ func (r *refusal) err() (error, error) {
 			}
 			conflict.Conflicts[i] = Conflict{Command: c.Command, CommandID: commandID, Type: c.Type, Ref: ref,
 				Expected: c.Expected, Exists: c.Exists, Current: c.Current}
-			if c.State != "" {
-				conflict.Conflicts[i].State = json.RawMessage(c.State)
+			if c.Exists {
+				state, ok := states[ref]
+				if !ok {
+					return nil, fmt.Errorf("conflict %d is of an entity that exists, without its state", i)
+				}
+				conflict.Conflicts[i].State = state
 			}
 		}
 		return conflict, nil
@@ -157,18 +188,28 @@ func (r *refusal) err() (error, error) {
 	return nil, fmt.Errorf("the refusal's reason %q is not one", r.Reason)
 }
 
+// kindsByName are the kinds of entity, by their names, as ids.Kind.String
+// names them.
+var kindsByName = func() map[string]ids.Kind {
+	m := map[string]ids.Kind{}
+	for _, k := range ids.Kinds() {
+		m[k.String()] = k
+	}
+	return m
+}()
+
 // parseRef returns the entity of the kind named kind, as ids.Kind.String
 // names it, with the UUID id, as logRef holds them.
 func parseRef(kind, id string) (Ref, error) {
-	i := slices.IndexFunc(ids.Kinds(), func(k ids.Kind) bool { return k.String() == kind })
-	if i < 0 {
+	k, ok := kindsByName[kind]
+	if !ok {
 		return Ref{}, fmt.Errorf("%q is not a kind of entity", kind)
 	}
 	u, err := ids.ParseUUID(id)
 	if err != nil {
 		return Ref{}, err
 	}
-	return Ref{Kind: ids.Kinds()[i], ID: u}, nil
+	return Ref{Kind: k, ID: u}, nil
 }
 
 // replay is the answer to a batch whose commands were sent before: the

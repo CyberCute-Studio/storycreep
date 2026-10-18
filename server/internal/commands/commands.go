@@ -213,7 +213,9 @@ type RevisionConflictError struct {
 	// Conflicts are every command's entities whose revisions are not the
 	// expected ones, in the order of the commands, and of each command's
 	// entities by their kinds and IDs. An entity that several commands
-	// expect a revision of that it does not have is in it once for each.
+	// expect a revision of that it does not have is in it once for each, each
+	// with the entity's one State, which they share, so that the API answers
+	// it, and the batch's idempotency record keeps it, once.
 	Conflicts []Conflict
 }
 
@@ -335,10 +337,7 @@ func (p *Pipeline) Collector() prometheus.Collector {
 // the actor's API token may not apply, the refusal in the audit log.
 func (p *Pipeline) Apply(ctx context.Context, actor Actor, projectID ids.UUID, batch []Command) (Result, error) {
 	start := time.Now()
-	cmds, err := p.registry.decode(batch)
-	if err == nil {
-		err = otherProjects(cmds, projectID)
-	}
+	cmds, err := p.registry.decode(batch, projectID)
 	var res Result
 	replayed := false
 	if err == nil {
@@ -352,28 +351,6 @@ func (p *Pipeline) Apply(ctx context.Context, actor Actor, projectID ids.UUID, b
 		p.notifier.Committed(context.WithoutCancel(ctx), projectID, res.Seq)
 	}
 	return res, nil
-}
-
-// otherProjects returns an *InvalidError that lists each revision that the
-// commands cmds expect of another project than projectID, the batch's, or nil
-// if they expect none. A command of the batch may expect a revision of the
-// batch's project alone, and the check of the revisions would take another
-// for one that no longer exists, which the client would show as deleted
-// (FR-OFF-04 AC5).
-func otherProjects(cmds []decoded, projectID ids.UUID) error {
-	var problems []Problem
-	for i, c := range cmds {
-		for _, ref := range sortedRefs(c.ExpectedRev) {
-			if ref.Kind == ids.Project && ref.ID != projectID {
-				problems = append(problems, Problem{Command: i, Field: "expected_rev." + c.key(ref),
-					Message: "names another project than the one that the batch is applied to"})
-			}
-		}
-	}
-	if len(problems) > 0 {
-		return &InvalidError{Problems: problems}
-	}
-	return nil
 }
 
 // apply applies the decoded commands cmds, and returns what they did, and

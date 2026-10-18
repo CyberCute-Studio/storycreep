@@ -255,10 +255,12 @@ var codes = []codeSpec{
 			"`details.conflicts` lists each command's entities whose revisions are not the ones that its " +
 			"`expected_rev` names: the command's index in the batch as `command`, its `command_id`, and its `type`, " +
 			"and the entity's `id`, its `expected_rev`, and `exists`, which is `true`, with the entity's " +
-			"`current_rev` and its `state`, the entity as it is now, or `false`, without them, for an entity that " +
-			"no longer exists, as one that was purged from the trash or never created (FR-OFF-04 AC5). An entity " +
-			"in the trash exists, and its state says that it is deleted. To make the change anyway, make it again " +
-			"on the current state, as a new command with an ID of its own and the current revisions."},
+			"`current_rev`, or `false`, without it, for an entity that no longer exists, as one that was purged " +
+			"from the trash or never created (FR-OFF-04 AC5). `details.states` holds the state of each of those " +
+			"entities that still exists, the entity as it is now, by its `id`, once, however many commands expect " +
+			"a revision of it. An entity in the trash exists, and its state says that it is deleted. To make the " +
+			"change anyway, make it again on the current state, as a new command with an ID of its own and the " +
+			"current revisions."},
 	{CodeProjectArchived, http.StatusConflict, i18n.K("error.project_archived"),
 		"The project is archived, and an archived project is read-only, so nothing of the change is made (PRD " +
 			"FR-PROJ-01 AC2). Unarchiving it, deleting it, and restoring it from the trash are the changes that it " +

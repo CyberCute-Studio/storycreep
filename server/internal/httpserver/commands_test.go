@@ -22,16 +22,20 @@ import (
 // TestRevisionConflict checks that a batch with stale revisions is answered
 // with 409 revision_conflict, whose details list each stale entity with its
 // command, the revision that the command expected, and the entity's current
-// revision and state, or that it no longer exists, without either.
+// revision, or that it no longer exists, without it, and the state of each
+// entity that still exists, once, however many commands expected it.
 //
 // Verifies: FR-API-03/AC3
 func TestRevisionConflict(t *testing.T) {
 	stale, gone := ids.New(), ids.New()
-	first, second := ids.New(), ids.New()
+	first, second, third := ids.New(), ids.New(), ids.New()
+	state := json.RawMessage(`{"text": "now"}`)
 	err := fmt.Errorf("apply: %w", &commands.RevisionConflictError{Conflicts: []commands.Conflict{
 		{Command: 0, CommandID: first, Type: "node.update_text", Ref: commands.Ref{Kind: ids.Node, ID: stale},
-			Expected: 4, Exists: true, Current: 5, State: json.RawMessage(`{"text": "now"}`)},
-		{Command: 2, CommandID: second, Type: "connection.create", Ref: commands.Ref{Kind: ids.Node, ID: gone},
+			Expected: 4, Exists: true, Current: 5, State: state},
+		{Command: 1, CommandID: second, Type: "node.move", Ref: commands.Ref{Kind: ids.Node, ID: stale},
+			Expected: 3, Exists: true, Current: 5, State: state},
+		{Command: 2, CommandID: third, Type: "connection.create", Ref: commands.Ref{Kind: ids.Node, ID: gone},
 			Expected: 2},
 	}})
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/projects/prj_01HQ8Z3XK4F7NAWR5TCQ9M2BVD/commands", nil)
@@ -45,6 +49,7 @@ func TestRevisionConflict(t *testing.T) {
 		Error struct {
 			Details struct {
 				Conflicts []map[string]any `json:"conflicts"`
+				States    map[string]any   `json:"states"`
 			} `json:"details"`
 		} `json:"error"`
 	}
@@ -53,9 +58,10 @@ func TestRevisionConflict(t *testing.T) {
 	}
 	want := []map[string]any{
 		{"command": float64(0), "command_id": first.String(), "type": "node.update_text",
-			"id": ids.Encode(ids.Node, stale), "expected_rev": float64(4), "exists": true, "current_rev": float64(5),
-			"state": map[string]any{"text": "now"}},
-		{"command": float64(2), "command_id": second.String(), "type": "connection.create",
+			"id": ids.Encode(ids.Node, stale), "expected_rev": float64(4), "exists": true, "current_rev": float64(5)},
+		{"command": float64(1), "command_id": second.String(), "type": "node.move",
+			"id": ids.Encode(ids.Node, stale), "expected_rev": float64(3), "exists": true, "current_rev": float64(5)},
+		{"command": float64(2), "command_id": third.String(), "type": "connection.create",
 			"id": ids.Encode(ids.Node, gone), "expected_rev": float64(2), "exists": false},
 	}
 	got := env.Error.Details.Conflicts
@@ -68,6 +74,10 @@ func TestRevisionConflict(t *testing.T) {
 		if string(g) != string(e) {
 			t.Errorf("conflict %d: %s, want %s", i, g, e)
 		}
+	}
+	if want := map[string]any{ids.Encode(ids.Node, stale): map[string]any{"text": "now"}}; !reflect.DeepEqual(
+		env.Error.Details.States, want) {
+		t.Errorf("the states are %v, want %v, the one entity that exists, once", env.Error.Details.States, want)
 	}
 
 	// Any other error is left to the route's own mapping.
@@ -284,9 +294,10 @@ func TestCommandEndpointConflict(t *testing.T) {
 		t.Fatalf("the conflicts: %s", res.body)
 	}
 	c := conflicts[0].(map[string]any)
-	state, _ := c["state"].(map[string]any)
+	states, _ := res.details(t)["states"].(map[string]any)
+	state, _ := states[p].(map[string]any)
 	if c["id"] != p || c["expected_rev"] != float64(1) || c["current_rev"] != float64(2) || state["name"] != "Now" {
-		t.Errorf("the conflict: %v", c)
+		t.Errorf("the conflict: %v, with the states %v", c, states)
 	}
 	if pr := projectFrom(t, call(f.s.main, http.MethodGet, projectPath(p), nil, admin.header(false)),
 		http.StatusOK); pr.Description != "" || pr.Seq != 1 {
@@ -380,6 +391,27 @@ func TestCommandEndpointBody(t *testing.T) {
 		{"another project's revision", commandBatch(t, wireCommand{Type: "project.rename",
 			Payload: map[string]string{"name": "Pier"}, ExpectedRev: map[string]int64{other: 1}}),
 			[]string{"body.commands[0].expected_rev." + other}},
+		// It is one of the batch's problems, which are listed together,
+		// whether a command's JSON has one or its payload.
+		{"another project's revision, beside a command_id that is not one", jsonBody(t, map[string]any{
+			"commands": []any{
+				map[string]any{"command_id": "x", "type": "project.rename", "payload": map[string]any{"name": "Pier"}},
+				map[string]any{"command_id": ids.New().String(), "type": "project.rename",
+					"payload": map[string]any{"name": " "}, "expected_rev": map[string]any{other: 1}},
+			}}), []string{"body.commands[0].command_id", "body.commands[1].expected_rev." + other,
+			"body.commands[1].payload.name"}},
+		{"another project's revision, beside a payload that is not valid", commandBatch(t,
+			wireCommand{Type: "project.rename", Payload: map[string]string{"name": " "}},
+			wireCommand{Type: "project.rename", Payload: map[string]string{"name": "Pier"},
+				ExpectedRev: map[string]int64{other: 1}}),
+			[]string{"body.commands[0].payload.name", "body.commands[1].expected_rev." + other}},
+		// A command that is null is not one, and a revision of the wrong
+		// type is located at its key.
+		{"a null command", []byte(`{"commands": [null]}`), []string{"body.commands[0]"}},
+		{"a revision that is not an integer", jsonBody(t, map[string]any{"commands": []any{
+			map[string]any{"command_id": ids.New().String(), "type": "project.rename",
+				"payload": map[string]any{"name": "Pier"}, "expected_rev": map[string]any{p: "1"}},
+		}}), []string{"body.commands[0].expected_rev." + p}},
 		// A key that differs from a field's name only in case is no field of
 		// the body, or of a command, where encoding/json would take it for
 		// one, and keep the last of the two.
@@ -395,23 +427,25 @@ func TestCommandEndpointBody(t *testing.T) {
 		}
 	}
 	// In a list, a batch of too many commands, or one that cannot be read,
-	// as one with a key in another case, refuses its own batch alone.
+	// as one with a key in another case, or null, refuses its own batch
+	// alone.
 	describe := wireCommand{Type: "project.describe", Payload: map[string]string{"description": "Quay"}}
 	res := call(f.s.main, http.MethodPost, commandsPath(p), jsonBody(t, map[string]any{"batches": []any{
 		map[string]any{"commands": withIDs(many(maxBatchCommands + 1))},
 		map[string]any{"COMMANDS": withIDs([]wireCommand{describe})},
 		map[string]any{"commands": 5},
 		7,
+		nil,
 		map[string]any{"commands": withIDs([]wireCommand{rename})},
 	}}), admin.header(true))
 	var body struct {
 		Results []commandOutcomeBody `json:"results"`
 	}
-	if res.status != http.StatusOK || json.Unmarshal(res.body, &body) != nil || len(body.Results) != 5 {
-		t.Fatalf("a list with batches that cannot be applied: %d %s, want 200 and 5 results", res.status, res.body)
+	if res.status != http.StatusOK || json.Unmarshal(res.body, &body) != nil || len(body.Results) != 6 {
+		t.Fatalf("a list with batches that cannot be applied: %d %s, want 200 and 6 results", res.status, res.body)
 	}
 	for i, at := range []string{"body.batches[0].commands", "body.batches[1].COMMANDS", "body.batches[2].commands",
-		"body.batches[3]"} {
+		"body.batches[3]", "body.batches[4]"} {
 		r := body.Results[i]
 		if r.Status != "rejected" || r.Error == nil || r.Error.Code != api.CodeValidationFailed {
 			t.Errorf("batch %d's result: %+v", i, r)
@@ -421,7 +455,7 @@ func TestCommandEndpointBody(t *testing.T) {
 			t.Errorf("batch %d's problem is at %v, want %s", i, got, at)
 		}
 	}
-	if r := body.Results[4]; r.Status != "applied" || r.Seq != 1 {
+	if r := body.Results[5]; r.Status != "applied" || r.Seq != 1 {
 		t.Errorf("the last batch's result: %+v", r)
 	}
 	if pr := projectFrom(t, call(f.s.main, http.MethodGet, projectPath(p), nil, admin.header(false)),

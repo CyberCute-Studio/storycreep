@@ -29,10 +29,9 @@ type conflictBody struct {
 	ID          string        `json:"id"`
 	ExpectedRev int64         `json:"expected_rev"`
 	Exists      bool          `json:"exists"`
-	// CurrentRev and State are the entity's revision and the entity as it is
-	// now, if it still exists.
-	CurrentRev *int64          `json:"current_rev,omitempty"`
-	State      json.RawMessage `json:"state,omitempty"`
+	// CurrentRev is the entity's revision now, if it still exists, whose
+	// state the details' states hold.
+	CurrentRev *int64 `json:"current_rev,omitempty"`
 }
 
 // revisionConflictError returns the error that the API answers err with if
@@ -41,24 +40,32 @@ type conflictBody struct {
 // command of the batch whose revision is not the one that the command
 // expected, with the command, by its index in the batch, its command_id, and
 // its type, the revision that it expected, and the entity's current revision
-// and state if it still exists, or exists false if it does not (PRD FR-API-03
-// AC3, FR-OFF-04 AC5). The error mapper of a route that applies commands
-// calls it.
+// if it still exists, or exists false if it does not, and as states the
+// state of each of those entities that still exists, by its ID, once,
+// however many commands expected a revision of it (PRD FR-API-03 AC3,
+// FR-OFF-04 AC5), so that a batch of many commands that expect one entity's
+// revision is not answered with the entity's state once for each. The error
+// mapper of a route that applies commands calls it.
 func revisionConflictError(err error) error {
 	var conflict *commands.RevisionConflictError
 	if !errors.As(err, &conflict) {
 		return err
 	}
 	conflicts := make([]conflictBody, len(conflict.Conflicts))
+	states := map[string]json.RawMessage{}
 	for i, c := range conflict.Conflicts {
-		conflicts[i] = conflictBody{Command: c.Command, CommandID: c.CommandID.String(), Type: c.Type,
-			ID: ids.Encode(c.Kind, c.ID), ExpectedRev: c.Expected, Exists: c.Exists}
+		id := ids.Encode(c.Kind, c.ID)
+		conflicts[i] = conflictBody{Command: c.Command, CommandID: c.CommandID.String(), Type: c.Type, ID: id,
+			ExpectedRev: c.Expected, Exists: c.Exists}
 		if c.Exists {
 			current := c.Current
-			conflicts[i].CurrentRev, conflicts[i].State = &current, c.State
+			conflicts[i].CurrentRev = &current
+			// Every conflict of an entity has its one state.
+			states[id] = c.State
 		}
 	}
-	return &api.Error{Code: api.CodeRevisionConflict, Details: map[string]any{"conflicts": conflicts}}
+	return &api.Error{Code: api.CodeRevisionConflict, Details: map[string]any{"conflicts": conflicts,
+		"states": states}}
 }
 
 // The most that a request of the command endpoint may hold (PRD FR-API-03),
@@ -157,12 +164,12 @@ func newCommandResult(res commands.Result) commandResultBody {
 
 // commandsSchemas adds to doc the schemas of the body of the command endpoint
 // and of its answer of 200, and returns them: one batch of commands, of any
-// type that registry holds (commands.Registry.Document), or a list of
+// type that pipeline applies (commands.Pipeline.Document), or a list of
 // batches; and what one batch did, or what each batch of a list did.
-func commandsSchemas(doc huma.Registry, registry *commands.Registry) (body, answer *huma.Schema) {
+func commandsSchemas(doc huma.Registry, pipeline *commands.Pipeline) (body, answer *huma.Schema) {
 	const prefix = commands.SchemaPrefix
 	schemas := doc.Map()
-	command := registry.Document(doc)
+	command := pipeline.Document(doc)
 	schemas["CommandBody"] = command
 	one := 1
 	batch := &huma.Schema{
@@ -204,10 +211,11 @@ func commandsSchemas(doc huma.Registry, registry *commands.Registry) (body, answ
 }
 
 // registerCommands registers the command endpoint (PRD FR-API-03, §10.5),
-// which applies batches of the commands of registry with pipeline.
-func registerCommands(m *api.Mux, pipeline *commands.Pipeline, registry *commands.Registry) {
+// which applies batches of commands with pipeline, whose registry the
+// document describes them from.
+func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 	const path = "/api/v1/projects/{project_id}/commands"
-	body, answer := commandsSchemas(m.OpenAPI().Components.Schemas, registry)
+	body, answer := commandsSchemas(m.OpenAPI().Components.Schemas, pipeline)
 	api.Register(m, api.ApplyCommands, huma.Operation{
 		OperationID: "applyCommands",
 		Method:      http.MethodPost,
@@ -317,7 +325,7 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline, registry *command
 // API answers it with (commandError).
 func applyBatch(ctx context.Context, pipeline *commands.Pipeline, actor commands.Actor, projectID ids.UUID,
 	raw []json.RawMessage, at string) (commands.Result, error) {
-	cmds, err := pipeline.Parse(raw, maxBatchCommands)
+	cmds, err := pipeline.Parse(projectID, raw, maxBatchCommands)
 	if err != nil {
 		return commands.Result{}, commandError(err, at)
 	}
@@ -356,12 +364,12 @@ func bodyProblem(at, msg string) error {
 // the pipeline that applied a batch of commands sent at the location at of
 // the request, as body.commands, or err itself if it is none of them: the
 // problems of a batch that is not valid, each at its command's location, as
-// body.commands[2].payload.name, and 422 idempotency_mismatch, whose details
-// list as applied the command_ids of the batch that were applied.
+// body.commands[2].payload.name, 422 idempotency_mismatch, whose details
+// list as applied the command_ids of the batch that were applied, and the
+// pipeline's other refusals as every route answers them (pipelineError).
 func commandError(err error, at string) error {
 	var invalid *commands.InvalidError
 	var mismatch *commands.IdempotencyMismatchError
-	var insufficient *scope.InsufficientError
 	switch {
 	case errors.As(err, &invalid):
 		problems := make([]api.Problem, len(invalid.Problems))
@@ -382,6 +390,21 @@ func commandError(err error, at string) error {
 			applied[i] = id.String()
 		}
 		return &api.Error{Code: api.CodeIdempotencyMismatch, Details: map[string]any{"applied": applied}}
+	}
+	return pipelineError(err)
+}
+
+// pipelineError returns the error that the API answers err with if it is one
+// of the command pipeline's refusals that every route that applies commands
+// answers alike, or err itself otherwise: of a project that is not found, of
+// the actor's role, or of their API token, of an archived project, of a limit
+// of the workspace's plan, and of stale revisions. The error mapper of each
+// such route calls it once it has mapped what it answers its own way, as the
+// problems of a batch that is not valid, so that a refusal that the pipeline
+// adds is answered alike on every route.
+func pipelineError(err error) error {
+	var insufficient *scope.InsufficientError
+	switch {
 	case errors.Is(err, commands.ErrNotFound):
 		return api.NewError(api.CodeNotFound)
 	case errors.Is(err, commands.ErrInsufficientRole):
@@ -391,6 +414,9 @@ func commandError(err error, at string) error {
 	case errors.Is(err, commands.ErrSessionRequired):
 		return api.NewError(api.CodeSessionRequired)
 	case errors.As(err, &insufficient):
+		// A route that takes a token checks the scope that it needs before
+		// the pipeline does, which refuses only a batch with a command that
+		// needs another.
 		return insufficientScope(insufficient.Scope)
 	case errors.Is(err, commands.ErrProjectArchived):
 		return api.NewError(api.CodeProjectArchived)

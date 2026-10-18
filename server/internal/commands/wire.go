@@ -19,26 +19,29 @@ import (
 
 // wireCommand is a command as a client sends it, in JSON (PRD FR-API-03):
 // its ID, a UUID; its type; its payload; and the revisions that it expects,
-// by the public IDs of their entities, as prj_….
+// by the public IDs of their entities, as prj_…, each of which Parse decodes
+// on its own, so that a problem of one is located at its key.
 type wireCommand struct {
-	CommandID   string           `json:"command_id"`
-	Type        Type             `json:"type"`
-	Payload     json.RawMessage  `json:"payload"`
-	ExpectedRev map[string]int64 `json:"expected_rev"`
+	CommandID   string                     `json:"command_id"`
+	Type        Type                       `json:"type"`
+	Payload     json.RawMessage            `json:"payload"`
+	ExpectedRev map[string]json.RawMessage `json:"expected_rev"`
 }
 
 // Parse returns the batch of the commands that raw holds, each a JSON object
 // as a client sends it (FR-API-03): {"command_id", "type", "payload",
 // "expected_rev"}, where command_id is a UUID, and expected_rev maps the
 // public ID of each entity that the command expects a revision of, as
-// prj_01HQ8Z3XK4F7NAWR5TCQ9M2BVD, to the revision. It returns an
-// *InvalidError if the batch has more than maxCommands commands, the most that
-// a client's batch may hold, unless it is 0, and otherwise one that lists every
-// problem of the batch, those that Apply would find included, if a command is
-// not an object of exactly those fields (DecodeObject), its command_id is not
-// a UUID, or expected_rev names an identifier that is not an entity's, or one
-// entity twice; otherwise Apply checks the rest, as it does of any batch. A
-// problem of an entity of expected_rev is located at its key as the client
+// prj_01HQ8Z3XK4F7NAWR5TCQ9M2BVD, to the revision, for a batch to apply to
+// the project projectID. It returns an *InvalidError if the batch has more
+// than maxCommands commands, the most that a client's batch may hold, unless
+// it is 0, and otherwise one that lists every problem of the batch, those
+// that Apply would find before it reads the database included, if a command
+// is not an object of exactly those fields (DecodeObject), its command_id is
+// not a UUID, or expected_rev names an identifier that is not an entity's, or
+// one entity twice, or a revision that is not an integer; otherwise Apply
+// checks the rest, as it does of any batch. A problem of an entity of
+// expected_rev, or of its revision, is located at its key as the client
 // wrote it. A batch that Parse refuses counts in the pipeline's metrics as
 // one that Apply refuses as invalid does.
 //
@@ -46,9 +49,9 @@ type wireCommand struct {
 // Apply remembers the answer to their batch in the batch's idempotency
 // record, a refusal that the project's state decides, as one of stale
 // revisions, included, where it would not of a batch of the server's own.
-func (p *Pipeline) Parse(raw []json.RawMessage, maxCommands int) ([]Command, error) {
+func (p *Pipeline) Parse(projectID ids.UUID, raw []json.RawMessage, maxCommands int) ([]Command, error) {
 	start := time.Now()
-	cmds, err := p.registry.parse(raw, maxCommands)
+	cmds, err := p.registry.parse(projectID, raw, maxCommands)
 	if err != nil {
 		p.metrics.observe(nil, err, false, time.Since(start))
 	}
@@ -56,7 +59,7 @@ func (p *Pipeline) Parse(raw []json.RawMessage, maxCommands int) ([]Command, err
 }
 
 // parse is Parse.
-func (r *Registry) parse(raw []json.RawMessage, maxCommands int) ([]Command, error) {
+func (r *Registry) parse(projectID ids.UUID, raw []json.RawMessage, maxCommands int) ([]Command, error) {
 	if maxCommands > 0 && len(raw) > maxCommands {
 		return nil, &InvalidError{Problems: []Problem{{Command: -1, Message: fmt.Sprintf("has more than %d commands",
 			maxCommands)}}}
@@ -104,10 +107,21 @@ func (r *Registry) parse(raw []json.RawMessage, maxCommands int) ([]Command, err
 				continue
 			}
 			named[ref] = key
+			// encoding/json would locate a revision of the wrong type at
+			// expected_rev alone, without its key, and take null for 0.
+			var rev *int64
+			if err := json.Unmarshal(w.ExpectedRev[key], &rev); err != nil {
+				add("expected_rev."+key, decodeError(err).Message)
+				continue
+			}
+			if rev == nil {
+				add("expected_rev."+key, "expected integer, got null")
+				continue
+			}
 			if c.ExpectedRev == nil {
 				c.ExpectedRev = map[Ref]int64{}
 			}
-			c.ExpectedRev[ref] = w.ExpectedRev[key]
+			c.ExpectedRev[ref] = *rev
 		}
 		if len(named) > 0 {
 			c.keys = named
@@ -117,7 +131,7 @@ func (r *Registry) parse(raw []json.RawMessage, maxCommands int) ([]Command, err
 	if len(problems) == 0 {
 		return cmds, nil
 	}
-	_, more := r.check(cmds, skip)
+	_, more := r.check(cmds, skip, projectID)
 	problems = append(problems, more...)
 	// The problems of each command stay in the order that they were found
 	// in: those of its JSON first.
@@ -143,21 +157,26 @@ func (e *DecodeError) Error() string {
 	return e.Field + ": " + e.Message
 }
 
-// DecodeObject decodes data, a JSON object or null, into v, a pointer to a
-// struct without embedded fields, as encoding/json does, but takes a key only
-// if it names one of the struct's fields exactly, as its json tag does (PRD
+// DecodeObject decodes data, a JSON object, into v, a pointer to a struct
+// without embedded fields, as encoding/json does, but takes a key only if it
+// names one of the struct's fields exactly, as its json tag does (PRD
 // FR-API-01 AC2), and returns a *DecodeError if it cannot. encoding/json also
 // takes a key that differs from a field's name only in case for the field,
 // and keeps the last of two such keys, so that
 // {"type": "project.rename", "Type": "project.delete"} would decode as a
-// deletion. huma's validation refuses such a key in the API's other bodies,
-// but the command endpoint decodes its batches and their commands without
-// it, batch by batch, with this. A key that is no field's exactly is refused
-// as an unexpected property, as huma's validation refuses it.
+// deletion, and takes null for an empty object. huma's validation refuses
+// both in the API's other bodies, but the command endpoint decodes its
+// batches and their commands without it, batch by batch, with this. A key
+// that is no field's exactly is refused as an unexpected property, and null
+// as a value that is not an object, as huma's validation refuses them.
 func DecodeObject(data []byte, v any) error {
 	var keys map[string]json.RawMessage
 	if err := json.Unmarshal(data, &keys); err != nil {
 		return decodeError(err)
+	}
+	// null leaves the map nil, where an object, even an empty one, makes it.
+	if keys == nil {
+		return &DecodeError{Message: "expected object, got null"}
 	}
 	t := reflect.TypeOf(v).Elem()
 	names := make(map[string]bool, t.NumField())
@@ -282,6 +301,14 @@ func (r *Registry) Document(reg huma.Registry) *huma.Schema {
 	}
 	union.PrecomputeMessages()
 	return union
+}
+
+// Document adds to reg the schemas of the commands that the pipeline applies,
+// as Registry.Document does of the pipeline's registry, and returns the
+// schema of a command of any of them, so that the API's document describes
+// the commands that Parse and Apply take, and no others.
+func (p *Pipeline) Document(reg huma.Registry) *huma.Schema {
+	return p.registry.Document(reg)
 }
 
 // typeSchemaName returns the name of the schemas of a command of the type typ:

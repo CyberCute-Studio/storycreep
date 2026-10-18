@@ -350,18 +350,29 @@ func TestRememberedRefusal(t *testing.T) {
 	})
 
 	t.Run("revision conflict", func(t *testing.T) {
-		stale := sentCommand(t, noteUpdate, notePayload{ID: aID, Body: "stale"}, map[Ref]int64{noteRef(a): 1})
-		_, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{stale})
+		// Both commands expect the note's revision, which it no longer has.
+		stale := []Command{
+			sentCommand(t, noteUpdate, notePayload{ID: aID, Body: "stale"}, map[Ref]int64{noteRef(a): 1}),
+			sentCommand(t, noteTouch, noteIDPayload{ID: aID}, map[Ref]int64{noteRef(a): 1}),
+		}
+		_, err := p.Apply(ctx, w.as(ownerUser), w.project, stale)
 		var conflict *RevisionConflictError
-		if !errors.As(err, &conflict) {
+		if !errors.As(err, &conflict) || len(conflict.Conflicts) != 2 {
 			t.Fatalf("a stale batch: %v", err)
+		}
+		// The record keeps the note's state once, however many commands
+		// expected its revision.
+		if n := w.count(t, `SELECT count(*) FROM idempotency_record WHERE command_id = $1
+			AND jsonb_array_length(response->'refusal'->'conflicts') = 2
+			AND jsonb_array_length(response->'refusal'->'states') = 1`, stale[0].ID); n != 1 {
+			t.Errorf("the stale batch's record does not hold its 2 conflicts and the note's state once")
 		}
 		// The note changes again, which the refusal sent again does not show.
 		if _, err := p.Apply(ctx, w.as(ownerUser), w.project,
 			[]Command{command(t, noteUpdate, notePayload{ID: aID, Body: "newer"}, nil)}); err != nil {
 			t.Fatal(err)
 		}
-		_, again := p.Apply(ctx, w.as(ownerUser), w.project, []Command{stale})
+		_, again := p.Apply(ctx, w.as(ownerUser), w.project, stale)
 		var conflictAgain *RevisionConflictError
 		if !errors.As(again, &conflictAgain) || !reflect.DeepEqual(conflictAgain, conflict) {
 			t.Errorf("the stale batch sent again: %#v, want %#v", again, conflict)
@@ -454,13 +465,17 @@ func TestConcurrentReplays(t *testing.T) {
 // TestParse checks that Parse reads a client's commands, and that a batch
 // with commands that it cannot read is refused with every problem of the
 // batch, those that Apply would find in its other commands included, in the
-// order of the commands.
+// order of the commands, each at its location, a revision's at its key, and
+// null, which encoding/json would take for an empty object, or 0, refused as
+// a value of the wrong type.
 func TestParse(t *testing.T) {
 	p := New(nil, Options{Registry: noteRegistry(), Entitlements: entitlements.New(entitlements.Options{})})
+	project := ids.New()
 	a, aID := newNote()
+	_, bID := newNote()
 	id := ids.New()
 	raw := func(s string) json.RawMessage { return json.RawMessage(s) }
-	cmds, err := p.Parse([]json.RawMessage{raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update",
+	cmds, err := p.Parse(project, []json.RawMessage{raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update",
 		"payload": {"id": %q, "body": "x"}, "expected_rev": {%q: 3}}`, id, aID, aID))}, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -471,7 +486,7 @@ func TestParse(t *testing.T) {
 	}
 
 	upper := "ND_" + strings.ToUpper(aID[len("nd_"):])
-	_, err = p.Parse([]json.RawMessage{
+	_, err = p.Parse(project, []json.RawMessage{
 		raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update", "payload": {"id": %q, "body": 7}}`, ids.New(),
 			aID)),
 		raw(`{"command_id": "not-a-uuid", "type": "note.unknown", "payload": {}}`),
@@ -479,6 +494,11 @@ func TestParse(t *testing.T) {
 		raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update", "payload": {"id": %q, "body": "y"},
 			"expected_rev": {"xx_1": 1, %q: 1, %q: 2}}`, ids.New(), aID, aID, upper)),
 		raw(`{"command_id": "", "type": "note.update", "payload": {"id": "nd_x", "body": ""}, "extra": 1}`),
+		raw(`null`),
+		raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update", "payload": {"id": %q, "body": "w"},
+			"expected_rev": {%q: "3"}}`, ids.New(), bID, bID)),
+		raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update", "payload": {"id": %q, "body": "w"},
+			"expected_rev": {%q: null}}`, ids.New(), bID, bID)),
 	}, 0)
 	var invalid *InvalidError
 	if !errors.As(err, &invalid) {
@@ -495,13 +515,20 @@ func TestParse(t *testing.T) {
 	// The keys are read in their order, in which the uppercase spelling of the
 	// note comes first.
 	want := []at{{0, "payload.body"}, {1, "command_id"}, {1, "type"}, {2, "command_id"},
-		{3, "expected_rev." + aID}, {3, "expected_rev.xx_1"}, {4, "extra"}}
+		{3, "expected_rev." + aID}, {3, "expected_rev.xx_1"}, {4, "extra"}, {5, ""}, {6, "expected_rev." + bID},
+		{7, "expected_rev." + bID}}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("the problems %+v, want them at %+v", invalid.Problems, want)
+		t.Fatalf("the problems %+v, want them at %+v", invalid.Problems, want)
 	}
-	// A value of the wrong JSON type is told so in JSON's terms, not Go's.
-	if pr := invalid.Problems[3]; pr.Message != "expected string, got number" {
-		t.Errorf("the problem of a command_id that is a number: %+v", pr)
+	// A value of the wrong JSON type is told so in JSON's terms, not Go's, as
+	// null is where the API's schema refuses it, which encoding/json would
+	// take for an empty object, or for a revision of 0; a revision's is
+	// located at its key.
+	for i, msg := range map[int]string{3: "expected string, got number", 7: "expected object, got null",
+		8: "expected integer, got string", 9: "expected integer, got null"} {
+		if pr := invalid.Problems[i]; pr.Message != msg {
+			t.Errorf("problem %d is %+v, want %q", i, pr, msg)
+		}
 	}
 
 	// A key that differs from a field's name only in case is no field, where
@@ -509,7 +536,7 @@ func TestParse(t *testing.T) {
 	// a problem of an entity of expected_rev is located at its key as the
 	// client wrote it, which Apply finds too, of a batch that Parse returns.
 	lower := "nd_" + strings.ToLower(aID[len("nd_"):])
-	_, err = p.Parse([]json.RawMessage{
+	_, err = p.Parse(project, []json.RawMessage{
 		raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update", "Type": "note.delete", "payload": {"id": %q}}`,
 			ids.New(), aID)),
 		raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update", "payload": {"id": %q, "body": "z"},
@@ -520,19 +547,19 @@ func TestParse(t *testing.T) {
 		invalid.Problems[1].Command != 1 || invalid.Problems[1].Field != "expected_rev."+lower {
 		t.Errorf("Parse of a key in another case, and of a revision at a lowercase key: %v", err)
 	}
-	cmds, err = p.Parse([]json.RawMessage{raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update",
+	cmds, err = p.Parse(project, []json.RawMessage{raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update",
 		"payload": {"id": %q, "body": "z"}, "expected_rev": {%q: 0}}`, ids.New(), aID, lower))}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.registry.decode(cmds); !errors.As(err, &invalid) || len(invalid.Problems) != 1 ||
+	if _, err := p.registry.decode(cmds, project); !errors.As(err, &invalid) || len(invalid.Problems) != 1 ||
 		invalid.Problems[0].Field != "expected_rev."+lower {
 		t.Errorf("the check of a revision at a lowercase key: %v, want it located at expected_rev.%s", err, lower)
 	}
 
 	// The nil UUID is a UUID, but no command's ID, which a command without one
 	// would be taken for.
-	_, err = p.Parse([]json.RawMessage{raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update",
+	_, err = p.Parse(project, []json.RawMessage{raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update",
 		"payload": {"id": %q, "body": "z"}}`, ids.UUID{}, aID))}, 0)
 	if !errors.As(err, &invalid) || !reflect.DeepEqual(invalid.Problems, []Problem{{Command: 0, Field: "command_id",
 		Message: "is the nil UUID, which is no command's ID"}}) {
@@ -540,7 +567,7 @@ func TestParse(t *testing.T) {
 	}
 
 	// A batch of more commands than its sender may send is refused whole.
-	_, err = p.Parse(make([]json.RawMessage, 3), 2)
+	_, err = p.Parse(project, make([]json.RawMessage, 3), 2)
 	if !errors.As(err, &invalid) || !reflect.DeepEqual(invalid.Problems,
 		[]Problem{{Command: -1, Message: "has more than 2 commands"}}) {
 		t.Errorf("Parse of 3 commands of at most 2: %v", err)

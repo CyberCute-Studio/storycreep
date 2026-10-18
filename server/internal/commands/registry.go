@@ -441,20 +441,25 @@ type decoded struct {
 	encoded []byte
 }
 
-// decode checks the batch, and returns its commands decoded, or an
-// *InvalidError that lists every problem of the batch.
-func (r *Registry) decode(batch []Command) ([]decoded, error) {
-	out, problems := r.check(batch, nil)
+// decode checks the batch, which is applied to the project projectID, and
+// returns its commands decoded, or an *InvalidError that lists every problem
+// of the batch.
+func (r *Registry) decode(batch []Command, projectID ids.UUID) ([]decoded, error) {
+	out, problems := r.check(batch, nil, projectID)
 	if len(problems) > 0 {
 		return nil, &InvalidError{Problems: problems}
 	}
 	return out, nil
 }
 
-// check checks the batch, but for its commands that skip names, which
-// another check found unreadable, and returns its commands decoded, and
-// every problem of the batch, in the order of its commands.
-func (r *Registry) check(batch []Command, skip map[int]bool) ([]decoded, []Problem) {
+// check checks the batch, which is applied to the project projectID, but for
+// its commands that skip names, which another check found unreadable, and
+// returns its commands decoded, and every problem of the batch, in the order
+// of its commands. Of the projects, a command may expect a revision of the
+// batch's own alone: the check of the revisions would take another for one
+// that no longer exists, which the client would show as deleted (FR-OFF-04
+// AC5).
+func (r *Registry) check(batch []Command, skip map[int]bool, projectID ids.UUID) ([]decoded, []Problem) {
 	if len(batch) == 0 {
 		return nil, []Problem{{Command: -1, Message: "has no commands"}}
 	}
@@ -486,6 +491,8 @@ func (r *Registry) check(batch []Command, skip map[int]bool) ([]decoded, []Probl
 			case !slices.Contains(s.touches, ref.Kind):
 				add("expected_rev."+c.key(ref), fmt.Sprintf("names a %s, which the command does not touch",
 					ref.Kind))
+			case ref.Kind == ids.Project && ref.ID != projectID:
+				add("expected_rev."+c.key(ref), "names another project than the one that the batch is applied to")
 			case c.ExpectedRev[ref] < 1:
 				add("expected_rev."+c.key(ref), "is not a revision; an entity's first revision is 1")
 			}
