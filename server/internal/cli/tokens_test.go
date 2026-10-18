@@ -55,8 +55,10 @@ func TestCreateToken(t *testing.T) {
 	lighthouse := encode(ids.Project, "0192f5c4-0000-7000-8000-0000000000cc")
 	elsewhere := encode(ids.Project, "0192f5c4-0000-7000-8000-0000000000dd")
 
-	code, stdout, stderr := runWithInput(t, env, "", "create-token", "--scopes", "snapshot:read, project:write",
-		"--expires", "2099-01-31T00:00:00Z", "jo@example.com", "harbour", "CI")
+	// The token holds each scope once, in the order of the PRD's table.
+	code, stdout, stderr := runWithInput(t, env, "", "create-token", "--scopes",
+		"project:write, snapshot:read,project:write", "--expires", "2099-01-31T00:00:00Z", "jo@example.com", "harbour",
+		"CI")
 	secret := strings.TrimSuffix(stdout, "\n")
 	if code != ExitOK || !strings.HasPrefix(secret, "scp_") || strings.Contains(secret, "\n") ||
 		!strings.Contains(stderr, "with the scopes snapshot:read, project:write") {

@@ -490,19 +490,19 @@ func (s *Service) workspaceOf(ctx context.Context, userID, projectID ids.UUID) (
 }
 
 // actorWorkspace returns the workspace that the actor acts in on the project
-// projectID: that of their API token, which acts in no other, so that a
-// transaction of it does not find a project of another workspace, or else
-// the project's, through the context bootstrap (workspaceOf). It returns
-// ErrNotFound as workspaceOf does, and for a project other than the one that
-// the token is narrowed to.
+// projectID: that of their API token (scope.Token.Workspace), which acts in
+// no other, so that a transaction of it does not find a project of another
+// workspace, or else the project's, through the context bootstrap
+// (workspaceOf). It returns ErrNotFound as workspaceOf does, and for a
+// project other than the one that the token is narrowed to.
 func (s *Service) actorWorkspace(ctx context.Context, actor commands.Actor, projectID ids.UUID) (ids.UUID, error) {
 	if actor.Token == nil {
 		return s.workspaceOf(ctx, actor.UserID, projectID)
 	}
-	if !actor.Token.Covers(actor.Token.WorkspaceID, projectID) {
-		return ids.UUID{}, ErrNotFound
+	if ws, ok := actor.Token.Workspace(projectID); ok {
+		return ws, nil
 	}
-	return actor.Token.WorkspaceID, nil
+	return ids.UUID{}, ErrNotFound
 }
 
 // Get returns the project projectID, with the role that the actor acts with
@@ -655,8 +655,8 @@ type Patch struct {
 // owner or admin (§5.6), then input.FieldErrors if a field of p is not
 // valid, commands.ErrProjectArchived if the project is archived, and a
 // *commands.RevisionConflictError if p expects a revision that the project
-// does not have, and changes nothing then. A patch that names no change is not applied, and returns the
-// project, whatever revision it expects.
+// does not have, and changes nothing then. A patch that names no change is
+// not applied, and returns the project, whatever revision it expects.
 func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID ids.UUID, p Patch) (Visible, error) {
 	var steps []commands.Step
 	var errs input.FieldErrors
@@ -698,7 +698,7 @@ func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID id
 		// checks it before a command's payload would reach the project, and a
 		// patch that names no change is answered with the project that the
 		// check reads.
-		v, err := s.authorise(ctx, actor, projectID, authz.ChangeProjectSettings)
+		v, err := s.authorise(ctx, actor, projectID, patchOperation, patchScope)
 		switch {
 		case err != nil:
 			return Visible{}, err
@@ -711,20 +711,20 @@ func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID id
 }
 
 // authorise returns the project projectID, with the actor's effective role on
-// it, for a change of it that op, one of the project-scoped operations (P),
-// authorises, as the pipeline would apply its commands: it returns the
-// errors of Get, then commands.ErrInsufficientScope, as a
-// *scope.InsufficientError, if the actor's API token does not hold
-// project:write, which each of the project's commands needs (Register), and
-// the error of authz.Check if the role does not allow op.
-func (s *Service) authorise(ctx context.Context, actor commands.Actor, projectID ids.UUID, op authz.Operation) (
-	Visible, error) {
+// it, for a change of it by commands that need the operation op, one of the
+// project-scoped operations (P), and the scope needed of an API token, as
+// they are registered (Register), as the pipeline would apply them: it
+// returns the errors of Get, then commands.ErrInsufficientScope, as a
+// *scope.InsufficientError, if the actor's API token does not hold needed,
+// and the error of authz.Check if the role does not allow op.
+func (s *Service) authorise(ctx context.Context, actor commands.Actor, projectID ids.UUID, op authz.Operation,
+	needed scope.Scope) (Visible, error) {
 	p, err := s.Get(ctx, actor, projectID)
 	if err != nil {
 		return Visible{}, err
 	}
-	if !actor.Token.Allows(scope.ProjectWrite) {
-		return Visible{}, &scope.InsufficientError{Scope: scope.ProjectWrite}
+	if !actor.Token.Allows(needed) {
+		return Visible{}, &scope.InsufficientError{Scope: needed}
 	}
 	if err := authz.Check(p.Role, op); err != nil {
 		return Visible{}, err

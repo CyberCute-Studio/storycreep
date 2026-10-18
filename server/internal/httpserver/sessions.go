@@ -226,7 +226,7 @@ func authenticator(accounts *account.Service, tokens *apitoken.Service, cookie s
 		}
 		session, err := accounts.Session(ctx, value)
 		if errors.Is(err, account.ErrNoSession) {
-			return nil, unauthenticated(needed, "", http.Header{"Set-Cookie": {cookie.clear()}})
+			return nil, signedOut(needed, cookie)
 		}
 		if err != nil {
 			return nil, err
@@ -290,9 +290,10 @@ func insufficientScope(needed scope.Scope) error {
 }
 
 // signedOut returns unauthenticated, with the header that clears the
-// cookie of a session that has ended.
-func signedOut(cookie sessionCookie) error {
-	return huma.ErrorWithHeaders(api.NewError(api.CodeUnauthenticated), http.Header{"Set-Cookie": {cookie.clear()}})
+// cookie of a session that has ended, on a route that takes an API token
+// that holds needed, or "" for one that takes none, as unauthenticated does.
+func signedOut(needed scope.Scope, cookie sessionCookie) error {
+	return unauthenticated(needed, "", http.Header{"Set-Cookie": {cookie.clear()}})
 }
 
 // sessionBody is a session, as the API shows it.
@@ -633,7 +634,8 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 				"errors": []api.Problem{{Location: "body.current_password", Message: "is not the account's password"}},
 			}}
 		case errors.Is(err, account.ErrNoSession):
-			return nil, signedOut(cookie)
+			// The route takes no token.
+			return nil, signedOut("", cookie)
 		case errors.As(err, &weak):
 			return nil, weakPasswordError(weak, "body.new_password")
 		case err != nil:

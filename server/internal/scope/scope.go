@@ -10,9 +10,11 @@
 // never with more than its owner's role allows at the time of use: the
 // permission check is allowed(role) AND token_has_scope AND
 // token_covers_project (§5.6). The services check the last two with Token,
-// once they know the project that a request acts on, and answer a project
-// that the token does not cover as one that does not exist, with 404, so that
-// the answer does not tell that it exists (AC3).
+// once they know the project that a request acts on: they act in the
+// token's workspace (Token.Workspace), and answer a project that the token
+// does not cover, of another workspace or other than the one that it is
+// narrowed to, as one that does not exist, with 404, so that the answer does
+// not tell that it exists (AC3).
 package scope
 
 import (
@@ -132,11 +134,18 @@ type Token struct {
 	Scopes []Scope
 }
 
-// Covers reports whether t lets its owner act on the project projectID of
-// the workspace workspaceID: whether it belongs to that workspace, and is
-// narrowed to no other project. A nil Token covers every project.
-func (t *Token) Covers(workspaceID, projectID ids.UUID) bool {
-	return t == nil || t.WorkspaceID == workspaceID && (t.ProjectID == ids.UUID{} || t.ProjectID == projectID)
+// Workspace returns the workspace that t's owner acts in on the project
+// projectID, and true, or false if t is narrowed to another project. It is
+// t's own workspace, in which alone t acts: a service reads the project in
+// a transaction of it, which finds no project of another workspace, so that
+// the service answers one as a project that does not exist. t is not nil: a
+// request made with a session acts in the project's workspace, which the
+// service finds through the context bootstrap (PRD §5.4).
+func (t *Token) Workspace(projectID ids.UUID) (ids.UUID, bool) {
+	if t.ProjectID != (ids.UUID{}) && t.ProjectID != projectID {
+		return ids.UUID{}, false
+	}
+	return t.WorkspaceID, true
 }
 
 // Allows reports whether t holds needed, or a scope that implies it

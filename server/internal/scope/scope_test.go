@@ -43,31 +43,33 @@ func TestGrants(t *testing.T) {
 	}
 }
 
-// TestToken checks what a token covers and allows, and that a nil Token, a
-// request's session, is restricted by neither, and that an
-// InsufficientError is ErrInsufficientScope.
+// TestToken checks the workspace that a token acts in on a project, and
+// which projects it covers, what it allows, that a nil Token, a request's
+// session, allows every scope, and that an InsufficientError is
+// ErrInsufficientScope.
 func TestToken(t *testing.T) {
-	ws, other, p, q := ids.New(), ids.New(), ids.New(), ids.New()
+	ws, p, q := ids.New(), ids.New(), ids.New()
 	wide := &Token{ID: ids.New(), WorkspaceID: ws, Scopes: []Scope{ProjectRead}}
 	narrowed := &Token{ID: ids.New(), WorkspaceID: ws, ProjectID: p, Scopes: []Scope{ProjectWrite}}
 	var session *Token
 	for _, tt := range []struct {
-		name      string
-		token     *Token
-		workspace ids.UUID
-		project   ids.UUID
-		want      bool
+		name    string
+		token   *Token
+		project ids.UUID
+		covers  bool
 	}{
-		{"a workspace's token on its project", wide, ws, p, true},
-		{"a workspace's token on another of its projects", wide, ws, q, true},
-		{"a workspace's token in another workspace", wide, other, p, false},
-		{"a narrowed token on its project", narrowed, ws, p, true},
-		{"a narrowed token on another project", narrowed, ws, q, false},
-		{"a narrowed token in another workspace", narrowed, other, p, false},
-		{"a session", session, other, q, true},
+		{"a workspace's token on a project", wide, p, true},
+		{"a workspace's token on another project", wide, q, true},
+		{"a narrowed token on its project", narrowed, p, true},
+		{"a narrowed token on another project", narrowed, q, false},
 	} {
-		if got := tt.token.Covers(tt.workspace, tt.project); got != tt.want {
-			t.Errorf("%s: Covers = %v, want %v", tt.name, got, tt.want)
+		got, covers := tt.token.Workspace(tt.project)
+		want := ws
+		if !tt.covers {
+			want = ids.UUID{}
+		}
+		if got != want || covers != tt.covers {
+			t.Errorf("%s: Workspace = %v, %v; want %v, %v", tt.name, got, covers, want, tt.covers)
 		}
 	}
 	switch {

@@ -67,6 +67,16 @@ type emptyPayload struct{}
 // touches are the kinds of entity that every command of a project touches.
 var touches = []ids.Kind{ids.Project}
 
+// The commands that a patch of the project applies (Update), Rename,
+// Describe, and UpdateSettings, need the operation patchOperation of the
+// actor's role, and the scope patchScope of their API token, which Update
+// checks too for a patch that it does not apply, as the pipeline would
+// check them.
+const (
+	patchOperation = authz.ChangeProjectSettings
+	patchScope     = scope.ProjectWrite
+)
+
 // Register registers in r the project as an entity of the pipeline, whose
 // revision a command expects as it does any entity's, and the project's
 // commands, each of which changes its draft, so that an API token needs
@@ -106,7 +116,7 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[renamePayload]{
-		Type: Rename, Capability: authz.ChangeProjectSettings, Scope: scope.ProjectWrite, Touches: touches,
+		Type: Rename, Capability: patchOperation, Scope: patchScope, Touches: touches,
 		Check: func(p renamePayload) input.FieldErrors { return field("name", checkName(p.Name)) },
 		Inverse: func(ctx context.Context, tx *commands.Tx, _ renamePayload) ([]commands.Step, error) {
 			p, err := read(ctx, tx)
@@ -123,7 +133,7 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[describePayload]{
-		Type: Describe, Capability: authz.ChangeProjectSettings, Scope: scope.ProjectWrite, Touches: touches,
+		Type: Describe, Capability: patchOperation, Scope: patchScope, Touches: touches,
 		Check: func(p describePayload) input.FieldErrors {
 			return field("description", checkDescription(p.Description))
 		},
@@ -142,7 +152,7 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[settingsPayload]{
-		Type: UpdateSettings, Capability: authz.ChangeProjectSettings, Scope: scope.ProjectWrite, Touches: touches,
+		Type: UpdateSettings, Capability: patchOperation, Scope: patchScope, Touches: touches,
 		Check: checkSettings,
 		Inverse: func(ctx context.Context, tx *commands.Tx, p settingsPayload) ([]commands.Step, error) {
 			cur, err := read(ctx, tx)

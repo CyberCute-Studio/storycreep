@@ -429,20 +429,20 @@ func allApply(cmds []decoded, applies func(decoded) bool) bool {
 }
 
 // actorWorkspace returns the workspace that the actor acts in on the
-// project: that of their API token, which acts in no other, so that the
-// batch's transaction does not find a project of another workspace, which it
-// answers with ErrNotFound before anything of it is read but whether it
-// exists, or else the project's (workspaceOf). It returns ErrNotFound as
-// workspaceOf does, and for a project other than the one that the token is
-// narrowed to.
+// project: that of their API token (scope.Token.Workspace), which acts in no
+// other, so that the batch's transaction does not find a project of another
+// workspace, which it answers with ErrNotFound before anything of it is read
+// but whether it exists, or else the project's (workspaceOf). It returns
+// ErrNotFound as workspaceOf does, and for a project other than the one that
+// the token is narrowed to.
 func (p *Pipeline) actorWorkspace(ctx context.Context, actor Actor, projectID ids.UUID) (ids.UUID, error) {
 	if actor.Token == nil {
 		return p.workspaceOf(ctx, actor.UserID, projectID)
 	}
-	if !actor.Token.Covers(actor.Token.WorkspaceID, projectID) {
-		return ids.UUID{}, ErrNotFound
+	if ws, ok := actor.Token.Workspace(projectID); ok {
+		return ws, nil
 	}
-	return actor.Token.WorkspaceID, nil
+	return ids.UUID{}, ErrNotFound
 }
 
 // workspaceOf returns the workspace of the project, through the context

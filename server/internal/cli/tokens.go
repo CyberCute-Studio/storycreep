@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -136,7 +135,9 @@ the expiry is not valid.
 }
 
 // parseScopes returns the scopes of --scopes, which lists them separated by
-// commas, or a usageError if it lists none, or one that is not a scope.
+// commas, or a usageError if it lists none, or one that is not a scope, as
+// grant-role's for a role that is not one. The token keeps each scope once,
+// as Issue makes it.
 func parseScopes(list string) ([]scope.Scope, error) {
 	var out []scope.Scope
 	for _, name := range strings.Split(list, ",") {
@@ -147,9 +148,8 @@ func parseScopes(list string) ([]scope.Scope, error) {
 		case !s.Known():
 			return nil, usageError{fmt.Sprintf("unknown scope %q; a scope is %s", s,
 				strings.Join(scope.Names(scope.All()), ", "))}
-		case !slices.Contains(out, s):
-			out = append(out, s)
 		}
+		out = append(out, s)
 	}
 	if len(out) == 0 {
 		return nil, usageError{"--scopes lists no scope; a token holds one at least"}
