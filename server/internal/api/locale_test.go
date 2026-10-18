@@ -47,6 +47,7 @@ func localeMux(t *testing.T, instanceDefault language.Tag) (*Mux, *bytes.Buffer)
 		Log:           logging.New(&logged, slog.LevelDebug),
 		Locales:       locales,
 		DefaultLocale: instanceDefault,
+		RateLimit:     noLimit{},
 		Middleware: []func(http.Handler) http.Handler{func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				next.ServeHTTP(w, r.WithContext(logging.WithRequestID(r.Context(), testRequestID)))

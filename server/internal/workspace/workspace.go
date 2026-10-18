@@ -56,6 +56,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
 
 // Limits of a workspace's fields.
@@ -557,8 +558,14 @@ func catalogLocale(v string) (language.Tag, bool) {
 }
 
 // Get returns the workspace id, and the role that the user userID acts with
-// in it, or ErrNotFound if it does not exist or the user's role is none.
-func (s *Service) Get(ctx context.Context, userID, id ids.UUID) (Workspace, role.Role, error) {
+// in it, or ErrNotFound if it does not exist, the user's role is none, or the
+// request is made with the API token tok, nil for a session, of another
+// workspace (FR-AUTH-04 AC3). The token's scopes are the route's to check.
+func (s *Service) Get(ctx context.Context, userID ids.UUID, tok *scope.Token, id ids.UUID) (Workspace, role.Role,
+	error) {
+	if tok != nil && !tok.InWorkspace(id) {
+		return Workspace{}, "", ErrNotFound
+	}
 	var w Workspace
 	var r role.Role
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: id, UserID: userID}, func(tx pgx.Tx) error {
@@ -700,11 +707,18 @@ func (w *Workspace) apply(p Patch) (bool, error) {
 // List returns at most limit of the workspaces that the user userID is a
 // member of, with each membership, guests' included, in the order of their
 // IDs: the first, if after is zero, or else those after the workspace after.
-func (s *Service) List(ctx context.Context, userID, after ids.UUID, limit int) ([]Membership, error) {
+// A request made with the API token tok, nil for a session, is shown the
+// token's workspace alone, in which alone it acts (FR-AUTH-04).
+func (s *Service) List(ctx context.Context, userID ids.UUID, tok *scope.Token, after ids.UUID, limit int) (
+	[]Membership, error) {
+	var only ids.UUID
+	if tok != nil {
+		only = tok.WorkspaceID
+	}
 	var out []Membership
 	err := s.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
 		rows, err := queries.New(tx).UserWorkspaces(ctx, queries.UserWorkspacesParams{UserID: nullUUID(userID),
-			After: nullUUID(after), MaxRows: int32(min(limit, 1<<20))})
+			After: nullUUID(after), OnlyWorkspace: nullUUID(only), MaxRows: int32(min(limit, 1<<20))})
 		if err != nil {
 			return fmt.Errorf("workspace: list the workspaces: %w", err)
 		}

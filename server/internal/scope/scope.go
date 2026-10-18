@@ -134,6 +134,15 @@ type Token struct {
 	Scopes []Scope
 }
 
+// InWorkspace reports whether t acts in the workspace workspaceID: whether it
+// is t's own, in which alone t acts, whether or not t is narrowed to one of
+// its projects. A service answers a route of another workspace, for a request
+// made with t, as one of a workspace that does not exist, with 404, as it
+// answers a project that t does not cover (AC3). t is not nil.
+func (t *Token) InWorkspace(workspaceID ids.UUID) bool {
+	return t.WorkspaceID == workspaceID
+}
+
 // Workspace returns the workspace that t's owner acts in on the project
 // projectID, and true, or false if t is narrowed to another project. It is
 // t's own workspace, in which alone t acts: a service reads the project in

@@ -198,8 +198,9 @@ LEFT JOIN project_grant g
 WHERE p.workspace_id = $2 AND p.deleted_at IS NULL
     AND ($3::uuid IS NULL OR p.id > $3::uuid)
     AND (NOT $4::boolean OR g.role IS NOT NULL)
+    AND ($5::uuid IS NULL OR p.id = $5::uuid)
 ORDER BY p.id
-LIMIT $5
+LIMIT $6
 `
 
 type ProjectsParams struct {
@@ -207,6 +208,7 @@ type ProjectsParams struct {
 	WorkspaceID  pgtype.UUID
 	After        pgtype.UUID
 	GrantedOnly  bool
+	OnlyProject  pgtype.UUID
 	MaxRows      int32
 }
 
@@ -219,13 +221,16 @@ type ProjectsRow struct {
 // the order of their IDs, after the project after, or from the first if after
 // is null, each with the role of the grant of the membership membership_id
 // on it, if it has one. If granted_only is set, as for a guest, who sees only
-// the projects granted to them (FR-TEN-04 AC2), it returns only those.
+// the projects granted to them (FR-TEN-04 AC2), it returns only those, and
+// if only_project is not null, as for an API token narrowed to a project,
+// which acts on that one alone, it returns only that one.
 func (q *Queries) Projects(ctx context.Context, arg ProjectsParams) ([]ProjectsRow, error) {
 	rows, err := q.db.Query(ctx, projects,
 		arg.MembershipID,
 		arg.WorkspaceID,
 		arg.After,
 		arg.GrantedOnly,
+		arg.OnlyProject,
 		arg.MaxRows,
 	)
 	if err != nil {

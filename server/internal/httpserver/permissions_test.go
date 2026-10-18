@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -696,13 +697,28 @@ type routeCall struct {
 // joins the tests that walk them.
 func routeCalls(t *testing.T, f *rolesFixture, params map[string]string) []routeCall {
 	t.Helper()
-	doc := f.s.main.OpenAPI()
 	var routes []api.Route
 	for r := range f.s.main.Routes() {
 		if strings.Contains(r.Pattern, "{workspace_id}") || strings.Contains(r.Pattern, "{project_id}") {
 			routes = append(routes, r)
 		}
 	}
+	return callsOf(t, f, params, routes)
+}
+
+// tokenRouteCalls returns a call of every route that takes an API token
+// (api.TokenScope), as routeCalls does, those without a parameter of a
+// workspace or a project included, such as the list of workspaces.
+func tokenRouteCalls(t *testing.T, f *rolesFixture, params map[string]string) []routeCall {
+	t.Helper()
+	return callsOf(t, f, params, slices.Collect(maps.Keys(f.s.main.TokenScopes())))
+}
+
+// callsOf returns a call of each of routes, in their order, with the values of
+// params for the parameters of their paths, as routeCalls describes.
+func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []api.Route) []routeCall {
+	t.Helper()
+	doc := f.s.main.OpenAPI()
 	slices.SortFunc(routes, func(a, b api.Route) int { return strings.Compare(a.String(), b.String()) })
 	var out []routeCall
 	for _, r := range routes {

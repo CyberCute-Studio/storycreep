@@ -160,18 +160,19 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 			withClient(cfg.TrustedProxies),
 		},
 		Authenticate: authenticator(s.accounts, s.tokens, cookie),
+		RateLimit:    limiter{s},
 	})
 	s.registerOperational(s.main)
-	registerAccounts(s.main, s.accounts, s.limits)
-	registerSessions(s.main, s.accounts, s.limits, cookie)
+	registerAccounts(s.main, s.accounts)
+	registerSessions(s.main, s.accounts, cookie)
 	registerWorkspaces(s.main, s.workspaces)
 	registerUsage(s.main, s.workspaces)
 	registerProjects(s.main, s.projects)
 	registerGrants(s.main, s.projects)
-	registerTokens(s.main, s.tokens, s.limits)
-	registerInvites(s.main, s.workspaces, s.invites, s.accounts, s.limits)
-	registerSetup(s.main, s.setups, s.limits)
-	registerEmail(s.main, s.accounts, s.limits)
+	registerTokens(s.main, s.tokens)
+	registerInvites(s.main, s.workspaces, s.invites, s.accounts)
+	registerSetup(s.main, s.setups)
+	registerEmail(s.main, s.accounts)
 	registerDocument(s.main)
 	registerPages(s.main, cfg.Capabilities.PublicSite)
 
@@ -226,7 +227,9 @@ type versionOutput struct {
 }
 
 // registerOperational registers /healthz, /readyz, and /version (PRD
-// FR-ADMIN-05).
+// FR-ADMIN-05), which no rate limit counts, because they answer without the
+// database, in which the limits count: the probes must answer while it is
+// being migrated, or does not answer.
 func (s *server) registerOperational(m *api.Mux) {
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "getHealth",
@@ -236,7 +239,7 @@ func (s *server) registerOperational(m *api.Mux) {
 		Tags:        []string{"Operations"},
 	}, func(context.Context, *struct{}) (*statusOutput, error) {
 		return &statusOutput{Body: statusBody{Status: "ok"}}, nil
-	})
+	}, api.Unlimited())
 
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "getReadiness",
@@ -252,7 +255,7 @@ func (s *server) registerOperational(m *api.Mux) {
 			return nil, err
 		}
 		return &statusOutput{Body: statusBody{Status: "ready"}}, nil
-	})
+	}, api.Unlimited())
 
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "getVersion",
@@ -268,7 +271,7 @@ func (s *server) registerOperational(m *api.Mux) {
 			CommitTime: info.CommitTime,
 			GoVersion:  info.GoVersion,
 		}}, nil
-	})
+	}, api.Unlimited())
 }
 
 // openAPIPath is where the server serves its OpenAPI document (PRD

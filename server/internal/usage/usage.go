@@ -1,6 +1,7 @@
 // Package usage meters how much of each thing that the plans meter a
 // workspace uses (PRD FR-ENT-02, §5.7, ADR-010): its projects, boards, nodes,
-// members, stored bytes, and snapshots. The entitlement layer checks the
+// members, stored bytes, snapshots, and the requests that its API tokens
+// make. The entitlement layer checks the
 // plan's limits against it (package entitlements, through Meter), and the
 // API shows it to the workspace's admins.
 //
@@ -57,7 +58,7 @@ import (
 // plans is spelled as the plan file spells the limit (entitlements.LimitKey).
 type Key string
 
-// The keys. API requests are metered with API tokens (plan item 27).
+// The keys.
 const (
 	// Projects is how many projects a workspace has that are neither archived
 	// nor in its trash, which alone count towards its projects limit (PRD
@@ -75,10 +76,17 @@ const (
 	// Snapshots is how many snapshots a workspace's projects have. It is
 	// counted exactly.
 	Snapshots Key = "snapshots"
+	// APIRequests is how many requests the workspace's API tokens have made
+	// (plan note N31): each request that a token is accepted for adds one,
+	// in the transaction that accepts it (package apitoken). It is a total,
+	// which no recount can correct, because nothing but its deltas records
+	// the requests, so reconciliation leaves it alone, and no limit of the
+	// plans checks it (ADR-010).
+	APIRequests Key = "api_requests"
 )
 
 // keys are the keys, in the order that the API lists them.
-var keys = []Key{Projects, Boards, Nodes, Members, StorageBytes, Snapshots}
+var keys = []Key{Projects, Boards, Nodes, Members, StorageBytes, Snapshots, APIRequests}
 
 // Keys returns the keys, in the order that the API lists them.
 func Keys() []Key {

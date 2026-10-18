@@ -100,7 +100,7 @@ Programs, such as a CI job that pulls a project's releases, use API tokens, whic
 docker compose exec app storycreep create-token --scopes snapshot:read jo@example.com harbour "CI releases"
 ```
 
-It prints the token's secret alone, once: the database keeps only its hash. A program sends it as `Authorization: Bearer scp_…`, so a reverse proxy in front of the server must pass that header on, as Caddy, Traefik, and nginx do unasked. A token acts only with the scopes that it holds, and never does more than its member's role allows at the time; removing the member revokes it.
+It prints the token's secret alone, once: the database keeps only its hash. A program sends it as `Authorization: Bearer scp_…`, so a reverse proxy in front of the server must pass that header on, as Caddy, Traefik, and nginx do unasked. A token acts only with the scopes that it holds, and never does more than its member's role allows at the time; removing the member revokes it. With any scope but `export:read`, it lists its workspace and the projects that it acts on, and reads them; the routes of accounts, members, and the administration of a workspace take a session alone, and answer a token with 403 `session_required`. Its requests count against its own rate limits and its member's, and in its workspace's usage, as `api_requests`.
 
 ### Behind a reverse proxy
 

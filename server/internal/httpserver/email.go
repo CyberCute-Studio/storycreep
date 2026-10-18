@@ -13,7 +13,6 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
-	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -79,7 +78,6 @@ type verifyEmailInput struct {
 // noContentOutput is an answer of 204 of an operation that the rate limit
 // counts.
 type noContentOutput struct {
-	RateLimitOutput
 }
 
 // issueLinkBody is the body of the routes that issue a link as text.
@@ -99,7 +97,6 @@ type linkBody struct {
 }
 
 type linkOutput struct {
-	RateLimitOutput
 	Body linkBody
 }
 
@@ -122,7 +119,7 @@ const adminLinkDoc = " It is for an instance that sends no email, whose links an
 
 // registerEmail registers the routes of email links (PRD FR-AUTH-03), and
 // GET /api/v1/instance.
-func registerEmail(m *api.Mux, accounts *account.Service, limits *ratelimit.Limiter) {
+func registerEmail(m *api.Mux, accounts *account.Service) {
 	// emailConfigured refuses a request on an instance that sends no email,
 	// before the operation reads its body.
 	emailConfigured := api.Guard(func(ctx context.Context) error {
@@ -182,17 +179,16 @@ func registerEmail(m *api.Mux, accounts *account.Service, limits *ratelimit.Limi
 			"answer is 202 without a body, as soon, whether or not the address belongs to an account, so that it " +
 			"does not tell whether it does; an address of no account is emailed nothing. Nor is an account that was " +
 			"emailed such a link in the last 10 minutes that still works, so that asking again and again does not " +
-			"flood its inbox: the answer is the same, and the earlier link keeps working." + noEmailDoc +
-			authLimitDoc,
+			"flood its inbox: the answer is the same, and the earlier link keeps working." + noEmailDoc,
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusAccepted,
-		Middlewares:   huma.Middlewares{emailConfigured, rateLimit(limits, ratelimit.Auth)},
+		Middlewares:   huma.Middlewares{emailConfigured},
 	}, func(ctx context.Context, in *passwordResetInput) (*acceptedOutput, error) {
 		if err := accounts.RequestPasswordReset(ctx, in.Body.Email); err != nil {
 			return nil, linkError(err, "")
 		}
 		return &acceptedOutput{}, nil
-	})
+	}, api.RateLimit(api.BucketAuth))
 
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "resetPassword",
@@ -204,17 +200,16 @@ func registerEmail(m *api.Mux, accounts *account.Service, limits *ratelimit.Limi
 			"user then signs in with the new password. The account's other reset links stop working too." +
 			tokenErrorsDoc + " The new password must have at least 12 characters, counted as Unicode code points " +
 			"once it is in NFKC, and must not be one of the 10,000 most common passwords, or the answer is 422 " +
-			"weak_password, which leaves the link as it was." + authLimitDoc,
+			"weak_password, which leaves the link as it was.",
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusNoContent,
-		Middlewares:   huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
 	}, func(ctx context.Context, in *resetPasswordInput) (*noContentOutput, error) {
 		err := accounts.ResetPassword(ctx, secret.New(in.Body.Token), secret.New(in.Body.NewPassword), clientFrom(ctx))
 		if err != nil {
 			return nil, linkError(err, "body.new_password")
 		}
 		return &noContentOutput{}, nil
-	})
+	}, api.RateLimit(api.BucketAuth))
 
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "verifyEmail",
@@ -226,16 +221,15 @@ func registerEmail(m *api.Mux, accounts *account.Service, limits *ratelimit.Limi
 			"instance requires a verified address before a workspace can be created, as hosted mode does, it " +
 			"also gives the account its personal workspace, if it has had none; should that fail, the answer is " +
 			"still 204, because the address is verified, and the account's next sign-in gives the workspace." +
-			tokenErrorsDoc + authLimitDoc,
+			tokenErrorsDoc,
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusNoContent,
-		Middlewares:   huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
 	}, func(ctx context.Context, in *verifyEmailInput) (*noContentOutput, error) {
 		if err := accounts.VerifyEmail(ctx, secret.New(in.Body.Token), clientFrom(ctx)); err != nil {
 			return nil, linkError(err, "")
 		}
 		return &noContentOutput{}, nil
-	})
+	}, api.RateLimit(api.BucketAuth))
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "requestEmailVerification",
@@ -246,10 +240,10 @@ func registerEmail(m *api.Mux, accounts *account.Service, limits *ratelimit.Limi
 			"and is used once with POST /api/v1/auth/verify-email. An address that is verified already is emailed " +
 			"nothing, and nor is one that was emailed such a link in the last 10 minutes that still works: the " +
 			"answer is the same, and the earlier link keeps working. Registering emails one too." + noEmailDoc +
-			csrfDoc + authLimitDoc,
+			csrfDoc,
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusAccepted,
-		Middlewares:   huma.Middlewares{emailConfigured, rateLimit(limits, ratelimit.Auth)},
+		Middlewares:   huma.Middlewares{emailConfigured},
 	}, func(ctx context.Context, _ *CSRFInput) (*acceptedOutput, error) {
 		cur, err := currentFrom(ctx)
 		if err != nil {
@@ -259,7 +253,7 @@ func registerEmail(m *api.Mux, accounts *account.Service, limits *ratelimit.Limi
 			return nil, linkError(err, "")
 		}
 		return &acceptedOutput{}, nil
-	})
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	for _, l := range []struct {
 		id, path, summary, doc string
@@ -279,10 +273,10 @@ func registerEmail(m *api.Mux, accounts *account.Service, limits *ratelimit.Limi
 			Method:        http.MethodPost,
 			Path:          l.path,
 			Summary:       l.summary,
-			Description:   l.doc + adminLinkDoc + csrfDoc + authLimitDoc,
+			Description:   l.doc + adminLinkDoc + csrfDoc,
 			Tags:          []string{"Instance administration"},
 			DefaultStatus: http.StatusCreated,
-			Middlewares:   huma.Middlewares{instanceAdmin, rateLimit(limits, ratelimit.Auth)},
+			Middlewares:   huma.Middlewares{instanceAdmin},
 		}, func(ctx context.Context, in *issueLinkInput) (*linkOutput, error) {
 			cur, err := currentFrom(ctx)
 			if err != nil {
@@ -293,7 +287,7 @@ func registerEmail(m *api.Mux, accounts *account.Service, limits *ratelimit.Limi
 				return nil, linkError(err, "")
 			}
 			return &linkOutput{Body: linkBody{URL: link.URL.Reveal(), ExpiresAt: link.ExpiresAt}}, nil
-		})
+		}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 	}
 }
 

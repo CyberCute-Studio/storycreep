@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document version | 1.18 |
+| Document version | 1.19 |
 | Date | 2026-10-18 |
 | Status | Approved for implementation |
 | Product | Storycreep — branching narrative design tool for games |
@@ -324,7 +324,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 
   | Scope | Grants | Implies |
   | --- | --- | --- |
-  | `snapshot:read` | List snapshots and their metadata, export `ready` snapshots (FR-SYNC-01), diff two snapshots (FR-SYNC-02). Grants no read of the draft. | — |
+  | `snapshot:read` | List snapshots and their metadata, export `ready` snapshots (FR-SYNC-01), diff two snapshots (FR-SYNC-02). List the token's workspace and its projects, and read a project's name, description, and settings, so that a client that pulls releases finds them (FR-GODOT-02). Grants no read of the draft's content. | — |
   | `project:read` | Everything in `snapshot:read`, plus reading draft content, draft export, diffs against the draft, and text export (FR-TEXT-05). | `snapshot:read` |
   | `project:write` | Commands on the draft (FR-API-03). | `project:read` |
   | `snapshot:write` | Publishing snapshots. | `snapshot:read` |
@@ -332,7 +332,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 
   A token that must not see unreleased work, such as a CI token that only pulls releases, holds `snapshot:read` alone.
 
-  Tokens are for content and release automation only. **Account and credential endpoints are session-only** and reject any API token with 403 `session_required`, whatever its scopes: password change, session listing and revocation, 2FA enrolment, API token creation, listing, and revocation, account deletion, personal-data export, and membership, invite, and role management. A leaked token therefore cannot mint further tokens, change credentials, or change who has access. Tokens for CI are created in the UI or with `storycreep create-token` (FR-ADMIN-06).
+  Tokens are for content and release automation only. **Account, credential, and administration endpoints are session-only** and reject any API token with 403 `session_required`, whatever its scopes: the session itself and signing out, password change, email verification, session listing and revocation, 2FA enrolment, API token creation, listing, and revocation, account deletion, personal-data export, membership, invite, and role management, listing a workspace's members, creating a workspace, a workspace's settings and usage, creating, deleting, and restoring projects and listing a workspace's trash, and the instance-admin area. A leaked token therefore cannot mint further tokens, change credentials, or change who has access. Tokens for CI are created in the UI or with `storycreep create-token` (FR-ADMIN-06).
 - **Acceptance criteria:**
   - AC1 — The token secret appears in exactly one API response, at creation.
   - AC2 — A `project:read` token is rejected (403, `insufficient_scope`) on any write endpoint.
@@ -1090,7 +1090,7 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-AUTH-04
 - **Requirement:** All programmatic access is under `/api/v1`. Resources: workspaces, members, invites, projects, boards, nodes, connections, branches, jumpers, variables, components, component types, expressions (as part of their owners), comments, snapshots, exports, diffs, validation, tokens, usage. Reads are plain REST; mutations go through the command endpoint (FR-API-03) or resource-specific endpoints that internally dispatch commands. JSON only, UTF-8, RFC 3339 timestamps.
 - **Acceptance criteria:**
-  - AC1 — Every endpoint is reachable with a session cookie. Every endpoint except the session-only account and credential endpoints (FR-AUTH-04) is also reachable with an API token holding the scope that the route declares.
+  - AC1 — Every endpoint is reachable with a session cookie. Every endpoint except the session-only endpoints (FR-AUTH-04) is also reachable with an API token holding the scope that the route declares.
   - AC2 — Unknown fields in request bodies are rejected (strict decoding) with the field name.
   - AC3 — A breaking change requires a new version prefix; a CI check compares the OpenAPI document against the previous release and fails on incompatible changes to `v1`. Until the first release exists, the check compares against the document on the main branch, so every incompatible change is still caught; because no client depends on `v1` yet, a pull request may override it with a reason recorded in the pull request.
 
@@ -3248,3 +3248,4 @@ No metric below depends on telemetry from running instances (ADR-026); every one
 | 1.16 | 2026-10-18 | **Project lifecycle** (plan note N32): §5.6 did not say which of its rows covers renaming, describing, archiving, and unarchiving a project, restoring one from the workspace's trash, listing the trash, or listing a workspace's projects, which a guest needs to do for the projects granted to them (FR-TEN-04 AC2). Renaming, describing, archiving, and unarchiving now change the project's settings, which owners and admins of the project do (P); restoring and the trash belong to creating and deleting projects, which owners and admins of the workspace do (W); and the list shows each member the projects on which their effective role is not `none` (§5.6). |
 | 1.17 | 2026-10-18 | **Project grants** (plan note N33): FR-TEN-04 AC4 said that a `guest` with an `admin` grant receives 403 on every workspace-scoped operation, while §5.5 answers every user whose resolved role is `none`, which a guest's workspace role is, with 404, so that the answer does not tell that the workspace exists. AC4 now says that the guest is refused every such operation, with 404 on the workspace's routes, as §5.5 says, and with 403 on the routes of the granted project itself, which the grant shows to them, and that a `viewer` with such a grant receives 403. Nor did FR-TEN-04 or §5.6 say who may change an owner's grant, which replaces the owner's role on the project as a demotion would: only an `owner` sets or removes one, as only an owner demotes an owner (FR-TEN-03 AC4), and §5.6 says which rows cover the grants (FR-TEN-04, §5.6). |
 | 1.18 | 2026-10-18 | **API tokens** (plan note N34): FR-AUTH-04 named API token creation and revocation among the session-only endpoints, but not the listing of tokens, so FR-API-01 AC1 would have had a token list tokens, with a scope that none of the five fits. Listing tokens is session-only too, so that a token neither makes, lists, nor revokes another. |
+| 1.19 | 2026-10-18 | **API surface** (plan note N35): FR-API-01 AC1 has every endpoint that is not session-only take an API token with a scope, but none of the five scopes fits creating a workspace, a workspace's settings and usage, the list of its members, creating, deleting, and restoring projects, the trash, the session's own details, signing out, email verification, or the instance-admin area, and the scope table gave no scope the list of workspaces and projects that a client pulling releases browses (FR-GODOT-02). FR-AUTH-04's session-only endpoints now name these, as account, credential, and administration endpoints, and `snapshot:read` lists the token's workspace and its projects and reads a project's name, description, and settings, which are not the draft's content. |

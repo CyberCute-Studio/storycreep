@@ -29,7 +29,9 @@ WHERE workspace_id = @workspace_id AND id = @id AND (hard_delete_after IS NULL O
 -- the order of their IDs, after the project after, or from the first if after
 -- is null, each with the role of the grant of the membership membership_id
 -- on it, if it has one. If granted_only is set, as for a guest, who sees only
--- the projects granted to them (FR-TEN-04 AC2), it returns only those.
+-- the projects granted to them (FR-TEN-04 AC2), it returns only those, and
+-- if only_project is not null, as for an API token narrowed to a project,
+-- which acts on that one alone, it returns only that one.
 SELECT sqlc.embed(p), g.role AS grant_role
 FROM project p
 LEFT JOIN project_grant g
@@ -37,6 +39,7 @@ LEFT JOIN project_grant g
 WHERE p.workspace_id = @workspace_id AND p.deleted_at IS NULL
     AND (sqlc.narg(after)::uuid IS NULL OR p.id > sqlc.narg(after)::uuid)
     AND (NOT @granted_only::boolean OR g.role IS NOT NULL)
+    AND (sqlc.narg(only_project)::uuid IS NULL OR p.id = sqlc.narg(only_project)::uuid)
 ORDER BY p.id
 LIMIT @max_rows;
 

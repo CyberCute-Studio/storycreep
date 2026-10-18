@@ -19,7 +19,6 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
-	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
@@ -343,8 +342,7 @@ func newSignedInBody(s account.Session, value secret.Value) signedInBody {
 // secret, which are rate-limited.
 type signedInOutput struct {
 	SetCookie string `header:"Set-Cookie" doc:"The session cookie, which holds the session's secret: __Host-sc_session, Secure, when STORYCREEP_PUBLIC_URL is https, and sc_session otherwise, in either case HttpOnly, SameSite=Lax, for the path /, and expiring when the session ends at the latest"`
-	RateLimitOutput
-	Body signedInBody
+	Body      signedInBody
 }
 
 type sessionOutput struct {
@@ -430,19 +428,20 @@ type passwordInput struct {
 	Body passwordBody
 }
 
-// sessionAuthDoc says, in an operation's description, what the operation
-// needs of a request.
+// sessionAuthDoc says, in the description of an operation that is
+// session-only (api.SessionOnly), what the operation needs of a request.
 const sessionAuthDoc = " It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the " +
-	"answer is 401 unauthenticated."
+	"answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is " +
+	"answered with 403 session_required (PRD FR-AUTH-04)."
 
-// csrfDoc says what an operation that changes something needs of a request
-// besides.
+// csrfDoc says what an operation that is session-only and changes something
+// needs of a request.
 const csrfDoc = sessionAuthDoc + " It changes something, so it also needs the session's CSRF token in the " +
 	"X-CSRF-Token header, or the answer is 403 csrf_failed."
 
 // registerSessions registers the routes of signing in and of the sessions
 // (PRD FR-AUTH-02).
-func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.Limiter, cookie sessionCookie) {
+func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCookie) {
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "login",
 		Method:      http.MethodPost,
@@ -462,9 +461,8 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			"further failure, once a lock ends, locks it for twice as long as the lock before, up to 15 minutes: " +
 			"while it is locked, every sign-in with it is answered with 429 rate_limited, whose details.reason is " +
 			"locked, even with the right password. A successful sign-in forgets the failures, and so do 24 hours " +
-			"without one." + authLimitDoc,
-		Tags:        []string{"Authentication"},
-		Middlewares: huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
+			"without one.",
+		Tags: []string{"Authentication"},
 	}, func(ctx context.Context, in *loginInput) (*signedInOutput, error) {
 		issued, err := accounts.Login(ctx, in.Body.Email, secret.New(in.Body.Password), clientFrom(ctx))
 		if errors.Is(err, account.ErrInvalidCredentials) {
@@ -474,7 +472,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			return nil, limitError(err)
 		}
 		return &signedInOutput{SetCookie: cookie.set(issued), Body: newSignedInBody(issued.Session, issued.Secret)}, nil
-	})
+	}, api.RateLimit(api.BucketAuth))
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "getSession",
@@ -490,7 +488,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			return nil, err
 		}
 		return &sessionOutput{Body: newSignedInBody(cur.session, cur.secret)}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "logout",
@@ -510,7 +508,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			return nil, err
 		}
 		return &clearedOutput{SetCookie: cookie.clear()}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "listSessions",
@@ -545,7 +543,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			out.Body.Items[i] = newSessionBody(s, cur.session.ID)
 		}
 		return out, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "revokeSession",
@@ -578,7 +576,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			out.SetCookie = cookie.clear()
 		}
 		return out, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "revokeOtherSessions",
@@ -604,7 +602,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			return nil, err
 		}
 		return &revokedOutput{Body: revokedBody{Revoked: n}}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "changePassword",
@@ -617,9 +615,8 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			"answer is 422 weak_password. Changing it revokes every other session of the account, stops the " +
 			"account's links that reset its password from working, and gives the session of the request a new " +
 			"secret, in the Set-Cookie header, and a new CSRF token, in the body, so that the old ones are no " +
-			"longer valid." + csrfDoc + authLimitDoc,
-		Tags:        []string{"Authentication"},
-		Middlewares: huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
+			"longer valid." + csrfDoc,
+		Tags: []string{"Authentication"},
 	}, func(ctx context.Context, in *passwordInput) (*signedInOutput, error) {
 		cur, err := currentFrom(ctx)
 		if err != nil {
@@ -642,5 +639,5 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			return nil, err
 		}
 		return &signedInOutput{SetCookie: cookie.set(issued), Body: newSignedInBody(issued.Session, issued.Secret)}, nil
-	})
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 }

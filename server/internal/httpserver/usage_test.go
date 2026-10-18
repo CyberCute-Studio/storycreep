@@ -349,7 +349,7 @@ func TestUsageBodyKeys(t *testing.T) {
 			t.Errorf("the body gives %s as %v", u.Key, obj)
 		}
 	}
-	if _, err := newUsageBody([]workspace.Usage{{Key: "api_requests"}}); err == nil {
+	if _, err := newUsageBody([]workspace.Usage{{Key: "uploads"}}); err == nil {
 		t.Error("a key that the body has no field of was left out")
 	}
 	if _, err := newUsageBody([]workspace.Usage{{Key: usage.Nodes, Limited: true}}); err == nil {

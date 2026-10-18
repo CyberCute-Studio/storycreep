@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danielgtaylor/huma/v2"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
@@ -198,11 +197,9 @@ func TestTokenSecretShownOnce(t *testing.T) {
 // and every other is refused with 403 insufficient_scope, which names the
 // route's scope, in its details and in the Bearer scheme's challenge of its
 // WWW-Authenticate header, as a project:read token is on every route that
-// changes
-// something. A token that holds every scope is refused with 403
-// session_required on every route that takes none. The audit log records
-// each token's first refusal, with its reason, and none of the others that
-// follow within the minute.
+// changes something. The audit log records each token's first refusal,
+// with its reason, and none of the others that follow within the minute.
+// TestRouteClassification tries the routes that take no token.
 //
 // Verifies: FR-AUTH-04/AC2
 func TestTokenScopes(t *testing.T) {
@@ -217,11 +214,8 @@ func TestTokenScopes(t *testing.T) {
 		// one do not change what the next finds.
 		params := routeParams(t, f)
 		walked, refused := 0, 0
-		for _, c := range routeCalls(t, f, params) {
-			needed, ok := tokenRoutes[c.route]
-			if !ok {
-				continue
-			}
+		for _, c := range tokenRouteCalls(t, f, params) {
+			needed := tokenRoutes[c.route]
 			walked++
 			res := call(f.s.main, c.route.Method, c.path, c.body, bearer(tok.Secret))
 			where := fmt.Sprintf("%s with a %s token", c.route, held)
@@ -244,7 +238,7 @@ func TestTokenScopes(t *testing.T) {
 				writes++
 			}
 		}
-		if walked < 4 {
+		if walked < 7 {
 			t.Errorf("the walk with a %s token tried %d routes", held, walked)
 		}
 		want := []string{"token.create success"}
@@ -257,27 +251,6 @@ func TestTokenScopes(t *testing.T) {
 	}
 	if writes < 3 {
 		t.Errorf("a project:read token was refused %d routes that change something", writes)
-	}
-
-	every := makeToken(t, f.s.main, owner, workspaceTokensPath(f.ws), "snapshot:read", "project:read",
-		"project:write", "snapshot:write", "export:read")
-	sessionOnly := 0
-	for r, c := range f.s.main.Routes() {
-		if _, ok := tokenRoutes[r]; ok || !c.Authenticated() {
-			continue
-		}
-		sessionOnly++
-		// The token is refused before the route reads its parameters.
-		res := call(f.s.main, r.Method, routeParam.ReplaceAllString(r.Pattern, "1"), nil, bearer(every.Secret))
-		wantCode(t, r.String()+" with a token of every scope", res, http.StatusForbidden, api.CodeSessionRequired)
-	}
-	if sessionOnly < 20 {
-		t.Errorf("the test tried %d session-only routes", sessionOnly)
-	}
-	if got := f.tokenAudit(t, every.ID); !slices.Equal(got, []string{"token.create success",
-		"token.use_denied denied session_required"}) {
-		t.Errorf("the audit log of the token of every scope, refused %d times, is %q, want its creation and its "+
-			"first refusal", sessionOnly, got)
 	}
 }
 
@@ -317,6 +290,18 @@ func TestTokenNarrowedToProject(t *testing.T) {
 	}
 	// The owner's session reads b, which exists.
 	projectFrom(t, call(f.s.main, http.MethodGet, projectPath(b), nil, owner.header(false)), http.StatusOK)
+	// The narrowed token lists its project alone, and the workspace that it
+	// belongs to.
+	if got := itemIDs(t, f.s.main, bearer(narrowed.Secret), projectsPath(f.ws)); !slices.Equal(got, []string{a}) {
+		t.Errorf("the narrowed token lists the projects %q, want only %s", got, a)
+	}
+	if got := itemIDs(t, f.s.main, bearer(narrowed.Secret), workspacesPath); !slices.Equal(got, []string{f.ws}) {
+		t.Errorf("the narrowed token lists the workspaces %q, want only %s", got, f.ws)
+	}
+	if res := call(f.s.main, http.MethodGet, workspacesPath+"/"+f.ws, nil, bearer(narrowed.Secret)); res.status !=
+		http.StatusOK {
+		t.Errorf("the narrowed token reads its workspace: %d %s", res.status, res.body)
+	}
 
 	var other membershipBody
 	if err := json.Unmarshal(call(f.s.main, http.MethodPost, workspacesPath, jsonBody(t,
@@ -326,6 +311,18 @@ func TestTokenNarrowedToProject(t *testing.T) {
 	c := createProject(t, f.s.main, owner, other.ID, "Elsewhere")
 	wide := makeToken(t, f.s.main, owner, workspaceTokensPath(f.ws), "project:write")
 	projectFrom(t, call(f.s.main, http.MethodGet, projectPath(b), nil, bearer(wide.Secret)), http.StatusOK)
+	// A token of the workspace lists its projects, but no other workspace,
+	// although its owner is a member of two.
+	if got := itemIDs(t, f.s.main, bearer(wide.Secret), projectsPath(f.ws)); !slices.Contains(got, a) ||
+		!slices.Contains(got, b) {
+		t.Errorf("the token of the workspace lists the projects %q, want %s and %s among them", got, a, b)
+	}
+	if got := itemIDs(t, f.s.main, owner.header(false), workspacesPath); len(got) != 2 {
+		t.Errorf("the owner's session lists the workspaces %q, want two", got)
+	}
+	if got := itemIDs(t, f.s.main, bearer(wide.Secret), workspacesPath); !slices.Equal(got, []string{f.ws}) {
+		t.Errorf("the token of the workspace lists the workspaces %q, want only %s", got, f.ws)
+	}
 	wantCode(t, "another workspace's project with a token of the workspace",
 		call(f.s.main, http.MethodGet, projectPath(c.ID), nil, bearer(wide.Secret)), http.StatusNotFound,
 		api.CodeNotFound)
@@ -370,6 +367,26 @@ func TestTokenNarrowedToProject(t *testing.T) {
 		owner.header(false)), http.StatusOK); after.Rev != before.Rev {
 		t.Errorf("tokens that do not cover the project changed it from rev %d to %d", before.Rev, after.Rev)
 	}
+}
+
+// itemIDs returns the IDs of the items of the first page of the list at path,
+// which a request with header reads, and which must answer 200.
+func itemIDs(t *testing.T, h http.Handler, header http.Header, path string) []string {
+	t.Helper()
+	res := call(h, http.MethodGet, path, nil, header)
+	var page struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if res.status != http.StatusOK || json.Unmarshal(res.body, &page) != nil {
+		t.Fatalf("GET %s: %d %s", path, res.status, res.body)
+	}
+	out := make([]string, len(page.Items))
+	for i, it := range page.Items {
+		out[i] = it.ID
+	}
+	return out
 }
 
 // TestTokenFailsWithOwner checks that a token never does more than its
@@ -812,9 +829,9 @@ func TestTokenLifecycle(t *testing.T) {
 
 // TestTokenRateLimit checks that a request made with an API token counts
 // against the token, as well as against its owner and the client's IP
-// address (NFR-SEC-06): on a route with a rate limit, here a test's own, of
-// a bucket that allows a token two requests, a token's third is refused with
-// 429 rate_limited, while its owner's session, and another token of theirs,
+// address (NFR-SEC-06): with a policy whose read bucket allows a token two
+// requests, a token's third read of a project is refused with 429
+// rate_limited, while its owner's session, and another token of theirs,
 // still make requests, whose answers report the limit of the key with the
 // fewest left. The server's buckets allow a token as much as a user.
 //
@@ -823,18 +840,13 @@ func TestTokenRateLimit(t *testing.T) {
 	t.Parallel()
 	s, d, owner, ws := inviteServer(t, "open", nil)
 	p := createProject(t, s.main, owner, ws, "Lighthouse")
+	first := makeToken(t, s.main, owner, workspaceTokensPath(ws), "snapshot:read")
+	second := makeToken(t, s.main, owner, workspaceTokensPath(ws), "snapshot:read")
 	policy := ratelimit.DefaultPolicy()
 	policy.Rates[ratelimit.Read] = ratelimit.Rate{Period: time.Hour,
 		Limits: map[ratelimit.Kind]int{ratelimit.IP: 100, ratelimit.User: 100, ratelimit.Token: 2}}
-	limits := ratelimit.New(readyDB{s.ready}, policy)
-	api.Register(s.main, api.ReadProject, huma.Operation{OperationID: "readLimited", Method: http.MethodGet,
-		Path: "/api/v1/projects/{project_id}/limited", Middlewares: huma.Middlewares{rateLimit(limits, ratelimit.Read)}},
-		func(context.Context, *projectInput) (*statusOutput, error) {
-			return &statusOutput{Body: statusBody{Status: "ok"}}, nil
-		}, api.TokenScope(scope.ProjectRead))
-	path := projectPath(p.ID) + "/limited"
-	first := makeToken(t, s.main, owner, workspaceTokensPath(ws), "project:read")
-	second := makeToken(t, s.main, owner, workspaceTokensPath(ws), "project:read")
+	s.limits = ratelimit.New(readyDB{s.ready}, policy)
+	path := projectPath(p.ID)
 	// The requests must fall in one window of an hour.
 	d.AwaitWindow(t, time.Hour, time.Minute)
 	for i := range 2 {

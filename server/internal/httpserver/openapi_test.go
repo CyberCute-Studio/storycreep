@@ -135,10 +135,12 @@ func TestOpenAPIDocumentsEveryRoute(t *testing.T) {
 }
 
 // TestOpenAPIDocumentServed checks /api/v1/openapi.json: it answers with the
-// document, and its ETag lets a client revalidate its copy.
+// document, and its ETag lets a client revalidate its copy. Its requests
+// count in the read bucket, as every operation's of the API, so the server
+// has a database.
 func TestOpenAPIDocumentServed(t *testing.T) {
-	s := newServer(loadConfig(t, nil), slog.New(slog.DiscardHandler))
-	s.ready.setPhase(phaseReady)
+	t.Parallel()
+	s, _ := pendingServer(t, nil)
 	want, err := s.main.Document()
 	if err != nil {
 		t.Fatal(err)

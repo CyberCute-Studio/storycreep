@@ -553,13 +553,25 @@ func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID ids.U
 }
 
 // List returns at most limit of the projects of the workspace workspaceID
-// that are not in the trash and on which the user userID's effective role is
-// not none, each with that role, in the order of their IDs: the first, if
-// after is zero, or else those after the project after. A guest is shown
-// only the projects granted to them (FR-TEN-04 AC2). It returns ErrNotFound
-// if the workspace does not exist, or the user is neither a member of it nor
-// an instance admin who acts as owner.
-func (s *Service) List(ctx context.Context, userID, workspaceID, after ids.UUID, limit int) ([]Visible, error) {
+// that are not in the trash and on which the actor's effective role is not
+// none, each with that role, in the order of their IDs: the first, if after
+// is zero, or else those after the project after. A guest is shown only the
+// projects granted to them (FR-TEN-04 AC2), and a request made with an API
+// token narrowed to a project only that project, on which alone the token
+// acts. It returns ErrNotFound if the workspace does not exist, the actor is
+// neither a member of it nor an instance admin who acts as owner, or the
+// actor's token is another workspace's (FR-AUTH-04 AC3). The token's scopes
+// are the route's to check.
+func (s *Service) List(ctx context.Context, actor commands.Actor, workspaceID, after ids.UUID, limit int) ([]Visible,
+	error) {
+	userID := actor.UserID
+	var only ids.UUID
+	if actor.Token != nil {
+		if !actor.Token.InWorkspace(workspaceID) {
+			return nil, ErrNotFound
+		}
+		only = actor.Token.ProjectID
+	}
 	var out []Visible
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: userID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
@@ -575,7 +587,8 @@ func (s *Service) List(ctx context.Context, userID, workspaceID, after ids.UUID,
 		}
 		rows, err := q.Projects(ctx, queries.ProjectsParams{MembershipID: nullUUID(a.membership),
 			WorkspaceID: nullUUID(workspaceID), After: nullUUID(after),
-			GrantedOnly: s.policy.Workspace(a.admin, a.member) == role.None, MaxRows: int32(min(limit, 1<<20))})
+			GrantedOnly: s.policy.Workspace(a.admin, a.member) == role.None, OnlyProject: nullUUID(only),
+			MaxRows: int32(min(limit, 1<<20))})
 		if err != nil {
 			return fmt.Errorf("project: list the projects: %w", err)
 		}

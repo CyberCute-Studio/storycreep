@@ -12,7 +12,6 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
-	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 	"github.com/CyberCute-Studio/storycreep/server/internal/setup"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
@@ -78,7 +77,6 @@ type completedSetupBody struct {
 }
 
 type completedSetupOutput struct {
-	RateLimitOutput
 	Body completedSetupBody
 }
 
@@ -87,7 +85,7 @@ type completedSetupOutput struct {
 const setupDoc = " Once setup has completed, the answer is 404 not_found, for everyone, and stays so."
 
 // registerSetup registers the routes of first-run setup (PRD FR-ADMIN-02).
-func registerSetup(m *api.Mux, setups *setup.Service, limits *ratelimit.Limiter) {
+func registerSetup(m *api.Mux, setups *setup.Service) {
 	// pending answers 404 once setup has completed, before the operation
 	// reads the request's body.
 	pending := api.Guard(func(ctx context.Context) error {
@@ -138,12 +136,12 @@ func registerSetup(m *api.Mux, setups *setup.Service, limits *ratelimit.Limiter)
 			"that is not one, or a username without a password, or an email address " +
 			"that has an account, as one that storycreep create-user made, is answered with 422 " +
 			"validation_failed. Of two setups at once, one completes, and the other is answered with 404 " +
-			"not_found. The owner then signs in with POST /api/v1/auth/login." + setupDoc + authLimitDoc,
+			"not_found. The owner then signs in with POST /api/v1/auth/login." + setupDoc,
 		Tags:          []string{"Setup"},
 		DefaultStatus: http.StatusCreated,
 		// The completed check comes first, so that the answer is 404 for
 		// everyone once setup has completed, whatever the request holds.
-		Middlewares: huma.Middlewares{pending, rateLimit(limits, ratelimit.Auth)},
+		Middlewares: huma.Middlewares{pending},
 	}, func(ctx context.Context, in *completeSetupInput) (*completedSetupOutput, error) {
 		res, err := setups.Complete(ctx, setup.Request{
 			Code: in.Body.SetupCode,
@@ -159,7 +157,7 @@ func registerSetup(m *api.Mux, setups *setup.Service, limits *ratelimit.Limiter)
 		}
 		return &completedSetupOutput{Body: completedSetupBody{OwnerID: ids.Encode(ids.User, res.OwnerID),
 			Workspace: newWorkspaceFields(res.Workspace)}}, nil
-	})
+	}, api.RateLimit(api.BucketAuth))
 }
 
 // settings returns the SMTP server of b, or nil if b is nil.

@@ -12,7 +12,6 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/apitoken"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
-	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
 
@@ -93,7 +92,6 @@ type CreatedAPITokenBody struct {
 }
 
 type createdTokenOutput struct {
-	RateLimitOutput
 	Body CreatedAPITokenBody
 }
 
@@ -151,10 +149,9 @@ type revokeProjectTokenInput struct {
 	TokenID   string `path:"token_id" doc:"The token's ID"`
 }
 
-// sessionOnlyDoc says, in the description of an operation of tokens, that it
-// takes no token.
-const sessionOnlyDoc = " A request made with an API token, whatever its scopes, is answered with 403 " +
-	"session_required, so that a token cannot make another."
+// tokenSessionOnlyDoc says, in the description of an operation of tokens,
+// why it is session-only, as sessionAuthDoc says that it is.
+const tokenSessionOnlyDoc = " That way no token makes, lists, or revokes another."
 
 // createTokenDoc says, in the description of an operation that makes a
 // token, what it does with it.
@@ -165,7 +162,7 @@ const createTokenDoc = " The answer holds the token's secret, which no other ans
 	"future, are answered with 422 validation_failed."
 
 // registerTokens registers the routes of API tokens (PRD FR-AUTH-04).
-func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limiter) {
+func registerTokens(m *api.Mux, tokens *apitoken.Service) {
 	api.Register(m, api.ManageWorkspaceTokens, huma.Operation{
 		OperationID: "createWorkspaceToken",
 		Method:      http.MethodPost,
@@ -175,10 +172,9 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limi
 			"that it holds, and an expiry, if it has one. It acts on every project of the workspace, and on no other " +
 			"workspace's. Only an owner, an admin, or an editor of the workspace may, and anyone else with a role in " +
 			"it is answered with 403 insufficient_role. POST /api/v1/projects/{project_id}/tokens makes one narrowed " +
-			"to a project." + notFoundDoc + createTokenDoc + csrfDoc + sessionOnlyDoc + authLimitDoc,
+			"to a project." + notFoundDoc + createTokenDoc + csrfDoc + tokenSessionOnlyDoc,
 		Tags:          []string{"Tokens"},
 		DefaultStatus: http.StatusCreated,
-		Middlewares:   huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
 	}, func(ctx context.Context, in *createWorkspaceTokenInput) (*createdTokenOutput, error) {
 		cur, err := currentFrom(ctx)
 		if err != nil {
@@ -193,7 +189,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limi
 			return nil, tokenError(err)
 		}
 		return newCreatedTokenOutput(issued), nil
-	})
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	api.Register(m, api.ManageProjectTokens, huma.Operation{
 		OperationID: "createProjectToken",
@@ -204,10 +200,9 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limi
 			"that it holds, and an expiry, if it has one. It acts on this project alone, and answers every other " +
 			"with 404 not_found. Only a user whose role on the project is owner, admin, or editor may, as a guest " +
 			"whose grant on it is, and anyone else with a role on it is answered with 403 insufficient_role." +
-			projectNotFoundDoc + createTokenDoc + csrfDoc + sessionOnlyDoc + authLimitDoc,
+			projectNotFoundDoc + createTokenDoc + csrfDoc + tokenSessionOnlyDoc,
 		Tags:          []string{"Tokens"},
 		DefaultStatus: http.StatusCreated,
-		Middlewares:   huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
 	}, func(ctx context.Context, in *createProjectTokenInput) (*createdTokenOutput, error) {
 		cur, err := currentFrom(ctx)
 		if err != nil {
@@ -222,7 +217,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limi
 			return nil, tokenError(err)
 		}
 		return newCreatedTokenOutput(issued), nil
-	})
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	api.Register(m, api.ManageWorkspaceTokens, huma.Operation{
 		OperationID: "listWorkspaceTokens",
@@ -233,7 +228,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limi
 			"order of their IDs, oldest first, without their secrets: every member's, to an owner or an admin of the " +
 			"workspace, and their own, to an editor. Anyone else with a role in it is answered with 403 " +
 			"insufficient_role. The tokens narrowed to a project are listed by GET " +
-			"/api/v1/projects/{project_id}/tokens." + notFoundDoc + sessionAuthDoc + sessionOnlyDoc,
+			"/api/v1/projects/{project_id}/tokens." + notFoundDoc + sessionAuthDoc + tokenSessionOnlyDoc,
 		Tags: []string{"Tokens"},
 	}, func(ctx context.Context, in *workspaceTokensInput) (*tokensOutput, error) {
 		cur, err := currentFrom(ctx)
@@ -253,7 +248,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limi
 			return nil, tokenError(err)
 		}
 		return tokenPage(in.PageParams, list)
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ManageProjectTokens, huma.Operation{
 		OperationID: "listProjectTokens",
@@ -264,7 +259,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limi
 			"the order of their IDs, oldest first, without their secrets: every member's, to an owner or an admin of " +
 			"the project's workspace, and their own, to a user whose role on the project is owner, admin, or editor. " +
 			"Anyone else with a role on it is answered with 403 insufficient_role." + projectNotFoundDoc +
-			sessionAuthDoc + sessionOnlyDoc,
+			sessionAuthDoc + tokenSessionOnlyDoc,
 		Tags: []string{"Tokens"},
 	}, func(ctx context.Context, in *projectTokensInput) (*tokensOutput, error) {
 		cur, err := currentFrom(ctx)
@@ -284,7 +279,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limi
 			return nil, tokenError(err)
 		}
 		return tokenPage(in.PageParams, list)
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ManageWorkspaceTokens, huma.Operation{
 		OperationID: "revokeWorkspaceToken",
@@ -296,7 +291,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limi
 			"their own; anyone else with a role in it is answered with 403 insufficient_role, and an editor who names " +
 			"another member's token too." + notFoundDoc + " So is a token that the workspace does not have, one " +
 			"narrowed to a project, which DELETE /api/v1/projects/{project_id}/tokens/{token_id} revokes, and one " +
-			"that is revoked already." + csrfDoc + sessionOnlyDoc,
+			"that is revoked already." + csrfDoc + tokenSessionOnlyDoc,
 		Tags:          []string{"Tokens"},
 		DefaultStatus: http.StatusNoContent,
 	}, func(ctx context.Context, in *revokeWorkspaceTokenInput) (*struct{}, error) {
@@ -316,7 +311,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limi
 			return nil, tokenError(err)
 		}
 		return &struct{}{}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ManageProjectTokens, huma.Operation{
 		OperationID: "revokeProjectToken",
@@ -329,7 +324,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limi
 			"role on it is answered with 403 insufficient_role, and so is such a user who names another member's " +
 			"token, as a guest with an admin grant on the project, which authorises nothing of the workspace (PRD " +
 			"FR-TEN-04 AC4)." + projectNotFoundDoc + " So is a token that is not narrowed to the project, or that is " +
-			"revoked already." + csrfDoc + sessionOnlyDoc,
+			"revoked already." + csrfDoc + tokenSessionOnlyDoc,
 		Tags:          []string{"Tokens"},
 		DefaultStatus: http.StatusNoContent,
 	}, func(ctx context.Context, in *revokeProjectTokenInput) (*struct{}, error) {
@@ -349,7 +344,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service, limits *ratelimit.Limi
 			return nil, tokenError(err)
 		}
 		return &struct{}{}, nil
-	})
+	}, api.SessionOnly())
 }
 
 // newCreatedTokenOutput returns the answer that holds the token that was

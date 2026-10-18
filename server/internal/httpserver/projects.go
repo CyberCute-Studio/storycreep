@@ -118,7 +118,9 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 			"shown only the projects granted to them. A workspace that does not exist, or of which the signed-in " +
 			"user is neither a member nor an instance admin who acts as its owner, as with " +
 			"STORYCREEP_INSTANCE_ADMIN_ACCESS on, is answered with 404 not_found, so that the answer does not tell " +
-			"whether it exists." + sessionAuthDoc,
+			"whether it exists. So is a workspace other than the one that the request's API token belongs to, and a " +
+			"token narrowed to a project is shown that project alone (PRD FR-AUTH-04 AC3)." +
+			tokenAuthDoc(scope.SnapshotRead),
 		Tags: []string{"Projects"},
 	}, func(ctx context.Context, in *projectsInput) (*projectsOutput, error) {
 		cur, err := currentFrom(ctx)
@@ -133,7 +135,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 		if err != nil {
 			return nil, err
 		}
-		list, err := projects.List(ctx, cur.session.UserID, ws, after, in.Fetch())
+		list, err := projects.List(ctx, cur.actor(ctx), ws, after, in.Fetch())
 		if err != nil {
 			return nil, projectError(err)
 		}
@@ -147,7 +149,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 			out.Body.Items[i] = newProjectBody(p)
 		}
 		return out, nil
-	})
+	}, api.TokenScope(scope.SnapshotRead))
 
 	api.Register(m, api.ManageProjects, huma.Operation{
 		OperationID: "createProject",
@@ -176,7 +178,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 			return nil, projectError(err)
 		}
 		return &createdProjectOutput{Location: "/api/v1/projects/" + p.ID, Body: newProjectBody(p)}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ManageProjects, huma.Operation{
 		OperationID: "listTrashedProjects",
@@ -211,7 +213,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 			return nil, err
 		}
 		return &trashOutput{Body: page}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ReadProject, huma.Operation{
 		OperationID: "getProject",
@@ -219,7 +221,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 		Path:        "/api/v1/projects/{project_id}",
 		Summary:     "Get a project",
 		Description: "Returns a project, with the role that the signed-in user acts with on it." +
-			projectNotFoundDoc + tokenNotFoundDoc + tokenAuthDoc(scope.ProjectRead),
+			projectNotFoundDoc + tokenNotFoundDoc + tokenAuthDoc(scope.SnapshotRead),
 		Tags: []string{"Projects"},
 	}, func(ctx context.Context, in *projectInput) (*projectOutput, error) {
 		id, actor, err := projectActor(ctx, in.ProjectID)
@@ -231,7 +233,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 			return nil, projectError(err)
 		}
 		return &projectOutput{Body: newProjectBody(p)}, nil
-	}, api.TokenScope(scope.ProjectRead))
+	}, api.TokenScope(scope.SnapshotRead))
 
 	api.Register(m, api.ChangeProjectSettings, huma.Operation{
 		OperationID: "updateProject",
@@ -327,7 +329,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 			return nil, projectError(err)
 		}
 		return &struct{}{}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ManageProjects, huma.Operation{
 		OperationID: "restoreProject",
@@ -352,7 +354,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 			return nil, projectError(err)
 		}
 		return &projectOutput{Body: newProjectBody(p)}, nil
-	})
+	}, api.SessionOnly())
 }
 
 // projectKey returns the key that the lists of projects are paged by: the
