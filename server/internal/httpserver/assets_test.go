@@ -151,6 +151,13 @@ func TestUploadAsset(t *testing.T) {
 			t.Errorf("%s with If-None-Match %q: %d %s, Cache-Control %q; want 304", path, etag, again.status,
 				again.body, again.header.Get("Cache-Control"))
 		}
+		// HEAD is answered with the headers of GET, without the file, which
+		// the route then does not read.
+		if head := call(s.main, http.MethodHead, assetPath(p, a.ID)+path, nil, owner.header(false)); head.status !=
+			http.StatusOK || len(head.body) != 0 || head.header.Get("Content-Length") != fmt.Sprint(len(data)) {
+			t.Errorf("HEAD %s: %d, %d bytes, Content-Length %q; want 200 and no file", path, head.status,
+				len(head.body), head.header.Get("Content-Length"))
+		}
 	}
 
 	if same := upload(t, s.main, owner, p, data, http.StatusOK); same != a {
@@ -317,17 +324,30 @@ func TestStorageLimit(t *testing.T) {
 
 // TestUploadSizeLimit checks that a file larger than
 // STORYCREEP_ASSET_MAX_BYTES is refused with 413 request_too_large, which
-// names the limit.
+// names the limit, as is an SVG image that is not, but would be stored
+// larger, as its characters are written as references once it is sanitized.
 func TestUploadSizeLimit(t *testing.T) {
 	t.Parallel()
 	data := testPNG(t, 30, 30)
-	s, _, owner, ws := inviteServer(t, "open",
-		map[string]string{"STORYCREEP_ASSET_MAX_BYTES": fmt.Sprint(len(data) - 1)})
+	maxBytes := len(data) - 1
+	s, d, owner, ws := inviteServer(t, "open",
+		map[string]string{"STORYCREEP_ASSET_MAX_BYTES": fmt.Sprint(maxBytes)})
 	p := createProject(t, s.main, owner, ws, "Lighthouse").ID
 	res := uploadFile(s.main, owner, p, data, "image/png")
 	wantCode(t, "a file too large", res, http.StatusRequestEntityTooLarge, api.CodeRequestTooLarge)
-	if got := res.details(t)["max_bytes"]; got != float64(len(data)-1) {
-		t.Errorf("max_bytes is %v, want %d", got, len(data)-1)
+	if got := res.details(t)["max_bytes"]; got != float64(maxBytes) {
+		t.Errorf("max_bytes is %v, want %d", got, maxBytes)
+	}
+	prefix, suffix := `<svg xmlns="http://www.w3.org/2000/svg"><text><![CDATA[`, `]]></text></svg>`
+	svg := prefix + strings.Repeat("&", maxBytes-len(prefix)-len(suffix)) + suffix
+	res = uploadFile(s.main, owner, p, []byte(svg), "image/svg+xml")
+	wantCode(t, "an SVG image that would be stored too large", res, http.StatusRequestEntityTooLarge,
+		api.CodeRequestTooLarge)
+	if got := res.details(t)["max_bytes"]; got != float64(maxBytes) {
+		t.Errorf("max_bytes is %v, want %d", got, maxBytes)
+	}
+	if n := countRows(t, d, "SELECT count(*) FROM asset"); n != 0 {
+		t.Errorf("the workspace has %d assets, want none", n)
 	}
 	upload(t, s.main, owner, p, testPNG(t, 2, 2), http.StatusCreated)
 }
@@ -564,7 +584,7 @@ func TestHoldSlot(t *testing.T) {
 	hapi := humachi.New(router, huma.DefaultConfig("Test", "1"))
 	entered, release := make(chan string, 3), make(chan struct{})
 	huma.Register(hapi, huma.Operation{Method: http.MethodPost, Path: "/{name}",
-		Middlewares: huma.Middlewares{holdSlot(make(chan struct{}, 1))}},
+		Middlewares: huma.Middlewares{holdSlot(newSlots(1))}},
 		func(_ context.Context, in *struct {
 			Name    string `path:"name"`
 			RawBody []byte
@@ -618,6 +638,169 @@ func TestHoldSlot(t *testing.T) {
 	case name := <-entered:
 		t.Errorf("%s reached the operation", name)
 	default:
+	}
+}
+
+// TestHoldSlotShare checks that a user holds no more than their share of
+// the slots, a quarter: a request of a user who holds as many waits, while
+// another user's takes a slot that is free, and once the user's request
+// ends, the next of theirs takes its slot.
+func TestHoldSlotShare(t *testing.T) {
+	t.Parallel()
+	router := chi.NewMux()
+	// The request's user is the one that the header names, as the
+	// authenticator would have found them.
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user := ids.UUID{byte(len(r.Header.Get("User")))}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), currentKey{}, current{userID: user})))
+		})
+	})
+	hapi := humachi.New(router, huma.DefaultConfig("Test", "1"))
+	entered, release := make(chan string, 8), map[string]chan struct{}{}
+	for _, name := range []string{"a1", "a2", "a3", "b1"} {
+		release[name] = make(chan struct{})
+	}
+	slots := newSlots(8)
+	huma.Register(hapi, huma.Operation{Method: http.MethodPost, Path: "/{name}",
+		Middlewares: huma.Middlewares{holdSlot(slots)}},
+		func(_ context.Context, in *struct {
+			Name    string `path:"name"`
+			RawBody []byte
+		}) (*struct{}, error) {
+			entered <- in.Name
+			<-release[in.Name]
+			return nil, nil
+		})
+	post := func(user, name string) <-chan int {
+		done := make(chan int, 1)
+		go func() {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/"+name, strings.NewReader("file"))
+			r.Header.Set("User", user)
+			router.ServeHTTP(w, r)
+			done <- w.Code
+		}()
+		return done
+	}
+	reached := func(want string) {
+		t.Helper()
+		select {
+		case name := <-entered:
+			if name != want {
+				t.Fatalf("%s reached the operation, want %s", name, want)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s did not reach the operation", want)
+		}
+	}
+	// A quarter of 8 slots is 2.
+	a1, a2 := post("a", "a1"), post("a", "a2")
+	got := map[string]bool{}
+	for range 2 {
+		got[<-entered] = true
+	}
+	if !got["a1"] || !got["a2"] {
+		t.Fatalf("%v reached the operation, want a1 and a2", got)
+	}
+	a3 := post("a", "a3")
+	select {
+	case name := <-entered:
+		t.Fatalf("%s reached the operation while its user held their share", name)
+	case <-time.After(100 * time.Millisecond):
+	}
+	b1 := post("bb", "b1")
+	reached("b1")
+	close(release["a1"])
+	reached("a3")
+	for _, name := range []string{"a2", "a3", "b1"} {
+		close(release[name])
+	}
+	for _, done := range []<-chan int{a1, a2, a3, b1} {
+		if code := <-done; code != http.StatusNoContent {
+			t.Errorf("a request: %d", code)
+		}
+	}
+	slots.mu.Lock()
+	defer slots.mu.Unlock()
+	if len(slots.users) != 0 || len(slots.all) != 0 {
+		t.Errorf("once every request has ended, %d users keep slots, and %d are held", len(slots.users),
+			len(slots.all))
+	}
+}
+
+// TestReconcileMendsThumbnails checks that the orphan reconciliation mends
+// the thumbnails of the files that the store has: it enqueues the job of an
+// asset that has none, as when its job ran out of attempts, and forgets a
+// thumbnail that the store lost, and enqueues its job, which then make the
+// thumbnail, while it enqueues no job of an asset whose job waits.
+func TestReconcileMendsThumbnails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, d, owner, ws := inviteServer(t, "open", map[string]string{"STORYCREEP_ASSET_STORAGE": dir})
+	p := createProject(t, s.main, owner, ws, "Lighthouse").ID
+	large := testPNG(t, 600, 300)
+	a := upload(t, s.main, owner, p, large, http.StatusCreated)
+	jobsOf := func(state string) int {
+		return countRows(t, d, `SELECT count(*) FROM river_job WHERE kind = 'asset_thumbnail' AND state::text LIKE $1`,
+			state)
+	}
+	reconcile := func() {
+		t.Helper()
+		if _, err := s.assets.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reconcile()
+	if n := jobsOf("%"); n != 1 {
+		t.Errorf("%d thumbnail jobs once the reconciliation ran while the upload's waits, want 1", n)
+	}
+	// The job ran out of attempts.
+	admin := d.Admin(t)
+	if _, err := admin.Exec(context.Background(),
+		`UPDATE river_job SET state = 'discarded', finalized_at = now() WHERE kind = 'asset_thumbnail'`); err != nil {
+		t.Fatal(err)
+	}
+	reconcile()
+	if n := jobsOf("available"); n != 1 {
+		t.Errorf("%d thumbnail jobs wait once the reconciliation ran, want 1", n)
+	}
+	thumbnail := func() []byte {
+		t.Helper()
+		for deadline := time.Now().Add(30 * time.Second); ; {
+			res := call(s.main, http.MethodGet, assetPath(p, a.ID)+"/thumbnail", nil, owner.header(false))
+			if _, err := png.DecodeConfig(bytes.NewReader(res.body)); err == nil && !bytes.Equal(res.body, large) {
+				return res.body
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the thumbnail job did not make the thumbnail")
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	startWorkers(t, s, d)
+	made := thumbnail()
+	var thumb string
+	for _, f := range storedFiles(t, dir) {
+		if strings.HasSuffix(f, ".thumb.png") {
+			thumb = f
+		}
+	}
+	if thumb == "" {
+		t.Fatalf("the store holds %v, want a thumbnail", storedFiles(t, dir))
+	}
+	// The store lost the thumbnail, which the route then finds nothing of.
+	if err := os.Remove(filepath.Join(dir, filepath.FromSlash(thumb))); err != nil {
+		t.Fatal(err)
+	}
+	res := call(s.main, http.MethodGet, assetPath(p, a.ID)+"/thumbnail", nil, owner.header(false))
+	wantCode(t, "a thumbnail that the store lost", res, http.StatusNotFound, api.CodeNotFound)
+	reconcile()
+	if again := thumbnail(); !bytes.Equal(again, made) {
+		t.Error("the thumbnail made again differs")
+	}
+	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(thumb))); err != nil {
+		t.Errorf("the thumbnail made again: %v", err)
 	}
 }
 

@@ -106,6 +106,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		Entitlements: s.entitlements,
 		Storage:      asset.NewStorage(readyDB{s.ready}, asset.StorageOptions{Configured: cfg.AssetStorage}),
 		Queue:        s.queue,
+		MaxBytes:     cfg.AssetMaxBytes,
 	})
 	s.tokens = apitoken.New(readyDB{s.ready}, apitoken.Options{
 		Policy: role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
@@ -179,7 +180,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerUsage(s.main, s.workspaces)
 	registerProjects(s.main, s.projects)
 	registerCommands(s.main, s.commands)
-	registerAssets(s.main, s.assets, cfg.AssetMaxBytes)
+	registerAssets(s.main, s.assets)
 	registerGrants(s.main, s.projects)
 	registerTokens(s.main, s.tokens)
 	registerInvites(s.main, s.workspaces, s.invites, s.accounts)

@@ -79,9 +79,22 @@ SELECT FROM project
 WHERE workspace_id = @workspace_id AND id = @id
 FOR SHARE;
 
--- name: ReferencedKeys :many
--- ReferencedKeys returns the keys of the blobs that the workspace's assets
--- refer to, as their files or their thumbnails, each once.
-SELECT a.storage_key AS key FROM asset a WHERE a.workspace_id = @workspace_id
-UNION
-SELECT a.thumbnail_key FROM asset a WHERE a.workspace_id = @workspace_id AND a.thumbnail_key IS NOT NULL;
+-- name: ContentKeys :many
+-- ContentKeys returns each content of the workspace's assets, with the key
+-- of its blob, the key of its thumbnail, or null until it has one, and the
+-- ID of one of its assets: the keys of the blobs that the assets refer to,
+-- as their files or their thumbnails, each once, and what the orphan
+-- reconciliation mends. A content's assets share its thumbnail, so each
+-- content is returned once, unless a change of the thumbnail that has not
+-- yet reached every asset is seen, which no transaction commits.
+SELECT DISTINCT ON (a.sha256, a.thumbnail_key) a.id, a.sha256, a.storage_key, a.thumbnail_key FROM asset a
+WHERE a.workspace_id = @workspace_id
+ORDER BY a.sha256, a.thumbnail_key, a.id;
+
+-- name: ForgetThumbnail :execrows
+-- ForgetThumbnail records that the assets of the workspace whose file is
+-- the content sha256, and whose thumbnail is the key, have none, as when the
+-- store lost the thumbnail, so that its job makes it again, and returns how
+-- many it changed.
+UPDATE asset SET thumbnail_key = NULL
+WHERE workspace_id = @workspace_id AND sha256 = @sha256 AND thumbnail_key = @thumbnail_key;

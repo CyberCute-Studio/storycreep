@@ -95,6 +95,51 @@ func (q *Queries) BlobReferenced(ctx context.Context, arg BlobReferencedParams) 
 	return referenced, err
 }
 
+const contentKeys = `-- name: ContentKeys :many
+SELECT DISTINCT ON (a.sha256, a.thumbnail_key) a.id, a.sha256, a.storage_key, a.thumbnail_key FROM asset a
+WHERE a.workspace_id = $1
+ORDER BY a.sha256, a.thumbnail_key, a.id
+`
+
+type ContentKeysRow struct {
+	ID           pgtype.UUID
+	Sha256       []byte
+	StorageKey   string
+	ThumbnailKey pgtype.Text
+}
+
+// ContentKeys returns each content of the workspace's assets, with the key
+// of its blob, the key of its thumbnail, or null until it has one, and the
+// ID of one of its assets: the keys of the blobs that the assets refer to,
+// as their files or their thumbnails, each once, and what the orphan
+// reconciliation mends. A content's assets share its thumbnail, so each
+// content is returned once, unless a change of the thumbnail that has not
+// yet reached every asset is seen, which no transaction commits.
+func (q *Queries) ContentKeys(ctx context.Context, workspaceID pgtype.UUID) ([]ContentKeysRow, error) {
+	rows, err := q.db.Query(ctx, contentKeys, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ContentKeysRow
+	for rows.Next() {
+		var i ContentKeysRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Sha256,
+			&i.StorageKey,
+			&i.ThumbnailKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const contentThumbnail = `-- name: ContentThumbnail :one
 SELECT a.thumbnail_key::text AS thumbnail_key FROM asset a
 WHERE a.workspace_id = $1 AND a.sha256 = $2 AND a.thumbnail_key IS NOT NULL
@@ -114,6 +159,29 @@ func (q *Queries) ContentThumbnail(ctx context.Context, arg ContentThumbnailPara
 	var thumbnail_key string
 	err := row.Scan(&thumbnail_key)
 	return thumbnail_key, err
+}
+
+const forgetThumbnail = `-- name: ForgetThumbnail :execrows
+UPDATE asset SET thumbnail_key = NULL
+WHERE workspace_id = $1 AND sha256 = $2 AND thumbnail_key = $3
+`
+
+type ForgetThumbnailParams struct {
+	WorkspaceID  pgtype.UUID
+	Sha256       []byte
+	ThumbnailKey pgtype.Text
+}
+
+// ForgetThumbnail records that the assets of the workspace whose file is
+// the content sha256, and whose thumbnail is the key, have none, as when the
+// store lost the thumbnail, so that its job makes it again, and returns how
+// many it changed.
+func (q *Queries) ForgetThumbnail(ctx context.Context, arg ForgetThumbnailParams) (int64, error) {
+	result, err := q.db.Exec(ctx, forgetThumbnail, arg.WorkspaceID, arg.Sha256, arg.ThumbnailKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertAsset = `-- name: InsertAsset :one
@@ -210,34 +278,6 @@ func (q *Queries) ProjectAsset(ctx context.Context, arg ProjectAssetParams) (Ass
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const referencedKeys = `-- name: ReferencedKeys :many
-SELECT a.storage_key AS key FROM asset a WHERE a.workspace_id = $1
-UNION
-SELECT a.thumbnail_key FROM asset a WHERE a.workspace_id = $1 AND a.thumbnail_key IS NOT NULL
-`
-
-// ReferencedKeys returns the keys of the blobs that the workspace's assets
-// refer to, as their files or their thumbnails, each once.
-func (q *Queries) ReferencedKeys(ctx context.Context, workspaceID pgtype.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, referencedKeys, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			return nil, err
-		}
-		items = append(items, key)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const setThumbnail = `-- name: SetThumbnail :exec

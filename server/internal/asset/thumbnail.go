@@ -18,9 +18,14 @@ import (
 // smaller one, or an SVG, which scales itself, is its own thumbnail.
 const ThumbnailSide = 256
 
-// needsThumbnail reports whether img gets a thumbnail of its own.
+// needsThumbnail reports whether img gets a thumbnail of its own, which its
+// job makes: a raster image larger than ThumbnailSide on a side, unless its
+// decoding would take more than maxDecodeBytes, as its header says
+// (decodeBytes), which Thumbnail would refuse, so that its job need not
+// read the whole file to learn so.
 func needsThumbnail(img Image) bool {
-	return img.Mime != MimeSVG && (img.Width > ThumbnailSide || img.Height > ThumbnailSide)
+	return img.Mime != MimeSVG && (img.Width > ThumbnailSide || img.Height > ThumbnailSide) &&
+		decodeBytes(img) <= maxDecodeBytes
 }
 
 // decoders decode the raster types; a GIF's first frame.
@@ -61,7 +66,7 @@ func Thumbnail(data []byte, mime string) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("asset: no thumbnail is made of %s", mime)
 	}
-	img, err := Sniff(data)
+	img, err := Sniff(data, len(data))
 	if err != nil {
 		return nil, err
 	}

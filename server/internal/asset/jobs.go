@@ -51,8 +51,9 @@ type orphans struct{}
 func (orphans) Kind() string { return "asset_orphans" }
 
 // RegisterJobs registers the jobs of the assets in r: the job that makes an
-// asset's thumbnail, which an upload enqueues, and which runs one at a time,
-// and the orphan reconciliation, which runs every hour.
+// asset's thumbnail, which an upload, or the orphan reconciliation, enqueues,
+// and which runs one at a time, and the orphan reconciliation, which runs
+// every hour.
 func (s *Service) RegisterJobs(r *jobs.Registry) {
 	jobs.Register(r, func(ctx context.Context, job *jobs.Job[thumbnailJob]) error {
 		return s.withDB(job.DB).makeThumbnail(ctx, job.Args)
@@ -78,18 +79,19 @@ func (s *Service) withDB(db *database.DB) *Service {
 }
 
 // makeThumbnail makes the thumbnail of the asset of args, unless the asset no
-// longer exists, has one, or is one of the assets of its content whose
-// thumbnail another job made, and records it for every asset of the
+// longer exists, or has one, and records it for every asset of the
 // workspace of the same content that has none. It decodes the image outside
 // any transaction, and stores the thumbnail under the blob's lock, which the
 // orphan reconciliation takes too, so that it never deletes a thumbnail that
-// is about to be recorded, unless another job recorded one meanwhile. An
-// image that does not decode, or whose decoding would take more memory than
-// a thumbnail may (Thumbnail), keeps no thumbnail of its own: it is recorded
-// as its own thumbnail, as a small image is, so that an upload of the same
-// content to another project shares that, rather than enqueue a job that
-// would fail the same way, and the job ends without another attempt. So it
-// is safe to repeat.
+// is about to be recorded, unless another job recorded one meanwhile, which
+// it then records for the assets that have none instead. An image that does
+// not decode, or whose decoding would take more memory than a thumbnail may
+// (Thumbnail), which an upload finds from the image's header, keeps no
+// thumbnail of its own: it is recorded as its own thumbnail, as a small image
+// is, so that an upload of the same content to another project shares that,
+// rather than enqueue a job that would fail the same way, and the job ends
+// without another attempt, cancelled with the error that kept it from making
+// the thumbnail. So it is safe to repeat.
 func (s *Service) makeThumbnail(ctx context.Context, args thumbnailJob) error {
 	workspaceID, err := ids.ParseUUID(args.WorkspaceID)
 	if err != nil {
@@ -146,15 +148,15 @@ func (s *Service) makeThumbnail(ctx context.Context, args thumbnailJob) error {
 			return err
 		}
 		// Another job of the content may have recorded its thumbnail since,
-		// as on another instance, which this one then need not store.
-		switch _, err := q.ContentThumbnail(ctx, queries.ContentThumbnailParams{
+		// as on another instance, which this one then need not store, but
+		// records for the assets that have none.
+		switch recorded, err := q.ContentThumbnail(ctx, queries.ContentThumbnailParams{
 			WorkspaceID: nullUUID(workspaceID), Sha256: a.Sha256}); {
 		case err == nil:
-			return nil
+			key, failed = recorded, nil
 		case !errors.Is(err, pgx.ErrNoRows):
 			return fmt.Errorf("asset: read the thumbnail of the content: %w", err)
-		}
-		if failed == nil {
+		case failed == nil:
 			if err := store.Put(ctx, key, thumb, MimePNG); err != nil {
 				return fmt.Errorf("asset: %w", err)
 			}
@@ -199,6 +201,13 @@ var errSpent = errors.New("asset: the run has spent its budget")
 // leaves alone a key that this package would not write. So it is safe to
 // repeat. The blobs of a workspace that no longer exists are deleted with it
 // (plan item 110).
+//
+// Once it has listed a workspace's blobs whole, it mends the thumbnails of
+// the contents whose files the store has (mendThumbnails): it enqueues the
+// job of a content that has no thumbnail, as when its job ran out of
+// attempts while the store did not answer, unless one waits, and forgets
+// a thumbnail that the store lost, and enqueues its job, so that the
+// thumbnail route serves neither a large file for good nor nothing.
 func (s *Service) Reconcile(ctx context.Context) (int, error) {
 	store, err := s.storage.Store(ctx)
 	if err != nil {
@@ -207,27 +216,32 @@ func (s *Service) Reconcile(ctx context.Context) (int, error) {
 	deleted := 0
 	more := sweep.Within(sweep.Budget)
 	err = sweep.Workspaces(ctx, s.db, more, func(workspaceID ids.UUID) error {
-		var referenced []string
+		var contents []queries.ContentKeysRow
 		if err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
 			var err error
-			referenced, err = queries.New(tx).ReferencedKeys(ctx, nullUUID(workspaceID))
+			contents, err = queries.New(tx).ContentKeys(ctx, nullUUID(workspaceID))
 			return err
 		}); err != nil {
 			return fmt.Errorf("asset: read the blobs that workspace %s refers to: %w", workspaceID, err)
 		}
-		known := make(map[string]bool, len(referenced))
-		for _, k := range referenced {
-			known[k] = true
+		known := make(map[string]bool, len(contents))
+		for _, c := range contents {
+			known[c.StorageKey] = true
+			if c.ThumbnailKey.Valid {
+				known[c.ThumbnailKey.String] = true
+			}
 		}
 		// The blobs that no row referred to when the rows were read; each is
 		// checked again under its lock before it is deleted. The listing of
 		// a workspace of many blobs, which takes a request for each thousand
 		// of a bucket's, stops within the run's budget too.
+		listed := map[string]bool{}
 		var unreferenced []string
 		switch err := store.List(ctx, workspaceID.String()+"/", func(i blob.Info) error {
 			if !more() {
 				return errSpent
 			}
+			listed[i.Key] = true
 			if !known[i.Key] {
 				unreferenced = append(unreferenced, i.Key)
 			}
@@ -273,7 +287,58 @@ func (s *Service) Reconcile(ctx context.Context) (int, error) {
 				deleted++
 			}
 		}
-		return nil
+		return s.mendThumbnails(ctx, store, workspaceID, contents, listed, more)
 	})
 	return deleted, err
+}
+
+// mendThumbnails mends the thumbnails of the contents of the workspace's
+// assets whose files are among the keys that the store listed, which were
+// read before the store was listed: it enqueues the job of a content that has
+// no thumbnail, unless one waits (enqueueThumbnail), and, for a content
+// whose thumbnail the store did not list, under the blob's lock, once it has
+// asked the store again, forgets the thumbnail, and enqueues its job. A
+// content whose file the store lost is left alone, which only an upload of
+// the file mends. It stops once more reports that the run has spent its
+// budget.
+func (s *Service) mendThumbnails(ctx context.Context, store blob.Store, workspaceID ids.UUID,
+	contents []queries.ContentKeysRow, listed map[string]bool, more func() bool) error {
+	scope := database.Scope{WorkspaceID: workspaceID}
+	for _, c := range contents {
+		lost := c.ThumbnailKey.Valid && c.ThumbnailKey.String != c.StorageKey && !listed[c.ThumbnailKey.String]
+		if !listed[c.StorageKey] || c.ThumbnailKey.Valid && !lost {
+			continue
+		}
+		if !more() {
+			return nil
+		}
+		err := s.db.InTx(ctx, scope, func(tx pgx.Tx) error {
+			if !lost {
+				return s.enqueueThumbnail(ctx, tx, workspaceID, c.ID.Bytes)
+			}
+			q := queries.New(tx)
+			if err := lockBlob(ctx, q, workspaceID, c.Sha256); err != nil {
+				return err
+			}
+			// A thumbnail is stored before it is recorded, so one that the
+			// listing missed is missing still, but the store has the last
+			// word.
+			switch _, err := store.Stat(ctx, c.ThumbnailKey.String); {
+			case err == nil:
+				return nil
+			case !errors.Is(err, blob.ErrNotFound):
+				return fmt.Errorf("asset: %w", err)
+			}
+			n, err := q.ForgetThumbnail(ctx, queries.ForgetThumbnailParams{WorkspaceID: nullUUID(workspaceID),
+				Sha256: c.Sha256, ThumbnailKey: c.ThumbnailKey})
+			if err != nil || n == 0 {
+				return err
+			}
+			return s.enqueueThumbnail(ctx, tx, workspaceID, c.ID.Bytes)
+		})
+		if err != nil {
+			return fmt.Errorf("asset: mend the thumbnail of %s: %w", c.StorageKey, err)
+		}
+	}
+	return nil
 }

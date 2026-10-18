@@ -6,6 +6,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io/fs"
 	"path"
 	"slices"
@@ -17,6 +18,7 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
 // embedded holds the migrations, in migrations/. They are forward-only:
@@ -69,6 +71,18 @@ const UsageLock int32 = 0x75736167
 // the blob, so that it never deletes a blob that a row is about to refer
 // to. It spells "blob".
 const BlobLock int32 = 0x626c6f62
+
+// LockObject returns the second integer of the key of a lock of the class
+// UsageLock or BlobLock: a hash of the workspace and of name, the key that
+// it counts, or the hash of the blob's content, so that the locks of two
+// workspaces, or of two of a workspace's keys or blobs, may share one, which
+// only makes their changes take turns.
+func LockObject(workspaceID ids.UUID, name []byte) int32 {
+	h := fnv.New32a()
+	h.Write(workspaceID[:])
+	h.Write(name)
+	return int32(h.Sum32())
+}
 
 // timeoutsOff switches off the timeouts that the server, the database, or the
 // login set and that would end a wait for an advisory lock early, or end an

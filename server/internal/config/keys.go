@@ -296,7 +296,8 @@ var keys = []key{
 		doc: "The largest file, in bytes, that an upload of an asset takes (PRD FR-ASSET-02): a larger one is " +
 			"refused with 413 `request_too_large`. It is at most 52428800 (50 MB), the most that the body of an " +
 			"upload may have (NFR-SEC-07). An SVG file is measured as it was uploaded, before the server removes " +
-			"what it does not allow from it.",
+			"what it does not allow from it, and then as the server would store it, which may take more bytes, as " +
+			"some of its characters are written as references: one that would then be larger is refused so too.",
 		valuesDoc: "A whole number from 1 to 52428800",
 		def:       constant(strconv.Itoa(DefaultAssetMaxBytes)),
 		parse: func(c *Config, v string) error {

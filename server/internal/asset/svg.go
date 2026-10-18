@@ -41,8 +41,17 @@ import (
 // well-formed to it, and it refuses a file whose references to its entities
 // would expand to more than maxSVGExpansion bytes in all, which the decoder
 // would otherwise expand in memory: a file of 3 MB holds a million
-// references to an entity of a kilobyte, a gigabyte in all. The file must be
-// UTF-8, and its root an svg element of SVG's namespace.
+// references to an entity of a kilobyte, a gigabyte in all. A file has one
+// document type at most, as XML allows, so that the references are counted
+// once, rather than once for each of a million declarations that a file of
+// a few megabytes could hold. The file must be UTF-8, and its root an svg
+// element of SVG's namespace.
+//
+// What it writes may take more bytes than what it read, as a character that
+// a section of CDATA holds as it is, & or <, is written as a reference, and
+// it takes at most as many as the caller says, the most that an upload may
+// store, so that a small file cannot make the server hold, or store, a huge
+// one: a larger one is refused with ErrTooLarge.
 
 const (
 	svgNamespace   = "http://www.w3.org/2000/svg"
@@ -94,8 +103,9 @@ var entityDecl = regexp.MustCompile(`<!ENTITY\s+([A-Za-z_][A-Za-z0-9_.-]*)\s+(?:
 // *ImageError: errNotImage if data is not XML whose root is an svg element of
 // SVG's namespace, and ReasonMalformed if it is, or its first element is an
 // svg element (startsAsSVG), but it is not well-formed XML in UTF-8, or nests
-// too deeply.
-func sanitizeSVG(data []byte) (Image, error) {
+// too deeply, or ErrTooLarge if the image, sanitized, would take more than
+// limit bytes.
+func sanitizeSVG(data []byte, limit int) (Image, error) {
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	if !utf8.Valid(data) {
 		if startsAsSVG(data) {
@@ -109,15 +119,18 @@ func sanitizeSVG(data []byte) (Image, error) {
 	d.CharsetReader = nil
 	d.Entity = map[string]string{}
 
-	var out bytes.Buffer
-	out.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
+	out := &svgOut{limit: limit}
+	out.write(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
 	var img Image
 	depth, skip := 0, 0
-	rootSeen, rootDone := false, false
+	rootSeen, rootDone, doctype := false, false, false
 	// inStyle is set inside a style element that is kept, whose text is CSS.
 	inStyle := false
 	var styleText strings.Builder
 	for {
+		if out.full {
+			return Image{}, ErrTooLarge
+		}
 		tok, err := d.Token()
 		if errors.Is(err, io.EOF) {
 			break
@@ -132,9 +145,13 @@ func sanitizeSVG(data []byte) (Image, error) {
 		}
 		switch t := tok.(type) {
 		case xml.Directive:
-			if rootSeen {
+			switch {
+			case rootSeen:
 				return Image{}, &ImageError{Reason: ReasonMalformed, Detail: "it has a document type inside its root"}
+			case doctype:
+				return Image{}, &ImageError{Reason: ReasonMalformed, Detail: "it has more than one document type"}
 			}
+			doctype = true
 			if err := declareEntities(d, t, data); err != nil {
 				return Image{}, err
 			}
@@ -160,7 +177,7 @@ func sanitizeSVG(data []byte) (Image, error) {
 				skip++
 				continue
 			}
-			writeStart(&out, t, depth == 1)
+			writeStart(out, t, depth == 1)
 			if t.Name.Local == "style" {
 				inStyle = true
 				styleText.Reset()
@@ -177,25 +194,82 @@ func sanitizeSVG(data []byte) (Image, error) {
 			if inStyle {
 				inStyle = false
 				if css := styleText.String(); !unsafeCSS(css) {
-					xmlEscape(&out, css)
+					out.escape(css, false)
 				}
 			}
-			out.WriteString("</" + t.Name.Local + ">")
+			out.write("</" + t.Name.Local + ">")
 		case xml.CharData:
 			switch {
 			case skip > 0 || depth == 0:
 			case inStyle:
 				styleText.Write(t)
 			default:
-				xmlEscape(&out, string(t))
+				out.escape(string(t), false)
 			}
 		}
 	}
-	if !rootSeen {
+	switch {
+	case !rootSeen:
 		return Image{}, errNotImage
+	case out.full:
+		return Image{}, ErrTooLarge
 	}
 	img.Mime, img.Ext, img.Data = MimeSVG, extensions[MimeSVG], out.Bytes()
 	return img, nil
+}
+
+// svgOut is the file that sanitizeSVG writes, which takes at most limit
+// bytes: once a write would take it past them, full is set, and nothing more
+// is written.
+type svgOut struct {
+	bytes.Buffer
+	limit int
+	full  bool
+}
+
+// write writes s, unless it would take the file past its limit.
+func (o *svgOut) write(s string) {
+	if o.full || o.Len()+len(s) > o.limit {
+		o.full = true
+		return
+	}
+	o.WriteString(s)
+}
+
+// escape writes s, escaped as the text of an element, or, if attr is set, as
+// the value of an attribute in double quotes: &, <, and >, and a carriage
+// return, which a parser would read as a line feed, as references, and, in
+// an attribute's value, a double quote, and a line feed or a tab, which a
+// parser would read as a space, and the rest as it is, so that text that
+// spans lines, as between the elements of a file that an editor indented,
+// takes no more bytes than it did.
+func (o *svgOut) escape(s string, attr bool) {
+	last := 0
+	for i := 0; i < len(s) && !o.full; i++ {
+		var ref string
+		switch c := s[i]; {
+		case c == '&':
+			ref = "&amp;"
+		case c == '<':
+			ref = "&lt;"
+		case c == '>':
+			ref = "&gt;"
+		case c == '\r':
+			ref = "&#xD;"
+		case attr && c == '"':
+			ref = "&quot;"
+		case attr && c == '\n':
+			ref = "&#xA;"
+		case attr && c == '\t':
+			ref = "&#x9;"
+		default:
+			continue
+		}
+		o.write(s[last:i])
+		o.write(ref)
+		last = i + 1
+	}
+	o.write(s[last:])
 }
 
 // firstElement matches the start of the tag of an element, and captures its
@@ -283,10 +357,10 @@ func entityExpansion(data []byte, entities map[string]string) int {
 
 // writeStart writes the start tag of the element t, which is kept, with the
 // attributes that it keeps, and, on the root, the namespace of SVG.
-func writeStart(out *bytes.Buffer, t xml.StartElement, root bool) {
-	out.WriteString("<" + t.Name.Local)
+func writeStart(out *svgOut, t xml.StartElement, root bool) {
+	out.write("<" + t.Name.Local)
 	if root {
-		out.WriteString(` xmlns="` + svgNamespace + `"`)
+		out.write(` xmlns="` + svgNamespace + `"`)
 	}
 	seen := map[string]bool{}
 	for _, a := range t.Attr {
@@ -295,11 +369,11 @@ func writeStart(out *bytes.Buffer, t xml.StartElement, root bool) {
 			continue
 		}
 		seen[name] = true
-		out.WriteString(" " + name + `="`)
-		xmlEscape(out, a.Value)
-		out.WriteString(`"`)
+		out.write(" " + name + `="`)
+		out.escape(a.Value, true)
+		out.write(`"`)
 	}
-	out.WriteString(">")
+	out.write(">")
 }
 
 // attrName returns the name that the attribute a is written with, and true,
@@ -363,13 +437,6 @@ func unsafeCSS(v string) bool {
 		}
 	}
 	return false
-}
-
-// xmlEscape writes s to out, escaped as the text of an element or the value
-// of an attribute in double quotes.
-func xmlEscape(out *bytes.Buffer, s string) {
-	// EscapeText writes to a buffer without failing.
-	_ = xml.EscapeText(out, []byte(s))
 }
 
 // svgLength matches a length of SVG's width or height in user units or

@@ -35,6 +35,10 @@ func encoded(t *testing.T, encode func(*bytes.Buffer, image.Image) error, img im
 	return b.Bytes()
 }
 
+// testLimit is the most bytes that the tests' SVG images may take once they
+// are sanitized: the most that an instance's uploads may.
+const testLimit = 50 << 20
+
 // minimalWebP is a lossless WebP image of 1 × 1 pixel.
 var minimalWebP = []byte("RIFF\x1a\x00\x00\x00WEBPVP8L\x0d\x00\x00\x00\x2f\x00\x00\x00\x10\x07\x10\x11\x11\x88\x88\xfe\x07\x00")
 
@@ -57,13 +61,13 @@ func TestSniff(t *testing.T) {
 			return gif.Encode(b, i, nil)
 		}, img)},
 	} {
-		got, err := Sniff(tt.data)
+		got, err := Sniff(tt.data, testLimit)
 		if err != nil || got.Mime != tt.mime || got.Ext != tt.ext || got.Width != 30 || got.Height != 20 ||
 			!bytes.Equal(got.Data, tt.data) {
 			t.Errorf("%s: %+v, %v", tt.name, got, err)
 		}
 	}
-	if got, err := Sniff(minimalWebP); err != nil || got.Mime != MimeWebP || got.Width != 1 || got.Height != 1 {
+	if got, err := Sniff(minimalWebP, testLimit); err != nil || got.Mime != MimeWebP || got.Width != 1 || got.Height != 1 {
 		t.Errorf("WebP: %+v, %v", got, err)
 	}
 	// A JPEG photo that its EXIF data says to turn a quarter is as large as
@@ -73,7 +77,7 @@ func TestSniff(t *testing.T) {
 		orientation, w, h int
 		big               bool
 	}{{6, 20, 30, true}, {8, 20, 30, false}, {5, 20, 30, true}, {3, 30, 20, false}, {1, 30, 20, true}} {
-		got, err := Sniff(withOrientation(jpg, tt.orientation, tt.big))
+		got, err := Sniff(withOrientation(jpg, tt.orientation, tt.big), testLimit)
 		if err != nil || got.Width != tt.w || got.Height != tt.h {
 			t.Errorf("a JPEG of the orientation %d: %d × %d, %v; want %d × %d", tt.orientation, got.Width,
 				got.Height, err, tt.w, tt.h)
@@ -96,13 +100,13 @@ func TestSniff(t *testing.T) {
 		{"a PNG of too many pixels", pngOf(6000, 5000), ReasonDimensions},
 		{"a PNG too tall", pngOf(1, MaxSide+1), ReasonDimensions},
 	} {
-		_, err := Sniff(tt.data)
+		_, err := Sniff(tt.data, testLimit)
 		var ie *ImageError
 		if !errors.As(err, &ie) || ie.Reason != tt.reason {
 			t.Errorf("%s: %v, want an ImageError of %s", tt.name, err, tt.reason)
 		}
 	}
-	if _, err := Sniff(pngOf(5000, 5000)); err != nil {
+	if _, err := Sniff(pngOf(5000, 5000), testLimit); err != nil {
 		t.Errorf("a PNG of %d pixels, the most: %v", MaxPixels, err)
 	}
 }
@@ -349,7 +353,7 @@ func TestDecodeBytes(t *testing.T) {
 		{"an interlaced RGBA PNG of 16 bits", MimePNG, pngWith(side, side, 16, 6, true), 16*side*side + scale},
 		{"a GIF", MimeGIF, []byte("GIF89a\x88\x13\x88\x13\x00\x00\x00"), side*side + scale},
 	} {
-		img, err := Sniff(tt.data)
+		img, err := Sniff(tt.data, testLimit)
 		if err != nil || img.Mime != tt.mime {
 			t.Errorf("%s: %s, %v", tt.name, img.Mime, err)
 			continue
@@ -365,7 +369,7 @@ func TestDecodeBytes(t *testing.T) {
 	// A photo of 24 million pixels, whose colours are subsampled 4:2:0: 375
 	// × 250 units of 4 blocks of luma and 2 of chroma.
 	photo, err := Sniff(jpegHeader(jfifSegment, 0xc2, 6000, 4000, [2]byte{1, 0x22}, [2]byte{2, 0x11},
-		[2]byte{3, 0x11}))
+		[2]byte{3, 0x11}), testLimit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,6 +377,17 @@ func TestDecodeBytes(t *testing.T) {
 		got > maxDecodeBytes {
 		t.Errorf("a progressive photo of 24 million pixels: %d bytes, want %d, at most %d", got, want,
 			maxDecodeBytes)
+	}
+	// An upload of an image whose thumbnail would take too much memory makes
+	// it its own thumbnail at once, rather than enqueue a job that would
+	// read the whole file to learn so.
+	costly, err := Sniff(cmyk, testLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needsThumbnail(costly) || !needsThumbnail(photo) {
+		t.Errorf("a thumbnail of its own: %t for the CMYK image, %t for the photo; want false and true",
+			needsThumbnail(costly), needsThumbnail(photo))
 	}
 }
 
@@ -483,7 +498,7 @@ func TestSanitizeSVG(t *testing.T) {
 				`<rect style="fill:u\72l(https://x.example)"/><rect cursor="url(x.cur)"/>` +
 				`<rect style="fill: image('https://y.example/t.png')"/><style>.c{fill:image("//z.example/t")}</style></svg>`,
 			keep: []string{"<style>.a{fill:url(#g)}</style>",
-				`<rect class="important" fill="url(#g)" style="fill: url( &#39;#g&#39; )"></rect>`},
+				`<rect class="important" fill="url(#g)" style="fill: url( '#g' )"></rect>`},
 			drop: []string{"@import", "x.example", "image-set", `\72`, "x.cur", "y.example", "z.example"},
 		},
 		{
@@ -517,7 +532,7 @@ func TestSanitizeSVG(t *testing.T) {
 			keep: []string{`<svg xmlns="http://www.w3.org/2000/svg" width="100%"><g></g></svg>`},
 		},
 	} {
-		img, err := sanitizeSVG([]byte(tt.in))
+		img, err := sanitizeSVG([]byte(tt.in), testLimit)
 		if err != nil {
 			t.Errorf("%s: %v", tt.name, err)
 			continue
@@ -537,7 +552,7 @@ func TestSanitizeSVG(t *testing.T) {
 			t.Errorf("%s: %s, %d × %d, want %d × %d", tt.name, img.Mime, img.Width, img.Height, tt.w, tt.h)
 		}
 		// What the sanitizer writes, it keeps as it is.
-		again, err := sanitizeSVG(img.Data)
+		again, err := sanitizeSVG(img.Data, testLimit)
 		if err != nil || !bytes.Equal(again.Data, img.Data) {
 			t.Errorf("%s: sanitizing the result again changes it: %v\n%s\n%s", tt.name, err, img.Data, again.Data)
 		}
@@ -563,6 +578,11 @@ func TestSanitizeSVG(t *testing.T) {
 			`<svg xmlns="http://www.w3.org/2000/svg">&x;</svg>`, ReasonMalformed},
 		{"nested entities", `<!DOCTYPE svg [<!ENTITY a "1"><!ENTITY b "&a;&a;">]>` +
 			`<svg xmlns="http://www.w3.org/2000/svg">&b;</svg>`, ReasonMalformed},
+		// Each document type would have the references counted again.
+		{"two document types", `<!DOCTYPE svg [<!ENTITY a "1">]><!DOCTYPE svg [<!ENTITY b "2">]>` +
+			`<svg xmlns="http://www.w3.org/2000/svg">&a;&b;</svg>`, ReasonMalformed},
+		{"declarations that are no document type", strings.Repeat("<!x[>", 1000) +
+			`<svg xmlns="http://www.w3.org/2000/svg"/>`, ReasonMalformed},
 		// 5,000 references of 3 bytes to an entity of 1,000 expand to 5 MB.
 		{"entities that expand too far", `<!DOCTYPE svg [<!ENTITY a "` + strings.Repeat("A", 1000) + `">]>` +
 			`<svg xmlns="http://www.w3.org/2000/svg"><text>` + strings.Repeat("&a;", 5000) + `</text></svg>`,
@@ -572,10 +592,47 @@ func TestSanitizeSVG(t *testing.T) {
 		{"another encoding", `<?xml version="1.0" encoding="ISO-8859-1"?><svg xmlns="http://www.w3.org/2000/svg"/>`,
 			ReasonMalformed},
 	} {
-		_, err := sanitizeSVG([]byte(tt.in))
+		_, err := sanitizeSVG([]byte(tt.in), testLimit)
 		var ie *ImageError
 		if !errors.As(err, &ie) || ie.Reason != tt.reason {
 			t.Errorf("%s: %v, want an ImageError of %s", tt.name, err, tt.reason)
 		}
+	}
+}
+
+// TestSanitizedSize checks how many bytes a sanitized SVG takes: text that
+// spans lines, as between the elements that an editor indented, takes no
+// more than it did, a line feed or a tab in an attribute's value, which a
+// parser would read as a space, is written as a reference, which keeps the
+// value, and an image whose characters, as those of a section of CDATA, are
+// written as references longer than the file was is refused once it would
+// take more than the limit, rather than held whole.
+func TestSanitizedSize(t *testing.T) {
+	indented := `<svg xmlns="http://www.w3.org/2000/svg">` + strings.Repeat("\n\t<g d=\"a\n\tb\"/>", 1000) + "\n</svg>"
+	img, err := sanitizeSVG([]byte(indented), testLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(img.Data)
+	if !strings.Contains(out, "\n\t<g d=") || strings.Contains(out, "&#xA;\t<g") ||
+		!strings.Contains(out, `<g d="a&#xA;&#x9;b"></g>`) {
+		t.Errorf("an indented image, sanitized:\n%.200s", out)
+	}
+	if again, err := sanitizeSVG(img.Data, testLimit); err != nil || !bytes.Equal(again.Data, img.Data) {
+		t.Errorf("sanitizing the indented image again changes it: %v", err)
+	}
+
+	ampersands := `<svg xmlns="http://www.w3.org/2000/svg"><text><![CDATA[` + strings.Repeat("&", 10_000) +
+		`]]></text></svg>`
+	img, err = sanitizeSVG([]byte(ampersands), testLimit)
+	if err != nil || strings.Count(string(img.Data), "&amp;") != 10_000 {
+		t.Errorf("a section of CDATA of ampersands: %v", err)
+	}
+	if _, err := sanitizeSVG([]byte(ampersands), len(ampersands)); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("a section of CDATA of ampersands, which take five times as many bytes once sanitized, within "+
+			"the size of the file: %v, want ErrTooLarge", err)
+	}
+	if _, err := Sniff([]byte(ampersands), 1000); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("Sniff of an image that takes more than its limit once sanitized: %v, want ErrTooLarge", err)
 	}
 }

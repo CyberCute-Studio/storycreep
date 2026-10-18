@@ -288,7 +288,9 @@ var codes = []codeSpec{
 		"The client did not send the whole request body within the route's time limit."},
 	{CodeRequestTooLarge, http.StatusRequestEntityTooLarge, i18n.K("error.request_too_large"),
 		"The request body is larger than the route accepts, 5 MB unless the route says otherwise " +
-			"(PRD NFR-SEC-07). `details.max_bytes` is the limit."},
+			"(PRD NFR-SEC-07), or, for an upload of an SVG image, the file that the server would store once it has " +
+			"removed what it does not allow is larger than the upload's limit (FR-ASSET-02). `details.max_bytes` is " +
+			"the limit."},
 	{CodeStorageLimitExceeded, http.StatusRequestEntityTooLarge, i18n.K("error.storage_limit_exceeded"),
 		"The upload would take the workspace past its storage limit, `storage_bytes`, so it stores nothing (PRD " +
 			"FR-ASSET-02 AC4, FR-ENT-03): its plan's, or the cap that the instance puts on every workspace " +

@@ -8,7 +8,8 @@
 // WebP image, whose header must decode, of a bounded size, or an SVG image,
 // which is sanitized of its scripts and external references before it is
 // stored, so that the server never stores, or serves, one as it was uploaded
-// (FR-ASSET-02 AC1, AC2). Anything else is refused.
+// (FR-ASSET-02 AC1, AC2), and which may then take no more bytes than an
+// upload may. Anything else is refused.
 //
 // A file is stored under {workspace}/{sha256}.{ext}, a key made of its
 // workspace and the hash of its content, so that the same file uploaded twice
@@ -45,7 +46,10 @@
 //
 // A thumbnail of a raster image larger than ThumbnailSide on a side is made
 // by a job, once the asset exists (FR-ASSET-02); until then, and for an
-// image that is small enough, or an SVG, the image is its own thumbnail.
+// image that is small enough, an SVG, or one whose decoding would take too
+// much memory, the image is its own thumbnail. The orphan reconciliation
+// enqueues the job again of a thumbnail that was not made, or that the store
+// lost (Reconcile).
 package asset
 
 import (
@@ -54,7 +58,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"path"
 	"strings"
@@ -133,6 +136,11 @@ type Options struct {
 	Storage *Storage
 	// Queue enqueues the jobs that make thumbnails. It is required.
 	Queue Queue
+	// MaxBytes is the most bytes that an upload's file may take
+	// (STORYCREEP_ASSET_MAX_BYTES), which the route reads no more of, and
+	// which an SVG image may take once it is sanitized too, or the upload
+	// is refused with ErrTooLarge. It is required.
+	MaxBytes int64
 }
 
 // Service keeps the assets.
@@ -142,10 +150,11 @@ type Service struct {
 	ent      *entitlements.Service
 	storage  *Storage
 	queue    Queue
+	maxBytes int64
 }
 
 // New returns a Service that keeps the assets in db, with opts. It panics if
-// an option that it requires is nil.
+// an option that it requires is nil, or MaxBytes is not positive.
 func New(db DB, opts Options) *Service {
 	switch {
 	case opts.Projects == nil:
@@ -156,14 +165,21 @@ func New(db DB, opts Options) *Service {
 		panic("asset: a Service needs the storage of its blobs")
 	case opts.Queue == nil:
 		panic("asset: a Service needs the queue of its thumbnails' jobs")
+	case opts.MaxBytes <= 0:
+		panic("asset: a Service needs the most bytes that an upload's file may take")
 	}
 	return &Service{db: db, projects: opts.Projects, ent: opts.Entitlements, storage: opts.Storage,
-		queue: opts.Queue}
+		queue: opts.Queue, maxBytes: opts.MaxBytes}
 }
 
 // Storage returns the storage of the blobs.
 func (s *Service) Storage() *Storage {
 	return s.storage
+}
+
+// MaxBytes returns the most bytes that an upload's file may take.
+func (s *Service) MaxBytes() int64 {
+	return s.maxBytes
 }
 
 // CheckUpload returns the error that an upload to the project projectID by
@@ -197,9 +213,10 @@ func uploadable(p project.Visible) error {
 // as an asset, and returns it, with true if it is new, or the project's asset
 // of the same content, which the project has already, with false. It returns
 // the errors of CheckUpload, an *ImageError if data is not an image that an
-// upload takes (Sniff), and an *entitlements.LimitError of storage_bytes if
-// the workspace does not store the file yet, and storing it would take the
-// workspace past its plan's storage, and adds nothing then.
+// upload takes, or ErrTooLarge if it is an SVG image that, sanitized, would
+// take more than MaxBytes (Sniff), and an *entitlements.LimitError of
+// storage_bytes if the workspace does not store the file yet, and storing it
+// would take the workspace past its plan's storage, and adds nothing then.
 //
 // It checks the upload in a transaction, then stores the blob outside any,
 // so that no connection of the pool, and no lock, waits for the store to
@@ -218,7 +235,7 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 	if err != nil {
 		return Asset{}, false, err
 	}
-	img, err := Sniff(data)
+	img, err := Sniff(data, int(s.maxBytes))
 	if err != nil {
 		return Asset{}, false, err
 	}
@@ -541,14 +558,11 @@ func thumbnailKey(workspaceID ids.UUID, sum []byte) string {
 }
 
 // lockBlob takes the lock of the workspace's blob of the content whose hash
-// is sum until the transaction of q ends (database.BlobLock). Its second
-// integer is a hash of the workspace and the content, so two blobs may share
-// one, which only makes their changes take turns.
+// is sum until the transaction of q ends (database.BlobLock), whose second
+// integer is the content's (database.LockObject).
 func lockBlob(ctx context.Context, q *queries.Queries, workspaceID ids.UUID, sum []byte) error {
-	h := fnv.New32a()
-	h.Write(workspaceID[:])
-	h.Write(sum)
-	if err := q.LockBlob(ctx, queries.LockBlobParams{Class: database.BlobLock, Object: int32(h.Sum32())}); err != nil {
+	if err := q.LockBlob(ctx, queries.LockBlobParams{Class: database.BlobLock,
+		Object: database.LockObject(workspaceID, sum)}); err != nil {
 		return fmt.Errorf("asset: lock the blob: %w", err)
 	}
 	return nil

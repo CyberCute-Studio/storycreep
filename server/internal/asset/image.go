@@ -3,6 +3,7 @@ package asset
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"image"
 	"image/gif"
@@ -100,12 +101,16 @@ func isWebP(data []byte) bool {
 	return len(data) >= 12 && bytes.Equal(data[:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP"))
 }
 
+// ErrTooLarge is returned for an SVG image that, sanitized, would take more
+// bytes than the file that an upload may store.
+var ErrTooLarge = errors.New("asset: the SVG image, sanitized, would be larger than an upload may store")
+
 // Sniff returns the image that data holds, or an *ImageError if it is not
 // one that an upload takes: a PNG, JPEG, GIF, or WebP file whose header
 // decodes, of at most MaxPixels pixels and MaxSide on each side, or an SVG
-// file, which it sanitizes (sanitizeSVG). The type comes from the content
-// alone.
-func Sniff(data []byte) (Image, error) {
+// file, which it sanitizes (sanitizeSVG), and which must then take at most
+// maxBytes, or it returns ErrTooLarge. The type comes from the content alone.
+func Sniff(data []byte, maxBytes int) (Image, error) {
 	for _, s := range signatures {
 		if bytes.HasPrefix(data, s.prefix) {
 			return raster(s.mime, data, s.config)
@@ -114,7 +119,7 @@ func Sniff(data []byte) (Image, error) {
 	if isWebP(data) {
 		return raster(MimeWebP, data, func(b []byte) (image.Config, error) { return webp.DecodeConfig(bytes.NewReader(b)) })
 	}
-	svg, err := sanitizeSVG(data)
+	svg, err := sanitizeSVG(data, maxBytes)
 	if err != nil {
 		return Image{}, err
 	}

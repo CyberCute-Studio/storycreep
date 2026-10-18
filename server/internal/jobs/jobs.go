@@ -63,7 +63,7 @@ const schema = "public"
 const concurrency = 4
 
 // poolSize returns the size of the workers' pool of a registry that has
-// serial kinds of job that are serial (Serial): a connection for each job
+// serial kinds of job (Serial): a connection for each job
 // that runs (Job.DB), one that River holds for LISTEN, and two for River's
 // own queries, which take jobs, finish them, and, on the leader, maintain
 // the queue.
