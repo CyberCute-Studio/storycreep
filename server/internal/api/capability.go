@@ -53,6 +53,12 @@ const (
 	// ReadProject is reading a project, which needs an effective role on it
 	// other than none (§5.5).
 	ReadProject Capability = "project.read"
+	// ApplyCommands is applying batches of commands to a project, through the
+	// command endpoint (PRD FR-API-03), which needs an effective role on the
+	// project other than none, and each command the role of its own
+	// operation of the permission matrix, which the command pipeline checks
+	// (package commands).
+	ApplyCommands Capability = "project.commands"
 	// ChangeProjectSettings is changing a project's name, description, and
 	// settings, and archiving and unarchiving it, which needs owner or admin
 	// as the effective role on the project (§5.6).
@@ -94,6 +100,7 @@ var capabilities = map[Capability]bool{
 	ManageProjects:          true,
 	ManageProjectGrants:     true,
 	ReadProject:             true,
+	ApplyCommands:           true,
 	ChangeProjectSettings:   true,
 	ManageWorkspaceTokens:   true,
 	ManageProjectTokens:     true,

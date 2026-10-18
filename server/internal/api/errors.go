@@ -57,6 +57,7 @@ const (
 	CodeLimitExceeded         Code = "limit_exceeded"
 	CodeRevisionConflict      Code = "revision_conflict"
 	CodeProjectArchived       Code = "project_archived"
+	CodeIdempotencyMismatch   Code = "idempotency_mismatch"
 	CodeInviteExpired         Code = "invite_expired"
 	CodeInviteRevoked         Code = "invite_revoked"
 	CodeInviteAccepted        Code = "invite_accepted"
@@ -254,10 +255,12 @@ var codes = []codeSpec{
 			"`details.conflicts` lists each command's entities whose revisions are not the ones that its " +
 			"`expected_rev` names: the command's index in the batch as `command`, its `command_id`, and its `type`, " +
 			"and the entity's `id`, its `expected_rev`, and `exists`, which is `true`, with the entity's " +
-			"`current_rev` and its `state`, the entity as it is now, or `false`, without them, for an entity that " +
-			"no longer exists, as one that was purged from the trash or never created (FR-OFF-04 AC5). An entity " +
-			"in the trash exists, and its state says that it is deleted. To make the change anyway, make it again " +
-			"on the current state, as a new command with an ID of its own and the current revisions."},
+			"`current_rev`, or `false`, without it, for an entity that no longer exists, as one that was purged " +
+			"from the trash or never created (FR-OFF-04 AC5). `details.states` holds the state of each of those " +
+			"entities that still exists, the entity as it is now, by its `id`, once, however many commands expect " +
+			"a revision of it. An entity in the trash exists, and its state says that it is deleted. To make the " +
+			"change anyway, make it again on the current state, as a new command with an ID of its own and the " +
+			"current revisions."},
 	{CodeProjectArchived, http.StatusConflict, i18n.K("error.project_archived"),
 		"The project is archived, and an archived project is read-only, so nothing of the change is made (PRD " +
 			"FR-PROJ-01 AC2). Unarchiving it, deleting it, and restoring it from the trash are the changes that it " +
@@ -290,6 +293,12 @@ var codes = []codeSpec{
 			"range; or a field's value is not one that the route takes, such as a registration's email address " +
 			"that is not one. `details.errors` lists each problem with its `location`, such as `body.name` or " +
 			"`query.limit`, and a `message`."},
+	{CodeIdempotencyMismatch, http.StatusUnprocessableEntity, i18n.K("error.idempotency_mismatch"),
+		"A batch of commands holds commands that were applied already, in another batch, and commands that were " +
+			"not, so nothing of it is applied (PRD FR-API-03). A batch applies whole or not at all, so only a client " +
+			"that grouped its commands anew sends one. `details.applied` lists the `command_id`s of the batch that " +
+			"were applied, in the order of the batch. Send the commands that were not applied in a batch of their " +
+			"own; a batch of commands that were all applied is answered as already applied."},
 	{CodeWeakPassword, http.StatusUnprocessableEntity, i18n.K("error.weak_password"),
 		"The password breaks the password policy (PRD FR-AUTH-01 AC2). `details.reason` says how: `too_short`, " +
 			"with fewer than 12 characters, counted as Unicode code points once the password is in NFKC, or " +
@@ -471,6 +480,18 @@ func toEnvelope(ctx context.Context, err error) *ErrorEnvelope {
 		loggerFrom(ctx).ErrorContext(ctx, "the request failed", "error", err)
 	}
 	return envelopeFor(CodeInternal, i18n.Message{}, nil)
+}
+
+// ErrorBodyOf returns the envelope's object that answers err for the request
+// whose context is ctx, as the error that a handler returns is answered, with
+// its message in the request's locale, which it returns too, and the
+// request's ID: for an answer of 200 that reports the errors of its parts,
+// as the results of a request's batches of commands (PRD FR-API-03). An error
+// that is not one the API reports is logged with the request, and answered
+// with internal_error, as toEnvelope does.
+func ErrorBodyOf(ctx context.Context, err error) (ErrorBody, language.Tag) {
+	env, locale := toEnvelope(ctx, err).forRequest(ctx)
+	return env.Body, locale
 }
 
 // idMessage returns the message that says why an identifier could not be

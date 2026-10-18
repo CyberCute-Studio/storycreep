@@ -375,6 +375,11 @@ var permissionMatrix = []struct {
 					return call(f.s.main, http.MethodPost, projectPath(f.project(t, "deleted"))+"/restore", nil,
 						si.header(true))
 				}},
+			{name: "delete a project with a batch of commands", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, commandsPath(f.project(t, "")),
+						commandBatch(t, wireCommand{Type: "project.delete"}), si.header(true))
+				}},
 		},
 	},
 	{
@@ -444,6 +449,12 @@ var permissionMatrix = []struct {
 			{name: "unarchive a project", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodPost, projectPath(f.project(t, "archived"))+"/unarchive", nil,
+						si.header(true))
+				}},
+			{name: "rename a project with a batch of commands", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, commandsPath(f.project(t, "")),
+						commandBatch(t, wireCommand{Type: "project.rename", Payload: map[string]string{"name": "Pier"}}),
 						si.header(true))
 				}},
 		},
@@ -688,6 +699,20 @@ func sampleValue(t *testing.T, registry huma.Registry, s *huma.Schema) any {
 	return nil
 }
 
+// sampleBodies are the bodies of the routes whose schema sampleValue cannot
+// sample, each of which reaches the operation, as a sample does: the command
+// endpoint's, whose body is one of several schemas, of commands whose
+// payloads a sample of the schema would not make valid. Its sample is a batch
+// of a new command, which unarchives the project, so that it is answered the
+// same whether a route walked before it archived the project, and needs
+// owner or admin, as the project's settings do.
+var sampleBodies = map[api.Route]func() any{
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/commands"}: func() any {
+		return map[string]any{"commands": []any{map[string]any{"command_id": ids.New().String(),
+			"type": "project.unarchive", "payload": map[string]any{}}}}
+	},
+}
+
 // routeCall is a request of a route of a workspace or of a project, with a
 // valid value for each of its parameters and a body that its schema
 // accepts, so that it reaches the service.
@@ -757,7 +782,9 @@ func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []a
 			path += "?" + query.Encode()
 		}
 		var body []byte
-		if op.RequestBody != nil {
+		if sample, ok := sampleBodies[r]; ok {
+			body = jsonBody(t, sample())
+		} else if op.RequestBody != nil {
 			mt := op.RequestBody.Content["application/json"]
 			if mt == nil || mt.Schema == nil {
 				t.Errorf("%s takes a body that is not JSON", r)

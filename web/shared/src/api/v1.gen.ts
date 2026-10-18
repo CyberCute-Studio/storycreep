@@ -28,6 +28,46 @@ export interface ChangeRoleBody {
   role: "owner" | "admin" | "editor" | "commenter" | "viewer" | "guest";
 }
 
+/** A batch of commands, which applies whole, in one transaction, or not at all. */
+export interface CommandBatchBody {
+  /** The batch's commands, in the order to apply them: at least one, and at most 1000. Every command_id of the batch is its own. */
+  commands: Array<CommandBody>;
+}
+
+/** A list of batches, each of which applies whole, in its own transaction, or not at all, in the order of the list, whatever the batches before it did. */
+export interface CommandBatchesBody {
+  /** The batches, at least one, and at most 100. */
+  batches: Array<CommandBatchBody>;
+}
+
+/** A command of the batch: its ID, its type, its payload, as the type's schema says, and the revisions that it expects (PRD FR-API-03). */
+export type CommandBody = ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand;
+
+export interface CommandOutcomeBody {
+  /** Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it */
+  error?: ErrorBody;
+  /** The entities that the batch changed, as for a request of one batch; not for a batch that was rejected */
+  revisions?: Array<EntityRevisionBody>;
+  /** The project's sequence number after the batch, as for a request of one batch; not for a batch that was rejected */
+  seq?: number;
+  /** applied or already_applied, as for a request of one batch, or rejected for a batch that was refused, and applied nothing */
+  status: "applied" | "already_applied" | "rejected";
+}
+
+export interface CommandResultBody {
+  /** The entities that the batch changed, each with its revision after the batch, in the order of their first change. Those of a batch already applied are the entities that the batches that applied its commands changed, each with its current revision, without those that no longer exist. */
+  revisions: Array<EntityRevisionBody> | null;
+  /** The project's sequence number after the batch: the seq of its operation in the project's operation log. That of a batch already applied is the latest seq of the batches that applied its commands. */
+  seq: number;
+  /** applied for a batch that applied, or that was sent before, while its idempotency record is kept, for at least 24 hours, which is answered as it was then; already_applied for a batch whose commands were all applied before, once that record is pruned, or by batches grouped otherwise */
+  status: "applied" | "already_applied";
+}
+
+export interface CommandResultsBody {
+  /** A result for each batch of the request, in the order of the batches */
+  results: Array<CommandOutcomeBody> | null;
+}
+
 export interface CompleteSetupBody {
   /** The first owner's account, which is an instance admin */
   owner: SetupOwnerBody;
@@ -103,6 +143,13 @@ export interface CreatedAPITokenBody {
   user_id: string;
   /** The ID of the workspace that the token belongs to, and acts in alone */
   workspace_id: string;
+}
+
+export interface EntityRevisionBody {
+  /** The entity's ID, as prj_… */
+  id: string;
+  /** The entity's revision */
+  rev: number;
 }
 
 export interface ErrorBody {
@@ -339,6 +386,20 @@ export interface Project {
   workspace_id: string;
 }
 
+/** A command of the type project.archive. */
+export interface ProjectArchiveCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ProjectArchivePayload;
+  /** The command's type. */
+  type: "project.archive";
+}
+
+/** The payload of a command of the type project.archive. */
+export type ProjectArchivePayload = Record<string, never>;
+
 export interface ProjectBody {
   /** When the project was archived, if it is: an archived project is read-only */
   archived_at?: string;
@@ -372,11 +433,108 @@ export interface ProjectBody {
   workspace_id: string;
 }
 
+/** A command of the type project.delete. Only a session may apply it: a batch with it that an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). */
+export interface ProjectDeleteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ProjectDeletePayload;
+  /** The command's type. */
+  type: "project.delete";
+}
+
+/** The payload of a command of the type project.delete. */
+export type ProjectDeletePayload = Record<string, never>;
+
+/** A command of the type project.describe. */
+export interface ProjectDescribeCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ProjectDescribePayload;
+  /** The command's type. */
+  type: "project.describe";
+}
+
+/** The payload of a command of the type project.describe. */
+export interface ProjectDescribePayload {
+  /** The project's new description, of at most 2000 characters, which may be empty, without white space around it, and without control characters but line feeds and tabs */
+  description: string;
+}
+
 export interface ProjectEntry {
   /** The ID of the project's entry board, if it has one */
   board_id?: string;
   /** The ID of the entry node on the entry board, if it has one */
   node_id?: string;
+}
+
+/** A command of the type project.rename. */
+export interface ProjectRenameCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ProjectRenamePayload;
+  /** The command's type. */
+  type: "project.rename";
+}
+
+/** The payload of a command of the type project.rename. */
+export interface ProjectRenamePayload {
+  /** The project's new name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them */
+  name: string;
+}
+
+/** A command of the type project.restore. Only a session may apply it: a batch with it that an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). */
+export interface ProjectRestoreCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ProjectRestorePayload;
+  /** The command's type. */
+  type: "project.restore";
+}
+
+/** The payload of a command of the type project.restore. */
+export type ProjectRestorePayload = Record<string, never>;
+
+/** A command of the type project.unarchive. */
+export interface ProjectUnarchiveCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ProjectUnarchivePayload;
+  /** The command's type. */
+  type: "project.unarchive";
+}
+
+/** The payload of a command of the type project.unarchive. */
+export type ProjectUnarchivePayload = Record<string, never>;
+
+/** A command of the type project.update_settings. */
+export interface ProjectUpdateSettingsCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ProjectUpdateSettingsPayload;
+  /** The command's type. */
+  type: "project.update_settings";
+}
+
+/** The payload of a command of the type project.update_settings. */
+export interface ProjectUpdateSettingsPayload {
+  /** The locale of the project's text, as a BCP 47 tag of a language in its canonical form, such as en or cs-CZ */
+  default_locale?: string;
+  /** The project's entry, which replaces its entry: without a board, the project has none. Neither the board nor the node needs to exist. */
+  entry?: ProjectEntry;
+  /** The least role that may publish the project's snapshots */
+  publish_min_role?: "editor" | "admin";
 }
 
 export interface RegisterBody {
@@ -595,6 +753,31 @@ export interface Operations {
     };
     responses: {
       200: MembershipBody;
+    };
+  };
+  /**
+   * Apply batches of commands to a project
+   *
+   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo. Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name.
+   *
+   * A command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.
+   *
+   * A request of a list of batches applies each, in its own transaction, in the order of the list, and is answered with 200 and a result of each, applied or rejected with its error, so that a rejected batch, of any of the refusals above, never keeps the later ones from applying. A body that is neither form, or has more than 100 batches, is answered with 422 validation_failed, and a batch of more than 1000 commands is rejected so. A body that is not one strict JSON value, as one with a key twice in an object, anywhere in it, is answered with 400 invalid_request, as on every route. The body is at most 5 MB, as every route's, and a larger one is answered with 413 request_too_large, so that a request of many large batches may need to be split. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
+   */
+  applyCommands: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      headers?: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return: a request made with the session cookie without it is answered with 403 csrf_failed, and a request made with an API token needs none */
+        "X-CSRF-Token"?: string;
+      };
+      body: CommandBatchBody | CommandBatchesBody;
+    };
+    responses: {
+      200: CommandResultBody | CommandResultsBody;
     };
   };
   /**
@@ -1563,6 +1746,7 @@ export interface Operations {
 /** The method and path of each operation. */
 export const routes = {
   acceptInvite: { method: "POST", path: "/api/v1/invites/accept" },
+  applyCommands: { method: "POST", path: "/api/v1/projects/{project_id}/commands" },
   archiveProject: { method: "POST", path: "/api/v1/projects/{project_id}/archive" },
   changeMemberRole: { method: "PATCH", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}" },
   changePassword: { method: "POST", path: "/api/v1/auth/password" },

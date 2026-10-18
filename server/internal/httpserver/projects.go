@@ -382,25 +382,15 @@ func projectActor(ctx context.Context, projectID string) (ids.UUID, commands.Act
 }
 
 // projectError returns the error that the API answers err with, an error of
-// package project or of the pipeline that applies its commands, or err
+// package project or of the pipeline that applies its commands, which it
+// answers as every route that applies commands does (pipelineError), or err
 // itself if it is none of them.
 func projectError(err error) error {
 	var fields input.FieldErrors
 	var invalid *commands.InvalidError
-	var insufficient *scope.InsufficientError
 	switch {
 	case errors.Is(err, project.ErrNotFound):
 		return api.NewError(api.CodeNotFound)
-	case errors.Is(err, project.ErrInsufficientRole):
-		return api.NewError(api.CodeInsufficientRole)
-	case errors.As(err, &insufficient):
-		// The route checks the scope that it needs before the pipeline does,
-		// which refuses only a batch with a command that needs another.
-		return insufficientScope(insufficient.Scope)
-	case errors.Is(err, commands.ErrOwnerRequired):
-		return api.NewError(api.CodeOwnerRequired)
-	case errors.Is(err, commands.ErrProjectArchived):
-		return api.NewError(api.CodeProjectArchived)
 	case errors.As(err, &fields):
 		return fieldErrors(fields)
 	case errors.As(err, &invalid):
@@ -413,5 +403,5 @@ func projectError(err error) error {
 		}
 		return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
 	}
-	return revisionConflictError(limitExceededError(err))
+	return pipelineError(err)
 }

@@ -316,6 +316,12 @@ func crossWorkspaceReferences(t *testing.T, f *isolationtest.Fixture) []string {
 	const operation = "INSERT INTO operation (id, workspace_id, project_id, seq, command_ids, type, payload, " +
 		"entity_refs) VALUES ($1, $2, $3, 1, ARRAY[$4::uuid], 'isolation.test', '[]', '[]')"
 	const applied = "INSERT INTO applied_command (workspace_id, project_id, command_id, seq) VALUES ($1, $2, $3, 1)"
+	// A batch's record of its own, and a row of a later command of the batch
+	// whose record is the row of $4.
+	const record = "INSERT INTO idempotency_record (workspace_id, project_id, command_id, batch_command_id, " +
+		"command_ids, response) VALUES ($1, $2, $3, $3, ARRAY[$3::uuid], '{}')"
+	const recordOf = "INSERT INTO idempotency_record (workspace_id, project_id, command_id, batch_command_id) " +
+		"VALUES ($1, $2, $3, $4)"
 	var reached []string
 	for _, c := range []struct {
 		key string
@@ -337,6 +343,12 @@ func crossWorkspaceReferences(t *testing.T, f *isolationtest.Fixture) []string {
 		}},
 		{"applied_command.project_id", applied, func(w *isolationtest.Workspace) []any {
 			return []any{a.ID, w.Rows["project"], ids.New()}
+		}},
+		{"idempotency_record.project_id", record, func(w *isolationtest.Workspace) []any {
+			return []any{a.ID, w.Rows["project"], ids.New()}
+		}},
+		{"idempotency_record.batch_command_id", recordOf, func(w *isolationtest.Workspace) []any {
+			return []any{a.ID, a.Rows["project"], ids.New(), w.Rows["idempotency_record"]}
 		}},
 	} {
 		for _, w := range []*isolationtest.Workspace{a, f.B} {
@@ -365,8 +377,9 @@ func crossWorkspaceReferences(t *testing.T, f *isolationtest.Fixture) []string {
 // TestWorkspaceScopedForeignKeys checks that a row cannot refer to a row of
 // another workspace through the foreign keys between tenant tables:
 // project_grant's to membership and to project, and api_token's to project
-// (00004), and operation's and applied_command's to project (00012), each of
-// which includes workspace_id. PostgreSQL checks foreign keys past row-level
+// (00004), operation's and applied_command's to project (00012), and
+// idempotency_record's to project and to the record of its batch (00016),
+// each of which includes workspace_id. PostgreSQL checks foreign keys past row-level
 // security, so a key on the ID alone would let a transaction of workspace A
 // refer to B's rows, and find out whether an ID exists in B. The test then
 // weakens each key to one on the ID alone, to check that it finds them.
@@ -380,6 +393,14 @@ func TestWorkspaceScopedForeignKeys(t *testing.T) {
 		t.Errorf("rows of one workspace refer to another's through %v", got)
 	}
 
+	// The name of idempotency_record's key to the record of its batch would
+	// be longer than PostgreSQL's 63 bytes, which it cuts its own way.
+	var batchKey string
+	if err := f.Admin().QueryRow(ctx, `SELECT conname FROM pg_constraint WHERE contype = 'f'
+		AND conrelid = 'idempotency_record'::regclass AND confrelid = 'idempotency_record'::regclass`).Scan(
+		&batchKey); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.Admin().Exec(ctx, `
 		ALTER TABLE project_grant DROP CONSTRAINT project_grant_workspace_id_membership_id_fkey,
 			DROP CONSTRAINT project_grant_workspace_id_project_id_fkey,
@@ -390,11 +411,17 @@ func TestWorkspaceScopedForeignKeys(t *testing.T) {
 		ALTER TABLE operation DROP CONSTRAINT operation_workspace_id_project_id_fkey,
 			ADD FOREIGN KEY (project_id) REFERENCES project ON DELETE CASCADE;
 		ALTER TABLE applied_command DROP CONSTRAINT applied_command_workspace_id_project_id_fkey,
-			ADD FOREIGN KEY (project_id) REFERENCES project ON DELETE CASCADE`); err != nil {
+			ADD FOREIGN KEY (project_id) REFERENCES project ON DELETE CASCADE;
+		ALTER TABLE idempotency_record DROP CONSTRAINT idempotency_record_workspace_id_project_id_fkey,
+			DROP CONSTRAINT `+pgx.Identifier{batchKey}.Sanitize()+`,
+			ADD UNIQUE (command_id),
+			ADD FOREIGN KEY (project_id) REFERENCES project ON DELETE CASCADE,
+			ADD FOREIGN KEY (batch_command_id) REFERENCES idempotency_record (command_id) ON DELETE CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"project_grant.membership_id", "project_grant.project_id", "api_token.project_id",
-		"operation.project_id", "applied_command.project_id"}
+		"operation.project_id", "applied_command.project_id", "idempotency_record.project_id",
+		"idempotency_record.batch_command_id"}
 	if got := crossWorkspaceReferences(t, f); !slices.Equal(got, want) {
 		t.Errorf("with keys on the ID alone, rows refer to another workspace's through %v, want %v", got, want)
 	}

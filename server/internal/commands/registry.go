@@ -62,6 +62,12 @@ type Spec[P any] struct {
 	// that does not hold every command's scope is refused with an
 	// *scope.InsufficientError that names the first that it lacks.
 	Scope scope.Scope
+	// SessionOnly says that no API token may apply the command, whatever its
+	// scopes, as deleting and restoring the project, which FR-AUTH-04 makes
+	// session-only, so that a leaked token cannot do through a batch what no
+	// route lets it do. A batch with such a command applied with a token is
+	// refused with ErrSessionRequired.
+	SessionOnly bool
 	// Touches are the kinds of entity that the command changes or refers to,
 	// each registered with RegisterEntity. A command's ExpectedRev may name
 	// an entity of these kinds only, and Apply reports a change of these
@@ -165,7 +171,7 @@ type Registry struct {
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
 	return &Registry{specs: map[Type]*spec{}, entities: map[ids.Kind]Entity{},
-		schemas: huma.NewMapRegistry("#/components/schemas/", schemaName)}
+		schemas: huma.NewMapRegistry(SchemaPrefix, schemaName)}
 }
 
 // schemaName names the schema of a payload, and of each struct that it
@@ -222,12 +228,16 @@ type spec struct {
 	capability authz.Operation
 	scope      scope.Scope
 	touches    []ids.Kind
-	schema     *huma.Schema
-	limits     []entitlements.LimitKey
+	// payload is the Go type of the payload, and schema its schema, which
+	// validates it.
+	payload reflect.Type
+	schema  *huma.Schema
+	limits  []entitlements.LimitKey
 	// adds return how much the command adds to each of limits, or nil for 1.
 	adds []func(ctx context.Context, tx *Tx, payload any) (int64, error)
-	// archived and trashed are Spec.Archived and Spec.Trashed.
-	archived, trashed bool
+	// archived, trashed, and sessionOnly are Spec.Archived, Spec.Trashed, and
+	// Spec.SessionOnly.
+	archived, trashed, sessionOnly bool
 	// decode decodes a payload that its schema allows, checks it, and
 	// returns it.
 	decode func(raw []byte) (payload any, problems input.FieldErrors)
@@ -294,9 +304,9 @@ func Register[P any](r *Registry, s Spec[P]) {
 		keys[i] = l.Key
 	}
 	sp := &spec{typ: s.Type, capability: s.Capability, scope: s.Scope, touches: slices.Clone(s.Touches),
-		schema: r.schemas.Schema(pt, true, ""), limits: keys,
+		payload: pt, schema: r.schemas.Schema(pt, true, ""), limits: keys,
 		adds: make([]func(context.Context, *Tx, any) (int64, error), len(s.Limits)), archived: s.Archived,
-		trashed: s.Trashed}
+		trashed: s.Trashed, sessionOnly: s.SessionOnly}
 	for i, l := range s.Limits {
 		if l.Adds != nil {
 			sp.adds[i] = func(ctx context.Context, tx *Tx, payload any) (int64, error) {
@@ -431,16 +441,35 @@ type decoded struct {
 	encoded []byte
 }
 
-// decode checks the batch, and returns its commands decoded, or an
-// *InvalidError that lists every problem of the batch.
-func (r *Registry) decode(batch []Command) ([]decoded, error) {
+// decode checks the batch, which is applied to the project projectID, and
+// returns its commands decoded, or an *InvalidError that lists every problem
+// of the batch.
+func (r *Registry) decode(batch []Command, projectID ids.UUID) ([]decoded, error) {
+	out, problems := r.check(batch, nil, projectID)
+	if len(problems) > 0 {
+		return nil, &InvalidError{Problems: problems}
+	}
+	return out, nil
+}
+
+// check checks the batch, which is applied to the project projectID, but for
+// its commands that skip names, which another check found unreadable, and
+// returns its commands decoded, and every problem of the batch, in the order
+// of its commands. Of the projects, a command may expect a revision of the
+// batch's own alone: the check of the revisions would take another for one
+// that no longer exists, which the client would show as deleted (FR-OFF-04
+// AC5).
+func (r *Registry) check(batch []Command, skip map[int]bool, projectID ids.UUID) ([]decoded, []Problem) {
 	if len(batch) == 0 {
-		return nil, &InvalidError{Problems: []Problem{{Command: -1, Message: "has no commands"}}}
+		return nil, []Problem{{Command: -1, Message: "has no commands"}}
 	}
 	var problems []Problem
 	out := make([]decoded, len(batch))
 	first := map[ids.UUID]int{}
 	for i, c := range batch {
+		if skip[i] {
+			continue
+		}
 		add := func(field, msg string) { problems = append(problems, Problem{Command: i, Field: field, Message: msg}) }
 		switch j, dup := first[c.ID]; {
 		case c.ID == (ids.UUID{}):
@@ -460,10 +489,12 @@ func (r *Registry) decode(batch []Command) ([]decoded, error) {
 		for _, ref := range sortedRefs(c.ExpectedRev) {
 			switch {
 			case !slices.Contains(s.touches, ref.Kind):
-				add("expected_rev."+encodeRef(ref), fmt.Sprintf("names a %s, which the command does not touch",
+				add("expected_rev."+c.key(ref), fmt.Sprintf("names a %s, which the command does not touch",
 					ref.Kind))
+			case ref.Kind == ids.Project && ref.ID != projectID:
+				add("expected_rev."+c.key(ref), "names another project than the one that the batch is applied to")
 			case c.ExpectedRev[ref] < 1:
-				add("expected_rev."+encodeRef(ref), "is not a revision; an entity's first revision is 1")
+				add("expected_rev."+c.key(ref), "is not a revision; an entity's first revision is 1")
 			}
 		}
 		fields := r.validate(s.schema, c.Payload)
@@ -484,10 +515,7 @@ func (r *Registry) decode(batch []Command) ([]decoded, error) {
 		}
 		out[i] = decoded{Command: c, spec: s, payload: payload, encoded: encoded}
 	}
-	if len(problems) > 0 {
-		return nil, &InvalidError{Problems: problems}
-	}
-	return out, nil
+	return out, problems
 }
 
 // validate returns what is wrong with the payload raw under the schema, with

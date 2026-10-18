@@ -486,17 +486,18 @@ func TestProjectRevisionConflict(t *testing.T) {
 		"description": "Stale", "expected_rev": p.Rev}), owner.header(true))
 	wantCode(t, "a change against a stale revision", res, http.StatusConflict, api.CodeRevisionConflict)
 	var details struct {
-		Conflicts []conflictBody `json:"conflicts"`
+		Conflicts []conflictBody             `json:"conflicts"`
+		States    map[string]json.RawMessage `json:"states"`
 	}
 	raw, _ := json.Marshal(res.details(t))
-	if err := json.Unmarshal(raw, &details); err != nil || len(details.Conflicts) != 2 {
-		t.Fatalf("the conflicts are %s, want one of each command", raw)
+	if err := json.Unmarshal(raw, &details); err != nil || len(details.Conflicts) != 2 || len(details.States) != 1 {
+		t.Fatalf("the conflicts are %s, want one of each command, and the project's state once", raw)
 	}
 	var state project.Project
 	c := details.Conflicts[0]
-	if err := json.Unmarshal(c.State, &state); err != nil || c.ID != p.ID || c.ExpectedRev != p.Rev ||
+	if err := json.Unmarshal(details.States[p.ID], &state); err != nil || c.ID != p.ID || c.ExpectedRev != p.Rev ||
 		c.CurrentRev == nil || *c.CurrentRev != p.Rev+1 || state.Name != "Lighthouse" || state.Rev != p.Rev+1 {
-		t.Errorf("the conflict is %+v, with the state %s", c, c.State)
+		t.Errorf("the conflict is %+v, with the states %s", c, raw)
 	}
 	if got := projectFrom(t, call(s.main, http.MethodGet, projectPath(p.ID), nil, owner.header(false)),
 		http.StatusOK); got.Name != "Lighthouse" || got.Description != "" {

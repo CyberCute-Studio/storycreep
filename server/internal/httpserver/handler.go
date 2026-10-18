@@ -168,6 +168,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerWorkspaces(s.main, s.workspaces)
 	registerUsage(s.main, s.workspaces)
 	registerProjects(s.main, s.projects)
+	registerCommands(s.main, s.commands)
 	registerGrants(s.main, s.projects)
 	registerTokens(s.main, s.tokens)
 	registerInvites(s.main, s.workspaces, s.invites, s.accounts)

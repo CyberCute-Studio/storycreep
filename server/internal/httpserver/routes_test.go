@@ -24,7 +24,8 @@ import (
 // that the token must hold (PRD FR-AUTH-04, plan note N35): the reads of the
 // workspaces and their projects with snapshot:read, so that a token that sees
 // only releases still finds them, and the changes of a project's settings
-// with project:write. Every other route that needs a signed-in user is
+// and its batches of commands, which change its draft, with project:write.
+// Every other route that needs a signed-in user is
 // session-only. A change of this list changes what a leaked token can do, so
 // the test makes it here as well as where the route is registered.
 var tokenRoutes = map[api.Route]scope.Scope{
@@ -35,6 +36,7 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodPatch, Pattern: "/api/v1/projects/{project_id}"}:            scope.ProjectWrite,
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/archive"}:     scope.ProjectWrite,
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/unarchive"}:   scope.ProjectWrite,
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/commands"}:    scope.ProjectWrite,
 }
 
 // operationOf returns the operation of the route r in the OpenAPI document,

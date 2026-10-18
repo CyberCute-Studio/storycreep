@@ -28,7 +28,7 @@ import (
 // kind that the command does not touch, or that no entity has.
 func TestDecodeRefusesInvalidBatches(t *testing.T) {
 	r := noteRegistry()
-	if _, err := r.decode(nil); !hasProblem(err, -1, "") {
+	if _, err := r.decode(nil, ids.New()); !hasProblem(err, -1, "") {
 		t.Errorf("an empty batch: %v", err)
 	}
 
@@ -58,7 +58,7 @@ func TestDecodeRefusesInvalidBatches(t *testing.T) {
 		{ID: ids.New(), Type: noteMisreport, Payload: raw(fmt.Sprintf(`{"id": %q, "mode": "other"}`, id))},
 		{ID: ids.New(), Type: noteCreate, Payload: raw(fmt.Sprintf(`{"id": %q, "body": "a\u0000b"}`, id))},
 	}
-	_, err := r.decode(batch)
+	_, err := r.decode(batch, ids.New())
 	var invalid *InvalidError
 	if !errors.As(err, &invalid) {
 		t.Fatalf("decode: %v, want an *InvalidError", err)
@@ -101,7 +101,7 @@ func TestDecodeRefusesInvalidBatches(t *testing.T) {
 	}
 
 	// The first command alone is valid, and decodes as the payload it holds.
-	cmds, err := r.decode(batch[:1])
+	cmds, err := r.decode(batch[:1], ids.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,10 +290,11 @@ func TestRegisterKeepsPackagesApart(t *testing.T) {
 	}
 	raw := func(s string) json.RawMessage { return json.RawMessage(s) }
 	if _, err := r.decode([]Command{{ID: ids.New(), Type: theirs, Payload: raw(`{"Field": "a", "Message": "b"}`)},
-		{ID: ids.New(), Type: ours, Payload: raw(`{"field": "a"}`)}}); err != nil {
+		{ID: ids.New(), Type: ours, Payload: raw(`{"field": "a"}`)}}, ids.New()); err != nil {
 		t.Errorf("each payload against its own schema: %v", err)
 	}
-	_, err := r.decode([]Command{{ID: ids.New(), Type: ours, Payload: raw(`{"Field": "a", "Message": "b"}`)}})
+	_, err := r.decode([]Command{{ID: ids.New(), Type: ours, Payload: raw(`{"Field": "a", "Message": "b"}`)}},
+		ids.New())
 	if !hasProblem(err, 0, "payload.Message") {
 		t.Errorf("a payload of one type against the other's schema: %v", err)
 	}

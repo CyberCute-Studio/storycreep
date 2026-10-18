@@ -138,6 +138,14 @@ var Tables = []Table{
 		return Statement{id, "INSERT INTO applied_command (workspace_id, project_id, command_id, seq) " +
 			"VALUES ($1, $2, $3, $4)", []any{w.ID, w.Rows["project"], id, seq()}}, nil
 	}},
+	{Name: "idempotency_record", ID: "command_id", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement,
+		error) {
+		// The record of a batch of one command, which its own row holds.
+		id := ids.New()
+		return Statement{id, "INSERT INTO idempotency_record (workspace_id, project_id, command_id, batch_command_id, " +
+				"command_ids, response) VALUES ($1, $2, $3, $3, ARRAY[$3::uuid], '{}')", []any{w.ID, w.Rows["project"], id}},
+			nil
+	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
 		id := ids.New()
