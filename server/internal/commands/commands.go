@@ -309,6 +309,15 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		if err != nil {
 			return fmt.Errorf("commands: lock the project: %w", err)
 		}
+		// The batch may have waited for the lock for as long as the project's
+		// other batches took, and a deletion requested meanwhile refuses it
+		// too, rather than letting it apply, with 404 whatever the project's
+		// state, which is read below (FR-TEN-05 AC1). The read is a statement
+		// of its own, which sees what committed while the batch waited, as the
+		// lock's own statement does not.
+		if err := activeWorkspace(ctx, q, workspaceID); err != nil {
+			return err
+		}
 		// The project may have changed while the batch waited for the lock,
 		// as when a batch before it deleted or archived it.
 		switch {
@@ -316,14 +325,6 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 			return ErrNotFound
 		case locked.Archived && !allApply(cmds, archived):
 			return ErrProjectArchived
-		}
-		// The batch may have waited for the lock for as long as the project's
-		// other batches took, and a deletion requested meanwhile refuses it
-		// too, rather than letting it apply. The read is a statement of its
-		// own, which sees what committed while the batch waited, as the lock's
-		// own statement does not.
-		if err := activeWorkspace(ctx, q, workspaceID); err != nil {
-			return err
 		}
 		t := &Tx{tx: tx, pipeline: p, actor: actor, project: projectID, workspace: workspaceID, at: map[Ref]int{},
 			revs: map[Ref]int64{}, usage: map[usage.Key]int64{}}

@@ -412,14 +412,14 @@ func TestPublishMinRole(t *testing.T) {
 	}
 }
 
-// TestProjectsLimit checks the projects limit at its one enforcement site,
-// creating a project, and where a project counts again: a workspace that has
-// as many projects as STORYCREEP_WORKSPACE_LIMITS caps it at refuses another
-// with 409 limit_exceeded, naming the limit and the usage; an archived
-// project and one in the trash do not count, so archiving or deleting one
-// makes room; and unarchiving or restoring one into a full workspace is
-// refused the same way, while restoring an archived one, which counts for
-// nothing, is not.
+// TestProjectsLimit checks the projects limit at each change that makes a
+// project count: creating one, at the one site that creates a project, and
+// unarchiving or restoring one. A workspace that has as many projects as
+// STORYCREEP_WORKSPACE_LIMITS caps it at refuses another with 409
+// limit_exceeded, naming the limit and the usage; an archived project and one
+// in the trash do not count, so archiving or deleting one makes room; and
+// unarchiving or restoring one into a full workspace is refused the same way,
+// while restoring an archived one, which counts for nothing, is not.
 //
 // Verifies: FR-ENT-01/AC1
 func TestProjectsLimit(t *testing.T) {
@@ -471,11 +471,13 @@ func TestProjectsLimit(t *testing.T) {
 
 // TestProjectRevisionConflict checks that a change that expects a revision
 // of the project that it no longer has is refused whole with 409
-// revision_conflict, with the project as it is now, and that one that
-// expects the current revision is made.
+// revision_conflict, with the project as it is now, that one that expects
+// the current revision is made, and that a body that names no field to
+// change is answered with the project as it is, whatever revision it
+// expects, but to a role that may not change it.
 func TestProjectRevisionConflict(t *testing.T) {
 	t.Parallel()
-	s, _, owner, ws := inviteServer(t, "open", nil)
+	s, d, owner, ws := inviteServer(t, "open", nil)
 	p := createProject(t, s.main, owner, ws, "Harbour")
 	projectFrom(t, call(s.main, http.MethodPatch, projectPath(p.ID), jsonBody(t, map[string]any{"name": "Lighthouse",
 		"expected_rev": p.Rev}), owner.header(true)), http.StatusOK)
@@ -500,6 +502,17 @@ func TestProjectRevisionConflict(t *testing.T) {
 		http.StatusOK); got.Name != "Lighthouse" || got.Description != "" {
 		t.Errorf("after the refused change, the project is %+v", got)
 	}
+
+	for _, body := range []map[string]any{{}, {"expected_rev": p.Rev}} {
+		if got := projectFrom(t, call(s.main, http.MethodPatch, projectPath(p.ID), jsonBody(t, body),
+			owner.header(true)), http.StatusOK); got.Name != "Lighthouse" || got.Rev != p.Rev+1 || got.Role != "owner" {
+			t.Errorf("a change of nothing, %v, answers %+v", body, got)
+		}
+	}
+	editor := newNamedAccount(t, s.main, "ed@example.com", "Ed")
+	join(t, d, editor, ws, "editor")
+	wantCode(t, "an editor's change of nothing", call(s.main, http.MethodPatch, projectPath(p.ID),
+		jsonBody(t, map[string]any{}), editor.header(true)), http.StatusForbidden, api.CodeInsufficientRole)
 }
 
 // TestGuestSeesGrantedProjects checks that a guest, who has no role in the
@@ -547,13 +560,17 @@ func TestGuestSeesGrantedProjects(t *testing.T) {
 }
 
 // TestProjectFields checks that a project's fields are refused with 422
-// validation_failed, naming the field, when their values are not valid, and
-// that nothing changes then, and that a description's line breaks are kept
-// as line feeds however the client writes them.
+// validation_failed, naming the field, when their values are not valid, as a
+// default locale whose canonical form is longer than 64 characters, although
+// the tag sent is not, and that nothing changes then, and that a
+// description's line breaks are kept as line feeds however the client writes
+// them.
 func TestProjectFields(t *testing.T) {
 	t.Parallel()
 	s, _, owner, ws := inviteServer(t, "open", nil)
 	board, node := ids.Encode(ids.Board, ids.New()), ids.Encode(ids.Node, ids.New())
+	// 62 characters, whose canonical form begins sr-Latn for sh, and has 67.
+	const longLocale = "sh-u-co-phonebk-ca-buddhist-nu-latn-cu-usd-tz-uslax-va-posix00"
 	for _, c := range []struct {
 		body  map[string]any
 		field string
@@ -564,6 +581,7 @@ func TestProjectFields(t *testing.T) {
 		{map[string]any{"name": "Harbour", "default_locale": "not a locale"}, "body.default_locale"},
 		{map[string]any{"name": "Harbour", "default_locale": "und"}, "body.default_locale"},
 		{map[string]any{"name": "Harbour", "default_locale": "und-CZ"}, "body.default_locale"},
+		{map[string]any{"name": "Harbour", "default_locale": longLocale}, "body.default_locale"},
 	} {
 		res := call(s.main, http.MethodPost, projectsPath(ws), jsonBody(t, c.body), owner.header(true))
 		wantProblem(t, fmt.Sprintf("create with %v", c.body), res, c.field)
@@ -576,6 +594,7 @@ func TestProjectFields(t *testing.T) {
 		{map[string]any{"name": ""}, "body.name"},
 		{map[string]any{"default_locale": "x-"}, "body.default_locale"},
 		{map[string]any{"default_locale": "und-Latn"}, "body.default_locale"},
+		{map[string]any{"default_locale": longLocale}, "body.default_locale"},
 		{map[string]any{"entry": map[string]string{"board_id": node}}, "body.entry.board_id"},
 		{map[string]any{"entry": map[string]string{"node_id": node}}, "body.entry.node_id"},
 		{map[string]any{"entry": map[string]string{"board_id": board, "node_id": board}}, "body.entry.node_id"},

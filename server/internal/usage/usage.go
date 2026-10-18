@@ -59,7 +59,9 @@ type Key string
 
 // The keys. API requests are metered with API tokens (plan item 27).
 const (
-	// Projects is how many projects a workspace has. It is counted exactly.
+	// Projects is how many projects a workspace has that are neither archived
+	// nor in its trash, which alone count towards its projects limit (PRD
+	// FR-PROJ-01, package project). It is counted exactly.
 	Projects Key = "projects"
 	// Boards is how many boards a workspace's projects have.
 	Boards Key = "boards"

@@ -435,7 +435,7 @@ export interface UsageBody {
   members: LimitUsageBody;
   /** The nodes of the workspace's projects */
   nodes: MeteredUsageBody;
-  /** The workspace's projects */
+  /** The workspace's projects that count towards its limit: those that are neither archived nor in its trash */
   projects: LimitUsageBody;
   /** The snapshots of the workspace's projects */
   snapshots: MeteredUsageBody;

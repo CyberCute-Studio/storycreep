@@ -542,7 +542,10 @@ func nulAt(v any, at string) (where string, ok bool) {
 // checkSteps returns the steps of an inverse as the operation log keeps
 // them, each with its payload encoded once, or an error unless every step
 // is a registered type of command whose payload its schema and Check allow,
-// so that an undo can apply it.
+// so that an undo can apply it. A step that is not valid is the command's
+// failure, not the batch's, whose payloads are valid, so its error does not
+// wrap the step's input.FieldErrors, which a caller would take for problems
+// of the payloads that it sent.
 func (r *Registry) checkSteps(steps []Step) ([]logStep, error) {
 	out := make([]logStep, len(steps))
 	for i, st := range steps {
@@ -559,7 +562,7 @@ func (r *Registry) checkSteps(steps []Step) ([]logStep, error) {
 			_, problems = s.decode(raw)
 		}
 		if len(problems) > 0 {
-			return nil, fmt.Errorf("step %d (%s) is not valid: %w", i, st.Type, problems)
+			return nil, fmt.Errorf("step %d (%s) is not valid: %v", i, st.Type, problems)
 		}
 		out[i] = logStep{Type: st.Type, Payload: raw}
 	}

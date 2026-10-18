@@ -27,6 +27,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
@@ -528,7 +529,9 @@ func TestNotFound(t *testing.T) {
 	}
 
 	// So does a deletion requested while the batch waits for the project's
-	// lock, after its transaction has read the workspace and the roles.
+	// lock, after its transaction has read the workspace and the roles, even
+	// with the project archived meanwhile, which would refuse the batch with
+	// ErrProjectArchived in an active workspace.
 	waiting, waitingProject := ids.New(), ids.New()
 	w.exec(t, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Waiting', $2, 'unlimited')", waiting,
 		"waiting-"+waiting.String()[:8])
@@ -556,6 +559,7 @@ func TestNotFound(t *testing.T) {
 		t.Fatalf("the batch does not wait for the project's lock: %v", <-done)
 	}
 	hold("UPDATE workspace SET status = 'pending_deletion', deleted_at = now() WHERE id = $1", waiting)
+	hold("UPDATE project SET archived_at = now() WHERE id = $1", waitingProject)
 	hold("COMMIT")
 	if err := <-done; !errors.Is(err, ErrNotFound) {
 		t.Errorf("a deletion requested while the batch waits for the lock: %v, want ErrNotFound", err)
@@ -903,7 +907,8 @@ func TestBatchAdds(t *testing.T) {
 // TestUndo checks that a batch with a command that cannot be undone has no
 // inverse, for which none of its commands' inverses is computed, and that a
 // command whose inverse could not be applied refuses a batch that can be
-// undone.
+// undone, with an error that does not pass for a problem of the batch's
+// payloads, which are valid.
 func TestUndo(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -922,8 +927,13 @@ func TestUndo(t *testing.T) {
 	for _, step := range []Type{"note.unknown", noteCreate} {
 		_, err := p.Apply(ctx, w.as(ownerUser), w.project,
 			[]Command{command(t, noteBadInverse, badInversePayload{ID: xID, Step: step}, map[Ref]int64{noteRef(x): 2})})
-		if err == nil {
+		var fields input.FieldErrors
+		switch {
+		case err == nil:
 			t.Errorf("a command undone by %s applies", step)
+		case errors.As(err, &fields):
+			t.Errorf("a command undone by %s is refused with the problems %v, as though the batch were not valid",
+				step, fields)
 		}
 	}
 	if after := w.written(t); after != before {

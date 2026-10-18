@@ -8,9 +8,9 @@
 // pipeline's registry, with those commands.
 //
 // Creating a project is not a command, because a batch of commands applies to
-// a project that exists. Create is the one enforcement site of the
-// workspace's projects limit (FR-ENT-01), which every path that creates a
-// project goes through, as importing one will (plan item 84).
+// a project that exists. Create is the one site that creates a project, and
+// checks the workspace's projects limit for it (FR-ENT-01), which every path
+// that creates a project goes through, as importing one will (plan item 84).
 //
 // An archived project is read-only: the pipeline refuses every command of it
 // but unarchiving, deleting, and restoring it with
@@ -19,7 +19,9 @@
 // not exist, except to restore it and to list the trash; then the purge job
 // deletes it, with every row of its content (AC3, Purge). Neither an archived
 // project nor a deleted one counts towards the workspace's projects, so
-// unarchiving and restoring one check the limit, as creating one does.
+// unarchiving and restoring one, which make it count again, check the limit
+// too, as the pipeline checks the limits that their commands declare
+// (commands.Limit).
 //
 // Every operation resolves the user's role as package role does (§5.5), and
 // package authz decides what it allows (§5.6): reading a project needs an
@@ -356,13 +358,20 @@ func checkDescription(description string) string {
 // canonicalLocale returns the BCP 47 tag v in its canonical form, as en-US
 // for en-us, or says what is wrong with it: a tag that names no language, as
 // und, or und-CZ, whose language is only guessed from its region, is not a
-// locale of text.
+// locale of text, and neither v nor its canonical form, which may be the
+// longer, as sr-Latn is for sh, may have more than MaxLocaleLength
+// characters, which UpdateSettings's payload allows, so that the inverse of a
+// change of the locale, which sets the one that the project has back, is
+// valid too.
 func canonicalLocale(v string) (string, string) {
 	if len(v) > MaxLocaleLength {
 		return "", fmt.Sprintf("is longer than %d characters", MaxLocaleLength)
 	}
 	if tag, err := language.Parse(v); err == nil {
 		if _, named := tag.Base(); named == language.Exact {
+			if s := tag.String(); len(s) > MaxLocaleLength {
+				return "", fmt.Sprintf("is longer than %d characters in its canonical form, %s", MaxLocaleLength, s)
+			}
 			return tag.String(), ""
 		}
 	}
@@ -650,34 +659,37 @@ func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID id
 	if set != (settingsPayload{}) {
 		steps = append(steps, commands.Step{Type: UpdateSettings, Payload: set})
 	}
-	// The actor's role is checked before the fields, as the pipeline checks
-	// it before a command's payload would reach the project.
-	if len(errs) > 0 {
-		if _, err := s.authorise(ctx, actor.UserID, projectID, authz.ChangeProjectSettings); err != nil {
+	if len(errs) > 0 || len(steps) == 0 {
+		// The actor's role is checked before the fields, as the pipeline
+		// checks it before a command's payload would reach the project, and a
+		// patch that names no change is answered with the project that the
+		// check reads.
+		v, err := s.authorise(ctx, actor.UserID, projectID, authz.ChangeProjectSettings)
+		switch {
+		case err != nil:
 			return Visible{}, err
+		case len(errs) > 0:
+			return Visible{}, errs
 		}
-		return Visible{}, errs
-	}
-	if len(steps) == 0 {
-		if _, err := s.authorise(ctx, actor.UserID, projectID, authz.ChangeProjectSettings); err != nil {
-			return Visible{}, err
-		}
-		return s.Get(ctx, actor.UserID, projectID)
+		return v, nil
 	}
 	return s.apply(ctx, actor, projectID, p.ExpectedRev, steps...)
 }
 
-// authorise returns the actor's effective role on the project projectID, or
-// ErrNotFound if the project does not exist, is in the trash, or the role is
-// none, and the error of authz.Check if the role does not allow op, which is
-// one of the project-scoped operations (P).
-func (s *Service) authorise(ctx context.Context, userID, projectID ids.UUID, op authz.Operation) (role.Role,
+// authorise returns the project projectID, with the actor's effective role on
+// it, or ErrNotFound if the project does not exist, is in the trash, or the
+// role is none, and the error of authz.Check if the role does not allow op,
+// which is one of the project-scoped operations (P).
+func (s *Service) authorise(ctx context.Context, userID, projectID ids.UUID, op authz.Operation) (Visible,
 	error) {
 	p, err := s.Get(ctx, userID, projectID)
 	if err != nil {
-		return "", err
+		return Visible{}, err
 	}
-	return p.Role, authz.Check(p.Role, op)
+	if err := authz.Check(p.Role, op); err != nil {
+		return Visible{}, err
+	}
+	return p, nil
 }
 
 // Archive archives the project projectID, which the actor asks for, and

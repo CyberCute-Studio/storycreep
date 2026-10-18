@@ -1281,7 +1281,7 @@
           },
           "projects": {
             "$ref": "#/components/schemas/LimitUsageBody",
-            "description": "The workspace's projects"
+            "description": "The workspace's projects that count towards its limit: those that are neither archived nor in its trash"
           },
           "snapshots": {
             "$ref": "#/components/schemas/MeteredUsageBody",

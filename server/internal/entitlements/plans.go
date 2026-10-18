@@ -33,7 +33,8 @@ const (
 	// Members is how many members a workspace has. It is what hosted mode
 	// bills by (ADR-010).
 	Members LimitKey = "members"
-	// Projects is how many projects a workspace has.
+	// Projects is how many projects a workspace has that are neither archived
+	// nor in its trash (PRD FR-PROJ-01).
 	Projects LimitKey = "projects"
 	// StorageBytes is how many bytes a workspace's stored files take up.
 	StorageBytes LimitKey = "storage_bytes"

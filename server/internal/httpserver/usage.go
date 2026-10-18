@@ -31,7 +31,7 @@ type meteredUsageBody struct {
 // of usage, so that a key that a later release meters is a property that a
 // client of this one ignores, as an enum's new value would not be.
 type usageBody struct {
-	Projects     limitUsageBody   `json:"projects" doc:"The workspace's projects"`
+	Projects     limitUsageBody   `json:"projects" doc:"The workspace's projects that count towards its limit: those that are neither archived nor in its trash"`
 	Boards       meteredUsageBody `json:"boards" doc:"The boards of the workspace's projects"`
 	Nodes        meteredUsageBody `json:"nodes" doc:"The nodes of the workspace's projects"`
 	Members      limitUsageBody   `json:"members" doc:"The workspace's members, guests included"`
