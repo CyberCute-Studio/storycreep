@@ -198,8 +198,9 @@ func TestTokenSecretShownOnce(t *testing.T) {
 // and every other is refused with 403 insufficient_scope, which names the
 // route's scope, as a project:read token is on every route that changes
 // something. A token that holds every scope is refused with 403
-// session_required on every route that takes none. Each refusal is in the
-// audit log, with its reason.
+// session_required on every route that takes none. The audit log records
+// each token's first refusal, with its reason, and none of the others that
+// follow within the minute.
 //
 // Verifies: FR-AUTH-04/AC2
 func TestTokenScopes(t *testing.T) {
@@ -213,7 +214,7 @@ func TestTokenScopes(t *testing.T) {
 		// Each scope acts on a project of its own, so that the changes of
 		// one do not change what the next finds.
 		params := routeParams(t, f)
-		walked := 0
+		walked, refused := 0, 0
 		for _, c := range routeCalls(t, f, params) {
 			needed, ok := tokenRoutes[c.route]
 			if !ok {
@@ -232,6 +233,7 @@ func TestTokenScopes(t *testing.T) {
 			if got := res.details(t)["scope"]; got != string(needed) {
 				t.Errorf("%s: details.scope is %v, want %s", where, got, needed)
 			}
+			refused++
 			if held == scope.ProjectRead && c.route.Method != http.MethodGet {
 				writes++
 			}
@@ -239,13 +241,16 @@ func TestTokenScopes(t *testing.T) {
 		if walked < 4 {
 			t.Errorf("the walk with a %s token tried %d routes", held, walked)
 		}
+		want := []string{"token.create success"}
+		if refused > 0 {
+			want = append(want, "token.use_denied denied insufficient_scope")
+		}
+		if got := f.tokenAudit(t, tok.ID); !slices.Equal(got, want) {
+			t.Errorf("the audit log of the %s token, refused %d times, is %q, want %q", held, refused, got, want)
+		}
 	}
 	if writes < 3 {
 		t.Errorf("a project:read token was refused %d routes that change something", writes)
-	}
-	if n := f.count(t, "SELECT count(*) FROM audit_entry WHERE action = 'token.use_denied' "+
-		"AND metadata->>'reason' = 'insufficient_scope' AND result = 'denied'"); n < 10 {
-		t.Errorf("the audit log has %d refusals for want of a scope", n)
 	}
 
 	every := makeToken(t, f.s.main, owner, workspaceTokensPath(f.ws), "snapshot:read", "project:read",
@@ -263,10 +268,10 @@ func TestTokenScopes(t *testing.T) {
 	if sessionOnly < 20 {
 		t.Errorf("the test tried %d session-only routes", sessionOnly)
 	}
-	if got := f.tokenAudit(t, every.ID); len(got) != sessionOnly+1 || got[1] != "token.use_denied denied "+
-		"session_required" {
-		t.Errorf("the audit log of the token of every scope is %q, want its creation and %d refusals", got,
-			sessionOnly)
+	if got := f.tokenAudit(t, every.ID); !slices.Equal(got, []string{"token.create success",
+		"token.use_denied denied session_required"}) {
+		t.Errorf("the audit log of the token of every scope, refused %d times, is %q, want its creation and its "+
+			"first refusal", sessionOnly, got)
 	}
 }
 
@@ -332,7 +337,8 @@ func TestTokenNarrowedToProject(t *testing.T) {
 // the WWW-Authenticate header of an invalid token, and do not work again if
 // the owner rejoins; a demoted owner's token reads, but no longer changes; a
 // token whose owner is no longer a member, or whose account is not active,
-// fails too. The audit log records the revocations, and each refused use.
+// fails too. The audit log records the revocations, and each token's first
+// refused use.
 //
 // Verifies: FR-AUTH-04/AC4, FR-TEN-07/AC2
 func TestTokenFailsWithOwner(t *testing.T) {
@@ -485,6 +491,53 @@ func TestTokenLastUsed(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].LastUsedAt == nil || !page.Items[0].LastUsedAt.Equal(*lastUsed()) {
 		t.Errorf("the list shows %+v, want the token with its last use", page.Items)
 	}
+}
+
+// TestTokenRefusalsAudited checks that the audit log records a token's
+// refusals at most once a minute, as its last use is written (FR-TEN-07):
+// the refusals that follow one that it recorded within the minute add no
+// entry, whatever their reason, and the first after a minute adds one, with
+// its own reason.
+//
+// Verifies: NFR-SEC-05
+func TestTokenRefusalsAudited(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newRolesFixture(t)
+	owner := f.as["owner"]
+	p := f.project(t, "")
+	tok := makeToken(t, f.s.main, owner, workspaceTokensPath(f.ws), "project:read")
+	write := func() {
+		t.Helper()
+		wantCode(t, "a change with a project:read token", call(f.s.main, http.MethodPatch, projectPath(p),
+			jsonBody(t, map[string]string{"name": "Pier"}), bearer(tok.Secret)), http.StatusForbidden,
+			api.CodeInsufficientScope)
+	}
+	sessionOnly := func() {
+		t.Helper()
+		wantCode(t, "a session-only route with a token", call(f.s.main, http.MethodGet, workspaceTokensPath(f.ws),
+			nil, bearer(tok.Secret)), http.StatusForbidden, api.CodeSessionRequired)
+	}
+	want := []string{"token.create success", "token.use_denied denied insufficient_scope"}
+	for range 3 {
+		write()
+		sessionOnly()
+	}
+	if got := f.tokenAudit(t, tok.ID); !slices.Equal(got, want) {
+		t.Errorf("after six refusals within the minute, the audit log of the token is %q, want %q", got, want)
+	}
+	if _, err := f.admin.Exec(ctx, "UPDATE api_token SET denied_at = denied_at - interval '61 seconds' "+
+		"WHERE id = $1", decode(t, ids.APIToken, tok.ID)); err != nil {
+		t.Fatal(err)
+	}
+	sessionOnly()
+	write()
+	want = append(want, "token.use_denied denied session_required")
+	if got := f.tokenAudit(t, tok.ID); !slices.Equal(got, want) {
+		t.Errorf("after refusals a minute later, the audit log of the token is %q, want %q", got, want)
+	}
+	// The token still reads.
+	projectFrom(t, call(f.s.main, http.MethodGet, projectPath(p), nil, bearer(tok.Secret)), http.StatusOK)
 }
 
 // tokenIDs returns the IDs of the tokens on the first page of the list at

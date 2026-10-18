@@ -20,14 +20,16 @@ JOIN workspace w ON w.id = r.workspace_id AND w.status = 'active';
 -- TokenForUse returns what a request made with the token checks of it, in a
 -- transaction of its workspace: its project and scopes, whether it is
 -- revoked or expired, whether its last use was recorded more than a minute
--- ago, so that TouchToken records this one, and its owner's status, whether
--- the owner is an instance admin, and the role of the owner's membership of
--- the workspace, null if they are not a member.
+-- ago, so that TouchToken records this one, and whether its last refusal
+-- was, so that DenyToken records this one if it is refused, and its owner's
+-- status, whether the owner is an instance admin, and the role of the
+-- owner's membership of the workspace, null if they are not a member.
 SELECT
     t.project_id, t.scopes,
     (t.revoked_at IS NOT NULL)::boolean AS revoked,
     (t.expires_at IS NOT NULL AND t.expires_at <= now())::boolean AS expired,
     (t.last_used_at IS NULL OR t.last_used_at <= now() - interval '1 minute')::boolean AS stale,
+    (t.denied_at IS NULL OR t.denied_at <= now() - interval '1 minute')::boolean AS denial_stale,
     u.status AS owner_status, u.is_instance_admin,
     m.role AS member_role
 FROM api_token t
@@ -45,6 +47,18 @@ WHERE t.workspace_id = @workspace_id AND t.id = @id;
 UPDATE api_token SET last_used_at = now()
 WHERE workspace_id = @workspace_id AND id = @id AND revoked_at IS NULL
     AND (last_used_at IS NULL OR last_used_at <= now() - interval '1 minute');
+
+-- name: DenyToken :execrows
+-- DenyToken records that a request made with the token is refused now,
+-- unless a refusal was recorded less than a minute ago, and returns 1 if it
+-- records this one, which the audit log then records too, and 0 if not, so
+-- that a token adds at most one refusal a minute to the audit log, however
+-- often a client repeats a refused request (FR-TEN-07). Two requests that
+-- both read the last refusal as stale record one: the second waits for the
+-- first's row lock, and finds the condition no longer true.
+UPDATE api_token SET denied_at = now()
+WHERE workspace_id = @workspace_id AND id = @id
+    AND (denied_at IS NULL OR denied_at <= now() - interval '1 minute');
 
 -- name: InsertToken :one
 -- InsertToken adds a token, and returns when it was created and when it

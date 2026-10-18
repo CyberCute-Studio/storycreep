@@ -17,10 +17,10 @@
 // a request made with it is authorised by the owner's role as it is then,
 // as a request made with a session is, and by the token's scopes and the
 // project that it covers on top (scope.Token). Authenticate checks the
-// token itself, on every request, from the database, and records each
-// refusal of a token that exists in the audit log (FR-TEN-07), and the
-// token's last use at most once a minute, so that a busy token does not
-// write on every request (AC5).
+// token itself, on every request, from the database, and records the
+// token's last use, and the refusals of a token that exists in the audit log
+// (FR-TEN-07), each at most once a minute, so that neither a busy token nor
+// a client that repeats a refused request writes on every request (AC5).
 //
 // Managing tokens (§5.6): a member whose role in the workspace is owner,
 // admin, or editor makes, lists, and revokes their own tokens of the whole
@@ -431,9 +431,11 @@ func (s *Service) RevokeProjectToken(ctx context.Context, userID, projectID, tok
 // expired, one whose owner's account is not active, and one whose owner is
 // neither a member of its workspace nor an instance admin who acts as its
 // owner, then ErrSessionRequired if needed is "", and ErrInsufficientScope if
-// the token does not grant needed (scope.Grants). Each refusal of a token
-// that exists is recorded in the audit log, in the token's workspace
-// (NFR-SEC-05).
+// the token does not grant needed (scope.Grants). A refusal of a token that
+// exists is recorded in the audit log, in the token's workspace (NFR-SEC-05),
+// unless a refusal of the token was recorded less than a minute ago, so that
+// a client that repeats a refused request, as a CI job left with a revoked
+// token, adds an entry a minute rather than one a request.
 func (s *Service) Authenticate(ctx context.Context, value secret.Value, needed scope.Scope, client audit.Client) (
 	Credential, error) {
 	hash, ok := hashOf(value)
@@ -485,11 +487,25 @@ func (s *Service) Authenticate(ctx context.Context, value secret.Value, needed s
 			reason, denied = "insufficient_scope", ErrInsufficientScope
 		}
 		if denied != nil {
+			// A token's refusals are recorded once a minute at most, so that
+			// a client that repeats a refused request does not add an entry
+			// to the audit log with each.
+			if !row.DenialStale {
+				return nil
+			}
+			if n, err := q.DenyToken(ctx, queries.DenyTokenParams{WorkspaceID: nullUUID(workspaceID),
+				ID: nullUUID(id)}); err != nil {
+				return fmt.Errorf("apitoken: record the token's refusal: %w", err)
+			} else if n == 0 {
+				// Another request recorded a refusal meanwhile.
+				return nil
+			}
 			metadata := map[string]any{"reason": reason}
 			if denied == ErrInsufficientScope {
 				metadata["scope"] = needed
 			}
-			// The refusal changes nothing else, so the entry commits.
+			// The refusal changes nothing else but when the token was last
+			// refused, so the entry commits.
 			return audit.Record(ctx, tx, audit.Entry{Action: audit.ActionTokenUseDenied, WorkspaceID: workspaceID,
 				ActorUserID: userID, ActorTokenID: id, SubjectID: id, Result: audit.ResultDenied, IP: client.IP,
 				UserAgent: client.UserAgent, Metadata: metadata})

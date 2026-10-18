@@ -97,6 +97,12 @@ func TestTokensIsolation(t *testing.T) {
 			return nil, queries.New(tx).TouchToken(ctx, queries.TouchTokenParams{WorkspaceID: uuid(target.ID),
 				ID: uuid(wide[target.ID])})
 		}},
+		{Name: "record a token's refusal", Blind: true, Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			_, err := queries.New(tx).DenyToken(ctx, queries.DenyTokenParams{WorkspaceID: uuid(target.ID),
+				ID: uuid(wide[target.ID])})
+			return nil, err
+		}},
 		{Name: "revoke a token", Blind: true, Run: func(ctx context.Context, tx pgx.Tx,
 			target *isolationtest.Workspace) ([]ids.UUID, error) {
 			return nil, queries.New(tx).RevokeToken(ctx, queries.RevokeTokenParams{WorkspaceID: uuid(target.ID),

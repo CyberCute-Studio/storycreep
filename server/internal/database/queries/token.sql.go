@@ -11,6 +11,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const denyToken = `-- name: DenyToken :execrows
+UPDATE api_token SET denied_at = now()
+WHERE workspace_id = $1 AND id = $2
+    AND (denied_at IS NULL OR denied_at <= now() - interval '1 minute')
+`
+
+type DenyTokenParams struct {
+	WorkspaceID pgtype.UUID
+	ID          pgtype.UUID
+}
+
+// DenyToken records that a request made with the token is refused now,
+// unless a refusal was recorded less than a minute ago, and returns 1 if it
+// records this one, which the audit log then records too, and 0 if not, so
+// that a token adds at most one refusal a minute to the audit log, however
+// often a client repeats a refused request (FR-TEN-07). Two requests that
+// both read the last refusal as stale record one: the second waits for the
+// first's row lock, and finds the condition no longer true.
+func (q *Queries) DenyToken(ctx context.Context, arg DenyTokenParams) (int64, error) {
+	result, err := q.db.Exec(ctx, denyToken, arg.WorkspaceID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertToken = `-- name: InsertToken :one
 INSERT INTO api_token (id, workspace_id, user_id, project_id, name, token_hash, scopes, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -249,6 +275,7 @@ SELECT
     (t.revoked_at IS NOT NULL)::boolean AS revoked,
     (t.expires_at IS NOT NULL AND t.expires_at <= now())::boolean AS expired,
     (t.last_used_at IS NULL OR t.last_used_at <= now() - interval '1 minute')::boolean AS stale,
+    (t.denied_at IS NULL OR t.denied_at <= now() - interval '1 minute')::boolean AS denial_stale,
     u.status AS owner_status, u.is_instance_admin,
     m.role AS member_role
 FROM api_token t
@@ -268,6 +295,7 @@ type TokenForUseRow struct {
 	Revoked         bool
 	Expired         bool
 	Stale           bool
+	DenialStale     bool
 	OwnerStatus     string
 	IsInstanceAdmin bool
 	MemberRole      pgtype.Text
@@ -276,9 +304,10 @@ type TokenForUseRow struct {
 // TokenForUse returns what a request made with the token checks of it, in a
 // transaction of its workspace: its project and scopes, whether it is
 // revoked or expired, whether its last use was recorded more than a minute
-// ago, so that TouchToken records this one, and its owner's status, whether
-// the owner is an instance admin, and the role of the owner's membership of
-// the workspace, null if they are not a member.
+// ago, so that TouchToken records this one, and whether its last refusal
+// was, so that DenyToken records this one if it is refused, and its owner's
+// status, whether the owner is an instance admin, and the role of the
+// owner's membership of the workspace, null if they are not a member.
 func (q *Queries) TokenForUse(ctx context.Context, arg TokenForUseParams) (TokenForUseRow, error) {
 	row := q.db.QueryRow(ctx, tokenForUse, arg.WorkspaceID, arg.ID)
 	var i TokenForUseRow
@@ -288,6 +317,7 @@ func (q *Queries) TokenForUse(ctx context.Context, arg TokenForUseParams) (Token
 		&i.Revoked,
 		&i.Expired,
 		&i.Stale,
+		&i.DenialStale,
 		&i.OwnerStatus,
 		&i.IsInstanceAdmin,
 		&i.MemberRole,
