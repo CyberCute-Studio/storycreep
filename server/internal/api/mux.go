@@ -443,8 +443,7 @@ func RateLimit(b Bucket) Option {
 // health and readiness probes must while the database is being migrated:
 // the rate limits count in the database (package ratelimit). Every route of
 // the API counts in a bucket, so Register panics on Unlimited for a path
-// under /api/, for a capability that needs credentials, and beside
-// RateLimit.
+// under /api/, for any capability but Public, and beside RateLimit.
 func Unlimited() Option {
 	return func(o *routeOptions) { o.unlimited = true }
 }

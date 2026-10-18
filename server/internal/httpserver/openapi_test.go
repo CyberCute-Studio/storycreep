@@ -90,18 +90,6 @@ func TestOpenAPIDocument(t *testing.T) {
 	}
 }
 
-// operationsOf returns the operations of a path of a huma document, by
-// method.
-func operationsOf(item *huma.PathItem) map[string]*huma.Operation {
-	all := map[string]*huma.Operation{
-		http.MethodGet: item.Get, http.MethodPut: item.Put, http.MethodPost: item.Post,
-		http.MethodDelete: item.Delete, http.MethodOptions: item.Options, http.MethodHead: item.Head,
-		http.MethodPatch: item.Patch, http.MethodTrace: item.Trace,
-	}
-	maps.DeleteFunc(all, func(_ string, op *huma.Operation) bool { return op == nil })
-	return all
-}
-
 // TestOpenAPIDocumentsEveryRoute checks that the document describes every
 // route of the API, and nothing else (PRD FR-API-02 AC1). The admin port's
 // /metrics, and the pages of the web interface, are not part of the API.
@@ -111,7 +99,7 @@ func TestOpenAPIDocumentsEveryRoute(t *testing.T) {
 	s := newServer(loadConfig(t, nil), slog.New(slog.DiscardHandler))
 	documented := map[api.Route]bool{}
 	for path, item := range s.main.OpenAPI().Paths {
-		for method := range operationsOf(item) {
+		for method := range api.Operations(item) {
 			documented[api.Route{Method: method, Pattern: path}] = true
 		}
 	}
@@ -373,7 +361,7 @@ func TestErrorEnvelopeContract(t *testing.T) {
 			var op *huma.Operation
 			if name == "main" {
 				if item := doc.Paths[r.Pattern]; item != nil {
-					op = operationsOf(item)[r.Method]
+					op = api.Operations(item)[r.Method]
 				}
 			}
 			failed := 0

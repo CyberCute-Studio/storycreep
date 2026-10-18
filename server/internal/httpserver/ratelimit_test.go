@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -321,6 +322,28 @@ func TestPasswordChangeRateLimit(t *testing.T) {
 	if res.status != http.StatusTooManyRequests || res.code() != api.CodeRateLimited ||
 		res.details(t)["bucket"] != "auth" || headerInt(res, "Retry-After") < 1 {
 		t.Errorf("the 11th attempt: %d %s %v", res.status, res.body, res.header)
+	}
+}
+
+// TestLimitDocFollowsPolicy checks that what the description of an operation
+// says of its rate limit is what the server's Limiter counts, the auth
+// bucket's limits included, so that a Limiter of other limits is described
+// with its own.
+func TestLimitDocFollowsPolicy(t *testing.T) {
+	policy := ratelimit.DefaultPolicy()
+	policy.Rates[ratelimit.Auth] = ratelimit.Rate{Period: time.Hour, Limits: map[ratelimit.Kind]int{
+		ratelimit.IP: 2000, ratelimit.User: 7, ratelimit.Token: 7, ratelimit.Email: 3}}
+	l := limiter{&server{limits: ratelimit.New(nil, policy)}}
+	doc := l.Doc(api.BucketAuth, api.Sessions)
+	for _, want := range []string{"a rate limit of 2,000 requests an hour for each IP address",
+		"one of 3 an hour for each email address", "one of 7 an hour for each account"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("the auth bucket's description does not say %q: %q", want, doc)
+		}
+	}
+	if doc := l.Doc(api.BucketRead, api.Tokens); !strings.Contains(doc, "1,200 a minute for each IP address, 600 "+
+		"for each account, and 600 for each API token") {
+		t.Errorf("the read bucket's description is %q", doc)
 	}
 }
 

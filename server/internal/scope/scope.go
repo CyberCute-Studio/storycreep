@@ -4,17 +4,19 @@
 //
 // A route that takes an API token declares the scope that it needs (package
 // api), and a token that does not hold it, or a scope that implies it, is
-// refused with 403 insufficient_scope; a route that declares none takes no
-// token, which it refuses with 403 session_required. A token also acts only
-// in its workspace, and only on its project if it is narrowed to one, and
-// never with more than its owner's role allows at the time of use: the
-// permission check is allowed(role) AND token_has_scope AND
-// token_covers_project (§5.6). The services check the last two with Token,
-// once they know the project that a request acts on: they act in the
-// token's workspace (Token.Workspace), and answer a project that the token
-// does not cover, of another workspace or other than the one that it is
-// narrowed to, as one that does not exist, with 404, so that the answer does
-// not tell that it exists (AC3).
+// refused with 403 insufficient_scope; every other route that needs a
+// signed-in user declares that it is session-only, and refuses a token with
+// 403 session_required, and package api refuses a route that declares
+// neither (FR-AUTH-04 AC6). A token also acts only in its workspace, and only
+// on its project if it is narrowed to one, and never with more than its
+// owner's role allows at the time of use: the permission check is
+// allowed(role) AND token_has_scope AND token_covers_project (§5.6). The
+// services check the last two with Token, once they know the workspace or
+// the project that a request acts on: they act in the token's workspace
+// (Token.InWorkspace, Token.Workspace), list only what the token covers, and
+// answer a workspace or a project that the token does not cover, of another
+// workspace or other than the one that it is narrowed to, as one that does
+// not exist, with 404, so that the answer does not tell that it exists (AC3).
 package scope
 
 import (
@@ -31,7 +33,10 @@ type Scope string
 // table says, and the only implications are those of implies.
 const (
 	// SnapshotRead is listing snapshots and their metadata, exporting ready
-	// snapshots, and diffing two snapshots, without any read of the draft.
+	// snapshots, and diffing two snapshots, and listing the token's workspace
+	// and its projects and reading a project's name, description, and
+	// settings, so that a client that pulls releases finds them, without any
+	// read of the draft's content.
 	SnapshotRead Scope = "snapshot:read"
 	// ProjectRead is everything of SnapshotRead, and reading the draft's
 	// content, its export, its diffs, and its text export.

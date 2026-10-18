@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"reflect"
 
@@ -43,6 +44,18 @@ func rateLimitHeaders() map[string]*huma.Header {
 	}
 }
 
+// Operations returns the operations of a path of an OpenAPI document, by
+// method, without the methods that the path has none of.
+func Operations(item *huma.PathItem) map[string]*huma.Operation {
+	all := map[string]*huma.Operation{
+		http.MethodGet: item.Get, http.MethodPut: item.Put, http.MethodPost: item.Post,
+		http.MethodDelete: item.Delete, http.MethodOptions: item.Options, http.MethodHead: item.Head,
+		http.MethodPatch: item.Patch, http.MethodTrace: item.Trace,
+	}
+	maps.DeleteFunc(all, func(_ string, op *huma.Operation) bool { return op == nil })
+	return all
+}
+
 // documentRateLimit documents the headers of a rate limit on every response
 // of the route's operation in the OpenAPI document but its default one, which
 // documents them already (errorResponse), unless the operation's output
@@ -53,9 +66,7 @@ func (m *Mux) documentRateLimit(r Route) {
 		// A hidden operation is not in the document.
 		return
 	}
-	op := map[string]*huma.Operation{http.MethodGet: item.Get, http.MethodHead: item.Head,
-		http.MethodPost: item.Post, http.MethodPut: item.Put, http.MethodPatch: item.Patch,
-		http.MethodDelete: item.Delete, http.MethodOptions: item.Options}[r.Method]
+	op := Operations(item)[r.Method]
 	if op == nil {
 		return
 	}

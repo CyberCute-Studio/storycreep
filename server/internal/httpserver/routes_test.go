@@ -44,7 +44,7 @@ func operationOf(doc *huma.OpenAPI, r api.Route) *huma.Operation {
 	if item == nil {
 		return nil
 	}
-	return operationsOf(item)[r.Method]
+	return api.Operations(item)[r.Method]
 }
 
 // TestRouteClassification checks that every route is classified (PRD
@@ -225,12 +225,16 @@ var authRoutes = map[api.Route]bool{
 // is one of authRoutes, and otherwise in the read bucket if it is a GET and
 // in the write bucket if it is not, and only the health and readiness
 // probes, /version, and the pages count in none. The description of each
-// route of the auth bucket says what its limit is (authLimitDoc).
-// With a policy that allows each key one request a minute, and a client and
-// an owner that have made theirs, every route answers 429 rate_limited, with
-// its bucket in details.bucket, and Retry-After (FR-API-04 AC3), but those
-// whose guards refuse the request before the limit counts it
-// (guardedFirst).
+// route of the auth bucket says what its limit is (authLimitDoc), as the
+// server's policy has it. With a policy that allows each key one request a
+// minute, and an owner who has made theirs of each bucket from a client's
+// address, which uses up the limits of both, every route answers 429
+// rate_limited, with its bucket in details.bucket, and Retry-After (FR-API-04
+// AC3): a public route the client's address, and a route that needs a
+// signed-in user the owner, from an address that has made no request, so that
+// a route that does not count its requests against their user fails. Only
+// the routes whose guards refuse the request before the limit counts it
+// answer otherwise (guardedFirst).
 //
 // Verifies: FR-API-04/AC3, NFR-SEC-06
 func TestEveryRouteRateLimited(t *testing.T) {
@@ -238,6 +242,7 @@ func TestEveryRouteRateLimited(t *testing.T) {
 	f := newRolesFixture(t)
 	buckets := f.s.main.Buckets()
 	doc := f.s.main.OpenAPI()
+	authDoc := authLimitDoc(ratelimit.DefaultPolicy().Rates[ratelimit.Auth])
 	var unlimited []string
 	for r := range f.s.main.Routes() {
 		b, ok := buckets[r]
@@ -255,7 +260,10 @@ func TestEveryRouteRateLimited(t *testing.T) {
 			}
 		case b != want:
 			t.Errorf("%s counts in the %s bucket, want %s", r, b, want)
-		case b == api.BucketAuth && !strings.Contains(operationOf(doc, r).Description, authLimitDoc):
+		case b != api.BucketAuth:
+		case operationOf(doc, r) == nil:
+			t.Errorf("%s is not in the OpenAPI document", r)
+		case !strings.Contains(operationOf(doc, r).Description, authDoc):
 			t.Errorf("the description of %s does not say what the auth bucket's limit is", r)
 		}
 	}
@@ -278,27 +286,28 @@ func TestEveryRouteRateLimited(t *testing.T) {
 	}
 	f.s.limits = ratelimit.New(readyDB{f.s.ready}, once)
 	owner := f.as["owner"]
-	client := http.Header{"X-Forwarded-For": {"203.0.113.27"}}
+	client := newClient()
 	// The requests must fall in one window of a minute.
 	f.d.AwaitWindow(t, time.Minute, 30*time.Second)
-	// The client's address and the owner make the one request of each
-	// bucket that the policy allows.
-	for _, r := range []struct {
-		method, path string
-		header       http.Header
-	}{
-		{http.MethodGet, "/api/v1/instance", client},
-		{http.MethodPatch, workspacesPath + "/" + f.ws, with(owner.header(true), client)},
-		{http.MethodPost, "/api/v1/invites/lookup", client},
+	// The owner makes the one request of each bucket that the policy allows,
+	// from the client's address, which counts it too.
+	for _, r := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/auth/session"},
+		{http.MethodPatch, workspacesPath + "/" + f.ws},
+		{http.MethodGet, workspaceTokensPath(f.ws)},
 	} {
-		if res := send(f.s.main, r.method, r.path, []byte("{}"), "", r.header); res.status ==
+		if res := send(f.s.main, r.method, r.path, []byte("{}"), "", with(owner.header(true), client)); res.status ==
 			http.StatusTooManyRequests {
 			t.Fatalf("%s %s, the first request: %d %s", r.method, r.path, res.status, res.body)
 		}
 	}
+	routes := f.s.main.Routes()
 	for r, b := range buckets {
-		res := send(f.s.main, r.Method, routeParam.ReplaceAllString(r.Pattern, "1"), nil, "",
-			with(owner.header(true), client))
+		header := client
+		if routes[r].Authenticated() {
+			header = with(owner.header(true), newClient())
+		}
+		res := send(f.s.main, r.Method, routeParam.ReplaceAllString(r.Pattern, "1"), nil, "", header)
 		if code, ok := guardedFirst[r]; ok {
 			wantCode(t, r.String()+", which a guard refuses first", res, code.Status(), code)
 			continue

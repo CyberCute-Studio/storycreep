@@ -732,11 +732,11 @@ func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []a
 	var out []routeCall
 	for _, r := range routes {
 		item := doc.Paths[r.Pattern]
-		if item == nil || operationsOf(item)[r.Method] == nil {
+		if item == nil || api.Operations(item)[r.Method] == nil {
 			t.Errorf("%s is not in the OpenAPI document", r)
 			continue
 		}
-		op := operationsOf(item)[r.Method]
+		op := api.Operations(item)[r.Method]
 		path, query := r.Pattern, url.Values{}
 		for _, p := range op.Parameters {
 			switch p.In {

@@ -585,16 +585,21 @@ func TestAuthenticate(t *testing.T) {
 }
 
 // recordingLimiter is a RateLimiter that records the bucket of each request
-// that it counts, with the caller that the Authenticator found, and refuses
-// every request while refuse is set.
+// that it counts, with the caller that the Authenticator found, and, if
+// order is set, its turn in order, and refuses every request while refuse is
+// set.
 type recordingLimiter struct {
 	taken  []string
+	order  *[]string
 	refuse error
 }
 
 func (l *recordingLimiter) Take(ctx huma.Context, b Bucket) error {
 	caller, _ := ctx.Context().Value(callerKey{}).(string)
 	l.taken = append(l.taken, string(b)+" "+caller)
+	if l.order != nil {
+		*l.order = append(*l.order, "limit")
+	}
 	if l.refuse != nil {
 		return l.refuse
 	}
@@ -614,12 +619,13 @@ func (l *recordingLimiter) Doc(b Bucket, c Callers) string {
 // count in none; and that no route that takes an API token counts in the
 // auth bucket.
 func TestRateLimit(t *testing.T) {
-	limiter := &recordingLimiter{}
+	var order []string
+	limiter := &recordingLimiter{order: &order}
 	m := NewMux(MuxOptions{RateLimit: limiter, Authenticate: func(ctx huma.Context, _ scope.Scope) (context.Context,
 		error) {
+		order = append(order, "authenticate")
 		return context.WithValue(ctx.Context(), callerKey{}, "jo"), nil
 	}})
-	var order []string
 	ran := 0
 	handler := func(context.Context, *struct{}) (*itemOutput, error) {
 		ran++
@@ -632,8 +638,8 @@ func TestRateLimit(t *testing.T) {
 	}}
 	Register(m, Public, huma.Operation{OperationID: "getThing", Method: http.MethodGet, Path: "/api/things",
 		Description: "Reads a thing.", Middlewares: own}, handler)
-	Register(m, OwnAccount, huma.Operation{OperationID: "putThing", Method: http.MethodPut, Path: "/api/things"},
-		handler, SessionOnly())
+	Register(m, OwnAccount, huma.Operation{OperationID: "putThing", Method: http.MethodPut, Path: "/api/things",
+		Middlewares: own}, handler, SessionOnly())
 	Register(m, Public, huma.Operation{OperationID: "login", Method: http.MethodPost, Path: "/api/login"}, handler,
 		RateLimit(BucketAuth))
 	Register(m, Public, huma.Operation{OperationID: "probe", Method: http.MethodGet, Path: "/probe"}, handler,
@@ -661,10 +667,18 @@ func TestRateLimit(t *testing.T) {
 				limiter.taken, c.taken, res.header.Get(RateLimitRemainingHeader))
 		}
 	}
-	limiter.taken, order = nil, nil
-	serve(m, http.MethodGet, "/api/things", "", nil)
-	if !slices.Equal(order, []string{"own middleware", "operation"}) {
-		t.Errorf("the request ran %q", order)
+	for _, c := range []struct {
+		method string
+		want   []string
+	}{
+		{http.MethodGet, []string{"own middleware", "limit", "operation"}},
+		{http.MethodPut, []string{"authenticate", "own middleware", "limit", "operation"}},
+	} {
+		order = nil
+		serve(m, c.method, "/api/things", "", nil)
+		if !slices.Equal(order, c.want) {
+			t.Errorf("%s /api/things ran %q, want %q", c.method, order, c.want)
+		}
 	}
 	limiter.taken = nil
 	if res := serve(m, http.MethodGet, "/probe", "", nil); res.status != http.StatusOK || len(limiter.taken) != 0 {

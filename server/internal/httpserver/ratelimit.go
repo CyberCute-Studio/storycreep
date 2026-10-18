@@ -45,23 +45,29 @@ const (
 )
 
 // authLimitDoc says, in the description of an operation that the auth bucket
-// limits, what its rate limit does.
-const authLimitDoc = " Signing in, registering, changing a password, completing first-run setup, asking for a link " +
-	"that resets a password or verifies an email address, using one, an instance admin's taking one as text, " +
-	"inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an " +
-	"invitation's link, and making, listing, or revoking an API token share a rate limit of 20 requests a minute " +
-	"for each IP address. " +
-	"Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 " +
-	"a minute for each email address, so that each counts against the other for the same address, and changing a " +
-	"password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a " +
-	"link as text, inviting someone, sending an invitation anew, accepting one, and making, listing, or revoking an " +
-	"API token share one of 10 a minute for each account. No request made with an API token counts against these, " +
-	"so that the requests of a token, which count against its owner's account too, cannot keep the owner from " +
-	"finding and revoking it, after which no limit counts them. The " +
-	"RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over " +
-	"a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the " +
-	"limit that it is over, that of the email address included, and whose Retry-After header says how many seconds " +
-	"to wait."
+// limits, what its rate limit does, as the auth bucket's rate r of the policy
+// says, so that the description changes with the limits, as bucketDoc's do.
+func authLimitDoc(r ratelimit.Rate) string {
+	// The descriptions are in the source locale, as bucketDoc's.
+	digits := i18n.Default().Localizer(i18n.Source).Number
+	window := per(r.Period)
+	return fmt.Sprintf(" Signing in, registering, changing a password, completing first-run setup, asking for a "+
+		"link that resets a password or verifies an email address, using one, an instance admin's taking one as "+
+		"text, inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with "+
+		"an invitation's link, and making, listing, or revoking an API token share a rate limit of %s requests %s "+
+		"for each IP address. Registering, with an invitation or without, and asking for a link that resets a "+
+		"password also share one of %s %s for each email address, so that each counts against the other for the "+
+		"same address, and changing a password, asking for a link that verifies the signed-in account's email "+
+		"address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, "+
+		"accepting one, and making, listing, or revoking an API token share one of %s %s for each account. No "+
+		"request made with an API token counts against these, so that the requests of a token, which count against "+
+		"its owner's account too, cannot keep the owner from finding and revoking it, after which no limit counts "+
+		"them. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a "+
+		"request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit "+
+		"headers report the limit that it is over, that of the email address included, and whose Retry-After "+
+		"header says how many seconds to wait.", digits(r.Limits[ratelimit.IP]), window,
+		digits(r.Limits[ratelimit.Email]), window, digits(r.Limits[ratelimit.User]), window)
+}
 
 // bucketDoc says, in the description of an operation whose requests count in
 // the bucket b, other than auth, and which callers may make, what its rate
@@ -139,9 +145,9 @@ func (l limiter) Take(ctx huma.Context, b api.Bucket) error {
 }
 
 // Doc says what the server's Limiter limits the bucket b to, which newServer
-// gives it before it registers the routes. It panics on a bucket that the
-// Limiter has no rate of, so that a route that counts in one fails when it is
-// registered rather than at its first request.
+// gives it before it registers the routes, the auth bucket's included. It
+// panics on a bucket that the Limiter has no rate of, so that a route that
+// counts in one fails when it is registered rather than at its first request.
 func (l limiter) Doc(b api.Bucket, callers api.Callers) string {
 	bucket := ratelimit.Bucket(b)
 	rate, ok := l.s.limits.Rate(bucket)
@@ -149,7 +155,7 @@ func (l limiter) Doc(b api.Bucket, callers api.Callers) string {
 	case !ok:
 		panic(fmt.Sprintf("httpserver: the bucket %q has no rate limit", b))
 	case b == api.BucketAuth:
-		return authLimitDoc
+		return authLimitDoc(rate)
 	}
 	return bucketDoc(bucket, rate, callers)
 }
