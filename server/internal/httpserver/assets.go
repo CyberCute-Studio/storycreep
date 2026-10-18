@@ -40,8 +40,9 @@ const uploadReadTimeout = 5 * time.Minute
 // large uploads, or many that send their files slowly, cannot make the
 // server run out of memory. A file takes up to about twice its size while it
 // arrives, and an SVG image a few times more while it is sanitized, as one
-// whose path is a single attribute of megabytes, which the decoder and the
-// sanitizer each hold a copy of, and the file that it writes, of at most the
+// whose path is a single attribute of megabytes, which the decoder holds
+// twice, as it reads it and as the attribute's value, which the sanitizer
+// checks without copying it, and the file that it writes, of at most the
 // same size (asset.ErrTooLarge), but no more, whatever its elements and their
 // attributes, which the sanitizer bounds before the decoder reads them.
 const uploadMemory = 256 << 20
@@ -206,6 +207,15 @@ var fileCache = blob.CacheControl(asset.SignedURLLifetime)
 // and reads the file that the URL answered with from its cache too.
 var redirectCache = blob.CacheControl(asset.SignedURLLifetime - time.Minute)
 
+// pendingCache is the Cache-Control of what the thumbnail route answers with
+// while the asset's thumbnail job has not made its thumbnail yet: the file
+// itself, or the redirect to it, which a browser keeps for half a minute
+// rather than fileCache's 5 minutes, so that it asks for the thumbnail again
+// soon after the job, which takes moments, has made it, rather than keep
+// showing the large file, which it decodes whole, as a board of the images
+// that were just uploaded would.
+var pendingCache = blob.CacheControl(30 * time.Second)
+
 // fileDoc says how an operation that serves an asset's file answers.
 var fileDoc = " The answer depends on where the instance stores its files (STORYCREEP_ASSET_STORAGE). The local " +
 	"driver's files are served by this route, with the file's type, Content-Security-Policy: sandbox, " +
@@ -334,7 +344,9 @@ func registerAssets(m *api.Mux, assets *asset.Service) {
 		{true, "getAssetThumbnail", "/thumbnail", "Get an asset's thumbnail",
 			"Serves an asset's thumbnail: a PNG image that fits in 256 × 256 pixels, of a PNG, JPEG, GIF, or WebP " +
 				"image larger than that, or else the file itself, which is also served until the thumbnail is made, " +
-				"soon after the upload, and for an image whose thumbnail cannot be made."},
+				"soon after the upload, and for an image whose thumbnail cannot be made. Until the thumbnail is " +
+				"made, the file, the redirect to it, and a 304 have Cache-Control: " + pendingCache + " instead, so " +
+				"that a browser asks for the thumbnail again soon after it is made."},
 	} {
 		api.Register(m, api.ReadProject, huma.Operation{
 			OperationID: file.id,
@@ -344,7 +356,7 @@ func registerAssets(m *api.Mux, assets *asset.Service) {
 			Description: file.description + fileDoc + projectNotFoundDoc + tokenNotFoundDoc + assetNotFoundDoc +
 				tokenAuthDoc(scope.ProjectRead),
 			Tags:      []string{"Assets"},
-			Responses: fileResponses(),
+			Responses: fileResponses(file.thumbnail),
 		}, func(ctx context.Context, in *assetFileInput) (*huma.StreamResponse, error) {
 			return serveAsset(ctx, assets, in, file.thumbnail)
 		}, api.TokenScope(scope.ProjectRead))
@@ -352,10 +364,16 @@ func registerAssets(m *api.Mux, assets *asset.Service) {
 }
 
 // fileResponses documents the answers of a route that serves an asset's
-// file.
-func fileResponses() map[string]*huma.Response {
+// file, or, if thumbnail is set, its thumbnail.
+func fileResponses(thumbnail bool) map[string]*huma.Response {
 	header := func(doc string) *huma.Header {
 		return &huma.Header{Schema: &huma.Schema{Type: huma.TypeString, Description: doc}}
+	}
+	// pending is what the thumbnail route says of the Cache-Control of its
+	// answers while the thumbnail is not made yet.
+	pending := ""
+	if thumbnail {
+		pending = ", or " + pendingCache + " while the thumbnail is not made yet"
 	}
 	ok := &huma.Response{
 		Description: "The file, which the local driver keeps",
@@ -364,7 +382,7 @@ func fileResponses() map[string]*huma.Response {
 			"X-Content-Type-Options":  header("nosniff"),
 			"Content-Disposition":     header("inline for an image, and attachment for any other type, with the file's name"),
 			"ETag":                    header("The file's entity tag, which If-None-Match revalidates"),
-			"Cache-Control":           header(fileCache),
+			"Cache-Control":           header(fileCache + pending),
 		},
 		Content: map[string]*huma.MediaType{},
 	}
@@ -378,10 +396,10 @@ func fileResponses() map[string]*huma.Response {
 				"for 5 minutes",
 			Headers: map[string]*huma.Header{
 				"Location":      header("The signed URL of the file"),
-				"Cache-Control": header(redirectCache + ": a minute less than the URL works"),
+				"Cache-Control": header(redirectCache + ": a minute less than the URL works" + pending),
 			},
 		},
-		"304": api.NotModifiedResponseWith(fileCache + ": the client keeps its copy for 5 minutes again"),
+		"304": api.NotModifiedResponseWith(fileCache + ": the client keeps its copy for 5 minutes again" + pending),
 	}
 }
 
@@ -390,7 +408,9 @@ func fileResponses() map[string]*huma.Response {
 // of the file: with a redirect to the URL that the store signs, or else, for
 // the local driver, with 304 if the client has the file, whose tag the key
 // gives, without opening it, or with the file, which a HEAD request, which
-// the route answers as GET (middleware.GetHead), is answered without.
+// the route answers as GET (middleware.GetHead), is answered without. A
+// thumbnail that is not made yet, whose file is served instead, is answered
+// with pendingCache rather than fileCache or redirectCache.
 func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, thumbnail bool) (
 	*huma.StreamResponse, error) {
 	pid, aid, actor, err := assetActor(ctx, in.ProjectID, in.AssetID)
@@ -404,6 +424,10 @@ func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, 
 	// The key is the content's hash, so its tag changes exactly with the
 	// file, as when the thumbnail is made.
 	etag := api.ETag([]byte(loc.Key))
+	cache, redirect := fileCache, redirectCache
+	if loc.Pending {
+		cache, redirect = pendingCache, pendingCache
+	}
 	url, signed, err := assets.SignedURL(ctx, loc)
 	switch {
 	case err != nil:
@@ -412,11 +436,11 @@ func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, 
 		return &huma.StreamResponse{Body: func(hc huma.Context) {
 			hc.SetHeader("Content-Security-Policy", sandboxCSP)
 			hc.SetHeader("Location", url)
-			hc.SetHeader("Cache-Control", redirectCache)
+			hc.SetHeader("Cache-Control", redirect)
 			hc.SetStatus(http.StatusFound)
 		}}, nil
 	case api.IfNoneMatch(in.IfNoneMatch, etag):
-		return nil, api.NotModifiedWith(etag, fileCache)
+		return nil, api.NotModifiedWith(etag, cache)
 	}
 	body, size, err := assets.Open(ctx, loc)
 	if err != nil {
@@ -430,7 +454,7 @@ func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, 
 		hc.SetHeader("X-Content-Type-Options", "nosniff")
 		hc.SetHeader("Content-Disposition", asset.Disposition(loc))
 		hc.SetHeader("ETag", etag)
-		hc.SetHeader("Cache-Control", fileCache)
+		hc.SetHeader("Cache-Control", cache)
 		hc.SetStatus(http.StatusOK)
 		if hc.Method() == http.MethodHead {
 			return

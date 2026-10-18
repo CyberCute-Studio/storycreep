@@ -124,8 +124,10 @@ func decodeBytes(img Image) int64 {
 	case MimePNG:
 		return n + pngDecodeBytes(img.Data, w*h)
 	case MimeGIF:
-		// The first frame's index of each pixel.
-		return n + w*h
+		// The first frame's index of each pixel, and as many again for an
+		// interlaced frame, as Pillow writes one by default, whose rows the
+		// decoder copies into their order.
+		return n + 2*w*h
 	}
 	// A WebP image, whose lossy decoder copies the frame's data out of the
 	// file first.

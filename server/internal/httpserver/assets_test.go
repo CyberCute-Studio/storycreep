@@ -441,11 +441,12 @@ func storedFiles(t *testing.T, dir string) []string {
 
 // TestThumbnailsAndOrphans checks the jobs of the assets: the thumbnail job
 // makes a PNG thumbnail of a large image, which the thumbnail route serves
-// once it is made, and the file until then; and once no asset refers to a
-// blob, as after its project is purged, the orphan reconciliation deletes
-// it, and its thumbnail, but keeps a blob that another project's asset
-// refers to, and usage's reconciliation corrects the storage that the purge
-// left behind.
+// once it is made, and the file until then, which a browser keeps for half a
+// minute rather than 5, so that it soon asks again; and once no asset refers
+// to a blob, as after its project is purged, the orphan reconciliation
+// deletes it, and its thumbnail, but keeps a blob that another project's
+// asset refers to, and usage's reconciliation corrects the storage that the
+// purge left behind.
 //
 // Verifies: FR-ENT-02/AC1
 func TestThumbnailsAndOrphans(t *testing.T) {
@@ -459,8 +460,25 @@ func TestThumbnailsAndOrphans(t *testing.T) {
 	thumb := func() response {
 		return call(s.main, http.MethodGet, assetPath(p, a.ID)+"/thumbnail", nil, owner.header(false))
 	}
-	if res := thumb(); res.status != http.StatusOK || !bytes.Equal(res.body, large) {
-		t.Errorf("the thumbnail before its job: %d, %d bytes, want the file", res.status, len(res.body))
+	// Until the thumbnail is made, the file is kept for half a minute, and a
+	// 304 says so again, so that the browser soon asks for the thumbnail.
+	pending := thumb()
+	if pending.status != http.StatusOK || !bytes.Equal(pending.body, large) ||
+		pending.header.Get("Cache-Control") != "private, max-age=30" {
+		t.Errorf("the thumbnail before its job: %d, %d bytes, Cache-Control %q; want the file, kept for 30 s",
+			pending.status, len(pending.body), pending.header.Get("Cache-Control"))
+	}
+	hdr := owner.header(false)
+	hdr.Set("If-None-Match", pending.header.Get("ETag"))
+	if again := call(s.main, http.MethodGet, assetPath(p, a.ID)+"/thumbnail", nil, hdr); again.status !=
+		http.StatusNotModified || again.header.Get("Cache-Control") != "private, max-age=30" {
+		t.Errorf("the thumbnail before its job, revalidated: %d, Cache-Control %q; want 304, kept for 30 s",
+			again.status, again.header.Get("Cache-Control"))
+	}
+	// The file itself is kept for as long as ever.
+	if content := call(s.main, http.MethodGet, assetPath(p, a.ID)+"/content", nil, owner.header(false)); content.
+		header.Get("Cache-Control") != "private, max-age=300" {
+		t.Errorf("the file while its thumbnail is not made: Cache-Control %q", content.header.Get("Cache-Control"))
 	}
 	startWorkers(t, s, d)
 	var cfg image.Config
@@ -471,7 +489,8 @@ func TestThumbnailsAndOrphans(t *testing.T) {
 			if cfg, err = png.DecodeConfig(bytes.NewReader(res.body)); err != nil {
 				t.Fatalf("the thumbnail is not a PNG image: %v", err)
 			}
-			if res.header.Get("Content-Type") != "image/png" || res.header.Get("Content-Security-Policy") != "sandbox" {
+			if res.header.Get("Content-Type") != "image/png" || res.header.Get("Content-Security-Policy") != "sandbox" ||
+				res.header.Get("Cache-Control") != "private, max-age=300" {
 				t.Errorf("the thumbnail's headers: %v", res.header)
 			}
 			break
@@ -533,6 +552,35 @@ func TestThumbnailsAndOrphans(t *testing.T) {
 	}
 	if used := readUsage(t, s.main, owner, ws)["storage_bytes"]["used"]; used != float64(len(small)) {
 		t.Errorf("after reconciliation, the workspace uses %v bytes, want %d", used, len(small))
+	}
+}
+
+// TestReconcileManyOrphans checks that the orphan reconciliation deletes in
+// one run more blobs that no asset refers to than it deletes in one
+// transaction, as a project of many images leaves once it is purged, and
+// keeps the blob that an asset refers to, whichever batch it falls in.
+func TestReconcileManyOrphans(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, _, owner, ws := inviteServer(t, "open", map[string]string{"STORYCREEP_ASSET_STORAGE": dir})
+	p := createProject(t, s.main, owner, ws, "Lighthouse").ID
+	kept := upload(t, s.main, owner, p, testPNG(t, 7, 7), http.StatusCreated)
+	wsDir := filepath.Join(dir, decode(t, ids.Workspace, ws).String())
+	const orphans = 200
+	for i := range orphans {
+		name := fmt.Sprintf("%064x.png", i)
+		if err := os.WriteFile(filepath.Join(wsDir, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deleted, err := s.assets.Reconcile(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := storedFiles(t, dir)
+	if deleted != orphans || len(files) != 1 || !strings.HasSuffix(files[0], kept.SHA256+".png") {
+		t.Errorf("the reconciliation deleted %d blobs, and left %v; want %d deleted, and the asset's file left",
+			deleted, files, orphans)
 	}
 }
 

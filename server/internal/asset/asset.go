@@ -216,7 +216,11 @@ func uploadable(p project.Visible) error {
 // upload takes, or ErrTooLarge if it is an SVG image that, sanitized, would
 // take more than MaxBytes (Sniff), and an *entitlements.LimitError of
 // storage_bytes if the workspace does not store the file yet, and storing it
-// would take the workspace past its plan's storage, and adds nothing then.
+// would take the workspace past its plan's storage, and adds no asset then.
+// An upload that the checks under the blob's lock refuse, as when another
+// upload took the workspace's storage meanwhile, or the actor's role was
+// revoked, has stored its blob already, which no asset refers to, and which
+// the orphan reconciliation deletes within the hour (Reconcile).
 //
 // It checks the upload in a transaction, then stores the blob outside any,
 // so that no connection of the pool, and no lock, waits for the store to
@@ -240,6 +244,9 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 	if err != nil {
 		return Asset{}, false, err
 	}
+	// Whether the image gets a thumbnail of its own, which reads every
+	// segment of a JPEG file of up to 50 MB, so once.
+	thumbnail := needsThumbnail(img)
 	sum := sha256.Sum256(img.Data)
 	key := blobKey(workspaceID, sum[:], img.Ext)
 	store, err := s.storage.Store(ctx)
@@ -268,7 +275,7 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		return Asset{}, false, err
 	}
 	if st.found {
-		if st.mendsThumbnail(img) {
+		if st.mendsThumbnail(thumbnail) {
 			if err := s.db.InTx(ctx, scope, func(tx pgx.Tx) error {
 				return s.enqueueThumbnail(ctx, tx, workspaceID, st.existing.ID.Bytes)
 			}); err != nil {
@@ -292,7 +299,7 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 			return err
 		case again.found:
 			out = assetOf(again.existing)
-			if again.mendsThumbnail(img) {
+			if again.mendsThumbnail(thumbnail) {
 				return s.enqueueThumbnail(ctx, tx, workspaceID, again.existing.ID.Bytes)
 			}
 			return nil
@@ -329,7 +336,7 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 			row.Width = pgtype.Int4{Int32: int32(img.Width), Valid: true}
 			row.Height = pgtype.Int4{Int32: int32(img.Height), Valid: true}
 		}
-		thumbnail := needsThumbnail(img)
+		enqueue := thumbnail
 		if !thumbnail {
 			row.ThumbnailKey = textOf(key)
 		} else {
@@ -341,7 +348,7 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 				WorkspaceID: nullUUID(workspaceID), Sha256: sum[:]})
 			switch {
 			case err == nil:
-				row.ThumbnailKey, thumbnail = textOf(shared), false
+				row.ThumbnailKey, enqueue = textOf(shared), false
 			case !errors.Is(err, pgx.ErrNoRows):
 				return fmt.Errorf("asset: read the thumbnail of the content: %w", err)
 			}
@@ -359,7 +366,7 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 				return err
 			}
 		}
-		if thumbnail {
+		if enqueue {
 			if err := s.enqueueThumbnail(ctx, tx, workspaceID, ids.UUID(row.ID.Bytes)); err != nil {
 				return err
 			}
@@ -404,14 +411,14 @@ type stored struct {
 	referenced bool
 }
 
-// mendsThumbnail reports whether an upload of img, which found the project's
-// asset of its file, enqueues the job of the asset's thumbnail again: if the
-// asset needs one and has none, as when its earlier job ran out of attempts
-// while the store did not answer. The job that the asset's upload enqueued
-// may still wait, which keeps an equal job from being enqueued
-// (enqueueThumbnail).
-func (st stored) mendsThumbnail(img Image) bool {
-	return st.found && !st.existing.ThumbnailKey.Valid && needsThumbnail(img)
+// mendsThumbnail reports whether an upload of an image, which found the
+// project's asset of its file, enqueues the job of the asset's thumbnail
+// again: if the image needs one (needs, as needsThumbnail says), and the
+// asset has none, as when its earlier job ran out of attempts while the store
+// did not answer. The job that the asset's upload enqueued may still wait,
+// which keeps an equal job from being enqueued (enqueueThumbnail).
+func (st stored) mendsThumbnail(needs bool) bool {
+	return st.found && !st.existing.ThumbnailKey.Valid && needs
 }
 
 // checkStorage returns the project's asset of the content sum, if it has
@@ -479,6 +486,10 @@ type Located struct {
 	Key string
 	// ContentType is the file's type.
 	ContentType string
+	// Pending is set if the thumbnail was asked for, and its job has not
+	// made it yet, so that Key is the asset's file, which the thumbnail
+	// route serves until then.
+	Pending bool
 }
 
 // Locate returns the file of the asset assetID of the project projectID, or
@@ -505,7 +516,8 @@ func (s *Service) Locate(ctx context.Context, actor commands.Actor, projectID, a
 		case err != nil:
 			return fmt.Errorf("asset: read the asset: %w", err)
 		}
-		out = Located{Asset: assetOf(a), Key: a.StorageKey, ContentType: a.Mime}
+		out = Located{Asset: assetOf(a), Key: a.StorageKey, ContentType: a.Mime,
+			Pending: thumbnail && !a.ThumbnailKey.Valid}
 		if thumbnail && a.ThumbnailKey.Valid && a.ThumbnailKey.String != a.StorageKey {
 			out.Key, out.ContentType = a.ThumbnailKey.String, MimePNG
 		}

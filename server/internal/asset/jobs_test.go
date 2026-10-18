@@ -16,8 +16,8 @@ import (
 
 // TestListWorkspace checks that a workspace's listing, which starts after a
 // key picked at random, lists each of its blobs once, and no other
-// workspace's, whatever key it starts after, and covers every key once it is
-// done.
+// workspace's, whatever key it starts after, which it holds in their order,
+// and covers every key once it is done.
 func TestListWorkspace(t *testing.T) {
 	store, err := blob.OpenLocal(t.TempDir())
 	if err != nil {
@@ -42,10 +42,12 @@ func TestListWorkspace(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got := slices.Sorted(slices.Values(l.ordered))
-		if !l.done || !slices.Equal(got, want) {
-			t.Fatalf("the listing after %s, done %t, lists %d keys, want each of %d once", l.from, l.done, len(got),
-				len(want))
+		if !l.done || !slices.Equal(l.keys, want) {
+			t.Fatalf("the listing after %s, done %t, lists %d keys, want each of %d once, in order", l.from, l.done,
+				len(l.keys), len(want))
+		}
+		if !l.has(want[0]) || !l.has(want[len(want)-1]) || l.has(blobKey(theirs, []byte{0}, "png")) {
+			t.Errorf("a listing that is done does not have its own keys, or has another workspace's")
 		}
 		if !l.covers(want[0]) || !l.covers(want[len(want)-1]) {
 			t.Errorf("a listing that is done does not cover every key")

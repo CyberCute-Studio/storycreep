@@ -428,7 +428,9 @@ func TestDecodeBytes(t *testing.T) {
 		{"a paletted PNG", MimePNG, pngWith(side, side, 8, 3, false), side*side + scale},
 		{"a grey PNG of 16 bits", MimePNG, pngWith(side, side, 16, 0, false), 8*side*side + scale},
 		{"an interlaced RGBA PNG of 16 bits", MimePNG, pngWith(side, side, 16, 6, true), 16*side*side + scale},
-		{"a GIF", MimeGIF, []byte("GIF89a\x88\x13\x88\x13\x00\x00\x00"), side*side + scale},
+		// An interlaced frame, whose rows the decoder copies into their order,
+		// takes another byte a pixel.
+		{"a GIF", MimeGIF, []byte("GIF89a\x88\x13\x88\x13\x00\x00\x00"), 2*side*side + scale},
 	} {
 		img, err := Sniff(tt.data, testLimit)
 		if err != nil || img.Mime != tt.mime {
@@ -647,10 +649,13 @@ func TestSanitizeSVG(t *testing.T) {
 				`<rect class="important" fill="url(#g)" style="fill: url( '#g' )"/>` +
 				`<rect fill="url(https://x.example/p)" style="background-image:image-set('x' 1x)"/>` +
 				`<rect style="fill:u\72l(https://x.example)"/><rect cursor="url(x.cur)"/>` +
-				`<rect style="fill: image('https://y.example/t.png')"/><style>.c{fill:image("//z.example/t")}</style></svg>`,
+				`<rect style="fill: image('https://y.example/t.png')"/><style>.c{fill:image("//z.example/t")}</style>` +
+				`<rect style="fill: IMAGE('https://w.example/t.png')"/><rect fill="Image-Set('v.example' 1x)"/>` +
+				`<style>.d{behavior:url(#a);x:JavaScript:alert(1)}</style></svg>`,
 			keep: []string{"<style>.a{fill:url(#g)}</style>",
 				`<rect class="important" fill="url(#g)" style="fill: url( '#g' )"></rect>`},
-			drop: []string{"@import", "x.example", "image-set", `\72`, "x.cur", "y.example", "z.example"},
+			drop: []string{"@import", "x.example", "image-set", `\72`, "x.cur", "y.example", "z.example", "w.example",
+				"v.example", "alert"},
 		},
 		{
 			name: "foreign content and animations",
@@ -681,6 +686,66 @@ func TestSanitizeSVG(t *testing.T) {
 			name: "a prefixed root",
 			in:   `<s:svg xmlns:s="http://www.w3.org/2000/svg" width="100%"><s:g/></s:svg>`,
 			keep: []string{`<svg xmlns="http://www.w3.org/2000/svg" width="100%"><g></g></svg>`},
+		},
+		// Only the equals signs of a start tag count its attributes, so text,
+		// CSS, a comment, a section of CDATA, or a processing instruction of
+		// many is sanitized, rather than refused.
+		{
+			name: "many equals signs outside the tags",
+			in: `<?xml-stylesheet ` + strings.Repeat(`a="b" `, 2*maxSVGAttrs) + `?>` +
+				`<svg xmlns="http://www.w3.org/2000/svg"><!--` + strings.Repeat("=", 2*maxSVGAttrs) + `-->` +
+				`<style>` + strings.Repeat(`rect[data-x="1"]{fill:red}`, 2*maxSVGAttrs) + `</style>` +
+				`<script><![CDATA[` + strings.Repeat("a=1;", 2*maxSVGAttrs) + `]]></script>` +
+				`<text>` + strings.Repeat("=", 2*maxSVGAttrs) + `</text></svg>`,
+			keep: []string{`<style>rect[data-x="1"]{fill:red}`, "<text>" + strings.Repeat("=", 2*maxSVGAttrs)},
+			drop: []string{"script", "a=1", "xml-stylesheet", "<!--"},
+		},
+		// An id or a class names the element, whatever it holds, as an editor
+		// writes one from a layer's name, which a reference then finds.
+		{
+			name: "ids and classes that look like URLs or CSS",
+			in: `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">` +
+				`<defs><circle id="icon@2x" r="3"/><rect id="Layer: 1" class="md:fill-red a\b"/></defs>` +
+				`<use href="#icon@2x"/><use xlink:href="#Layer: 1"/><rect data-name="Layer: 1"/></svg>`,
+			keep: []string{`<circle id="icon@2x" r="3"></circle>`, `<rect id="Layer: 1" class="md:fill-red a\b">`,
+				`<use href="#icon@2x"></use>`, `<use href="#Layer: 1"></use>`, `<rect></rect>`},
+			drop: []string{"data-name"},
+		},
+		// Sizes in absolute units, at 96 pixels to the inch, as Inkscape's A4
+		// page, of 210mm × 297mm.
+		{
+			name: "a size in millimetres",
+			in:   `<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297MM" viewBox="0 0 210 297"/>`,
+			keep: []string{`width="210mm"`},
+			w:    794, h: 1123,
+		},
+		{
+			name: "a size in points and inches",
+			in:   `<svg xmlns="http://www.w3.org/2000/svg" width="18pt" height="0.25in"/>`,
+			w:    24, h: 24,
+		},
+		// 6.35mm is 24 pixels, which the conversion's error does not make 25.
+		{
+			name: "a size whose conversion is not exact",
+			in:   `<svg xmlns="http://www.w3.org/2000/svg" width="6.35mm" height="12.7mm"/>`,
+			w:    24, h: 48,
+		},
+		// A side in a unit that says no size by itself, as a percentage, or a
+		// font's, is the other's in the proportions of the viewBox.
+		{
+			name: "one side in pixels",
+			in:   `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50%" viewBox="0 0 400 300"/>`,
+			w:    100, h: 75,
+		},
+		{
+			name: "one side in millimetres",
+			in:   `<svg xmlns="http://www.w3.org/2000/svg" height="25.4mm" viewBox="0 0 30 60"/>`,
+			w:    48, h: 96,
+		},
+		{
+			name: "sides in a font's units",
+			in:   `<svg xmlns="http://www.w3.org/2000/svg" width="2em" height="2em" viewBox="0 0 16 8"/>`,
+			w:    16, h: 8,
 		},
 	} {
 		img, err := sanitizeSVG([]byte(tt.in), testLimit)
@@ -743,11 +808,7 @@ func TestSanitizeSVG(t *testing.T) {
 		// An element of far more attributes than a drawing has, which the
 		// decoder would otherwise hold at once.
 		{"too many attributes", svgWithAttrs(maxSVGAttrs + 1), ReasonUnsupported},
-		// The equals signs that follow a tag count its attributes, so text of
-		// more than a drawing has is refused with them.
-		{"equals signs after a tag", `<svg xmlns="http://www.w3.org/2000/svg"><!--` +
-			strings.Repeat("=", maxSVGAttrs+1) + `--></svg>`, ReasonUnsupported},
-		{"many equals signs in a file that is no SVG", "<p>" + strings.Repeat("=", maxSVGAttrs+1), ReasonType},
+		{"many equals signs in a file that is no SVG", "<p " + strings.Repeat("=", maxSVGAttrs+1), ReasonType},
 		// Elements that enclose one another, each of which declares fewer
 		// namespaces than an element may have attributes, but which the
 		// decoder holds together, until they end.
@@ -768,7 +829,9 @@ func TestSanitizeSVG(t *testing.T) {
 // TestManyAttributes checks that an element of more attributes than one may
 // have is refused before the decoder reads any of them, which it would hold
 // at many times the bytes that they take in the file, as a megabyte of
-// namespace declarations would take tens of megabytes of memory.
+// namespace declarations would take tens of megabytes of memory, by the
+// equals signs of its start tag alone, so that a file whose text, CSS, or
+// comments hold many is not refused.
 func TestManyAttributes(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`<svg xmlns="http://www.w3.org/2000/svg"`)
@@ -794,10 +857,27 @@ func TestManyAttributes(t *testing.T) {
 	}{
 		{svgWithAttrs(maxSVGAttrs), false},
 		{svgWithAttrs(maxSVGAttrs + 1), true},
-		// The equals signs between two tags count once, not twice.
+		// A start tag's equals signs count, and those of two tags apart.
 		{`<a ` + strings.Repeat("=", maxSVGAttrs) + `><b ` + strings.Repeat("=", maxSVGAttrs) + `>`, false},
+		{`<a ` + strings.Repeat("=", maxSVGAttrs+1) + `/>`, true},
+		// A tag that does not end, which the decoder reads up to the next
+		// less-than sign, or the end of the file.
+		{`<a ` + strings.Repeat("=", maxSVGAttrs+1), true},
+		{`<a ` + strings.Repeat("=", maxSVGAttrs+1) + `<b>`, true},
+		// A greater-than sign in a quoted value does not end the tag, and an
+		// equals sign there is no attribute's.
+		{`<a b=">" ` + strings.Repeat("=", maxSVGAttrs) + `>`, true},
+		{`<a b='` + strings.Repeat("=", 2*maxSVGAttrs) + `'>`, false},
+		// The text between the tags, as CSS, and what has no attributes, a
+		// comment, a section of CDATA, a processing instruction, a declaration,
+		// and an end tag, do not count.
 		{strings.Repeat("=", 2*maxSVGAttrs) + "<a>", false},
-		{"<a>" + strings.Repeat("=", maxSVGAttrs+1), true},
+		{"<a>" + strings.Repeat("=", 2*maxSVGAttrs), false},
+		{"<a><!--" + strings.Repeat("=", 2*maxSVGAttrs) + "-->", false},
+		{"<a><![CDATA[" + strings.Repeat("x=1;", 2*maxSVGAttrs) + "]]></a>", false},
+		{"<?pi " + strings.Repeat(`a="b" `, 2*maxSVGAttrs) + "?><a/>", false},
+		{"<!DOCTYPE a " + strings.Repeat("=", 2*maxSVGAttrs) + "><a/>", false},
+		{"<a></a " + strings.Repeat("=", 2*maxSVGAttrs) + ">", false},
 	} {
 		if got := manyAttributes([]byte(tt.in)); got != tt.want {
 			t.Errorf("manyAttributes of %.40q…: %t, want %t", tt.in, got, tt.want)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -36,7 +37,11 @@ import (
 //     other attribute, only if every url() in it refers to a fragment of the
 //     file, and it has no backslash, which an escape could hide a URL
 //     behind, no at-rule, as @import, and none of the other constructs of
-//     CSS that load or run something (unsafeCSS).
+//     CSS that load or run something (unsafeCSS);
+//   - an id or a class, whatever its value, which names the element, and
+//     which a browser reads neither as a URL nor as CSS, so that a reference
+//     to an element whose id an editor wrote from a layer's name, as
+//     "icon@2x" or "Layer: 1", still finds it.
 //
 // It drops comments, processing instructions, and the document type, and
 // reads only the entities of the document type's internal subset whose values
@@ -73,14 +78,14 @@ const maxSVGDepth = 256
 // open at once may declare in all. The decoder reads all of an element's
 // attributes into memory at once, each of which takes many times the bytes
 // that it takes in the file, before the sanitizer sees any of them, so the
-// file is read for them first, and refused before the decoder reads it if an
-// element may have too many (manyAttributes); and the decoder keeps the
-// namespaces that the open elements declare until they end, so those are
-// counted as they are read. So a file of a few megabytes, as an element of a
-// million attributes, or elements nested 256 deep that each declare a
-// thousand namespaces, cannot make the server hold many times its size.
-// Enough for a drawing whose elements an editor wrote with many, and little
-// next to what a file of a few megabytes holds.
+// file's start tags are read for them first, and the file refused before the
+// decoder reads it if one may have too many (manyAttributes); and the
+// decoder keeps the namespaces that the open elements declare until they
+// end, so those are counted as they are read. So a file of a few megabytes,
+// as an element of a million attributes, or elements nested 256 deep that
+// each declare a thousand namespaces, cannot make the server hold many times
+// its size. Enough for a drawing whose elements an editor wrote with many,
+// and little next to what a file of a few megabytes holds.
 const maxSVGAttrs = 1024
 
 // The bounds of the entities that an SVG's document type may declare, and of
@@ -125,9 +130,9 @@ var entityDecl = regexp.MustCompile(`<!ENTITY\s+([A-Za-z_][A-Za-z0-9_.-]*)\s+(?:
 // SVG's namespace, ReasonMalformed if it is, or its first element is an svg
 // element (startsAsSVG), but it is not well-formed XML in UTF-8, and
 // ReasonUnsupported if it is well-formed, but declares another encoding, or
-// another version of XML, or goes past one of the bounds of its elements' depth and attributes, or of
-// its entities, or ErrTooLarge if the image, sanitized, would take more than
-// limit bytes.
+// another version of XML, or goes past one of the bounds of its elements'
+// depth and attributes, or of its entities, or ErrTooLarge if the image,
+// sanitized, would take more than limit bytes.
 func sanitizeSVG(data []byte, limit int) (Image, error) {
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	if !utf8.Valid(data) {
@@ -141,7 +146,7 @@ func sanitizeSVG(data []byte, limit int) (Image, error) {
 			return Image{}, errNotImage
 		}
 		return Image{}, unsupported(fmt.Sprintf("an element has more than %d attributes, as the equals signs "+
-			"that follow its tag count them", maxSVGAttrs))
+			"of its start tag count them", maxSVGAttrs))
 	}
 	d := xml.NewDecoder(bytes.NewReader(data))
 	d.Strict = true
@@ -285,29 +290,56 @@ func unsupported(detail string) *ImageError {
 }
 
 // manyAttributes reports whether data may hold an element of more than
-// maxSVGAttrs attributes, before the decoder reads any: whether more than
-// maxSVGAttrs equals signs follow a less-than sign before the next. Each
-// attribute of a start tag has an equals sign, which the decoder requires,
-// and no attribute's value has a less-than sign, which the decoder refuses
-// there, so the equals signs from the less-than sign that opens a tag to the
-// next count every attribute of the tag, and those of the text that follows
-// it, which a drawing has few of, as of a comment or a style element's CSS.
-// It reads data once.
+// maxSVGAttrs attributes, before the decoder reads any: whether a start tag
+// has more than maxSVGAttrs equals signs outside its attributes' quoted
+// values. Each attribute of a start tag has an equals sign before its value,
+// which the decoder requires, and no attribute's value has a less-than sign,
+// which the decoder refuses there, so a start tag's attributes are all
+// between its less-than sign and the first greater-than sign outside their
+// quotes, or else the next less-than sign, where the decoder stops reading
+// them. The decoder reads what follows a less-than sign as a start tag
+// unless it is an exclamation mark, a question mark, or a slash, which start
+// a comment, a section of CDATA, or a declaration, a processing instruction,
+// and an end tag, none of which has attributes, so what follows one of them
+// is read past to the next less-than sign, uncounted, as the text between
+// the tags is, as a style element's CSS, which a file may hold any number of
+// equals signs in. A less-than sign inside one of them that a name follows,
+// as in a comment, is counted as a start tag, which only refuses more. It
+// reads data once.
 func manyAttributes(data []byte) bool {
-	for rest := data; ; {
-		start := bytes.IndexByte(rest, '<')
+	for i := 0; ; {
+		start := bytes.IndexByte(data[i:], '<')
 		if start < 0 {
 			return false
 		}
-		rest = rest[start+1:]
-		end := bytes.IndexByte(rest, '<')
-		if end < 0 {
-			end = len(rest)
+		i += start + 1
+		if i < len(data) && (data[i] == '!' || data[i] == '?' || data[i] == '/') {
+			continue
 		}
-		if bytes.Count(rest[:end], []byte("=")) > maxSVGAttrs {
-			return true
+		n := 0
+		var quote byte
+	tag:
+		for ; i < len(data); i++ {
+			switch c := data[i]; {
+			case c == '<':
+				break tag
+			case quote != 0:
+				if c == quote {
+					quote = 0
+				}
+			case c == '"' || c == '\'':
+				quote = c
+			case c == '>':
+				break tag
+			case c == '=':
+				if n++; n > maxSVGAttrs {
+					return true
+				}
+			}
 		}
-		rest = rest[end:]
+		if i >= len(data) {
+			return false
+		}
 	}
 }
 
@@ -497,14 +529,17 @@ func attrName(n xml.Name) (string, bool) {
 
 // keepAttr reports whether an attribute name, as attrName writes it, of the
 // element, keeps the value v: a reference, only to a fragment of the file, or
-// a data: URL of an image's raster type, a style, which CSS reads, only if it
-// is safe (unsafeCSS), and any other only if it is safe as CSS too, as a
-// presentation attribute is CSS, and it names no URL outside the file
-// (namesURL), as ping's do.
+// a data: URL of an image's raster type, an id or a class, whatever it is,
+// which names the element, and which a browser neither requests nor reads
+// as CSS, a style, which CSS reads, only if it is safe (unsafeCSS), and any
+// other only if it is safe as CSS too, as a presentation attribute is CSS,
+// and it names no URL outside the file (namesURL), as ping's do.
 func keepAttr(element, name, v string) bool {
 	switch {
 	case name == "href":
 		return strings.HasPrefix(v, "#") || element == "image" && dataImage.MatchString(v)
+	case name == "id" || name == "class":
+		return true
 	case name != "style" && namesURL(v):
 		return false
 	}
@@ -579,25 +614,31 @@ func absoluteURL(s string) bool {
 // parenthesis.
 var cssURL = regexp.MustCompile(`(?i)url\(\s*['"]?`)
 
+// cssDangers are the functions, properties, and schemes that unsafeCSS
+// refuses a value of CSS for, in lowercase. A function of CSS is its name and
+// a parenthesis, with nothing between them, so a value that names one
+// otherwise, as class="expression", is not one.
+var cssDangers = []string{"image-set(", "image(", "expression(", "src(", "element(", "javascript:", "vbscript:",
+	"behavior:", "-moz-binding"}
+
 // unsafeCSS reports whether v, a value that CSS may read, as a style
 // attribute, a style element's text, or a presentation attribute, could load
 // or run something: a url() of anything but a fragment of the file, a
 // backslash, which could escape any of these past the checks, an at-rule, as
-// @import or @font-face, or one of the functions, properties, and schemes
-// that load or run something, as image-set() and image(), which take a URL as
-// a string, without url(), element(), expression(), or javascript:.
+// @import or @font-face, or one of cssDangers, as image-set() and image(),
+// which take a URL as a string, without url(), element(), expression(), or
+// javascript:, whose ASCII letters CSS and URLs read in either case alike.
+// It reads v without copying it, as a path's data, of megabytes, may be.
 func unsafeCSS(v string) bool {
-	lower := strings.ToLower(v)
-	if strings.ContainsAny(lower, `\@`) {
+	if strings.ContainsAny(v, `\@`) {
 		return true
 	}
-	// A function of CSS is its name and a parenthesis, with nothing between
-	// them, so a value that names one otherwise, as class="expression", is
-	// not one.
-	for _, bad := range []string{"image-set(", "image(", "expression(", "src(", "element(", "javascript:",
-		"vbscript:", "behavior:", "-moz-binding"} {
-		if strings.Contains(lower, bad) {
-			return true
+	for i := range len(v) {
+		c := lowerASCII(v[i])
+		for _, bad := range cssDangers {
+			if c == bad[0] && hasPrefixFold(v[i:], bad) {
+				return true
+			}
 		}
 	}
 	for _, loc := range cssURL.FindAllStringIndex(v, -1) {
@@ -608,13 +649,48 @@ func unsafeCSS(v string) bool {
 	return false
 }
 
-// svgLength matches a length of SVG's width or height in user units or
-// pixels, the only units that say the image's size in pixels.
-var svgLength = regexp.MustCompile(`^\s*([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)\s*(px)?\s*$`)
+// lowerASCII returns c in lowercase if it is an ASCII letter, or else c.
+func lowerASCII(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + 'a' - 'A'
+	}
+	return c
+}
+
+// hasPrefixFold reports whether s starts with prefix, which is in lowercase,
+// its ASCII letters in either case alike.
+func hasPrefixFold(s, prefix string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	for i := range len(prefix) {
+		if lowerASCII(s[i]) != prefix[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// svgLength matches a length of SVG's width or height, a number and its
+// unit, if it has one, and svgNumber a number of its viewBox, which has none.
+var (
+	svgLength = regexp.MustCompile(`^\s*([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)\s*([A-Za-z]*)\s*$`)
+	svgNumber = regexp.MustCompile(`^([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)$`)
+)
+
+// svgUnits are the pixels of a user unit, as a length without a unit is, and
+// of each absolute unit of CSS, which a width or a height of SVG may be in,
+// at CSS's 96 pixels to the inch, as Inkscape's default page, of 210mm by
+// 297mm, is: the units that say how many pixels a browser shows the image at
+// by themselves, unlike a percentage, or the size of a font.
+var svgUnits = map[string]float64{"": 1, "px": 1, "in": 96, "cm": 96 / 2.54, "mm": 96 / 25.4, "q": 96 / 101.6,
+	"pt": 96.0 / 72, "pc": 16}
 
 // svgSize returns the size of the SVG whose root element has the attributes
-// attrs, in pixels, rounded up: its width and height, or else its viewBox's,
-// or 0, 0 if it says neither, or a size of more than MaxSide on a side.
+// attrs, in pixels, rounded up, as a browser shows it: its width and height;
+// or else, if it says one of them, that one, and the other in the proportions
+// of its viewBox; or else its viewBox's size; or 0, 0 if it says too little
+// for any of these, or a size of more than MaxSide on a side.
 func svgSize(attrs []xml.Attr) (int, int) {
 	var width, height, viewBox string
 	for _, a := range attrs {
@@ -634,35 +710,66 @@ func svgSize(attrs []xml.Attr) (int, int) {
 	h, hok := svgPixels(height)
 	if !wok || !hok {
 		fields := strings.FieldsFunc(viewBox, func(r rune) bool {
-			return r == ' ' || r == ',' || r == '\t' ||
-				r == '\n' || r == '\r'
+			return r == ' ' || r == ',' || r == '\t' || r == '\n' || r == '\r'
 		})
 		if len(fields) != 4 {
 			return 0, 0
 		}
-		w, wok = svgPixels(fields[2])
-		h, hok = svgPixels(fields[3])
-		if !wok || !hok {
+		vw, vwok := svgViewBoxLength(fields[2])
+		vh, vhok := svgViewBoxLength(fields[3])
+		switch {
+		case !vwok || !vhok:
 			return 0, 0
+		case wok:
+			h = w * vh / vw
+		case hok:
+			w = h * vw / vh
+		default:
+			w, h = vw, vh
 		}
 	}
-	return w, h
+	if w > MaxSide || h > MaxSide {
+		return 0, 0
+	}
+	return wholePixels(w), wholePixels(h)
 }
 
-// svgPixels returns a length of SVG as whole pixels, rounded up, and true,
-// or false for one that is not a positive length of at most MaxSide pixels.
-func svgPixels(v string) (int, bool) {
+// wholePixels returns f, a positive number of pixels, rounded up, and at
+// least 1, but for the error that a unit's conversion leaves, so that 6.35mm,
+// which is 24 pixels, is not 25.
+func wholePixels(f float64) int {
+	return max(1, int(math.Ceil(f-1e-9)))
+}
+
+// svgPixels returns a length of SVG's width or height in pixels, and true,
+// or false for one that is not a positive length of at most MaxSide pixels
+// in one of svgUnits.
+func svgPixels(v string) (float64, bool) {
 	m := svgLength.FindStringSubmatch(v)
 	if m == nil {
 		return 0, false
 	}
+	unit, ok := svgUnits[strings.ToLower(m[2])]
+	if !ok {
+		return 0, false
+	}
 	f, err := strconv.ParseFloat(m[1], 64)
+	if f *= unit; err != nil || f <= 0 || f > MaxSide {
+		return 0, false
+	}
+	return f, true
+}
+
+// svgViewBoxLength returns the width or height of a viewBox, in user units,
+// and true, or false for one that is not a positive number of at most
+// MaxSide.
+func svgViewBoxLength(v string) (float64, bool) {
+	if !svgNumber.MatchString(v) {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(v, 64)
 	if err != nil || f <= 0 || f > MaxSide {
 		return 0, false
 	}
-	n := int(f)
-	if float64(n) < f {
-		n++
-	}
-	return n, true
+	return f, true
 }
