@@ -60,6 +60,10 @@ const (
 	// ReadProject is reading a project's content (P), which every role that
 	// allows anything allows.
 	ReadProject Operation = "project.read"
+	// UploadAssets is uploading an image to a project (P, "Upload images
+	// (assets)", PRD FR-ASSET-02), which its content, as a node's cover or a
+	// component's portrait, then refers to.
+	UploadAssets Operation = "project.assets.upload"
 	// ChangeProjectSettings is changing a project's settings (P): its name,
 	// description, default locale, entry board and node, and
 	// publish_min_role (FR-SNAP-01 AC3), and archiving and unarchiving it.
@@ -126,6 +130,7 @@ var matrix = map[Operation]rule{
 	ManageProjects:          {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
 	ManageProjectGrants:     {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
 	ReadProject:             {scope: Project, least: role.Viewer, denied: ErrInsufficientRole},
+	UploadAssets:            {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	ChangeProjectSettings:   {scope: Project, least: role.Admin, denied: ErrInsufficientRole},
 	ManageOwnProjectTokens:  {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	// The workspace's own tokens and the others' are rows of their own.

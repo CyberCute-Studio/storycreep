@@ -23,6 +23,27 @@ export interface APITokenBody {
   workspace_id: string;
 }
 
+export interface Asset {
+  /** The size of the file as it is stored, in bytes: for an SVG, once the server has removed what it does not allow */
+  bytes: number;
+  /** The image's type, which the server found from its content */
+  content_type: "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/svg+xml";
+  /** When it was uploaded */
+  created_at: string;
+  /** The image's height in pixels, unless it is an SVG that does not say it */
+  height?: number;
+  /** The asset's ID */
+  id: string;
+  /** The ID of the asset's project */
+  project_id: string;
+  /** The SHA-256 hash of the file as it is stored, in lowercase hex */
+  sha256: string;
+  /** The ID of the account that uploaded it, unless the account has been deleted */
+  uploaded_by?: string;
+  /** The image's width in pixels, unless it is an SVG that does not say it */
+  width?: number;
+}
+
 export interface ChangeRoleBody {
   /** The membership's new role. Only an owner grants the role owner, and an admin is answered with 403 owner_required. */
   role: "owner" | "admin" | "editor" | "commenter" | "viewer" | "guest";
@@ -77,6 +98,8 @@ export interface CompleteSetupBody {
   signup_policy?: "closed" | "invite" | "open";
   /** The SMTP server that the instance sends its email through: the links that verify an email address and reset a password. Without it, the instance sends no email, and an instance admin gives out the links as text. STORYCREEP_SMTP_URL overrides it for as long as it is set, as GET /api/v1/setup says. Setup does not connect to it. */
   smtp?: SetupSMTPBody;
+  /** The bucket of an S3-compatible object storage that stores the files of the assets, the images that users upload. Without it, the server stores them in its asset directory, /var/lib/storycreep/assets. STORYCREEP_ASSET_STORAGE overrides it for as long as it is set, as GET /api/v1/setup says. Setup does not connect to it. */
+  storage?: SetupStorageBody;
   /** The first workspace, which the owner owns, and which is the owner's personal workspace. Its default locale is STORYCREEP_DEFAULT_LOCALE. */
   workspace: SetupWorkspaceBody;
 }
@@ -600,6 +623,8 @@ export interface SetupBody {
   signup_policy_fixed: boolean;
   /** Whether the configuration sets the SMTP server, with STORYCREEP_SMTP_URL, which then overrides the one that setup records, for as long as it sets it. A setup screen asks for no SMTP server then. */
   smtp_fixed: boolean;
+  /** Whether the configuration sets where the files of the assets are stored, with STORYCREEP_ASSET_STORAGE, which then overrides the bucket that setup records, for as long as it sets it. A setup screen asks for no bucket then. */
+  storage_fixed: boolean;
 }
 
 export interface SetupOwnerBody {
@@ -624,6 +649,23 @@ export interface SetupSMTPBody {
   security: "tls" | "starttls" | "none";
   /** The username that signs in to the server, with PLAIN or LOGIN, with the password; without it, the server is not signed in to */
   username?: string;
+}
+
+export interface SetupStorageBody {
+  /** The access key ID of the keys that read, write, list, and delete the bucket's objects */
+  access_key_id: string;
+  /** The bucket, which must exist: 3 to 63 lowercase letters, digits, dots, and hyphens */
+  bucket: string;
+  /** The host name or IP address of the S3-compatible object storage, as s3.eu-central-1.amazonaws.com, which the users' browsers must reach too, because they read the files through URLs of it that the server signs */
+  host: string;
+  /** The storage's port; without it, 443 for tls and 80 for none */
+  port?: number;
+  /** The bucket's region, as eu-central-1; without it, us-east-1, which MinIO and most S3-compatible storages take */
+  region?: string;
+  /** The secret key of those keys */
+  secret_access_key: string;
+  /** How the connection is protected: tls, HTTPS, which is the default, or none, plain HTTP, for a storage on the same host or network */
+  security?: "tls" | "none";
 }
 
 export interface SetupWorkspaceBody {
@@ -843,7 +885,7 @@ export interface Operations {
   /**
    * Complete first-run setup
    *
-   * Completes the instance's first-run setup, once: creates the first owner's account, which is an instance admin, and the first workspace, which the owner owns, and records the signup policy and the SMTP server. Until then, POST /api/v1/auth/register answers 403 setup_required, whatever the policy. The setup code, which the server writes to its log while setup is pending, must be the instance's, or the answer is 403 invalid_setup_code. A field that the request does not allow, as an SMTP server's host that is not one, or a username without a password, or an email address that has an account, as one that storycreep create-user made, is answered with 422 validation_failed. Of two setups at once, one completes, and the other is answered with 404 not_found. The owner then signs in with POST /api/v1/auth/login. Once setup has completed, the answer is 404 not_found, for everyone, and stays so. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an invitation's link, and making, listing, or revoking an API token share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, accepting one, and making, listing, or revoking an API token share one of 10 a minute for each account. No request made with an API token counts against these, so that the requests of a token, which count against its owner's account too, cannot keep the owner from finding and revoking it, after which no limit counts them. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
+   * Completes the instance's first-run setup, once: creates the first owner's account, which is an instance admin, and the first workspace, which the owner owns, and records the signup policy, the SMTP server, and the bucket of the assets' files. Until then, POST /api/v1/auth/register answers 403 setup_required, whatever the policy. The setup code, which the server writes to its log while setup is pending, must be the instance's, or the answer is 403 invalid_setup_code. A field that the request does not allow, as an SMTP server's host that is not one, a username without a password, a bucket's name in capitals, or an email address that has an account, as one that storycreep create-user made, is answered with 422 validation_failed. Of two setups at once, one completes, and the other is answered with 404 not_found. The owner then signs in with POST /api/v1/auth/login. Once setup has completed, the answer is 404 not_found, for everyone, and stays so. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an invitation's link, and making, listing, or revoking an API token share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, accepting one, and making, listing, or revoking an API token share one of 10 a minute for each account. No request made with an API token counts against these, so that the requests of a token, which count against its owner's account too, cannot keep the owner from finding and revoking it, after which no limit counts them. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
    */
   completeSetup: {
     input: {
@@ -974,6 +1016,72 @@ export interface Operations {
       204: undefined;
     };
   };
+  /**
+   * Get an asset
+   *
+   * Returns an asset of a project: its type, size, and hash. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). An asset that the project does not have, as one of another project, is answered with 404 not_found too, whatever its ID. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getAsset: {
+    input: {
+      path: {
+        /** The asset's ID */
+        asset_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: Asset;
+    };
+  };
+  /**
+   * Get an asset's file
+   *
+   * Serves an asset's file, as it is stored. The answer depends on where the instance stores its files (STORYCREEP_ASSET_STORAGE). The local driver's files are served by this route, with the file's type, Content-Security-Policy: sandbox, X-Content-Type-Options: nosniff, and Content-Disposition: inline for an image, which every asset is, and attachment for any other type (PRD FR-ASSET-02 AC3), an ETag, which If-None-Match revalidates with 304, and Cache-Control: private, no-cache, so that a browser checks the user's access again before it uses its copy. An S3 bucket's are answered with 302 Found, whose Location is a URL of the bucket that the server signs for 5 minutes, with the file's type and Content-Disposition fixed in its signature: the bucket's origin is not the application's, so a file read from it reaches nothing of the application's (NFR-SEC-10). Either way, the server checks the user's access to the project before it reads anything of the file, so that no URL reads another workspace's file, whatever it guesses (FR-ASSET-01 AC2). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). An asset that the project does not have, as one of another project, is answered with 404 not_found too, whatever its ID. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getAssetContent: {
+    input: {
+      path: {
+        /** The asset's ID */
+        asset_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+      headers?: {
+        /** The ETag of the file that the client has, which is answered with 304 Not Modified while it is current */
+        "If-None-Match"?: string;
+      };
+    };
+    responses: {
+      200: Blob;
+      302: undefined;
+      304: undefined;
+    };
+  };
+  /**
+   * Get an asset's thumbnail
+   *
+   * Serves an asset's thumbnail: a PNG image that fits in 256 × 256 pixels, of a PNG, JPEG, GIF, or WebP image larger than that, or else the file itself, which is also served until the thumbnail is made, soon after the upload, and for an image whose thumbnail cannot be made. The answer depends on where the instance stores its files (STORYCREEP_ASSET_STORAGE). The local driver's files are served by this route, with the file's type, Content-Security-Policy: sandbox, X-Content-Type-Options: nosniff, and Content-Disposition: inline for an image, which every asset is, and attachment for any other type (PRD FR-ASSET-02 AC3), an ETag, which If-None-Match revalidates with 304, and Cache-Control: private, no-cache, so that a browser checks the user's access again before it uses its copy. An S3 bucket's are answered with 302 Found, whose Location is a URL of the bucket that the server signs for 5 minutes, with the file's type and Content-Disposition fixed in its signature: the bucket's origin is not the application's, so a file read from it reaches nothing of the application's (NFR-SEC-10). Either way, the server checks the user's access to the project before it reads anything of the file, so that no URL reads another workspace's file, whatever it guesses (FR-ASSET-01 AC2). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). An asset that the project does not have, as one of another project, is answered with 404 not_found too, whatever its ID. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getAssetThumbnail: {
+    input: {
+      path: {
+        /** The asset's ID */
+        asset_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+      headers?: {
+        /** The ETag of the file that the client has, which is answered with 304 Not Modified while it is current */
+        "If-None-Match"?: string;
+      };
+    };
+    responses: {
+      200: Blob;
+      302: undefined;
+      304: undefined;
+    };
+  };
   /** Report that the process is alive */
   getHealth: {
     input: Record<string, never>;
@@ -1050,7 +1158,7 @@ export interface Operations {
   /**
    * Get what first-run setup asks for
    *
-   * Tells a setup screen that the instance's first-run setup is pending, and whether it can choose the signup policy and the SMTP server. Once setup has completed, the answer is 404 not_found, for everyone, and stays so. Requests that read share a rate limit of 1,200 a minute for each IP address. The RateLimit headers say how much is left of the limit of the IP address, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   * Tells a setup screen that the instance's first-run setup is pending, and whether it can choose the signup policy, the SMTP server, and the bucket of the assets' files. Once setup has completed, the answer is 404 not_found, for everyone, and stays so. Requests that read share a rate limit of 1,200 a minute for each IP address. The RateLimit headers say how much is left of the limit of the IP address, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
    */
   getSetup: {
     input: Record<string, never>;
@@ -1729,6 +1837,29 @@ export interface Operations {
     };
   };
   /**
+   * Upload an image to a project
+   *
+   * Uploads an image, which the project's content can then refer to, as a node's cover or a component's portrait (PRD FR-ASSET-02). The body is the file: a PNG, JPEG, GIF, WebP, or SVG image of at most STORYCREEP_ASSET_MAX_BYTES, 10 MB unless the instance says otherwise, or the answer is 413 request_too_large. The server tells the type from the file's content alone, and refuses any other file, as text whose name ends in .png, with 422 image_invalid. An SVG image is stored without its scripts, event handlers, and references to anything outside it, which the server removes; it is never stored as it was uploaded. A thumbnail of a large image is made soon after. The answer is 201 with the new asset, or 200 with the asset that the project has of the same file already, which makes an upload that a client sends again harmless. A file that the workspace does not store yet must fit in its storage: an upload that would take the workspace past its plan's storage_bytes is answered with 413 storage_limit_exceeded, with the workspace's usage and limit. Only an owner, an admin, or an editor of the project may upload, and anyone else with a role on it is answered with 403 insufficient_role, before the file is read. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). An archived project is read-only, and the change is answered with 409 project_archived. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
+   */
+  uploadAsset: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      headers?: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return: a request made with the session cookie without it is answered with 403 csrf_failed, and a request made with an API token needs none */
+        "X-CSRF-Token"?: string;
+      };
+      /** The file, as it is, whatever its name: the server tells its type from its content, and ignores the request's Content-Type, which may be any. */
+      body: Blob;
+    };
+    responses: {
+      200: Asset;
+      201: Asset;
+    };
+  };
+  /**
    * Verify an email address with a link
    *
    * Records that the email address of the account of a link that verifies it is verified, and uses the link, which works once, and only while the address is still the account's. Where the instance requires a verified address before a workspace can be created, as hosted mode does, it also gives the account its personal workspace, if it has had none; should that fail, the answer is still 204, because the address is verified, and the account's next sign-in gives the workspace. A token that does not exist, of another kind of link, or of an account that can no longer use it, is answered with 400 token_invalid, a link that has been used with 400 token_used, and one that has expired with 400 token_expired. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an invitation's link, and making, listing, or revoking an API token share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, accepting one, and making, listing, or revoking an API token share one of 10 a minute for each account. No request made with an API token counts against these, so that the requests of a token, which count against its owner's account too, cannot keep the owner from finding and revoking it, after which no limit counts them. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
@@ -1743,7 +1874,7 @@ export interface Operations {
   };
 }
 
-/** The method and path of each operation. */
+/** The method and path of each operation, and whether it answers with a file (blob). */
 export const routes = {
   acceptInvite: { method: "POST", path: "/api/v1/invites/accept" },
   applyCommands: { method: "POST", path: "/api/v1/projects/{project_id}/commands" },
@@ -1757,6 +1888,9 @@ export const routes = {
   createWorkspace: { method: "POST", path: "/api/v1/workspaces" },
   createWorkspaceToken: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/tokens" },
   deleteProject: { method: "DELETE", path: "/api/v1/projects/{project_id}" },
+  getAsset: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}" },
+  getAssetContent: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}/content", blob: true },
+  getAssetThumbnail: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}/thumbnail", blob: true },
   getHealth: { method: "GET", path: "/healthz" },
   getInstance: { method: "GET", path: "/api/v1/instance" },
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
@@ -1800,5 +1934,6 @@ export const routes = {
   unarchiveProject: { method: "POST", path: "/api/v1/projects/{project_id}/unarchive" },
   updateProject: { method: "PATCH", path: "/api/v1/projects/{project_id}" },
   updateWorkspace: { method: "PATCH", path: "/api/v1/workspaces/{workspace_id}" },
+  uploadAsset: { method: "POST", path: "/api/v1/projects/{project_id}/assets" },
   verifyEmail: { method: "POST", path: "/api/v1/auth/verify-email" },
-} as const satisfies Record<keyof Operations, { method: string; path: string }>;
+} as const satisfies Record<keyof Operations, { method: string; path: string; blob?: true }>;

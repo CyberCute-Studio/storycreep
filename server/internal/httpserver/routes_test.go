@@ -37,6 +37,12 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/archive"}:     scope.ProjectWrite,
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/unarchive"}:   scope.ProjectWrite,
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/commands"}:    scope.ProjectWrite,
+	// A project's assets are its draft's content: reading them needs
+	// project:read, and uploading one project:write.
+	{Method: http.MethodPost, Pattern: assetsPath}:                          scope.ProjectWrite,
+	{Method: http.MethodGet, Pattern: assetsPath + "/{asset_id}"}:           scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: assetsPath + "/{asset_id}/content"}:   scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: assetsPath + "/{asset_id}/thumbnail"}: scope.ProjectRead,
 }
 
 // operationOf returns the operation of the route r in the OpenAPI document,
@@ -179,12 +185,15 @@ func TestEveryRouteReachable(t *testing.T) {
 
 // guardedFirst are the routes whose guards refuse their requests, in the
 // configuration of the roles fixture, before their rate limit counts them,
-// with the code that they refuse them with: the instance sends no email, and
-// its first-run setup has completed.
+// with the code that they refuse them with: the instance sends no email, its
+// first-run setup has completed, and the project of an upload is not one.
 var guardedFirst = map[api.Route]api.Code{
 	{Method: http.MethodPost, Pattern: "/api/v1/auth/password-reset"}:     api.CodeEmailNotConfigured,
 	{Method: http.MethodPost, Pattern: "/api/v1/auth/email-verification"}: api.CodeEmailNotConfigured,
 	{Method: http.MethodPost, Pattern: "/api/v1/setup"}:                   api.CodeNotFound,
+	// An upload's guard checks the project before the route reads the file,
+	// and the walk names it with an ID that is not one.
+	{Method: http.MethodPost, Pattern: assetsPath}: api.CodeInvalidID,
 }
 
 // authRoutes are the routes that count in the auth bucket (plan notes N23,

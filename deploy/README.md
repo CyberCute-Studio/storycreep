@@ -34,17 +34,19 @@ The compose file names its Compose project `storycreep`, and the containers and 
 | `STORYCREEP_PUBLISH` | `127.0.0.1:7777` | Where Docker publishes the server's HTTP port, as `[address:]port`. The default reaches it from this machine only. A port without an address, such as `8000`, publishes it on every network interface, as `0.0.0.0:8000` does, so to change only the port, keep the address, as in `127.0.0.1:8000`. Another port is another URL, so set `STORYCREEP_PUBLIC_URL` with it, as in `http://localhost:8000`. |
 | `STORYCREEP_PUBLIC_URL` | `http://localhost:7777` | The URL users open Storycreep at. |
 | `STORYCREEP_TRUSTED_PROXIES` | Not set | The addresses that a reverse proxy in front of the server connects from, whose `X-Forwarded-For` header the server believes. See [Behind a reverse proxy](#behind-a-reverse-proxy). |
-| `STORYCREEP_WORKSPACE_LIMITS` | Not set | Caps on what each workspace may use, as limits and whole numbers joined by `=`, separated by commas, such as `members=20, projects=50`, of `members`, `projects`, and `storage_bytes`. Without it, no workspace has a limit. A workspace that has as many members as its `members` cap allows, guests included, lets no one else in: accepting an invitation, `storycreep grant-role`, and registering with a link invitation's link are refused, while registering with the link of an invitation to an address adds the account alone, which accepts the invitation once a member has left. `projects` and `storage_bytes` limit nothing yet, as [`docs/configuration.md`](../docs/configuration.md) says. |
+| `STORYCREEP_WORKSPACE_LIMITS` | Not set | Caps on what each workspace may use, as limits and whole numbers joined by `=`, separated by commas, such as `members=20, projects=50`, of `members`, `projects`, and `storage_bytes`. Without it, no workspace has a limit. A workspace that has as many members as its `members` cap allows, guests included, lets no one else in: accepting an invitation, `storycreep grant-role`, and registering with a link invitation's link are refused, while registering with the link of an invitation to an address adds the account alone, which accepts the invitation once a member has left. A workspace at its `projects` cap creates no project, and one at its `storage_bytes` cap stores no new file, which an upload is refused with `413 storage_limit_exceeded`. |
 | `STORYCREEP_SMTP_URL`, `STORYCREEP_SMTP_FROM` | Not set | The SMTP server that the instance sends its email through, and the address that the email comes from. See [Email](#email). |
-| `STORYCREEP_SETUP_OWNER_EMAIL`, `STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, `STORYCREEP_SETUP_WORKSPACE_NAME`, `STORYCREEP_SETUP_WORKSPACE_SLUG`, `STORYCREEP_SETUP_SIGNUP`, `STORYCREEP_SETUP_SMTP_URL`, `STORYCREEP_SETUP_SMTP_FROM` | Not set | Unattended first-run setup. See [First-run setup](#first-run-setup). |
-| `STORYCREEP_MODE`, `STORYCREEP_PUBLIC_SITE`, `STORYCREEP_SIGNUP`, `STORYCREEP_INSTANCE_ADMIN_ACCESS`, `STORYCREEP_SESSION_IDLE_TIMEOUT`, `STORYCREEP_SESSION_LIFETIME`, `STORYCREEP_DEFAULT_LOCALE`, `STORYCREEP_LOG_LEVEL`, `STORYCREEP_ADMIN_ADDR`, `STORYCREEP_METRICS_TOKEN` | The server's | The server keys of the same names, which [`docs/configuration.md`](../docs/configuration.md) describes, as it does `STORYCREEP_TRUSTED_PROXIES`, `STORYCREEP_WORKSPACE_LIMITS`, the `STORYCREEP_SMTP_` keys, and the `STORYCREEP_SETUP_` keys. |
+| `STORYCREEP_ASSET_STORAGE` | Not set | Where the files that users upload are stored: an `s3://` URL of a bucket, or the `assets` volume when it is not set, unless first-run setup chose a bucket. See [Uploaded files](#uploaded-files). |
+| `STORYCREEP_ASSET_MAX_BYTES` | `10485760` | The largest file, in bytes, that an upload takes, at most `52428800` (50 MB). |
+| `STORYCREEP_SETUP_OWNER_EMAIL`, `STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, `STORYCREEP_SETUP_WORKSPACE_NAME`, `STORYCREEP_SETUP_WORKSPACE_SLUG`, `STORYCREEP_SETUP_SIGNUP`, `STORYCREEP_SETUP_SMTP_URL`, `STORYCREEP_SETUP_SMTP_FROM`, `STORYCREEP_SETUP_ASSET_STORAGE` | Not set | Unattended first-run setup. See [First-run setup](#first-run-setup). |
+| `STORYCREEP_MODE`, `STORYCREEP_PUBLIC_SITE`, `STORYCREEP_SIGNUP`, `STORYCREEP_INSTANCE_ADMIN_ACCESS`, `STORYCREEP_SESSION_IDLE_TIMEOUT`, `STORYCREEP_SESSION_LIFETIME`, `STORYCREEP_DEFAULT_LOCALE`, `STORYCREEP_LOG_LEVEL`, `STORYCREEP_ADMIN_ADDR`, `STORYCREEP_METRICS_TOKEN` | The server's | The server keys of the same names, which [`docs/configuration.md`](../docs/configuration.md) describes, as it does `STORYCREEP_TRUSTED_PROXIES`, `STORYCREEP_WORKSPACE_LIMITS`, the `STORYCREEP_SMTP_` keys, the `STORYCREEP_ASSET_` keys, and the `STORYCREEP_SETUP_` keys. |
 | `COMPOSE_PROJECT_NAME` | `storycreep` | The Compose project's name, which the containers' and volumes' names start with. Another name is another instance, with volumes of its own, so set it before the first start. |
 
 The compose file sets the database URLs itself. The three logins in them take their password from `POSTGRES_PASSWORD`, through `PGPASSWORD`, so that a password with characters such as `@` or `/` needs no escaping.
 
 ### First-run setup
 
-A new instance has no accounts. Until its first-run setup has completed, nobody can register one, whatever `STORYCREEP_SIGNUP` says. Setup creates the first owner, who is an instance admin, and the first workspace, which is the owner's, and records who can register afterwards: nobody (`closed`, the default), people holding an invitation (`invite`), or anyone (`open`). `STORYCREEP_SIGNUP` overrides that choice for as long as it is set. Setup can also record the SMTP server that the instance sends its email through (see [Email](#email)), which `STORYCREEP_SMTP_URL` overrides in the same way.
+A new instance has no accounts. Until its first-run setup has completed, nobody can register one, whatever `STORYCREEP_SIGNUP` says. Setup creates the first owner, who is an instance admin, and the first workspace, which is the owner's, and records who can register afterwards: nobody (`closed`, the default), people holding an invitation (`invite`), or anyone (`open`). `STORYCREEP_SIGNUP` overrides that choice for as long as it is set. Setup can also record the SMTP server that the instance sends its email through (see [Email](#email)), which `STORYCREEP_SMTP_URL` overrides in the same way, and a bucket that stores the files that users upload (see [Uploaded files](#uploaded-files)), which `STORYCREEP_ASSET_STORAGE` overrides.
 
 Completing setup asks for a setup code, so that whoever reaches a new instance first cannot make themselves its administrator. While setup is pending, the server writes the code to its log at every start:
 
@@ -71,9 +73,9 @@ and send it:
 curl -H 'Content-Type: application/json' --data-binary @setup.json http://localhost:7777/api/v1/setup
 ```
 
-Leave out `smtp` for an instance that sends no email. The answer is `201`, with the owner's account ID and the workspace, or an error that names what to change. Then delete `setup.json`, which holds the passwords. The API's OpenAPI document, at `/api/v1/openapi.json`, describes `POST /api/v1/setup` in full.
+Leave out `smtp` for an instance that sends no email. To store the uploaded files in a bucket rather than in the `assets` volume, add `"storage": {"host": "s3.eu-central-1.amazonaws.com", "region": "eu-central-1", "bucket": "storycreep", "access_key_id": "…", "secret_access_key": "…"}`, with `"security": "none"` and a `port` for a storage on the same network without TLS. The answer is `201`, with the owner's account ID and the workspace, or an error that names what to change. Then delete `setup.json`, which holds the passwords. The API's OpenAPI document, at `/api/v1/openapi.json`, describes `POST /api/v1/setup` in full.
 
-To complete setup without anyone visiting the instance, set `STORYCREEP_SETUP_OWNER_EMAIL`, `STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, and `STORYCREEP_SETUP_WORKSPACE_NAME` in `.env` before the first start, and optionally `STORYCREEP_SETUP_WORKSPACE_SLUG`, `STORYCREEP_SETUP_SIGNUP`, and the SMTP server, with `STORYCREEP_SETUP_SMTP_URL` and `STORYCREEP_SETUP_SMTP_FROM`, which are written as `STORYCREEP_SMTP_URL` and `STORYCREEP_SMTP_FROM` are. The server then completes setup itself, as the setup API would, and needs no code. A value that setup refuses, such as a password of fewer than 12 characters, stops the server, and its log names the setting. Once setup has completed, the server ignores these settings, so remove them from `.env`, the passwords above all, and run `docker compose up -d` again.
+To complete setup without anyone visiting the instance, set `STORYCREEP_SETUP_OWNER_EMAIL`, `STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, and `STORYCREEP_SETUP_WORKSPACE_NAME` in `.env` before the first start, and optionally `STORYCREEP_SETUP_WORKSPACE_SLUG`, `STORYCREEP_SETUP_SIGNUP`, the SMTP server, with `STORYCREEP_SETUP_SMTP_URL` and `STORYCREEP_SETUP_SMTP_FROM`, which are written as `STORYCREEP_SMTP_URL` and `STORYCREEP_SMTP_FROM` are, and a bucket, with `STORYCREEP_SETUP_ASSET_STORAGE`, written as an `s3://` URL of `STORYCREEP_ASSET_STORAGE`. The server then completes setup itself, as the setup API would, and needs no code. A value that setup refuses, such as a password of fewer than 12 characters, stops the server, and its log names the setting. Once setup has completed, the server ignores these settings, so remove them from `.env`, the passwords above all, and run `docker compose up -d` again.
 
 ### Email
 
@@ -91,6 +93,20 @@ Without an SMTP server, the instance sends no email, and says so to its users. R
 ```sh
 docker compose exec app storycreep reset-password jo@example.com
 ```
+
+### Uploaded files
+
+The images that users upload, such as the covers of nodes and the portraits of characters, are stored in the `assets` volume, at `/var/lib/storycreep/assets` in the container, unless they are stored in a bucket of an S3-compatible object storage, such as Amazon S3, MinIO, or Cloudflare R2: the bucket that first-run setup chose, or the one that `STORYCREEP_ASSET_STORAGE` sets, which overrides it:
+
+```sh
+STORYCREEP_ASSET_STORAGE=s3://access-key-id:secret-access-key@s3.eu-central-1.amazonaws.com/storycreep?region=eu-central-1
+```
+
+The URL is over HTTPS, on port 443 unless it names another; add `security=none`, as in `s3://key:secret@minio:9000/storycreep?security=none`, for a storage on the same network without TLS. Percent-encode the keys, as `%2F` for `/`. The bucket must exist, and the keys must let the server read, write, list, and delete its objects. The users' browsers read the files from the bucket, through URLs that the server signs for 5 minutes once it has checked their access, so the bucket's host must be one that they reach too, not only the server: a MinIO beside the server needs a host name that both resolve, behind a reverse proxy of its own. The bucket's objects are never public.
+
+A file is stored under `{workspace}/{sha256}.{ext}`, the same key in the volume and in a bucket, so switching from one to the other is a matter of copying the files, with their paths as their keys, and then setting `STORYCREEP_ASSET_STORAGE`: the server copies nothing itself. Back up the volume or the bucket with the database. Once no asset refers to a file any longer, as after its project is deleted for good, an hourly job deletes it, and its thumbnail.
+
+An upload takes PNG, JPEG, GIF, WebP, and SVG images of at most `STORYCREEP_ASSET_MAX_BYTES`, and tells their type from their content. An SVG file is stored without its scripts and its references to anything outside it.
 
 ### API tokens
 
@@ -194,5 +210,6 @@ export STORYCREEP_DATABASE_URL=postgres://storycreep:storycreep-dev@localhost:54
 export STORYCREEP_DATABASE_ADMIN_URL=postgres://postgres:storycreep-dev@localhost:5432/storycreep
 export STORYCREEP_DATABASE_MAINTENANCE_URL=postgres://storycreep_maintainer:storycreep-dev@localhost:5432/storycreep
 export STORYCREEP_PUBLIC_URL=http://localhost:8080
+export STORYCREEP_ASSET_STORAGE="$PWD/.dev-assets"
 go run ./cmd/storycreep serve
 ```

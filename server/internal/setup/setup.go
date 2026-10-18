@@ -14,7 +14,10 @@
 // Setup also records the SMTP server that the instance sends its email
 // through, if it is given one (package email), which STORYCREEP_SMTP_URL
 // overrides for as long as it is set, as STORYCREEP_SIGNUP does the signup
-// policy.
+// policy, and the bucket of an S3-compatible object storage that keeps the
+// files of the assets, if it is given one (package asset), which
+// STORYCREEP_ASSET_STORAGE overrides likewise; without one, the local driver
+// keeps them.
 //
 // The owner is an instance admin, and the first workspace is the owner's
 // personal workspace, so that the owner's first sign-in gives them no other
@@ -77,6 +80,9 @@ type Options struct {
 	// SMTPFixed says that the configuration sets the SMTP server, which
 	// overrides the one that setup records.
 	SMTPFixed bool
+	// StorageFixed says that the configuration sets the storage of the
+	// assets' files, which overrides the bucket that setup records.
+	StorageFixed bool
 	// DefaultLocale is the instance's default locale, which the first
 	// workspace has.
 	DefaultLocale language.Tag
@@ -88,19 +94,20 @@ type Options struct {
 
 // Service completes first-run setup.
 type Service struct {
-	db         DB
-	signup     config.SignupPolicy
-	smtpFixed  bool
-	locale     language.Tag
-	workspaces *workspace.Service
-	hasher     *account.Hasher
+	db           DB
+	signup       config.SignupPolicy
+	smtpFixed    bool
+	storageFixed bool
+	locale       language.Tag
+	workspaces   *workspace.Service
+	hasher       *account.Hasher
 }
 
 // New returns a Service that completes the setup of the instance of db, with
 // opts.
 func New(db DB, opts Options) *Service {
-	return &Service{db: db, signup: opts.Signup, smtpFixed: opts.SMTPFixed, locale: opts.DefaultLocale,
-		workspaces: opts.Workspaces, hasher: opts.Hasher}
+	return &Service{db: db, signup: opts.Signup, smtpFixed: opts.SMTPFixed, storageFixed: opts.StorageFixed,
+		locale: opts.DefaultLocale, workspaces: opts.Workspaces, hasher: opts.Hasher}
 }
 
 // Status is the state of first-run setup.
@@ -117,6 +124,10 @@ type Status struct {
 	// SMTPFixed says whether the configuration sets the SMTP server, which
 	// then overrides the one that setup records, for as long as it sets it.
 	SMTPFixed bool
+	// StorageFixed says whether the configuration sets the storage of the
+	// assets' files, which then overrides the bucket that setup records,
+	// for as long as it sets it.
+	StorageFixed bool
 }
 
 // Status returns the state of first-run setup.
@@ -131,7 +142,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		return Status{}, fmt.Errorf("setup: read the instance's setup: %w", err)
 	}
 	return Status{Completed: row.SetupCompleted, SignupFixed: s.signup != config.SignupSetup,
-		Signup: s.signup.Resolve(""), SMTPFixed: s.smtpFixed}, nil
+		Signup: s.signup.Resolve(""), SMTPFixed: s.smtpFixed, StorageFixed: s.storageFixed}, nil
 }
 
 // codeAlphabet is the alphabet of the setup code: Crockford's base32, which
@@ -212,6 +223,9 @@ type Request struct {
 	Signup config.SignupPolicy
 	// SMTP is the SMTP server that setup records, or nil for none.
 	SMTP *config.SMTP
+	// S3 is the bucket that setup records for the files of the assets, or
+	// nil for none, which leaves them to the local driver.
+	S3 *config.S3
 }
 
 // Result is what first-run setup created.
@@ -270,8 +284,8 @@ func (s *Service) checkCode(ctx context.Context, code string) error {
 // without its code: input.FieldErrors for the fields of the owner's account,
 // as account.CheckRegistration names them but under owner., as owner.email,
 // for the workspace's name, as workspace.name, for the signup policy, as
-// signup_policy, and for the SMTP server's settings, under smtp., as
-// smtp.host; then a *workspace.SlugError if the workspace's slug is not
+// signup_policy, for the SMTP server's settings, under smtp., as smtp.host,
+// and for the bucket's, under storage., as storage.bucket; then a *workspace.SlugError if the workspace's slug is not
 // valid; and then an *account.PasswordError if the owner's password breaks
 // the policy. Completing setup adds that the owner's email address must
 // belong to no account, as owner.email.
@@ -291,6 +305,11 @@ func (s *Service) check(ctx context.Context, req Request) (workspace.Draft, erro
 	if req.SMTP != nil {
 		for _, p := range req.SMTP.Check() {
 			fields = append(fields, input.FieldError{Field: "smtp." + p.Field, Message: p.Msg})
+		}
+	}
+	if req.S3 != nil {
+		for _, p := range req.S3.Check() {
+			fields = append(fields, input.FieldError{Field: "storage." + p.Field, Message: p.Msg})
 		}
 	}
 	switch {
@@ -352,7 +371,7 @@ func (s *Service) complete(ctx context.Context, req Request, client audit.Client
 		if err != nil {
 			return err
 		}
-		if err := q.CompleteSetup(ctx, completeParams(signup, req.SMTP)); err != nil {
+		if err := q.CompleteSetup(ctx, completeParams(signup, req.SMTP, req.S3)); err != nil {
 			return fmt.Errorf("setup: record that setup completed: %w", err)
 		}
 		res = Result{OwnerID: owner.ID, Workspace: w}
@@ -364,20 +383,25 @@ func (s *Service) complete(ctx context.Context, req Request, client audit.Client
 	return res, nil
 }
 
-// completeParams returns what CompleteSetup records: the signup policy, and
-// the SMTP server, if setup has one, with its host in lower case, as
-// config.ParseSMTPURL reads it, so that the API and unattended setup record
-// the same host.
-func completeParams(signup config.SignupPolicy, smtp *config.SMTP) queries.CompleteSetupParams {
+// completeParams returns what CompleteSetup records: the signup policy, the
+// SMTP server, if setup has one, and the bucket, if setup has one, each with
+// its host in lower case, as config.ParseSMTPURL and config.ParseS3URL read
+// it, so that the API and unattended setup record the same host.
+func completeParams(signup config.SignupPolicy, smtp *config.SMTP, s3 *config.S3) queries.CompleteSetupParams {
 	p := queries.CompleteSetupParams{SignupPolicy: pgtype.Text{String: string(signup), Valid: true}}
-	if smtp == nil {
-		return p
-	}
 	text := func(v string) pgtype.Text { return pgtype.Text{String: v, Valid: v != ""} }
-	p.SmtpHost, p.SmtpSecurity = text(strings.ToLower(smtp.Host)), text(string(smtp.Security))
-	p.SmtpFrom = text(strings.TrimSpace(smtp.From))
-	p.SmtpPort = pgtype.Int4{Int32: int32(smtp.Port), Valid: true}
-	p.SmtpUsername, p.SmtpPassword = text(smtp.Username), text(smtp.Password.Reveal())
+	if smtp != nil {
+		p.SmtpHost, p.SmtpSecurity = text(strings.ToLower(smtp.Host)), text(string(smtp.Security))
+		p.SmtpFrom = text(strings.TrimSpace(smtp.From))
+		p.SmtpPort = pgtype.Int4{Int32: int32(smtp.Port), Valid: true}
+		p.SmtpUsername, p.SmtpPassword = text(smtp.Username), text(smtp.Password.Reveal())
+	}
+	if s3 != nil {
+		p.S3Host, p.S3Security = text(strings.ToLower(s3.Host)), text(string(s3.Security))
+		p.S3Port = pgtype.Int4{Int32: int32(s3.Port), Valid: true}
+		p.S3Bucket, p.S3Region = text(s3.Bucket), text(s3.Region)
+		p.S3AccessKeyID, p.S3SecretAccessKey = text(s3.AccessKeyID), text(s3.SecretAccessKey.Reveal())
+	}
 	return p
 }
 
@@ -391,6 +415,7 @@ const (
 	keySignup        = "STORYCREEP_SETUP_SIGNUP"
 	keySMTPURL       = "STORYCREEP_SETUP_SMTP_URL"
 	keySMTPFrom      = "STORYCREEP_SETUP_SMTP_FROM"
+	keyAssetStorage  = "STORYCREEP_SETUP_ASSET_STORAGE"
 )
 
 // fieldKeys maps the fields that Check names to the keys of unattended
@@ -406,6 +431,15 @@ var fieldKeys = map[string]string{
 	"smtp.username":      keySMTPURL,
 	"smtp.password":      keySMTPURL,
 	"smtp.from":          keySMTPFrom,
+	// The configuration parses the bucket's URL as the setup API's checks
+	// would, so these are a fallback.
+	"storage.host":              keyAssetStorage,
+	"storage.port":              keyAssetStorage,
+	"storage.security":          keyAssetStorage,
+	"storage.bucket":            keyAssetStorage,
+	"storage.region":            keyAssetStorage,
+	"storage.access_key_id":     keyAssetStorage,
+	"storage.secret_access_key": keyAssetStorage,
 }
 
 // ConfigError is a configuration that unattended setup refuses, as the
@@ -485,6 +519,7 @@ func unattendedRequest(u *config.UnattendedSetup) (Request, error) {
 		WorkspaceSlug: u.WorkspaceSlug,
 		Signup:        u.Signup,
 		SMTP:          u.SMTP,
+		S3:            u.S3,
 	}, nil
 }
 

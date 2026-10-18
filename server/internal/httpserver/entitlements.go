@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
@@ -57,5 +58,21 @@ func limitExceededError(err error) error {
 		Message: i18n.Message{Key: i18n.K("error.limit_exceeded.key"),
 			Args: i18n.Args{"key": string(limit.Key), "limit": limit.Limit}},
 		Details: details,
+	}
+}
+
+// storageLimitError returns the answer of an upload that the storage limit
+// refuses: 413 storage_limit_exceeded, with the details of limit_exceeded
+// (limitExceededError).
+func storageLimitError(limit *entitlements.LimitError) error {
+	var e *api.Error
+	if !errors.As(limitExceededError(limit), &e) {
+		return fmt.Errorf("httpserver: the storage limit has no answer: %w", limit)
+	}
+	return &api.Error{
+		Code: api.CodeStorageLimitExceeded,
+		Message: i18n.Message{Key: i18n.K("error.storage_limit_exceeded.limit"),
+			Args: i18n.Args{"limit": limit.Limit}},
+		Details: e.Details,
 	}
 }

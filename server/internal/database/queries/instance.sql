@@ -14,16 +14,27 @@ SELECT (setup_completed_at IS NOT NULL)::boolean AS setup_completed, signup_poli
 SELECT (setup_completed_at IS NOT NULL)::boolean AS setup_completed, signup_policy FROM instance FOR UPDATE;
 
 -- name: CompleteSetup :exec
--- CompleteSetup marks first-run setup completed, with the signup policy and
--- the SMTP settings that it chose, which are all null if it chose none.
+-- CompleteSetup marks first-run setup completed, with the signup policy, the
+-- SMTP settings, and the bucket of the assets' files that it chose, the
+-- settings of each all null if it chose none.
 UPDATE instance SET setup_completed_at = now(), signup_policy = @signup_policy, smtp_host = @smtp_host,
     smtp_port = @smtp_port, smtp_security = @smtp_security, smtp_username = @smtp_username,
-    smtp_password = @smtp_password, smtp_from = @smtp_from, updated_at = now();
+    smtp_password = @smtp_password, smtp_from = @smtp_from, s3_host = @s3_host, s3_port = @s3_port,
+    s3_security = @s3_security, s3_bucket = @s3_bucket, s3_region = @s3_region,
+    s3_access_key_id = @s3_access_key_id, s3_secret_access_key = @s3_secret_access_key, updated_at = now();
 
 -- name: InstanceSMTP :one
 -- InstanceSMTP returns the SMTP settings that first-run setup chose (package
 -- email), whose host is null if it chose none.
 SELECT smtp_host, smtp_port, smtp_security, smtp_username, smtp_password, smtp_from FROM instance;
+
+-- name: InstanceS3 :one
+-- InstanceS3 returns whether first-run setup has completed, and the bucket
+-- that it chose for the files of the assets (package asset), whose host is
+-- null if it chose none.
+SELECT (setup_completed_at IS NOT NULL)::boolean AS setup_completed, s3_host, s3_port, s3_security, s3_bucket,
+    s3_region, s3_access_key_id, s3_secret_access_key
+FROM instance;
 
 -- name: SetupCodeKey :one
 -- SetupCodeKey returns the key that the setup code is made of.

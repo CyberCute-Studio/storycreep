@@ -14,21 +14,31 @@ import (
 const completeSetup = `-- name: CompleteSetup :exec
 UPDATE instance SET setup_completed_at = now(), signup_policy = $1, smtp_host = $2,
     smtp_port = $3, smtp_security = $4, smtp_username = $5,
-    smtp_password = $6, smtp_from = $7, updated_at = now()
+    smtp_password = $6, smtp_from = $7, s3_host = $8, s3_port = $9,
+    s3_security = $10, s3_bucket = $11, s3_region = $12,
+    s3_access_key_id = $13, s3_secret_access_key = $14, updated_at = now()
 `
 
 type CompleteSetupParams struct {
-	SignupPolicy pgtype.Text
-	SmtpHost     pgtype.Text
-	SmtpPort     pgtype.Int4
-	SmtpSecurity pgtype.Text
-	SmtpUsername pgtype.Text
-	SmtpPassword pgtype.Text
-	SmtpFrom     pgtype.Text
+	SignupPolicy      pgtype.Text
+	SmtpHost          pgtype.Text
+	SmtpPort          pgtype.Int4
+	SmtpSecurity      pgtype.Text
+	SmtpUsername      pgtype.Text
+	SmtpPassword      pgtype.Text
+	SmtpFrom          pgtype.Text
+	S3Host            pgtype.Text
+	S3Port            pgtype.Int4
+	S3Security        pgtype.Text
+	S3Bucket          pgtype.Text
+	S3Region          pgtype.Text
+	S3AccessKeyID     pgtype.Text
+	S3SecretAccessKey pgtype.Text
 }
 
-// CompleteSetup marks first-run setup completed, with the signup policy and
-// the SMTP settings that it chose, which are all null if it chose none.
+// CompleteSetup marks first-run setup completed, with the signup policy, the
+// SMTP settings, and the bucket of the assets' files that it chose, the
+// settings of each all null if it chose none.
 func (q *Queries) CompleteSetup(ctx context.Context, arg CompleteSetupParams) error {
 	_, err := q.db.Exec(ctx, completeSetup,
 		arg.SignupPolicy,
@@ -38,8 +48,51 @@ func (q *Queries) CompleteSetup(ctx context.Context, arg CompleteSetupParams) er
 		arg.SmtpUsername,
 		arg.SmtpPassword,
 		arg.SmtpFrom,
+		arg.S3Host,
+		arg.S3Port,
+		arg.S3Security,
+		arg.S3Bucket,
+		arg.S3Region,
+		arg.S3AccessKeyID,
+		arg.S3SecretAccessKey,
 	)
 	return err
+}
+
+const instanceS3 = `-- name: InstanceS3 :one
+SELECT (setup_completed_at IS NOT NULL)::boolean AS setup_completed, s3_host, s3_port, s3_security, s3_bucket,
+    s3_region, s3_access_key_id, s3_secret_access_key
+FROM instance
+`
+
+type InstanceS3Row struct {
+	SetupCompleted    bool
+	S3Host            pgtype.Text
+	S3Port            pgtype.Int4
+	S3Security        pgtype.Text
+	S3Bucket          pgtype.Text
+	S3Region          pgtype.Text
+	S3AccessKeyID     pgtype.Text
+	S3SecretAccessKey pgtype.Text
+}
+
+// InstanceS3 returns whether first-run setup has completed, and the bucket
+// that it chose for the files of the assets (package asset), whose host is
+// null if it chose none.
+func (q *Queries) InstanceS3(ctx context.Context) (InstanceS3Row, error) {
+	row := q.db.QueryRow(ctx, instanceS3)
+	var i InstanceS3Row
+	err := row.Scan(
+		&i.SetupCompleted,
+		&i.S3Host,
+		&i.S3Port,
+		&i.S3Security,
+		&i.S3Bucket,
+		&i.S3Region,
+		&i.S3AccessKeyID,
+		&i.S3SecretAccessKey,
+	)
+	return i, err
 }
 
 const instanceSMTP = `-- name: InstanceSMTP :one

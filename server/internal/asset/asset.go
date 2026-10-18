@@ -1,0 +1,458 @@
+// Package asset keeps a project's assets (PRD FR-ASSET-01, FR-ASSET-02,
+// ADR-009): the images that its users upload, which its content refers to,
+// as a node's cover or a component's portrait. It takes an upload through
+// its pipeline, stores the file in the instance's store of package blob,
+// checks every read of an asset, and serves it.
+//
+// An upload's type comes from its content alone (Sniff): a PNG, JPEG, GIF, or
+// WebP image, whose header must decode, of a bounded size, or an SVG image,
+// which is sanitized of its scripts and external references before it is
+// stored, so that the server never stores, or serves, one as it was uploaded
+// (FR-ASSET-02 AC1, AC2). Anything else is refused.
+//
+// A file is stored under {workspace}/{sha256}.{ext}, a key made of its
+// workspace and the hash of its content, so that the same file uploaded twice
+// in a workspace is stored once (FR-ASSET-01). A project has one asset for
+// each content: uploading the same file to it again answers with the asset
+// that it has, which makes an upload that a client sends again harmless. A
+// blob counts once towards the workspace's storage_bytes, however many assets
+// share it, and an upload that would take the workspace past its plan's
+// storage is refused (FR-ASSET-02 AC4). The upload stores the blob and adds
+// the asset under the blob's lock (database.BlobLock), which the orphan
+// reconciliation takes too, before it deletes a blob that no asset refers to
+// (Reconcile), so that it never deletes one that an upload is about to refer
+// to.
+//
+// Uploading an asset is not a command of the pipeline (package commands): it
+// adds a file, which nothing refers to yet, and no change of the project's
+// content, which the commands that set a node's cover, or a component's
+// portrait, make, and it can be neither undone nor redone. It is authorised
+// as a change of the project all the same: it needs owner, admin, or editor
+// as the effective role on the project (§5.6 "Upload images (assets)"), and
+// an archived project, which is read-only, refuses it, as one in the trash is
+// not found.
+//
+// Reading an asset is reading the project's content, which every role on it
+// allows, and the access check reads the asset's row, in a transaction of the
+// project's workspace, before any of its blob is read, so that no request
+// reads another workspace's blob, whatever key it guesses (FR-ASSET-01 AC2).
+// The local driver's blobs are served by the server, and the S3 driver's
+// through a URL that the server signs for a few minutes, once it has checked
+// the access.
+//
+// A thumbnail of a raster image larger than ThumbnailSide on a side is made
+// by a job, once the asset exists (FR-ASSET-02); until then, and for an
+// image that is small enough, or an SVG, the image is its own thumbnail.
+package asset
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"hash/fnv"
+	"io"
+	"path"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
+	"github.com/CyberCute-Studio/storycreep/server/internal/blob"
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
+	"github.com/CyberCute-Studio/storycreep/server/internal/project"
+	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
+)
+
+var (
+	// ErrNotFound is returned for an asset that its project does not have,
+	// and for a project that ReadProject would answer with
+	// project.ErrNotFound, which it is.
+	ErrNotFound = errors.New("asset: no such asset")
+	// ErrInsufficientRole is returned when the user's role on the project
+	// does not allow an upload (§5.6).
+	ErrInsufficientRole = authz.ErrInsufficientRole
+)
+
+// signedURLLifetime is how long a URL that the S3 driver signs reads its
+// blob: long enough for a browser to follow the redirect, and short enough
+// that a URL that leaks, as through a browser's history, soon stops working.
+const signedURLLifetime = 5 * time.Minute
+
+// Asset is an asset as the API shows it.
+type Asset struct {
+	ID          string    `json:"id" doc:"The asset's ID"`
+	ProjectID   string    `json:"project_id" doc:"The ID of the asset's project"`
+	ContentType string    `json:"content_type" enum:"image/png,image/jpeg,image/gif,image/webp,image/svg+xml" doc:"The image's type, which the server found from its content"`
+	Bytes       int64     `json:"bytes" doc:"The size of the file as it is stored, in bytes: for an SVG, once the server has removed what it does not allow"`
+	Width       int       `json:"width,omitempty" doc:"The image's width in pixels, unless it is an SVG that does not say it"`
+	Height      int       `json:"height,omitempty" doc:"The image's height in pixels, unless it is an SVG that does not say it"`
+	SHA256      string    `json:"sha256" doc:"The SHA-256 hash of the file as it is stored, in lowercase hex"`
+	UploadedBy  string    `json:"uploaded_by,omitempty" doc:"The ID of the account that uploaded it, unless the account has been deleted"`
+	CreatedAt   time.Time `json:"created_at" doc:"When it was uploaded"`
+}
+
+// assetOf returns the asset of the row a.
+func assetOf(a queries.Asset) Asset {
+	out := Asset{ID: ids.Encode(ids.Asset, a.ID.Bytes), ProjectID: ids.Encode(ids.Project, a.ProjectID.Bytes),
+		ContentType: a.Mime, Bytes: a.Bytes, Width: int(a.Width.Int32), Height: int(a.Height.Int32),
+		SHA256: hex.EncodeToString(a.Sha256), CreatedAt: a.CreatedAt.Time}
+	if a.UploadedBy.Valid {
+		out.UploadedBy = ids.Encode(ids.User, a.UploadedBy.Bytes)
+	}
+	return out
+}
+
+// Queue enqueues jobs in a transaction, as *jobs.Queue does.
+type Queue interface {
+	Enqueue(ctx context.Context, tx pgx.Tx, args jobs.Args, opts *jobs.EnqueueOptions) (jobs.Enqueued, error)
+}
+
+// Options configure a Service.
+type Options struct {
+	// Projects reads the projects, and the user's role on them. It is
+	// required.
+	Projects *project.Service
+	// Entitlements check the storage limit of the workspaces' plans
+	// (FR-ENT-01). It is required.
+	Entitlements *entitlements.Service
+	// Storage finds the store of the blobs. It is required.
+	Storage *Storage
+	// Queue enqueues the jobs that make thumbnails. It is required.
+	Queue Queue
+}
+
+// Service keeps the assets.
+type Service struct {
+	db       DB
+	projects *project.Service
+	ent      *entitlements.Service
+	storage  *Storage
+	queue    Queue
+}
+
+// New returns a Service that keeps the assets in db, with opts. It panics if
+// an option that it requires is nil.
+func New(db DB, opts Options) *Service {
+	switch {
+	case opts.Projects == nil:
+		panic("asset: a Service needs the projects that its assets belong to")
+	case opts.Entitlements == nil:
+		panic("asset: a Service needs the entitlements that check its workspaces' storage limit")
+	case opts.Storage == nil:
+		panic("asset: a Service needs the storage of its blobs")
+	case opts.Queue == nil:
+		panic("asset: a Service needs the queue of its thumbnails' jobs")
+	}
+	return &Service{db: db, projects: opts.Projects, ent: opts.Entitlements, storage: opts.Storage,
+		queue: opts.Queue}
+}
+
+// Storage returns the storage of the blobs.
+func (s *Service) Storage() *Storage {
+	return s.storage
+}
+
+// CheckUpload returns the error that an upload to the project projectID by
+// the actor would be refused with whatever its file holds, as Upload checks
+// it, so that a route can refuse the upload before it reads the file: the
+// errors of project.Service.Get, then ErrInsufficientRole unless the actor's
+// effective role on the project is owner, admin, or editor, and
+// commands.ErrProjectArchived if the project is archived. The scope of the
+// actor's API token is the route's to check.
+func (s *Service) CheckUpload(ctx context.Context, actor commands.Actor, projectID ids.UUID) error {
+	p, err := s.projects.Get(ctx, actor, projectID)
+	if err != nil {
+		return err
+	}
+	return uploadable(p)
+}
+
+// uploadable returns the error that an upload to the project p is refused
+// with, whatever its file holds, or nil.
+func uploadable(p project.Visible) error {
+	if err := authz.Check(p.Role, authz.UploadAssets); err != nil {
+		return err
+	}
+	if p.ArchivedAt != nil {
+		return commands.ErrProjectArchived
+	}
+	return nil
+}
+
+// Upload adds data, a file that the actor uploads, to the project projectID
+// as an asset, and returns it, with true if it is new, or the project's asset
+// of the same content, which the project has already, with false. It returns
+// the errors of CheckUpload, an *ImageError if data is not an image that an
+// upload takes (Sniff), and an *entitlements.LimitError of storage_bytes if
+// the workspace does not store the file yet, and storing it would take the
+// workspace past its plan's storage, and adds nothing then.
+func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID ids.UUID, data []byte) (Asset, bool,
+	error) {
+	workspaceID, err := s.projects.ActorWorkspace(ctx, actor, projectID)
+	if err != nil {
+		return Asset{}, false, err
+	}
+	img, err := Sniff(data)
+	if err != nil {
+		return Asset{}, false, err
+	}
+	sum := sha256.Sum256(img.Data)
+	key := blobKey(workspaceID, sum[:], img.Ext)
+	store, err := s.storage.Store(ctx)
+	if err != nil {
+		return Asset{}, false, err
+	}
+	var out Asset
+	created := false
+	err = s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
+		q := queries.New(tx)
+		p, err := s.projects.GetIn(ctx, tx, actor, workspaceID, projectID)
+		if err != nil {
+			return err
+		}
+		if err := uploadable(p); err != nil {
+			return err
+		}
+		if err := lockBlob(ctx, q, workspaceID, sum[:]); err != nil {
+			return err
+		}
+		existing, err := q.ProjectAsset(ctx, queries.ProjectAssetParams{WorkspaceID: nullUUID(workspaceID),
+			ProjectID: nullUUID(projectID), Sha256: sum[:]})
+		switch {
+		case err == nil:
+			out = assetOf(existing)
+			return nil
+		case !errors.Is(err, pgx.ErrNoRows):
+			return fmt.Errorf("asset: read the project's assets: %w", err)
+		}
+		referenced, err := q.BlobReferenced(ctx, queries.BlobReferencedParams{WorkspaceID: nullUUID(workspaceID),
+			Key: key})
+		if err != nil {
+			return fmt.Errorf("asset: read the assets of the blob: %w", err)
+		}
+		if !referenced {
+			// The blob is new to the workspace, so it adds to its storage.
+			if err := s.ent.Check(ctx, tx, workspaceID, entitlements.StorageBytes, int64(len(img.Data))); err != nil {
+				return err
+			}
+		}
+		if err := ensureBlob(ctx, store, key, img); err != nil {
+			return err
+		}
+		// The project is read again, under a lock that keeps it from being
+		// archived or deleted until the asset is added, once the blob is
+		// stored, so that the lock is held for no longer than the insert.
+		state, err := q.ShareProject(ctx, queries.ShareProjectParams{WorkspaceID: nullUUID(workspaceID),
+			ID: nullUUID(projectID)})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows), err == nil && state.Deleted:
+			return project.ErrNotFound
+		case err != nil:
+			return fmt.Errorf("asset: lock the project: %w", err)
+		case state.Archived:
+			return commands.ErrProjectArchived
+		}
+		row := queries.Asset{ID: nullUUID(ids.New()), WorkspaceID: nullUUID(workspaceID),
+			ProjectID: nullUUID(projectID), Sha256: sum[:], Mime: img.Mime, Bytes: int64(len(img.Data)),
+			StorageKey: key, UploadedBy: nullUUID(actor.UserID)}
+		if img.Width > 0 {
+			row.Width = pgtype.Int4{Int32: int32(img.Width), Valid: true}
+			row.Height = pgtype.Int4{Int32: int32(img.Height), Valid: true}
+		}
+		thumbnail := needsThumbnail(img)
+		if !thumbnail {
+			row.ThumbnailKey = textOf(key)
+		}
+		createdAt, err := q.InsertAsset(ctx, queries.InsertAssetParams{ID: row.ID, WorkspaceID: row.WorkspaceID,
+			ProjectID: row.ProjectID, Sha256: row.Sha256, Mime: row.Mime, Bytes: row.Bytes, Width: row.Width,
+			Height: row.Height, StorageKey: row.StorageKey, ThumbnailKey: row.ThumbnailKey,
+			UploadedBy: row.UploadedBy})
+		if err != nil {
+			return fmt.Errorf("asset: add the asset: %w", err)
+		}
+		row.CreatedAt = createdAt
+		if !referenced {
+			if err := usage.Record(ctx, tx, workspaceID, usage.StorageBytes, row.Bytes); err != nil {
+				return err
+			}
+		}
+		if thumbnail {
+			if _, err := s.queue.Enqueue(ctx, tx, thumbnailJob{WorkspaceID: workspaceID.String(),
+				AssetID: ids.UUID(row.ID.Bytes).String()}, &jobs.EnqueueOptions{MaxAttempts: thumbnailAttempts}); err != nil {
+				return fmt.Errorf("asset: enqueue the thumbnail's job: %w", err)
+			}
+		}
+		out, created = assetOf(row), true
+		return nil
+	})
+	if err != nil {
+		return Asset{}, false, err
+	}
+	return out, created, nil
+}
+
+// ensureBlob stores img under key, unless the store has the blob already,
+// which, its key being the hash of its content, is the same file. The caller
+// holds the blob's lock.
+func ensureBlob(ctx context.Context, store blob.Store, key string, img Image) error {
+	_, err := store.Stat(ctx, key)
+	switch {
+	case err == nil:
+		return nil
+	case !errors.Is(err, blob.ErrNotFound):
+		return fmt.Errorf("asset: %w", err)
+	}
+	if err := store.Put(ctx, key, img.Data, img.Mime); err != nil {
+		return fmt.Errorf("asset: %w", err)
+	}
+	return nil
+}
+
+// Get returns the asset assetID of the project projectID, which the actor
+// reads. It returns the errors of project.Service.Get, and ErrNotFound if the
+// project has no such asset.
+func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID, assetID ids.UUID) (Asset, error) {
+	loc, err := s.Locate(ctx, actor, projectID, assetID, false)
+	if err != nil {
+		return Asset{}, err
+	}
+	return loc.Asset, nil
+}
+
+// Located is an asset's file, or its thumbnail, that the actor may read.
+type Located struct {
+	// Asset is the asset.
+	Asset Asset
+	// Key is the key of the file, or of its thumbnail, in the store, which
+	// is unique to its content.
+	Key string
+	// ContentType is the file's type.
+	ContentType string
+}
+
+// Locate returns the file of the asset assetID of the project projectID, or
+// its thumbnail if thumbnail is set, which the actor reads, once it has
+// checked that they may, in a transaction of the project's workspace,
+// which reads none of the file. The thumbnail of an asset whose thumbnail
+// job has not run yet is its file. It returns the errors of Get.
+func (s *Service) Locate(ctx context.Context, actor commands.Actor, projectID, assetID ids.UUID, thumbnail bool) (
+	Located, error) {
+	workspaceID, err := s.projects.ActorWorkspace(ctx, actor, projectID)
+	if err != nil {
+		return Located{}, err
+	}
+	var out Located
+	err = s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
+		if _, err := s.projects.GetIn(ctx, tx, actor, workspaceID, projectID); err != nil {
+			return err
+		}
+		a, err := queries.New(tx).Asset(ctx, queries.AssetParams{WorkspaceID: nullUUID(workspaceID),
+			ProjectID: nullUUID(projectID), ID: nullUUID(assetID)})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return ErrNotFound
+		case err != nil:
+			return fmt.Errorf("asset: read the asset: %w", err)
+		}
+		out = Located{Asset: assetOf(a), Key: a.StorageKey, ContentType: a.Mime}
+		if thumbnail && a.ThumbnailKey.Valid && a.ThumbnailKey.String != a.StorageKey {
+			out.Key, out.ContentType = a.ThumbnailKey.String, MimePNG
+		}
+		return nil
+	})
+	if err != nil {
+		return Located{}, err
+	}
+	return out, nil
+}
+
+// Served is how a located file is served: from URL, which the store signed,
+// or else from Body, of Size bytes, which the caller closes.
+type Served struct {
+	URL  string
+	Body io.ReadCloser
+	Size int64
+}
+
+// Serve returns how to serve loc, which Locate returned once it had checked
+// the actor's access: a URL that the store signs for 5 minutes, with the
+// file's type and Content-Disposition fixed in it, or else the file itself.
+// It returns ErrNotFound if the store lost the file.
+func (s *Service) Serve(ctx context.Context, loc Located) (Served, error) {
+	store, err := s.storage.Store(ctx)
+	if err != nil {
+		return Served{}, err
+	}
+	url, ok, err := store.SignedURL(ctx, loc.Key, signedURLLifetime, loc.ContentType, Disposition(loc))
+	switch {
+	case err != nil:
+		return Served{}, fmt.Errorf("asset: %w", err)
+	case ok:
+		return Served{URL: url}, nil
+	}
+	body, info, err := store.Open(ctx, loc.Key)
+	switch {
+	case errors.Is(err, blob.ErrNotFound):
+		return Served{}, ErrNotFound
+	case err != nil:
+		return Served{}, fmt.Errorf("asset: %w", err)
+	}
+	return Served{Body: body, Size: info.Size}, nil
+}
+
+// Disposition returns the Content-Disposition of loc: inline for an image,
+// and an attachment for any other type, which a browser then saves rather
+// than shows (FR-ASSET-02 AC3), with a file name made of the asset's ID and
+// the extension of its key.
+func Disposition(loc Located) string {
+	kind := "attachment"
+	if strings.HasPrefix(loc.ContentType, "image/") {
+		kind = "inline"
+	}
+	return kind + `; filename="` + loc.Asset.ID + path.Ext(loc.Key) + `"`
+}
+
+// blobKey returns the key of the blob of the workspace whose content has the
+// hash sum, of the extension ext: {workspace}/{sha256}.{ext}.
+func blobKey(workspaceID ids.UUID, sum []byte, ext string) string {
+	return workspaceID.String() + "/" + hex.EncodeToString(sum) + "." + ext
+}
+
+// thumbnailKey returns the key of the thumbnail of the blob of the workspace
+// whose content has the hash sum: {workspace}/{sha256}.thumb.png.
+func thumbnailKey(workspaceID ids.UUID, sum []byte) string {
+	return workspaceID.String() + "/" + hex.EncodeToString(sum) + ".thumb.png"
+}
+
+// lockBlob takes the lock of the workspace's blob of the content whose hash
+// is sum until the transaction of q ends (database.BlobLock). Its second
+// integer is a hash of the workspace and the content, so two blobs may share
+// one, which only makes their changes take turns.
+func lockBlob(ctx context.Context, q *queries.Queries, workspaceID ids.UUID, sum []byte) error {
+	h := fnv.New32a()
+	h.Write(workspaceID[:])
+	h.Write(sum)
+	if err := q.LockBlob(ctx, queries.LockBlobParams{Class: database.BlobLock, Object: int32(h.Sum32())}); err != nil {
+		return fmt.Errorf("asset: lock the blob: %w", err)
+	}
+	return nil
+}
+
+// textOf returns s as a text column.
+func textOf(s string) pgtype.Text {
+	return pgtype.Text{String: s, Valid: true}
+}
+
+// nullUUID returns id as a uuid column, null if id is zero.
+func nullUUID(id ids.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: id != (ids.UUID{})}
+}

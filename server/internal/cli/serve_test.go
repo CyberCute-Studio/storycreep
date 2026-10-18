@@ -130,7 +130,7 @@ func TestServeRefusesPlainHTTPInHostedMode(t *testing.T) {
 	env := map[string]string{"STORYCREEP_MODE": "hosted", "STORYCREEP_PUBLIC_URL": "http://storycreep.example.com",
 		"STORYCREEP_DATABASE_URL": testDatabaseURL, "STORYCREEP_HTTP_ADDR": addr, "STORYCREEP_ADMIN_ADDR": "off",
 		"STORYCREEP_METRICS_TOKEN": "test-metrics-token-0123456789", "STORYCREEP_SMTP_URL": "smtp://smtp.example.com",
-		"STORYCREEP_SMTP_FROM": "noreply@example.com"}
+		"STORYCREEP_SMTP_FROM": "noreply@example.com", "STORYCREEP_ASSET_STORAGE": "s3://key:secret@s3.example.com/bucket"}
 	code, stdout, stderr := run(t, env, "serve", "--no-auto-migrate")
 	if code != ExitFailure || stdout != "" || !strings.Contains(stderr, "\n  STORYCREEP_PUBLIC_URL (") ||
 		!strings.Contains(stderr, "hosted mode requires an https URL") {

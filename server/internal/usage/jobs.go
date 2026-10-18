@@ -97,8 +97,9 @@ func RollUp(ctx context.Context, db DB) error {
 // counts. APIRequests has none, because no rows but its deltas record the
 // requests that it counts.
 var drifts = map[Key]func(q *queries.Queries, ctx context.Context, workspaceID pgtype.UUID) (int64, error){
-	Projects: (*queries.Queries).ProjectDrift,
-	Members:  (*queries.Queries).MemberDrift,
+	Projects:     (*queries.Queries).ProjectDrift,
+	Members:      (*queries.Queries).MemberDrift,
+	StorageBytes: (*queries.Queries).StorageDrift,
 }
 
 // Reconcile corrects every workspace's usage of each key that a recount can

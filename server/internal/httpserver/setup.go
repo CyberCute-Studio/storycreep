@@ -25,6 +25,7 @@ type setupBody struct {
 	SignupPolicyFixed bool   `json:"signup_policy_fixed" doc:"Whether the configuration sets the signup policy, with STORYCREEP_SIGNUP, or because the instance is hosted, which then overrides the policy that setup records, for as long as it sets it. A setup screen offers no choice of policy then."`
 	SignupPolicy      string `json:"signup_policy" enum:"closed,invite,open" doc:"The signup policy that the configuration sets, if it sets one, or else the one that setup records when the request names none: closed."`
 	SMTPFixed         bool   `json:"smtp_fixed" doc:"Whether the configuration sets the SMTP server, with STORYCREEP_SMTP_URL, which then overrides the one that setup records, for as long as it sets it. A setup screen asks for no SMTP server then."`
+	StorageFixed      bool   `json:"storage_fixed" doc:"Whether the configuration sets where the files of the assets are stored, with STORYCREEP_ASSET_STORAGE, which then overrides the bucket that setup records, for as long as it sets it. A setup screen asks for no bucket then."`
 }
 
 type setupOutput struct {
@@ -57,6 +58,18 @@ type setupSMTPBody struct {
 	From     string `json:"from" maxLength:"320" doc:"The address that the instance's email comes from, alone or with a name, as Storycreep <noreply@example.com>, which the server must let it send from"`
 }
 
+// setupStorageBody is the bucket in the body of POST /api/v1/setup. The
+// limits are package config's.
+type setupStorageBody struct {
+	Host            string `json:"host" maxLength:"253" doc:"The host name or IP address of the S3-compatible object storage, as s3.eu-central-1.amazonaws.com, which the users' browsers must reach too, because they read the files through URLs of it that the server signs"`
+	Port            int    `json:"port,omitempty" minimum:"1" maximum:"65535" doc:"The storage's port; without it, 443 for tls and 80 for none"`
+	Security        string `json:"security,omitempty" enum:"tls,none" doc:"How the connection is protected: tls, HTTPS, which is the default, or none, plain HTTP, for a storage on the same host or network"`
+	Bucket          string `json:"bucket" maxLength:"63" doc:"The bucket, which must exist: 3 to 63 lowercase letters, digits, dots, and hyphens"`
+	Region          string `json:"region,omitempty" maxLength:"64" doc:"The bucket's region, as eu-central-1; without it, us-east-1, which MinIO and most S3-compatible storages take"`
+	AccessKeyID     string `json:"access_key_id" maxLength:"256" doc:"The access key ID of the keys that read, write, list, and delete the bucket's objects"`
+	SecretAccessKey string `json:"secret_access_key" maxLength:"256" doc:"The secret key of those keys"`
+}
+
 // completeSetupBody is the body of POST /api/v1/setup.
 type completeSetupBody struct {
 	SetupCode    string             `json:"setup_code" maxLength:"64" doc:"The setup code, which the server writes to its log while setup is pending, as 7K2M-Q9XD-4RTB-H8VW. Case, hyphens, and spaces do not matter, and O is read as 0, and I and L as 1."`
@@ -64,6 +77,7 @@ type completeSetupBody struct {
 	Workspace    setupWorkspaceBody `json:"workspace" doc:"The first workspace, which the owner owns, and which is the owner's personal workspace. Its default locale is STORYCREEP_DEFAULT_LOCALE."`
 	SignupPolicy string             `json:"signup_policy,omitempty" enum:"closed,invite,open" doc:"Who can register an account once setup has completed: closed (no one), invite (people holding an invitation), or open (anyone). Without it, closed. STORYCREEP_SIGNUP overrides it for as long as it is set, as GET /api/v1/setup says."`
 	SMTP         *setupSMTPBody     `json:"smtp,omitempty" doc:"The SMTP server that the instance sends its email through: the links that verify an email address and reset a password. Without it, the instance sends no email, and an instance admin gives out the links as text. STORYCREEP_SMTP_URL overrides it for as long as it is set, as GET /api/v1/setup says. Setup does not connect to it."`
+	Storage      *setupStorageBody  `json:"storage,omitempty" doc:"The bucket of an S3-compatible object storage that stores the files of the assets, the images that users upload. Without it, the server stores them in its asset directory, /var/lib/storycreep/assets. STORYCREEP_ASSET_STORAGE overrides it for as long as it is set, as GET /api/v1/setup says. Setup does not connect to it."`
 }
 
 type completeSetupInput struct {
@@ -108,7 +122,7 @@ func registerSetup(m *api.Mux, setups *setup.Service) {
 		Path:        setupPath,
 		Summary:     "Get what first-run setup asks for",
 		Description: "Tells a setup screen that the instance's first-run setup is pending, and whether it can " +
-			"choose the signup policy and the SMTP server." + setupDoc,
+			"choose the signup policy, the SMTP server, and the bucket of the assets' files." + setupDoc,
 		Tags: []string{"Setup"},
 	}, func(ctx context.Context, _ *struct{}) (*setupOutput, error) {
 		st, err := setups.Status(ctx)
@@ -119,7 +133,7 @@ func registerSetup(m *api.Mux, setups *setup.Service) {
 			return nil, api.NewError(api.CodeNotFound)
 		}
 		return &setupOutput{Body: setupBody{SignupPolicyFixed: st.SignupFixed, SignupPolicy: string(st.Signup),
-			SMTPFixed: st.SMTPFixed}}, nil
+			SMTPFixed: st.SMTPFixed, StorageFixed: st.StorageFixed}}, nil
 	})
 
 	api.Register(m, api.Public, huma.Operation{
@@ -128,12 +142,12 @@ func registerSetup(m *api.Mux, setups *setup.Service) {
 		Path:        setupPath,
 		Summary:     "Complete first-run setup",
 		Description: "Completes the instance's first-run setup, once: creates the first owner's account, which is " +
-			"an instance admin, and the first workspace, which the owner owns, and records the signup policy and " +
-			"the SMTP server. " +
+			"an instance admin, and the first workspace, which the owner owns, and records the signup policy, " +
+			"the SMTP server, and the bucket of the assets' files. " +
 			"Until then, POST /api/v1/auth/register answers 403 setup_required, whatever the policy. The setup " +
 			"code, which the server writes to its log while setup is pending, must be the instance's, or the " +
 			"answer is 403 invalid_setup_code. A field that the request does not allow, as an SMTP server's host " +
-			"that is not one, or a username without a password, or an email address " +
+			"that is not one, a username without a password, a bucket's name in capitals, or an email address " +
 			"that has an account, as one that storycreep create-user made, is answered with 422 " +
 			"validation_failed. Of two setups at once, one completes, and the other is answered with 404 " +
 			"not_found. The owner then signs in with POST /api/v1/auth/login." + setupDoc,
@@ -151,6 +165,7 @@ func registerSetup(m *api.Mux, setups *setup.Service) {
 			WorkspaceSlug: in.Body.Workspace.Slug,
 			Signup:        config.SignupPolicy(in.Body.SignupPolicy),
 			SMTP:          in.Body.SMTP.settings(),
+			S3:            in.Body.Storage.settings(),
 		}, clientFrom(ctx))
 		if err != nil {
 			return nil, setupError(err)
@@ -167,6 +182,29 @@ func (b *setupSMTPBody) settings() *config.SMTP {
 	}
 	return &config.SMTP{Host: b.Host, Port: b.Port, Security: config.SMTPSecurity(b.Security), Username: b.Username,
 		Password: secret.New(b.Password), From: b.From}
+}
+
+// settings returns the bucket of b, with the defaults of the fields that it
+// leaves out, as config.ParseS3URL fills them in, or nil if b is nil.
+func (b *setupStorageBody) settings() *config.S3 {
+	if b == nil {
+		return nil
+	}
+	s := &config.S3{Host: b.Host, Port: b.Port, Security: config.S3Security(b.Security), Bucket: b.Bucket,
+		Region: b.Region, AccessKeyID: b.AccessKeyID, SecretAccessKey: secret.New(b.SecretAccessKey)}
+	if s.Security == "" {
+		s.Security = config.S3TLS
+	}
+	if s.Port == 0 {
+		s.Port = 443
+		if s.Security == config.S3None {
+			s.Port = 80
+		}
+	}
+	if s.Region == "" {
+		s.Region = config.DefaultS3Region
+	}
+	return s
 }
 
 // setupError returns the error that the API answers err with, an error of

@@ -77,6 +77,9 @@ services:
       - ../..:/src:ro
       - go-modules:/go/pkg/mod
       - go-build:/root/.cache/go-build
+      # The files that users upload, in the directory that the server
+      # stores them in by default, so that they outlast the container.
+      - assets:/var/lib/storycreep/assets
     stop_grace_period: 30s
     develop:
       watch:
@@ -95,3 +98,5 @@ volumes:
     name: storycreep-dev_go-modules
   go-build:
     name: storycreep-dev_go-build
+  assets:
+    name: storycreep-dev_assets

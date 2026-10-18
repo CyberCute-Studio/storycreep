@@ -52,6 +52,69 @@ describe("the API client", () => {
     }
   });
 
+  it("sends a file as it is, with its own type", async () => {
+    const { fetch, calls } = fakeFetch(
+      () => new Response(null, { status: 204 }),
+    );
+    const picture = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], {
+      type: "image/png",
+    });
+    const answer = await createClient<Operations>(routes, {
+      baseUrl,
+      fetch,
+    }).call("putThingPicture", { path: { id: "t1" }, body: picture });
+    expect(calls[0].init.method).toBe("PUT");
+    expect(calls[0].init.body).toBe(picture);
+    const headers = new Headers(calls[0].init.headers);
+    expect(headers.get("Content-Type")).toBe("image/png");
+    expect(answer.status).toBe(204);
+  });
+
+  it("sends a file without a type as bytes", async () => {
+    const { fetch, calls } = fakeFetch(
+      () => new Response(null, { status: 204 }),
+    );
+    await createClient<Operations>(routes, { baseUrl, fetch }).call(
+      "putThingPicture",
+      { path: { id: "t1" }, body: new Blob(["raw"]) },
+    );
+    expect(new Headers(calls[0].init.headers).get("Content-Type")).toBe(
+      "application/octet-stream",
+    );
+  });
+
+  it("reads the answer of an operation that answers with a file as a Blob", async () => {
+    const { fetch, calls } = fakeFetch(
+      () =>
+        new Response(new Uint8Array([1, 2, 3]), {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        }),
+    );
+    const answer = await createClient<Operations>(routes, {
+      baseUrl,
+      fetch,
+    }).call("getThingPicture", { path: { id: "t1" } });
+    expect(new Headers(calls[0].init.headers).get("Accept")).toBeNull();
+    expect(answer.status).toBe(200);
+    if (answer.status === 200) {
+      expect(answer.body).toBeInstanceOf(Blob);
+      expect(answer.body.type).toBe("image/png");
+      expect(new Uint8Array(await answer.body.arrayBuffer())).toEqual(
+        new Uint8Array([1, 2, 3]),
+      );
+    }
+  });
+
+  it("refuses JSON where it expects a file", async () => {
+    const { fetch } = fakeFetch(() => json(200, { not: "a file" }));
+    const call = createClient<Operations>(routes, { baseUrl, fetch }).call(
+      "getThingPicture",
+      { path: { id: "t1" } },
+    );
+    await expect(call).rejects.toThrow("not a file");
+  });
+
   it("throws the error envelope as an ApiError", async () => {
     const envelope = {
       error: {

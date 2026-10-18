@@ -60,6 +60,16 @@ const (
 // whose second integer is the workspace's key's own. It spells "usag".
 const UsageLock int32 = 0x75736167
 
+// BlobLock is the class of the transaction-scoped advisory locks that
+// package asset takes of a workspace's blob, by its content's hash, whose
+// second integer is the blob's own (PRD FR-ASSET-01): an upload holds it
+// while it stores the blob and adds the row that refers to it, the
+// thumbnail job while it stores a thumbnail and records it, and the orphan
+// reconciliation while it checks that no row refers to a blob and deletes
+// the blob, so that it never deletes a blob that a row is about to refer
+// to. It spells "blob".
+const BlobLock int32 = 0x626c6f62
+
 // timeoutsOff switches off the timeouts that the server, the database, or the
 // login set and that would end a wait for an advisory lock early, or end an
 // idle session and with it the locks it holds: for the session, or, if $1 is

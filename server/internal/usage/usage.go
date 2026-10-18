@@ -71,7 +71,9 @@ const (
 	// Members is how many memberships a workspace has, guests' included. It
 	// is counted exactly.
 	Members Key = "members"
-	// StorageBytes is how many bytes a workspace's stored files take up.
+	// StorageBytes is how many bytes a workspace's stored files take up:
+	// each blob of its assets once, however many assets share it, but not
+	// the thumbnails that the server derives (package asset).
 	StorageBytes Key = "storage_bytes"
 	// Snapshots is how many snapshots a workspace's projects have. It is
 	// counted exactly.

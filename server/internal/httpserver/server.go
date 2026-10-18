@@ -100,8 +100,9 @@ type Options struct {
 	// rate limit cleanup (package ratelimit), the rollup and the
 	// reconciliation of usage (package usage), the purge of the projects in
 	// the trash (package project), and the pruning of the command batches'
-	// idempotency records (package commands). The plan items that add jobs
-	// register them in serverJobs.
+	// idempotency records (package commands), and the thumbnails of the
+	// assets and the reconciliation of their blobs (package asset). The plan
+	// items that add jobs register them in serverJobs.
 	Jobs *jobs.Registry
 }
 
@@ -393,6 +394,7 @@ func (s *server) serverJobs() *jobs.Registry {
 	usage.RegisterJobs(r)
 	project.RegisterJobs(r)
 	commands.RegisterJobs(r)
+	s.assets.RegisterJobs(r)
 	return r
 }
 
