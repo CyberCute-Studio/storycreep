@@ -39,6 +39,8 @@ func TestMatrix(t *testing.T) {
 		ManageWorkspaceSettings: {y, y, n, n, n},
 		// Create/delete projects (W).
 		ManageProjects: {y, y, n, n, n},
+		// Manage project grants (W).
+		ManageProjectGrants: {y, y, n, n, n},
 		// Read project content, run play mode, view dependencies (P).
 		ReadProject: {y, y, y, y, y},
 		// Change project settings, including publish_min_role (P).

@@ -24,3 +24,13 @@ type Project struct {
 	CreatedBy       pgtype.UUID
 	UpdatedBy       pgtype.UUID
 }
+
+type ProjectGrant struct {
+	ID           pgtype.UUID
+	WorkspaceID  pgtype.UUID
+	MembershipID pgtype.UUID
+	ProjectID    pgtype.UUID
+	Role         string
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}

@@ -45,6 +45,11 @@ const (
 	// trash, listing its trash, and restoring them, which needs owner or admin
 	// in the workspace (§5.6 "Create/delete projects").
 	ManageProjects Capability = "workspace.projects"
+	// ManageProjectGrants is listing, setting, and removing the members'
+	// grants on a workspace's projects, which needs owner or admin in the
+	// workspace, and owner for a grant of an owner (§5.6 "Manage project
+	// grants", FR-TEN-04).
+	ManageProjectGrants Capability = "workspace.grants"
 	// ReadProject is reading a project, which needs an effective role on it
 	// other than none (§5.5).
 	ReadProject Capability = "project.read"
@@ -74,6 +79,7 @@ var capabilities = map[Capability]bool{
 	ManageMembers:           true,
 	ListProjects:            true,
 	ManageProjects:          true,
+	ManageProjectGrants:     true,
 	ReadProject:             true,
 	ChangeProjectSettings:   true,
 	ManageInstance:          true,

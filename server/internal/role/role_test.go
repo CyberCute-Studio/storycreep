@@ -1,6 +1,9 @@
 package role
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // memberships are the roles that a membership can have, None for a user who
 // is not a member, and a value that is no role, which must fail closed.
@@ -100,5 +103,21 @@ func TestAtLeast(t *testing.T) {
 				t.Errorf("%s and %q are ordered", r, nothing)
 			}
 		}
+	}
+}
+
+// TestGrants checks that Grants lists exactly the roles that a grant of a
+// member resolves to on the project, Effective's own reading of what a grant
+// can be: every role that allows something but owner.
+func TestGrants(t *testing.T) {
+	t.Parallel()
+	var want []Role
+	for _, g := range grants {
+		if g != None && (Policy{}).Effective(false, Viewer, g) == g {
+			want = append(want, g)
+		}
+	}
+	if got := Grants(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("Grants() = %v, want %v", got, want)
 	}
 }

@@ -129,6 +129,21 @@ const (
 	// of the project, its actor (FR-SNAP-01 AC6). It belongs to the
 	// project's workspace, and its subject is the project.
 	ActionProjectPublishPolicyChange Action = "project.publish_policy_change"
+	// ActionProjectGrantCreate is a member's new grant on a project, with the
+	// role that its metadata's role names, which replaces the member's role
+	// in the workspace on that project, by an owner or admin of the
+	// workspace, its actor (FR-TEN-04). ActionProjectGrantChange is a change
+	// of a grant's role, from its metadata's previous_role to its role, and
+	// ActionProjectGrantRemove is a grant's removal, after which the member
+	// acts on the project with their role in the workspace again, with the
+	// grant's role as its role. Each belongs to the workspace, its subject is
+	// the membership, and its metadata's project_id names the project. The
+	// grants that the removal of a membership, or the purge of a project,
+	// deletes are recorded by that (ActionMembershipRemove,
+	// ActionProjectPurge).
+	ActionProjectGrantCreate Action = "project_grant.create"
+	ActionProjectGrantChange Action = "project_grant.change"
+	ActionProjectGrantRemove Action = "project_grant.remove"
 	// ActionInstanceAdminGrant makes an account an instance admin, as the
 	// operator's storycreep create-user --instance-admin and grant-role do,
 	// and ActionInstanceAdminRevoke makes it no longer one, as grant-role
@@ -206,6 +221,12 @@ var events = []eventSpec{
 	{action: ActionProjectPurge, inWorkspace: true, subject: "project", results: []Result{ResultSuccess}},
 	{action: ActionProjectPublishPolicyChange, inWorkspace: true, subject: "project", results: []Result{ResultSuccess},
 		metadata: []string{"publish_min_role", "previous_publish_min_role"}},
+	{action: ActionProjectGrantCreate, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
+		metadata: []string{"project_id", "role"}},
+	{action: ActionProjectGrantChange, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
+		metadata: []string{"project_id", "role", "previous_role"}},
+	{action: ActionProjectGrantRemove, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
+		metadata: []string{"project_id", "role"}},
 	{action: ActionInstanceAdminGrant, subject: "user", results: []Result{ResultSuccess}},
 	{action: ActionInstanceAdminRevoke, subject: "user", results: []Result{ResultSuccess}},
 }
