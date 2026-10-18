@@ -307,7 +307,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-ENT-02 AC1, AC2, AC4, and AC5 pass, and the FR-ENT-01 AC1 test for `members` reaches the limit through both invite acceptance and `grant-role`. AC3 creates nodes and lands in item 35.
 
 ### 24. Project lifecycle
-**Status:** todo · **Depends on:** 23
+**Status:** done ([#27](https://github.com/CyberCute-Studio/storycreep/pull/27)) · **Depends on:** 23
 **PRD:** FR-PROJ-01 (AC2, AC3), FR-SNAP-01 (AC3 and AC6, setting only), FR-ENT-01 (`projects` limit), FR-TEN-04 (AC2, project list)
 - Project routes and commands: create, rename, describe, archive, unarchive, and soft delete with 30-day restore. A hard-delete job. The `projects` limit, its usage deltas, and its recount for reconciliation (N31, N32).
 - The project's `rev`, and the project as an entity of the command registry, so that its commands carry `expected_rev` (N30).
