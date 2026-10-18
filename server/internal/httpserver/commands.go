@@ -251,7 +251,9 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 				"the list, and is answered with 200 and a result of each, applied or rejected with its error, so "+
 				"that a rejected batch, of any of the refusals above, never keeps the later ones from applying. "+
 				"A body that is neither form, or has more than %d batches, is answered with 422 "+
-				"validation_failed, and a batch of more than %d commands is rejected so. The body is at most "+
+				"validation_failed, and a batch of more than %d commands is rejected so. A body that is not one "+
+				"strict JSON value, as one with a key twice in an object, anywhere in it, is answered with 400 "+
+				"invalid_request, as on every route. The body is at most "+
 				"%d MB, as every route's, and a larger one is answered with 413 request_too_large, so that a "+
 				"request of many large batches may need to be split.", maxBatches, maxBatchCommands,
 				api.DefaultMaxBodyBytes>>20) +
