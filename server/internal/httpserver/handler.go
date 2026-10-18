@@ -331,6 +331,17 @@ func registerDocument(m *api.Mux) {
 	})
 }
 
+// bearerCredential returns the credential of the Bearer scheme (RFC 6750
+// §2.1) that r's Authorization header holds, without the white space around
+// it, and false if the header holds none, as when it names another scheme.
+func bearerCredential(r *http.Request) (string, bool) {
+	scheme, credential, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return "", false
+	}
+	return strings.TrimSpace(credential), true
+}
+
 // requireBearer passes on only the requests that carry token as their bearer
 // token (RFC 6750), and answers the others with unauthenticated. With no
 // token, it passes on every request.
@@ -340,14 +351,14 @@ func requireBearer(token []byte, next http.Handler) http.Handler {
 	}
 	want := sha256.Sum256(token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		scheme, got, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-		if !ok || !strings.EqualFold(scheme, "Bearer") {
+		got, ok := bearerCredential(r)
+		if !ok {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="metrics"`)
 			api.WriteError(w, r, api.NewError(api.CodeUnauthenticated))
 			return
 		}
 		// Comparing hashes takes the same time whatever the token's length.
-		sum := sha256.Sum256([]byte(strings.TrimSpace(got)))
+		sum := sha256.Sum256([]byte(got))
 		if subtle.ConstantTimeCompare(sum[:], want[:]) != 1 {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="metrics", error="invalid_token"`)
 			api.WriteError(w, r, api.NewError(api.CodeUnauthenticated))

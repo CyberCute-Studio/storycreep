@@ -196,7 +196,9 @@ func TestTokenSecretShownOnce(t *testing.T) {
 // workspace's owner, whose role allows everything: a token whose scope
 // grants the route's, itself or by an implication, reaches the operation,
 // and every other is refused with 403 insufficient_scope, which names the
-// route's scope, as a project:read token is on every route that changes
+// route's scope, in its details and in the Bearer scheme's challenge of its
+// WWW-Authenticate header, as a project:read token is on every route that
+// changes
 // something. A token that holds every scope is refused with 403
 // session_required on every route that takes none. The audit log records
 // each token's first refusal, with its reason, and none of the others that
@@ -232,6 +234,10 @@ func TestTokenScopes(t *testing.T) {
 			wantCode(t, where, res, http.StatusForbidden, api.CodeInsufficientScope)
 			if got := res.details(t)["scope"]; got != string(needed) {
 				t.Errorf("%s: details.scope is %v, want %s", where, got, needed)
+			}
+			if got, want := res.header.Get("WWW-Authenticate"), `Bearer realm="storycreep", `+
+				`error="insufficient_scope", scope="`+string(needed)+`"`; got != want {
+				t.Errorf("%s: WWW-Authenticate is %q, want %q", where, got, want)
 			}
 			refused++
 			if held == scope.ProjectRead && c.route.Method != http.MethodGet {
@@ -573,7 +579,9 @@ func tokenIDs(t *testing.T, h http.Handler, si signedIn, path string) []string {
 // revoking one makes it fail at once, and leaves it off the lists, and only
 // an owner or an admin revokes another member's. A field that its schema or
 // the service refuses is answered with 422, and a request that sends no API
-// token in its Authorization header is made with its session.
+// token in its Authorization header is made with its session, or, without
+// one, answered with 401 and, on a route that takes a token, the Bearer
+// scheme's challenge.
 //
 // Verifies: NFR-SEC-05, FR-TEN-07/AC2
 func TestTokenLifecycle(t *testing.T) {
@@ -711,8 +719,19 @@ func TestTokenLifecycle(t *testing.T) {
 	} {
 		projectFrom(t, call(f.s.main, http.MethodGet, projectPath(p), nil, with(h, owner.header(false))),
 			http.StatusOK)
-		wantCode(t, fmt.Sprintf("%v without a session", h), call(f.s.main, http.MethodGet, projectPath(p), nil, h),
-			http.StatusUnauthorized, api.CodeUnauthenticated)
+		res := call(f.s.main, http.MethodGet, projectPath(p), nil, h)
+		wantCode(t, fmt.Sprintf("%v without a session", h), res, http.StatusUnauthorized, api.CodeUnauthenticated)
+		// A route that takes a token asks for one (RFC 6750 §3), and a
+		// session-only route does not.
+		if got := res.header.Get("WWW-Authenticate"); got != `Bearer realm="storycreep"` {
+			t.Errorf("%v without a session: WWW-Authenticate is %q, want the Bearer scheme's challenge", h, got)
+		}
+		res = call(f.s.main, http.MethodGet, workspaceTokensPath(f.ws), nil, h)
+		wantCode(t, fmt.Sprintf("%v without a session, on a session-only route", h), res, http.StatusUnauthorized,
+			api.CodeUnauthenticated)
+		if got := res.header.Get("WWW-Authenticate"); got != "" {
+			t.Errorf("%v without a session, on a session-only route: WWW-Authenticate is %q", h, got)
+		}
 	}
 	// A token needs no CSRF token, and a session still does.
 	write := makeToken(t, f.s.main, owner, workspaceTokensPath(f.ws), "project:write")

@@ -41,8 +41,9 @@ type SessionCSRFInput struct {
 func tokenAuthDoc(s scope.Scope) string {
 	return " It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that " +
 		"holds the scope " + string(s) + ", or a scope that implies it, as Authorization: Bearer <token>; " +
-		"otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope. A " +
-		"request made with a token does no more than the token's owner's role allows at the time."
+		"otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, " +
+		"each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a " +
+		"token does no more than the token's owner's role allows at the time."
 }
 
 // tokenChangeDoc says, in the description of an operation that changes

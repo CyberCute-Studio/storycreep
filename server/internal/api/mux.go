@@ -193,8 +193,9 @@ const (
 
 // WWWAuthenticateHeader names the scheme of the credentials that an answer
 // of 401 unauthenticated wants (RFC 9110 §11.6.1), which package httpserver
-// sets for an API token that is not valid (RFC 6750 §3), and the error
-// response documents (errorResponse).
+// sets, as the challenge of the Bearer scheme (RFC 6750 §3), on a route that
+// takes an API token, for a token that is not valid, and for one without the
+// route's scope, and the error response documents (errorResponse).
 const WWWAuthenticateHeader = "WWW-Authenticate"
 
 // replacedHeaders are the headers that an operation's error replaces, rather

@@ -104,7 +104,9 @@ var codes = []codeSpec{
 			"and a `WWW-Authenticate` header of the `Bearer` scheme with `error=\"invalid_token\"` (RFC 6750), to a " +
 			"request whose `Authorization: Bearer` token is not one, or is revoked or expired, or whose owner's " +
 			"account is not active or is no longer a member of the token's workspace (PRD FR-AUTH-04 AC4); a " +
-			"session-only route answers so too, as it would answer `session_required` to a valid token. A " +
+			"session-only route answers so too, as it would answer `session_required` to a valid token. A route " +
+			"that takes an API token also sends the `Bearer` scheme's challenge, without an `error`, to a request " +
+			"without credentials or with the cookie of a session that has ended. A " +
 			"`Bearer` credential that does not start with `scp_` is not taken for a token, and the request is " +
 			"authenticated by its session cookie instead. `/metrics` answers with it to a request without " +
 			"`STORYCREEP_METRICS_TOKEN` as its bearer token, and its `WWW-Authenticate` header names the scheme."},
@@ -139,9 +141,10 @@ var codes = []codeSpec{
 	{CodeInsufficientScope, http.StatusForbidden, i18n.K("error.insufficient_scope"),
 		"The request was made with an API token that does not hold the scope that the route needs, nor a scope " +
 			"that implies it (PRD FR-AUTH-04 AC2): `project:read` to read a project's draft, which `project:write` " +
-			"implies, and `project:write` to change it. `details.scope` names the scope that the route needs. A " +
-			"token never does more than its owner's role allows either, which is answered with `insufficient_role` " +
-			"when the token holds the scope."},
+			"implies, and `project:write` to change it. `details.scope` names the scope that the route needs, and " +
+			"so does the `WWW-Authenticate` header, with the `Bearer` scheme's `error=\"insufficient_scope\"` and " +
+			"`scope` (RFC 6750 §3.1). A token never does more than its owner's role allows either, which is " +
+			"answered with `insufficient_role` when the token holds the scope."},
 	{CodeSessionRequired, http.StatusForbidden, i18n.K("error.session_required"),
 		"The route takes no API token, whatever its scopes, and needs the session cookie of a signed-in user " +
 			"instead, which `POST /api/v1/auth/login` sets (PRD FR-AUTH-04): every route of an account, its " +

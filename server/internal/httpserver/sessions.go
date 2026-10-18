@@ -195,7 +195,10 @@ func currentFrom(ctx context.Context) (current, error) {
 // changes something, checks its CSRF token first, so that a request without
 // one is refused before the database is asked. A request without the
 // cookie, or with one of a session that has ended, is answered with
-// unauthenticated, and the answer clears the cookie in the second case.
+// unauthenticated, and the answer clears the cookie in the second case. On a
+// route that takes a token, every answer of unauthenticated and of
+// insufficient_scope carries the challenge of the Bearer scheme that RFC 6750
+// §3 gives it, so that a client of the API learns what a token needs there.
 func authenticator(accounts *account.Service, tokens *apitoken.Service, cookie sessionCookie) api.Authenticator {
 	return func(hctx huma.Context, needed scope.Scope) (context.Context, error) {
 		r, _ := humachi.Unwrap(hctx)
@@ -204,7 +207,7 @@ func authenticator(accounts *account.Service, tokens *apitoken.Service, cookie s
 			cred, err := tokens.Authenticate(ctx, value, needed, clientFrom(ctx))
 			switch {
 			case errors.Is(err, apitoken.ErrInvalid):
-				return nil, invalidToken()
+				return nil, unauthenticated(needed, `error="invalid_token"`, nil)
 			case errors.Is(err, apitoken.ErrSessionRequired):
 				return nil, api.NewError(api.CodeSessionRequired)
 			case errors.Is(err, apitoken.ErrInsufficientScope):
@@ -216,14 +219,14 @@ func authenticator(accounts *account.Service, tokens *apitoken.Service, cookie s
 		}
 		value, ok := cookie.read(r)
 		if !ok {
-			return nil, api.NewError(api.CodeUnauthenticated)
+			return nil, unauthenticated(needed, "", nil)
 		}
 		if !safeMethod(r.Method) && !validCSRF(r.Header.Get(csrfHeader), value) {
 			return nil, api.NewError(api.CodeCSRFFailed)
 		}
 		session, err := accounts.Session(ctx, value)
 		if errors.Is(err, account.ErrNoSession) {
-			return nil, signedOut(cookie)
+			return nil, unauthenticated(needed, "", http.Header{"Set-Cookie": {cookie.clear()}})
 		}
 		if err != nil {
 			return nil, err
@@ -240,28 +243,50 @@ func authenticator(accounts *account.Service, tokens *apitoken.Service, cookie s
 // that authenticates its users with a header of its own, as basic
 // authentication, keeps working with the session cookie.
 func bearerToken(r *http.Request) (secret.Value, bool) {
-	scheme, credential, ok := strings.Cut(r.Header.Get("Authorization"), " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") {
-		return secret.Value{}, false
-	}
-	credential = strings.TrimSpace(credential)
-	if !strings.HasPrefix(credential, apitoken.Prefix) {
+	credential, ok := bearerCredential(r)
+	if !ok || !strings.HasPrefix(credential, apitoken.Prefix) {
 		return secret.Value{}, false
 	}
 	return secret.New(credential), true
 }
 
-// invalidToken returns unauthenticated, with the header that RFC 6750 §3
-// gives the answer to a request whose token is not valid.
-func invalidToken() error {
-	return huma.ErrorWithHeaders(api.NewError(api.CodeUnauthenticated),
-		http.Header{api.WWWAuthenticateHeader: {`Bearer realm="storycreep", error="invalid_token"`}})
+// bearerChallenge returns the challenge of the Bearer scheme (RFC 6750 §3)
+// that an answer of the API carries in its WWW-Authenticate header, with the
+// attributes attrs after the realm, if there are any.
+func bearerChallenge(attrs string) string {
+	if attrs == "" {
+		return `Bearer realm="storycreep"`
+	}
+	return `Bearer realm="storycreep", ` + attrs
+}
+
+// unauthenticated returns unauthenticated, with the headers h, if any, and,
+// on a route that takes an API token (needed is not ""), the challenge of the
+// Bearer scheme, with the attributes attrs (bearerChallenge): RFC 6750 §3
+// gives one to the answer to a request without a token as to one whose
+// token is not valid (error="invalid_token"). A session-only route asks for
+// no token, because it takes none, but answers one that is not valid with
+// error="invalid_token" all the same.
+func unauthenticated(needed scope.Scope, attrs string, h http.Header) error {
+	if needed != "" || attrs != "" {
+		if h == nil {
+			h = http.Header{}
+		}
+		h.Set(api.WWWAuthenticateHeader, bearerChallenge(attrs))
+	}
+	if h == nil {
+		return api.NewError(api.CodeUnauthenticated)
+	}
+	return huma.ErrorWithHeaders(api.NewError(api.CodeUnauthenticated), h)
 }
 
 // insufficientScope returns insufficient_scope, for a request made with an
-// API token that does not hold needed.
+// API token that does not hold needed, with the challenge of the Bearer
+// scheme that RFC 6750 §3.1 gives it, which names the scope too.
 func insufficientScope(needed scope.Scope) error {
-	return &api.Error{Code: api.CodeInsufficientScope, Details: map[string]any{"scope": needed}}
+	return huma.ErrorWithHeaders(&api.Error{Code: api.CodeInsufficientScope, Details: map[string]any{"scope": needed}},
+		http.Header{api.WWWAuthenticateHeader: {bearerChallenge(`error="insufficient_scope", scope="` +
+			string(needed) + `"`)}})
 }
 
 // signedOut returns unauthenticated, with the header that clears the
