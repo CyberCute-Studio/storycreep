@@ -337,7 +337,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-AUTH-04 AC1–AC5 pass for the current routes. AC7 needs the snapshot, draft, and authoring exports and lands in item 83.
 
 ### 27. REST surface: token classification and limits
-**Status:** todo · **Depends on:** 7, 26
+**Status:** done ([#30](https://github.com/CyberCute-Studio/storycreep/pull/30)) · **Depends on:** 7, 26
 **PRD:** FR-API-01 (AC1), FR-AUTH-04 (AC6), FR-API-04, FR-ENT-02 (API requests)
 - A route-enumeration gate: every route is either token-capable with a declared scope or session-only (`403 session_required`, which item 26 answers already, N34). This becomes a permanent CI check. The reads of the workspaces and their projects take `snapshot:read`, and every route that no scope fits is session-only (N35).
 - The read, write, and export buckets of item 15 are attached to every route through its declaration, so no route can skip them. RFC 3339 timestamps. `ETag` / `If-None-Match` on large reads (N35).
