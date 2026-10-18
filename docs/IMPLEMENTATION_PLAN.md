@@ -347,7 +347,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-API-01 AC1 and FR-AUTH-04 AC6 pass. FR-API-04 AC1–AC3 hold across the current routes.
 
 ### 28. Command endpoint, idempotency, and multi-batch
-**Status:** todo · **Depends on:** 27
+**Status:** done ([#31](https://github.com/CyberCute-Studio/storycreep/pull/31)) · **Depends on:** 27
 **PRD:** FR-API-03
 - `POST /api/v1/projects/{id}/commands` in single-batch and `{"batches": [...]}` forms, each command with its `expected_rev` beside its payload, and a command ID unique within the project (N30). Each batch of a list is validated and answered on its own; at most 100 batches of at most 1,000 commands. The OpenAPI document describes every type of command with its payload (N36).
 - `idempotency_record` kept for at least 24 h, with a pruning job. Fallback to `applied_command` returning `already_applied`. `422 idempotency_mismatch`. The record remembers `revision_conflict`, `limit_exceeded`, and `project_archived` too (N36).
