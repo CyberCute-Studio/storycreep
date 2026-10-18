@@ -87,6 +87,21 @@ type batchBody struct {
 	Commands []json.RawMessage `json:"commands"`
 }
 
+// UnmarshalJSON decodes the body, which huma does not validate, with its keys
+// written exactly as its schema names them (commands.DecodeObject), as huma's
+// validation has the API's other bodies (PRD FR-API-01 AC2).
+func (b *commandsBody) UnmarshalJSON(data []byte) error {
+	type plain commandsBody
+	return commands.DecodeObject(data, (*plain)(b))
+}
+
+// UnmarshalJSON decodes a batch of a list, as commandsBody's UnmarshalJSON
+// decodes the body.
+func (b *batchBody) UnmarshalJSON(data []byte) error {
+	type plain batchBody
+	return commands.DecodeObject(data, (*plain)(b))
+}
+
 type commandsInput struct {
 	SessionCSRFInput
 	ProjectID string `path:"project_id" doc:"The project's ID"`
@@ -204,7 +219,9 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline, registry *command
 			"{\"commands\": [...]}, or a list of batches, {\"batches\": [{\"commands\": [...]}, ...]}. A batch " +
 			"applies whole, in one transaction, or not at all, and is one step of undo. Each command is authorised " +
 			"by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and " +
-			"a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required." +
+			"a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A " +
+			"batch with a command that only a session may apply, as deleting or restoring the project, which an " +
+			"API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04)." +
 			projectNotFoundDoc + tokenNotFoundDoc + " Every expected_rev of a batch is checked against the " +
 			"entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose " +
 			"details hold the entities' current revisions and states. An archived project refuses a batch with " +
@@ -294,10 +311,7 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline, registry *command
 // API answers it with (commandError).
 func applyBatch(ctx context.Context, pipeline *commands.Pipeline, actor commands.Actor, projectID ids.UUID,
 	raw []json.RawMessage, at string) (commands.Result, error) {
-	if len(raw) > maxBatchCommands {
-		return commands.Result{}, bodyProblem(at, fmt.Sprintf("has more than %d commands", maxBatchCommands))
-	}
-	cmds, err := pipeline.Parse(raw)
+	cmds, err := pipeline.Parse(raw, maxBatchCommands)
 	if err != nil {
 		return commands.Result{}, commandError(err, at)
 	}
@@ -351,6 +365,8 @@ func commandError(err error, at string) error {
 		return api.NewError(api.CodeInsufficientRole)
 	case errors.Is(err, commands.ErrOwnerRequired):
 		return api.NewError(api.CodeOwnerRequired)
+	case errors.Is(err, commands.ErrSessionRequired):
+		return api.NewError(api.CodeSessionRequired)
 	case errors.As(err, &insufficient):
 		return insufficientScope(insufficient.Scope)
 	case errors.Is(err, commands.ErrProjectArchived):

@@ -28,7 +28,8 @@
 // and the jobs of its commands, and what they add to the workspace's usage,
 // are written in the same transaction (Tx.Audit, Tx.Enqueue, Tx.AddUsage),
 // and once it commits, the Notifier is told its seq (§10.2 step 7). A batch
-// that does not apply changes nothing at all (FR-API-03 AC2).
+// that does not apply changes nothing of the project at all (FR-API-03 AC2):
+// at most, its refusal is remembered, in its idempotency record.
 //
 // A batch applied with an API token is authorised by its owner's roles, as
 // any other, and by the token on top (FR-AUTH-04, §5.6): a token that does
@@ -39,12 +40,17 @@
 // refused with a *scope.InsufficientError that names the scope (AC2),
 // whatever the owner's role.
 //
+// A batch applied with an API token with a command that only a session may
+// apply (Spec.SessionOnly), as deleting the project, which FR-AUTH-04 makes
+// session-only, is refused with ErrSessionRequired, whatever its scopes.
+//
 // A command's ID makes it idempotent (FR-API-03). Every batch that applies,
-// and every batch that its project's state refuses before any of its
-// commands applies, which is archived, past a limit, or of stale revisions,
-// has an idempotency record of its answer, which the pruning job keeps for
-// RecordRetention (Prune); every command of a batch that applies has a row of
-// applied_command too, which is kept for as long as the project exists. A
+// and every batch that a client sent (Parse) that its project's state
+// refuses before any of its commands applies, which is archived, past a
+// limit, or of stale revisions, has an idempotency record of its answer,
+// which the pruning job keeps for RecordRetention (Prune); every command of
+// a batch that applies has a row of applied_command too, which is kept for
+// as long as the project exists. A
 // batch sent again, once its actor is authorised and the project's lock is
 // held, before the project's state or the workspace's limits are checked
 // (§10.2 step 4), is answered from them, and nothing applies again: as it was
@@ -110,6 +116,11 @@ var (
 	// names the scope, for a batch applied with an API token that does not
 	// hold the scope of one of its commands (Spec.Scope, FR-AUTH-04 AC2).
 	ErrInsufficientScope = scope.ErrInsufficientScope
+	// ErrSessionRequired is returned for a batch applied with an API token
+	// with a command that no token may apply, whatever its scopes
+	// (Spec.SessionOnly, FR-AUTH-04), as deleting the project. The API
+	// answers it with 403 session_required.
+	ErrSessionRequired = errors.New("commands: only a session may apply the command, not an API token")
 )
 
 // Ref names an entity: its kind and its ID.
@@ -139,6 +150,28 @@ type Command struct {
 	// the client read, not one that an earlier command of the batch gives,
 	// and an entity that the batch creates has none to expect.
 	ExpectedRev map[Ref]int64
+
+	// sent marks a command that Parse read from a client's JSON, with an ID
+	// that the client made, and may send again, as when the answer was lost.
+	// A refusal that the pipeline remembers is recorded only for a batch of
+	// such commands (refusalOf): the batches of the server's own, as package
+	// project's, whose IDs it makes anew for each, nobody sends again, so
+	// their refusals commit nothing.
+	sent bool
+	// keys are the keys of ExpectedRev as the client wrote them, by entity,
+	// for a command that Parse read, so that a problem of one is located where
+	// the client wrote it, as nd_01hq8z… in lowercase, which names the same
+	// entity as nd_01HQ8Z….
+	keys map[Ref]string
+}
+
+// key returns the key of the entity ref in c's ExpectedRev, as the client
+// wrote it, or as the API writes the entity's ID if no client did.
+func (c Command) key(ref Ref) string {
+	if k, ok := c.keys[ref]; ok {
+		return k
+	}
+	return encodeRef(ref)
 }
 
 // Actor is who applies a batch.
@@ -278,16 +311,23 @@ func (p *Pipeline) Collector() prometheus.Collector {
 // exist, its workspace's deletion is pending, the actor's effective role on
 // it is none, or it is in the trash and a command does not apply there
 // (Spec.Trashed), or the actor's API token does not cover the project;
-// ErrInsufficientScope, as a *scope.InsufficientError, if the token does not
-// hold a command's scope (Spec.Scope);
-// ErrInsufficientRole or ErrOwnerRequired if the actor's role
-// does not allow a command's operation; ErrProjectArchived if the project is
-// archived and a command does not apply to it then (Spec.Archived); an
-// *entitlements.LimitError if the
-// batch would take the workspace past a limit of its plan; a
-// *RevisionConflictError if a command's expected revision is stale; and an
-// error that wraps a command's own if a command refuses the batch. Whatever
-// it returns but a Result, it changes nothing.
+// ErrSessionRequired if the actor acts with an API token, and a command is
+// one that only a session may apply (Spec.SessionOnly); ErrInsufficientScope,
+// as a *scope.InsufficientError, if the token does not hold a command's
+// scope (Spec.Scope); ErrInsufficientRole or ErrOwnerRequired if the actor's
+// role does not allow a command's operation; an *IdempotencyMismatchError if
+// some of the batch's commands were applied before, and others were not;
+// ErrProjectArchived if the project is archived and a command does not apply
+// to it then (Spec.Archived); an *entitlements.LimitError if the batch would
+// take the workspace past a limit of its plan; a *RevisionConflictError if a
+// command's expected revision is stale; and an error that wraps a command's
+// own if a command refuses the batch. A batch that was sent before is
+// answered as it was, and applies nothing again (FR-API-03): with the Result
+// that it had, or with the error that refused it, if its idempotency record
+// remembers that refusal, without checking it again. Whatever Apply returns
+// but a Result, it changes nothing of the project: at most, for a batch that
+// a client sent (Parse) that the project's state or the limits refuse, it
+// records that refusal as the batch's idempotency record.
 func (p *Pipeline) Apply(ctx context.Context, actor Actor, projectID ids.UUID, batch []Command) (Result, error) {
 	start := time.Now()
 	cmds, err := p.registry.decode(batch)
@@ -347,8 +387,12 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		if err != nil {
 			return err
 		}
-		// A token needs the scope of each command, whatever its owner's role
-		// allows.
+		// A token may apply no command that only a session may, whatever its
+		// scopes, and needs the scope of each other command, whatever its
+		// owner's role allows.
+		if actor.Token != nil && slices.ContainsFunc(cmds, func(c decoded) bool { return c.spec.sessionOnly }) {
+			return ErrSessionRequired
+		}
 		for _, c := range cmds {
 			if !actor.Token.Allows(c.spec.scope) {
 				return &scope.InsufficientError{Scope: c.spec.scope}
@@ -448,13 +492,15 @@ func (e *rememberedError) Unwrap() error { return e.err }
 // which is archived if archivedProject is set: it checks the project's state,
 // the limits, and the revisions, applies the commands, and records the
 // batch. A refusal of those checks, which comes before any command writes
-// anything, is recorded as the batch's idempotency record, and returned as a
-// *rememberedError (refusalOf).
+// anything, of a batch that a client sent (Parse), is recorded as the batch's
+// idempotency record, and returned as a *rememberedError (refusalOf).
 func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded, seq int64,
 	archivedProject bool) (Result, error) {
 	if err := p.check(ctx, t, cmds, archivedProject); err != nil {
 		r := refusalOf(err)
-		if r == nil {
+		// Only a client sends a batch again, so only its refusals are worth
+		// a record, whose transaction then commits.
+		if r == nil || !slices.ContainsFunc(cmds, func(c decoded) bool { return c.sent }) {
 			return Result{}, err
 		}
 		if err := remember(ctx, q, t, cmds, answer{Refusal: r}); err != nil {

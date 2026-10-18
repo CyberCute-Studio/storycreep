@@ -213,7 +213,9 @@ func Register(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[emptyPayload]{
 		Type: Delete, Capability: authz.ManageProjects, Scope: scope.ProjectWrite, Touches: touches,
-		Archived: true,
+		// Deleting a project is session-only (FR-AUTH-04), through a batch
+		// too.
+		SessionOnly: true, Archived: true,
 		Inverse: func(context.Context, *commands.Tx, emptyPayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: Restore, Payload: emptyPayload{}}}, nil
 		},
@@ -225,7 +227,7 @@ func Register(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[emptyPayload]{
 		Type: Restore, Capability: authz.ManageProjects, Scope: scope.ProjectWrite, Touches: touches,
-		Archived: true, Trashed: true,
+		SessionOnly: true, Archived: true, Trashed: true,
 		// Only a project in the trash that is not archived adds to the
 		// projects. Restoring one that is not in the trash undoes nothing.
 		Limits: []commands.Limit[emptyPayload]{{Key: entitlements.Projects, Adds: func(ctx context.Context,

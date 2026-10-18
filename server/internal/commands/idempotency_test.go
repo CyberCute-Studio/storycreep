@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
@@ -36,6 +37,16 @@ func (w *world) age(t *testing.T, first ids.UUID, interval string) {
 	t.Helper()
 	w.exec(t, "UPDATE idempotency_record SET created_at = now() - $2::interval WHERE batch_command_id = $1", first,
 		interval)
+}
+
+// sentCommand returns a command as command does, as Parse returns a
+// client's, which may be sent again, so that a refusal of its batch that
+// the project's state decides is remembered.
+func sentCommand(t *testing.T, typ Type, p any, revs map[Ref]int64) Command {
+	t.Helper()
+	c := command(t, typ, p, revs)
+	c.sent = true
+	return c
 }
 
 // sameResult reports whether a and b are the same Result, nil and empty
@@ -284,7 +295,7 @@ func TestRememberedRefusal(t *testing.T) {
 
 	t.Run("archived", func(t *testing.T) {
 		w.exec(t, "UPDATE project SET archived_at = now() WHERE id = $1", w.project)
-		update := command(t, noteUpdate, notePayload{ID: aID, Body: "while archived"}, nil)
+		update := sentCommand(t, noteUpdate, notePayload{ID: aID, Body: "while archived"}, nil)
 		if _, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{update}); !errors.Is(err,
 			ErrProjectArchived) {
 			t.Fatalf("a change of an archived project: %v", err)
@@ -316,7 +327,7 @@ func TestRememberedRefusal(t *testing.T) {
 				Meter: fixedMeter{entitlements.Projects: 1}})
 		})
 		_, id := newNote()
-		create := []Command{command(t, noteCreate, notePayload{ID: id, Body: "past the limit"}, nil)}
+		create := []Command{sentCommand(t, noteCreate, notePayload{ID: id, Body: "past the limit"}, nil)}
 		_, err := full.Apply(ctx, w.as(ownerUser), w.project, create)
 		var limit *entitlements.LimitError
 		if !errors.As(err, &limit) {
@@ -339,7 +350,7 @@ func TestRememberedRefusal(t *testing.T) {
 	})
 
 	t.Run("revision conflict", func(t *testing.T) {
-		stale := command(t, noteUpdate, notePayload{ID: aID, Body: "stale"}, map[Ref]int64{noteRef(a): 1})
+		stale := sentCommand(t, noteUpdate, notePayload{ID: aID, Body: "stale"}, map[Ref]int64{noteRef(a): 1})
 		_, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{stale})
 		var conflict *RevisionConflictError
 		if !errors.As(err, &conflict) {
@@ -357,6 +368,25 @@ func TestRememberedRefusal(t *testing.T) {
 		}
 		if got := gather(t, p)[`storycreep_command_revision_conflicts_total{type="note.update"}`]; got != 1 {
 			t.Errorf("the conflicts counted: %v, want the first alone", got)
+		}
+	})
+
+	t.Run("not sent", func(t *testing.T) {
+		// A batch of the server's own, whose IDs nobody sends again, as
+		// package project's, is refused without a record, and is checked
+		// anew if it is applied again.
+		rowsBefore, _ := w.records(t)
+		w.exec(t, "UPDATE project SET archived_at = now() WHERE id = $1", w.project)
+		update := []Command{command(t, noteUpdate, notePayload{ID: aID, Body: "from the server"}, nil)}
+		if _, err := p.Apply(ctx, w.as(ownerUser), w.project, update); !errors.Is(err, ErrProjectArchived) {
+			t.Fatalf("a change of an archived project: %v", err)
+		}
+		if rows, _ := w.records(t); rows != rowsBefore {
+			t.Errorf("the refusal left %d rows of records, where there were %d", rows, rowsBefore)
+		}
+		w.exec(t, "UPDATE project SET archived_at = NULL WHERE id = $1", w.project)
+		if res, err := p.Apply(ctx, w.as(ownerUser), w.project, update); err != nil || res.Status != Applied {
+			t.Errorf("the change applied again once the project is unarchived = %+v, %v, want it applied", res, err)
 		}
 	})
 
@@ -423,7 +453,7 @@ func TestParse(t *testing.T) {
 	id := ids.New()
 	raw := func(s string) json.RawMessage { return json.RawMessage(s) }
 	cmds, err := p.Parse([]json.RawMessage{raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update",
-		"payload": {"id": %q, "body": "x"}, "expected_rev": {%q: 3}}`, id, aID, aID))})
+		"payload": {"id": %q, "body": "x"}, "expected_rev": {%q: 3}}`, id, aID, aID))}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +471,7 @@ func TestParse(t *testing.T) {
 		raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update", "payload": {"id": %q, "body": "y"},
 			"expected_rev": {"xx_1": 1, %q: 1, %q: 2}}`, ids.New(), aID, aID, upper)),
 		raw(`{"command_id": "", "type": "note.update", "payload": {"id": "nd_x", "body": ""}, "extra": 1}`),
-	})
+	}, 0)
 	var invalid *InvalidError
 	if !errors.As(err, &invalid) {
 		t.Fatalf("Parse of commands it cannot read: %v", err)
@@ -460,6 +490,44 @@ func TestParse(t *testing.T) {
 		{3, "expected_rev.xx_1"}, {4, ""}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("the problems %+v, want them at %+v", invalid.Problems, want)
+	}
+
+	// A key that differs from a field's name only in case is no field, where
+	// encoding/json would take it for type, and keep the last of the two; and
+	// a problem of an entity of expected_rev is located at its key as the
+	// client wrote it, which Apply finds too, of a batch that Parse returns.
+	lower := "nd_" + strings.ToLower(aID[len("nd_"):])
+	_, err = p.Parse([]json.RawMessage{
+		raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update", "Type": "note.delete", "payload": {"id": %q}}`,
+			ids.New(), aID)),
+		raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update", "payload": {"id": %q, "body": "z"},
+			"expected_rev": {%q: 0}}`, ids.New(), aID, lower)),
+	}, 0)
+	if !errors.As(err, &invalid) || len(invalid.Problems) != 2 ||
+		invalid.Problems[0] != (Problem{Command: 0, Message: `does not decode: unknown field "Type"`}) ||
+		invalid.Problems[1].Command != 1 || invalid.Problems[1].Field != "expected_rev."+lower {
+		t.Errorf("Parse of a key in another case, and of a revision at a lowercase key: %v", err)
+	}
+	cmds, err = p.Parse([]json.RawMessage{raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update",
+		"payload": {"id": %q, "body": "z"}, "expected_rev": {%q: 0}}`, ids.New(), aID, lower))}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.registry.decode(cmds); !errors.As(err, &invalid) || len(invalid.Problems) != 1 ||
+		invalid.Problems[0].Field != "expected_rev."+lower {
+		t.Errorf("the check of a revision at a lowercase key: %v, want it located at expected_rev.%s", err, lower)
+	}
+
+	// A batch of more commands than its sender may send is refused whole.
+	_, err = p.Parse(make([]json.RawMessage, 3), 2)
+	if !errors.As(err, &invalid) || !reflect.DeepEqual(invalid.Problems,
+		[]Problem{{Command: -1, Message: "has more than 2 commands"}}) {
+		t.Errorf("Parse of 3 commands of at most 2: %v", err)
+	}
+	// Each batch that Parse refuses counts as invalid, as one that Apply
+	// refuses would.
+	if got := gather(t, p)[`storycreep_command_batches_total{result="invalid"}`]; got != 3 {
+		t.Errorf("the metrics count %v invalid batches, want the 3 that Parse refused", got)
 	}
 }
 
@@ -553,11 +621,12 @@ func TestIdempotencyIsolation(t *testing.T) {
 		},
 	})
 	f.Check(t, isolationtest.Op{
-		Name: "the applied commands",
+		Name: "the applied commands and the commands' idempotency records",
 		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
-			rows, err := queries.New(tx).AppliedCommands(ctx, queries.AppliedCommandsParams{
+			rows, err := queries.New(tx).CommandStates(ctx, queries.CommandStatesParams{
 				WorkspaceID: nullUUID(target.ID), ProjectID: nullUUID(target.Rows["project"]),
-				CommandIds: []pgtype.UUID{nullUUID(target.Rows["applied_command"])}})
+				CommandIds: []pgtype.UUID{nullUUID(target.Rows["applied_command"]),
+					nullUUID(target.Rows["idempotency_record"])}})
 			var out []ids.UUID
 			for _, r := range rows {
 				out = append(out, r.CommandID.Bytes)
@@ -636,5 +705,49 @@ func TestPruneEveryWorkspace(t *testing.T) {
 	}
 	if rows, _ := w.records(t); pruned != 2 || rows != 0 {
 		t.Errorf("Prune pruned %d batches, and left %d rows, want 2, and none", pruned, rows)
+	}
+}
+
+// TestPruneByRows checks that a transaction of the pruning job deletes the
+// oldest batches' records until it has deleted the rows that it may, each
+// batch whole, so that it takes about as long however many commands the
+// batches have, and that a batch of more rows than that is deleted whole, by
+// a transaction of its own.
+func TestPruneByRows(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	// Batches of 2, 2, 5, and 2 commands, the oldest first.
+	for i, n := range []int{2, 2, 5, 2} {
+		cmds := make([]pgtype.UUID, n)
+		for j := range cmds {
+			cmds[j] = nullUUID(ids.New())
+		}
+		w.exec(t, `INSERT INTO idempotency_record (workspace_id, project_id, command_id, batch_command_id,
+			command_ids, response, created_at)
+			SELECT $1, $2, c, $3, CASE WHEN c = $3 THEN $4::uuid[] END,
+				CASE WHEN c = $3 THEN '{"seq": 1}'::jsonb END, now() - interval '1 day' * (10 - $5::int)
+			FROM unnest($4::uuid[]) AS c`, w.ws, w.project, cmds[0], cmds, i)
+	}
+	prune := func() queries.PruneBatchRecordsRow {
+		t.Helper()
+		var n queries.PruneBatchRecordsRow
+		if err := w.db.InTx(ctx, database.Scope{WorkspaceID: w.ws}, func(tx pgx.Tx) error {
+			var err error
+			n, err = queries.New(tx).PruneBatchRecords(ctx, queries.PruneBatchRecordsParams{
+				WorkspaceID: nullUUID(w.ws), Retention: database.Interval(RecordRetention), MaxRows: 3})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	for i, want := range []queries.PruneBatchRecordsRow{{Batches: 2, Rows: 4}, {Batches: 1, Rows: 5},
+		{Batches: 1, Rows: 2}, {}} {
+		if got := prune(); got != want {
+			t.Errorf("transaction %d pruned %+v, want %+v", i, got, want)
+		}
+	}
+	if rows, _ := w.records(t); rows != 0 {
+		t.Errorf("the pruning left %d rows", rows)
 	}
 }

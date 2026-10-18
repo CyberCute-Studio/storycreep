@@ -184,43 +184,58 @@ type replay struct {
 // AlreadyApplied; one with commands that were applied and commands that were
 // not, with an *IdempotencyMismatchError; and one with none that were applied
 // is new: its commands' records, of refused batches, are deleted, so that
-// sending one of those batches again checks it again too.
+// sending one of those batches again checks it again too. A new batch, whose
+// commands have neither, costs one read.
 func (p *Pipeline) idempotent(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded) (*replay, error) {
 	ws, project := nullUUID(t.workspace), nullUUID(t.project)
 	commandIDs := make([]pgtype.UUID, len(cmds))
 	for i, c := range cmds {
 		commandIDs[i] = nullUUID(c.ID)
 	}
-	rec, err := q.BatchRecord(ctx, queries.BatchRecordParams{WorkspaceID: ws, ProjectID: project,
-		CommandID: commandIDs[0]})
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-	case err != nil:
-		return nil, fmt.Errorf("commands: read the batch's idempotency record: %w", err)
-	case slices.Equal(rec.CommandIds, commandIDs):
-		r, err := stored(rec.Response)
-		if err != nil {
-			return nil, fmt.Errorf("commands: the idempotency record of the batch of %s: %w", cmds[0].ID, err)
-		}
-		return r, nil
-	}
-	rows, err := q.AppliedCommands(ctx, queries.AppliedCommandsParams{WorkspaceID: ws, ProjectID: project,
+	states, err := q.CommandStates(ctx, queries.CommandStatesParams{WorkspaceID: ws, ProjectID: project,
 		CommandIds: commandIDs})
 	if err != nil {
-		return nil, fmt.Errorf("commands: read the applied commands: %w", err)
+		return nil, fmt.Errorf("commands: read the batch's commands' idempotency: %w", err)
 	}
-	if len(rows) == 0 {
-		if err := q.DeleteBatchRecords(ctx, queries.DeleteBatchRecordsParams{WorkspaceID: ws, ProjectID: project,
-			CommandIds: commandIDs}); err != nil {
-			return nil, fmt.Errorf("commands: delete the idempotency records of the batch's commands: %w", err)
+	seqs := make(map[ids.UUID]int64, len(states))
+	recorded, first := false, false
+	for _, s := range states {
+		if s.Seq.Valid {
+			seqs[s.CommandID.Bytes] = s.Seq.Int64
+		}
+		if s.BatchCommandID.Valid {
+			recorded = true
+			// The batch's first command is the first of a recorded batch.
+			first = first || s.CommandID == commandIDs[0] && s.BatchCommandID == commandIDs[0]
+		}
+	}
+	if first {
+		rec, err := q.BatchRecord(ctx, queries.BatchRecordParams{WorkspaceID: ws, ProjectID: project,
+			CommandID: commandIDs[0]})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			// The pruning job, which does not wait for the project's lock,
+			// deleted it since.
+		case err != nil:
+			return nil, fmt.Errorf("commands: read the batch's idempotency record: %w", err)
+		case slices.Equal(rec.CommandIds, commandIDs):
+			r, err := stored(rec.Response)
+			if err != nil {
+				return nil, fmt.Errorf("commands: the idempotency record of the batch of %s: %w", cmds[0].ID, err)
+			}
+			return r, nil
+		}
+	}
+	if len(seqs) == 0 {
+		if recorded {
+			if err := q.DeleteBatchRecords(ctx, queries.DeleteBatchRecordsParams{WorkspaceID: ws,
+				ProjectID: project, CommandIds: commandIDs}); err != nil {
+				return nil, fmt.Errorf("commands: delete the idempotency records of the batch's commands: %w", err)
+			}
 		}
 		return nil, nil
 	}
-	seqs := make(map[ids.UUID]int64, len(rows))
-	for _, row := range rows {
-		seqs[row.CommandID.Bytes] = row.Seq
-	}
-	if len(rows) < len(cmds) {
+	if len(seqs) < len(cmds) {
 		mismatch := &IdempotencyMismatchError{}
 		for _, c := range cmds {
 			if _, ok := seqs[c.ID]; ok {
@@ -269,13 +284,7 @@ func stored(response []byte) (*replay, error) {
 // that no longer exists, as one purged from the trash, is left out.
 func (p *Pipeline) alreadyApplied(ctx context.Context, q *queries.Queries, t *Tx, seqs map[ids.UUID]int64) (Result,
 	error) {
-	var batches []int64
-	for _, seq := range seqs {
-		if !slices.Contains(batches, seq) {
-			batches = append(batches, seq)
-		}
-	}
-	slices.Sort(batches)
+	batches := slices.Compact(slices.Sorted(maps.Values(seqs)))
 	docs, err := q.OperationEntityRefs(ctx, queries.OperationEntityRefsParams{WorkspaceID: nullUUID(t.workspace),
 		ProjectID: nullUUID(t.project), Seqs: batches})
 	if err != nil {

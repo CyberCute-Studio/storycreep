@@ -72,11 +72,19 @@ FROM idempotency_record
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND command_id = @command_id
     AND command_id = batch_command_id;
 
--- name: AppliedCommands :many
--- AppliedCommands returns those of the commands that were applied, each with
--- the seq of the batch that applied it.
-SELECT command_id, seq FROM applied_command
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND command_id = ANY(@command_ids::uuid[]);
+-- name: CommandStates :many
+-- CommandStates returns those of the commands that were applied, or that an
+-- idempotency record holds, each with the seq of the batch that applied it,
+-- if one did, and the first command of the batch of its record, if it has
+-- one (FR-API-03), so that a new batch, of commands that neither holds, costs
+-- one read.
+SELECT c.command_id::uuid AS command_id, a.seq, r.batch_command_id
+FROM unnest(@command_ids::uuid[]) AS c (command_id)
+LEFT JOIN applied_command a
+    ON a.workspace_id = @workspace_id AND a.project_id = @project_id AND a.command_id = c.command_id
+LEFT JOIN idempotency_record r
+    ON r.workspace_id = @workspace_id AND r.project_id = @project_id AND r.command_id = c.command_id
+WHERE a.command_id IS NOT NULL OR r.command_id IS NOT NULL;
 
 -- name: DeleteBatchRecords :exec
 -- DeleteBatchRecords deletes the idempotency records of the batches that
@@ -105,16 +113,32 @@ SELECT entity_refs FROM operation
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND seq = ANY(@seqs::bigint[])
 ORDER BY seq;
 
--- name: PruneBatchRecords :execrows
--- PruneBatchRecords deletes at most max_rows of the workspace's batches'
--- idempotency records that are older than retention, each whole, by the row
--- of its first command, and returns how many batches it deleted. It skips a
--- record that a batch of commands holds, as one that deletes it, which a
--- later run deletes.
-DELETE FROM idempotency_record d
-WHERE d.workspace_id = @workspace_id AND (d.project_id, d.command_id) IN (
-    SELECT r.project_id, r.command_id FROM idempotency_record r
+-- name: PruneBatchRecords :one
+-- PruneBatchRecords deletes the workspace's oldest batches' idempotency
+-- records that are older than retention, each whole, by the row of its first
+-- command, which deletes the batch's other rows, until it has deleted
+-- max_rows rows, of which the last batch may take it past by its own rows
+-- alone, and returns how many batches' records and how many rows it deleted.
+-- It skips a record that a batch of commands holds, as one that deletes it,
+-- which a later run deletes.
+WITH candidate AS (
+    SELECT r.project_id, r.command_id, r.created_at, cardinality(r.command_ids) AS n
+    FROM idempotency_record r
     WHERE r.workspace_id = @workspace_id AND r.command_id = r.batch_command_id
         AND r.created_at < now() - @retention::interval
-    LIMIT @max_rows
-    FOR UPDATE SKIP LOCKED);
+    ORDER BY r.created_at, r.project_id, r.command_id
+    LIMIT @max_rows::bigint
+    FOR UPDATE SKIP LOCKED
+), chosen AS (
+    -- The rows of the batches before each.
+    SELECT c.project_id, c.command_id,
+        sum(c.n) OVER (ORDER BY c.created_at, c.project_id, c.command_id) - c.n AS before
+    FROM candidate c
+), deleted AS (
+    DELETE FROM idempotency_record d
+    USING chosen
+    WHERE d.workspace_id = @workspace_id AND d.project_id = chosen.project_id
+        AND d.command_id = chosen.command_id AND chosen.before < @max_rows::bigint
+    RETURNING cardinality(d.command_ids) AS n
+)
+SELECT count(*)::bigint AS batches, coalesce(sum(n), 0)::bigint AS rows FROM deleted;

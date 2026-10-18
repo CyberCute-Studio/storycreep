@@ -11,44 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const appliedCommands = `-- name: AppliedCommands :many
-SELECT command_id, seq FROM applied_command
-WHERE workspace_id = $1 AND project_id = $2 AND command_id = ANY($3::uuid[])
-`
-
-type AppliedCommandsParams struct {
-	WorkspaceID pgtype.UUID
-	ProjectID   pgtype.UUID
-	CommandIds  []pgtype.UUID
-}
-
-type AppliedCommandsRow struct {
-	CommandID pgtype.UUID
-	Seq       int64
-}
-
-// AppliedCommands returns those of the commands that were applied, each with
-// the seq of the batch that applied it.
-func (q *Queries) AppliedCommands(ctx context.Context, arg AppliedCommandsParams) ([]AppliedCommandsRow, error) {
-	rows, err := q.db.Query(ctx, appliedCommands, arg.WorkspaceID, arg.ProjectID, arg.CommandIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []AppliedCommandsRow
-	for rows.Next() {
-		var i AppliedCommandsRow
-		if err := rows.Scan(&i.CommandID, &i.Seq); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const batchRecord = `-- name: BatchRecord :one
 SELECT command_ids::uuid[] AS command_ids, response::jsonb AS response
 FROM idempotency_record
@@ -76,6 +38,53 @@ func (q *Queries) BatchRecord(ctx context.Context, arg BatchRecordParams) (Batch
 	var i BatchRecordRow
 	err := row.Scan(&i.CommandIds, &i.Response)
 	return i, err
+}
+
+const commandStates = `-- name: CommandStates :many
+SELECT c.command_id::uuid AS command_id, a.seq, r.batch_command_id
+FROM unnest($1::uuid[]) AS c (command_id)
+LEFT JOIN applied_command a
+    ON a.workspace_id = $2 AND a.project_id = $3 AND a.command_id = c.command_id
+LEFT JOIN idempotency_record r
+    ON r.workspace_id = $2 AND r.project_id = $3 AND r.command_id = c.command_id
+WHERE a.command_id IS NOT NULL OR r.command_id IS NOT NULL
+`
+
+type CommandStatesParams struct {
+	CommandIds  []pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+}
+
+type CommandStatesRow struct {
+	CommandID      pgtype.UUID
+	Seq            pgtype.Int8
+	BatchCommandID pgtype.UUID
+}
+
+// CommandStates returns those of the commands that were applied, or that an
+// idempotency record holds, each with the seq of the batch that applied it,
+// if one did, and the first command of the batch of its record, if it has
+// one (FR-API-03), so that a new batch, of commands that neither holds, costs
+// one read.
+func (q *Queries) CommandStates(ctx context.Context, arg CommandStatesParams) ([]CommandStatesRow, error) {
+	rows, err := q.db.Query(ctx, commandStates, arg.CommandIds, arg.WorkspaceID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CommandStatesRow
+	for rows.Next() {
+		var i CommandStatesRow
+		if err := rows.Scan(&i.CommandID, &i.Seq, &i.BatchCommandID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deleteBatchRecords = `-- name: DeleteBatchRecords :exec
@@ -326,33 +335,53 @@ func (q *Queries) ProjectWorkspace(ctx context.Context, projectID pgtype.UUID) (
 	return id, err
 }
 
-const pruneBatchRecords = `-- name: PruneBatchRecords :execrows
-DELETE FROM idempotency_record d
-WHERE d.workspace_id = $1 AND (d.project_id, d.command_id) IN (
-    SELECT r.project_id, r.command_id FROM idempotency_record r
+const pruneBatchRecords = `-- name: PruneBatchRecords :one
+WITH candidate AS (
+    SELECT r.project_id, r.command_id, r.created_at, cardinality(r.command_ids) AS n
+    FROM idempotency_record r
     WHERE r.workspace_id = $1 AND r.command_id = r.batch_command_id
         AND r.created_at < now() - $2::interval
-    LIMIT $3
-    FOR UPDATE SKIP LOCKED)
+    ORDER BY r.created_at, r.project_id, r.command_id
+    LIMIT $3::bigint
+    FOR UPDATE SKIP LOCKED
+), chosen AS (
+    -- The rows of the batches before each.
+    SELECT c.project_id, c.command_id,
+        sum(c.n) OVER (ORDER BY c.created_at, c.project_id, c.command_id) - c.n AS before
+    FROM candidate c
+), deleted AS (
+    DELETE FROM idempotency_record d
+    USING chosen
+    WHERE d.workspace_id = $1 AND d.project_id = chosen.project_id
+        AND d.command_id = chosen.command_id AND chosen.before < $3::bigint
+    RETURNING cardinality(d.command_ids) AS n
+)
+SELECT count(*)::bigint AS batches, coalesce(sum(n), 0)::bigint AS rows FROM deleted
 `
 
 type PruneBatchRecordsParams struct {
 	WorkspaceID pgtype.UUID
 	Retention   pgtype.Interval
-	MaxRows     int32
+	MaxRows     int64
 }
 
-// PruneBatchRecords deletes at most max_rows of the workspace's batches'
-// idempotency records that are older than retention, each whole, by the row
-// of its first command, and returns how many batches it deleted. It skips a
-// record that a batch of commands holds, as one that deletes it, which a
-// later run deletes.
-func (q *Queries) PruneBatchRecords(ctx context.Context, arg PruneBatchRecordsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, pruneBatchRecords, arg.WorkspaceID, arg.Retention, arg.MaxRows)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+type PruneBatchRecordsRow struct {
+	Batches int64
+	Rows    int64
+}
+
+// PruneBatchRecords deletes the workspace's oldest batches' idempotency
+// records that are older than retention, each whole, by the row of its first
+// command, which deletes the batch's other rows, until it has deleted
+// max_rows rows, of which the last batch may take it past by its own rows
+// alone, and returns how many batches' records and how many rows it deleted.
+// It skips a record that a batch of commands holds, as one that deletes it,
+// which a later run deletes.
+func (q *Queries) PruneBatchRecords(ctx context.Context, arg PruneBatchRecordsParams) (PruneBatchRecordsRow, error) {
+	row := q.db.QueryRow(ctx, pruneBatchRecords, arg.WorkspaceID, arg.Retention, arg.MaxRows)
+	var i PruneBatchRecordsRow
+	err := row.Scan(&i.Batches, &i.Rows)
+	return i, err
 }
 
 const setProjectSeq = `-- name: SetProjectSeq :exec

@@ -492,14 +492,6 @@ func ErrorBodyOf(ctx context.Context, err error) (ErrorBody, language.Tag) {
 	return env.Body, locale
 }
 
-// SetLanguage sets the headers of an answer that holds messages in locale, as
-// one with the objects of ErrorBodyOf does: Content-Language names the
-// locale, and Vary says that the answer depends on the request's
-// Accept-Language.
-func SetLanguage(h http.Header, locale language.Tag) {
-	setLanguage(h, locale)
-}
-
 // idMessage returns the message that says why an identifier could not be
 // decoded, or none, for the code's message.
 func idMessage(e *ids.DecodeError) i18n.Message {

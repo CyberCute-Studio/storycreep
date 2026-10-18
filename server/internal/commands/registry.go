@@ -62,6 +62,12 @@ type Spec[P any] struct {
 	// that does not hold every command's scope is refused with an
 	// *scope.InsufficientError that names the first that it lacks.
 	Scope scope.Scope
+	// SessionOnly says that no API token may apply the command, whatever its
+	// scopes, as deleting and restoring the project, which FR-AUTH-04 makes
+	// session-only, so that a leaked token cannot do through a batch what no
+	// route lets it do. A batch with such a command applied with a token is
+	// refused with ErrSessionRequired.
+	SessionOnly bool
 	// Touches are the kinds of entity that the command changes or refers to,
 	// each registered with RegisterEntity. A command's ExpectedRev may name
 	// an entity of these kinds only, and Apply reports a change of these
@@ -229,8 +235,9 @@ type spec struct {
 	limits  []entitlements.LimitKey
 	// adds return how much the command adds to each of limits, or nil for 1.
 	adds []func(ctx context.Context, tx *Tx, payload any) (int64, error)
-	// archived and trashed are Spec.Archived and Spec.Trashed.
-	archived, trashed bool
+	// archived, trashed, and sessionOnly are Spec.Archived, Spec.Trashed, and
+	// Spec.SessionOnly.
+	archived, trashed, sessionOnly bool
 	// decode decodes a payload that its schema allows, checks it, and
 	// returns it.
 	decode func(raw []byte) (payload any, problems input.FieldErrors)
@@ -299,7 +306,7 @@ func Register[P any](r *Registry, s Spec[P]) {
 	sp := &spec{typ: s.Type, capability: s.Capability, scope: s.Scope, touches: slices.Clone(s.Touches),
 		payload: pt, schema: r.schemas.Schema(pt, true, ""), limits: keys,
 		adds: make([]func(context.Context, *Tx, any) (int64, error), len(s.Limits)), archived: s.Archived,
-		trashed: s.Trashed}
+		trashed: s.Trashed, sessionOnly: s.SessionOnly}
 	for i, l := range s.Limits {
 		if l.Adds != nil {
 			sp.adds[i] = func(ctx context.Context, tx *Tx, payload any) (int64, error) {
@@ -477,10 +484,10 @@ func (r *Registry) check(batch []Command, skip map[int]bool) ([]decoded, []Probl
 		for _, ref := range sortedRefs(c.ExpectedRev) {
 			switch {
 			case !slices.Contains(s.touches, ref.Kind):
-				add("expected_rev."+encodeRef(ref), fmt.Sprintf("names a %s, which the command does not touch",
+				add("expected_rev."+c.key(ref), fmt.Sprintf("names a %s, which the command does not touch",
 					ref.Kind))
 			case c.ExpectedRev[ref] < 1:
-				add("expected_rev."+encodeRef(ref), "is not a revision; an entity's first revision is 1")
+				add("expected_rev."+c.key(ref), "is not a revision; an entity's first revision is 1")
 			}
 		}
 		fields := r.validate(s.schema, c.Payload)

@@ -15,6 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
 
 // TestRevisionConflict checks that a batch with stale revisions is answered
@@ -368,6 +369,16 @@ func TestCommandEndpointBody(t *testing.T) {
 				"surplus": true},
 		}}), []string{"body.commands[1].command_id", "body.commands[1].payload.name",
 			"body.commands[2].expected_rev.xx_1", "body.commands[2].payload", "body.commands[3]"}},
+		// A key that differs from a field's name only in case is no field of
+		// the body, of a batch, or of a command, where encoding/json would take
+		// it for one, and keep the last of the two.
+		{"a body's key in another case", jsonBody(t, map[string]any{"Commands": withIDs([]wireCommand{rename})}),
+			[]string{"body"}},
+		{"a batch's key in another case", jsonBody(t, map[string]any{"batches": []any{
+			map[string]any{"COMMANDS": withIDs([]wireCommand{rename})}}}), []string{"body"}},
+		{"a command's key in another case", jsonBody(t, map[string]any{"commands": []any{
+			map[string]any{"command_id": ids.New().String(), "type": "project.rename", "Type": "project.delete",
+				"payload": map[string]any{"name": "Pier"}}}}), []string{"body.commands[0]"}},
 	} {
 		if got := problems(t, call(f.s.main, http.MethodPost, commandsPath(p), tt.body, admin.header(true))); !slices.Equal(
 			got, tt.want) {
@@ -385,4 +396,44 @@ func TestCommandEndpointBody(t *testing.T) {
 		http.StatusOK); pr.Name != "Pier" || pr.Seq != 1 {
 		t.Errorf("the project after the requests: %+v", pr)
 	}
+}
+
+// TestCommandEndpointSessionOnly checks that a batch with a command that
+// only a session may apply, deleting or restoring the project, which
+// FR-AUTH-04 makes session-only, is refused to an API token of an owner,
+// with every scope, with 403 session_required, alone or in a list of
+// batches, and applies nothing, while the owner's session applies it.
+//
+// Verifies: FR-AUTH-04/AC6
+func TestCommandEndpointSessionOnly(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	owner := f.as["owner"]
+	every := bearer(makeToken(t, f.s.main, owner, workspaceTokensPath(f.ws), scope.Names(scope.All())...).Secret)
+	p, deleted := f.project(t, ""), f.project(t, "deleted")
+	wantCode(t, "a token's deletion", call(f.s.main, http.MethodPost, commandsPath(p),
+		commandBatch(t, wireCommand{Type: "project.delete"}), every), http.StatusForbidden, api.CodeSessionRequired)
+	wantCode(t, "a token's restoration", call(f.s.main, http.MethodPost, commandsPath(deleted),
+		commandBatch(t, wireCommand{Type: "project.restore"}), every), http.StatusForbidden, api.CodeSessionRequired)
+	res := call(f.s.main, http.MethodPost, commandsPath(p), commandBatches(t,
+		[]wireCommand{{Type: "project.rename", Payload: map[string]string{"name": "Pier"}},
+			{Type: "project.delete"}},
+		[]wireCommand{{Type: "project.rename", Payload: map[string]string{"name": "Quay"}}}), every)
+	if res.status != http.StatusOK || !strings.Contains(string(res.body), `"code":"session_required"`) ||
+		!strings.Contains(string(res.body), `"seq":1`) {
+		t.Errorf("a token's list of a batch that deletes the project and one that renames it: %d %s", res.status,
+			res.body)
+	}
+	if pr := projectFrom(t, call(f.s.main, http.MethodGet, projectPath(p), nil, owner.header(false)),
+		http.StatusOK); pr.Name != "Quay" || pr.Seq != 1 {
+		t.Errorf("the project after the token's batches: %+v", pr)
+	}
+	if n := f.count(t, "SELECT count(*) FROM project WHERE id = $1 AND deleted_at IS NOT NULL",
+		decode(t, ids.Project, deleted)); n != 1 {
+		t.Errorf("the deleted project was restored")
+	}
+	resultFrom(t, call(f.s.main, http.MethodPost, commandsPath(deleted),
+		commandBatch(t, wireCommand{Type: "project.restore"}), owner.header(true)))
+	resultFrom(t, call(f.s.main, http.MethodPost, commandsPath(p),
+		commandBatch(t, wireCommand{Type: "project.delete"}), owner.header(true)))
 }
