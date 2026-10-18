@@ -1,6 +1,7 @@
 // Package usage meters how much of each thing that the plans meter a
 // workspace uses (PRD FR-ENT-02, §5.7, ADR-010): its projects, boards, nodes,
-// members, stored bytes, and snapshots. The entitlement layer checks the
+// members, stored bytes, snapshots, and the requests that its API tokens
+// make. The entitlement layer checks the
 // plan's limits against it (package entitlements, through Meter), and the
 // API shows it to the workspace's admins.
 //
@@ -57,7 +58,7 @@ import (
 // plans is spelled as the plan file spells the limit (entitlements.LimitKey).
 type Key string
 
-// The keys. API requests are metered with API tokens (plan item 27).
+// The keys.
 const (
 	// Projects is how many projects a workspace has that are neither archived
 	// nor in its trash, which alone count towards its projects limit (PRD
@@ -75,10 +76,17 @@ const (
 	// Snapshots is how many snapshots a workspace's projects have. It is
 	// counted exactly.
 	Snapshots Key = "snapshots"
+	// APIRequests is how many requests the workspace's API tokens have made
+	// (plan note N31): each request that a token is accepted for adds one,
+	// in the transaction that accepts it (package apitoken). It is a total,
+	// which no recount can correct, because nothing but its deltas records
+	// the requests, so reconciliation leaves it alone, and no limit of the
+	// plans checks it (ADR-010).
+	APIRequests Key = "api_requests"
 )
 
 // keys are the keys, in the order that the API lists them.
-var keys = []Key{Projects, Boards, Nodes, Members, StorageBytes, Snapshots}
+var keys = []Key{Projects, Boards, Nodes, Members, StorageBytes, Snapshots, APIRequests}
 
 // Keys returns the keys, in the order that the API lists them.
 func Keys() []Key {
@@ -100,14 +108,45 @@ func (k Key) Exact() bool {
 // or takes -delta from it, in tx, the change's transaction, which is the
 // workspace's. Adding nothing records nothing.
 func Record(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, key Key, delta int64) error {
+	return record(ctx, tx, workspaceID, key, delta, false)
+}
+
+// RecordUnflushed records a delta as Record does, and makes tx commit without
+// waiting for the disk, as a rate limit's count does (package ratelimit), so
+// that a crash of the database may lose the last few hundred milliseconds of
+// such commits, the delta with whatever else tx writes. It is for a key that
+// is counted approximately, whose deltas come with requests that would each
+// wait for the disk otherwise, in a transaction that writes nothing else that
+// must outlive such a crash, as the API requests that package apitoken
+// records as it accepts a token. It refuses a key that is counted exactly
+// (Exact), whose limit's check needs every delta.
+func RecordUnflushed(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, key Key, delta int64) error {
+	if key.Exact() {
+		return fmt.Errorf("usage: %s is counted exactly, so its deltas wait for the disk", key)
+	}
+	return record(ctx, tx, workspaceID, key, delta, true)
+}
+
+// record records a delta for Record, or, if unflushed is set, for
+// RecordUnflushed.
+func record(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, key Key, delta int64, unflushed bool) error {
 	if !key.Known() {
 		return fmt.Errorf("usage: %q is not a key", key)
 	}
 	if delta == 0 {
 		return nil
 	}
-	if err := queries.New(tx).InsertUsageDelta(ctx, queries.InsertUsageDeltaParams{ID: nullUUID(ids.New()),
-		WorkspaceID: nullUUID(workspaceID), Key: string(key), Delta: delta}); err != nil {
+	q := queries.New(tx)
+	id, ws := nullUUID(ids.New()), nullUUID(workspaceID)
+	var err error
+	if unflushed {
+		err = q.InsertUnflushedUsageDelta(ctx, queries.InsertUnflushedUsageDeltaParams{ID: id, WorkspaceID: ws,
+			Key: string(key), Delta: delta})
+	} else {
+		err = q.InsertUsageDelta(ctx, queries.InsertUsageDeltaParams{ID: id, WorkspaceID: ws, Key: string(key),
+			Delta: delta})
+	}
+	if err != nil {
 		return fmt.Errorf("usage: record the change of %s: %w", key, err)
 	}
 	return nil

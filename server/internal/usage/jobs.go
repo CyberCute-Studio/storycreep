@@ -94,7 +94,8 @@ func RollUp(ctx context.Context, db DB) error {
 // drifts are the queries that recount each key that a recount can count:
 // each returns how far the workspace's usage of the key is from the count of
 // what it counts. A later item adds its key's query with the rows that it
-// counts.
+// counts. APIRequests has none, because no rows but its deltas record the
+// requests that it counts.
 var drifts = map[Key]func(q *queries.Queries, ctx context.Context, workspaceID pgtype.UUID) (int64, error){
 	Projects: (*queries.Queries).ProjectDrift,
 	Members:  (*queries.Queries).MemberDrift,

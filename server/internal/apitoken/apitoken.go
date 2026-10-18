@@ -52,6 +52,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
+	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
 // Prefix starts the secret of every token (FR-AUTH-04).
@@ -425,8 +426,9 @@ func (s *Service) RevokeProjectToken(ctx context.Context, userID, projectID, tok
 // Authenticate returns who makes a request with the token whose secret is
 // value, on a route that takes a token that holds needed, or "" for a route
 // that takes none, and records the token's use now, unless its use was
-// recorded less than a minute ago (FR-AUTH-04 AC5). It checks the token from
-// the database, every time, so that a token that is revoked, or whose
+// recorded less than a minute ago (FR-AUTH-04 AC5), and the request in the
+// workspace's usage of API requests (usage.APIRequests). It checks the token
+// from the database, every time, so that a token that is revoked, or whose
 // owner's membership is removed, fails at its next request (AC4). It returns
 // ErrInvalid for a secret that is no token's, a token that is revoked or
 // expired, one whose owner's account is not active, and one whose owner is
@@ -516,6 +518,16 @@ func (s *Service) Authenticate(ctx context.Context, value secret.Value, needed s
 				ID: nullUUID(id)}); err != nil {
 				return fmt.Errorf("apitoken: record the token's use: %w", err)
 			}
+		}
+		// The workspace's API requests are metered (FR-ENT-02, plan note
+		// N31): each that a token is accepted for counts, in the transaction
+		// that accepts it, which then commits without waiting for the disk,
+		// so that no request made with a token waits for it. The count is
+		// approximate, and the transaction writes nothing else but when the
+		// token was last used, which a crash of the database may lose too;
+		// a refusal's audit entry, above, waits for the disk.
+		if err := usage.RecordUnflushed(ctx, tx, workspaceID, usage.APIRequests, 1); err != nil {
+			return err
 		}
 		out = Credential{UserID: userID, Token: scope.Token{ID: id, WorkspaceID: workspaceID,
 			ProjectID: row.ProjectID.Bytes, Scopes: scopes}}

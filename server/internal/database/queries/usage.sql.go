@@ -76,6 +76,38 @@ func (q *Queries) FoldUsageDeltas(ctx context.Context, workspaceID pgtype.UUID) 
 	return items, nil
 }
 
+const insertUnflushedUsageDelta = `-- name: InsertUnflushedUsageDelta :exec
+WITH no_flush AS (
+    SELECT set_config('synchronous_commit', 'off', true)
+)
+INSERT INTO usage_delta (id, workspace_id, key, delta)
+SELECT $1::uuid, $2::uuid, $3::text, $4::bigint
+FROM no_flush
+`
+
+type InsertUnflushedUsageDeltaParams struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	Key         string
+	Delta       int64
+}
+
+// InsertUnflushedUsageDelta records a delta as InsertUsageDelta does, and
+// makes the transaction that it runs in commit without waiting for its commit
+// to be flushed to disk (synchronous_commit off), as TakeRateLimit does, for a
+// delta that a crash of the database may lose, with the last few hundred
+// milliseconds of such commits. It changes the setting in no_flush, whose one
+// row the insert reads, so that it spends no round trip on it.
+func (q *Queries) InsertUnflushedUsageDelta(ctx context.Context, arg InsertUnflushedUsageDeltaParams) error {
+	_, err := q.db.Exec(ctx, insertUnflushedUsageDelta,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.Key,
+		arg.Delta,
+	)
+	return err
+}
+
 const insertUsageDelta = `-- name: InsertUsageDelta :exec
 
 INSERT INTO usage_delta (id, workspace_id, key, delta) VALUES ($1, $2, $3, $4)

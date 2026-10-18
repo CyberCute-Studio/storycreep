@@ -13,7 +13,6 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
-	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -47,14 +46,8 @@ type registerInput struct {
 	Body registerBody
 }
 
-// acceptedOutput is an answer of 202 without a body, of a registration,
-// which is rate-limited.
-type acceptedOutput struct {
-	RateLimitOutput
-}
-
 // registerAccounts registers the routes of accounts (PRD FR-AUTH-01).
-func registerAccounts(m *api.Mux, accounts *account.Service, limits *ratelimit.Limiter) {
+func registerAccounts(m *api.Mux, accounts *account.Service) {
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "registerAccount",
 		Method:      http.MethodPost,
@@ -72,7 +65,7 @@ func registerAccounts(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 			"has an account already, which then stays as it was, so that the answer does not tell whether an " +
 			"address has an account. On an instance that sends email, as GET /api/v1/instance says, a new account " +
 			"is emailed a link that verifies its address, which POST /api/v1/auth/verify-email uses, and an " +
-			"address that has an account already is emailed nothing." + authLimitDoc,
+			"address that has an account already is emailed nothing.",
 		Tags:          []string{"Authentication"},
 		DefaultStatus: http.StatusAccepted,
 		// The policy is checked before the body is read, so that a
@@ -81,8 +74,8 @@ func registerAccounts(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 		// need not count.
 		Middlewares: huma.Middlewares{api.Guard(func(ctx context.Context) error {
 			return accountError(accounts.CheckSignup(ctx))
-		}), rateLimit(limits, ratelimit.Auth)},
-	}, func(ctx context.Context, in *registerInput) (*acceptedOutput, error) {
+		})},
+	}, func(ctx context.Context, in *registerInput) (*struct{}, error) {
 		err := accounts.Register(ctx, account.Registration{
 			Email:       in.Body.Email,
 			DisplayName: in.Body.DisplayName,
@@ -91,8 +84,8 @@ func registerAccounts(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 		if err != nil {
 			return nil, accountError(err)
 		}
-		return &acceptedOutput{}, nil
-	})
+		return &struct{}{}, nil
+	}, api.RateLimit(api.BucketAuth))
 }
 
 // accountError returns the error that the API answers err with, an error

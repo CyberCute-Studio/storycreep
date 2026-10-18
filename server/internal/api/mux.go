@@ -1,6 +1,8 @@
 // Package api is the toolkit of the server's HTTP API (PRD §10.5, FR-API-01,
 // FR-API-04): a router whose every route declares the capability it requires
-// (NFR-SEC-02), huma operations whose bodies are decoded strictly and limited
+// (NFR-SEC-02), whether it takes an API token, and with which scope, or a
+// session alone (FR-AUTH-04), and the rate limit that counts its requests
+// (NFR-SEC-06), huma operations whose bodies are decoded strictly and limited
 // in size (FR-API-01 AC2, NFR-SEC-07), the error envelope and its registry of
 // codes, keyset pagination, and entity tags.
 //
@@ -18,6 +20,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -76,12 +79,19 @@ type Mux struct {
 	api    huma.API
 	routes map[Route]Capability
 	// tokens are the routes that take an API token, each with the scope
-	// that the token must hold (TokenScope).
-	tokens map[Route]scope.Scope
+	// that the token must hold (TokenScope), and sessionOnly those that
+	// take a session alone (SessionOnly).
+	tokens      map[Route]scope.Scope
+	sessionOnly map[Route]bool
+	// buckets are the routes that a rate limit counts, each with the bucket
+	// that counts its requests (RateLimit).
+	buckets map[Route]Bucket
 	// pages are the patterns that HandlePage registered.
 	pages map[string]bool
-	// authenticate is MuxOptions.Authenticate.
+	// authenticate is MuxOptions.Authenticate, and limiter is
+	// MuxOptions.RateLimit.
 	authenticate Authenticator
+	limiter      RateLimiter
 }
 
 // MuxOptions configure NewMux.
@@ -102,18 +112,59 @@ type MuxOptions struct {
 	// needs an authenticated caller (Capability.Authenticated). Register
 	// panics on such an operation if it is nil.
 	Authenticate Authenticator
+	// RateLimit counts the requests of each operation in the bucket of its
+	// route (PRD FR-API-04, NFR-SEC-06). Register panics on an operation
+	// that a rate limit counts if it is nil, as every operation of the API
+	// is (Unlimited).
+	RateLimit RateLimiter
 }
 
 // Authenticator finds who makes a request of an operation whose capability
 // needs an authenticated caller, before the operation reads the request's
 // parameters or body, as Guard checks. token is the scope that the route
-// takes an API token with (TokenScope), or "" for a route that takes none,
-// which the Authenticator refuses a token on (PRD FR-AUTH-04). It returns
+// takes an API token with (TokenScope), or "" for a route that is
+// session-only (SessionOnly), which the Authenticator refuses a token on
+// (PRD FR-AUTH-04). It returns
 // the context that the operation runs with, which says who the caller is, or
 // the error that the request is answered with, as Register answers a
 // handler's error, such as unauthenticated for a request without
 // credentials.
 type Authenticator func(ctx huma.Context, token scope.Scope) (context.Context, error)
+
+// RateLimiter counts the requests of the operations in the buckets of their
+// routes (MuxOptions.RateLimit).
+type RateLimiter interface {
+	// Take counts a request of an operation whose route counts in b, once
+	// the Authenticator, if the operation needs one, has found who makes
+	// it, and the operation's own middleware, as its guards, has let it
+	// through, before the operation reads its parameters or body. It sets
+	// the RateLimit headers of the answer on ctx, or returns the error that
+	// the request is answered with, as Register answers a handler's error,
+	// such as rate_limited.
+	Take(ctx huma.Context, b Bucket) error
+	// Doc returns what the description of an operation whose route counts
+	// in b, and which callers may make requests of, says of the limit, which
+	// Register appends to it, so that every operation's description says
+	// what its own limit is.
+	Doc(b Bucket, callers Callers) string
+}
+
+// Callers are who may make the requests of a route, which a rate limit counts
+// against their keys: a request of a public route is counted against its IP
+// address alone, one of a session-only route also against its user, and one
+// of a route that takes an API token also against the token.
+type Callers int
+
+// The callers of the routes.
+const (
+	// Anyone may make the requests of a public route.
+	Anyone Callers = iota
+	// Sessions may make those of a session-only route (SessionOnly).
+	Sessions
+	// Tokens, besides sessions, may make those of a route that takes an API
+	// token (TokenScope).
+	Tokens
+)
 
 // NewMux returns a Mux without routes.
 func NewMux(opts MuxOptions) *Mux {
@@ -126,7 +177,8 @@ func NewMux(opts MuxOptions) *Mux {
 		locales = i18n.Default()
 	}
 	m := &Mux{router: chi.NewRouter(), routes: map[Route]Capability{}, tokens: map[Route]scope.Scope{},
-		pages: map[string]bool{}, authenticate: opts.Authenticate}
+		sessionOnly: map[Route]bool{}, buckets: map[Route]Bucket{}, pages: map[string]bool{},
+		authenticate: opts.Authenticate, limiter: opts.RateLimit}
 	m.router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			next.ServeHTTP(w, r.WithContext(withLogger(r.Context(), log)))
@@ -274,12 +326,19 @@ func (m *Mux) declare(method, pattern string, c Capability) {
 // writes Prometheus's text format, for the route, which requires c. It
 // writes its own errors, with WriteError. It must limit how much it reads of
 // the request body itself; the body must arrive within a minute, as for
-// Register, unless the handler sets another read deadline. It panics if c
-// needs an authenticated caller, whom only Register finds.
+// Register, unless the handler sets another read deadline. No rate limit
+// counts its requests, which only Register's operations count, so a route of
+// the API, under /api/, is an operation. It panics if c needs an
+// authenticated caller, whom only Register finds, and on a pattern under
+// /api/, whose requests a rate limit must count.
 func (m *Mux) Handle(c Capability, method, pattern string, h http.Handler) {
-	if c.Authenticated() {
+	switch {
+	case c.Authenticated():
 		panic(fmt.Sprintf("api: %s %s requires %s, which needs an authenticated caller; register it with Register",
 			method, pattern, c))
+	case IsAPIPath(pattern):
+		panic(fmt.Sprintf("api: %s %s is a route of the API, which a rate limit counts; register it with Register",
+			method, pattern))
 	}
 	m.declare(method, pattern, c)
 	m.router.Method(method, pattern, h)
@@ -307,17 +366,92 @@ type Option func(*routeOptions)
 
 // routeOptions are what a route's Options set.
 type routeOptions struct {
-	token scope.Scope
+	token       scope.Scope
+	sessionOnly bool
+	bucket      Bucket
+	unlimited   bool
 }
 
 // TokenScope says that a route takes an API token too, besides a session,
 // and that the token must hold the scope s, or a scope that implies it (PRD
-// FR-AUTH-04): the Mux's Authenticator is told s. A route registered
-// without it is session-only, and the Authenticator refuses a token there.
-// Register panics on TokenScope for a capability that needs no
-// authenticated caller, or with a value that is not a scope.
+// FR-AUTH-04): the Mux's Authenticator is told s. Register panics on
+// TokenScope for a capability that needs no authenticated caller, with a
+// value that is not a scope, or beside RateLimit(BucketAuth).
 func TokenScope(s scope.Scope) Option {
 	return func(o *routeOptions) { o.token = s }
+}
+
+// SessionOnly says that a route takes a session alone, as the account and
+// credential endpoints do, and that the Authenticator refuses an API token
+// there, whatever its scopes, with 403 session_required (PRD FR-AUTH-04).
+// A route whose capability needs an authenticated caller declares either
+// TokenScope or SessionOnly, and Register panics on one that declares
+// neither or both, so that no route takes a token, or refuses one, because
+// its declaration left something out (FR-AUTH-04 AC6). It panics on
+// SessionOnly for a capability that needs no authenticated caller.
+func SessionOnly() Option {
+	return func(o *routeOptions) { o.sessionOnly = true }
+}
+
+// Bucket is the rate limit that counts the requests of a route (PRD
+// FR-API-04, NFR-SEC-06). A route's requests count in one bucket, which its
+// declaration says (RateLimit), and the RateLimiter of the Mux knows how many
+// requests each bucket allows.
+type Bucket string
+
+// The buckets of the routes. The WebSocket connects of NFR-SEC-06 have one of
+// their own, which is no route's that Register registers.
+const (
+	// BucketAuth is signing in, registering, and the other requests about
+	// credentials that FR-AUTH-05 limits most, among them listing and
+	// revoking API tokens. No route that takes an API token counts in it
+	// (Register), so that a token's requests, which count against its owner
+	// too, cannot use up the owner's limit of the requests that find and
+	// revoke the token, after which no limit counts them: the Authenticator
+	// refuses a revoked token before the limit counts its request.
+	BucketAuth Bucket = "auth"
+	// BucketRead is a request that reads, which a GET or HEAD route counts
+	// in unless it says otherwise.
+	BucketRead Bucket = "read"
+	// BucketWrite is a request that changes something, which a route of
+	// every other method counts in unless it says otherwise.
+	BucketWrite Bucket = "write"
+	// BucketExport is a request for an export.
+	BucketExport Bucket = "export"
+)
+
+// Known reports whether b is a bucket of the routes.
+func (b Bucket) Known() bool {
+	switch b {
+	case BucketAuth, BucketRead, BucketWrite, BucketExport:
+		return true
+	}
+	return false
+}
+
+// RateLimit says that a route's requests count in the bucket b, rather than
+// in BucketRead, for a GET or HEAD route, or in BucketWrite, for any other,
+// in which they count otherwise. Register panics on a value that is not a
+// bucket, and on BucketAuth for a route that takes an API token
+// (TokenScope).
+func RateLimit(b Bucket) Option {
+	return func(o *routeOptions) { o.bucket = b }
+}
+
+// Unlimited says that no rate limit counts a route's requests, for a route
+// outside the API, under /api/, that answers without the database, as the
+// health and readiness probes must while the database is being migrated:
+// the rate limits count in the database (package ratelimit). Every route of
+// the API counts in a bucket, so Register panics on Unlimited for a path
+// under /api/, for any capability but Public, and beside RateLimit.
+func Unlimited() Option {
+	return func(o *routeOptions) { o.unlimited = true }
+}
+
+// IsAPIPath reports whether path is the API's, under /api/, whose every
+// route a rate limit counts, and which needs the database.
+func IsAPIPath(path string) bool {
+	return path == "/api" || strings.HasPrefix(path, "/api/")
 }
 
 // Register registers a huma operation that requires c. Its request body is
@@ -329,33 +463,88 @@ func TokenScope(s scope.Scope) Option {
 //
 // If c needs an authenticated caller, the Mux's Authenticator runs before
 // the operation's own middleware, and handler runs with the context that it
-// returns, with the scope of the route's TokenScope, if opts have one. A
-// route therefore cannot declare such a capability and forget to
-// authenticate its caller. Register panics if the Mux has no Authenticator
-// then.
+// returns, with the scope of the route's TokenScope, or none for a route
+// that is SessionOnly, one of which opts must say. A route therefore cannot
+// declare such a capability and forget to authenticate its caller, or to
+// say whether it takes an API token. Register panics if the Mux has no
+// Authenticator then.
+//
+// Unless opts say that the route is Unlimited, the Mux's RateLimiter counts
+// each request in the route's bucket (RateLimit) after the operation's own
+// middleware, the operation's description ends with what the RateLimiter's
+// Doc says of the limit, and each of its responses in the OpenAPI document
+// but the default documents the RateLimit headers. Register panics if the
+// Mux has no RateLimiter then.
 func Register[I, O any](m *Mux, c Capability, op huma.Operation, handler func(context.Context, *I) (*O, error),
 	opts ...Option) {
 	var o routeOptions
 	for _, opt := range opts {
 		opt(&o)
 	}
+	route := Route{op.Method, op.Path}
 	switch {
 	case o.token != "" && !c.Authenticated():
-		panic(fmt.Sprintf("api: %s %s requires %s, which needs no authenticated caller, so it takes no API token",
-			op.Method, op.Path, c))
+		panic(fmt.Sprintf("api: %s requires %s, which needs no authenticated caller, so it takes no API token",
+			route, c))
 	case o.token != "" && !o.token.Known():
-		panic(fmt.Sprintf("api: %s %s takes an API token with the unknown scope %q", op.Method, op.Path, o.token))
+		panic(fmt.Sprintf("api: %s takes an API token with the unknown scope %q", route, o.token))
+	case o.sessionOnly && !c.Authenticated():
+		panic(fmt.Sprintf("api: %s requires %s, which needs no authenticated caller, so it is not session-only",
+			route, c))
+	case o.sessionOnly && o.token != "":
+		panic(fmt.Sprintf("api: %s is session-only and takes an API token", route))
+	case c.Authenticated() && !o.sessionOnly && o.token == "":
+		panic(fmt.Sprintf("api: %s requires %s, which needs an authenticated caller, and says neither the scope "+
+			"that it takes an API token with (TokenScope) nor that it is session-only (SessionOnly)", route, c))
+	case o.unlimited && o.bucket != "":
+		panic(fmt.Sprintf("api: %s is unlimited and counts in the %s bucket", route, o.bucket))
+	case o.unlimited && (IsAPIPath(op.Path) || c != Public):
+		panic(fmt.Sprintf("api: %s requires %s, and only a public route outside /api/ may be unlimited", route, c))
+	case o.bucket != "" && !o.bucket.Known():
+		panic(fmt.Sprintf("api: %s counts in the unknown bucket %q", route, o.bucket))
+	case o.token != "" && o.bucket == BucketAuth:
+		panic(fmt.Sprintf("api: %s takes an API token and counts in the %s bucket, which no token's request may "+
+			"count in, so that a token cannot use up its owner's limit of the requests that revoke it", route,
+			BucketAuth))
+	case !o.unlimited && m.limiter == nil:
+		panic(fmt.Sprintf("api: %s counts in a rate limit, and the Mux has no RateLimiter", route))
 	}
 	if c.Authenticated() {
 		if m.authenticate == nil {
-			panic(fmt.Sprintf("api: %s %s requires %s, which needs an authenticated caller, and the Mux has no "+
-				"Authenticator", op.Method, op.Path, c))
+			panic(fmt.Sprintf("api: %s requires %s, which needs an authenticated caller, and the Mux has no "+
+				"Authenticator", route, c))
 		}
 		op.Middlewares = append(huma.Middlewares{authenticateWith(m.authenticate, o.token)}, op.Middlewares...)
 	}
+	bucket := o.bucket
+	if bucket == "" && !o.unlimited {
+		bucket = BucketWrite
+		if op.Method == http.MethodGet || op.Method == http.MethodHead {
+			bucket = BucketRead
+		}
+	}
+	if bucket != "" {
+		callers := Anyone
+		switch {
+		case o.token != "":
+			callers = Tokens
+		case o.sessionOnly:
+			callers = Sessions
+		}
+		// A new slice, so that the limit is not appended to the backing
+		// array of middleware that another operation shares.
+		op.Middlewares = append(slices.Clip(op.Middlewares), limitWith(m.limiter, bucket))
+		op.Description = strings.TrimSpace(op.Description + m.limiter.Doc(bucket, callers))
+	}
 	m.declare(op.Method, op.Path, c)
-	if o.token != "" {
-		m.tokens[Route{op.Method, op.Path}] = o.token
+	switch {
+	case o.token != "":
+		m.tokens[route] = o.token
+	case o.sessionOnly:
+		m.sessionOnly[route] = true
+	}
+	if bucket != "" {
+		m.buckets[route] = bucket
 	}
 	// huma documents the envelope as the default response only for an
 	// operation that documents no other response than its success, so an
@@ -391,6 +580,23 @@ func Register[I, O any](m *Mux, c Capability, op huma.Operation, handler func(co
 		}
 		return out, nil
 	})
+	if bucket != "" {
+		m.documentRateLimit(route)
+	}
+}
+
+// limitWith returns middleware for an operation that counts each request in
+// bucket b with limiter, or answers the request with its error, as Guard
+// does.
+func limitWith(limiter RateLimiter, b Bucket) func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		if err := limiter.Take(ctx, b); err != nil {
+			r, w := humachi.Unwrap(ctx)
+			WriteError(w, r, err)
+			return
+		}
+		next(ctx)
+	}
 }
 
 // Guard returns middleware for an operation, for its huma.Operation's
@@ -430,10 +636,23 @@ func (m *Mux) Routes() map[Route]Capability {
 }
 
 // TokenScopes returns the routes that take an API token, each with the scope
-// that the token must hold (TokenScope). Every other route is session-only,
-// or needs no authenticated caller.
+// that the token must hold (TokenScope).
 func (m *Mux) TokenScopes() map[Route]scope.Scope {
 	return maps.Clone(m.tokens)
+}
+
+// SessionOnlyRoutes returns the routes that take a session alone
+// (SessionOnly). Every route whose capability needs an authenticated caller
+// is one of them or one of TokenScopes.
+func (m *Mux) SessionOnlyRoutes() map[Route]bool {
+	return maps.Clone(m.sessionOnly)
+}
+
+// Buckets returns the routes that a rate limit counts, each with the bucket
+// that counts its requests. Every route that Register registers is one of
+// them, but those that are Unlimited.
+func (m *Mux) Buckets() map[Route]Bucket {
+	return maps.Clone(m.buckets)
 }
 
 // Walk calls fn for every route that the router has, whether or not it was

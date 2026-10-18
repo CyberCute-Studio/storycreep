@@ -74,9 +74,10 @@ RETURNING updated_at;
 -- name: UserWorkspaces :many
 -- UserWorkspaces returns the workspaces that a user is a member of, with
 -- each membership, in the order of the workspaces' IDs, after the workspace
--- after, or from the first if after is null. It reads the memberships
--- through auth_user_memberships, which returns them only to a transaction
--- whose app.user_id is the user (§5.4).
+-- after, or from the first if after is null, and only the workspace
+-- only_workspace if it is not null, as for an API token, which acts in its
+-- own alone. It reads the memberships through auth_user_memberships, which
+-- returns them only to a transaction whose app.user_id is the user (§5.4).
 SELECT
     m.membership_id::uuid AS membership_id, m.role::text AS role,
     w.id, w.name, w.slug, w.settings, w.created_at, w.updated_at
@@ -84,6 +85,7 @@ FROM auth_user_memberships(@user_id::uuid) m
 JOIN workspace w ON w.id = m.workspace_id
 WHERE w.status = 'active'
     AND (sqlc.narg(after)::uuid IS NULL OR w.id > sqlc.narg(after)::uuid)
+    AND (sqlc.narg(only_workspace)::uuid IS NULL OR w.id = sqlc.narg(only_workspace)::uuid)
 ORDER BY w.id
 LIMIT @max_rows;
 

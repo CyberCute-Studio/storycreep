@@ -13,7 +13,6 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/invite"
-	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
@@ -120,7 +119,6 @@ type createInviteInput struct {
 }
 
 type inviteOutput struct {
-	RateLimitOutput
 	Body inviteBody
 }
 
@@ -158,7 +156,6 @@ type invitePreviewBody struct {
 }
 
 type invitePreviewOutput struct {
-	RateLimitOutput
 	Body invitePreviewBody
 }
 
@@ -168,7 +165,6 @@ type acceptInviteInput struct {
 }
 
 type acceptedInviteOutput struct {
-	RateLimitOutput
 	Body membershipBody
 }
 
@@ -209,8 +205,7 @@ const inviteStateDoc = " A token that belongs to no invitation, as one that send
 
 // registerInvites registers the routes of a workspace's members and
 // invitations (PRD FR-TEN-02, FR-AUTH-03).
-func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.Service, accounts *account.Service,
-	limits *ratelimit.Limiter) {
+func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.Service, accounts *account.Service) {
 	api.Register(m, api.ListMembers, huma.Operation{
 		OperationID: "listMembers",
 		Method:      http.MethodGet,
@@ -249,7 +244,7 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			out.Body.Items[i] = newMemberBody(m)
 		}
 		return out, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ManageMembers, huma.Operation{
 		OperationID: "removeMember",
@@ -284,7 +279,7 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			return nil, memberError(err)
 		}
 		return &struct{}{}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ManageMembers, huma.Operation{
 		OperationID: "changeMemberRole",
@@ -321,7 +316,7 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			return nil, memberError(err)
 		}
 		return &memberOutput{Body: newMemberBody(member)}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ManageMembers, huma.Operation{
 		OperationID: "createInvite",
@@ -341,11 +336,9 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			"invitation on every instance, the answer's url is the link, which the signed-in user gives the " +
 			"person invited; the server keeps no copy of it. The email names the instance and the role, but " +
 			"neither the workspace nor who invites, which the page that the link opens shows instead (POST " +
-			"/api/v1/invites/lookup)." + csrfDoc +
-			authLimitDoc,
+			"/api/v1/invites/lookup)." + csrfDoc,
 		Tags:          []string{"Members"},
 		DefaultStatus: http.StatusCreated,
-		Middlewares:   huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
 	}, func(ctx context.Context, in *createInviteInput) (*inviteOutput, error) {
 		cur, err := currentFrom(ctx)
 		if err != nil {
@@ -361,7 +354,7 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			return nil, memberError(err)
 		}
 		return &inviteOutput{Body: newInviteBody(inv)}, nil
-	})
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	api.Register(m, api.ManageMembers, huma.Operation{
 		OperationID: "listInvites",
@@ -401,7 +394,7 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			out.Body.Items[i] = newInviteBody(inv)
 		}
 		return out, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ManageMembers, huma.Operation{
 		OperationID: "resendInvite",
@@ -416,10 +409,8 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			"with 403 owner_required." +
 			manageMembersDoc + " So is an invitation that the workspace does not have. One that has been accepted " +
 			"is answered with 410 invite_accepted, one that has been revoked with 410 invite_revoked, and one to " +
-			"an address that belongs to a member of the workspace by now with 409 already_member." + csrfDoc +
-			authLimitDoc,
-		Tags:        []string{"Members"},
-		Middlewares: huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
+			"an address that belongs to a member of the workspace by now with 409 already_member." + csrfDoc,
+		Tags: []string{"Members"},
 	}, func(ctx context.Context, in *inviteActionInput) (*inviteOutput, error) {
 		cur, err := currentFrom(ctx)
 		if err != nil {
@@ -434,7 +425,7 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			return nil, memberError(err)
 		}
 		return &inviteOutput{Body: newInviteBody(inv)}, nil
-	})
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	api.Register(m, api.ManageMembers, huma.Operation{
 		OperationID: "revokeInvite",
@@ -460,7 +451,7 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			return nil, memberError(err)
 		}
 		return &struct{}{}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "lookupInvite",
@@ -469,10 +460,8 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 		Summary:     "Read an invitation with its link",
 		Description: "Returns what the holder of an invitation's link sees of it, so that the page that accepts " +
 			"it can show it: the workspace's name, the role, and the invited address, if it has one. It is a POST, " +
-			"so that the token travels in the body, never in a URL that a log could hold." + inviteStateDoc +
-			authLimitDoc,
-		Tags:        []string{"Members"},
-		Middlewares: huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
+			"so that the token travels in the body, never in a URL that a log could hold." + inviteStateDoc,
+		Tags: []string{"Members"},
 	}, func(ctx context.Context, in *lookupInviteInput) (*invitePreviewOutput, error) {
 		p, err := invites.Lookup(ctx, secret.New(in.Body.Token))
 		if err != nil {
@@ -480,7 +469,7 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 		}
 		return &invitePreviewOutput{Body: invitePreviewBody{WorkspaceName: p.WorkspaceName, Kind: string(p.Kind()),
 			Email: p.Email, Role: string(p.Role), ExpiresAt: p.ExpiresAt}}, nil
-	})
+	}, api.RateLimit(api.BucketAuth))
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "acceptInvite",
@@ -494,9 +483,8 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			"workspace that has as many members, guests included, as its plan, or STORYCREEP_WORKSPACE_LIMITS on " +
 			"a self-hosted instance, allows with 409 limit_exceeded, and the invitation stays open either way. " +
 			"Accepting again an invitation that the user accepted, as registering with it does, returns the " +
-			"membership again, while the user is still a member." + inviteStateDoc + csrfDoc + authLimitDoc,
-		Tags:        []string{"Members"},
-		Middlewares: huma.Middlewares{rateLimit(limits, ratelimit.Auth)},
+			"membership again, while the user is still a member." + inviteStateDoc + csrfDoc,
+		Tags: []string{"Members"},
 	}, func(ctx context.Context, in *acceptInviteInput) (*acceptedInviteOutput, error) {
 		cur, err := currentFrom(ctx)
 		if err != nil {
@@ -508,7 +496,7 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 		}
 		return &acceptedInviteOutput{Body: membershipBody{WorkspaceFields: newWorkspaceFields(ms.Workspace),
 			MembershipID: ids.Encode(ids.Membership, ms.ID), Role: string(ms.Role)}}, nil
-	})
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	api.Register(m, api.Public, huma.Operation{
 		OperationID: "registerWithInvite",
@@ -531,7 +519,7 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 			"So it does for a new account, which joins no workspace, if the workspace of an invitation to an " +
 			"address is full. The client then signs in, and accepts the invitation with POST " +
 			"/api/v1/invites/accept, which returns the membership either way, or answers 409 limit_exceeded while " +
-			"the workspace is full." + authLimitDoc,
+			"the workspace is full.",
 		Tags:          []string{"Members"},
 		DefaultStatus: http.StatusAccepted,
 		// The policy is checked before the body is read, so that a
@@ -539,15 +527,15 @@ func registerInvites(m *api.Mux, workspaces *workspace.Service, invites *invite.
 		// before the rate limit, as for POST /api/v1/auth/register.
 		Middlewares: huma.Middlewares{api.Guard(func(ctx context.Context) error {
 			return accountError(accounts.CheckInvitedSignup(ctx))
-		}), rateLimit(limits, ratelimit.Auth)},
-	}, func(ctx context.Context, in *registerWithInviteInput) (*acceptedOutput, error) {
+		})},
+	}, func(ctx context.Context, in *registerWithInviteInput) (*struct{}, error) {
 		err := invites.Register(ctx, secret.New(in.Body.Token), account.Registration{Email: in.Body.Email,
 			DisplayName: in.Body.DisplayName, Password: secret.New(in.Body.Password)}, clientFrom(ctx))
 		if err != nil {
 			return nil, memberError(err)
 		}
-		return &acceptedOutput{}, nil
-	})
+		return &struct{}{}, nil
+	}, api.RateLimit(api.BucketAuth))
 }
 
 // inviteIDs returns the IDs of the workspace and the invitation that in

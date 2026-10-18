@@ -37,6 +37,7 @@ type usageBody struct {
 	Members      limitUsageBody   `json:"members" doc:"The workspace's members, guests included"`
 	StorageBytes limitUsageBody   `json:"storage_bytes" doc:"The bytes that the workspace's stored files take up. Uploads that run at once may take it past its limit by what they add together."`
 	Snapshots    meteredUsageBody `json:"snapshots" doc:"The snapshots of the workspace's projects"`
+	APIRequests  meteredUsageBody `json:"api_requests" doc:"The requests that the workspace's API tokens have made: each that a token was accepted for, whatever its answer then; a request that a token is refused for, as one without the route's scope, is not counted"`
 }
 
 // newUsageBody returns the body of the workspace's usage us, which holds
@@ -46,7 +47,7 @@ func newUsageBody(us []workspace.Usage) (usageBody, error) {
 	limits := map[usage.Key]*limitUsageBody{usage.Projects: &b.Projects, usage.Members: &b.Members,
 		usage.StorageBytes: &b.StorageBytes}
 	metered := map[usage.Key]*meteredUsageBody{usage.Boards: &b.Boards, usage.Nodes: &b.Nodes,
-		usage.Snapshots: &b.Snapshots}
+		usage.Snapshots: &b.Snapshots, usage.APIRequests: &b.APIRequests}
 	for _, u := range us {
 		switch l, m := limits[u.Key], metered[u.Key]; {
 		case l != nil && u.Limited:
@@ -105,5 +106,5 @@ func registerUsage(m *api.Mux, workspaces *workspace.Service) {
 			return nil, err
 		}
 		return &usageOutput{Body: body}, nil
-	})
+	}, api.SessionOnly())
 }

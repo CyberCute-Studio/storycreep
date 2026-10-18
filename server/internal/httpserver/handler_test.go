@@ -373,8 +373,9 @@ func TestRequestID(t *testing.T) {
 func TestPanicIsAnswered(t *testing.T) {
 	log, logged := newTestLog()
 	s := newServer(loadConfig(t, nil), log)
+	// No rate limit counts the route, which would need the database.
 	api.Register(s.main, api.Public, huma.Operation{OperationID: "panic", Method: http.MethodGet, Path: "/panic"},
-		func(context.Context, *struct{}) (*statusOutput, error) { panic("the handler broke") })
+		func(context.Context, *struct{}) (*statusOutput, error) { panic("the handler broke") }, api.Unlimited())
 	res := do(s.main, http.MethodGet, "/panic", nil)
 	if res.status != http.StatusInternalServerError || res.code() != api.CodeInternal {
 		t.Errorf("a panic is answered with %d %s", res.status, res.body)

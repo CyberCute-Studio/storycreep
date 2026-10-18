@@ -17,8 +17,8 @@ const (
 	// depends on the MetricsEndpoint capability of the configuration.
 	ScrapeMetrics Capability = "metrics.scrape"
 	// OwnAccount is the caller's own account: who is signed in, the
-	// account's sessions and password, and signing out. It needs a signed-in
-	// caller, whom the Mux's Authenticator finds.
+	// account's sessions and password, its workspaces, and signing out. It
+	// needs a signed-in caller, whom the Mux's Authenticator finds.
 	OwnAccount Capability = "account.own"
 	// CreateWorkspace is creating a workspace, which any signed-in user may
 	// do, becoming its owner (PRD FR-TEN-01).

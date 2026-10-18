@@ -118,7 +118,7 @@ func registerGrants(m *api.Mux, projects *project.Service) {
 			return nil, grantError(err)
 		}
 		return grantPage(in.PageParams, list, func(g project.Grant) ids.UUID { return g.MembershipID })
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ManageProjectGrants, huma.Operation{
 		OperationID: "setProjectGrant",
@@ -153,7 +153,7 @@ func registerGrants(m *api.Mux, projects *project.Service) {
 			return nil, grantError(err)
 		}
 		return &grantOutput{Body: newGrantBody(g)}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ManageProjectGrants, huma.Operation{
 		OperationID: "removeProjectGrant",
@@ -182,7 +182,7 @@ func registerGrants(m *api.Mux, projects *project.Service) {
 			return nil, grantError(err)
 		}
 		return &struct{}{}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ManageProjectGrants, huma.Operation{
 		OperationID: "listMemberGrants",
@@ -215,7 +215,7 @@ func registerGrants(m *api.Mux, projects *project.Service) {
 			return nil, grantError(err)
 		}
 		return grantPage(in.PageParams, list, func(g project.Grant) ids.UUID { return g.ProjectID })
-	})
+	}, api.SessionOnly())
 }
 
 // grantPage returns the page of the grants list that in asks for, which a

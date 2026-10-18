@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -135,16 +134,11 @@ func (r *readiness) migrationsApplied(ctx context.Context) bool {
 	return ready
 }
 
-// isAPI reports whether path is the API's, which needs the database.
-func isAPI(path string) bool {
-	return path == "/api" || strings.HasPrefix(path, "/api/")
-}
-
 // gate answers the API's requests with not_ready, and its Retry-After, until
 // the server can serve.
 func (r *readiness) gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if isAPI(req.URL.Path) {
+		if api.IsAPIPath(req.URL.Path) {
 			if err := r.notReady(req.Context(), false); err != nil {
 				api.WriteError(w, req, err)
 				return

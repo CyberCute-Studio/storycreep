@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -18,6 +19,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 )
 
 // The permission matrix on the wire (PRD §5.6, FR-TEN-03): every operation
@@ -47,10 +49,18 @@ type rolesFixture struct {
 }
 
 // newRolesFixture returns a server whose workspace has an account of each of
-// matrixRoles.
+// matrixRoles. The tests of the roles try every operation as each account,
+// many of which, as making, listing, and revoking tokens and inviting
+// someone, count in the auth bucket, whose limit of 10 a minute for each
+// account would refuse them, so the server's limiter allows each account
+// 1,000 of them a minute; the tests of the limits use servers of their own,
+// or a policy of their own.
 func newRolesFixture(t *testing.T) *rolesFixture {
 	t.Helper()
 	s, d, owner, ws := inviteServer(t, "open", nil)
+	policy := ratelimit.DefaultPolicy()
+	policy.Rates[ratelimit.Auth].Limits[ratelimit.User] = 1000
+	s.limits = ratelimit.New(readyDB{s.ready}, policy)
 	f := &rolesFixture{s: s, d: d, admin: d.Admin(t), ws: ws, as: map[string]signedIn{"owner": owner}}
 	for _, r := range matrixRoles[1:] {
 		// Not admin@example.com, which is the owner's.
@@ -696,22 +706,37 @@ type routeCall struct {
 // joins the tests that walk them.
 func routeCalls(t *testing.T, f *rolesFixture, params map[string]string) []routeCall {
 	t.Helper()
-	doc := f.s.main.OpenAPI()
 	var routes []api.Route
 	for r := range f.s.main.Routes() {
 		if strings.Contains(r.Pattern, "{workspace_id}") || strings.Contains(r.Pattern, "{project_id}") {
 			routes = append(routes, r)
 		}
 	}
+	return callsOf(t, f, params, routes)
+}
+
+// tokenRouteCalls returns a call of every route that takes an API token
+// (api.TokenScope), as routeCalls does, those without a parameter of a
+// workspace or a project included, such as the list of workspaces.
+func tokenRouteCalls(t *testing.T, f *rolesFixture, params map[string]string) []routeCall {
+	t.Helper()
+	return callsOf(t, f, params, slices.Collect(maps.Keys(f.s.main.TokenScopes())))
+}
+
+// callsOf returns a call of each of routes, in their order, with the values of
+// params for the parameters of their paths, as routeCalls describes.
+func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []api.Route) []routeCall {
+	t.Helper()
+	doc := f.s.main.OpenAPI()
 	slices.SortFunc(routes, func(a, b api.Route) int { return strings.Compare(a.String(), b.String()) })
 	var out []routeCall
 	for _, r := range routes {
 		item := doc.Paths[r.Pattern]
-		if item == nil || operationsOf(item)[r.Method] == nil {
+		if item == nil || api.Operations(item)[r.Method] == nil {
 			t.Errorf("%s is not in the OpenAPI document", r)
 			continue
 		}
-		op := operationsOf(item)[r.Method]
+		op := api.Operations(item)[r.Method]
 		path, query := r.Pattern, url.Values{}
 		for _, p := range op.Parameters {
 			switch p.In {

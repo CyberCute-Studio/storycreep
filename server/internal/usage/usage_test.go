@@ -410,9 +410,10 @@ func TestExactKeysTakeTurns(t *testing.T) {
 }
 
 // TestRecordAndRead checks that Record refuses a key that is not one and
-// records nothing for no change, that Read gives every key, 0 for one
-// without a counter or a delta, and leaves out a key that this release does
-// not know, and that the meter refuses a limit that is not metered.
+// records nothing for no change, that RecordUnflushed refuses a key that is
+// counted exactly too, that Read gives every key, 0 for one without a counter
+// or a delta, and leaves out a key that this release does not know, and that
+// the meter refuses a limit that is not metered.
 func TestRecordAndRead(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -429,6 +430,11 @@ func TestRecordAndRead(t *testing.T) {
 		}
 		if err := usage.Record(ctx, tx, ws, usage.Nodes, 0); err != nil {
 			t.Errorf("Record of no change: %v", err)
+		}
+		for _, k := range []usage.Key{"retired_things", usage.Projects, usage.Members, usage.Snapshots} {
+			if err := usage.RecordUnflushed(ctx, tx, ws, k, 1); err == nil {
+				t.Errorf("RecordUnflushed of %s succeeded", k)
+			}
 		}
 		if _, err := (usage.Meter{}).Usage(ctx, tx, ws, "snapshot_retention"); err == nil {
 			t.Error("the meter read snapshot_retention, which nothing meters")
@@ -461,6 +467,61 @@ func TestRecordAndRead(t *testing.T) {
 		if exact := k == usage.Projects || k == usage.Members || k == usage.Snapshots; k.Exact() != exact {
 			t.Errorf("%s: Exact is %v, want %v", k, k.Exact(), exact)
 		}
+	}
+}
+
+// TestRecordUnflushed checks that RecordUnflushed records its delta, which
+// Read counts, in the statement that also makes its transaction commit
+// without waiting for the disk, and that Record leaves the transaction
+// waiting for it. The test's database server waits for no commit at all, so
+// the transaction asks it to wait first.
+func TestRecordUnflushed(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	ws, _ := f.workspace(t, 1)
+	setting := func(tx pgx.Tx) string {
+		t.Helper()
+		var s string
+		if err := tx.QueryRow(ctx, "SELECT current_setting('synchronous_commit')").Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	err := f.db.InTx(ctx, database.Scope{WorkspaceID: ws}, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SET LOCAL synchronous_commit = on"); err != nil {
+			return err
+		}
+		if err := usage.Record(ctx, tx, ws, usage.Nodes, 2); err != nil {
+			return err
+		}
+		if s := setting(tx); s != "on" {
+			t.Errorf("synchronous_commit is %s once Record recorded a delta, want on", s)
+		}
+		if err := usage.RecordUnflushed(ctx, tx, ws, usage.APIRequests, 3); err != nil {
+			return err
+		}
+		if s := setting(tx); s != "off" {
+			t.Errorf("synchronous_commit is %s once RecordUnflushed recorded a delta, want off", s)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = f.db.InTx(ctx, database.Scope{WorkspaceID: ws}, func(tx pgx.Tx) error {
+		used, err := usage.Read(ctx, tx, ws)
+		if err != nil {
+			return err
+		}
+		if used[usage.Nodes] != 2 || used[usage.APIRequests] != 3 {
+			t.Errorf("the workspace uses %d nodes and %d API requests, want 2 and 3", used[usage.Nodes],
+				used[usage.APIRequests])
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -518,6 +579,13 @@ func TestIsolation(t *testing.T) {
 			id := ids.New()
 			return []ids.UUID{id}, queries.New(tx).InsertUsageDelta(ctx, queries.InsertUsageDeltaParams{ID: uuid(id),
 				WorkspaceID: uuid(target.ID), Key: string(usage.Nodes), Delta: 1})
+		}},
+		{Name: "an unflushed delta", Denied: true, Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			id := ids.New()
+			return []ids.UUID{id}, queries.New(tx).InsertUnflushedUsageDelta(ctx,
+				queries.InsertUnflushedUsageDeltaParams{ID: uuid(id), WorkspaceID: uuid(target.ID),
+					Key: string(usage.APIRequests), Delta: 1})
 		}},
 		{Name: "a counter", Denied: true, Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) (
 			[]ids.UUID, error) {

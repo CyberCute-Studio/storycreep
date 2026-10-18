@@ -38,13 +38,21 @@ func TestMain(m *testing.M) {
 
 const testRequestID = "req-test-1"
 
+// noLimit is a RateLimiter that counts nothing, for the tests of what a
+// rate limit does not change.
+type noLimit struct{}
+
+func (noLimit) Take(huma.Context, Bucket) error { return nil }
+func (noLimit) Doc(Bucket, Callers) string      { return "" }
+
 // testMux returns a Mux whose requests have the ID testRequestID, and the
-// buffer its log is written to.
+// buffer its log is written to. Its RateLimiter counts nothing.
 func testMux(t *testing.T) (*Mux, *bytes.Buffer) {
 	t.Helper()
 	var logged bytes.Buffer
 	m := NewMux(MuxOptions{
-		Log: logging.New(&logged, slog.LevelDebug),
+		Log:       logging.New(&logged, slog.LevelDebug),
+		RateLimit: noLimit{},
 		Middleware: []func(http.Handler) http.Handler{func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				next.ServeHTTP(w, r.WithContext(logging.WithRequestID(r.Context(), testRequestID)))
@@ -493,7 +501,7 @@ func TestAuthenticate(t *testing.T) {
 	}, func(ctx context.Context, in *itemInput) (*itemOutput, error) {
 		caller, _ = ctx.Value(callerKey{}).(string)
 		return &itemOutput{Body: in.Body}, nil
-	})
+	}, SessionOnly())
 	Register(m, Public, huma.Operation{OperationID: "createItem", Method: http.MethodPost, Path: "/items"},
 		func(_ context.Context, in *itemInput) (*itemOutput, error) { return &itemOutput{Body: in.Body}, nil })
 	Register(m, ReadProject, huma.Operation{OperationID: "getItem", Method: http.MethodGet, Path: "/projects/items"},
@@ -530,11 +538,29 @@ func TestAuthenticate(t *testing.T) {
 	if got, want := m.TokenScopes(), map[Route]scope.Scope{{http.MethodGet, "/projects/items"}: scope.ProjectRead}; !maps.Equal(got, want) {
 		t.Errorf("TokenScopes() = %v, want %v", got, want)
 	}
+	if got, want := m.SessionOnlyRoutes(), map[Route]bool{{http.MethodPost, "/own/items"}: true}; !maps.Equal(got, want) {
+		t.Errorf("SessionOnlyRoutes() = %v, want %v", got, want)
+	}
 
 	for name, register := range map[string]func(){
 		"an operation without an Authenticator": func() {
-			Register(NewMux(MuxOptions{}), OwnAccount, huma.Operation{OperationID: "x", Method: http.MethodGet,
-				Path: "/x"}, func(context.Context, *struct{}) (*itemOutput, error) { return nil, nil })
+			Register(NewMux(MuxOptions{RateLimit: noLimit{}}), OwnAccount, huma.Operation{OperationID: "x",
+				Method: http.MethodGet, Path: "/x"}, func(context.Context, *struct{}) (*itemOutput, error) {
+				return nil, nil
+			}, SessionOnly())
+		},
+		"an operation that says neither whether it takes a token nor that it is session-only": func() {
+			Register(m, OwnAccount, huma.Operation{OperationID: "w", Method: http.MethodGet, Path: "/w"},
+				func(context.Context, *struct{}) (*itemOutput, error) { return nil, nil })
+		},
+		"a session-only operation that takes a token": func() {
+			Register(m, ReadProject, huma.Operation{OperationID: "v", Method: http.MethodGet, Path: "/v"},
+				func(context.Context, *struct{}) (*itemOutput, error) { return nil, nil },
+				TokenScope(scope.ProjectRead), SessionOnly())
+		},
+		"a public operation that is session-only": func() {
+			Register(m, Public, huma.Operation{OperationID: "u", Method: http.MethodGet, Path: "/u"},
+				func(context.Context, *struct{}) (*itemOutput, error) { return nil, nil }, SessionOnly())
 		},
 		"a handler": func() { m.Handle(OwnAccount, http.MethodGet, "/own", http.NotFoundHandler()) },
 		"a public operation that takes a token": func() {
@@ -545,6 +571,179 @@ func TestAuthenticate(t *testing.T) {
 		"an operation that takes a token with an unknown scope": func() {
 			Register(m, ReadProject, huma.Operation{OperationID: "z", Method: http.MethodGet, Path: "/z"},
 				func(context.Context, *struct{}) (*itemOutput, error) { return nil, nil }, TokenScope("project:all"))
+		},
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("registering %s did not panic", name)
+				}
+			}()
+			register()
+		}()
+	}
+}
+
+// recordingLimiter is a RateLimiter that records the bucket of each request
+// that it counts, with the caller that the Authenticator found, and, if
+// order is set, its turn in order, and refuses every request while refuse is
+// set.
+type recordingLimiter struct {
+	taken  []string
+	order  *[]string
+	refuse error
+}
+
+func (l *recordingLimiter) Take(ctx huma.Context, b Bucket) error {
+	caller, _ := ctx.Context().Value(callerKey{}).(string)
+	l.taken = append(l.taken, string(b)+" "+caller)
+	if l.order != nil {
+		*l.order = append(*l.order, "limit")
+	}
+	if l.refuse != nil {
+		return l.refuse
+	}
+	ctx.SetHeader(RateLimitRemainingHeader, "7")
+	return nil
+}
+
+func (l *recordingLimiter) Doc(b Bucket, c Callers) string {
+	return fmt.Sprintf(" Counted as %s for %d.", b, c)
+}
+
+// TestRateLimit checks that every operation counts in the bucket that its
+// declaration says, or that its method does, once the Authenticator and the
+// operation's own middleware have let its request through, before the
+// operation runs; that the bucket's limit is in its description and its
+// headers in its responses; that only a public route outside /api/ may
+// count in none; and that no route that takes an API token counts in the
+// auth bucket.
+func TestRateLimit(t *testing.T) {
+	var order []string
+	limiter := &recordingLimiter{order: &order}
+	m := NewMux(MuxOptions{RateLimit: limiter, Authenticate: func(ctx huma.Context, _ scope.Scope) (context.Context,
+		error) {
+		order = append(order, "authenticate")
+		return context.WithValue(ctx.Context(), callerKey{}, "jo"), nil
+	}})
+	ran := 0
+	handler := func(context.Context, *struct{}) (*itemOutput, error) {
+		ran++
+		order = append(order, "operation")
+		return &itemOutput{}, nil
+	}
+	own := huma.Middlewares{func(ctx huma.Context, next func(huma.Context)) {
+		order = append(order, "own middleware")
+		next(ctx)
+	}}
+	Register(m, Public, huma.Operation{OperationID: "getThing", Method: http.MethodGet, Path: "/api/things",
+		Description: "Reads a thing.", Middlewares: own}, handler)
+	Register(m, OwnAccount, huma.Operation{OperationID: "putThing", Method: http.MethodPut, Path: "/api/things",
+		Middlewares: own}, handler, SessionOnly())
+	Register(m, Public, huma.Operation{OperationID: "login", Method: http.MethodPost, Path: "/api/login"}, handler,
+		RateLimit(BucketAuth))
+	Register(m, Public, huma.Operation{OperationID: "probe", Method: http.MethodGet, Path: "/probe"}, handler,
+		Unlimited())
+
+	want := map[Route]Bucket{
+		{http.MethodGet, "/api/things"}: BucketRead,
+		{http.MethodPut, "/api/things"}: BucketWrite,
+		{http.MethodPost, "/api/login"}: BucketAuth,
+	}
+	if got := m.Buckets(); !maps.Equal(got, want) {
+		t.Errorf("Buckets() = %v, want %v", got, want)
+	}
+	for _, c := range []struct{ method, path, taken string }{
+		{http.MethodGet, "/api/things", "read "},
+		{http.MethodHead, "/api/things", "read "},
+		{http.MethodPut, "/api/things", "write jo"},
+		{http.MethodPost, "/api/login", "auth "},
+	} {
+		limiter.taken, order = nil, nil
+		res := serve(m, c.method, c.path, "", nil)
+		if res.status != http.StatusOK || !slices.Equal(limiter.taken, []string{c.taken}) ||
+			res.header.Get(RateLimitRemainingHeader) != "7" {
+			t.Errorf("%s %s: %d, counted %q, want %q, RateLimit-Remaining %q", c.method, c.path, res.status,
+				limiter.taken, c.taken, res.header.Get(RateLimitRemainingHeader))
+		}
+	}
+	for _, c := range []struct {
+		method string
+		want   []string
+	}{
+		{http.MethodGet, []string{"own middleware", "limit", "operation"}},
+		{http.MethodPut, []string{"authenticate", "own middleware", "limit", "operation"}},
+	} {
+		order = nil
+		serve(m, c.method, "/api/things", "", nil)
+		if !slices.Equal(order, c.want) {
+			t.Errorf("%s /api/things ran %q, want %q", c.method, order, c.want)
+		}
+	}
+	limiter.taken = nil
+	if res := serve(m, http.MethodGet, "/probe", "", nil); res.status != http.StatusOK || len(limiter.taken) != 0 {
+		t.Errorf("the unlimited route: %d, counted %q", res.status, limiter.taken)
+	}
+
+	limiter.refuse = huma.ErrorWithHeaders(NewError(CodeRateLimited), http.Header{RetryAfterHeader: {"9"}})
+	ran = 0
+	for _, path := range []string{"/api/things", "/api/login"} {
+		method := http.MethodGet
+		if path == "/api/login" {
+			method = http.MethodPost
+		}
+		res := serve(m, method, path, "", nil)
+		if res.status != http.StatusTooManyRequests || res.header.Get(RetryAfterHeader) != "9" {
+			t.Errorf("%s %s over its limit: %d %s %v", method, path, res.status, res.body, res.header)
+		}
+	}
+	if ran != 0 {
+		t.Errorf("%d requests over the limit reached their operation", ran)
+	}
+
+	doc := m.OpenAPI()
+	get := doc.Paths["/api/things"].Get
+	if get.Description != "Reads a thing. Counted as read for 0." {
+		t.Errorf("the description is %q", get.Description)
+	}
+	if d := doc.Paths["/api/things"].Put.Description; d != "Counted as write for 1." {
+		t.Errorf("the description of an operation without one is %q", d)
+	}
+	for _, name := range []string{RateLimitLimitHeader, RateLimitRemainingHeader, RateLimitResetHeader} {
+		if h := get.Responses["200"].Headers[name]; h == nil || h.Schema.Type != huma.TypeInteger {
+			t.Errorf("the 200 response does not document %s", name)
+		}
+	}
+	if d := doc.Paths["/probe"].Get; len(d.Responses["200"].Headers) != 0 || d.Description != "" {
+		t.Errorf("the unlimited operation documents %v, %q", d.Responses["200"].Headers, d.Description)
+	}
+
+	for name, register := range map[string]func(){
+		"an operation of a Mux without a RateLimiter": func() {
+			Register(NewMux(MuxOptions{}), Public, huma.Operation{OperationID: "a", Method: http.MethodGet,
+				Path: "/a"}, handler)
+		},
+		"an unlimited operation of the API": func() {
+			Register(m, Public, huma.Operation{OperationID: "b", Method: http.MethodGet, Path: "/api/b"}, handler,
+				Unlimited())
+		},
+		"an unlimited operation that needs credentials": func() {
+			Register(m, OwnAccount, huma.Operation{OperationID: "c", Method: http.MethodGet, Path: "/c"}, handler,
+				Unlimited(), SessionOnly())
+		},
+		"an unlimited operation in a bucket": func() {
+			Register(m, Public, huma.Operation{OperationID: "d", Method: http.MethodGet, Path: "/d"}, handler,
+				Unlimited(), RateLimit(BucketRead))
+		},
+		"an operation in an unknown bucket": func() {
+			Register(m, Public, huma.Operation{OperationID: "e", Method: http.MethodGet, Path: "/api/e"}, handler,
+				RateLimit("connect"))
+		},
+		// A token's requests count against its owner too, so none counts in
+		// the bucket of the requests that revoke it.
+		"an operation that takes a token in the auth bucket": func() {
+			Register(m, ReadProject, huma.Operation{OperationID: "f", Method: http.MethodGet, Path: "/api/f"}, handler,
+				TokenScope(scope.ProjectRead), RateLimit(BucketAuth))
 		},
 	} {
 		func() {
@@ -585,7 +784,7 @@ func TestRoutingErrors(t *testing.T) {
 func TestRoutePattern(t *testing.T) {
 	var refuse bool
 	got := map[string]string{}
-	m := NewMux(MuxOptions{Middleware: []func(http.Handler) http.Handler{func(next http.Handler) http.Handler {
+	m := NewMux(MuxOptions{RateLimit: noLimit{}, Middleware: []func(http.Handler) http.Handler{func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if refuse {
 				WriteError(w, r, NewError(CodeNotReady))
@@ -671,6 +870,9 @@ func TestDeclarations(t *testing.T) {
 		"an unknown capability": func() { m.Handle("project.fly", http.MethodGet, "/fly", http.NotFoundHandler()) },
 		"no capability":         func() { m.Handle("", http.MethodGet, "/none", http.NotFoundHandler()) },
 		"a route twice":         func() { m.Handle(Public, http.MethodGet, "/metrics", http.NotFoundHandler()) },
+		// A rate limit counts every route of the API, which only Register
+		// attaches.
+		"a handler of the API": func() { m.Handle(Public, http.MethodGet, "/api/raw", http.NotFoundHandler()) },
 	} {
 		func() {
 			defer func() {
@@ -729,7 +931,7 @@ func TestETag(t *testing.T) {
 
 	// As in httpserver, every response is no-store unless its operation says
 	// otherwise.
-	m := NewMux(MuxOptions{Middleware: []func(http.Handler) http.Handler{func(next http.Handler) http.Handler {
+	m := NewMux(MuxOptions{RateLimit: noLimit{}, Middleware: []func(http.Handler) http.Handler{func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 			next.ServeHTTP(w, r)

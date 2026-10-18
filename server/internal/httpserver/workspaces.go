@@ -13,6 +13,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
 )
 
@@ -116,7 +117,11 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 			"oldest first, each with the role of the user's membership, guest included. A client switches " +
 			"between them by naming one by its ID in the routes that it calls: the server keeps no current " +
 			"workspace. Every account has one at least from its first sign-in, which gives it its personal " +
-			"workspace." + sessionAuthDoc,
+			"workspace. A request made with an API token is shown, of these, the token's workspace alone, in which " +
+			"alone it acts, whether or not the token is narrowed to one of its projects. So the token of an " +
+			"instance admin who acts as the owner of a workspace without being a member of it, as with " +
+			"STORYCREEP_INSTANCE_ADMIN_ACCESS on, is shown none, as the admin's session is not shown that " +
+			"workspace either; GET /api/v1/workspaces/{workspace_id} reads it." + tokenAuthDoc(scope.SnapshotRead),
 		Tags: []string{"Workspaces"},
 	}, func(ctx context.Context, in *workspacesInput) (*workspacesOutput, error) {
 		cur, err := currentFrom(ctx)
@@ -127,7 +132,7 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 		if err != nil {
 			return nil, err
 		}
-		memberships, err := workspaces.List(ctx, cur.session.UserID, after, in.Fetch())
+		memberships, err := workspaces.List(ctx, cur.userID, cur.token, after, in.Fetch())
 		if err != nil {
 			return nil, err
 		}
@@ -144,7 +149,7 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 				MembershipID: ids.Encode(ids.Membership, m.ID), Role: string(m.Role)}
 		}
 		return out, nil
-	})
+	}, api.TokenScope(scope.SnapshotRead))
 
 	api.Register(m, api.CreateWorkspace, huma.Operation{
 		OperationID: "createWorkspace",
@@ -181,7 +186,7 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 		}
 		body := newWorkspaceBody(w, role.Owner)
 		return &createdWorkspaceOutput{Location: "/api/v1/workspaces/" + body.ID, Body: body}, nil
-	})
+	}, api.SessionOnly())
 
 	api.Register(m, api.ReadWorkspace, huma.Operation{
 		OperationID: "getWorkspace",
@@ -189,7 +194,8 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 		Path:        "/api/v1/workspaces/{workspace_id}",
 		Summary:     "Get a workspace",
 		Description: "Returns a workspace, with the role that the signed-in user acts with in it." + notFoundDoc +
-			sessionAuthDoc,
+			" So is a workspace other than the one that the request's API token belongs to (PRD FR-AUTH-04 AC3)." +
+			tokenAuthDoc(scope.SnapshotRead),
 		Tags: []string{"Workspaces"},
 	}, func(ctx context.Context, in *workspaceInput) (*workspaceOutput, error) {
 		cur, err := currentFrom(ctx)
@@ -200,12 +206,12 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 		if err != nil {
 			return nil, err
 		}
-		w, r, err := workspaces.Get(ctx, cur.session.UserID, id)
+		w, r, err := workspaces.Get(ctx, cur.userID, cur.token, id)
 		if err != nil {
 			return nil, workspaceError(err)
 		}
 		return &workspaceOutput{Body: newWorkspaceBody(w, r)}, nil
-	})
+	}, api.TokenScope(scope.SnapshotRead))
 
 	api.Register(m, api.ManageWorkspaceSettings, huma.Operation{
 		OperationID: "updateWorkspace",
@@ -232,7 +238,7 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 			return nil, workspaceError(err)
 		}
 		return &workspaceOutput{Body: newWorkspaceBody(w, r)}, nil
-	})
+	}, api.SessionOnly())
 }
 
 // workspaceError returns the error that the API answers err with, an error

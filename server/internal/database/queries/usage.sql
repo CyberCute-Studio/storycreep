@@ -8,6 +8,20 @@
 -- key, or takes from it.
 INSERT INTO usage_delta (id, workspace_id, key, delta) VALUES (@id, @workspace_id, @key, @delta);
 
+-- name: InsertUnflushedUsageDelta :exec
+-- InsertUnflushedUsageDelta records a delta as InsertUsageDelta does, and
+-- makes the transaction that it runs in commit without waiting for its commit
+-- to be flushed to disk (synchronous_commit off), as TakeRateLimit does, for a
+-- delta that a crash of the database may lose, with the last few hundred
+-- milliseconds of such commits. It changes the setting in no_flush, whose one
+-- row the insert reads, so that it spends no round trip on it.
+WITH no_flush AS (
+    SELECT set_config('synchronous_commit', 'off', true)
+)
+INSERT INTO usage_delta (id, workspace_id, key, delta)
+SELECT @id::uuid, @workspace_id::uuid, @key::text, @delta::bigint
+FROM no_flush;
+
 -- name: LockUsage :exec
 -- LockUsage takes the transaction-scoped advisory lock of the workspace's key,
 -- in the two-integer key space of pg_advisory_xact_lock, which the lock of

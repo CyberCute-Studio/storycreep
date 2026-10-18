@@ -354,14 +354,16 @@ FROM auth_user_memberships($1::uuid) m
 JOIN workspace w ON w.id = m.workspace_id
 WHERE w.status = 'active'
     AND ($2::uuid IS NULL OR w.id > $2::uuid)
+    AND ($3::uuid IS NULL OR w.id = $3::uuid)
 ORDER BY w.id
-LIMIT $3
+LIMIT $4
 `
 
 type UserWorkspacesParams struct {
-	UserID  pgtype.UUID
-	After   pgtype.UUID
-	MaxRows int32
+	UserID        pgtype.UUID
+	After         pgtype.UUID
+	OnlyWorkspace pgtype.UUID
+	MaxRows       int32
 }
 
 type UserWorkspacesRow struct {
@@ -377,11 +379,17 @@ type UserWorkspacesRow struct {
 
 // UserWorkspaces returns the workspaces that a user is a member of, with
 // each membership, in the order of the workspaces' IDs, after the workspace
-// after, or from the first if after is null. It reads the memberships
-// through auth_user_memberships, which returns them only to a transaction
-// whose app.user_id is the user (§5.4).
+// after, or from the first if after is null, and only the workspace
+// only_workspace if it is not null, as for an API token, which acts in its
+// own alone. It reads the memberships through auth_user_memberships, which
+// returns them only to a transaction whose app.user_id is the user (§5.4).
 func (q *Queries) UserWorkspaces(ctx context.Context, arg UserWorkspacesParams) ([]UserWorkspacesRow, error) {
-	rows, err := q.db.Query(ctx, userWorkspaces, arg.UserID, arg.After, arg.MaxRows)
+	rows, err := q.db.Query(ctx, userWorkspaces,
+		arg.UserID,
+		arg.After,
+		arg.OnlyWorkspace,
+		arg.MaxRows,
+	)
 	if err != nil {
 		return nil, err
 	}
