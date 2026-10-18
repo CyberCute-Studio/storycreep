@@ -489,6 +489,22 @@ func (s *Service) workspaceOf(ctx context.Context, userID, projectID ids.UUID) (
 	return ws.Bytes, nil
 }
 
+// actorWorkspace returns the workspace that the actor acts in on the project
+// projectID: that of their API token, which acts in no other, so that a
+// transaction of it does not find a project of another workspace, or else
+// the project's, through the context bootstrap (workspaceOf). It returns
+// ErrNotFound as workspaceOf does, and for a project other than the one that
+// the token is narrowed to.
+func (s *Service) actorWorkspace(ctx context.Context, actor commands.Actor, projectID ids.UUID) (ids.UUID, error) {
+	if actor.Token == nil {
+		return s.workspaceOf(ctx, actor.UserID, projectID)
+	}
+	if !actor.Token.Covers(actor.Token.WorkspaceID, projectID) {
+		return ids.UUID{}, ErrNotFound
+	}
+	return actor.Token.WorkspaceID, nil
+}
+
 // Get returns the project projectID, with the role that the actor acts with
 // on it, or ErrNotFound if it does not exist, is in the trash, the actor's
 // effective role on it is none, or the actor's API token does not cover it,
@@ -496,12 +512,9 @@ func (s *Service) workspaceOf(ctx context.Context, userID, projectID ids.UUID) (
 // (FR-AUTH-04 AC3). The token's scopes are the route's to check.
 func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID ids.UUID) (Visible, error) {
 	userID := actor.UserID
-	workspaceID, err := s.workspaceOf(ctx, userID, projectID)
+	workspaceID, err := s.actorWorkspace(ctx, actor, projectID)
 	if err != nil {
 		return Visible{}, err
-	}
-	if !actor.Token.Covers(workspaceID, projectID) {
-		return Visible{}, ErrNotFound
 	}
 	var out Visible
 	err = s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: userID}, func(tx pgx.Tx) error {

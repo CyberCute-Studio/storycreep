@@ -284,7 +284,8 @@ func TestTokenScopes(t *testing.T) {
 // TestTokenNarrowedToProject checks that a token narrowed to a project acts
 // on it, and answers every other project of its workspace with 404, as one
 // that does not exist, and that a token of one workspace answers a project
-// of another with 404, although its owner is a member of both.
+// of another with 404, although its owner is a member of both, on every
+// route that takes a token.
 //
 // Verifies: FR-AUTH-04/AC3
 func TestTokenNarrowedToProject(t *testing.T) {
@@ -334,6 +335,40 @@ func TestTokenNarrowedToProject(t *testing.T) {
 	if got := projectFrom(t, call(f.s.main, http.MethodGet, projectPath(c.ID), nil, owner.header(false)),
 		http.StatusOK); got.ArchivedAt != nil {
 		t.Error("a token of another workspace archived the project")
+	}
+
+	// Every route that takes a token answers a project that the token does
+	// not cover as one that does not exist, whatever the token's scopes, so
+	// that a route that joins them without its service holding the request
+	// to its token fails here: a token of another workspace, and, on a route
+	// of a project, one narrowed to another project.
+	every := scope.Names(scope.All())
+	elsewhere := makeToken(t, f.s.main, owner, projectTokensPath(f.project(t, "")), every...)
+	otherWorkspace := makeToken(t, f.s.main, owner, workspaceTokensPath(other.ID), every...)
+	params := routeParams(t, f)
+	before := projectFrom(t, call(f.s.main, http.MethodGet, projectPath(params["project_id"]), nil,
+		owner.header(false)), http.StatusOK)
+	walked := 0
+	for _, rc := range routeCalls(t, f, params) {
+		if _, ok := f.s.main.TokenScopes()[rc.route]; !ok {
+			continue
+		}
+		walked++
+		uncovered := map[string]CreatedAPITokenBody{"of another workspace": otherWorkspace}
+		if strings.Contains(rc.route.Pattern, "{project_id}") {
+			uncovered["narrowed to another project"] = elsewhere
+		}
+		for name, tok := range uncovered {
+			wantCode(t, rc.route.String()+" with a token "+name, call(f.s.main, rc.route.Method, rc.path, rc.body,
+				bearer(tok.Secret)), http.StatusNotFound, api.CodeNotFound)
+		}
+	}
+	if walked < 4 {
+		t.Errorf("the walk tried %d routes that take a token", walked)
+	}
+	if after := projectFrom(t, call(f.s.main, http.MethodGet, projectPath(params["project_id"]), nil,
+		owner.header(false)), http.StatusOK); after.Rev != before.Rev {
+		t.Errorf("tokens that do not cover the project changed it from rev %d to %d", before.Rev, after.Rev)
 	}
 }
 

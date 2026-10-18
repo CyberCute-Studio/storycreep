@@ -280,23 +280,22 @@ func (p *Pipeline) Apply(ctx context.Context, actor Actor, projectID ids.UUID, b
 
 // apply applies the decoded commands cmds.
 func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, cmds []decoded) (Result, error) {
-	workspaceID, err := p.workspaceOf(ctx, actor.UserID, projectID)
+	workspaceID, err := p.actorWorkspace(ctx, actor, projectID)
 	if err != nil {
 		return Result{}, err
-	}
-	if !actor.Token.Covers(workspaceID, projectID) {
-		return Result{}, ErrNotFound
 	}
 	var res Result
 	err = p.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		// workspaceOf found the workspace active in a transaction of its own,
-		// so the batch's reads it again, before the roles, so that a deletion
-		// requested in between refuses the batch as well, and with 404,
-		// whatever the actor's role would allow (FR-TEN-05 AC1). The same read
-		// finds whether the project is in the trash, where it is not found by
-		// a batch that may not apply there, before the actor's role is, so
-		// that a refusal of the role does not tell that it exists.
+		// workspaceOf, or the authentication of the actor's API token, found
+		// the workspace active in a transaction of its own, so the batch's
+		// reads it again, before the roles, so that a deletion requested in
+		// between refuses the batch as well, and with 404, whatever the
+		// actor's role would allow (FR-TEN-05 AC1). The same read finds
+		// whether the project is in the trash, where it is not found by a
+		// batch that may not apply there, before the actor's role is, so that
+		// a refusal of the role does not tell that it exists, and finds no
+		// project of another workspace than a token's.
 		deleted, err := q.ProjectInTrash(ctx, queries.ProjectInTrashParams{WorkspaceID: nullUUID(workspaceID),
 			ID: nullUUID(projectID)})
 		switch {
@@ -427,6 +426,23 @@ func archived(c decoded) bool { return c.spec.archived }
 // allApply reports whether every command of cmds applies, as applies says.
 func allApply(cmds []decoded, applies func(decoded) bool) bool {
 	return !slices.ContainsFunc(cmds, func(c decoded) bool { return !applies(c) })
+}
+
+// actorWorkspace returns the workspace that the actor acts in on the
+// project: that of their API token, which acts in no other, so that the
+// batch's transaction does not find a project of another workspace, which it
+// answers with ErrNotFound before anything of it is read but whether it
+// exists, or else the project's (workspaceOf). It returns ErrNotFound as
+// workspaceOf does, and for a project other than the one that the token is
+// narrowed to.
+func (p *Pipeline) actorWorkspace(ctx context.Context, actor Actor, projectID ids.UUID) (ids.UUID, error) {
+	if actor.Token == nil {
+		return p.workspaceOf(ctx, actor.UserID, projectID)
+	}
+	if !actor.Token.Covers(actor.Token.WorkspaceID, projectID) {
+		return ids.UUID{}, ErrNotFound
+	}
+	return actor.Token.WorkspaceID, nil
 }
 
 // workspaceOf returns the workspace of the project, through the context
