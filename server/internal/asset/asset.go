@@ -17,11 +17,14 @@
 // that it has, which makes an upload that a client sends again harmless. A
 // blob counts once towards the workspace's storage_bytes, however many assets
 // share it, and an upload that would take the workspace past its plan's
-// storage is refused (FR-ASSET-02 AC4). The upload stores the blob and adds
-// the asset under the blob's lock (database.BlobLock), which the orphan
-// reconciliation takes too, before it deletes a blob that no asset refers to
-// (Reconcile), so that it never deletes one that an upload is about to refer
-// to.
+// storage is refused (FR-ASSET-02 AC4). The upload adds the asset under the
+// blob's lock (database.BlobLock), which the orphan reconciliation takes too,
+// before it deletes a blob that no asset refers to (Reconcile), so that it
+// never deletes one that an upload is about to refer to: the upload stores
+// the blob outside any transaction, so that no connection waits for the
+// store, and then, under the lock, checks that the store still has it,
+// stores it again if the reconciliation deleted it in between, and adds the
+// asset.
 //
 // Uploading an asset is not a command of the pipeline (package commands): it
 // adds a file, which nothing refers to yet, and no change of the project's
@@ -82,10 +85,12 @@ var (
 	ErrInsufficientRole = authz.ErrInsufficientRole
 )
 
-// signedURLLifetime is how long a URL that the S3 driver signs reads its
+// SignedURLLifetime is how long a URL that the S3 driver signs reads its
 // blob: long enough for a browser to follow the redirect, and short enough
 // that a URL that leaks, as through a browser's history, soon stops working.
-const signedURLLifetime = 5 * time.Minute
+// A browser keeps a file that it has read for as long, whichever driver
+// serves it, before the server checks the user's access to it again.
+const SignedURLLifetime = 5 * time.Minute
 
 // Asset is an asset as the API shows it.
 type Asset struct {
@@ -93,8 +98,8 @@ type Asset struct {
 	ProjectID   string    `json:"project_id" doc:"The ID of the asset's project"`
 	ContentType string    `json:"content_type" enum:"image/png,image/jpeg,image/gif,image/webp,image/svg+xml" doc:"The image's type, which the server found from its content"`
 	Bytes       int64     `json:"bytes" doc:"The size of the file as it is stored, in bytes: for an SVG, once the server has removed what it does not allow"`
-	Width       int       `json:"width,omitempty" doc:"The image's width in pixels, unless it is an SVG that does not say it"`
-	Height      int       `json:"height,omitempty" doc:"The image's height in pixels, unless it is an SVG that does not say it"`
+	Width       int       `json:"width,omitempty" doc:"The image's width in pixels, as it is shown, unless it is an SVG that does not say it"`
+	Height      int       `json:"height,omitempty" doc:"The image's height in pixels, as it is shown, unless it is an SVG that does not say it"`
 	SHA256      string    `json:"sha256" doc:"The SHA-256 hash of the file as it is stored, in lowercase hex"`
 	UploadedBy  string    `json:"uploaded_by,omitempty" doc:"The ID of the account that uploaded it, unless the account has been deleted"`
 	CreatedAt   time.Time `json:"created_at" doc:"When it was uploaded"`
@@ -195,6 +200,15 @@ func uploadable(p project.Visible) error {
 // upload takes (Sniff), and an *entitlements.LimitError of storage_bytes if
 // the workspace does not store the file yet, and storing it would take the
 // workspace past its plan's storage, and adds nothing then.
+//
+// It checks the upload in a transaction, then stores the blob outside any,
+// so that no connection of the pool, and no lock, waits for the store to
+// take a file of up to 50 MB, and then adds the asset in a transaction that
+// holds the blob's lock, which checks again what may have changed since, and
+// stores the blob again in the rare case that the orphan reconciliation
+// deleted it in between, before the lock was taken. An upload of a file
+// that the project has already stores its blob again too if the store lost
+// it, so that uploading the file again mends its asset.
 func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID ids.UUID, data []byte) (Asset, bool,
 	error) {
 	workspaceID, err := s.projects.ActorWorkspace(ctx, actor, projectID)
@@ -211,10 +225,9 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 	if err != nil {
 		return Asset{}, false, err
 	}
-	var out Asset
-	created := false
-	err = s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
-		q := queries.New(tx)
+	scope := database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}
+	var st stored
+	err = s.db.InTx(ctx, scope, func(tx pgx.Tx) error {
 		p, err := s.projects.GetIn(ctx, tx, actor, workspaceID, projectID)
 		if err != nil {
 			return err
@@ -222,35 +235,46 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		if err := uploadable(p); err != nil {
 			return err
 		}
+		st, err = s.checkStorage(ctx, tx, workspaceID, projectID, sum[:], key, img)
+		return err
+	})
+	if err != nil {
+		return Asset{}, false, err
+	}
+	// The blob is stored outside any transaction. An asset that the project
+	// has already refers to it, so the reconciliation keeps it.
+	if err := ensureBlob(ctx, store, key, img); err != nil {
+		return Asset{}, false, err
+	}
+	if st.found {
+		return st.asset, false, nil
+	}
+	var out Asset
+	created := false
+	err = s.db.InTx(ctx, scope, func(tx pgx.Tx) error {
+		q := queries.New(tx)
 		if err := lockBlob(ctx, q, workspaceID, sum[:]); err != nil {
 			return err
 		}
-		existing, err := q.ProjectAsset(ctx, queries.ProjectAssetParams{WorkspaceID: nullUUID(workspaceID),
-			ProjectID: nullUUID(projectID), Sha256: sum[:]})
+		// Another upload of the file to the project may have added its asset
+		// since, and another of the workspace its blob.
+		again, err := s.checkStorage(ctx, tx, workspaceID, projectID, sum[:], key, img)
 		switch {
-		case err == nil:
-			out = assetOf(existing)
+		case err != nil:
+			return err
+		case again.found:
+			out = again.asset
 			return nil
-		case !errors.Is(err, pgx.ErrNoRows):
-			return fmt.Errorf("asset: read the project's assets: %w", err)
 		}
-		referenced, err := q.BlobReferenced(ctx, queries.BlobReferencedParams{WorkspaceID: nullUUID(workspaceID),
-			Key: key})
-		if err != nil {
-			return fmt.Errorf("asset: read the assets of the blob: %w", err)
-		}
-		if !referenced {
-			// The blob is new to the workspace, so it adds to its storage.
-			if err := s.ent.Check(ctx, tx, workspaceID, entitlements.StorageBytes, int64(len(img.Data))); err != nil {
-				return err
-			}
-		}
+		// The reconciliation deletes a blob that no row refers to under its
+		// lock, which it may have done after the blob was stored, before this
+		// transaction took the lock, and cannot do now until the asset is
+		// added.
 		if err := ensureBlob(ctx, store, key, img); err != nil {
 			return err
 		}
 		// The project is read again, under a lock that keeps it from being
-		// archived or deleted until the asset is added, once the blob is
-		// stored, so that the lock is held for no longer than the insert.
+		// archived or deleted until the asset is added.
 		state, err := q.ShareProject(ctx, queries.ShareProjectParams{WorkspaceID: nullUUID(workspaceID),
 			ID: nullUUID(projectID)})
 		switch {
@@ -271,6 +295,19 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		thumbnail := needsThumbnail(img)
 		if !thumbnail {
 			row.ThumbnailKey = textOf(key)
+		} else {
+			// An asset of the same content in the workspace shares its
+			// thumbnail, once its job has made it, which this one then needs
+			// no job of its own for. The thumbnail job records a thumbnail
+			// under the blob's lock, which this transaction holds.
+			shared, err := q.ContentThumbnail(ctx, queries.ContentThumbnailParams{
+				WorkspaceID: nullUUID(workspaceID), Sha256: sum[:]})
+			switch {
+			case err == nil:
+				row.ThumbnailKey, thumbnail = textOf(shared), false
+			case !errors.Is(err, pgx.ErrNoRows):
+				return fmt.Errorf("asset: read the thumbnail of the content: %w", err)
+			}
 		}
 		createdAt, err := q.InsertAsset(ctx, queries.InsertAssetParams{ID: row.ID, WorkspaceID: row.WorkspaceID,
 			ProjectID: row.ProjectID, Sha256: row.Sha256, Mime: row.Mime, Bytes: row.Bytes, Width: row.Width,
@@ -280,7 +317,7 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 			return fmt.Errorf("asset: add the asset: %w", err)
 		}
 		row.CreatedAt = createdAt
-		if !referenced {
+		if !again.referenced {
 			if err := usage.Record(ctx, tx, workspaceID, usage.StorageBytes, row.Bytes); err != nil {
 				return err
 			}
@@ -300,9 +337,47 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 	return out, created, nil
 }
 
+// stored is what checkStorage finds of an upload's file in its workspace.
+type stored struct {
+	// asset is the project's asset of the file, if found is set.
+	asset Asset
+	found bool
+	// referenced is set if an asset of the workspace refers to the file's
+	// blob, which then counts towards its storage_bytes already.
+	referenced bool
+}
+
+// checkStorage returns the project's asset of the content sum, if it has
+// one, or else checks that the workspace's storage takes the blob of key,
+// which img is, unless an asset of the workspace refers to it already
+// (entitlements), in tx.
+func (s *Service) checkStorage(ctx context.Context, tx pgx.Tx, workspaceID, projectID ids.UUID, sum []byte,
+	key string, img Image) (stored, error) {
+	q := queries.New(tx)
+	existing, err := q.ProjectAsset(ctx, queries.ProjectAssetParams{WorkspaceID: nullUUID(workspaceID),
+		ProjectID: nullUUID(projectID), Sha256: sum})
+	switch {
+	case err == nil:
+		return stored{asset: assetOf(existing), found: true, referenced: true}, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return stored{}, fmt.Errorf("asset: read the project's assets: %w", err)
+	}
+	referenced, err := q.BlobReferenced(ctx, queries.BlobReferencedParams{WorkspaceID: nullUUID(workspaceID),
+		Key: key})
+	if err != nil {
+		return stored{}, fmt.Errorf("asset: read the assets of the blob: %w", err)
+	}
+	if !referenced {
+		// The blob is new to the workspace, so it adds to its storage.
+		if err := s.ent.Check(ctx, tx, workspaceID, entitlements.StorageBytes, int64(len(img.Data))); err != nil {
+			return stored{}, err
+		}
+	}
+	return stored{referenced: referenced}, nil
+}
+
 // ensureBlob stores img under key, unless the store has the blob already,
-// which, its key being the hash of its content, is the same file. The caller
-// holds the blob's lock.
+// which, its key being the hash of its content, is the same file.
 func ensureBlob(ctx context.Context, store blob.Store, key string, img Image) error {
 	_, err := store.Stat(ctx, key)
 	switch {
@@ -392,7 +467,7 @@ func (s *Service) Serve(ctx context.Context, loc Located) (Served, error) {
 	if err != nil {
 		return Served{}, err
 	}
-	url, ok, err := store.SignedURL(ctx, loc.Key, signedURLLifetime, loc.ContentType, Disposition(loc))
+	url, ok, err := store.SignedURL(ctx, loc.Key, SignedURLLifetime, loc.ContentType, Disposition(loc))
 	switch {
 	case err != nil:
 		return Served{}, fmt.Errorf("asset: %w", err)

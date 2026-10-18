@@ -82,10 +82,13 @@ type S3Security string
 const (
 	// S3TLS is HTTPS, as every hosted object storage takes.
 	S3TLS S3Security = "tls"
-	// S3None is plain HTTP, for an object storage on the same host or
-	// network, such as a MinIO beside the server, where nothing on the way
-	// can read the files. The requests are signed, so the secret key itself
-	// is never sent.
+	// S3None is plain HTTP, for an object storage on a network where nothing
+	// on the way can read the files, which the users' browsers read them
+	// over too, through the URLs that the server signs: a page of the
+	// application over HTTPS does not load images over plain HTTP, so it
+	// suits only an instance that is itself served over plain HTTP, as on a
+	// local network. The requests are signed, so the secret key itself is
+	// never sent.
 	S3None S3Security = "none"
 )
 
@@ -204,6 +207,26 @@ func checkS3Credential(v string) string {
 	return ""
 }
 
+// WithDefaults returns s with the defaults of the settings that it leaves
+// out, as a URL of STORYCREEP_ASSET_STORAGE (ParseS3URL) and the setup API
+// leave them out: tls for the security, the security's port, 443 for tls
+// and 80 for none, and DefaultS3Region for the region.
+func (s S3) WithDefaults() S3 {
+	if s.Security == "" {
+		s.Security = S3TLS
+	}
+	if s.Port == 0 {
+		s.Port = s3TLSPort
+		if s.Security == S3None {
+			s.Port = s3NonePort
+		}
+	}
+	if s.Region == "" {
+		s.Region = DefaultS3Region
+	}
+	return s
+}
+
 // Endpoint returns the URL of the storage, without the bucket: https, or
 // http for S3None, with the host and the port.
 func (s S3) Endpoint() string {
@@ -218,8 +241,8 @@ func (s S3) Endpoint() string {
 // s3://access_key_id:secret_access_key@host[:port]/bucket, over HTTPS, on port
 // 443 unless it names another, with the query parameters region, us-east-1
 // unless it names one, and security=none for plain HTTP, on port 80 unless it
-// names another. The keys are percent-encoded, as in any URL. Its errors
-// never quote the URL, which holds the secret key.
+// names another (WithDefaults). The keys are percent-encoded, as in any URL.
+// Its errors never quote the URL, which holds the secret key.
 func ParseS3URL(v string) (S3, error) {
 	fail := func(msg string) (S3, error) {
 		return S3{}, hiddenValueError{errors.New(msg)}
@@ -240,7 +263,7 @@ func ParseS3URL(v string) (S3, error) {
 	case u.User == nil:
 		return fail("has no access key ID and secret key, as s3://access_key_id:secret_access_key@host/bucket")
 	}
-	s := S3{Security: S3TLS, Region: DefaultS3Region, Host: strings.ToLower(u.Hostname())}
+	s := S3{Host: strings.ToLower(u.Hostname())}
 	s.AccessKeyID = u.User.Username()
 	key, _ := u.User.Password()
 	s.SecretAccessKey = secret.New(key)
@@ -272,15 +295,13 @@ func ParseS3URL(v string) (S3, error) {
 			return fail("has a query parameter other than region and security, which are the only ones it takes")
 		}
 	}
-	s.Port = s3TLSPort
-	if s.Security == S3None {
-		s.Port = s3NonePort
-	}
 	if port := u.Port(); port != "" {
-		if s.Port, err = strconv.Atoi(port); err != nil {
+		// Port 0 is no port, which WithDefaults would take for none.
+		if s.Port, err = strconv.Atoi(port); err != nil || s.Port == 0 {
 			return fail("the port must be between 1 and 65535")
 		}
 	}
+	s = s.WithDefaults()
 	var msgs []string
 	for _, p := range s.Check() {
 		msgs = append(msgs, "the "+strings.ReplaceAll(p.Field, "_", " ")+" "+p.Msg)

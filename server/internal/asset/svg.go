@@ -84,11 +84,15 @@ var entityDecl = regexp.MustCompile(`<!ENTITY\s+([A-Za-z_][A-Za-z0-9_.-]*)\s+(?:
 
 // sanitizeSVG returns the SVG image that data holds, sanitized, or an
 // *ImageError: errNotImage if data is not XML whose root is an svg element of
-// SVG's namespace, and ReasonMalformed if it is, but is not well-formed, or
-// nests too deeply.
+// SVG's namespace, and ReasonMalformed if it is, or its first element is an
+// svg element (startsAsSVG), but it is not well-formed XML in UTF-8, or nests
+// too deeply.
 func sanitizeSVG(data []byte) (Image, error) {
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	if !utf8.Valid(data) {
+		if startsAsSVG(data) {
+			return Image{}, &ImageError{Reason: ReasonMalformed, Detail: "it is an SVG that is not in UTF-8"}
+		}
 		return Image{}, errNotImage
 	}
 	d := xml.NewDecoder(bytes.NewReader(data))
@@ -111,10 +115,12 @@ func sanitizeSVG(data []byte) (Image, error) {
 			break
 		}
 		if err != nil {
-			if !rootSeen {
+			if !rootSeen && !startsAsSVG(data) {
 				return Image{}, errNotImage
 			}
-			return Image{}, &ImageError{Reason: ReasonMalformed, Detail: "it is an SVG that is not well-formed XML"}
+			// A charset other than UTF-8 is not well-formed to the decoder.
+			return Image{}, &ImageError{Reason: ReasonMalformed,
+				Detail: "it is an SVG that is not well-formed XML in UTF-8"}
 		}
 		switch t := tok.(type) {
 		case xml.Directive:
@@ -182,6 +188,29 @@ func sanitizeSVG(data []byte) (Image, error) {
 	}
 	img.Mime, img.Ext, img.Data = MimeSVG, extensions[MimeSVG], out.Bytes()
 	return img, nil
+}
+
+// firstElement matches the start of the tag of an element, and captures its
+// name: a less-than sign and a letter or an underscore, which neither a
+// declaration, as <!DOCTYPE, nor a processing instruction, as <?xml, starts
+// with.
+var firstElement = regexp.MustCompile(`<([A-Za-z_][A-Za-z0-9_.:-]*)`)
+
+// startsAsSVG reports whether the first element of data, as far as text that
+// may not be XML shows it, is an svg element, with a prefix or without, as a
+// file is whose root an SVG editor wrote, so that such a file that is not
+// well-formed is refused as an SVG that is damaged, rather than as a file
+// that is none of the types.
+func startsAsSVG(data []byte) bool {
+	m := firstElement.FindSubmatch(data)
+	if m == nil {
+		return false
+	}
+	name := m[1]
+	if i := bytes.LastIndexByte(name, ':'); i >= 0 {
+		name = name[i+1:]
+	}
+	return string(name) == "svg"
 }
 
 // declareEntities adds to d's entities those that the document type dir
@@ -272,8 +301,8 @@ var cssURL = regexp.MustCompile(`(?i)url\(\s*['"]?`)
 // or run something: a url() of anything but a fragment of the file, a
 // backslash, which could escape any of these past the checks, an at-rule, as
 // @import or @font-face, or one of the functions, properties, and schemes
-// that load or run something, as image-set(), element(), expression(), or
-// javascript:.
+// that load or run something, as image-set() and image(), which take a URL as
+// a string, without url(), element(), expression(), or javascript:.
 func unsafeCSS(v string) bool {
 	lower := strings.ToLower(v)
 	if strings.ContainsAny(lower, `\@`) {
@@ -282,8 +311,8 @@ func unsafeCSS(v string) bool {
 	// A function of CSS is its name and a parenthesis, with nothing between
 	// them, so a value that names one otherwise, as class="expression", is
 	// not one.
-	for _, bad := range []string{"image-set(", "expression(", "src(", "element(", "javascript:", "vbscript:",
-		"behavior:", "-moz-binding"} {
+	for _, bad := range []string{"image-set(", "image(", "expression(", "src(", "element(", "javascript:",
+		"vbscript:", "behavior:", "-moz-binding"} {
 		if strings.Contains(lower, bad) {
 			return true
 		}

@@ -95,6 +95,27 @@ func (q *Queries) BlobReferenced(ctx context.Context, arg BlobReferencedParams) 
 	return referenced, err
 }
 
+const contentThumbnail = `-- name: ContentThumbnail :one
+SELECT a.thumbnail_key::text AS thumbnail_key FROM asset a
+WHERE a.workspace_id = $1 AND a.sha256 = $2 AND a.thumbnail_key IS NOT NULL
+LIMIT 1
+`
+
+type ContentThumbnailParams struct {
+	WorkspaceID pgtype.UUID
+	Sha256      []byte
+}
+
+// ContentThumbnail returns the thumbnail of an asset of the workspace whose
+// file is the content sha256, which an asset of the same content shares, if
+// one has one.
+func (q *Queries) ContentThumbnail(ctx context.Context, arg ContentThumbnailParams) (string, error) {
+	row := q.db.QueryRow(ctx, contentThumbnail, arg.WorkspaceID, arg.Sha256)
+	var thumbnail_key string
+	err := row.Scan(&thumbnail_key)
+	return thumbnail_key, err
+}
+
 const insertAsset = `-- name: InsertAsset :one
 INSERT INTO asset (id, workspace_id, project_id, sha256, mime, bytes, width, height, storage_key, thumbnail_key,
     uploaded_by)

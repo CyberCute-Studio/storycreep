@@ -14,6 +14,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
+	"github.com/CyberCute-Studio/storycreep/server/internal/blob"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
@@ -75,17 +76,36 @@ type uploadedAssetOutput struct {
 const assetNotFoundDoc = " An asset that the project does not have, as one of another project, is answered with 404 " +
 	"not_found too, whatever its ID."
 
+// fileCache is the Cache-Control of an asset's file that the server serves:
+// a browser keeps its copy, for its user alone, for as long as a URL that the
+// S3 driver signs works, as the bucket lets it keep a file that it reads
+// through one, before it asks the server again, which checks the user's
+// access again. A board that shows many images then asks for each once in
+// that time, rather than each time that it shows it, which the read rate
+// limit would count.
+var fileCache = blob.CacheControl(asset.SignedURLLifetime)
+
+// redirectCache is the Cache-Control of the redirect to a URL that the S3
+// driver signs: a browser follows it again from its cache for a minute less
+// than the URL works, so that the URL that it reaches that way still works,
+// and reads the file that the URL answered with from its cache too.
+var redirectCache = blob.CacheControl(asset.SignedURLLifetime - time.Minute)
+
 // fileDoc says how an operation that serves an asset's file answers.
-const fileDoc = " The answer depends on where the instance stores its files (STORYCREEP_ASSET_STORAGE). The local " +
+var fileDoc = " The answer depends on where the instance stores its files (STORYCREEP_ASSET_STORAGE). The local " +
 	"driver's files are served by this route, with the file's type, Content-Security-Policy: sandbox, " +
 	"X-Content-Type-Options: nosniff, and Content-Disposition: inline for an image, which every asset is, and " +
 	"attachment for any other type (PRD FR-ASSET-02 AC3), an ETag, which If-None-Match revalidates with 304, and " +
-	"Cache-Control: private, no-cache, so that a browser checks the user's access again before it uses its copy. " +
-	"An S3 bucket's are answered with 302 Found, whose Location is a URL of the bucket that the server signs for 5 " +
-	"minutes, with the file's type and Content-Disposition fixed in its signature: the bucket's origin is not the " +
-	"application's, so a file read from it reaches nothing of the application's (NFR-SEC-10). Either way, the " +
-	"server checks the user's access to the project before it reads anything of the file, so that no URL reads " +
-	"another workspace's file, whatever it guesses (FR-ASSET-01 AC2)."
+	"Cache-Control: " + fileCache + ", so that a browser uses its copy for 5 minutes, as long as a URL of an S3 " +
+	"bucket works, before it asks again, and the server checks the user's access again. An S3 bucket's are " +
+	"answered with 302 Found, whose Location is a URL of the bucket that the server signs for 5 minutes, with the " +
+	"file's type, its Content-Disposition, and Cache-Control: " + fileCache + " fixed in its signature, and the " +
+	"redirect has Cache-Control: " + redirectCache + ", so that a browser that follows it again from its cache " +
+	"reaches a URL that still works. The bucket's origin is not the application's, so a file read from it " +
+	"reaches nothing of the application's (NFR-SEC-10); a client that reads the file with fetch, rather than " +
+	"showing it as an image, follows the redirect there, so the bucket's CORS rules must then allow the " +
+	"application's origin. Either way, the server checks the user's access to the project before it reads " +
+	"anything of the file, so that no URL reads another workspace's file, whatever it guesses (FR-ASSET-01 AC2)."
 
 // registerAssets registers the routes of the projects' assets (PRD
 // FR-ASSET-01, FR-ASSET-02): uploading one, whose file is at most maxBytes,
@@ -221,7 +241,7 @@ func fileResponses() map[string]*huma.Response {
 			"X-Content-Type-Options":  header("nosniff"),
 			"Content-Disposition":     header("inline for an image, and attachment for any other type, with the file's name"),
 			"ETag":                    header("The file's entity tag, which If-None-Match revalidates"),
-			"Cache-Control":           header("private, no-cache"),
+			"Cache-Control":           header(fileCache),
 		},
 		Content: map[string]*huma.MediaType{},
 	}
@@ -233,9 +253,12 @@ func fileResponses() map[string]*huma.Response {
 		"302": {
 			Description: "Found: the file is in an S3 bucket, and Location is a URL of it that the server signed " +
 				"for 5 minutes",
-			Headers: map[string]*huma.Header{"Location": header("The signed URL of the file")},
+			Headers: map[string]*huma.Header{
+				"Location":      header("The signed URL of the file"),
+				"Cache-Control": header(redirectCache + ": a minute less than the URL works"),
+			},
 		},
-		"304": api.NotModifiedResponse(),
+		"304": api.NotModifiedResponseWith(fileCache + ": the client keeps its copy for 5 minutes again"),
 	}
 }
 
@@ -263,12 +286,13 @@ func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, 
 		return &huma.StreamResponse{Body: func(hc huma.Context) {
 			hc.SetHeader("Content-Security-Policy", sandboxCSP)
 			hc.SetHeader("Location", served.URL)
+			hc.SetHeader("Cache-Control", redirectCache)
 			hc.SetStatus(http.StatusFound)
 		}}, nil
 	}
 	if api.IfNoneMatch(in.IfNoneMatch, etag) {
 		_ = served.Body.Close()
-		return nil, api.NotModified(etag)
+		return nil, api.NotModifiedWith(etag, fileCache)
 	}
 	return &huma.StreamResponse{Body: func(hc huma.Context) {
 		defer served.Body.Close()
@@ -278,7 +302,7 @@ func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, 
 		hc.SetHeader("X-Content-Type-Options", "nosniff")
 		hc.SetHeader("Content-Disposition", asset.Disposition(loc))
 		hc.SetHeader("ETag", etag)
-		hc.SetHeader("Cache-Control", api.CacheRevalidate)
+		hc.SetHeader("Cache-Control", fileCache)
 		hc.SetStatus(http.StatusOK)
 		// The status and the headers are sent, so a failure from here on can
 		// only end the answer early, which the client sees as a body shorter

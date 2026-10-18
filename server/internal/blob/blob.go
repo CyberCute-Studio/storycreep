@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -64,11 +65,19 @@ type Store interface {
 	List(ctx context.Context, prefix string, fn func(Info) error) error
 	// SignedURL returns a URL that reads the blob of key, until ttl has
 	// passed, with the content type and the Content-Disposition that it
-	// names, and true; or "", false for a store that has no URLs of its own,
-	// as the local driver, whose blobs the server serves itself. It does not
-	// check that the blob exists.
+	// names, and a Cache-Control that lets the browser that reads it keep
+	// the answer for as long as the URL works, and true; or "", false for a
+	// store that has no URLs of its own, as the local driver, whose blobs the
+	// server serves itself. It does not check that the blob exists.
 	SignedURL(ctx context.Context, key string, ttl time.Duration, contentType, disposition string) (string, bool,
 		error)
+}
+
+// CacheControl returns the Cache-Control of an answer that the browser that
+// reads it may keep, for its user alone, until ttl has passed: private, with
+// a max-age of ttl in whole seconds.
+func CacheControl(ttl time.Duration) string {
+	return "private, max-age=" + strconv.FormatInt(int64(ttl/time.Second), 10)
 }
 
 // maxSegmentLength is the longest segment of a key: the longest file name

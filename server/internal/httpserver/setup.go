@@ -63,7 +63,7 @@ type setupSMTPBody struct {
 type setupStorageBody struct {
 	Host            string `json:"host" maxLength:"253" doc:"The host name or IP address of the S3-compatible object storage, as s3.eu-central-1.amazonaws.com, which the users' browsers must reach too, because they read the files through URLs of it that the server signs"`
 	Port            int    `json:"port,omitempty" minimum:"1" maximum:"65535" doc:"The storage's port; without it, 443 for tls and 80 for none"`
-	Security        string `json:"security,omitempty" enum:"tls,none" doc:"How the connection is protected: tls, HTTPS, which is the default, or none, plain HTTP, for a storage on the same host or network"`
+	Security        string `json:"security,omitempty" enum:"tls,none" doc:"How the connection is protected: tls, HTTPS, which is the default, or none, plain HTTP, which the users' browsers read the files over too, for an instance that is itself served over plain HTTP, as on a local network"`
 	Bucket          string `json:"bucket" maxLength:"63" doc:"The bucket, which must exist: 3 to 63 lowercase letters, digits, dots, and hyphens"`
 	Region          string `json:"region,omitempty" maxLength:"64" doc:"The bucket's region, as eu-central-1; without it, us-east-1, which MinIO and most S3-compatible storages take"`
 	AccessKeyID     string `json:"access_key_id" maxLength:"256" doc:"The access key ID of the keys that read, write, list, and delete the bucket's objects"`
@@ -185,26 +185,15 @@ func (b *setupSMTPBody) settings() *config.SMTP {
 }
 
 // settings returns the bucket of b, with the defaults of the fields that it
-// leaves out, as config.ParseS3URL fills them in, or nil if b is nil.
+// leaves out, as config.ParseS3URL fills them in (config.S3.WithDefaults), or
+// nil if b is nil.
 func (b *setupStorageBody) settings() *config.S3 {
 	if b == nil {
 		return nil
 	}
-	s := &config.S3{Host: b.Host, Port: b.Port, Security: config.S3Security(b.Security), Bucket: b.Bucket,
-		Region: b.Region, AccessKeyID: b.AccessKeyID, SecretAccessKey: secret.New(b.SecretAccessKey)}
-	if s.Security == "" {
-		s.Security = config.S3TLS
-	}
-	if s.Port == 0 {
-		s.Port = 443
-		if s.Security == config.S3None {
-			s.Port = 80
-		}
-	}
-	if s.Region == "" {
-		s.Region = config.DefaultS3Region
-	}
-	return s
+	s := config.S3{Host: b.Host, Port: b.Port, Security: config.S3Security(b.Security), Bucket: b.Bucket,
+		Region: b.Region, AccessKeyID: b.AccessKeyID, SecretAccessKey: secret.New(b.SecretAccessKey)}.WithDefaults()
+	return &s
 }
 
 // setupError returns the error that the API answers err with, an error of

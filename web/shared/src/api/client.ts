@@ -226,7 +226,11 @@ async function readBody(response: Response): Promise<unknown> {
  * Returns the body of an answer of an operation that answers with a file, as
  * a Blob, or undefined if it has none, as a 304 has not. A body that is JSON
  * is not the file, but the page of something in between, as a proxy, so it is
- * refused, as readBody refuses one that is not JSON.
+ * refused, as readBody refuses one that is not JSON. An instance that keeps
+ * its files in an S3 bucket answers with a redirect to a URL of the bucket,
+ * which fetch follows to the bucket's origin, and reads only if the bucket's
+ * CORS rules allow the application's origin; a page that only shows a file
+ * points an img element at the operation's path instead, which needs no CORS.
  */
 async function readFile(response: Response): Promise<Blob | undefined> {
   if (isJSON(response)) {

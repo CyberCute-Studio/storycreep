@@ -3,6 +3,7 @@ package asset
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"image"
 	"image/color"
@@ -64,6 +65,19 @@ func TestSniff(t *testing.T) {
 	if got, err := Sniff(minimalWebP); err != nil || got.Mime != MimeWebP || got.Width != 1 || got.Height != 1 {
 		t.Errorf("WebP: %+v, %v", got, err)
 	}
+	// A JPEG photo that its EXIF data says to turn a quarter is as large as
+	// it is shown; one turned half a turn is as large as it is stored.
+	jpg := encoded(t, func(b *bytes.Buffer, i image.Image) error { return jpeg.Encode(b, i, nil) }, img)
+	for _, tt := range []struct {
+		orientation, w, h int
+		big               bool
+	}{{6, 20, 30, true}, {8, 20, 30, false}, {5, 20, 30, true}, {3, 30, 20, false}, {1, 30, 20, true}} {
+		got, err := Sniff(withOrientation(jpg, tt.orientation, tt.big))
+		if err != nil || got.Width != tt.w || got.Height != tt.h {
+			t.Errorf("a JPEG of the orientation %d: %d × %d, %v; want %d × %d", tt.orientation, got.Width,
+				got.Height, err, tt.w, tt.h)
+		}
+	}
 
 	for _, tt := range []struct {
 		name   string
@@ -89,6 +103,67 @@ func TestSniff(t *testing.T) {
 	}
 	if _, err := Sniff(pngOf(5000, 5000)); err != nil {
 		t.Errorf("a PNG of %d pixels, the most: %v", MaxPixels, err)
+	}
+}
+
+// withOrientation returns the JPEG file jpg with an APP1 segment of EXIF data
+// after its start, which says the orientation o, in a TIFF header of big
+// endian byte order if big is set, and of little endian otherwise.
+func withOrientation(jpg []byte, o int, big bool) []byte {
+	var order binary.AppendByteOrder = binary.LittleEndian
+	tiff := []byte("II")
+	if big {
+		order, tiff = binary.BigEndian, []byte("MM")
+	}
+	tiff = order.AppendUint16(tiff, 42)
+	tiff = order.AppendUint32(tiff, 8)
+	// An image directory of two entries: another tag first, and then the
+	// orientation, a SHORT, of which there is one.
+	tiff = order.AppendUint16(tiff, 2)
+	tiff = order.AppendUint16(tiff, 0x010f)
+	tiff = order.AppendUint16(tiff, 2)
+	tiff = order.AppendUint32(tiff, 4)
+	tiff = append(tiff, 'c', 'a', 'm', 0)
+	tiff = order.AppendUint16(tiff, 0x0112)
+	tiff = order.AppendUint16(tiff, 3)
+	tiff = order.AppendUint32(tiff, 1)
+	tiff = order.AppendUint16(tiff, uint16(o))
+	tiff = append(tiff, 0, 0, 0, 0, 0, 0)
+	segment := append([]byte("Exif\x00\x00"), tiff...)
+	out := append([]byte{}, jpg[:2]...)
+	out = append(out, 0xff, 0xe1)
+	out = binary.BigEndian.AppendUint16(out, uint16(len(segment)+2))
+	out = append(out, segment...)
+	return append(out, jpg[2:]...)
+}
+
+// TestJPEGOrientation checks that the orientation is read from EXIF data
+// alone, and is 1 for a file without any, or whose data is not valid.
+func TestJPEGOrientation(t *testing.T) {
+	jpg := encoded(t, func(b *bytes.Buffer, i image.Image) error { return jpeg.Encode(b, i, nil) }, rgba(4, 4))
+	if o := jpegOrientation(jpg); o != 1 {
+		t.Errorf("a JPEG without EXIF data: %d, want 1", o)
+	}
+	for o := 1; o <= 8; o++ {
+		for _, big := range []bool{true, false} {
+			if got := jpegOrientation(withOrientation(jpg, o, big)); got != o {
+				t.Errorf("the orientation %d, big endian %v: %d", o, big, got)
+			}
+		}
+	}
+	bad := withOrientation(jpg, 9, true)
+	if o := jpegOrientation(bad); o != 1 {
+		t.Errorf("the orientation 9: %d, want 1", o)
+	}
+	cut := withOrientation(jpg, 6, true)[:30]
+	if o := jpegOrientation(cut); o != 1 {
+		t.Errorf("EXIF data cut short: %d, want 1", o)
+	}
+	for _, data := range [][]byte{nil, []byte("\xff\xd8"), []byte("\xff\xd8\xff\xe1\x00\x01"),
+		[]byte("\xff\xd8\xff\xe1\xff\xffExif\x00\x00")} {
+		if o := jpegOrientation(data); o != 1 {
+			t.Errorf("%q: %d, want 1", data, o)
+		}
 	}
 }
 
@@ -159,6 +234,64 @@ func TestThumbnail(t *testing.T) {
 		!strings.Contains(err.Error(), "no thumbnail") {
 		t.Errorf("an SVG: %v", err)
 	}
+
+	// A photo stored on its side, red on the left and blue on the right,
+	// that its EXIF data says to turn a quarter clockwise, has a thumbnail
+	// that is upright, as a browser shows the photo: red at the top.
+	side := image.NewNRGBA(image.Rect(0, 0, 400, 200))
+	for y := range 200 {
+		for x := range 400 {
+			c := color.NRGBA{R: 255, A: 255}
+			if x >= 200 {
+				c = color.NRGBA{B: 255, A: 255}
+			}
+			side.SetNRGBA(x, y, c)
+		}
+	}
+	photo := withOrientation(encoded(t, func(b *bytes.Buffer, i image.Image) error {
+		return jpeg.Encode(b, i, &jpeg.Options{Quality: 95})
+	}, side), 6, true)
+	thumb, err := Thumbnail(ctx, photo, MimeJPEG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upright, err := png.Decode(bytes.NewReader(thumb))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := upright.Bounds(); b.Dx() != 128 || b.Dy() != 256 {
+		t.Fatalf("the thumbnail of a photo turned a quarter is %d × %d, want 128 × 256", b.Dx(), b.Dy())
+	}
+	top, bottom := color.NRGBAModel.Convert(upright.At(64, 20)).(color.NRGBA),
+		color.NRGBAModel.Convert(upright.At(64, 236)).(color.NRGBA)
+	if top.R < 200 || top.B > 60 || bottom.B < 200 || bottom.R > 60 {
+		t.Errorf("the thumbnail is %v at the top and %v at the bottom, want red and blue", top, bottom)
+	}
+}
+
+// TestOrient checks each orientation against the pixel that it shows at the
+// top left, of an image of 3 × 2 pixels whose every pixel differs.
+func TestOrient(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 3, 2))
+	for y := range 2 {
+		for x := range 3 {
+			img.SetNRGBA(x, y, color.NRGBA{R: uint8(x), G: uint8(y), A: 255})
+		}
+	}
+	for _, tt := range []struct {
+		o, w, h, x, y int
+	}{
+		// The pixel of img shown at the top left, and the size it is shown at.
+		{1, 3, 2, 0, 0}, {2, 3, 2, 2, 0}, {3, 3, 2, 2, 1}, {4, 3, 2, 0, 1},
+		{5, 2, 3, 0, 0}, {6, 2, 3, 0, 1}, {7, 2, 3, 2, 1}, {8, 2, 3, 2, 0},
+	} {
+		got := orient(img, tt.o)
+		b := got.Bounds()
+		if c := got.NRGBAAt(0, 0); b.Dx() != tt.w || b.Dy() != tt.h || int(c.R) != tt.x || int(c.G) != tt.y {
+			t.Errorf("the orientation %d: %d × %d, the top left is %d, %d; want %d × %d and %d, %d", tt.o,
+				b.Dx(), b.Dy(), c.R, c.G, tt.w, tt.h, tt.x, tt.y)
+		}
+	}
 }
 
 // TestSanitizeSVG checks what an SVG keeps and what it loses: its scripts,
@@ -202,10 +335,11 @@ func TestSanitizeSVG(t *testing.T) {
 				`<style>@import url(x.css);</style><style>.b{background:url(https://x.example/i)}</style>` +
 				`<rect class="important" fill="url(#g)" style="fill: url( '#g' )"/>` +
 				`<rect fill="url(https://x.example/p)" style="background-image:image-set('x' 1x)"/>` +
-				`<rect style="fill:u\72l(https://x.example)"/><rect cursor="url(x.cur)"/></svg>`,
+				`<rect style="fill:u\72l(https://x.example)"/><rect cursor="url(x.cur)"/>` +
+				`<rect style="fill: image('https://y.example/t.png')"/><style>.c{fill:image("//z.example/t")}</style></svg>`,
 			keep: []string{"<style>.a{fill:url(#g)}</style>",
 				`<rect class="important" fill="url(#g)" style="fill: url( &#39;#g&#39; )"></rect>`},
-			drop: []string{"@import", "x.example", "image-set", `\72`, "x.cur"},
+			drop: []string{"@import", "x.example", "image-set", `\72`, "x.cur", "y.example", "z.example"},
 		},
 		{
 			name: "foreign content and animations",
@@ -262,7 +396,12 @@ func TestSanitizeSVG(t *testing.T) {
 		{"no namespace", `<svg width="1"/>`, ReasonType},
 		{"another root", `<html xmlns="http://www.w3.org/1999/xhtml"/>`, ReasonType},
 		{"not XML", `{"svg": true}`, ReasonType},
-		{"not UTF-8", "<svg xmlns=\"http://www.w3.org/2000/svg\">\xff</svg>", ReasonType},
+		{"text not in UTF-8", "a caption\xff", ReasonType},
+		{"not UTF-8", "<svg xmlns=\"http://www.w3.org/2000/svg\">\xff</svg>", ReasonMalformed},
+		{"a broken root", `<svg xmlns="http://www.w3.org/2000/svg" width="10" <rect/>`, ReasonMalformed},
+		{"a broken prefixed root", `<?xml version="1.0"?><s:svg xmlns:s="http://www.w3.org/2000/svg" a=1/>`,
+			ReasonMalformed},
+		{"a broken element of another kind", `<html <body>`, ReasonType},
 		{"unclosed", `<svg xmlns="http://www.w3.org/2000/svg"><g>`, ReasonMalformed},
 		{"two roots", `<svg xmlns="http://www.w3.org/2000/svg"/><svg xmlns="http://www.w3.org/2000/svg"/>`,
 			ReasonMalformed},
@@ -274,7 +413,7 @@ func TestSanitizeSVG(t *testing.T) {
 		{"too deep", `<svg xmlns="http://www.w3.org/2000/svg">` + strings.Repeat("<g>", maxSVGDepth) +
 			strings.Repeat("</g>", maxSVGDepth) + `</svg>`, ReasonMalformed},
 		{"another encoding", `<?xml version="1.0" encoding="ISO-8859-1"?><svg xmlns="http://www.w3.org/2000/svg"/>`,
-			ReasonType},
+			ReasonMalformed},
 	} {
 		_, err := sanitizeSVG([]byte(tt.in))
 		var ie *ImageError

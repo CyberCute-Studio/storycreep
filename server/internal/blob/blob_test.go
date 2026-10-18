@@ -2,10 +2,13 @@ package blob_test
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/blob"
 	"github.com/CyberCute-Studio/storycreep/server/internal/blob/blobtest"
@@ -39,7 +42,9 @@ func TestS3(t *testing.T) {
 
 // TestLocalStaysInItsDirectory checks that the local driver reads, lists,
 // and writes nothing outside its directory, even through a symbolic link
-// inside it, and that it lists no file that Put is writing.
+// inside it, and that it lists no file that Put is writing, and removes one
+// that a Put left behind an hour ago, as when the process died while it
+// wrote.
 func TestLocalStaysInItsDirectory(t *testing.T) {
 	ctx := context.Background()
 	parent := t.TempDir()
@@ -72,10 +77,14 @@ func TestLocalStaysInItsDirectory(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "w2"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{".put-unfinished", "kept.png"} {
+	for _, name := range []string{".put-unfinished", ".put-abandoned", "kept.png"} {
 		if err := os.WriteFile(filepath.Join(dir, "w2", name), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	old := time.Now().Add(-61 * time.Minute)
+	if err := os.Chtimes(filepath.Join(dir, "w2", ".put-abandoned"), old, old); err != nil {
+		t.Fatal(err)
 	}
 	var keys []string
 	if err := store.List(ctx, "w2/", func(i blob.Info) error {
@@ -86,6 +95,12 @@ func TestLocalStaysInItsDirectory(t *testing.T) {
 	}
 	if !slices.Equal(keys, []string{"w2/kept.png"}) {
 		t.Errorf("the directory lists %q, want w2/kept.png alone", keys)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "w2", ".put-unfinished")); err != nil {
+		t.Errorf("List removed a file that Put may still be writing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "w2", ".put-abandoned")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("List kept a file that a Put left behind an hour ago: %v", err)
 	}
 }
 

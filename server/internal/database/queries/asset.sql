@@ -40,6 +40,14 @@ SELECT * FROM asset WHERE workspace_id = @workspace_id AND project_id = @project
 -- the thumbnail job.
 SELECT * FROM asset WHERE workspace_id = @workspace_id AND id = @id;
 
+-- name: ContentThumbnail :one
+-- ContentThumbnail returns the thumbnail of an asset of the workspace whose
+-- file is the content sha256, which an asset of the same content shares, if
+-- one has one.
+SELECT a.thumbnail_key::text AS thumbnail_key FROM asset a
+WHERE a.workspace_id = @workspace_id AND a.sha256 = @sha256 AND a.thumbnail_key IS NOT NULL
+LIMIT 1;
+
 -- name: SetThumbnail :exec
 -- SetThumbnail records the thumbnail of every asset of the workspace whose
 -- file is the content sha256, and that has none yet, which share it.

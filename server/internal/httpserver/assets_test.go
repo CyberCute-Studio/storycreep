@@ -81,8 +81,9 @@ func upload(t *testing.T, h http.Handler, si signedIn, project string, data []by
 
 // TestUploadAsset checks an upload and every read of the asset: the asset's
 // fields, its file as it was uploaded, served with the headers that keep it
-// from running in the application's origin and an ETag that revalidates it,
-// and its thumbnail, which a small image is its own of. Uploading the same
+// from running in the application's origin, a Cache-Control that lets the
+// browser keep it for 5 minutes, and an ETag that revalidates it, and its
+// thumbnail, which a small image is its own of. Uploading the same
 // file to the project again answers with the asset that it has, and to
 // another project of the workspace with an asset of its own that shares the
 // blob, which counts once towards the workspace's storage.
@@ -127,7 +128,7 @@ func TestUploadAsset(t *testing.T) {
 			"Content-Security-Policy": "sandbox",
 			"X-Content-Type-Options":  "nosniff",
 			"Content-Disposition":     `inline; filename="` + a.ID + `.png"`,
-			"Cache-Control":           api.CacheRevalidate,
+			"Cache-Control":           "private, max-age=300",
 			"Content-Length":          fmt.Sprint(len(data)),
 		} {
 			if h.Get(name) != want {
@@ -137,9 +138,13 @@ func TestUploadAsset(t *testing.T) {
 		etag := h.Get("ETag")
 		hdr := owner.header(false)
 		hdr.Set("If-None-Match", etag)
+		// The 304 sends the same Cache-Control, which replaces the stored
+		// response's.
 		if again := call(s.main, http.MethodGet, assetPath(p, a.ID)+path, nil, hdr); etag == "" ||
-			again.status != http.StatusNotModified || len(again.body) != 0 {
-			t.Errorf("%s with If-None-Match %q: %d %s, want 304", path, etag, again.status, again.body)
+			again.status != http.StatusNotModified || len(again.body) != 0 ||
+			again.header.Get("Cache-Control") != "private, max-age=300" {
+			t.Errorf("%s with If-None-Match %q: %d %s, Cache-Control %q; want 304", path, etag, again.status,
+				again.body, again.header.Get("Cache-Control"))
 		}
 	}
 
@@ -458,6 +463,19 @@ func TestThumbnailsAndOrphans(t *testing.T) {
 	if n := len(storedFiles(t, dir)); n != 3 {
 		t.Errorf("the store holds %v, want the two files and a thumbnail", storedFiles(t, dir))
 	}
+	// Another project's asset of the large file shares its thumbnail at once,
+	// without a job of its own.
+	cove := createProject(t, s.main, owner, ws, "Cove").ID
+	shared := upload(t, s.main, owner, cove, large, http.StatusCreated)
+	res := call(s.main, http.MethodGet, assetPath(cove, shared.ID)+"/thumbnail", nil, owner.header(false))
+	if cfg, err := png.DecodeConfig(bytes.NewReader(res.body)); err != nil || bytes.Equal(res.body, large) ||
+		cfg.Width != asset.ThumbnailSide {
+		t.Errorf("the thumbnail of the same file in another project: %d, %d bytes, %v; want the thumbnail",
+			res.status, len(res.body), err)
+	}
+	if n := countRows(t, d, `SELECT count(*) FROM river_job WHERE kind = 'asset_thumbnail'`); n != 1 {
+		t.Errorf("%d thumbnail jobs, want the first upload's alone", n)
+	}
 
 	// Another project shares the small file, whose blob stays.
 	other := createProject(t, s.main, owner, ws, "Harbour").ID
@@ -465,8 +483,8 @@ func TestThumbnailsAndOrphans(t *testing.T) {
 	// The purge of a project deletes its assets by the cascade of their
 	// foreign key, as purging it does.
 	admin := d.Admin(t)
-	if _, err := admin.Exec(context.Background(), "DELETE FROM project WHERE id = $1",
-		decode(t, ids.Project, p)); err != nil {
+	if _, err := admin.Exec(context.Background(), "DELETE FROM project WHERE id = ANY($1)",
+		[]ids.UUID{decode(t, ids.Project, p), decode(t, ids.Project, cove)}); err != nil {
 		t.Fatal(err)
 	}
 	// A file that Put left half written, as when the server stopped, is not
@@ -493,6 +511,35 @@ func TestThumbnailsAndOrphans(t *testing.T) {
 	}
 }
 
+// TestUploadAgainMendsItsFile checks that uploading a file that the project
+// has already, whose blob the store lost, as when files were not all copied
+// to a new store, stores the blob again, so that the asset is served again.
+func TestUploadAgainMendsItsFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, _, owner, ws := inviteServer(t, "open", map[string]string{"STORYCREEP_ASSET_STORAGE": dir})
+	p := createProject(t, s.main, owner, ws, "Lighthouse").ID
+	data := testPNG(t, 9, 9)
+	a := upload(t, s.main, owner, p, data, http.StatusCreated)
+	files := storedFiles(t, dir)
+	if len(files) != 1 {
+		t.Fatalf("the store holds %v, want the file", files)
+	}
+	if err := os.Remove(filepath.Join(dir, filepath.FromSlash(files[0]))); err != nil {
+		t.Fatal(err)
+	}
+	content := func() response {
+		return call(s.main, http.MethodGet, assetPath(p, a.ID)+"/content", nil, owner.header(false))
+	}
+	wantCode(t, "a file that the store lost", content(), http.StatusNotFound, api.CodeNotFound)
+	if again := upload(t, s.main, owner, p, data, http.StatusOK); again != a {
+		t.Errorf("the same file again: %+v, want %+v", again, a)
+	}
+	if res := content(); res.status != http.StatusOK || !bytes.Equal(res.body, data) {
+		t.Errorf("the file once it is uploaded again: %d, %d bytes", res.status, len(res.body))
+	}
+}
+
 // TestS3Assets checks the S3 driver end to end, against MinIO, which only
 // configuration chooses: an upload stores the file in the bucket, and the
 // routes that serve it answer with a redirect to a URL of the bucket that
@@ -512,8 +559,9 @@ func TestS3Assets(t *testing.T) {
 	a := upload(t, s.main, owner, p, data, http.StatusCreated)
 	res := call(s.main, http.MethodGet, assetPath(p, a.ID)+"/content", nil, owner.header(false))
 	location := res.header.Get("Location")
+	// The browser reuses the redirect a minute less than the URL works.
 	if res.status != http.StatusFound || !strings.Contains(location, "/"+bucket.Bucket+"/") ||
-		!strings.Contains(location, "X-Amz-Signature=") || res.header.Get("Cache-Control") != "no-store" {
+		!strings.Contains(location, "X-Amz-Signature=") || res.header.Get("Cache-Control") != "private, max-age=240" {
 		t.Fatalf("the file: %d, Location %q, Cache-Control %q", res.status, location,
 			res.header.Get("Cache-Control"))
 	}
@@ -524,7 +572,8 @@ func TestS3Assets(t *testing.T) {
 	defer got.Body.Close()
 	body, _ := io.ReadAll(got.Body)
 	if got.StatusCode != http.StatusOK || !bytes.Equal(body, data) || got.Header.Get("Content-Type") != "image/png" ||
-		got.Header.Get("Content-Disposition") != `inline; filename="`+a.ID+`.png"` {
+		got.Header.Get("Content-Disposition") != `inline; filename="`+a.ID+`.png"` ||
+		got.Header.Get("Cache-Control") != "private, max-age=300" {
 		t.Errorf("the signed URL: %d, %d bytes, %v", got.StatusCode, len(body), got.Header)
 	}
 	// The bucket itself serves nothing without a signature.

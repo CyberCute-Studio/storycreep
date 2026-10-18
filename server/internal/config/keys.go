@@ -255,14 +255,19 @@ var keys = []key{
 			"URL is `s3://access_key_id:secret_access_key@host[:port]/bucket`, with the keys percent-encoded, as " +
 			"`%2F` for `/`, over HTTPS on port 443 unless it names another port, and takes two query parameters: " +
 			"`region`, the bucket's region, `" + DefaultS3Region + "` unless it names one, and `security=none` for " +
-			"plain HTTP, on port 80 unless it names another, for an object storage on the same host or network, " +
-			"such as a MinIO beside the server. The bucket must exist, and the keys must let the server read, " +
-			"write, list, and delete its objects; the server addresses it in the path of its URLs, as " +
-			"`https://host/bucket/key`. A file is stored under `{workspace}/{sha256}.{ext}`, the same key in either " +
-			"driver, so switching drivers needs only this key, once the files are copied to the new place with " +
-			"their keys: the server moves none. The local driver serves a file through the API, after it checks " +
-			"the user's access, and the S3 driver through a URL that it signs for 5 minutes, after the same " +
-			"check. Set, the key overrides the bucket that first-run setup chose (PRD FR-ADMIN-02) for as long as " +
+			"plain HTTP, on port 80 unless it names another. The bucket must exist, and the keys must let the " +
+			"server read, write, list, and delete its objects; the server addresses it in the path of its URLs, " +
+			"as `https://host/bucket/key`. A file is stored under `{workspace}/{sha256}.{ext}`, the same key in " +
+			"either driver, so switching drivers needs only this key, once the files are copied to the new place " +
+			"with their keys: the server moves none. The local driver serves a file through the API, after it " +
+			"checks the user's access, and the S3 driver through a URL of this host that it signs for 5 minutes, " +
+			"after the same check, which the users' browsers then read the file from. So the host must be one " +
+			"that the browsers reach too, not only the server: a MinIO beside the server needs a host name that " +
+			"both resolve, behind a reverse proxy of its own. A URL of `security=none` is plain HTTP for the " +
+			"browsers too, whose images a page of the application over HTTPS does not load, so it suits only an " +
+			"instance that is itself served over plain HTTP, as on a local network. A client of the API that reads " +
+			"a file with fetch, rather than showing it as an image, needs the bucket's CORS rules to allow GET " +
+			"from `STORYCREEP_PUBLIC_URL`'s origin. Set, the key overrides the bucket that first-run setup chose (PRD FR-ADMIN-02) for as long as " +
 			"it is set; not set, self-hosted mode stores the files in the bucket that setup chose, or else in `" +
 			DefaultAssetDir + "`, which the `BlobDriver` capability shows as `setup`. The directory is created if " +
 			"it does not exist. Hosted mode, which stores no file on the instance's disk, requires an `s3://` URL. " +

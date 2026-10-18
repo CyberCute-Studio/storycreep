@@ -47,6 +47,10 @@ func TestParseS3URL(t *testing.T) {
 	if plain, err := ParseS3URL("s3://k:s@minio/bucket?security=none"); err != nil || plain.Port != 80 {
 		t.Errorf("plain HTTP without a port: %+v, %v; want port 80", plain, err)
 	}
+	// An empty region is no region, as the setup API takes it.
+	if empty, err := ParseS3URL("s3://k:s@host/bucket?region="); err != nil || empty.Region != DefaultS3Region {
+		t.Errorf("an empty region: %+v, %v; want %s", empty, err, DefaultS3Region)
+	}
 
 	for _, tt := range []struct{ name, url, want string }{
 		{"another scheme", "https://k:s3cr3t@host/bucket", "must start with s3://"},
@@ -58,6 +62,7 @@ func TestParseS3URL(t *testing.T) {
 		{"a short bucket", "s3://k:s3cr3t@host/ab", "is not a bucket's name"},
 		{"no host", "s3://k:s3cr3t@/bucket", "the host is empty"},
 		{"a bad port", "s3://k:s3cr3t@host:99999/bucket", "the port must be between 1 and 65535"},
+		{"port 0", "s3://k:s3cr3t@host:0/bucket", "the port must be between 1 and 65535"},
 		{"another security", "s3://k:s3cr3t@host/bucket?security=starttls", "not tls or none"},
 		{"a region with a space", "s3://k:s3cr3t@host/bucket?region=eu+west", "is not a region's name"},
 		{"another parameter", "s3://k:s3cr3t@host/bucket?path_style=true", "other than region and security"},
@@ -77,6 +82,24 @@ func TestParseS3URL(t *testing.T) {
 				t.Errorf("the error %q quotes the secret key", err)
 			}
 		})
+	}
+}
+
+// TestS3WithDefaults checks the defaults of the settings that a bucket
+// leaves out, which the URL and the setup API share, and that it keeps those
+// that it sets.
+func TestS3WithDefaults(t *testing.T) {
+	for _, tt := range []struct {
+		in, want S3
+	}{
+		{S3{Host: "h"}, S3{Host: "h", Security: S3TLS, Port: 443, Region: DefaultS3Region}},
+		{S3{Host: "h", Security: S3None}, S3{Host: "h", Security: S3None, Port: 80, Region: DefaultS3Region}},
+		{S3{Host: "h", Security: S3None, Port: 9000, Region: "eu-west-1"},
+			S3{Host: "h", Security: S3None, Port: 9000, Region: "eu-west-1"}},
+	} {
+		if got := tt.in.WithDefaults(); got != tt.want {
+			t.Errorf("%+v.WithDefaults() = %+v, want %+v", tt.in, got, tt.want)
+		}
 	}
 }
 

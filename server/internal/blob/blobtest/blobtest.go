@@ -171,6 +171,19 @@ func Suite(t *testing.T, store blob.Store) {
 				t.Errorf("%s lists with size %d, want %d", key, sizes[key], len(key))
 			}
 		}
+		// A key's segments sort as the key does, so a key under a directory
+		// a follows one of a-1, and one of a.png, whose characters sort
+		// before the slash.
+		nested := workspace()
+		ordered := []string{nested + "/a-1/x.png", nested + "/a.png", nested + "/a/x.png", nested + "/b/c/d.png"}
+		for _, i := range []int{2, 0, 3, 1} {
+			if err := store.Put(ctx, ordered[i], []byte("x"), "image/png"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if keys := list(t, store, nested+"/"); !slices.Equal(keys, ordered) {
+			t.Errorf("the nested keys list %q, want %q in order", keys, ordered)
+		}
 		stop := errors.New("stop")
 		calls := 0
 		err := store.List(ctx, mine+"/", func(blob.Info) error {
@@ -223,9 +236,10 @@ func Suite(t *testing.T, store blob.Store) {
 		got, _ := io.ReadAll(res.Body)
 		if res.StatusCode != http.StatusOK || !bytes.Equal(got, data) ||
 			res.Header.Get("Content-Type") != "image/svg+xml" ||
-			res.Header.Get("Content-Disposition") != `inline; filename="x.svg"` {
-			t.Errorf("the signed URL answers %d %s, %q, %q", res.StatusCode, got, res.Header.Get("Content-Type"),
-				res.Header.Get("Content-Disposition"))
+			res.Header.Get("Content-Disposition") != `inline; filename="x.svg"` ||
+			res.Header.Get("Cache-Control") != "private, max-age=60" {
+			t.Errorf("the signed URL answers %d %s, %q, %q, %q", res.StatusCode, got, res.Header.Get("Content-Type"),
+				res.Header.Get("Content-Disposition"), res.Header.Get("Cache-Control"))
 		}
 		// The URL is signed for the key: another key's is refused.
 		other := strings.Replace(u, "/signed.svg", "/other.svg", 1)

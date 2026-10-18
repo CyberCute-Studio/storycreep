@@ -154,9 +154,10 @@ var workspaceKey = regexp.MustCompile(`^[0-9a-f-]{36}/([0-9a-f]{64})\.(?:png|jpg
 // deleted (ADR-009). It works on each workspace in transactions of the
 // workspace (§5.4): one that reads the keys that its rows refer to, and then
 // one for each blob of the store that none referred to, which takes the
-// blob's lock, which an upload and the thumbnail job hold while they store a
-// blob and add the row that refers to it, and checks the rows again, so that
-// it never deletes a blob that a row is about to refer to. It starts no
+// blob's lock, which an upload holds while it checks that the store has its
+// blob and adds the row that refers to it, and the thumbnail job while it
+// stores a thumbnail and records it, and checks the rows again, so that it
+// never deletes a blob that a row is about to refer to. It starts no
 // workspace, and checks no blob, once it has run for sweep.Budget, going on
 // from a workspace picked at random (sweep.Workspaces), and it leaves alone a
 // key that this package would not write. So it is safe to repeat. The blobs of a workspace that no longer

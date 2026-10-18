@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"time"
 )
@@ -148,8 +149,18 @@ func (l *Local) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// List walks the directory of prefix, in lexical order, which is the order
-// of the keys, and skips the files that Put is writing.
+// staleTemp is how long after it was last written a file that Put was
+// writing is left behind, as when the process died while it wrote, which no
+// Put still writes: Put writes a file of 50 MB at most, in moments.
+const staleTemp = time.Hour
+
+// List walks the directory of prefix, and each of its directories, in the
+// order of the keys, which is not the order of the names of a directory's
+// entries: a directory's keys follow its name and a slash, so the keys of a
+// directory a follow those of a-1, because a hyphen sorts before a slash. It
+// skips the files that Put is writing, and removes those that a Put left
+// behind more than staleTemp ago, as when the process died while it wrote,
+// which no key names, and nothing else would ever remove.
 func (l *Local) List(ctx context.Context, prefix string, fn func(Info) error) error {
 	if err := checkPrefix(prefix); err != nil {
 		return err
@@ -158,36 +169,74 @@ func (l *Local) List(ctx context.Context, prefix string, fn func(Info) error) er
 	if start == "" {
 		start = "."
 	}
-	err := fs.WalkDir(l.root.FS(), start, func(p string, d fs.DirEntry, err error) error {
-		switch {
-		case err != nil && p == start && errors.Is(err, fs.ErrNotExist):
-			return fs.SkipAll
-		case err != nil:
-			return err
-		case ctx.Err() != nil:
-			return ctx.Err()
-		case p != start && strings.HasPrefix(d.Name(), "."):
-			if d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		case d.IsDir() || !d.Type().IsRegular():
-			return nil
-		}
-		info, err := d.Info()
-		if errors.Is(err, fs.ErrNotExist) {
-			// Deleted while the walk went on.
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		return fn(Info{Key: p, Size: info.Size(), Modified: info.ModTime()})
-	})
+	err := l.walk(ctx, start, true, fn)
 	if err != nil {
 		return fmt.Errorf("blob: list %s: %w", prefix, err)
 	}
 	return nil
+}
+
+// walk calls fn with the Info of each file of the directory dir, and of its
+// directories, in the order of their keys (List). The directory of the
+// prefix, which is top, may not exist, which lists nothing.
+func (l *Local) walk(ctx context.Context, dir string, top bool, fn func(Info) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	entries, err := fs.ReadDir(l.root.FS(), dir)
+	switch {
+	case top && errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	}
+	// A directory sorts as its name and a slash would, which its keys start
+	// with.
+	sortName := func(e fs.DirEntry) string {
+		if e.IsDir() {
+			return e.Name() + "/"
+		}
+		return e.Name()
+	}
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(sortName(a), sortName(b)) })
+	for _, e := range entries {
+		p := path.Join(dir, e.Name())
+		switch {
+		case strings.HasPrefix(e.Name(), tempPrefix) && e.Type().IsRegular():
+			l.removeStale(e, p)
+			continue
+		case strings.HasPrefix(e.Name(), "."):
+			continue
+		case e.IsDir():
+			if err := l.walk(ctx, p, false, fn); err != nil {
+				return err
+			}
+			continue
+		case !e.Type().IsRegular():
+			continue
+		}
+		info, err := e.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			// Deleted while the walk went on.
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := fn(Info{Key: p, Size: info.Size(), Modified: info.ModTime()}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeStale removes the file e, at p, that Put was writing, if it was last
+// written more than staleTemp ago. A file that cannot be removed now is left
+// for the next List.
+func (l *Local) removeStale(e fs.DirEntry, p string) {
+	if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > staleTemp {
+		_ = l.root.Remove(p)
+	}
 }
 
 // SignedURL returns false: the server serves the local driver's blobs

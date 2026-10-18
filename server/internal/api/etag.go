@@ -47,20 +47,33 @@ func IfNoneMatch(h, etag string) bool {
 // body. A 304's headers replace those of the response the browser stored, so
 // it must not say no-store, which would make the browser drop that response.
 func NotModified(etag string) error {
+	return NotModifiedWith(etag, CacheRevalidate)
+}
+
+// NotModifiedWith is NotModified with cacheControl in Cache-Control, for an
+// operation whose 200 sends a Cache-Control other than CacheRevalidate,
+// which its 304 sends again, because the 304's headers replace those of the
+// response the browser stored.
+func NotModifiedWith(etag, cacheControl string) error {
 	return huma.ErrorWithHeaders(huma.Status304NotModified(),
-		http.Header{"ETag": {etag}, "Cache-Control": {CacheRevalidate}})
+		http.Header{"ETag": {etag}, "Cache-Control": {cacheControl}})
 }
 
 // NotModifiedResponse documents the 304 that NotModified answers with, with
 // its headers, for the Responses of an operation that returns it.
 func NotModifiedResponse() *huma.Response {
+	return NotModifiedResponseWith("private, no-cache: the client keeps its copy, and revalidates it")
+}
+
+// NotModifiedResponseWith documents the 304 that NotModifiedWith answers
+// with, whose Cache-Control cacheControlDoc describes.
+func NotModifiedResponseWith(cacheControlDoc string) *huma.Response {
 	return &huma.Response{
 		Description: "Not Modified: the copy whose ETag the client sent in If-None-Match is current",
 		Headers: map[string]*huma.Header{
 			"ETag": {Schema: &huma.Schema{Type: huma.TypeString,
 				Description: "The entity tag of the client's copy"}},
-			"Cache-Control": {Schema: &huma.Schema{Type: huma.TypeString,
-				Description: "private, no-cache: the client keeps its copy, and revalidates it"}},
+			"Cache-Control": {Schema: &huma.Schema{Type: huma.TypeString, Description: cacheControlDoc}},
 		},
 	}
 }

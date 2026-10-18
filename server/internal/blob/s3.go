@@ -145,9 +145,10 @@ func (s *S3) List(ctx context.Context, prefix string, fn func(Info) error) error
 	return nil
 }
 
-// SignedURL presigns a GET of the object, which overrides the content type
-// and the Content-Disposition of the answer, so that the signature fixes
-// both.
+// SignedURL presigns a GET of the object, which overrides the content type,
+// the Content-Disposition, and the Cache-Control of the answer, so that the
+// signature fixes all three: private, for the browser alone, and a max-age
+// of ttl.
 func (s *S3) SignedURL(ctx context.Context, key string, ttl time.Duration, contentType, disposition string) (string,
 	bool, error) {
 	if err := CheckKey(key); err != nil {
@@ -158,6 +159,7 @@ func (s *S3) SignedURL(ctx context.Context, key string, ttl time.Duration, conte
 		Key:                        aws.String(key),
 		ResponseContentType:        aws.String(contentType),
 		ResponseContentDisposition: aws.String(disposition),
+		ResponseCacheControl:       aws.String(CacheControl(ttl)),
 	}, s3.WithPresignExpires(ttl))
 	if err != nil {
 		return "", false, fmt.Errorf("blob: sign a URL of %s: %w", key, err)
