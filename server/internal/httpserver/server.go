@@ -40,6 +40,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
@@ -97,9 +98,10 @@ type Options struct {
 	// means the server's own: the session cleanup, the cleanup of the email
 	// links' tokens, and the job that emails a link (package account), the
 	// rate limit cleanup (package ratelimit), the rollup and the
-	// reconciliation of usage (package usage), and the purge of the projects
-	// in the trash (package project). The plan items that add jobs register
-	// them in serverJobs.
+	// reconciliation of usage (package usage), the purge of the projects in
+	// the trash (package project), and the pruning of the command batches'
+	// idempotency records (package commands). The plan items that add jobs
+	// register them in serverJobs.
 	Jobs *jobs.Registry
 }
 
@@ -390,6 +392,7 @@ func (s *server) serverJobs() *jobs.Registry {
 	s.limits.RegisterJobs(r)
 	usage.RegisterJobs(r)
 	project.RegisterJobs(r)
+	commands.RegisterJobs(r)
 	return r
 }
 

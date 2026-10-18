@@ -10,6 +10,7 @@
   "error.email_configured": "This server emails its links to each account's own address, so it gives none as text.",
   "error.email_not_configured": "This server does not send email. Ask an instance admin for the link instead.",
   "error.email_unverified": "Verify your email address first, with the link that was emailed to you.",
+  "error.idempotency_mismatch": "Some of these changes were saved already and others were not, so none of them was saved.",
   "error.instance_admin_required": "Only an instance admin may do this.",
   "error.insufficient_role": "Your role does not allow this.",
   "error.insufficient_scope": "This API token does not hold the scope that this needs.",

@@ -11,6 +11,95 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const appliedCommands = `-- name: AppliedCommands :many
+SELECT command_id, seq FROM applied_command
+WHERE workspace_id = $1 AND project_id = $2 AND command_id = ANY($3::uuid[])
+`
+
+type AppliedCommandsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	CommandIds  []pgtype.UUID
+}
+
+type AppliedCommandsRow struct {
+	CommandID pgtype.UUID
+	Seq       int64
+}
+
+// AppliedCommands returns those of the commands that were applied, each with
+// the seq of the batch that applied it.
+func (q *Queries) AppliedCommands(ctx context.Context, arg AppliedCommandsParams) ([]AppliedCommandsRow, error) {
+	rows, err := q.db.Query(ctx, appliedCommands, arg.WorkspaceID, arg.ProjectID, arg.CommandIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AppliedCommandsRow
+	for rows.Next() {
+		var i AppliedCommandsRow
+		if err := rows.Scan(&i.CommandID, &i.Seq); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const batchRecord = `-- name: BatchRecord :one
+SELECT command_ids::uuid[] AS command_ids, response::jsonb AS response
+FROM idempotency_record
+WHERE workspace_id = $1 AND project_id = $2 AND command_id = $3
+    AND command_id = batch_command_id
+`
+
+type BatchRecordParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	CommandID   pgtype.UUID
+}
+
+type BatchRecordRow struct {
+	CommandIds []pgtype.UUID
+	Response   []byte
+}
+
+// BatchRecord returns the idempotency record of the batch whose first
+// command is command_id (FR-API-03): the commands of the batch, in order,
+// and what it was answered with, and no row if the command is no batch's
+// first, or has no record, as when its record has been pruned.
+func (q *Queries) BatchRecord(ctx context.Context, arg BatchRecordParams) (BatchRecordRow, error) {
+	row := q.db.QueryRow(ctx, batchRecord, arg.WorkspaceID, arg.ProjectID, arg.CommandID)
+	var i BatchRecordRow
+	err := row.Scan(&i.CommandIds, &i.Response)
+	return i, err
+}
+
+const deleteBatchRecords = `-- name: DeleteBatchRecords :exec
+DELETE FROM idempotency_record d
+WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.command_id IN (
+    SELECT r.batch_command_id FROM idempotency_record r
+    WHERE r.workspace_id = $1 AND r.project_id = $2 AND r.command_id = ANY($3::uuid[]))
+`
+
+type DeleteBatchRecordsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	CommandIds  []pgtype.UUID
+}
+
+// DeleteBatchRecords deletes the idempotency records of the batches that
+// any of the commands is in, whole: the row of each batch's first command,
+// whose deletion deletes the batch's other rows. A batch whose commands are
+// applied anew no longer answers as the batch that they were refused in.
+func (q *Queries) DeleteBatchRecords(ctx context.Context, arg DeleteBatchRecordsParams) error {
+	_, err := q.db.Exec(ctx, deleteBatchRecords, arg.WorkspaceID, arg.ProjectID, arg.CommandIds)
+	return err
+}
+
 const insertAppliedCommands = `-- name: InsertAppliedCommands :exec
 INSERT INTO applied_command (workspace_id, project_id, command_id, seq)
 SELECT $1, $2, c.command_id, $3
@@ -32,6 +121,33 @@ func (q *Queries) InsertAppliedCommands(ctx context.Context, arg InsertAppliedCo
 		arg.ProjectID,
 		arg.Seq,
 		arg.CommandIds,
+	)
+	return err
+}
+
+const insertBatchRecord = `-- name: InsertBatchRecord :exec
+INSERT INTO idempotency_record (workspace_id, project_id, command_id, batch_command_id, command_ids, response)
+SELECT $1, $2, c.command_id, ($3::uuid[])[1],
+    CASE WHEN c.n = 1 THEN $3::uuid[] END, CASE WHEN c.n = 1 THEN $4::jsonb END
+FROM unnest($3::uuid[]) WITH ORDINALITY AS c (command_id, n)
+`
+
+type InsertBatchRecordParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	CommandIds  []pgtype.UUID
+	Response    []byte
+}
+
+// InsertBatchRecord records what the batch of the commands, in order, was
+// answered with: a row for each command, which points to the first's, which
+// holds the commands and the answer.
+func (q *Queries) InsertBatchRecord(ctx context.Context, arg InsertBatchRecordParams) error {
+	_, err := q.db.Exec(ctx, insertBatchRecord,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.CommandIds,
+		arg.Response,
 	)
 	return err
 }
@@ -106,6 +222,41 @@ func (q *Queries) LockProjectSeq(ctx context.Context, arg LockProjectSeqParams) 
 	return i, err
 }
 
+const operationEntityRefs = `-- name: OperationEntityRefs :many
+SELECT entity_refs FROM operation
+WHERE workspace_id = $1 AND project_id = $2 AND seq = ANY($3::bigint[])
+ORDER BY seq
+`
+
+type OperationEntityRefsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Seqs        []int64
+}
+
+// OperationEntityRefs returns the entities that the project's operations of
+// the seqs changed, as their entity_refs hold them, in the order of the
+// seqs.
+func (q *Queries) OperationEntityRefs(ctx context.Context, arg OperationEntityRefsParams) ([][]byte, error) {
+	rows, err := q.db.Query(ctx, operationEntityRefs, arg.WorkspaceID, arg.ProjectID, arg.Seqs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items [][]byte
+	for rows.Next() {
+		var entity_refs []byte
+		if err := rows.Scan(&entity_refs); err != nil {
+			return nil, err
+		}
+		items = append(items, entity_refs)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const projectGrantRole = `-- name: ProjectGrantRole :one
 SELECT role FROM project_grant
 WHERE workspace_id = $1 AND membership_id = $2 AND project_id = $3
@@ -173,6 +324,35 @@ func (q *Queries) ProjectWorkspace(ctx context.Context, projectID pgtype.UUID) (
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const pruneBatchRecords = `-- name: PruneBatchRecords :execrows
+DELETE FROM idempotency_record d
+WHERE d.workspace_id = $1 AND (d.project_id, d.command_id) IN (
+    SELECT r.project_id, r.command_id FROM idempotency_record r
+    WHERE r.workspace_id = $1 AND r.command_id = r.batch_command_id
+        AND r.created_at < now() - $2::interval
+    LIMIT $3
+    FOR UPDATE SKIP LOCKED)
+`
+
+type PruneBatchRecordsParams struct {
+	WorkspaceID pgtype.UUID
+	Retention   pgtype.Interval
+	MaxRows     int32
+}
+
+// PruneBatchRecords deletes at most max_rows of the workspace's batches'
+// idempotency records that are older than retention, each whole, by the row
+// of its first command, and returns how many batches it deleted. It skips a
+// record that a batch of commands holds, as one that deletes it, which a
+// later run deletes.
+func (q *Queries) PruneBatchRecords(ctx context.Context, arg PruneBatchRecordsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneBatchRecords, arg.WorkspaceID, arg.Retention, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setProjectSeq = `-- name: SetProjectSeq :exec

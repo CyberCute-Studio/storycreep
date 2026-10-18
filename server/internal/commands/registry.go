@@ -222,8 +222,11 @@ type spec struct {
 	capability authz.Operation
 	scope      scope.Scope
 	touches    []ids.Kind
-	schema     *huma.Schema
-	limits     []entitlements.LimitKey
+	// payload is the Go type of the payload, and schema its schema, which
+	// validates it.
+	payload reflect.Type
+	schema  *huma.Schema
+	limits  []entitlements.LimitKey
 	// adds return how much the command adds to each of limits, or nil for 1.
 	adds []func(ctx context.Context, tx *Tx, payload any) (int64, error)
 	// archived and trashed are Spec.Archived and Spec.Trashed.
@@ -294,7 +297,7 @@ func Register[P any](r *Registry, s Spec[P]) {
 		keys[i] = l.Key
 	}
 	sp := &spec{typ: s.Type, capability: s.Capability, scope: s.Scope, touches: slices.Clone(s.Touches),
-		schema: r.schemas.Schema(pt, true, ""), limits: keys,
+		payload: pt, schema: r.schemas.Schema(pt, true, ""), limits: keys,
 		adds: make([]func(context.Context, *Tx, any) (int64, error), len(s.Limits)), archived: s.Archived,
 		trashed: s.Trashed}
 	for i, l := range s.Limits {
@@ -434,13 +437,27 @@ type decoded struct {
 // decode checks the batch, and returns its commands decoded, or an
 // *InvalidError that lists every problem of the batch.
 func (r *Registry) decode(batch []Command) ([]decoded, error) {
+	out, problems := r.check(batch, nil)
+	if len(problems) > 0 {
+		return nil, &InvalidError{Problems: problems}
+	}
+	return out, nil
+}
+
+// check checks the batch, but for its commands that skip names, which
+// another check found unreadable, and returns its commands decoded, and
+// every problem of the batch, in the order of its commands.
+func (r *Registry) check(batch []Command, skip map[int]bool) ([]decoded, []Problem) {
 	if len(batch) == 0 {
-		return nil, &InvalidError{Problems: []Problem{{Command: -1, Message: "has no commands"}}}
+		return nil, []Problem{{Command: -1, Message: "has no commands"}}
 	}
 	var problems []Problem
 	out := make([]decoded, len(batch))
 	first := map[ids.UUID]int{}
 	for i, c := range batch {
+		if skip[i] {
+			continue
+		}
 		add := func(field, msg string) { problems = append(problems, Problem{Command: i, Field: field, Message: msg}) }
 		switch j, dup := first[c.ID]; {
 		case c.ID == (ids.UUID{}):
@@ -484,10 +501,7 @@ func (r *Registry) decode(batch []Command) ([]decoded, error) {
 		}
 		out[i] = decoded{Command: c, spec: s, payload: payload, encoded: encoded}
 	}
-	if len(problems) > 0 {
-		return nil, &InvalidError{Problems: problems}
-	}
-	return out, nil
+	return out, problems
 }
 
 // validate returns what is wrong with the payload raw under the schema, with

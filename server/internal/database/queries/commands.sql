@@ -61,3 +61,60 @@ VALUES (@id, @workspace_id, @project_id, @seq, @command_ids::uuid[], @actor_user
 INSERT INTO applied_command (workspace_id, project_id, command_id, seq)
 SELECT @workspace_id, @project_id, c.command_id, @seq
 FROM unnest(@command_ids::uuid[]) AS c (command_id);
+
+-- name: BatchRecord :one
+-- BatchRecord returns the idempotency record of the batch whose first
+-- command is command_id (FR-API-03): the commands of the batch, in order,
+-- and what it was answered with, and no row if the command is no batch's
+-- first, or has no record, as when its record has been pruned.
+SELECT command_ids::uuid[] AS command_ids, response::jsonb AS response
+FROM idempotency_record
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND command_id = @command_id
+    AND command_id = batch_command_id;
+
+-- name: AppliedCommands :many
+-- AppliedCommands returns those of the commands that were applied, each with
+-- the seq of the batch that applied it.
+SELECT command_id, seq FROM applied_command
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND command_id = ANY(@command_ids::uuid[]);
+
+-- name: DeleteBatchRecords :exec
+-- DeleteBatchRecords deletes the idempotency records of the batches that
+-- any of the commands is in, whole: the row of each batch's first command,
+-- whose deletion deletes the batch's other rows. A batch whose commands are
+-- applied anew no longer answers as the batch that they were refused in.
+DELETE FROM idempotency_record d
+WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.command_id IN (
+    SELECT r.batch_command_id FROM idempotency_record r
+    WHERE r.workspace_id = @workspace_id AND r.project_id = @project_id AND r.command_id = ANY(@command_ids::uuid[]));
+
+-- name: InsertBatchRecord :exec
+-- InsertBatchRecord records what the batch of the commands, in order, was
+-- answered with: a row for each command, which points to the first's, which
+-- holds the commands and the answer.
+INSERT INTO idempotency_record (workspace_id, project_id, command_id, batch_command_id, command_ids, response)
+SELECT @workspace_id, @project_id, c.command_id, (@command_ids::uuid[])[1],
+    CASE WHEN c.n = 1 THEN @command_ids::uuid[] END, CASE WHEN c.n = 1 THEN @response::jsonb END
+FROM unnest(@command_ids::uuid[]) WITH ORDINALITY AS c (command_id, n);
+
+-- name: OperationEntityRefs :many
+-- OperationEntityRefs returns the entities that the project's operations of
+-- the seqs changed, as their entity_refs hold them, in the order of the
+-- seqs.
+SELECT entity_refs FROM operation
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND seq = ANY(@seqs::bigint[])
+ORDER BY seq;
+
+-- name: PruneBatchRecords :execrows
+-- PruneBatchRecords deletes at most max_rows of the workspace's batches'
+-- idempotency records that are older than retention, each whole, by the row
+-- of its first command, and returns how many batches it deleted. It skips a
+-- record that a batch of commands holds, as one that deletes it, which a
+-- later run deletes.
+DELETE FROM idempotency_record d
+WHERE d.workspace_id = @workspace_id AND (d.project_id, d.command_id) IN (
+    SELECT r.project_id, r.command_id FROM idempotency_record r
+    WHERE r.workspace_id = @workspace_id AND r.command_id = r.batch_command_id
+        AND r.created_at < now() - @retention::interval
+    LIMIT @max_rows
+    FOR UPDATE SKIP LOCKED);

@@ -39,8 +39,26 @@
 // refused with a *scope.InsufficientError that names the scope (AC2),
 // whatever the owner's role.
 //
-// The idempotency of command IDs and the multi-batch form join with the
-// command endpoint (plan item 28).
+// A command's ID makes it idempotent (FR-API-03). Every batch that applies,
+// and every batch that its project's state refuses before any of its
+// commands applies, which is archived, past a limit, or of stale revisions,
+// has an idempotency record of its answer, which the pruning job keeps for
+// RecordRetention (Prune); every command of a batch that applies has a row of
+// applied_command too, which is kept for as long as the project exists. A
+// batch sent again, once its actor is authorised and the project's lock is
+// held, before the project's state or the workspace's limits are checked
+// (§10.2 step 4), is answered from them, and nothing applies again: as it was
+// answered, if it is the batch of a record, with the same commands in the same
+// order; as AlreadyApplied, if all of its commands were applied otherwise; and
+// with an *IdempotencyMismatchError if only some of them were. A refusal that
+// is not recorded, as of a batch that is not valid, or of an actor that may
+// not apply it, is checked anew when the batch is sent again. A command's
+// payload is not compared with the one that its ID was applied with: the ID
+// is the command.
+//
+// The API's command endpoint sends the pipeline its clients' batches, in the
+// JSON that Parse reads, and the API's OpenAPI document describes every type
+// of command, with its payload's schema (Registry.Document).
 package commands
 
 import (
@@ -135,10 +153,19 @@ type Actor struct {
 
 // Result is what a batch that applied did.
 type Result struct {
-	// Seq is the batch's seq: the project's sequence number after it.
+	// Status is Applied, or AlreadyApplied for a batch whose commands were
+	// applied before, once the record of the batch that applied them is
+	// pruned, or grouped otherwise (FR-API-03).
+	Status Status
+	// Seq is the batch's seq: the project's sequence number after it. That
+	// of a batch AlreadyApplied is the latest seq of the batches that applied
+	// its commands.
 	Seq int64
 	// Revisions are the entities that the batch changed, with their
-	// revisions after it, in the order of their first change.
+	// revisions after it, in the order of their first change. Those of a
+	// batch AlreadyApplied are the entities that the batches that applied its
+	// commands changed, with their current revisions, but for those that no
+	// longer exist.
 	Revisions []Revision
 }
 
@@ -265,26 +292,36 @@ func (p *Pipeline) Apply(ctx context.Context, actor Actor, projectID ids.UUID, b
 	start := time.Now()
 	cmds, err := p.registry.decode(batch)
 	var res Result
+	replayed := false
 	if err == nil {
-		res, err = p.apply(ctx, actor, projectID, cmds)
+		res, replayed, err = p.apply(ctx, actor, projectID, cmds)
 	}
-	p.metrics.observe(cmds, err, time.Since(start))
+	p.metrics.observe(cmds, err, replayed, time.Since(start))
 	if err != nil {
 		return Result{}, err
 	}
-	if p.notifier != nil {
+	if p.notifier != nil && !replayed {
 		p.notifier.Committed(context.WithoutCancel(ctx), projectID, res.Seq)
 	}
 	return res, nil
 }
 
-// apply applies the decoded commands cmds.
-func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, cmds []decoded) (Result, error) {
+// apply applies the decoded commands cmds, and returns what they did, and
+// whether the batch was answered as it was before (replayed), which applied
+// nothing.
+func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, cmds []decoded) (Result, bool,
+	error) {
 	workspaceID, err := p.actorWorkspace(ctx, actor, projectID)
 	if err != nil {
-		return Result{}, err
+		return Result{}, false, err
 	}
 	var res Result
+	// replayed is set for a batch that was sent before, which is answered as
+	// it was, and refused for a batch that is refused, as one that the
+	// pipeline remembers, whose transaction commits its idempotency record,
+	// or one that mixes applied commands and new ones.
+	var replayed bool
+	var refused error
 	err = p.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
 		// workspaceOf, or the authentication of the actor's API token, found
@@ -344,16 +381,31 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 			return err
 		}
 		// The project may have changed while the batch waited for the lock,
-		// as when a batch before it deleted or archived it.
-		switch {
-		case locked.Deleted && !allApply(cmds, trashed):
+		// as when a batch before it deleted it. A project in the trash is not
+		// found even by a batch that was sent before (FR-PROJ-01 AC3).
+		if locked.Deleted && !allApply(cmds, trashed) {
 			return ErrNotFound
-		case locked.Archived && !allApply(cmds, archived):
-			return ErrProjectArchived
 		}
 		t := &Tx{tx: tx, pipeline: p, actor: actor, project: projectID, workspace: workspaceID, at: map[Ref]int{},
 			revs: map[Ref]int64{}, usage: map[usage.Key]int64{}}
-		res, err = p.applyLocked(ctx, q, t, cmds, locked.Seq)
+		// A batch that was sent before is answered as it was, whatever has
+		// changed since, before the project's state and the workspace's limits
+		// are checked (§10.2 step 4), so that a batch that applied is never
+		// applied again, nor refused because of what it did, as a create that
+		// took the last of a limit. The project's lock keeps a batch that is
+		// sent again while it applies from applying too: it waits for the
+		// first, and finds it applied.
+		r, err := p.idempotent(ctx, q, t, cmds)
+		switch {
+		case err != nil:
+			return err
+		case r != nil:
+			// A mismatch answers no batch as it was, but refuses this one.
+			var mismatch *IdempotencyMismatchError
+			replayed, res, refused = !errors.As(r.err, &mismatch), r.res, r.err
+			return nil
+		}
+		res, err = p.applyLocked(ctx, q, t, cmds, locked.Seq, locked.Archived)
 		// Each later read is a statement of its own too, so a deletion
 		// requested once the read above is done is seen by the next read that
 		// only an active workspace answers, as the read of its plan with plans
@@ -363,27 +415,52 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		if errors.Is(err, pgx.ErrNoRows) && errors.Is(activeWorkspace(ctx, q, workspaceID), ErrNotFound) {
 			return ErrNotFound
 		}
+		var remembered *rememberedError
+		if errors.As(err, &remembered) {
+			// The refusal changed nothing but its record, which commits.
+			refused = remembered.err
+			return nil
+		}
 		return err
 	})
-	if err != nil {
-		return Result{}, err
+	switch {
+	case err != nil:
+		return Result{}, false, err
+	case refused != nil:
+		return Result{}, replayed, refused
 	}
-	return res, nil
+	return res, replayed, nil
 }
 
+// rememberedError is a refusal of a batch that applyLocked has recorded as
+// the batch's idempotency record, whose transaction commits, so that the
+// batch sent again is refused as it was (refusalOf).
+type rememberedError struct {
+	err error
+}
+
+func (e *rememberedError) Error() string { return e.err.Error() }
+
+func (e *rememberedError) Unwrap() error { return e.err }
+
 // applyLocked applies the decoded commands cmds in t, the batch's
-// transaction, once it holds the lock of the project, whose seq is seq: it
-// checks the limits and the revisions, applies the commands, and records the
-// batch.
-func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded, seq int64) (Result,
-	error) {
-	checked, err := p.checkLimits(ctx, t, cmds)
-	if err != nil {
-		return Result{}, err
-	}
-	t.checked = checked
-	if err := p.checkRevs(ctx, t, cmds); err != nil {
-		return Result{}, err
+// transaction, once it holds the lock of the project, whose seq is seq, and
+// which is archived if archivedProject is set: it checks the project's state,
+// the limits, and the revisions, applies the commands, and records the
+// batch. A refusal of those checks, which comes before any command writes
+// anything, is recorded as the batch's idempotency record, and returned as a
+// *rememberedError (refusalOf).
+func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded, seq int64,
+	archivedProject bool) (Result, error) {
+	if err := p.check(ctx, t, cmds, archivedProject); err != nil {
+		r := refusalOf(err)
+		if r == nil {
+			return Result{}, err
+		}
+		if err := remember(ctx, q, t, cmds, answer{Refusal: r}); err != nil {
+			return Result{}, err
+		}
+		return Result{}, &rememberedError{err: err}
 	}
 	// A batch with a command that cannot be undone has no inverse, so none of
 	// its commands' inverses is computed, only to be dropped.
@@ -411,11 +488,30 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 	if err := t.recordUsage(ctx); err != nil {
 		return Result{}, err
 	}
-	res := Result{Seq: seq + 1, Revisions: slices.Clone(t.changed)}
+	// Revisions is never nil, as that of a batch answered from its record is
+	// not, so that the batch's answer is the same either way.
+	res := Result{Status: Applied, Seq: seq + 1, Revisions: append([]Revision{}, t.changed...)}
 	if err := p.record(ctx, q, t, cmds, res, inverses, undoable); err != nil {
 		return Result{}, err
 	}
 	return res, nil
+}
+
+// check checks, in t, the batch's transaction, before any of its commands
+// applies, that the batch applies to the project, which is archived if
+// archivedProject is set (Spec.Archived), that it takes the workspace past
+// none of its limits, and that every revision that its commands expect is
+// the entity's. It reads, and writes nothing.
+func (p *Pipeline) check(ctx context.Context, t *Tx, cmds []decoded, archivedProject bool) error {
+	if archivedProject && !allApply(cmds, archived) {
+		return ErrProjectArchived
+	}
+	checked, err := p.checkLimits(ctx, t, cmds)
+	if err != nil {
+		return err
+	}
+	t.checked = checked
+	return p.checkRevs(ctx, t, cmds)
 }
 
 // trashed and archived report whether a command applies to a project in the
@@ -698,7 +794,8 @@ type (
 
 // record appends the batch of the commands cmds, which res says what they
 // did, to the project's operation log, records each command as applied, and
-// sets the project's seq. inverses are the commands' inverses, and undoable
+// what the batch was answered with as its idempotency record, and sets the
+// project's seq. inverses are the commands' inverses, and undoable
 // says whether every command has one.
 func (p *Pipeline) record(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded, res Result,
 	inverses [][]logStep, undoable bool) error {
@@ -746,6 +843,9 @@ func (p *Pipeline) record(ctx context.Context, q *queries.Queries, t *Tx, cmds [
 	if err := q.InsertAppliedCommands(ctx, queries.InsertAppliedCommandsParams{WorkspaceID: ws, ProjectID: project,
 		Seq: res.Seq, CommandIds: commandIDs}); err != nil {
 		return fmt.Errorf("commands: record the applied commands: %w", err)
+	}
+	if err := remember(ctx, q, t, cmds, answer{Seq: res.Seq, Revisions: refs}); err != nil {
+		return err
 	}
 	if err := q.SetProjectSeq(ctx, queries.SetProjectSeqParams{Seq: res.Seq, WorkspaceID: ws,
 		ID: project}); err != nil {

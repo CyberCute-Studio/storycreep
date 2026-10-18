@@ -28,11 +28,17 @@ const (
 	// resultRejected is a batch that a command refused, or that failed,
 	// which applied nothing.
 	resultRejected = "rejected"
+	// resultReplayed is a batch that was sent before, answered as it was
+	// then, or as already applied, which applied nothing again (FR-API-03).
+	resultReplayed = "replayed"
+	// resultMismatch is a batch with commands that were applied and commands
+	// that were not, which the API answers with idempotency_mismatch.
+	resultMismatch = "idempotency_mismatch"
 )
 
 // results are the results of a batch, which the metrics start at zero.
 var results = []string{resultApplied, resultInvalid, resultNotFound, resultDenied, resultOverLimit,
-	resultRevisionConflict, resultArchived, resultRejected}
+	resultRevisionConflict, resultArchived, resultRejected, resultReplayed, resultMismatch}
 
 // metrics are the pipeline's Prometheus metrics: the command throughput and
 // the conflict rate (PRD NFR-OBS-02). They label commands by their type,
@@ -52,8 +58,10 @@ func newMetrics(types []Type) *metrics {
 				"before the database was read; not_found, for a project that does not exist, is in the trash, whose " +
 				"workspace is being deleted, or that the actor has no role on; denied, by the actor's role; " +
 				"over_limit, past a limit of the workspace's plan; revision_conflict, made against a revision that an " +
-				"entity no longer has; archived, a change of an archived project, which is read-only; or rejected, " +
-				"refused by a command or failed. Only an applied batch changes anything.",
+				"entity no longer has; archived, a change of an archived project, which is read-only; rejected, " +
+				"refused by a command or failed; replayed, sent before, and answered as it was then, or as already " +
+				"applied; or idempotency_mismatch, with commands that were applied and commands that were not. Only an " +
+				"applied batch changes anything.",
 		}, []string{"result"}),
 		commands: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "storycreep_commands_applied_total",
@@ -97,13 +105,18 @@ func (m *metrics) Collect(ch chan<- prometheus.Metric) {
 }
 
 // observe counts a batch that took elapsed and ended with err, whose
-// commands, if it decoded, were cmds.
-func (m *metrics) observe(cmds []decoded, err error, elapsed time.Duration) {
+// commands, if it decoded, were cmds, and which was answered as it was before
+// if replayed is set, so that it applied nothing again, nor conflicted again.
+func (m *metrics) observe(cmds []decoded, err error, replayed bool, elapsed time.Duration) {
 	r := result(err)
+	if replayed {
+		r = resultReplayed
+	}
 	m.batches.WithLabelValues(r).Inc()
 	m.duration.WithLabelValues(r).Observe(elapsed.Seconds())
 	var conflict *RevisionConflictError
 	switch {
+	case replayed:
 	case err == nil:
 		for _, c := range cmds {
 			m.commands.WithLabelValues(string(c.spec.typ)).Inc()
@@ -126,6 +139,7 @@ func result(err error) string {
 	var invalid *InvalidError
 	var limit *entitlements.LimitError
 	var conflict *RevisionConflictError
+	var mismatch *IdempotencyMismatchError
 	switch {
 	case err == nil:
 		return resultApplied
@@ -142,6 +156,8 @@ func result(err error) string {
 		return resultRevisionConflict
 	case errors.Is(err, ErrProjectArchived):
 		return resultArchived
+	case errors.As(err, &mismatch):
+		return resultMismatch
 	}
 	return resultRejected
 }
