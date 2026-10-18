@@ -375,7 +375,9 @@ func TestWorkspaceRoles(t *testing.T) {
 // none, as one who is not a member, or is a guest, is answered with 404 on
 // every workspace route, as for a workspace that does not exist, never 403
 // or 500, and that an instance admin is such a user unless
-// STORYCREEP_INSTANCE_ADMIN_ACCESS is on.
+// STORYCREEP_INSTANCE_ADMIN_ACCESS is on, when the admin, and the admin's
+// API token of the workspace, read it as its owner, but do not list it,
+// because the list shows the admin's memberships alone.
 //
 // Verifies: FR-TEN-04/AC6
 func TestWorkspaceNotFound(t *testing.T) {
@@ -447,6 +449,17 @@ func TestWorkspaceNotFound(t *testing.T) {
 			}
 			if got := workspacesOf(t, s.main, admin); len(got) != 1 {
 				t.Errorf("an instance admin lists %d workspaces, want only its own", len(got))
+			}
+			// The admin's token of the workspace reads it, but lists it no
+			// more than the admin's session does, as the list's description
+			// says: the list shows memberships.
+			tok := makeToken(t, s.main, admin, workspaceTokensPath(w.ID), "snapshot:read")
+			if got := itemIDs(t, s.main, bearer(tok.Secret), workspacesPath); len(got) != 0 {
+				t.Errorf("an instance admin's token lists %q", got)
+			}
+			if got := workspaceFrom(t, call(s.main, http.MethodGet, workspacesPath+"/"+w.ID, nil,
+				bearer(tok.Secret)), http.StatusOK); got.Role != "owner" {
+				t.Errorf("an instance admin's token reads %+v", got)
 			}
 		}
 	}

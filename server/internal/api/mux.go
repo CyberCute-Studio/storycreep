@@ -329,11 +329,16 @@ func (m *Mux) declare(method, pattern string, c Capability) {
 // Register, unless the handler sets another read deadline. No rate limit
 // counts its requests, which only Register's operations count, so a route of
 // the API, under /api/, is an operation. It panics if c needs an
-// authenticated caller, whom only Register finds.
+// authenticated caller, whom only Register finds, and on a pattern under
+// /api/, whose requests a rate limit must count.
 func (m *Mux) Handle(c Capability, method, pattern string, h http.Handler) {
-	if c.Authenticated() {
+	switch {
+	case c.Authenticated():
 		panic(fmt.Sprintf("api: %s %s requires %s, which needs an authenticated caller; register it with Register",
 			method, pattern, c))
+	case apiPath(pattern):
+		panic(fmt.Sprintf("api: %s %s is a route of the API, which a rate limit counts; register it with Register",
+			method, pattern))
 	}
 	m.declare(method, pattern, c)
 	m.router.Method(method, pattern, h)
@@ -370,8 +375,8 @@ type routeOptions struct {
 // TokenScope says that a route takes an API token too, besides a session,
 // and that the token must hold the scope s, or a scope that implies it (PRD
 // FR-AUTH-04): the Mux's Authenticator is told s. Register panics on
-// TokenScope for a capability that needs no authenticated caller, or with a
-// value that is not a scope.
+// TokenScope for a capability that needs no authenticated caller, with a
+// value that is not a scope, or beside RateLimit(BucketAuth).
 func TokenScope(s scope.Scope) Option {
 	return func(o *routeOptions) { o.token = s }
 }
@@ -398,7 +403,12 @@ type Bucket string
 // their own, which is no route's that Register registers.
 const (
 	// BucketAuth is signing in, registering, and the other requests about
-	// credentials that FR-AUTH-05 limits most.
+	// credentials that FR-AUTH-05 limits most, among them the requests with
+	// which a user finds and ends a credential: signing out, listing and
+	// revoking sessions, and listing and revoking API tokens. No route that
+	// takes an API token counts in it (Register), so that a token's
+	// requests, which count against its owner too, cannot use up the
+	// owner's limit of the requests that revoke the token.
 	BucketAuth Bucket = "auth"
 	// BucketRead is a request that reads, which a GET or HEAD route counts
 	// in unless it says otherwise.
@@ -422,7 +432,8 @@ func (b Bucket) Known() bool {
 // RateLimit says that a route's requests count in the bucket b, rather than
 // in BucketRead, for a GET or HEAD route, or in BucketWrite, for any other,
 // in which they count otherwise. Register panics on a value that is not a
-// bucket.
+// bucket, and on BucketAuth for a route that takes an API token
+// (TokenScope).
 func RateLimit(b Bucket) Option {
 	return func(o *routeOptions) { o.bucket = b }
 }
@@ -491,6 +502,10 @@ func Register[I, O any](m *Mux, c Capability, op huma.Operation, handler func(co
 		panic(fmt.Sprintf("api: %s requires %s, and only a public route outside /api/ may be unlimited", route, c))
 	case o.bucket != "" && !o.bucket.Known():
 		panic(fmt.Sprintf("api: %s counts in the unknown bucket %q", route, o.bucket))
+	case o.token != "" && o.bucket == BucketAuth:
+		panic(fmt.Sprintf("api: %s takes an API token and counts in the %s bucket, which no token's request may "+
+			"count in, so that a token cannot use up its owner's limit of the requests that revoke it", route,
+			BucketAuth))
 	case !o.unlimited && m.limiter == nil:
 		panic(fmt.Sprintf("api: %s counts in a rate limit, and the Mux has no RateLimiter", route))
 	}

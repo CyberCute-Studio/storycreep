@@ -610,8 +610,9 @@ func (l *recordingLimiter) Doc(b Bucket, c Callers) string {
 // declaration says, or that its method does, once the Authenticator and the
 // operation's own middleware have let its request through, before the
 // operation runs; that the bucket's limit is in its description and its
-// headers in its responses; and that only a public route outside /api/ may
-// count in none.
+// headers in its responses; that only a public route outside /api/ may
+// count in none; and that no route that takes an API token counts in the
+// auth bucket.
 func TestRateLimit(t *testing.T) {
 	limiter := &recordingLimiter{}
 	m := NewMux(MuxOptions{RateLimit: limiter, Authenticate: func(ctx huma.Context, _ scope.Scope) (context.Context,
@@ -723,6 +724,12 @@ func TestRateLimit(t *testing.T) {
 		"an operation in an unknown bucket": func() {
 			Register(m, Public, huma.Operation{OperationID: "e", Method: http.MethodGet, Path: "/api/e"}, handler,
 				RateLimit("connect"))
+		},
+		// A token's requests count against its owner too, so none counts in
+		// the bucket of the requests that revoke it.
+		"an operation that takes a token in the auth bucket": func() {
+			Register(m, ReadProject, huma.Operation{OperationID: "f", Method: http.MethodGet, Path: "/api/f"}, handler,
+				TokenScope(scope.ProjectRead), RateLimit(BucketAuth))
 		},
 	} {
 		func() {
@@ -849,6 +856,9 @@ func TestDeclarations(t *testing.T) {
 		"an unknown capability": func() { m.Handle("project.fly", http.MethodGet, "/fly", http.NotFoundHandler()) },
 		"no capability":         func() { m.Handle("", http.MethodGet, "/none", http.NotFoundHandler()) },
 		"a route twice":         func() { m.Handle(Public, http.MethodGet, "/metrics", http.NotFoundHandler()) },
+		// A rate limit counts every route of the API, which only Register
+		// attaches.
+		"a handler of the API": func() { m.Handle(Public, http.MethodGet, "/api/raw", http.NotFoundHandler()) },
 	} {
 		func() {
 			defer func() {

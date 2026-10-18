@@ -508,7 +508,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 			return nil, err
 		}
 		return &clearedOutput{SetCookie: cookie.clear()}, nil
-	}, api.SessionOnly())
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "listSessions",
@@ -543,7 +543,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 			out.Body.Items[i] = newSessionBody(s, cur.session.ID)
 		}
 		return out, nil
-	}, api.SessionOnly())
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "revokeSession",
@@ -576,7 +576,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 			out.SetCookie = cookie.clear()
 		}
 		return out, nil
-	}, api.SessionOnly())
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "revokeOtherSessions",
@@ -602,7 +602,7 @@ func registerSessions(m *api.Mux, accounts *account.Service, cookie sessionCooki
 			return nil, err
 		}
 		return &revokedOutput{Body: revokedBody{Revoked: n}}, nil
-	}, api.SessionOnly())
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	api.Register(m, api.OwnAccount, huma.Operation{
 		OperationID: "changePassword",

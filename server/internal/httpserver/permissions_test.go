@@ -19,6 +19,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 )
 
 // The permission matrix on the wire (PRD §5.6, FR-TEN-03): every operation
@@ -48,10 +49,18 @@ type rolesFixture struct {
 }
 
 // newRolesFixture returns a server whose workspace has an account of each of
-// matrixRoles.
+// matrixRoles. The tests of the roles try every operation as each account,
+// many of which, as making, listing, and revoking tokens and sessions, count
+// in the auth bucket, whose limit of 10 a minute for each account would
+// refuse them, so the server's limiter allows each account 1,000 of them a
+// minute; the tests of the limits use servers of their own, or a policy of
+// their own.
 func newRolesFixture(t *testing.T) *rolesFixture {
 	t.Helper()
 	s, d, owner, ws := inviteServer(t, "open", nil)
+	policy := ratelimit.DefaultPolicy()
+	policy.Rates[ratelimit.Auth].Limits[ratelimit.User] = 1000
+	s.limits = ratelimit.New(readyDB{s.ready}, policy)
 	f := &rolesFixture{s: s, d: d, admin: d.Admin(t), ws: ws, as: map[string]signedIn{"owner": owner}}
 	for _, r := range matrixRoles[1:] {
 		// Not admin@example.com, which is the owner's.

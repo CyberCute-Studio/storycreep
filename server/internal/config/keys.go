@@ -583,8 +583,10 @@ var keys = []key{
 			"taken for the client. The client's address is what the rate limits of an IP address count (PRD " +
 			"NFR-SEC-06), and what a session and the audit log record. Without this setting, behind a reverse " +
 			"proxy, every request seems to come from the proxy, so all clients share the rate limits of one " +
-			"address, and one client that uses up the limit of signing in refuses everybody's sign-ins until it " +
-			"resets. List only the addresses that the proxies " +
+			"address, which count every request of the API: one client that uses up the limit of signing in " +
+			"refuses everybody's sign-ins until it resets, and one busy client, such as a CI job, that uses up the " +
+			"address's limit of reading or of changing something gets everybody's such requests refused " +
+			"likewise. List only the addresses that the proxies " +
 			"connect from, as the server sees them, because whoever connects from a listed address can claim to " +
 			"be any client. Nor may a listed range hold a client's address, as the proxies see it, such as the " +
 			"addresses of a local network or a VPN that uses the same range: the server skips over every listed " +

@@ -56,9 +56,10 @@ type Bucket string
 
 // The buckets (NFR-SEC-06).
 const (
-	// Auth is signing in, registering, changing a password, and, as the
-	// plan's later items add them, resetting a password and creating an
-	// API token (FR-AUTH-05).
+	// Auth is signing in, registering, changing a password, resetting one,
+	// and the other requests about credentials, as creating, listing, and
+	// revoking an API token and signing out (FR-AUTH-05), which the
+	// descriptions of the API's operations list.
 	Auth Bucket = "auth"
 	// Read is a request that reads.
 	Read Bucket = "read"

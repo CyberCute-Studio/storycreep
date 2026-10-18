@@ -316,9 +316,11 @@ var codes = []codeSpec{
 			"`details.bucket` is `auth` for signing in, registering, changing a password, completing first-run " +
 			"setup, asking for a link that resets a password or verifies an email address, using such a link, " +
 			"an instance admin's taking one as text, inviting someone to a workspace or sending an invitation " +
-			"anew, reading, accepting, or registering with an invitation's link, and making an API token; `read` " +
-			"for every other request that reads, and `write` for every other that changes something, which every " +
-			"operation's description states the limits of."},
+			"anew, reading, accepting, or registering with an invitation's link, making, listing, and revoking an " +
+			"API token, signing out, and listing and revoking sessions, which no request made with an API token " +
+			"counts in, so that a token's requests cannot keep its owner from revoking it; `read` for every other " +
+			"request that reads, and `write` for every other that changes something, which every operation's " +
+			"description states the limits of."},
 	{CodeInternal, http.StatusInternalServerError, i18n.K("error.internal_error"),
 		"The server failed. Its log has the cause, under the envelope's `request_id`."},
 	{CodeNotReady, http.StatusServiceUnavailable, i18n.K("error.not_ready"),

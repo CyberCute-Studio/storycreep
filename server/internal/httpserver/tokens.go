@@ -150,8 +150,10 @@ type revokeProjectTokenInput struct {
 }
 
 // tokenSessionOnlyDoc says, in the description of an operation of tokens,
-// why it is session-only, as sessionAuthDoc says that it is.
-const tokenSessionOnlyDoc = " That way no token makes, lists, or revokes another."
+// why it is session-only, as sessionAuthDoc says that it is. It names what it
+// explains, because csrfDoc's sentence comes between them in the
+// descriptions of the operations that change something.
+const tokenSessionOnlyDoc = " It refuses every API token so that no token makes, lists, or revokes another."
 
 // createTokenDoc says, in the description of an operation that makes a
 // token, what it does with it.
@@ -248,7 +250,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service) {
 			return nil, tokenError(err)
 		}
 		return tokenPage(in.PageParams, list)
-	}, api.SessionOnly())
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	api.Register(m, api.ManageProjectTokens, huma.Operation{
 		OperationID: "listProjectTokens",
@@ -279,7 +281,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service) {
 			return nil, tokenError(err)
 		}
 		return tokenPage(in.PageParams, list)
-	}, api.SessionOnly())
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	api.Register(m, api.ManageWorkspaceTokens, huma.Operation{
 		OperationID: "revokeWorkspaceToken",
@@ -311,7 +313,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service) {
 			return nil, tokenError(err)
 		}
 		return &struct{}{}, nil
-	}, api.SessionOnly())
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 
 	api.Register(m, api.ManageProjectTokens, huma.Operation{
 		OperationID: "revokeProjectToken",
@@ -344,7 +346,7 @@ func registerTokens(m *api.Mux, tokens *apitoken.Service) {
 			return nil, tokenError(err)
 		}
 		return &struct{}{}, nil
-	}, api.SessionOnly())
+	}, api.RateLimit(api.BucketAuth), api.SessionOnly())
 }
 
 // newCreatedTokenOutput returns the answer that holds the token that was

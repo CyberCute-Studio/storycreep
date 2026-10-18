@@ -711,14 +711,18 @@ func (w *Workspace) apply(p Patch) (bool, error) {
 // token's workspace alone, in which alone it acts (FR-AUTH-04).
 func (s *Service) List(ctx context.Context, userID ids.UUID, tok *scope.Token, after ids.UUID, limit int) (
 	[]Membership, error) {
-	var only ids.UUID
+	// A token's workspace is never zero, but the filter holds even a zero one
+	// as an ID, which no workspace has, rather than as null, which filters
+	// nothing, so that a token without a workspace is shown none of its
+	// owner's, as Get and project.List answer it with ErrNotFound.
+	var only pgtype.UUID
 	if tok != nil {
-		only = tok.WorkspaceID
+		only = pgtype.UUID{Bytes: tok.WorkspaceID, Valid: true}
 	}
 	var out []Membership
 	err := s.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
 		rows, err := queries.New(tx).UserWorkspaces(ctx, queries.UserWorkspacesParams{UserID: nullUUID(userID),
-			After: nullUUID(after), OnlyWorkspace: nullUUID(only), MaxRows: int32(min(limit, 1<<20))})
+			After: nullUUID(after), OnlyWorkspace: only, MaxRows: int32(min(limit, 1<<20))})
 		if err != nil {
 			return fmt.Errorf("workspace: list the workspaces: %w", err)
 		}

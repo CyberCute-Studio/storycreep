@@ -49,12 +49,15 @@ const (
 const authLimitDoc = " Signing in, registering, changing a password, completing first-run setup, asking for a link " +
 	"that resets a password or verifies an email address, using one, an instance admin's taking one as text, " +
 	"inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an " +
-	"invitation's link, and making an API token share a rate limit of 20 requests a minute for each IP address. " +
+	"invitation's link, making, listing, or revoking an API token, signing out, and listing or revoking sessions " +
+	"share a rate limit of 20 requests a minute for each IP address. " +
 	"Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 " +
 	"a minute for each email address, so that each counts against the other for the same address, and changing a " +
 	"password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a " +
-	"link as text, inviting someone, sending an invitation anew, accepting one, and making an API token share one " +
-	"of 10 a minute for each account. The " +
+	"link as text, inviting someone, sending an invitation anew, accepting one, making, listing, or revoking an API " +
+	"token, signing out, and listing or revoking sessions share one of 10 a minute for each account. No request " +
+	"made with an API token counts against these, so that the requests of a token, which count against its owner's " +
+	"account too, cannot keep the owner from finding and revoking it. The " +
 	"RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over " +
 	"a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the " +
 	"limit that it is over, that of the email address included, and whose Retry-After header says how many seconds " +
@@ -67,8 +70,10 @@ const authLimitDoc = " Signing in, registering, changing a password, completing 
 func bucketDoc(b ratelimit.Bucket, r ratelimit.Rate, callers api.Callers) string {
 	what := map[ratelimit.Bucket]string{ratelimit.Read: "Requests that read", ratelimit.Write: "Requests that " +
 		"change something", ratelimit.Export: "Exports"}[b]
-	ip, user, token := thousands(r.Limits[ratelimit.IP]), thousands(r.Limits[ratelimit.User]),
-		thousands(r.Limits[ratelimit.Token])
+	// The descriptions are in the source locale, which writes 1200 as 1,200.
+	digits := i18n.Default().Localizer(i18n.Source).Number
+	ip, user, token := digits(r.Limits[ratelimit.IP]), digits(r.Limits[ratelimit.User]),
+		digits(r.Limits[ratelimit.Token])
 	var limits, left string
 	switch callers {
 	case api.Anyone:
@@ -98,32 +103,16 @@ func per(d time.Duration) string {
 	return "every " + d.String()
 }
 
-// thousands returns n in digits, with a comma between each three, as 1,200.
-func thousands(n int) string {
-	s := strconv.Itoa(n)
-	for i := len(s) - 3; i > 0; i -= 3 {
-		s = s[:i] + "," + s[i:]
-	}
-	return s
-}
-
-// buckets are the buckets of package ratelimit that count the requests of
-// the routes in each bucket of package api.
-var buckets = map[api.Bucket]ratelimit.Bucket{
-	api.BucketAuth:   ratelimit.Auth,
-	api.BucketRead:   ratelimit.Read,
-	api.BucketWrite:  ratelimit.Write,
-	api.BucketExport: ratelimit.Export,
-}
-
 // limiter is the API's RateLimiter (api.MuxOptions): it counts each request
 // of an operation in the bucket of its route with the server's Limiter, for
 // the client's IP address, for the signed-in user if the authenticator found
 // one, which it has before the limiter counts, and for the API token of a
 // request made with one, and sets the RateLimit headers of the answer, or
-// answers a request over the limit with rate_limited. It reads the server's
-// Limiter at each request, so that a test can give the server one with
-// another policy before it makes requests.
+// answers a request over the limit with rate_limited. A bucket of package
+// api is the bucket of package ratelimit of the same name, whose rate Doc
+// finds when the route is registered. It reads the server's Limiter at each
+// request, so that a test can give the server one with another policy before
+// it makes requests.
 type limiter struct {
 	s *server
 }
@@ -131,10 +120,7 @@ type limiter struct {
 var _ api.RateLimiter = limiter{}
 
 func (l limiter) Take(ctx huma.Context, b api.Bucket) error {
-	bucket, ok := buckets[b]
-	if !ok {
-		return fmt.Errorf("httpserver: the bucket %q has no rate limit", b)
-	}
+	bucket := ratelimit.Bucket(b)
 	keys := []ratelimit.Key{ratelimit.ClientIP(clientFrom(ctx.Context()).IP)}
 	if cur, err := currentFrom(ctx.Context()); err == nil {
 		keys = append(keys, ratelimit.UserID(cur.userID))
@@ -153,13 +139,19 @@ func (l limiter) Take(ctx huma.Context, b api.Bucket) error {
 }
 
 // Doc says what the server's default policy limits each bucket to, which is
-// the one that it counts with.
+// the one that it counts with. It panics on a bucket that the policy has no
+// rate of, so that a route that counts in one fails when it is registered
+// rather than at its first request.
 func (limiter) Doc(b api.Bucket, callers api.Callers) string {
-	if b == api.BucketAuth {
+	bucket := ratelimit.Bucket(b)
+	rate, ok := ratelimit.DefaultPolicy().Rates[bucket]
+	switch {
+	case !ok:
+		panic(fmt.Sprintf("httpserver: the bucket %q has no rate limit", b))
+	case b == api.BucketAuth:
 		return authLimitDoc
 	}
-	bucket := buckets[b]
-	return bucketDoc(bucket, ratelimit.DefaultPolicy().Rates[bucket], callers)
+	return bucketDoc(bucket, rate, callers)
 }
 
 // limitError returns the error that the API answers err with: rate_limited,

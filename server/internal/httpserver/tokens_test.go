@@ -876,6 +876,75 @@ func TestTokenRateLimit(t *testing.T) {
 	}
 }
 
+// TestTokenCannotLockOutItsOwner checks that a token whose requests use up
+// its owner's limits of reading and of changing something, as a leaked one
+// may, cannot keep its owner from finding and revoking it, nor from ending
+// their sessions: those requests count in the auth bucket, in which no
+// request made with a token counts (NFR-SEC-05, NFR-SEC-06). With a policy
+// that allows the owner and each token two reads and two changes an hour,
+// the token's requests are refused once they are over the limit, and so are
+// the owner's own reads and changes then, but the owner lists the tokens,
+// revokes this one, which then fails, lists the sessions, revokes the other
+// ones, and signs out.
+//
+// Verifies: NFR-SEC-05
+func TestTokenCannotLockOutItsOwner(t *testing.T) {
+	t.Parallel()
+	s, d, owner, ws := inviteServer(t, "open", nil)
+	p := createProject(t, s.main, owner, ws, "Lighthouse")
+	leaked := makeToken(t, s.main, owner, workspaceTokensPath(ws), "project:write")
+	policy := ratelimit.DefaultPolicy()
+	for _, b := range []ratelimit.Bucket{ratelimit.Read, ratelimit.Write} {
+		policy.Rates[b] = ratelimit.Rate{Period: time.Hour,
+			Limits: map[ratelimit.Kind]int{ratelimit.IP: 100, ratelimit.User: 2, ratelimit.Token: 2}}
+	}
+	s.limits = ratelimit.New(readyDB{s.ready}, policy)
+	path := projectPath(p.ID)
+	rename := jsonBody(t, map[string]string{"name": "Harbour"})
+	// The requests must fall in one window of an hour.
+	d.AwaitWindow(t, time.Hour, time.Minute)
+	for _, r := range []struct {
+		method string
+		body   []byte
+	}{{http.MethodGet, nil}, {http.MethodPatch, rename}} {
+		// A token's requests count against its owner too, so once the token
+		// is refused, its owner has used up the limit as well, whatever the
+		// owner's own requests counted before.
+		refused := false
+		for range 4 {
+			if res := call(s.main, r.method, path, r.body, bearer(leaked.Secret)); res.status ==
+				http.StatusTooManyRequests {
+				refused = true
+				break
+			}
+		}
+		if !refused {
+			t.Fatalf("the token's %s requests are not refused", r.method)
+		}
+		wantCode(t, "the owner's "+r.method+" after the token's", call(s.main, r.method, path, r.body,
+			owner.header(true)), http.StatusTooManyRequests, api.CodeRateLimited)
+	}
+
+	if got := itemIDs(t, s.main, owner.header(false), workspaceTokensPath(ws)); !slices.Contains(got, leaked.ID) {
+		t.Errorf("the owner lists the tokens %q, without the token", got)
+	}
+	if res := call(s.main, http.MethodDelete, workspaceTokenPath(ws, leaked.ID), nil, owner.header(true)); res.status !=
+		http.StatusNoContent {
+		t.Fatalf("the owner revokes the token: %d %s", res.status, res.body)
+	}
+	wantCode(t, "the revoked token", call(s.main, http.MethodGet, path, nil, bearer(leaked.Secret)),
+		http.StatusUnauthorized, api.CodeUnauthenticated)
+	if got := itemIDs(t, s.main, owner.header(false), sessionsPath); len(got) == 0 {
+		t.Error("the owner lists no session")
+	}
+	if res := call(s.main, http.MethodDelete, sessionsPath, nil, owner.header(true)); res.status != http.StatusOK {
+		t.Errorf("the owner revokes the other sessions: %d %s", res.status, res.body)
+	}
+	if res := call(s.main, http.MethodPost, logoutPath, nil, owner.header(true)); res.status != http.StatusNoContent {
+		t.Errorf("the owner signs out: %d %s", res.status, res.body)
+	}
+}
+
 // TestTokenCreationRateLimit checks that making API tokens shares the auth
 // bucket's limit of 10 a minute for each account, from any IP address
 // (plan note N23), and that the 11th is refused with 429 rate_limited.

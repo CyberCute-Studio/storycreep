@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
@@ -275,6 +277,51 @@ func TestCreateRollsBack(t *testing.T) {
 	}
 	if n := count(t, d, `SELECT count(*) FROM membership`) + count(t, d, `SELECT count(*) FROM audit_entry`); n != 2 {
 		t.Errorf("%d memberships and audit entries, want those of the first workspace", n)
+	}
+}
+
+// TestListForToken checks what List shows a request made with an API token:
+// the token's workspace alone, of its owner's workspaces, whether or not the
+// token is narrowed to a project, and none for a token without a workspace,
+// rather than every workspace of its owner, as a filter of null would.
+func TestListForToken(t *testing.T) {
+	t.Parallel()
+	s, d := newService(t, role.Policy{})
+	user := addUser(t, d, "Jo")
+	ctx := context.Background()
+	var created []ids.UUID
+	for _, slug := range []string{"harbour", "lighthouse"} {
+		w, err := s.Create(ctx, user, Settings{Name: "Jo", Slug: slug}, audit.Client{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		created = append(created, w.ID)
+	}
+	// List shows them in the order of their IDs.
+	slices.SortFunc(created, func(a, b ids.UUID) int { return bytes.Compare(a[:], b[:]) })
+	listed := func(tok *scope.Token) []ids.UUID {
+		t.Helper()
+		list, err := s.List(ctx, user, tok, ids.UUID{}, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []ids.UUID
+		for _, m := range list {
+			out = append(out, m.Workspace.ID)
+		}
+		return out
+	}
+	if got := listed(nil); !slices.Equal(got, created) {
+		t.Errorf("the session lists %v, want %v", got, created)
+	}
+	for _, tok := range []*scope.Token{{ID: ids.New(), WorkspaceID: created[1]},
+		{ID: ids.New(), WorkspaceID: created[1], ProjectID: ids.New()}} {
+		if got := listed(tok); !slices.Equal(got, created[1:]) {
+			t.Errorf("a token of %v, narrowed to %v, lists %v", tok.WorkspaceID, tok.ProjectID, got)
+		}
+	}
+	if got := listed(&scope.Token{ID: ids.New()}); len(got) != 0 {
+		t.Errorf("a token without a workspace lists %v", got)
 	}
 }
 

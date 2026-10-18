@@ -117,8 +117,11 @@ func registerWorkspaces(m *api.Mux, workspaces *workspace.Service) {
 			"oldest first, each with the role of the user's membership, guest included. A client switches " +
 			"between them by naming one by its ID in the routes that it calls: the server keeps no current " +
 			"workspace. Every account has one at least from its first sign-in, which gives it its personal " +
-			"workspace. A request made with an API token is shown the token's workspace alone, in which alone it " +
-			"acts, whether or not the token is narrowed to one of its projects." + tokenAuthDoc(scope.SnapshotRead),
+			"workspace. A request made with an API token is shown, of these, the token's workspace alone, in which " +
+			"alone it acts, whether or not the token is narrowed to one of its projects. So the token of an " +
+			"instance admin who acts as the owner of a workspace without being a member of it, as with " +
+			"STORYCREEP_INSTANCE_ADMIN_ACCESS on, is shown none, as the admin's session is not shown that " +
+			"workspace either; GET /api/v1/workspaces/{workspace_id} reads it." + tokenAuthDoc(scope.SnapshotRead),
 		Tags: []string{"Workspaces"},
 	}, func(ctx context.Context, in *workspacesInput) (*workspacesOutput, error) {
 		cur, err := currentFrom(ctx)

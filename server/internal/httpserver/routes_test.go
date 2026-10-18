@@ -185,10 +185,27 @@ var guardedFirst = map[api.Route]api.Code{
 	{Method: http.MethodPost, Pattern: "/api/v1/setup"}:                   api.CodeNotFound,
 }
 
+// revocationRoutes are the routes with which a user finds and ends a
+// credential, which count in the auth bucket, in which no request made with
+// an API token counts, so that a token whose requests use up its owner's
+// limits of reading and of changing something cannot keep its owner from
+// revoking it (TestTokenCannotLockOutItsOwner).
+var revocationRoutes = []api.Route{
+	{Method: http.MethodPost, Pattern: "/api/v1/auth/logout"},
+	{Method: http.MethodGet, Pattern: "/api/v1/auth/sessions"},
+	{Method: http.MethodDelete, Pattern: "/api/v1/auth/sessions"},
+	{Method: http.MethodDelete, Pattern: "/api/v1/auth/sessions/{session_id}"},
+	{Method: http.MethodGet, Pattern: "/api/v1/workspaces/{workspace_id}/tokens"},
+	{Method: http.MethodDelete, Pattern: "/api/v1/workspaces/{workspace_id}/tokens/{token_id}"},
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/tokens"},
+	{Method: http.MethodDelete, Pattern: "/api/v1/projects/{project_id}/tokens/{token_id}"},
+}
+
 // TestEveryRouteRateLimited checks that a rate limit counts every route of
 // the API (PRD FR-API-04, NFR-SEC-06): each counts in the read bucket if it
-// is a GET, in the write bucket otherwise, or in the auth bucket, and only
-// the health and readiness probes, /version, and the pages count in none.
+// is a GET, in the write bucket otherwise, or in the auth bucket, as the
+// routes that revoke credentials do (revocationRoutes), and only the health
+// and readiness probes, /version, and the pages count in none.
 // With a policy that allows each key one request a minute, and a client and
 // an owner that have made theirs, every route answers 429 rate_limited, with
 // its bucket in details.bucket, and Retry-After (FR-API-04 AC3), but those
@@ -219,6 +236,11 @@ func TestEveryRouteRateLimited(t *testing.T) {
 	slices.Sort(unlimited)
 	if want := []string{"GET /healthz", "GET /readyz", "GET /version"}; !slices.Equal(unlimited, want) {
 		t.Errorf("no rate limit counts %q, want only %q and the pages", unlimited, want)
+	}
+	for _, r := range revocationRoutes {
+		if b := buckets[r]; b != api.BucketAuth {
+			t.Errorf("%s, which revokes a credential, counts in the %q bucket, want auth", r, b)
+		}
 	}
 
 	once := ratelimit.DefaultPolicy()
