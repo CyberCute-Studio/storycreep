@@ -34,6 +34,15 @@ export interface CreateInviteBody {
   role: "owner" | "admin" | "editor" | "commenter" | "viewer" | "guest";
 }
 
+export interface CreateProjectBody {
+  /** The locale of the project's text, as a BCP 47 tag of a language, such as en or cs-CZ, which the project keeps in its canonical form. Without it, the workspace's default locale. */
+  default_locale?: string;
+  /** The project's description, of at most 2000 characters, without control characters but line feeds and tabs. White space around it is removed. Without it, the project has none. */
+  description?: string;
+  /** The project's name, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls, and line separators among them. White space around it is removed. */
+  name: string;
+}
+
 export interface CreateWorkspaceBody {
   /** The workspace's default locale, as a BCP 47 tag of a locale that the server has a catalog for. Without it, the locale of the request: the one that its Accept-Language prefers among those, or else STORYCREEP_DEFAULT_LOCALE. */
   default_locale?: string;
@@ -189,6 +198,18 @@ export interface PageMembershipBody {
   next_cursor: string | null;
 }
 
+export interface PageProject {
+  items: Array<Project>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
+export interface PageProjectBody {
+  items: Array<ProjectBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PageSessionBody {
   items: Array<SessionBody>;
   /** The cursor of the next page, or null if this is the last page */
@@ -205,6 +226,77 @@ export interface PasswordBody {
 export interface PasswordResetBody {
   /** The email address of the account whose password to reset, in any case */
   email: string;
+}
+
+export interface Project {
+  /** When the project was archived, if it is: an archived project is read-only */
+  archived_at?: string;
+  /** When the project was created */
+  created_at: string;
+  /** The locale of the project's text, as a BCP 47 tag */
+  default_locale: string;
+  /** When the project was deleted to the trash, if it is there */
+  deleted_at?: string;
+  /** The project's description, which may be empty */
+  description: string;
+  /** Where the game starts: the entry board, and the node on it */
+  entry: ProjectEntry;
+  /** When a project in the trash is deleted for good, after which it cannot be restored */
+  hard_delete_after?: string;
+  /** The project's ID */
+  id: string;
+  /** The project's name */
+  name: string;
+  /** The least role that may publish the project's snapshots: editor, or admin once raised (PRD FR-SNAP-01 AC3) */
+  publish_min_role: "editor" | "admin";
+  /** The project's revision, which every change of its name, description, settings, archiving, or deletion increments, and which a change expects with expected_rev */
+  rev: number;
+  /** The sequence number of the project's latest operation, 0 before its first */
+  seq: number;
+  /** When the project last changed */
+  updated_at: string;
+  /** The ID of the project's workspace */
+  workspace_id: string;
+}
+
+export interface ProjectBody {
+  /** When the project was archived, if it is: an archived project is read-only */
+  archived_at?: string;
+  /** When the project was created */
+  created_at: string;
+  /** The locale of the project's text, as a BCP 47 tag */
+  default_locale: string;
+  /** When the project was deleted to the trash, if it is there */
+  deleted_at?: string;
+  /** The project's description, which may be empty */
+  description: string;
+  /** Where the game starts: the entry board, and the node on it */
+  entry: ProjectEntry;
+  /** When a project in the trash is deleted for good, after which it cannot be restored */
+  hard_delete_after?: string;
+  /** The project's ID */
+  id: string;
+  /** The project's name */
+  name: string;
+  /** The least role that may publish the project's snapshots: editor, or admin once raised (PRD FR-SNAP-01 AC3) */
+  publish_min_role: "editor" | "admin";
+  /** The project's revision, which every change of its name, description, settings, archiving, or deletion increments, and which a change expects with expected_rev */
+  rev: number;
+  /** The role that the signed-in user acts with on the project: their grant on it, or else their role in its workspace, or owner for an instance admin when STORYCREEP_INSTANCE_ADMIN_ACCESS is on (PRD §5.5) */
+  role: "owner" | "admin" | "editor" | "commenter" | "viewer";
+  /** The sequence number of the project's latest operation, 0 before its first */
+  seq: number;
+  /** When the project last changed */
+  updated_at: string;
+  /** The ID of the project's workspace */
+  workspace_id: string;
+}
+
+export interface ProjectEntry {
+  /** The ID of the project's entry board, if it has one */
+  board_id?: string;
+  /** The ID of the entry node on the entry board, if it has one */
+  node_id?: string;
 }
 
 export interface RegisterBody {
@@ -312,6 +404,21 @@ export interface StatusBody {
   status: "ok" | "ready";
 }
 
+export interface UpdateProjectBody {
+  /** The new locale of the project's text, as a BCP 47 tag of a language */
+  default_locale?: string;
+  /** The project's new description, as for POST /api/v1/workspaces/{workspace_id}/projects; empty for none */
+  description?: string;
+  /** The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. Neither the board nor the node needs to exist yet. */
+  entry?: ProjectEntry;
+  /** The project's revision that the change was made against. If the project has another, the answer is 409 revision_conflict, and nothing changes. Without it, the change is made whatever the revision. */
+  expected_rev?: number;
+  /** The project's new name, as for POST /api/v1/workspaces/{workspace_id}/projects */
+  name?: string;
+  /** The least role that may publish the project's snapshots: editor, or admin to keep editors from publishing (PRD FR-SNAP-01 AC3). A change is recorded in the audit log. */
+  publish_min_role?: "editor" | "admin";
+}
+
 export interface UpdateWorkspaceBody {
   /** The workspace's new default locale, a BCP 47 tag of a locale that the server has a catalog for */
   default_locale?: string;
@@ -404,6 +511,26 @@ export interface Operations {
     };
   };
   /**
+   * Archive a project
+   *
+   * Archives a project, which makes it read-only: every change of it but unarchiving, deleting, and restoring it is answered with 409 project_archived (PRD FR-PROJ-01 AC2). An archived project does not count towards the workspace's projects. Only an owner or an admin of the project may, and anyone else with a role on it is answered with 403 insufficient_role. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. A project that is archived already is answered with 409 project_archived. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  archiveProject: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      200: ProjectBody;
+    };
+  };
+  /**
    * Change a member's role
    *
    * Changes the role of a membership of a workspace, and returns the member, with their email address. A membership that has the role already stays as it is. Only an owner grants the role owner, or changes an owner's role, and an admin is answered with 403 owner_required (FR-TEN-03 AC4). A workspace keeps an owner whose account is active, so changing the role of its last one is answered with 409 last_owner (FR-TEN-02 AC2). An owner or an admin may change their own role, as long as the workspace keeps an owner. The change also revokes the workspace's open invitations, expired or not, that the member made, and those whose link the member was last given as text, as by sending one anew, whose role the new role may not give: every one, for a role below admin, and those as owner, for admin, so that no link that they hold gives what their role no longer may. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a membership that the workspace does not have. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
@@ -478,6 +605,27 @@ export interface Operations {
     };
   };
   /**
+   * Create a project
+   *
+   * Creates a project in the workspace. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. A name, a description, or a default locale that its field does not allow is answered with 422 validation_failed, and a workspace that has as many projects as its plan allows with 409 limit_exceeded; archived projects and those in the trash do not count. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  createProject: {
+    input: {
+      path: {
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: CreateProjectBody;
+    };
+    responses: {
+      201: ProjectBody;
+    };
+  };
+  /**
    * Create a workspace
    *
    * Creates a workspace, whose owner the signed-in user becomes. Where the instance always sends email, as hosted mode does, a user who has not verified their email address is answered with 403 email_unverified, whatever the request holds. A name or a default locale that its field does not allow is answered with 422 validation_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
@@ -492,6 +640,26 @@ export interface Operations {
     };
     responses: {
       201: WorkspaceBody;
+    };
+  };
+  /**
+   * Delete a project to the trash
+   *
+   * Deletes a project to its workspace's trash, archived or not, where it stays for 30 days, and POST /api/v1/projects/{project_id}/restore restores it (PRD FR-PROJ-01 AC3). Then it is deleted for good, with all of its content. Meanwhile, every route of the project but that one answers it with 404 not_found, and it does not count towards the workspace's projects. Only an owner or an admin of the workspace may, and anyone else with a role on the project is answered with 403 insufficient_role. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  deleteProject: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      204: undefined;
     };
   };
   /** Report that the process is alive */
@@ -527,6 +695,22 @@ export interface Operations {
     responses: {
       200: Record<string, unknown>;
       304: undefined;
+    };
+  };
+  /**
+   * Get a project
+   *
+   * Returns a project, with the role that the signed-in user acts with on it. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
+   */
+  getProject: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: ProjectBody;
     };
   };
   /**
@@ -680,6 +864,28 @@ export interface Operations {
     };
   };
   /**
+   * List a workspace's projects
+   *
+   * Lists the workspace's projects that are not in its trash, archived ones included, in the order of their IDs, oldest first, each with the role that the signed-in user acts with on it. A guest is shown only the projects granted to them. A workspace that does not exist, or of which the signed-in user is not a member, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
+   */
+  listProjects: {
+    input: {
+      path: {
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageProjectBody;
+    };
+  };
+  /**
    * List the account's sessions
    *
    * Lists the signed-in account's active sessions, newest first, each with the IP address and user agent that it started with, and when it was last used. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
@@ -695,6 +901,28 @@ export interface Operations {
     };
     responses: {
       200: PageSessionBody;
+    };
+  };
+  /**
+   * List the projects in a workspace's trash
+   *
+   * Lists the workspace's projects that were deleted and can still be restored, in the order of their IDs, oldest first. A deleted project stays in the trash for 30 days, until its hard_delete_after, and is then deleted for good, with all of its content. Only an owner or an admin of the workspace may list them, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated.
+   */
+  listTrashedProjects: {
+    input: {
+      path: {
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageProject;
     };
   };
   /**
@@ -870,6 +1098,26 @@ export interface Operations {
     };
   };
   /**
+   * Restore a project from the trash
+   *
+   * Restores a project from its workspace's trash, as it was when it was deleted, within 30 days of its deletion; after that, it is answered with 404 not_found. A project that is not in the trash stays as it is. A restored project that is not archived counts towards the workspace's projects again: a workspace that has as many projects as its plan allows is answered with 409 limit_exceeded. Only an owner or an admin of the workspace may, and anyone else with a role on the project is answered with 403 insufficient_role. A project that does not exist, or on which the signed-in user's role is none, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  restoreProject: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      200: ProjectBody;
+    };
+  };
+  /**
    * Revoke an invitation
    *
    * Revokes an open invitation, whose link is then answered with 410 invite_revoked (FR-TEN-02 AC1). Revoking it again changes nothing. An admin may revoke an invitation as owner too. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. So is an invitation that the workspace does not have. One that has been accepted is answered with 410 invite_accepted. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
@@ -928,6 +1176,47 @@ export interface Operations {
     };
   };
   /**
+   * Unarchive a project
+   *
+   * Unarchives a project, which can then be changed again, and counts towards the workspace's projects again: a workspace that has as many projects as its plan allows is answered with 409 limit_exceeded. A project that is not archived stays as it is. Only an owner or an admin of the project may, and anyone else with a role on it is answered with 403 insufficient_role. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  unarchiveProject: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      200: ProjectBody;
+    };
+  };
+  /**
+   * Change a project's name, description, or settings
+   *
+   * Changes a project's name, description, default locale, publish_min_role, or entry, in one batch of the project's commands; a field that the body leaves out, or sets to null, stays as it is. Only an owner or an admin of the project may, and anyone else with a role on it is answered with 403 insufficient_role. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. A field whose value it does not allow is answered with 422 validation_failed. An archived project is read-only, and the change is answered with 409 project_archived. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
+   */
+  updateProject: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: UpdateProjectBody;
+    };
+    responses: {
+      200: ProjectBody;
+    };
+  };
+  /**
    * Change a workspace's settings
    *
    * Changes a workspace's name, slug, or default locale; a field that the body leaves out, or sets to null, stays as it is. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. A name or a default locale that its field does not allow is answered with 422 validation_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed.
@@ -966,14 +1255,18 @@ export interface Operations {
 /** The method and path of each operation. */
 export const routes = {
   acceptInvite: { method: "POST", path: "/api/v1/invites/accept" },
+  archiveProject: { method: "POST", path: "/api/v1/projects/{project_id}/archive" },
   changeMemberRole: { method: "PATCH", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}" },
   changePassword: { method: "POST", path: "/api/v1/auth/password" },
   completeSetup: { method: "POST", path: "/api/v1/setup" },
   createInvite: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/invites" },
+  createProject: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/projects" },
   createWorkspace: { method: "POST", path: "/api/v1/workspaces" },
+  deleteProject: { method: "DELETE", path: "/api/v1/projects/{project_id}" },
   getHealth: { method: "GET", path: "/healthz" },
   getInstance: { method: "GET", path: "/api/v1/instance" },
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
+  getProject: { method: "GET", path: "/api/v1/projects/{project_id}" },
   getReadiness: { method: "GET", path: "/readyz" },
   getSession: { method: "GET", path: "/api/v1/auth/session" },
   getSetup: { method: "GET", path: "/api/v1/setup" },
@@ -984,7 +1277,9 @@ export const routes = {
   issueVerificationLink: { method: "POST", path: "/api/v1/admin/verification-links" },
   listInvites: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/invites" },
   listMembers: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members" },
+  listProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/projects" },
   listSessions: { method: "GET", path: "/api/v1/auth/sessions" },
+  listTrashedProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/trash/projects" },
   listWorkspaces: { method: "GET", path: "/api/v1/workspaces" },
   login: { method: "POST", path: "/api/v1/auth/login" },
   logout: { method: "POST", path: "/api/v1/auth/logout" },
@@ -996,9 +1291,12 @@ export const routes = {
   requestPasswordReset: { method: "POST", path: "/api/v1/auth/password-reset" },
   resendInvite: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/invites/{invite_id}/resend" },
   resetPassword: { method: "POST", path: "/api/v1/auth/password-reset/confirm" },
+  restoreProject: { method: "POST", path: "/api/v1/projects/{project_id}/restore" },
   revokeInvite: { method: "DELETE", path: "/api/v1/workspaces/{workspace_id}/invites/{invite_id}" },
   revokeOtherSessions: { method: "DELETE", path: "/api/v1/auth/sessions" },
   revokeSession: { method: "DELETE", path: "/api/v1/auth/sessions/{session_id}" },
+  unarchiveProject: { method: "POST", path: "/api/v1/projects/{project_id}/unarchive" },
+  updateProject: { method: "PATCH", path: "/api/v1/projects/{project_id}" },
   updateWorkspace: { method: "PATCH", path: "/api/v1/workspaces/{workspace_id}" },
   verifyEmail: { method: "POST", path: "/api/v1/auth/verify-email" },
 } as const satisfies Record<keyof Operations, { method: string; path: string }>;

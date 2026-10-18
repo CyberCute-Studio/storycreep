@@ -93,6 +93,23 @@ func (f *rolesFixture) invite(t *testing.T, role string) string {
 	return ids.Encode(ids.Invite, id)
 }
 
+// project adds a project to the workspace, as the superuser, archived or in
+// the trash as state says, if it is "archived" or "deleted", and returns its
+// ID.
+func (f *rolesFixture) project(t *testing.T, state string) string {
+	t.Helper()
+	id := ids.New()
+	if _, err := f.d.Admin(t).Exec(context.Background(), `INSERT INTO project
+		(id, workspace_id, name, settings, archived_at, deleted_at, hard_delete_after)
+		VALUES ($1, $2, 'Lighthouse', '{"default_locale": "en", "publish_min_role": "editor", "entry": {}}',
+			CASE WHEN $3 = 'archived' THEN now() END, CASE WHEN $3 = 'deleted' THEN now() END,
+			CASE WHEN $3 = 'deleted' THEN now() + interval '30 days' END)`,
+		id, decode(t, ids.Workspace, f.ws), state); err != nil {
+		t.Fatal(err)
+	}
+	return ids.Encode(ids.Project, id)
+}
+
 // memberPath returns the path of the membership of the workspace ws.
 func memberPath(ws, membership string) string { return membersPath(ws) + "/" + membership }
 
@@ -139,10 +156,12 @@ type matrixOp struct {
 // permissionMatrix is §5.6, for the operations that exist so far: each row,
 // named as §5.6 names it, with its explicit allow (✓) or deny (✗) for each
 // of its columns, owner, admin, editor, commenter, and viewer, and the
-// operations of the API that the row covers. Every row is resolved by the
-// workspace role (W), so a guest and a user who is not a member are refused
-// every operation with 404, which does not tell them that the workspace
-// exists (§5.5). The two rows that manage members are separate: an admin
+// operations of the API that the row covers. A row resolved by the workspace
+// role (W) refuses a guest and a user who is not a member every operation
+// with 404, which does not tell them that the workspace exists, and so does
+// a row resolved by the effective role on the project (P), because the
+// fixture's guest has no grant on its projects (§5.5). The two rows that
+// manage members are separate: an admin
 // does all of the first, and is refused the second with 403 owner_required
 // (FR-TEN-03 AC4). Each row names its operation of package authz, and a
 // later operation of §5.6 adds its row here, or TestPermissionMatrix fails
@@ -254,6 +273,67 @@ var permissionMatrix = []struct {
 				}},
 		},
 	},
+	{
+		row:     "Create/delete projects",
+		op:      authz.ManageProjects,
+		allowed: [5]bool{true, true, false, false, false},
+		ops: []matrixOp{
+			{name: "create a project", success: http.StatusCreated,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, projectsPath(f.ws),
+						jsonBody(t, map[string]string{"name": "Lighthouse"}), si.header(true))
+				}},
+			{name: "list the trash", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, trashPath(f.ws), nil, si.header(false))
+				}},
+			{name: "delete a project", success: http.StatusNoContent,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodDelete, projectPath(f.project(t, "")), nil, si.header(true))
+				}},
+			{name: "restore a project", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, projectPath(f.project(t, "deleted"))+"/restore", nil,
+						si.header(true))
+				}},
+		},
+	},
+	{
+		row:     "Read project content, run play mode, view dependencies",
+		op:      authz.ReadProject,
+		allowed: [5]bool{true, true, true, true, true},
+		ops: []matrixOp{{name: "read a project", success: http.StatusOK,
+			do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+				return call(f.s.main, http.MethodGet, projectPath(f.project(t, "")), nil, si.header(false))
+			}}},
+	},
+	{
+		row:     "Change project settings, including publish_min_role",
+		op:      authz.ChangeProjectSettings,
+		allowed: [5]bool{true, true, false, false, false},
+		ops: []matrixOp{
+			{name: "rename a project", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPatch, projectPath(f.project(t, "")),
+						jsonBody(t, map[string]string{"name": "Harbour"}), si.header(true))
+				}},
+			{name: "raise publish_min_role", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPatch, projectPath(f.project(t, "")),
+						jsonBody(t, map[string]string{"publish_min_role": "admin"}), si.header(true))
+				}},
+			{name: "archive a project", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, projectPath(f.project(t, ""))+"/archive", nil,
+						si.header(true))
+				}},
+			{name: "unarchive a project", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, projectPath(f.project(t, "archived"))+"/unarchive", nil,
+						si.header(true))
+				}},
+		},
+	},
 }
 
 // TestPermissionMatrix checks that permissionMatrix has a row for each
@@ -320,6 +400,10 @@ var viewerReads = map[api.Capability]bool{
 	api.ListMembers:             true,
 	api.ManageMembers:           false,
 	api.ManageWorkspaceSettings: false,
+	api.ListProjects:            true,
+	api.ManageProjects:          false,
+	api.ReadProject:             true,
+	api.ChangeProjectSettings:   false,
 }
 
 // sampleValue returns a value that the schema s accepts, with registry for
@@ -361,7 +445,8 @@ func sampleValue(t *testing.T, registry huma.Registry, s *huma.Schema) any {
 }
 
 // TestViewerReadsOnly walks every route of a workspace, whose role authorises
-// it (§5.6 W), and calls it as a viewer, with a valid value for each of its
+// it (§5.6 W), and of a project, whose effective role authorises it (P), and
+// calls it as a viewer, with a valid value for each of its
 // parameters and a body that its schema accepts, so that the request
 // reaches the service. Each route that changes something is refused with 403
 // insufficient_role, and each that reads answers 200, unless §5.6 keeps the
@@ -378,11 +463,12 @@ func TestViewerReadsOnly(t *testing.T) {
 		"workspace_id":  f.ws,
 		"membership_id": f.member(t, "editor"),
 		"invite_id":     f.invite(t, "editor"),
+		"project_id":    f.project(t, ""),
 	}
 	doc := f.s.main.OpenAPI()
 	var routes []api.Route
 	for r := range f.s.main.Routes() {
-		if strings.Contains(r.Pattern, "{workspace_id}") {
+		if strings.Contains(r.Pattern, "{workspace_id}") || strings.Contains(r.Pattern, "{project_id}") {
 			routes = append(routes, r)
 		}
 	}

@@ -107,6 +107,28 @@ const (
 	// metadata's role and kind are the invitation's, and its new_account
 	// says whether the acceptance created the user's account.
 	ActionInviteAccept Action = "invite.accept"
+	// ActionProjectCreate is the creation of a project by an owner or admin
+	// of its workspace, its actor (FR-PROJ-01). It belongs to the workspace,
+	// and its subject is the project.
+	ActionProjectCreate Action = "project.create"
+	// ActionProjectDelete is the deletion of a project to its workspace's
+	// trash by an owner or admin of the workspace, its actor, from which it
+	// can be restored until it is purged (FR-PROJ-01 AC3), and
+	// ActionProjectRestore is its restoration. Each belongs to the workspace,
+	// and its subject is the project.
+	ActionProjectDelete  Action = "project.delete"
+	ActionProjectRestore Action = "project.restore"
+	// ActionProjectPurge is the hard deletion of a project whose time in the
+	// trash has passed, with every row of its content, by the purge job,
+	// without an actor. It belongs to the workspace, and its subject is the
+	// project, which no longer exists.
+	ActionProjectPurge Action = "project.purge"
+	// ActionProjectPublishPolicyChange is a change of the least role that may
+	// publish a project's snapshots, from its metadata's
+	// previous_publish_min_role to its publish_min_role, by an owner or admin
+	// of the project, its actor (FR-SNAP-01 AC6). It belongs to the
+	// project's workspace, and its subject is the project.
+	ActionProjectPublishPolicyChange Action = "project.publish_policy_change"
 	// ActionInstanceAdminGrant makes an account an instance admin, as the
 	// operator's storycreep create-user --instance-admin and grant-role do,
 	// and ActionInstanceAdminRevoke makes it no longer one, as grant-role
@@ -178,6 +200,12 @@ var events = []eventSpec{
 		metadata: []string{"role", "kind", "membership_id"}},
 	{action: ActionInviteAccept, inWorkspace: true, subject: "invite", results: []Result{ResultSuccess},
 		metadata: []string{"role", "kind", "membership_id", "new_account"}},
+	{action: ActionProjectCreate, inWorkspace: true, subject: "project", results: []Result{ResultSuccess}},
+	{action: ActionProjectDelete, inWorkspace: true, subject: "project", results: []Result{ResultSuccess}},
+	{action: ActionProjectRestore, inWorkspace: true, subject: "project", results: []Result{ResultSuccess}},
+	{action: ActionProjectPurge, inWorkspace: true, subject: "project", results: []Result{ResultSuccess}},
+	{action: ActionProjectPublishPolicyChange, inWorkspace: true, subject: "project", results: []Result{ResultSuccess},
+		metadata: []string{"publish_min_role", "previous_publish_min_role"}},
 	{action: ActionInstanceAdminGrant, subject: "user", results: []Result{ResultSuccess}},
 	{action: ActionInstanceAdminRevoke, subject: "user", results: []Result{ResultSuccess}},
 }

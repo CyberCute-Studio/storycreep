@@ -53,6 +53,7 @@ const (
 	CodeInviteExists          Code = "invite_exists"
 	CodeLimitExceeded         Code = "limit_exceeded"
 	CodeRevisionConflict      Code = "revision_conflict"
+	CodeProjectArchived       Code = "project_archived"
 	CodeInviteExpired         Code = "invite_expired"
 	CodeInviteRevoked         Code = "invite_revoked"
 	CodeInviteAccepted        Code = "invite_accepted"
@@ -216,6 +217,10 @@ var codes = []codeSpec{
 			"no longer exists, as one that was purged from the trash or never created (FR-OFF-04 AC5). An entity " +
 			"in the trash exists, and its state says that it is deleted. To make the change anyway, make it again " +
 			"on the current state, as a new command with an ID of its own and the current revisions."},
+	{CodeProjectArchived, http.StatusConflict, i18n.K("error.project_archived"),
+		"The project is archived, and an archived project is read-only, so nothing of the change is made (PRD " +
+			"FR-PROJ-01 AC2). Unarchiving it, deleting it, and restoring it from the trash are the changes that it " +
+			"takes. An owner or admin of the project unarchives it with `POST /api/v1/projects/{project_id}/unarchive`."},
 	{CodeInviteExpired, http.StatusGone, i18n.K("error.invite_expired"),
 		"The invitation has expired: it lasts 14 days from when it was made, sent anew, or emailed (PRD " +
 			"FR-TEN-02 AC1). An owner or admin of the workspace sends it anew."},

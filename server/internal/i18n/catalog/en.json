@@ -41,6 +41,7 @@
   "error.not_ready.starting": "The server is starting.",
   "error.not_ready.stopping": "The server is stopping.",
   "error.owner_required": "Only an owner of this workspace may do this.",
+  "error.project_archived": "This project is archived, so it cannot be changed. Unarchive it first.",
   "error.rate_limited": "Too many requests. Try again later.",
   "error.rate_limited.locked": "Too many failed sign-ins with this email address. Try again later.",
   "error.request_timeout": "The request body did not arrive in time.",

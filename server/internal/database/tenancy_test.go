@@ -400,6 +400,60 @@ func TestWorkspaceScopedForeignKeys(t *testing.T) {
 	}
 }
 
+// projectKey is the foreign key that every table with a project_id has, as
+// PostgreSQL writes it: with the workspace_id of the row, to its project in
+// the same workspace, which deletes the row with the project.
+const projectKey = "FOREIGN KEY (workspace_id, project_id) REFERENCES project(workspace_id, id) ON DELETE CASCADE"
+
+// projectTableProblems returns the tables of the public schema with a
+// project_id column that lacks projectKey, so that deleting the project
+// would fail on their rows, or leave them.
+func projectTableProblems(t *testing.T, conn *pgx.Conn) []string {
+	t.Helper()
+	rows, err := conn.Query(context.Background(), `
+		SELECT c.relname FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'project_id' AND NOT a.attisdropped
+		WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
+			AND NOT EXISTS (SELECT FROM pg_constraint k
+				WHERE k.conrelid = c.oid AND k.contype = 'f' AND pg_get_constraintdef(k.oid) = $1)
+		ORDER BY c.relname`, projectKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	problems, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return problems
+}
+
+// TestProjectTables checks that every table with a project_id has a foreign
+// key, with its workspace_id, to its project, which deletes its rows with the
+// project, so that the purge of a project whose time in the trash has passed
+// deletes every row of its content, whichever table a later release adds it
+// to (PRD FR-PROJ-01 AC3). It then adds a table whose project_id has a key on
+// the ID alone that deletes nothing, and one with no key at all, to check
+// that it finds them.
+//
+// Verifies: FR-PROJ-01/AC3
+func TestProjectTables(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	if got := projectTableProblems(t, admin); len(got) > 0 {
+		t.Errorf("the tables %v have a project_id without the key %q", got, projectKey)
+	}
+	if _, err := admin.Exec(context.Background(), `
+		CREATE TABLE loose_key (workspace_id uuid, project_id uuid REFERENCES project (id));
+		CREATE TABLE no_key (workspace_id uuid, project_id uuid)`); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := projectTableProblems(t, admin), []string{"loose_key", "no_key"}; !slices.Equal(got, want) {
+		t.Errorf("with tables that lack the key, the check finds %v, want %v", got, want)
+	}
+}
+
 // TestTenancyMigrationNeedsCitextInPublic checks that the tenancy migration
 // refuses a database that has the citext extension in a schema other than
 // public, where the migrations would not find its type, with an error that

@@ -96,8 +96,8 @@ func entries(t *testing.T, admin *pgx.Conn, where string, args ...any) []stored 
 func addProject(t *testing.T, tx pgx.Tx, workspace ids.UUID) ids.UUID {
 	t.Helper()
 	id := ids.New()
-	if _, err := tx.Exec(context.Background(), "INSERT INTO project (id, workspace_id) VALUES ($1, $2)", id,
-		workspace); err != nil {
+	if _, err := tx.Exec(context.Background(),
+		"INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')", id, workspace); err != nil {
 		t.Fatalf("add a project: %v", err)
 	}
 	return id

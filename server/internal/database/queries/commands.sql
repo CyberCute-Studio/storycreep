@@ -17,13 +17,26 @@ WHERE w.id = route_project_workspace(@project_id::uuid) AND w.status = 'active';
 SELECT role FROM project_grant
 WHERE workspace_id = @workspace_id AND membership_id = @membership_id AND project_id = @project_id;
 
+-- name: ProjectState :one
+-- ProjectState returns whether the project is archived, and whether it is in
+-- the trash (FR-PROJ-01), and no row if it does not exist, or its time in the
+-- trash has passed, which a batch of commands reads before it authorises the
+-- actor, so that a project in the trash is not found by a batch that may not
+-- apply to it, whoever sends it. It locks nothing.
+SELECT (archived_at IS NOT NULL)::boolean AS archived, (deleted_at IS NOT NULL)::boolean AS deleted FROM project
+WHERE workspace_id = @workspace_id AND id = @id AND (hard_delete_after IS NULL OR hard_delete_after > now());
+
 -- name: LockProjectSeq :one
--- LockProjectSeq returns the seq of the project's latest operation, and locks
+-- LockProjectSeq returns the seq of the project's latest operation, and
+-- whether it is archived and in the trash, as ProjectState does, and locks
 -- the project's row until the transaction ends, so that the project's
 -- batches of commands are applied one at a time, in the order of their seqs.
 -- The lock is FOR NO KEY UPDATE, which lets the foreign keys of other rows
 -- check the project meanwhile.
-SELECT seq FROM project WHERE workspace_id = @workspace_id AND id = @id FOR NO KEY UPDATE;
+SELECT seq, (archived_at IS NOT NULL)::boolean AS archived, (deleted_at IS NOT NULL)::boolean AS deleted
+FROM project
+WHERE workspace_id = @workspace_id AND id = @id AND (hard_delete_after IS NULL OR hard_delete_after > now())
+FOR NO KEY UPDATE;
 
 -- name: SetProjectSeq :exec
 -- SetProjectSeq sets the seq of the project's latest operation.

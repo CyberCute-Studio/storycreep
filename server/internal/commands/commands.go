@@ -12,8 +12,11 @@
 // validated against their payloads' schemas, before the database is read;
 // the actor's roles are resolved (§5.5), and each command's operation is
 // authorised by the role that its scope names; the project's row is locked,
-// so that the project's batches are applied one at a time; the workspace's
-// limits are checked for what the batch adds (FR-ENT-01); every expected
+// so that the project's batches are applied one at a time; a batch of an
+// archived project, which is read-only, or of one in the trash, is refused
+// unless each of its commands applies there, as unarchiving and restoring
+// the project do (FR-PROJ-01); the workspace's limits are checked for what
+// the batch adds (FR-ENT-01); every expected
 // revision of the batch's commands is checked against the project as it is
 // before the batch, which is what the client authored the batch against, and
 // a stale one refuses the whole batch with the entities' current state
@@ -65,6 +68,10 @@ var (
 	// for one of a project whose workspace's deletion is pending, which
 	// blocks every access to the workspace at once (FR-TEN-05 AC1).
 	ErrNotFound = errors.New("commands: no such project, or the user has no role on it")
+	// ErrProjectArchived is returned for a batch of an archived project with
+	// a command that does not apply to an archived project (Spec.Archived),
+	// which is read-only (FR-PROJ-01 AC2).
+	ErrProjectArchived = errors.New("commands: the project is archived")
 	// ErrInsufficientRole is returned for a batch with a command whose
 	// operation the actor's role does not allow (§5.6), and ErrOwnerRequired
 	// for one whose operation only an owner may do, as package authz decides.
@@ -226,9 +233,12 @@ func (p *Pipeline) Collector() prometheus.Collector {
 // Apply applies the batch of commands to the project projectID, as the actor
 // asks, atomically, and returns what it did (FR-API-03). It returns an
 // *InvalidError if the batch is not valid; ErrNotFound if the project does not
-// exist, its workspace's deletion is pending, or the actor's effective role
-// on it is none; ErrInsufficientRole or ErrOwnerRequired if the actor's role
-// does not allow a command's operation; an *entitlements.LimitError if the
+// exist, its workspace's deletion is pending, the actor's effective role on
+// it is none, or it is in the trash and a command does not apply there
+// (Spec.Trashed); ErrInsufficientRole or ErrOwnerRequired if the actor's role
+// does not allow a command's operation; ErrProjectArchived if the project is
+// archived and a command does not apply to it then (Spec.Archived); an
+// *entitlements.LimitError if the
 // batch would take the workspace past a limit of its plan; a
 // *RevisionConflictError if a command's expected revision is stale; and an
 // error that wraps a command's own if a command refuses the batch. Whatever
@@ -266,6 +276,19 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		if err := activeWorkspace(ctx, q, workspaceID); err != nil {
 			return err
 		}
+		// A project in the trash is not found by a batch that may not apply
+		// there, before the actor's role is, so that a refusal of the role
+		// does not tell that it exists.
+		state, err := q.ProjectState(ctx, queries.ProjectStateParams{WorkspaceID: nullUUID(workspaceID),
+			ID: nullUUID(projectID)})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return ErrNotFound
+		case err != nil:
+			return fmt.Errorf("commands: read the project: %w", err)
+		case state.Deleted && !allApply(cmds, trashed):
+			return ErrNotFound
+		}
 		roles, err := p.roles(ctx, q, actor.UserID, workspaceID, projectID)
 		if err != nil {
 			return err
@@ -279,13 +302,21 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		// without a role on the project can hold up its batches. It is the
 		// only row that the batch locks before its commands apply: roles says
 		// why the membership and the grant that authorise the batch are not.
-		seq, err := q.LockProjectSeq(ctx, queries.LockProjectSeqParams{WorkspaceID: nullUUID(workspaceID),
+		locked, err := q.LockProjectSeq(ctx, queries.LockProjectSeqParams{WorkspaceID: nullUUID(workspaceID),
 			ID: nullUUID(projectID)})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("commands: lock the project: %w", err)
+		}
+		// The project may have changed while the batch waited for the lock,
+		// as when a batch before it deleted or archived it.
+		switch {
+		case locked.Deleted && !allApply(cmds, trashed):
+			return ErrNotFound
+		case locked.Archived && !allApply(cmds, archived):
+			return ErrProjectArchived
 		}
 		// The batch may have waited for the lock for as long as the project's
 		// other batches took, and a deletion requested meanwhile refuses it
@@ -297,7 +328,7 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		}
 		t := &Tx{tx: tx, pipeline: p, actor: actor, project: projectID, workspace: workspaceID, at: map[Ref]int{},
 			revs: map[Ref]int64{}, usage: map[usage.Key]int64{}}
-		res, err = p.applyLocked(ctx, q, t, cmds, seq)
+		res, err = p.applyLocked(ctx, q, t, cmds, locked.Seq)
 		// Each later read is a statement of its own too, so a deletion
 		// requested once the read above is done is seen by the next read that
 		// only an active workspace answers, as the read of its plan with plans
@@ -321,7 +352,7 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 // batch.
 func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded, seq int64) (Result,
 	error) {
-	checked, err := p.checkLimits(ctx, t.tx, t.workspace, cmds)
+	checked, err := p.checkLimits(ctx, t, cmds)
 	if err != nil {
 		return Result{}, err
 	}
@@ -360,6 +391,16 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		return Result{}, err
 	}
 	return res, nil
+}
+
+// trashed and archived report whether a command applies to a project in the
+// trash, and to an archived one (Spec.Trashed, Spec.Archived).
+func trashed(c decoded) bool  { return c.spec.trashed }
+func archived(c decoded) bool { return c.spec.archived }
+
+// allApply reports whether every command of cmds applies, as applies says.
+func allApply(cmds []decoded, applies func(decoded) bool) bool {
+	return !slices.ContainsFunc(cmds, func(c decoded) bool { return !applies(c) })
 }
 
 // workspaceOf returns the workspace of the project, through the context
@@ -455,47 +496,63 @@ func (p *Pipeline) roles(ctx context.Context, q *queries.Queries, userID, worksp
 // plan that the batch adds to, for what all of its commands add together, so
 // that a batch whose commands each fit, but not all of them, is refused
 // (FR-ENT-01), and returns what it checked each limit for, which the batch's
-// usage may not pass (Tx.recordUsage). It returns an *entitlements.LimitError
-// for the first limit, in the order of the commands, that the batch would take
-// the workspace past.
-func (p *Pipeline) checkLimits(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, cmds []decoded) (
-	map[entitlements.LimitKey]int64, error) {
-	keys, adds := batchAdds(cmds)
+// usage may not pass (Tx.recordUsage). It asks each command how much it adds
+// (Limit.Adds) in t, the batch's transaction, before any command applies. It
+// returns an *entitlements.LimitError for the first limit, in the order of
+// the commands, that the batch would take the workspace past.
+func (p *Pipeline) checkLimits(ctx context.Context, t *Tx, cmds []decoded) (map[entitlements.LimitKey]int64,
+	error) {
+	adds := make([][]int64, len(cmds))
+	for i, c := range cmds {
+		adds[i] = make([]int64, len(c.spec.limits))
+		for j, key := range c.spec.limits {
+			adds[i][j] = 1
+			if c.spec.adds[j] == nil {
+				continue
+			}
+			var err error
+			if adds[i][j], err = c.spec.adds[j](ctx, t, c.payload); err != nil {
+				return nil, fmt.Errorf("commands: what command %d (%s) adds to %s: %w", i, c.spec.typ, key, err)
+			}
+		}
+	}
+	keys, sums := batchAdds(cmds, adds)
 	for _, key := range keys {
-		if err := p.ent.Check(ctx, tx, workspaceID, key, adds[key]); err != nil {
+		if err := p.ent.Check(ctx, t.tx, t.workspace, key, sums[key]); err != nil {
 			return nil, err
 		}
 	}
-	return adds, nil
+	return sums, nil
 }
 
 // batchAdds returns the limits that the commands cmds add to, in the order of
-// the commands, and how much all of them add to each. A sum past what an
-// int64 holds would wrap around, as to an amount that adds nothing, which
-// entitlements.Check allows without reading the usage, so a sum that would
-// pass math.MaxInt64 stays there, more than any quota, whatever the commands
-// after it take away, and one that would pass math.MinInt64 is held at it.
-func batchAdds(cmds []decoded) ([]entitlements.LimitKey, map[entitlements.LimitKey]int64) {
+// the commands, and how much all of them add to each, where adds[i][j] is
+// what command i adds to its limit j. A sum past what an int64 holds would
+// wrap around, as to an amount that adds nothing, which entitlements.Check
+// allows without reading the usage, so a sum that would pass math.MaxInt64
+// stays there, more than any quota, whatever the commands after it take
+// away, and one that would pass math.MinInt64 is held at it.
+func batchAdds(cmds []decoded, adds [][]int64) ([]entitlements.LimitKey, map[entitlements.LimitKey]int64) {
 	var keys []entitlements.LimitKey
-	adds := map[entitlements.LimitKey]int64{}
-	for _, c := range cmds {
-		for i, key := range c.spec.limits {
-			sum, ok := adds[key]
+	sums := map[entitlements.LimitKey]int64{}
+	for i, c := range cmds {
+		for j, key := range c.spec.limits {
+			sum, ok := sums[key]
 			if !ok {
 				keys = append(keys, key)
 			}
-			switch a := c.adds[i]; {
+			switch a := adds[i][j]; {
 			case sum == math.MaxInt64:
 			case a > 0 && sum > math.MaxInt64-a:
-				adds[key] = math.MaxInt64
+				sums[key] = math.MaxInt64
 			case a < 0 && sum < math.MinInt64-a:
-				adds[key] = math.MinInt64
+				sums[key] = math.MinInt64
 			default:
-				adds[key] = sum + a
+				sums[key] = sum + a
 			}
 		}
 	}
-	return keys, adds
+	return keys, sums
 }
 
 // checkRevs returns a *RevisionConflictError if an entity that a command of

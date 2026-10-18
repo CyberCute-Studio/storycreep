@@ -14,11 +14,13 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/invite"
+	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/setup"
@@ -43,6 +45,11 @@ type server struct {
 	workspaces *workspace.Service
 	// invites keeps the workspaces' invitations.
 	invites *invite.Service
+	// commands applies the batches of commands that change the projects'
+	// content (package commands).
+	commands *commands.Pipeline
+	// projects keeps the projects.
+	projects *project.Service
 	// setups completes first-run setup.
 	setups *setup.Service
 	// unattended is the configuration's unattended first-run setup, or nil
@@ -72,9 +79,23 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		// address (FR-AUTH-03).
 		RequireVerifiedEmail: cfg.Capabilities.EmailRequired,
 	})
+	registry := commands.NewRegistry()
+	project.Register(registry)
+	s.queue = &queueRef{}
+	s.commands = commands.New(readyDB{s.ready}, commands.Options{
+		Registry:     registry,
+		Policy:       role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
+		Entitlements: s.entitlements,
+		Jobs:         s.queue,
+	})
+	s.metrics.registry.MustRegister(s.commands.Collector())
+	s.projects = project.New(readyDB{s.ready}, project.Options{
+		Policy:       role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
+		Entitlements: s.entitlements,
+		Pipeline:     s.commands,
+	})
 	s.limits = ratelimit.New(readyDB{s.ready}, ratelimit.DefaultPolicy())
 	s.email = email.New(readyDB{s.ready}, email.Options{SMTP: cfg.SMTP, Hostname: cfg.PublicURL.URL().Hostname()})
-	s.queue = &queueRef{}
 	s.accounts = account.New(readyDB{s.ready}, account.Options{
 		Signup:      cfg.Capabilities.Signup,
 		IdleTimeout: cfg.SessionIdleTimeout,
@@ -138,6 +159,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerSessions(s.main, s.accounts, s.limits, cookie)
 	registerWorkspaces(s.main, s.workspaces)
 	registerUsage(s.main, s.workspaces)
+	registerProjects(s.main, s.projects)
 	registerInvites(s.main, s.workspaces, s.invites, s.accounts, s.limits)
 	registerSetup(s.main, s.setups, s.limits)
 	registerEmail(s.main, s.accounts, s.limits)

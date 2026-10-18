@@ -76,7 +76,10 @@ func (q *Queries) InsertOperation(ctx context.Context, arg InsertOperationParams
 }
 
 const lockProjectSeq = `-- name: LockProjectSeq :one
-SELECT seq FROM project WHERE workspace_id = $1 AND id = $2 FOR NO KEY UPDATE
+SELECT seq, (archived_at IS NOT NULL)::boolean AS archived, (deleted_at IS NOT NULL)::boolean AS deleted
+FROM project
+WHERE workspace_id = $1 AND id = $2 AND (hard_delete_after IS NULL OR hard_delete_after > now())
+FOR NO KEY UPDATE
 `
 
 type LockProjectSeqParams struct {
@@ -84,16 +87,23 @@ type LockProjectSeqParams struct {
 	ID          pgtype.UUID
 }
 
-// LockProjectSeq returns the seq of the project's latest operation, and locks
+type LockProjectSeqRow struct {
+	Seq      int64
+	Archived bool
+	Deleted  bool
+}
+
+// LockProjectSeq returns the seq of the project's latest operation, and
+// whether it is archived and in the trash, as ProjectState does, and locks
 // the project's row until the transaction ends, so that the project's
 // batches of commands are applied one at a time, in the order of their seqs.
 // The lock is FOR NO KEY UPDATE, which lets the foreign keys of other rows
 // check the project meanwhile.
-func (q *Queries) LockProjectSeq(ctx context.Context, arg LockProjectSeqParams) (int64, error) {
+func (q *Queries) LockProjectSeq(ctx context.Context, arg LockProjectSeqParams) (LockProjectSeqRow, error) {
 	row := q.db.QueryRow(ctx, lockProjectSeq, arg.WorkspaceID, arg.ID)
-	var seq int64
-	err := row.Scan(&seq)
-	return seq, err
+	var i LockProjectSeqRow
+	err := row.Scan(&i.Seq, &i.Archived, &i.Deleted)
+	return i, err
 }
 
 const projectGrantRole = `-- name: ProjectGrantRole :one
@@ -116,6 +126,33 @@ func (q *Queries) ProjectGrantRole(ctx context.Context, arg ProjectGrantRolePara
 	var role string
 	err := row.Scan(&role)
 	return role, err
+}
+
+const projectState = `-- name: ProjectState :one
+SELECT (archived_at IS NOT NULL)::boolean AS archived, (deleted_at IS NOT NULL)::boolean AS deleted FROM project
+WHERE workspace_id = $1 AND id = $2 AND (hard_delete_after IS NULL OR hard_delete_after > now())
+`
+
+type ProjectStateParams struct {
+	WorkspaceID pgtype.UUID
+	ID          pgtype.UUID
+}
+
+type ProjectStateRow struct {
+	Archived bool
+	Deleted  bool
+}
+
+// ProjectState returns whether the project is archived, and whether it is in
+// the trash (FR-PROJ-01), and no row if it does not exist, or its time in the
+// trash has passed, which a batch of commands reads before it authorises the
+// actor, so that a project in the trash is not found by a batch that may not
+// apply to it, whoever sends it. It locks nothing.
+func (q *Queries) ProjectState(ctx context.Context, arg ProjectStateParams) (ProjectStateRow, error) {
+	row := q.db.QueryRow(ctx, projectState, arg.WorkspaceID, arg.ID)
+	var i ProjectStateRow
+	err := row.Scan(&i.Archived, &i.Deleted)
+	return i, err
 }
 
 const projectWorkspace = `-- name: ProjectWorkspace :one

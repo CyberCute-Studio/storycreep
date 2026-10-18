@@ -107,8 +107,8 @@ func TestDecodeRefusesInvalidBatches(t *testing.T) {
 	if got, ok := cmds[0].payload.(notePayload); !ok || got != (notePayload{ID: id, Body: "fine"}) {
 		t.Errorf("the payload decodes as %#v", cmds[0].payload)
 	}
-	if !sameJSON(t, cmds[0].encoded, valid) || !slices.Equal(cmds[0].adds, []int64{1}) {
-		t.Errorf("the command encodes as %s, and adds %v", cmds[0].encoded, cmds[0].adds)
+	if !sameJSON(t, cmds[0].encoded, valid) {
+		t.Errorf("the command encodes as %s", cmds[0].encoded)
 	}
 }
 

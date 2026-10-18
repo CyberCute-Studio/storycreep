@@ -2,8 +2,8 @@
 
 | Field | Value |
 | --- | --- |
-| Document version | 1.15 |
-| Date | 2026-10-17 |
+| Document version | 1.16 |
+| Date | 2026-10-18 |
 | Status | Approved for implementation |
 | Product | Storycreep — branching narrative design tool for games |
 | License | AGPL-3.0-only (see ADR-011) |
@@ -1611,6 +1611,8 @@ The **Resolved by** column says which function from §5.5 supplies the role. **P
 | Transfer ownership, delete workspace, billing | W | ✓ | ✗ | ✗ | ✗ | ✗ |
 
 API token scopes intersect with the owner's effective role: the permission check is `allowed(role) AND token_has_scope AND token_covers_project`.
+
+Renaming, describing, archiving, and unarchiving a project change its settings, under "Change project settings". Restoring a deleted project from the workspace's trash, and listing the trash, belong to "Create/delete projects". Listing a workspace's projects needs a membership of it: each member is shown the projects on which their effective role is not `none`, so a `guest` sees only the projects granted to them (FR-TEN-04 AC2).
 
 ### 5.7 Content model, revisions, and the operation log
 
@@ -3243,3 +3245,4 @@ No metric below depends on telemetry from running instances (ADR-026); every one
 | 1.13 | 2026-10-17 | **Workspace roles** (plan note N28): FR-TEN-02 said what removing a member revokes, but not what changing a member's role does to the invitations that the member made or holds the link of, with which an admin who is demoted, or an owner who is made admin, could still let in someone with the role that they may no longer give. A role change now revokes the open invitations that the member made or was last given the link of as text whose role the new role may not give: every one, for a role that does not manage members, and those as `owner`, for `admin` (FR-TEN-02, §5.3). |
 | 1.14 | 2026-10-17 | **Command pipeline** (plan note N30): §5.3 made `applied_command.command_id` a primary key of its own, so that a command ID that a client reused in another project, or that a client of another workspace sent, would collide with a command that its sender cannot see, and the collision would reveal that the ID exists. A command ID is now unique within its project (FR-API-03, §5.3). FR-API-03 did not say what a batch's `expected_rev` is checked against: every one is checked against the entities as they are before the batch, which the client authored it against, so an entity that the batch creates has none to expect. A `revision_conflict` names every stale entity of the batch, and one that no longer exists as such, without a state (§5.7). A project's batches are applied one at a time, under a lock of the project's row, so that its seqs commit in order without a gap, where §5.7 said that the commands of one workspace contend on no lock; the batches of other projects still do not wait for them (§5.7). |
 | 1.15 | 2026-10-17 | **Usage metering** (plan note N31): FR-TEN-02 and FR-AUTH-01 said that registering with an invitation's link accepts the invitation in the same step, but not what happens when the invitation's workspace has as many members as its plan, or the instance's cap, allows (FR-ENT-01). Refusing the registration then would tell that the address has no account, because an address that has one is answered as a success, and its account accepts the invitation once it signs in. Registering with an invitation to an address now adds the account without the membership, and answers the same, and the invitation stays open for the account to accept once a member has left; accepting it meanwhile is refused with `limit_exceeded`, as accepting any invitation to a full workspace is. A link invitation registers any address, so one that stayed open so would register account after account, where the `invite` policy lets an invitation register one; registering with its link is refused with `limit_exceeded` while the workspace is full, whatever the address, which tells nothing of whether the address has an account (FR-TEN-02, FR-AUTH-01). |
+| 1.16 | 2026-10-18 | **Project lifecycle** (plan note N32): §5.6 did not say which of its rows covers renaming, describing, archiving, and unarchiving a project, restoring one from the workspace's trash, listing the trash, or listing a workspace's projects, which a guest needs to do for the projects granted to them (FR-TEN-04 AC2). Renaming, describing, archiving, and unarchiving now change the project's settings, which owners and admins of the project do (P); restoring and the trash belong to creating and deleting projects, which owners and admins of the workspace do (W); and the list shows each member the projects on which their effective role is not `none` (§5.6). |

@@ -37,6 +37,21 @@ const (
 	// admin, and owner for granting the owner role, by a role change or an
 	// invitation, and for demoting or removing an owner (§5.6).
 	ManageMembers Capability = "workspace.members"
+	// ListProjects is listing a workspace's projects, which needs a
+	// membership of it: a guest is shown only the projects granted to them
+	// (§5.5, FR-TEN-04 AC2).
+	ListProjects Capability = "workspace.projects.list"
+	// ManageProjects is creating a workspace's projects, deleting them to its
+	// trash, listing its trash, and restoring them, which needs owner or admin
+	// in the workspace (§5.6 "Create/delete projects").
+	ManageProjects Capability = "workspace.projects"
+	// ReadProject is reading a project, which needs an effective role on it
+	// other than none (§5.5).
+	ReadProject Capability = "project.read"
+	// ChangeProjectSettings is changing a project's name, description, and
+	// settings, and archiving and unarchiving it, which needs owner or admin
+	// as the effective role on the project (§5.6).
+	ChangeProjectSettings Capability = "project.settings"
 	// ManageInstance is the instance-admin area (PRD FR-ADMIN-03), which
 	// needs a signed-in instance admin, whom the service checks (package
 	// account).
@@ -57,6 +72,10 @@ var capabilities = map[Capability]bool{
 	ListMembers:             true,
 	ManageWorkspaceSettings: true,
 	ManageMembers:           true,
+	ListProjects:            true,
+	ManageProjects:          true,
+	ReadProject:             true,
+	ChangeProjectSettings:   true,
 	ManageInstance:          true,
 }
 
