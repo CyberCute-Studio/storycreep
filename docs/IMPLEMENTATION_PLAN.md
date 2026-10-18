@@ -327,7 +327,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-TEN-04 AC1–AC3, AC5, and AC6 pass, and AC4 passes for the workspace-scoped operations that exist so far. Item 117 completes AC4 once token management (26), import (84), and the remaining workspace operations have joined.
 
 ### 26. API tokens and scopes
-**Status:** todo · **Depends on:** 15, 25
+**Status:** done ([#29](https://github.com/CyberCute-Studio/storycreep/pull/29)) · **Depends on:** 15, 25
 **PRD:** FR-AUTH-04, NFR-SEC-05, FR-ADMIN-06 (`create-token`)
 - Tokens with the `scp_` prefix, stored as SHA-256, shown once. Scoped to a workspace and optionally narrowed to a project, which returns 404 for other projects. Optional expiry. Removing the owner's membership revokes the owner's tokens (N34).
 - The scope table with its implications. Intersection with the owner's current role on every request. `last_used_at` written at most once per minute.
