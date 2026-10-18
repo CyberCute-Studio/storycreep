@@ -318,7 +318,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-PROJ-01 AC2–AC3 pass and the `publish_min_role` change is audited.
 
 ### 25. Project grants
-**Status:** todo · **Depends on:** 20, 24
+**Status:** done ([#28](https://github.com/CyberCute-Studio/storycreep/pull/28)) · **Depends on:** 20, 24
 **PRD:** FR-TEN-04
 - Grant routes and CRUD, authorised by the workspace role; only an `owner` changes an owner's grant (N33). An `owner` grant returns 400.
 - Guest semantics. Grants apply only to project-scoped operations.
