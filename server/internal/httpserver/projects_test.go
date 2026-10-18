@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -554,6 +555,7 @@ func TestProjectFields(t *testing.T) {
 		{map[string]any{"name": "Harbour", "description": "A\u0007"}, "body.description"},
 		{map[string]any{"name": "Harbour", "default_locale": "not a locale"}, "body.default_locale"},
 		{map[string]any{"name": "Harbour", "default_locale": "und"}, "body.default_locale"},
+		{map[string]any{"name": "Harbour", "default_locale": "und-CZ"}, "body.default_locale"},
 	} {
 		res := call(s.main, http.MethodPost, projectsPath(ws), jsonBody(t, c.body), owner.header(true))
 		wantProblem(t, fmt.Sprintf("create with %v", c.body), res, c.field)
@@ -565,6 +567,7 @@ func TestProjectFields(t *testing.T) {
 	}{
 		{map[string]any{"name": ""}, "body.name"},
 		{map[string]any{"default_locale": "x-"}, "body.default_locale"},
+		{map[string]any{"default_locale": "und-Latn"}, "body.default_locale"},
 		{map[string]any{"entry": map[string]string{"board_id": node}}, "body.entry.board_id"},
 		{map[string]any{"entry": map[string]string{"node_id": node}}, "body.entry.node_id"},
 		{map[string]any{"entry": map[string]string{"board_id": board, "node_id": board}}, "body.entry.node_id"},
@@ -583,6 +586,59 @@ func TestProjectFields(t *testing.T) {
 		if got.Entry.BoardID != entry["board_id"] || got.Entry.NodeID != entry["node_id"] {
 			t.Errorf("the entry is %+v, want %v", got.Entry, entry)
 		}
+	}
+}
+
+// TestProjectListsPage checks that the list of a workspace's projects and the
+// list of its trash each page through every project once, in the order of
+// their IDs, with the next_cursor of each page, until a page without one.
+func TestProjectListsPage(t *testing.T) {
+	t.Parallel()
+	s, _, owner, ws := inviteServer(t, "open", nil)
+	var all []string
+	for _, name := range []string{"A", "B", "C"} {
+		all = append(all, createProject(t, s.main, owner, ws, name).ID)
+	}
+	// Projects created in one millisecond have IDs in a random order.
+	slices.SortFunc(all, func(a, b string) int {
+		x, y := decode(t, ids.Project, a), decode(t, ids.Project, b)
+		return bytes.Compare(x[:], y[:])
+	})
+	pages := func(path string) []string {
+		t.Helper()
+		var got []string
+		cursor := ""
+		for range len(all) + 1 {
+			res := call(s.main, http.MethodGet, path+"?limit=2&cursor="+cursor, nil, owner.header(false))
+			var page struct {
+				Items      []projectBody `json:"items"`
+				NextCursor *string       `json:"next_cursor"`
+			}
+			if res.status != http.StatusOK || json.Unmarshal(res.body, &page) != nil {
+				t.Fatalf("list %s after %q: %d %s", path, cursor, res.status, res.body)
+			}
+			for _, p := range page.Items {
+				got = append(got, p.ID)
+			}
+			if page.NextCursor == nil {
+				return got
+			}
+			cursor = *page.NextCursor
+		}
+		t.Fatalf("list %s has more pages than projects", path)
+		return nil
+	}
+	if got := pages(projectsPath(ws)); !slices.Equal(got, all) {
+		t.Errorf("the pages of the projects hold %v, want %v", got, all)
+	}
+	for _, id := range all {
+		if res := call(s.main, http.MethodDelete, projectPath(id), nil, owner.header(true)); res.status !=
+			http.StatusNoContent {
+			t.Fatalf("delete %s: %d %s", id, res.status, res.body)
+		}
+	}
+	if got := pages(trashPath(ws)); !slices.Equal(got, all) {
+		t.Errorf("the pages of the trash hold %v, want %v", got, all)
 	}
 }
 

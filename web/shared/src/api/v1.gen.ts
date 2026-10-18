@@ -411,7 +411,7 @@ export interface UpdateProjectBody {
   description?: string;
   /** The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. Neither the board nor the node needs to exist yet. */
   entry?: ProjectEntry;
-  /** The project's revision that the change was made against. If the project has another, the answer is 409 revision_conflict, and nothing changes. Without it, the change is made whatever the revision. */
+  /** The project's revision that the change was made against. If the project has another, the answer is 409 revision_conflict, and nothing changes. Without it, the change is made whatever the revision. A body that names no field to change changes nothing, so it is answered with the project, whatever its revision. */
   expected_rev?: number;
   /** The project's new name, as for POST /api/v1/workspaces/{workspace_id}/projects */
   name?: string;

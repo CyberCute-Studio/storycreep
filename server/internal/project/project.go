@@ -341,17 +341,19 @@ func checkDescription(description string) string {
 }
 
 // canonicalLocale returns the BCP 47 tag v in its canonical form, as en-US
-// for en-us, or says what is wrong with it: a tag of no language, as und, is
-// not a locale of text.
+// for en-us, or says what is wrong with it: a tag that names no language, as
+// und, or und-CZ, whose language is only guessed from its region, is not a
+// locale of text.
 func canonicalLocale(v string) (string, string) {
 	if len(v) > MaxLocaleLength {
 		return "", fmt.Sprintf("is longer than %d characters", MaxLocaleLength)
 	}
-	tag, err := language.Parse(v)
-	if err != nil || tag == language.Und {
-		return "", "is not a BCP 47 tag of a language, such as en or cs-CZ"
+	if tag, err := language.Parse(v); err == nil {
+		if _, named := tag.Base(); named == language.Exact {
+			return tag.String(), ""
+		}
 	}
-	return tag.String(), ""
+	return "", "is not a BCP 47 tag of a language, such as en or cs-CZ"
 }
 
 // checkEntry says what is wrong with an entry, by the field that is wrong,
@@ -602,7 +604,8 @@ type Patch struct {
 // input.FieldErrors if a field of p is not valid, commands.ErrProjectArchived
 // if the project is archived, and a *commands.RevisionConflictError if p
 // expects a revision that the project does not have, and changes nothing
-// then. A patch that changes nothing is not applied.
+// then. A patch that names no change is not applied, and returns the
+// project, whatever revision it expects.
 func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID ids.UUID, p Patch) (Visible, error) {
 	var steps []commands.Step
 	var errs input.FieldErrors

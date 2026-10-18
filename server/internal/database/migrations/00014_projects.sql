@@ -18,9 +18,9 @@
 -- (a test of package database checks that). Neither an archived project nor
 -- a deleted one counts towards the workspace's projects (FR-PROJ-01).
 ALTER TABLE project
-	-- Each new column that is NOT NULL has a value for the rows that exist,
-	-- and no default after this migration, but name, which the server always
-	-- sets.
+	-- Each new column that is NOT NULL takes its default for the rows that
+	-- exist, and keeps it, but name, which the server always sets, and which
+	-- has no default once they have theirs.
 	ADD COLUMN name text NOT NULL DEFAULT 'Project',
 	ADD COLUMN description text NOT NULL DEFAULT '',
 	-- The project's settings (package project): its default locale, the

@@ -74,7 +74,8 @@ type Spec[P any] struct {
 	// Trashed says that the command applies to a project in the trash too, as
 	// restoring it does. The pipeline refuses a batch of a project in the
 	// trash with any other command with ErrNotFound, as one of a project that
-	// does not exist, whoever sends it (FR-PROJ-01 AC3).
+	// does not exist, whoever sends it (FR-PROJ-01 AC3). A project in the
+	// trash may be archived too, so a command with Trashed needs Archived.
 	Trashed bool
 	// Check returns what is wrong with a payload that its schema cannot say,
 	// such as an identifier of the wrong type, with each field's name in the
@@ -231,8 +232,9 @@ type spec struct {
 // that is registered already, a Capability that is not an operation of the
 // permission matrix, no Touches, a touched kind that is not registered or
 // twice, a limit that the plan file does not check or twice, both Inverse and
-// NonUndoable or neither, no Apply, or a payload that is not a struct, or that
-// has a field with a default or a type that resolves itself.
+// NonUndoable or neither, Trashed without Archived, no Apply, or a payload
+// that is not a struct, or that has a field with a default or a type that
+// resolves itself.
 func Register[P any](r *Registry, s Spec[P]) {
 	fail := func(format string, args ...any) {
 		panic(fmt.Sprintf("commands: %s: ", s.Type) + fmt.Sprintf(format, args...))
@@ -249,6 +251,11 @@ func Register[P any](r *Registry, s Spec[P]) {
 		fail("a command touches at least one kind of entity")
 	case (s.Inverse != nil) == s.NonUndoable:
 		fail("exactly one of Inverse and NonUndoable is set")
+	case s.Trashed && !s.Archived:
+		// A project in the trash may be archived too, and the pipeline would
+		// refuse a batch of it with ErrProjectArchived, which tells that the
+		// project exists, where any other batch of it is not found.
+		fail("a command that applies to a project in the trash applies to an archived one too (Archived)")
 	case s.Apply == nil:
 		fail("the command has no Apply")
 	case pt.Kind() != reflect.Struct:

@@ -183,6 +183,7 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 		}},
 		{"both inverse and non-undoable", func(s *Spec[notePayload]) { s.NonUndoable = true }},
 		{"neither inverse nor non-undoable", func(s *Spec[notePayload]) { s.Inverse = nil }},
+		{"in the trash but not archived", func(s *Spec[notePayload]) { s.Trashed = true }},
 		{"no apply", func(s *Spec[notePayload]) { s.Apply = nil }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -318,6 +319,7 @@ func TestResult(t *testing.T) {
 		ErrOwnerRequired:                      resultDenied,
 		&entitlements.LimitError{}:            resultOverLimit,
 		&RevisionConflictError{}:              resultRevisionConflict,
+		ErrProjectArchived:                    resultArchived,
 		fmt.Errorf("wrapped: %w", errRefused): resultRejected,
 	} {
 		if got := result(err); got != want {

@@ -272,21 +272,18 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		// workspaceOf found the workspace active in a transaction of its own,
 		// so the batch's reads it again, before the roles, so that a deletion
 		// requested in between refuses the batch as well, and with 404,
-		// whatever the actor's role would allow (FR-TEN-05 AC1).
-		if err := activeWorkspace(ctx, q, workspaceID); err != nil {
-			return err
-		}
-		// A project in the trash is not found by a batch that may not apply
-		// there, before the actor's role is, so that a refusal of the role
-		// does not tell that it exists.
-		state, err := q.ProjectState(ctx, queries.ProjectStateParams{WorkspaceID: nullUUID(workspaceID),
+		// whatever the actor's role would allow (FR-TEN-05 AC1). The same read
+		// finds whether the project is in the trash, where it is not found by
+		// a batch that may not apply there, before the actor's role is, so
+		// that a refusal of the role does not tell that it exists.
+		deleted, err := q.ProjectInTrash(ctx, queries.ProjectInTrashParams{WorkspaceID: nullUUID(workspaceID),
 			ID: nullUUID(projectID)})
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			return ErrNotFound
 		case err != nil:
 			return fmt.Errorf("commands: read the project: %w", err)
-		case state.Deleted && !allApply(cmds, trashed):
+		case deleted && !allApply(cmds, trashed):
 			return ErrNotFound
 		}
 		roles, err := p.roles(ctx, q, actor.UserID, workspaceID, projectID)

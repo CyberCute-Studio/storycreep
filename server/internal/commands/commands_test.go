@@ -1157,6 +1157,7 @@ func TestMetrics(t *testing.T) {
 		`storycreep_command_batches_total{result="denied"}`:               1,
 		`storycreep_command_batches_total{result="rejected"}`:             1,
 		`storycreep_command_batches_total{result="over_limit"}`:           0,
+		`storycreep_command_batches_total{result="archived"}`:             0,
 		`storycreep_commands_applied_total{type="note.create"}`:           1,
 		`storycreep_commands_applied_total{type="note.update"}`:           1,
 		`storycreep_commands_applied_total{type="note.delete"}`:           0,

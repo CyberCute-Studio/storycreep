@@ -94,7 +94,7 @@ type LockProjectSeqRow struct {
 }
 
 // LockProjectSeq returns the seq of the project's latest operation, and
-// whether it is archived and in the trash, as ProjectState does, and locks
+// whether it is archived and in the trash, as ProjectInTrash does, and locks
 // the project's row until the transaction ends, so that the project's
 // batches of commands are applied one at a time, in the order of their seqs.
 // The lock is FOR NO KEY UPDATE, which lets the foreign keys of other rows
@@ -128,31 +128,32 @@ func (q *Queries) ProjectGrantRole(ctx context.Context, arg ProjectGrantRolePara
 	return role, err
 }
 
-const projectState = `-- name: ProjectState :one
-SELECT (archived_at IS NOT NULL)::boolean AS archived, (deleted_at IS NOT NULL)::boolean AS deleted FROM project
-WHERE workspace_id = $1 AND id = $2 AND (hard_delete_after IS NULL OR hard_delete_after > now())
+const projectInTrash = `-- name: ProjectInTrash :one
+SELECT (p.deleted_at IS NOT NULL)::boolean AS deleted
+FROM project p
+JOIN workspace w ON w.id = p.workspace_id AND w.status = 'active'
+WHERE p.workspace_id = $1 AND p.id = $2
+    AND (p.hard_delete_after IS NULL OR p.hard_delete_after > now())
 `
 
-type ProjectStateParams struct {
+type ProjectInTrashParams struct {
 	WorkspaceID pgtype.UUID
 	ID          pgtype.UUID
 }
 
-type ProjectStateRow struct {
-	Archived bool
-	Deleted  bool
-}
-
-// ProjectState returns whether the project is archived, and whether it is in
-// the trash (FR-PROJ-01), and no row if it does not exist, or its time in the
-// trash has passed, which a batch of commands reads before it authorises the
-// actor, so that a project in the trash is not found by a batch that may not
-// apply to it, whoever sends it. It locks nothing.
-func (q *Queries) ProjectState(ctx context.Context, arg ProjectStateParams) (ProjectStateRow, error) {
-	row := q.db.QueryRow(ctx, projectState, arg.WorkspaceID, arg.ID)
-	var i ProjectStateRow
-	err := row.Scan(&i.Archived, &i.Deleted)
-	return i, err
+// ProjectInTrash returns whether the project is in the trash (FR-PROJ-01),
+// and no row if it does not exist, its time in the trash has passed, or its
+// workspace's deletion is pending (FR-TEN-05 AC1), which a batch of commands
+// reads, in one statement, before it authorises the actor, so that a deletion
+// of the workspace requested since the batch found the project refuses the
+// batch, whatever the actor's role would allow, and a project in the trash is
+// not found by a batch that may not apply to it, whoever sends it. It locks
+// nothing.
+func (q *Queries) ProjectInTrash(ctx context.Context, arg ProjectInTrashParams) (bool, error) {
+	row := q.db.QueryRow(ctx, projectInTrash, arg.WorkspaceID, arg.ID)
+	var deleted bool
+	err := row.Scan(&deleted)
+	return deleted, err
 }
 
 const projectWorkspace = `-- name: ProjectWorkspace :one

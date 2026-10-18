@@ -116,8 +116,8 @@ RETURNING rev;
 -- trash has passed, the one whose time passed first, and returns its ID, or
 -- no row if there is none. Deleting a project deletes every row that refers
 -- to it, by the cascade of their foreign keys. It skips a project whose row a
--- transaction has locked, as a batch of commands that waits for its lock
--- (LockProjectSeq) does, which a later run purges.
+-- transaction has locked, as a batch of commands of it does while it holds
+-- the project's lock (LockProjectSeq), which a later run purges.
 DELETE FROM project d
 WHERE d.workspace_id = @workspace_id AND d.id = (
     SELECT p.id FROM project p

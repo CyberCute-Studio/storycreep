@@ -79,7 +79,7 @@ type updateProjectBody struct {
 	DefaultLocale  *string               `json:"default_locale,omitempty" maxLength:"64" doc:"The new locale of the project's text, as a BCP 47 tag of a language"`
 	PublishMinRole *string               `json:"publish_min_role,omitempty" enum:"editor,admin" doc:"The least role that may publish the project's snapshots: editor, or admin to keep editors from publishing (PRD FR-SNAP-01 AC3). A change is recorded in the audit log."`
 	Entry          *project.ProjectEntry `json:"entry,omitempty" doc:"The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. Neither the board nor the node needs to exist yet."`
-	ExpectedRev    int64                 `json:"expected_rev,omitempty" minimum:"1" doc:"The project's revision that the change was made against. If the project has another, the answer is 409 revision_conflict, and nothing changes. Without it, the change is made whatever the revision."`
+	ExpectedRev    int64                 `json:"expected_rev,omitempty" minimum:"1" doc:"The project's revision that the change was made against. If the project has another, the answer is 409 revision_conflict, and nothing changes. Without it, the change is made whatever the revision. A body that names no field to change changes nothing, so it is answered with the project, whatever its revision."`
 }
 
 type updateProjectInput struct {
@@ -128,7 +128,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 		if err != nil {
 			return nil, projectError(err)
 		}
-		page, err := api.NewPage(in.PageParams, list, func(p project.Visible) idKey { return idKey{ID: p.ID} })
+		page, err := api.NewPage(in.PageParams, list, func(p project.Visible) idKey { return projectKey(p.Project) })
 		if err != nil {
 			return nil, err
 		}
@@ -197,7 +197,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 		if err != nil {
 			return nil, projectError(err)
 		}
-		page, err := api.NewPage(in.PageParams, list, func(p project.Project) idKey { return idKey{ID: p.ID} })
+		page, err := api.NewPage(in.PageParams, list, projectKey)
 		if err != nil {
 			return nil, err
 		}
@@ -347,6 +347,15 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 		}
 		return &projectOutput{Body: newProjectBody(p)}, nil
 	})
+}
+
+// projectKey returns the key that the lists of projects are paged by: the
+// project's UUID, in the form that cursorID reads, rather than its ID as the
+// API writes it.
+func projectKey(p project.Project) idKey {
+	// The ID is the service's encoding of the project's UUID, which decodes.
+	id, _ := ids.Decode(ids.Project, p.ID)
+	return idKey{ID: id.String()}
 }
 
 // projectActor returns the project that the path names as projectID, and
