@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -14,9 +15,12 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/apitoken"
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -150,15 +154,28 @@ func refuseCrossSite(next http.Handler) http.Handler {
 
 type currentKey struct{}
 
-// current is the session that a request is made with, and its secret.
+// current is who makes a request: the user, and the session that they make
+// it with, and its secret, or else the API token that they make it with. A
+// route that takes no token (api.TokenScope) always has the session, because
+// the authenticator refuses a token there.
 type current struct {
+	userID  ids.UUID
 	session account.Session
 	secret  secret.Value
+	// token is the API token of a request made with one, and what it
+	// restricts the user to, or nil for a request made with a session.
+	token *scope.Token
 }
 
-// currentFrom returns the session of a request's context, which the
+// actor returns the user of the request as the actor of the commands that it
+// applies, and of the reads that a token is held to.
+func (c current) actor(ctx context.Context) commands.Actor {
+	return commands.Actor{UserID: c.userID, Token: c.token, Client: clientFrom(ctx)}
+}
+
+// currentFrom returns who makes a request, from its context, which the
 // authenticator put there, or unauthenticated if it has none, which only a
-// route that does not need a session could have.
+// route that does not need an authenticated caller could have.
 func currentFrom(ctx context.Context) (current, error) {
 	c, ok := ctx.Value(currentKey{}).(current)
 	if !ok {
@@ -167,16 +184,36 @@ func currentFrom(ctx context.Context) (current, error) {
 	return c, nil
 }
 
-// authenticator returns the Authenticator of the API (api.MuxOptions): it
-// finds the session that a request's cookie holds the secret of, and, for a
-// request that changes something, checks its CSRF token first, so that a
-// request without one is refused before the database is asked. A request
-// without the cookie, or with one of a session that has ended, is answered
-// with unauthenticated, and the answer clears the cookie in the second case.
-func authenticator(accounts *account.Service, cookie sessionCookie) api.Authenticator {
-	return func(hctx huma.Context) (context.Context, error) {
+// authenticator returns the Authenticator of the API (api.MuxOptions). A
+// request whose Authorization header holds an API token (bearerToken) is
+// made with the token, whatever cookie it has, and tokens checks it against
+// the scope that the route takes a token with, or refuses it on a route that
+// takes none (PRD FR-AUTH-04). It needs no CSRF token, because no browser
+// sends an Authorization header that a page of another site chose. Any
+// other request is made with its session: the authenticator finds the
+// session that its cookie holds the secret of, and, for a request that
+// changes something, checks its CSRF token first, so that a request without
+// one is refused before the database is asked. A request without the
+// cookie, or with one of a session that has ended, is answered with
+// unauthenticated, and the answer clears the cookie in the second case.
+func authenticator(accounts *account.Service, tokens *apitoken.Service, cookie sessionCookie) api.Authenticator {
+	return func(hctx huma.Context, needed scope.Scope) (context.Context, error) {
 		r, _ := humachi.Unwrap(hctx)
 		ctx := hctx.Context()
+		if value, ok := bearerToken(r); ok {
+			cred, err := tokens.Authenticate(ctx, value, needed, clientFrom(ctx))
+			switch {
+			case errors.Is(err, apitoken.ErrInvalid):
+				return nil, invalidToken()
+			case errors.Is(err, apitoken.ErrSessionRequired):
+				return nil, api.NewError(api.CodeSessionRequired)
+			case errors.Is(err, apitoken.ErrInsufficientScope):
+				return nil, insufficientScope(needed)
+			case err != nil:
+				return nil, err
+			}
+			return context.WithValue(ctx, currentKey{}, current{userID: cred.UserID, token: &cred.Token}), nil
+		}
 		value, ok := cookie.read(r)
 		if !ok {
 			return nil, api.NewError(api.CodeUnauthenticated)
@@ -191,8 +228,40 @@ func authenticator(accounts *account.Service, cookie sessionCookie) api.Authenti
 		if err != nil {
 			return nil, err
 		}
-		return context.WithValue(ctx, currentKey{}, current{session: session, secret: value}), nil
+		return context.WithValue(ctx, currentKey{}, current{userID: session.UserID, session: session,
+			secret: value}), nil
 	}
+}
+
+// bearerToken returns the API token that r's Authorization header holds, as
+// the credential of the Bearer scheme (RFC 6750 §2.1), and false if it holds
+// none. A credential that does not start with the prefix of a token's secret
+// is no API token, and is left alone, so that a proxy in front of the server
+// that authenticates its users with a header of its own, as basic
+// authentication, keeps working with the session cookie.
+func bearerToken(r *http.Request) (secret.Value, bool) {
+	scheme, credential, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return secret.Value{}, false
+	}
+	credential = strings.TrimSpace(credential)
+	if !strings.HasPrefix(credential, apitoken.Prefix) {
+		return secret.Value{}, false
+	}
+	return secret.New(credential), true
+}
+
+// invalidToken returns unauthenticated, with the header that RFC 6750 §3
+// gives the answer to a request whose token is not valid.
+func invalidToken() error {
+	return huma.ErrorWithHeaders(api.NewError(api.CodeUnauthenticated),
+		http.Header{api.WWWAuthenticateHeader: {`Bearer realm="storycreep", error="invalid_token"`}})
+}
+
+// insufficientScope returns insufficient_scope, for a request made with an
+// API token that does not hold needed.
+func insufficientScope(needed scope.Scope) error {
+	return &api.Error{Code: api.CodeInsufficientScope, Details: map[string]any{"scope": needed}}
 }
 
 // signedOut returns unauthenticated, with the header that clears the

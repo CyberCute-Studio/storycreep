@@ -83,7 +83,8 @@ func count(t *testing.T, admin *pgx.Conn, sql string, args ...any) int {
 // a lock after 10 failed sign-ins in a row, for a minute, doubling up to 15
 // minutes, with failures forgotten after a day, and 20 requests a minute of
 // the auth bucket for an IP address, and 10 for an account and an email
-// address.
+// address. Every bucket of requests limits an API token as much as a user
+// (plan note N23).
 //
 // Verifies: NFR-SEC-06
 func TestDefaultPolicy(t *testing.T) {
@@ -104,8 +105,8 @@ func TestDefaultPolicy(t *testing.T) {
 	}
 	for _, b := range []Bucket{Auth, Read, Write, Export, Connect} {
 		r, ok := p.Rates[b]
-		if !ok || r.Limits[IP] == 0 || r.Limits[User] == 0 {
-			t.Errorf("the bucket %s does not limit IP addresses and users: %+v", b, r)
+		if !ok || r.Limits[IP] == 0 || r.Limits[User] == 0 || r.Limits[Token] != r.Limits[User] {
+			t.Errorf("the bucket %s does not limit IP addresses, users, and tokens as users: %+v", b, r)
 		}
 	}
 }

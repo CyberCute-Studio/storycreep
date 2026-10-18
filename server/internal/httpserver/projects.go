@@ -12,6 +12,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
 
 // projectBody is a project, with the role that the signed-in user acts with
@@ -70,6 +71,13 @@ type changeProjectInput struct {
 	ProjectID string `path:"project_id" doc:"The project's ID"`
 }
 
+// tokenChangeProjectInput is changeProjectInput of a route that takes an API
+// token, which needs no CSRF token.
+type tokenChangeProjectInput struct {
+	SessionCSRFInput
+	ProjectID string `path:"project_id" doc:"The project's ID"`
+}
+
 // updateProjectBody is the body of PATCH /api/v1/projects/{project_id}. A
 // field that it leaves out, or sets to null, which huma takes for a field
 // left out, stays as it is.
@@ -83,7 +91,7 @@ type updateProjectBody struct {
 }
 
 type updateProjectInput struct {
-	CSRFInput
+	SessionCSRFInput
 	ProjectID string `path:"project_id" doc:"The project's ID"`
 	Body      updateProjectBody
 }
@@ -211,23 +219,19 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 		Path:        "/api/v1/projects/{project_id}",
 		Summary:     "Get a project",
 		Description: "Returns a project, with the role that the signed-in user acts with on it." +
-			projectNotFoundDoc + sessionAuthDoc,
+			projectNotFoundDoc + tokenNotFoundDoc + tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Projects"},
 	}, func(ctx context.Context, in *projectInput) (*projectOutput, error) {
-		cur, err := currentFrom(ctx)
+		id, actor, err := projectActor(ctx, in.ProjectID)
 		if err != nil {
 			return nil, err
 		}
-		id, err := ids.Decode(ids.Project, in.ProjectID)
-		if err != nil {
-			return nil, err
-		}
-		p, err := projects.Get(ctx, cur.session.UserID, id)
+		p, err := projects.Get(ctx, actor, id)
 		if err != nil {
 			return nil, projectError(err)
 		}
 		return &projectOutput{Body: newProjectBody(p)}, nil
-	})
+	}, api.TokenScope(scope.ProjectRead))
 
 	api.Register(m, api.ChangeProjectSettings, huma.Operation{
 		OperationID: "updateProject",
@@ -237,8 +241,8 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 		Description: "Changes a project's name, description, default locale, publish_min_role, or entry, in one " +
 			"batch of the project's commands; a field that the body leaves out, or sets to null, stays as it is. " +
 			"Only an owner or an admin of the project may, and anyone else with a role on it is answered with 403 " +
-			"insufficient_role." + projectNotFoundDoc + " A field whose value it does not allow is answered with " +
-			"422 validation_failed." + archivedDoc + csrfDoc,
+			"insufficient_role." + projectNotFoundDoc + tokenNotFoundDoc + " A field whose value it does not " +
+			"allow is answered with 422 validation_failed." + archivedDoc + tokenChangeDoc(scope.ProjectWrite),
 		Tags: []string{"Projects"},
 	}, func(ctx context.Context, in *updateProjectInput) (*projectOutput, error) {
 		id, actor, err := projectActor(ctx, in.ProjectID)
@@ -252,7 +256,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 			return nil, projectError(err)
 		}
 		return &projectOutput{Body: newProjectBody(p)}, nil
-	})
+	}, api.TokenScope(scope.ProjectWrite))
 
 	api.Register(m, api.ChangeProjectSettings, huma.Operation{
 		OperationID: "archiveProject",
@@ -262,10 +266,11 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 		Description: "Archives a project, which makes it read-only: every change of it but unarchiving, deleting, " +
 			"and restoring it is answered with 409 project_archived (PRD FR-PROJ-01 AC2). An archived project does " +
 			"not count towards the workspace's projects. Only an owner or an admin of the project may, and anyone " +
-			"else with a role on it is answered with 403 insufficient_role." + projectNotFoundDoc +
-			" A project that is archived already is answered with 409 project_archived." + csrfDoc,
+			"else with a role on it is answered with 403 insufficient_role." + projectNotFoundDoc + tokenNotFoundDoc +
+			" A project that is archived already is answered with 409 project_archived." +
+			tokenChangeDoc(scope.ProjectWrite),
 		Tags: []string{"Projects"},
-	}, func(ctx context.Context, in *changeProjectInput) (*projectOutput, error) {
+	}, func(ctx context.Context, in *tokenChangeProjectInput) (*projectOutput, error) {
 		id, actor, err := projectActor(ctx, in.ProjectID)
 		if err != nil {
 			return nil, err
@@ -275,7 +280,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 			return nil, projectError(err)
 		}
 		return &projectOutput{Body: newProjectBody(p)}, nil
-	})
+	}, api.TokenScope(scope.ProjectWrite))
 
 	api.Register(m, api.ChangeProjectSettings, huma.Operation{
 		OperationID: "unarchiveProject",
@@ -286,9 +291,9 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 			"projects again: a workspace that has as many projects as its plan allows is answered with 409 " +
 			"limit_exceeded. A project that is not archived stays as it is. Only an owner or an admin of the " +
 			"project may, and anyone else with a role on it is answered with 403 insufficient_role." +
-			projectNotFoundDoc + csrfDoc,
+			projectNotFoundDoc + tokenNotFoundDoc + tokenChangeDoc(scope.ProjectWrite),
 		Tags: []string{"Projects"},
-	}, func(ctx context.Context, in *changeProjectInput) (*projectOutput, error) {
+	}, func(ctx context.Context, in *tokenChangeProjectInput) (*projectOutput, error) {
 		id, actor, err := projectActor(ctx, in.ProjectID)
 		if err != nil {
 			return nil, err
@@ -298,7 +303,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 			return nil, projectError(err)
 		}
 		return &projectOutput{Body: newProjectBody(p)}, nil
-	})
+	}, api.TokenScope(scope.ProjectWrite))
 
 	api.Register(m, api.ManageProjects, huma.Operation{
 		OperationID: "deleteProject",
@@ -360,7 +365,8 @@ func projectKey(p project.Project) idKey {
 }
 
 // projectActor returns the project that the path names as projectID, and
-// the signed-in user as the actor of its commands.
+// the user who makes the request, with the API token that they make it with,
+// if any, as the actor of its commands and its reads.
 func projectActor(ctx context.Context, projectID string) (ids.UUID, commands.Actor, error) {
 	cur, err := currentFrom(ctx)
 	if err != nil {
@@ -370,7 +376,7 @@ func projectActor(ctx context.Context, projectID string) (ids.UUID, commands.Act
 	if err != nil {
 		return ids.UUID{}, commands.Actor{}, err
 	}
-	return id, commands.Actor{UserID: cur.session.UserID, Client: clientFrom(ctx)}, nil
+	return id, cur.actor(ctx), nil
 }
 
 // projectError returns the error that the API answers err with, an error of
@@ -384,6 +390,10 @@ func projectError(err error) error {
 		return api.NewError(api.CodeNotFound)
 	case errors.Is(err, project.ErrInsufficientRole):
 		return api.NewError(api.CodeInsufficientRole)
+	case errors.Is(err, commands.ErrInsufficientScope):
+		// The route checks the scope that it needs before the pipeline does,
+		// which refuses only a batch that a route let past.
+		return insufficientScope(scope.ProjectWrite)
 	case errors.Is(err, commands.ErrOwnerRequired):
 		return api.NewError(api.CodeOwnerRequired)
 	case errors.Is(err, commands.ErrProjectArchived):

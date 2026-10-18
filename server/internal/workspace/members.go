@@ -31,7 +31,9 @@ import (
 // Removing a member revokes the workspace's open invitations that the member
 // made, those whose link the member was last given as text, as by sending
 // one anew, and those to the member's address, so that no link that they
-// hold lets them back in. Changing a member's role revokes those that the
+// hold lets them back in, and the member's API tokens of the workspace, so
+// that none works from the next request, nor again if the member rejoins
+// (FR-AUTH-04 AC4). Changing a member's role revokes those that the
 // member made or was last given the link of whose role the new role may not
 // give (authz.Ungrantable), so that no link that they hold gives what their
 // role no longer may. A user joins a workspace by accepting an invitation
@@ -187,8 +189,9 @@ func lockTarget(ctx context.Context, q *queries.Queries, id, membershipID ids.UU
 // and with it the membership's project grants, and revokes the workspace's
 // open invitations that the member made, whose link the member was last
 // given as text, or that are to the member's address, expired or not, so
-// that no link that they hold lets them back in, which the user userID asks
-// for, as client, and records all of that in the audit log. It returns
+// that no link that they hold lets them back in, and the member's API tokens
+// of the workspace, which the user userID asks for, as client, and records
+// all of that in the audit log. It returns
 // ErrNotFound if the workspace does not exist, the user's role in it is none,
 // or it has no such membership, ErrInsufficientRole unless the user's role is
 // owner or admin, ErrOwnerRequired if the membership is an owner's and the
@@ -227,6 +230,14 @@ func (s *Service) RemoveMember(ctx context.Context, userID, id, membershipID ids
 		if err != nil {
 			return fmt.Errorf("workspace: revoke the member's invitations: %w", err)
 		}
+		// A token that the member makes meanwhile locks their membership
+		// first, which this transaction has locked, so it is made once this
+		// one ends, and then finds no membership (package apitoken).
+		tokens, err := q.RevokeUserTokens(ctx, queries.RevokeUserTokensParams{WorkspaceID: nullUUID(id),
+			UserID: target.UserID})
+		if err != nil {
+			return fmt.Errorf("workspace: revoke the member's API tokens: %w", err)
+		}
 		if err := q.DeleteMembership(ctx, queries.DeleteMembershipParams{WorkspaceID: nullUUID(id),
 			ID: nullUUID(membershipID)}); err != nil {
 			return fmt.Errorf("workspace: remove the membership: %w", err)
@@ -239,6 +250,18 @@ func (s *Service) RemoveMember(ctx context.Context, userID, id, membershipID ids
 			UserAgent: client.UserAgent, Metadata: map[string]any{"role": target.Role,
 				"user_id": ids.UUID(target.UserID.Bytes).String()}}); err != nil {
 			return err
+		}
+		for _, tok := range tokens {
+			metadata := map[string]any{"user_id": ids.UUID(target.UserID.Bytes).String(),
+				"membership_id": membershipID.String()}
+			if tok.ProjectID.Valid {
+				metadata["project_id"] = ids.UUID(tok.ProjectID.Bytes).String()
+			}
+			if err := audit.Record(ctx, tx, audit.Entry{Action: audit.ActionTokenRevoke, WorkspaceID: id,
+				ActorUserID: userID, SubjectID: tok.ID.Bytes, Result: audit.ResultSuccess, IP: client.IP,
+				UserAgent: client.UserAgent, Metadata: metadata}); err != nil {
+				return err
+			}
 		}
 		return recordRevoked(ctx, tx, id, userID, membershipID, client, revoked)
 	})

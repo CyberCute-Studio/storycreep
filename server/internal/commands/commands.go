@@ -30,9 +30,16 @@
 // and once it commits, the Notifier is told its seq (§10.2 step 7). A batch
 // that does not apply changes nothing at all (FR-API-03 AC2).
 //
-// Token scopes join the authorisation with API tokens (plan item 26), and
-// the idempotency of command IDs and the multi-batch form with the command
-// endpoint (plan item 28).
+// A batch applied with an API token is authorised by its owner's roles, as
+// any other, and by the token on top (FR-AUTH-04, §5.6): a token that does
+// not cover the project, as one of another workspace, or one narrowed to
+// another project, is told that the project does not exist, before anything
+// of it is read (AC3), and one that does not hold project:write, which every
+// command of the draft needs, is refused with scope.ErrInsufficientScope
+// (AC2), whatever the owner's role.
+//
+// The idempotency of command IDs and the multi-batch form join with the
+// command endpoint (plan item 28).
 package commands
 
 import (
@@ -57,6 +64,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
@@ -79,6 +87,9 @@ var (
 	// for one whose operation only an owner may do, as package authz decides.
 	ErrInsufficientRole = authz.ErrInsufficientRole
 	ErrOwnerRequired    = authz.ErrOwnerRequired
+	// ErrInsufficientScope is returned for a batch applied with an API token
+	// that does not hold project:write (FR-AUTH-04 AC2).
+	ErrInsufficientScope = scope.ErrInsufficientScope
 )
 
 // Ref names an entity: its kind and its ID.
@@ -113,9 +124,9 @@ type Command struct {
 // Actor is who applies a batch.
 type Actor struct {
 	UserID ids.UUID
-	// TokenID is the API token that the user acts with, or zero for a
-	// session (FR-AUTH-04).
-	TokenID ids.UUID
+	// Token is the API token that the user acts with, and what it restricts
+	// them to, or nil for a session (FR-AUTH-04).
+	Token *scope.Token
 	// Client is what the audit log records of the client.
 	Client audit.Client
 }
@@ -237,7 +248,9 @@ func (p *Pipeline) Collector() prometheus.Collector {
 // *InvalidError if the batch is not valid; ErrNotFound if the project does not
 // exist, its workspace's deletion is pending, the actor's effective role on
 // it is none, or it is in the trash and a command does not apply there
-// (Spec.Trashed); ErrInsufficientRole or ErrOwnerRequired if the actor's role
+// (Spec.Trashed), or the actor's API token does not cover the project;
+// ErrInsufficientScope if the token does not hold project:write;
+// ErrInsufficientRole or ErrOwnerRequired if the actor's role
 // does not allow a command's operation; ErrProjectArchived if the project is
 // archived and a command does not apply to it then (Spec.Archived); an
 // *entitlements.LimitError if the
@@ -268,6 +281,9 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 	if err != nil {
 		return Result{}, err
 	}
+	if !actor.Token.Covers(workspaceID, projectID) {
+		return Result{}, ErrNotFound
+	}
 	var res Result
 	err = p.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
@@ -291,6 +307,11 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		roles, err := p.roles(ctx, q, actor.UserID, workspaceID, projectID)
 		if err != nil {
 			return err
+		}
+		// Every command changes the draft, which a token needs project:write
+		// for, whatever its owner's role allows.
+		if !actor.Token.Allows(scope.ProjectWrite) {
+			return ErrInsufficientScope
 		}
 		for _, c := range cmds {
 			if err := authz.Check(roles[c.spec.capability.Scope()], c.spec.capability); err != nil {
@@ -697,7 +718,7 @@ func (p *Pipeline) record(ctx context.Context, q *queries.Queries, t *Tx, cmds [
 	ws, project := nullUUID(t.workspace), nullUUID(t.project)
 	if err := q.InsertOperation(ctx, queries.InsertOperationParams{ID: nullUUID(ids.New()), WorkspaceID: ws,
 		ProjectID: project, Seq: res.Seq, CommandIds: commandIDs, ActorUserID: nullUUID(t.actor.UserID),
-		ActorTokenID: nullUUID(t.actor.TokenID), Type: typ, Payload: encodedPayload, Inverse: inverse,
+		ActorTokenID: nullUUID(t.actor.Token.TokenID()), Type: typ, Payload: encodedPayload, Inverse: inverse,
 		EntityRefs: encodedRefs}); err != nil {
 		return fmt.Errorf("commands: append the operation: %w", err)
 	}

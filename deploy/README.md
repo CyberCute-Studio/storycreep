@@ -92,6 +92,16 @@ Without an SMTP server, the instance sends no email, and says so to its users. R
 docker compose exec app storycreep reset-password jo@example.com
 ```
 
+### API tokens
+
+Programs, such as a CI job that pulls a project's releases, use API tokens, which a member of a workspace makes for themselves through the API, or the operator with `storycreep create-token`, for a member of a workspace by its slug:
+
+```sh
+docker compose exec app storycreep create-token --scopes snapshot:read jo@example.com harbour "CI releases"
+```
+
+It prints the token's secret alone, once: the database keeps only its hash. A program sends it as `Authorization: Bearer scp_…`, so a reverse proxy in front of the server must pass that header on, as Caddy, Traefik, and nginx do unasked. A token acts only with the scopes that it holds, and never does more than its member's role allows at the time; removing the member revokes it.
+
 ### Behind a reverse proxy
 
 The server speaks plain HTTP, and expects a reverse proxy in front of it to terminate TLS. Run the proxy on the same machine, forward it to `127.0.0.1:7777`, and set `STORYCREEP_PUBLIC_URL` to the proxy's `https` URL, such as `https://storycreep.example.com`.

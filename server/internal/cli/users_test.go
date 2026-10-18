@@ -393,8 +393,8 @@ func TestGrantRoleMembersLimit(t *testing.T) {
 	}
 }
 
-// TestUserCommandsHelp checks the help of create-user, grant-role, and
-// reset-password.
+// TestUserCommandsHelp checks the help of create-user, grant-role,
+// reset-password, and create-token.
 //
 // Verifies: FR-ADMIN-06/AC1
 func TestUserCommandsHelp(t *testing.T) {
@@ -402,6 +402,7 @@ func TestUserCommandsHelp(t *testing.T) {
 		"create-user":    "Usage: storycreep create-user [flags] <email> <display-name>\n",
 		"grant-role":     "Usage: storycreep grant-role [flags] <email> <role> [workspace]\n",
 		"reset-password": "Usage: storycreep reset-password [flags] <email>\n",
+		"create-token":   "Usage: storycreep create-token [flags] <email> <workspace> <name>\n",
 	} {
 		code, stdout, stderr := run(t, nil, name, "--help")
 		if code != ExitOK || !strings.HasPrefix(stdout, want) || stderr != "" {
@@ -412,7 +413,7 @@ func TestUserCommandsHelp(t *testing.T) {
 		}
 	}
 	code, stdout, _ := run(t, nil, "--help")
-	for _, name := range []string{"create-user", "grant-role", "reset-password"} {
+	for _, name := range []string{"create-user", "grant-role", "reset-password", "create-token"} {
 		if code != ExitOK || !strings.Contains(stdout, fmt.Sprintf("\n  %s ", name)) {
 			t.Errorf("the command list lacks %s:\n%s", name, stdout)
 		}

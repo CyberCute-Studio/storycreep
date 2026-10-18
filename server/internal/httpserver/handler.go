@@ -14,6 +14,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/apitoken"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
@@ -50,6 +51,9 @@ type server struct {
 	commands *commands.Pipeline
 	// projects keeps the projects.
 	projects *project.Service
+	// tokens keeps the API tokens, and authenticates the requests made with
+	// them.
+	tokens *apitoken.Service
 	// setups completes first-run setup.
 	setups *setup.Service
 	// unattended is the configuration's unattended first-run setup, or nil
@@ -93,6 +97,9 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		Policy:       role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
 		Entitlements: s.entitlements,
 		Pipeline:     s.commands,
+	})
+	s.tokens = apitoken.New(readyDB{s.ready}, apitoken.Options{
+		Policy: role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
 	})
 	s.limits = ratelimit.New(readyDB{s.ready}, ratelimit.DefaultPolicy())
 	s.email = email.New(readyDB{s.ready}, email.Options{SMTP: cfg.SMTP, Hostname: cfg.PublicURL.URL().Hostname()})
@@ -152,7 +159,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 			s.ready.gate,
 			withClient(cfg.TrustedProxies),
 		},
-		Authenticate: authenticator(s.accounts, cookie),
+		Authenticate: authenticator(s.accounts, s.tokens, cookie),
 	})
 	s.registerOperational(s.main)
 	registerAccounts(s.main, s.accounts, s.limits)
@@ -161,6 +168,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerUsage(s.main, s.workspaces)
 	registerProjects(s.main, s.projects)
 	registerGrants(s.main, s.projects)
+	registerTokens(s.main, s.tokens, s.limits)
 	registerInvites(s.main, s.workspaces, s.invites, s.accounts, s.limits)
 	registerSetup(s.main, s.setups, s.limits)
 	registerEmail(s.main, s.accounts, s.limits)

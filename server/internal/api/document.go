@@ -40,6 +40,9 @@ func (m *Mux) errorResponse() *huma.Response {
 		Headers: map[string]*huma.Header{
 			"Content-Language": {Schema: &huma.Schema{Type: huma.TypeString,
 				Description: "The language of the envelope's message, as a BCP 47 tag, such as en"}},
+			WWWAuthenticateHeader: {Schema: &huma.Schema{Type: huma.TypeString,
+				Description: "With 401 unauthenticated to a request whose API token is not valid, the Bearer " +
+					"scheme with error=\"invalid_token\" (RFC 6750)"}},
 			RetryAfterHeader: {Schema: &huma.Schema{Type: huma.TypeInteger,
 				Description: "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready"}},
 			RateLimitLimitHeader: {Schema: &huma.Schema{Type: huma.TypeInteger,

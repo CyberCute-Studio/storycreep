@@ -21,7 +21,8 @@ import (
 // Rate limits on the wire (PRD FR-API-04, NFR-SEC-06). An operation that is
 // limited counts each request in its bucket (package ratelimit) for the
 // client's IP address, and for its signed-in user, once the authenticator has
-// found one, before it reads the request's body. Its answers to the requests
+// found one, and for the API token that it is made with, if it is, before it
+// reads the request's body. Its answers to the requests
 // that it counts, but not to those that the router's middleware, the
 // authenticator, or a guard refused before, say how much of the limit is
 // left in the RateLimit headers of draft-ietf-httpapi-ratelimit-headers:
@@ -53,12 +54,13 @@ type RateLimitOutput struct {
 // limits, what its rate limit does.
 const authLimitDoc = " Signing in, registering, changing a password, completing first-run setup, asking for a link " +
 	"that resets a password or verifies an email address, using one, an instance admin's taking one as text, " +
-	"inviting someone to a workspace, sending an invitation anew, and reading, accepting, or registering with an " +
-	"invitation's link share a rate limit of 20 requests a minute for each IP address. Registering, with an " +
-	"invitation or without, and asking for a link that resets a password also share one of 10 a minute for each " +
-	"email address, so that each counts against the other for the same address, and changing a password, asking " +
-	"for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, " +
-	"inviting someone, sending an invitation anew, and accepting one share one of 10 a minute for each account. The " +
+	"inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an " +
+	"invitation's link, and making an API token share a rate limit of 20 requests a minute for each IP address. " +
+	"Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 " +
+	"a minute for each email address, so that each counts against the other for the same address, and changing a " +
+	"password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a " +
+	"link as text, inviting someone, sending an invitation anew, accepting one, and making an API token share one " +
+	"of 10 a minute for each account. The " +
 	"RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over " +
 	"a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the " +
 	"limit that it is over, that of the email address included, and whose Retry-After header says how many seconds " +
@@ -67,13 +69,17 @@ const authLimitDoc = " Signing in, registering, changing a password, completing 
 // rateLimit returns middleware for an operation, for its huma.Operation's
 // Middlewares, that counts each request in bucket, for the client's IP
 // address, and for the signed-in user if the authenticator found one, which
-// it has before this middleware runs, and sets the RateLimit headers of the
-// answer, or answers a request over the limit with rate_limited.
+// it has before this middleware runs, and for the API token of a request made
+// with one, and sets the RateLimit headers of the answer, or answers a
+// request over the limit with rate_limited.
 func rateLimit(limits *ratelimit.Limiter, bucket ratelimit.Bucket) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
 		keys := []ratelimit.Key{ratelimit.ClientIP(clientFrom(ctx.Context()).IP)}
 		if cur, err := currentFrom(ctx.Context()); err == nil {
-			keys = append(keys, ratelimit.UserID(cur.session.UserID))
+			keys = append(keys, ratelimit.UserID(cur.userID))
+			if cur.token != nil {
+				keys = append(keys, ratelimit.TokenID(cur.token.ID))
+			}
 		}
 		d, err := limits.Take(ctx.Context(), bucket, keys...)
 		if err != nil {

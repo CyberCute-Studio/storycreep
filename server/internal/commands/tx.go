@@ -189,7 +189,7 @@ func (t *Tx) Enqueue(ctx context.Context, args jobs.Args, opts *jobs.EnqueueOpti
 // the batch's, whatever e holds.
 func (t *Tx) Audit(ctx context.Context, e audit.Entry) error {
 	e.WorkspaceID = t.workspace
-	e.ActorUserID, e.ActorTokenID = t.actor.UserID, t.actor.TokenID
+	e.ActorUserID, e.ActorTokenID = t.actor.UserID, t.actor.Token.TokenID()
 	e.IP, e.UserAgent = t.actor.Client.IP, t.actor.Client.UserAgent
 	return audit.Record(ctx, t.tx, e)
 }

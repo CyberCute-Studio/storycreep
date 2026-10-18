@@ -4,8 +4,8 @@
 //
 // A rate limit counts the requests of a kind, a bucket (auth, read, write,
 // export, connect, or invite_email), separately for each key that makes
-// them: the client's IP address, the signed-in user, or the email address
-// that a request names. Each bucket counts in fixed windows of time, of the
+// them: the client's IP address, the signed-in user, the API token that a
+// request is made with, or the email address that a request names. Each bucket counts in fixed windows of time, of the
 // same length for every key, and allows each kind of key a number of
 // requests in a window (Policy). A request is allowed only if none of its
 // keys has used up its limit, and counts against all of them either way.
@@ -97,8 +97,13 @@ const (
 	// IP counts a client's IP address, and an IPv6 address's /64 prefix,
 	// which one user typically has all of.
 	IP Kind = "ip"
-	// User counts a signed-in user.
+	// User counts a signed-in user, whether they make the request with a
+	// session or with an API token.
 	User Kind = "user"
+	// Token counts an API token (NFR-SEC-06). A request made with a token
+	// counts against its owner too (User), so that however many tokens a
+	// user has, they make no more requests than the user may.
+	Token Kind = "token"
 	// Email counts an email address that a registration or a request for a
 	// link that resets a password names, whether or not it belongs to an
 	// account, or the mailbox that an invitation is emailed to (Mailbox).
@@ -136,6 +141,11 @@ func ClientIP(addr netip.Addr) Key {
 // UserID returns the key of a signed-in user.
 func UserID(id ids.UUID) Key {
 	return Key{kind: User, value: id.String()}
+}
+
+// TokenID returns the key of an API token.
+func TokenID(id ids.UUID) Key {
+	return Key{kind: Token, value: id.String()}
 }
 
 // EmailAddress returns the key of an email address, as package account
@@ -215,15 +225,18 @@ type Policy struct {
 
 // DefaultPolicy returns the server's limits. A request from an address that
 // many people share, such as an office's, counts against one IP address, so
-// each bucket allows an IP address twice as much as one user.
+// each bucket allows an IP address twice as much as one user. An API token
+// is allowed as much as one user, and its requests count against its owner
+// too, so that a user with many tokens makes no more requests than one user
+// may (plan note N23).
 func DefaultPolicy() Policy {
 	return Policy{
 		Rates: map[Bucket]Rate{
-			Auth:    {Period: time.Minute, Limits: map[Kind]int{IP: 20, User: 10, Email: 10}},
-			Read:    {Period: time.Minute, Limits: map[Kind]int{IP: 1200, User: 600}},
-			Write:   {Period: time.Minute, Limits: map[Kind]int{IP: 600, User: 300}},
-			Export:  {Period: time.Hour, Limits: map[Kind]int{IP: 60, User: 30}},
-			Connect: {Period: time.Minute, Limits: map[Kind]int{IP: 60, User: 30}},
+			Auth:    {Period: time.Minute, Limits: map[Kind]int{IP: 20, User: 10, Token: 10, Email: 10}},
+			Read:    {Period: time.Minute, Limits: map[Kind]int{IP: 1200, User: 600, Token: 600}},
+			Write:   {Period: time.Minute, Limits: map[Kind]int{IP: 600, User: 300, Token: 300}},
+			Export:  {Period: time.Hour, Limits: map[Kind]int{IP: 60, User: 30, Token: 30}},
+			Connect: {Period: time.Minute, Limits: map[Kind]int{IP: 60, User: 30, Token: 30}},
 			// Invitation emails are counted by the address alone.
 			InviteEmail: {Period: time.Hour, Limits: map[Kind]int{Email: 10}},
 		},

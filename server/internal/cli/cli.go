@@ -75,6 +75,7 @@ var commands = []*command{
 	createUser,
 	grantRole,
 	resetPassword,
+	createToken,
 	validateConfig,
 	healthcheck,
 }
@@ -230,6 +231,11 @@ func (c *command) execute(ctx context.Context, args []string, stdin io.Reader, s
 // boolFlag returns the value of the command's boolean flag name.
 func (inv *invocation) boolFlag(name string) bool {
 	return inv.flags.Lookup(name).Value.(flag.Getter).Get().(bool)
+}
+
+// stringFlag returns the value of the command's string flag name.
+func (inv *invocation) stringFlag(name string) string {
+	return inv.flags.Lookup(name).Value.String()
 }
 
 // isSet reports whether the command line set the named flag.
