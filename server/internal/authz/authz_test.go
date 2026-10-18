@@ -45,8 +45,15 @@ func TestMatrix(t *testing.T) {
 		ReadProject: {y, y, y, y, y},
 		// Change project settings, including publish_min_role (P).
 		ChangeProjectSettings: {y, y, n, n, n},
+		// Manage own API tokens narrowed to this project (P).
+		ManageOwnProjectTokens: {y, y, y, n, n},
+		// Manage own workspace-wide API tokens (W).
+		ManageOwnWorkspaceTokens: {y, y, y, n, n},
+		// Manage API tokens (others') (W).
+		ManageTokens: {y, y, n, n, n},
 	}
-	scopes := map[Operation]Scope{ReadProject: Project, ChangeProjectSettings: Project}
+	scopes := map[Operation]Scope{ReadProject: Project, ChangeProjectSettings: Project,
+		ManageOwnProjectTokens: Project}
 	for _, op := range Operations() {
 		row, ok := want[op]
 		if !ok {

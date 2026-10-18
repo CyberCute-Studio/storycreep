@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/logging"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
 
 // TestMain runs the tests with dbtest.Run, for the pagination test, which
@@ -459,15 +461,19 @@ type callerKey struct{}
 // authenticated caller runs the Mux's Authenticator before its own
 // middleware, and before it reads the request's body, so that a refusal
 // comes whatever the body holds, and that the operation runs with the
-// context that the Authenticator returns. A public operation does not run
-// it, and a route that needs a caller cannot be registered where nothing
-// finds one.
+// context that the Authenticator returns. The Authenticator is told the
+// scope that the route takes an API token with, or none for a session-only
+// route, and the Mux lists the routes that take one. A public operation does
+// not run it, and a route that needs a caller cannot be registered where
+// nothing finds one, nor can one that needs none take a token.
 func TestAuthenticate(t *testing.T) {
 	var refuse error
 	authenticated := 0
+	var told []scope.Scope
 	m, _ := testMux(t)
-	m.authenticate = func(ctx huma.Context) (context.Context, error) {
+	m.authenticate = func(ctx huma.Context, token scope.Scope) (context.Context, error) {
 		authenticated++
+		told = append(told, token)
 		if refuse != nil {
 			return nil, refuse
 		}
@@ -490,6 +496,9 @@ func TestAuthenticate(t *testing.T) {
 	})
 	Register(m, Public, huma.Operation{OperationID: "createItem", Method: http.MethodPost, Path: "/items"},
 		func(_ context.Context, in *itemInput) (*itemOutput, error) { return &itemOutput{Body: in.Body}, nil })
+	Register(m, ReadProject, huma.Operation{OperationID: "getItem", Method: http.MethodGet, Path: "/projects/items"},
+		func(context.Context, *struct{}) (*itemOutput, error) { return &itemOutput{}, nil },
+		TokenScope(scope.ProjectRead))
 
 	refuse = huma.ErrorWithHeaders(NewError(CodeUnauthenticated), http.Header{"Set-Cookie": {"a=; Max-Age=0"}})
 	for _, body := range []string{`{"name":"a"}`, ``, `{"name":`, `{"colour":"red"}`, strings.Repeat(" ", 65)} {
@@ -512,6 +521,15 @@ func TestAuthenticate(t *testing.T) {
 		http.StatusOK || authenticated != before {
 		t.Errorf("a public operation: %d, and it ran the Authenticator", res.status)
 	}
+	told = nil
+	serve(m, http.MethodGet, "/projects/items", "", nil)
+	serve(m, http.MethodPost, "/own/items", "application/json", []byte(`{"name":"a"}`))
+	if !slices.Equal(told, []scope.Scope{scope.ProjectRead, ""}) {
+		t.Errorf("the Authenticator was told the scopes %q, want project:read and none", told)
+	}
+	if got, want := m.TokenScopes(), map[Route]scope.Scope{{http.MethodGet, "/projects/items"}: scope.ProjectRead}; !maps.Equal(got, want) {
+		t.Errorf("TokenScopes() = %v, want %v", got, want)
+	}
 
 	for name, register := range map[string]func(){
 		"an operation without an Authenticator": func() {
@@ -519,11 +537,20 @@ func TestAuthenticate(t *testing.T) {
 				Path: "/x"}, func(context.Context, *struct{}) (*itemOutput, error) { return nil, nil })
 		},
 		"a handler": func() { m.Handle(OwnAccount, http.MethodGet, "/own", http.NotFoundHandler()) },
+		"a public operation that takes a token": func() {
+			Register(m, Public, huma.Operation{OperationID: "y", Method: http.MethodGet, Path: "/y"},
+				func(context.Context, *struct{}) (*itemOutput, error) { return nil, nil },
+				TokenScope(scope.ProjectRead))
+		},
+		"an operation that takes a token with an unknown scope": func() {
+			Register(m, ReadProject, huma.Operation{OperationID: "z", Method: http.MethodGet, Path: "/z"},
+				func(context.Context, *struct{}) (*itemOutput, error) { return nil, nil }, TokenScope("project:all"))
+		},
 	} {
 		func() {
 			defer func() {
 				if recover() == nil {
-					t.Errorf("registering %s that needs an authenticated caller did not panic", name)
+					t.Errorf("registering %s did not panic", name)
 				}
 			}()
 			register()

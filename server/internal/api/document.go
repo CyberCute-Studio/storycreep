@@ -40,6 +40,11 @@ func (m *Mux) errorResponse() *huma.Response {
 		Headers: map[string]*huma.Header{
 			"Content-Language": {Schema: &huma.Schema{Type: huma.TypeString,
 				Description: "The language of the envelope's message, as a BCP 47 tag, such as en"}},
+			WWWAuthenticateHeader: {Schema: &huma.Schema{Type: huma.TypeString,
+				Description: "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a " +
+					"route that takes an API token, and to a request whose API token is not valid, with " +
+					"error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" " +
+					"and the scope that the route needs"}},
 			RetryAfterHeader: {Schema: &huma.Schema{Type: huma.TypeInteger,
 				Description: "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready"}},
 			RateLimitLimitHeader: {Schema: &huma.Schema{Type: huma.TypeInteger,

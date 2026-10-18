@@ -133,7 +133,8 @@ func result(err error) string {
 		return resultInvalid
 	case errors.Is(err, ErrNotFound):
 		return resultNotFound
-	case errors.Is(err, authz.ErrInsufficientRole), errors.Is(err, authz.ErrOwnerRequired):
+	case errors.Is(err, authz.ErrInsufficientRole), errors.Is(err, authz.ErrOwnerRequired),
+		errors.Is(err, ErrInsufficientScope):
 		return resultDenied
 	case errors.As(err, &limit):
 		return resultOverLimit

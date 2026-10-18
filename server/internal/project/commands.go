@@ -16,6 +16,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
@@ -66,11 +67,23 @@ type emptyPayload struct{}
 // touches are the kinds of entity that every command of a project touches.
 var touches = []ids.Kind{ids.Project}
 
+// The commands that a patch of the project applies (Update), Rename,
+// Describe, and UpdateSettings, need the operation patchOperation of the
+// actor's role, and the scope patchScope of their API token, which Update
+// checks too for a patch that it does not apply, as the pipeline would
+// check them.
+const (
+	patchOperation = authz.ChangeProjectSettings
+	patchScope     = scope.ProjectWrite
+)
+
 // Register registers in r the project as an entity of the pipeline, whose
 // revision a command expects as it does any entity's, and the project's
-// commands. Neither the board nor the node of an entry is checked to exist,
-// which the boards and the nodes do once they are added (plan items 30 and
-// 35); the validation reports one that does not (FR-DEP-04).
+// commands, each of which changes its draft, so that an API token needs
+// project:write for it (FR-AUTH-04). Neither the board nor the node of an
+// entry is checked to exist, which the boards and the nodes do once they are
+// added (plan items 30 and 35); the validation reports one that does not
+// (FR-DEP-04).
 func Register(r *commands.Registry) {
 	commands.RegisterEntity(r, commands.Entity{
 		Kind: ids.Project,
@@ -103,7 +116,7 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[renamePayload]{
-		Type: Rename, Capability: authz.ChangeProjectSettings, Touches: touches,
+		Type: Rename, Capability: patchOperation, Scope: patchScope, Touches: touches,
 		Check: func(p renamePayload) input.FieldErrors { return field("name", checkName(p.Name)) },
 		Inverse: func(ctx context.Context, tx *commands.Tx, _ renamePayload) ([]commands.Step, error) {
 			p, err := read(ctx, tx)
@@ -120,7 +133,7 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[describePayload]{
-		Type: Describe, Capability: authz.ChangeProjectSettings, Touches: touches,
+		Type: Describe, Capability: patchOperation, Scope: patchScope, Touches: touches,
 		Check: func(p describePayload) input.FieldErrors {
 			return field("description", checkDescription(p.Description))
 		},
@@ -139,7 +152,7 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[settingsPayload]{
-		Type: UpdateSettings, Capability: authz.ChangeProjectSettings, Touches: touches,
+		Type: UpdateSettings, Capability: patchOperation, Scope: patchScope, Touches: touches,
 		Check: checkSettings,
 		Inverse: func(ctx context.Context, tx *commands.Tx, p settingsPayload) ([]commands.Step, error) {
 			cur, err := read(ctx, tx)
@@ -164,7 +177,7 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[emptyPayload]{
-		Type: Archive, Capability: authz.ChangeProjectSettings, Touches: touches,
+		Type: Archive, Capability: authz.ChangeProjectSettings, Scope: scope.ProjectWrite, Touches: touches,
 		Inverse: func(context.Context, *commands.Tx, emptyPayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: Unarchive, Payload: emptyPayload{}}}, nil
 		},
@@ -174,7 +187,8 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[emptyPayload]{
-		Type: Unarchive, Capability: authz.ChangeProjectSettings, Touches: touches, Archived: true,
+		Type: Unarchive, Capability: authz.ChangeProjectSettings, Scope: scope.ProjectWrite, Touches: touches,
+		Archived: true,
 		// Only an archived project, which counts towards none, adds to the
 		// projects. Unarchiving one that is not undoes nothing.
 		Limits: []commands.Limit[emptyPayload]{{Key: entitlements.Projects, Adds: func(ctx context.Context,
@@ -198,7 +212,8 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[emptyPayload]{
-		Type: Delete, Capability: authz.ManageProjects, Touches: touches, Archived: true,
+		Type: Delete, Capability: authz.ManageProjects, Scope: scope.ProjectWrite, Touches: touches,
+		Archived: true,
 		Inverse: func(context.Context, *commands.Tx, emptyPayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: Restore, Payload: emptyPayload{}}}, nil
 		},
@@ -209,7 +224,8 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[emptyPayload]{
-		Type: Restore, Capability: authz.ManageProjects, Touches: touches, Archived: true, Trashed: true,
+		Type: Restore, Capability: authz.ManageProjects, Scope: scope.ProjectWrite, Touches: touches,
+		Archived: true, Trashed: true,
 		// Only a project in the trash that is not archived adds to the
 		// projects. Restoring one that is not in the trash undoes nothing.
 		Limits: []commands.Limit[emptyPayload]{{Key: entitlements.Projects, Adds: func(ctx context.Context,

@@ -21,6 +21,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
@@ -82,6 +83,9 @@ const (
 	// one does.
 	noteTouch  Type = "note.touch"
 	noteRevive Type = "note.revive"
+	// notePublish changes nothing, and needs snapshot:write rather than
+	// project:write of an API token, as publishing a snapshot would.
+	notePublish Type = "note.publish"
 )
 
 // errRefused is noteFail's refusal.
@@ -231,7 +235,7 @@ func noteRegistry() *Registry {
 	})
 	touches := []ids.Kind{ids.Node}
 	Register(r, Spec[notePayload]{
-		Type: noteCreate, Capability: authz.ListMembers, Touches: touches,
+		Type: noteCreate, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
 		Limits: []Limit[notePayload]{{Key: entitlements.Projects}},
 		Check:  func(p notePayload) input.FieldErrors { return checkNoteID(p.ID) },
 		Inverse: func(_ context.Context, _ *Tx, p notePayload) ([]Step, error) {
@@ -253,7 +257,7 @@ func noteRegistry() *Registry {
 		},
 	})
 	Register(r, Spec[notePayload]{
-		Type: noteUpdate, Capability: authz.ListMembers, Touches: touches,
+		Type: noteUpdate, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
 		Check: func(p notePayload) input.FieldErrors { return checkNoteID(p.ID) },
 		Inverse: func(ctx context.Context, tx *Tx, p notePayload) ([]Step, error) {
 			s, err := readNote(ctx, tx, noteUUID(p.ID))
@@ -267,15 +271,17 @@ func noteRegistry() *Registry {
 		},
 	})
 	Register(r, Spec[noteIDPayload]{
-		Type: noteDelete, Capability: authz.ManageWorkspaceSettings, Touches: touches, NonUndoable: true,
-		Check: func(p noteIDPayload) input.FieldErrors { return checkNoteID(p.ID) },
+		Type: noteDelete, Capability: authz.ManageWorkspaceSettings, Scope: scope.ProjectWrite, Touches: touches,
+		NonUndoable: true,
+		Check:       func(p noteIDPayload) input.FieldErrors { return checkNoteID(p.ID) },
 		Apply: func(ctx context.Context, tx *Tx, p noteIDPayload) error {
 			return setNote(ctx, tx, noteUUID(p.ID), "deleted_at = now()")
 		},
 	})
 	Register(r, Spec[notePayload]{
-		Type: noteFail, Capability: authz.ListMembers, Touches: touches, NonUndoable: true,
-		Check: func(p notePayload) input.FieldErrors { return checkNoteID(p.ID) },
+		Type: noteFail, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
+		NonUndoable: true,
+		Check:       func(p notePayload) input.FieldErrors { return checkNoteID(p.ID) },
 		Apply: func(ctx context.Context, tx *Tx, p notePayload) error {
 			if err := insertNote(ctx, tx, noteUUID(p.ID), p.Body); err != nil {
 				return err
@@ -284,8 +290,9 @@ func noteRegistry() *Registry {
 		},
 	})
 	Register(r, Spec[misreportPayload]{
-		Type: noteMisreport, Capability: authz.ListMembers, Touches: touches, NonUndoable: true,
-		Check: func(p misreportPayload) input.FieldErrors { return checkNoteID(p.ID) },
+		Type: noteMisreport, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
+		NonUndoable: true,
+		Check:       func(p misreportPayload) input.FieldErrors { return checkNoteID(p.ID) },
 		Apply: func(ctx context.Context, tx *Tx, p misreportPayload) error {
 			id := noteUUID(p.ID)
 			switch p.Mode {
@@ -302,7 +309,7 @@ func noteRegistry() *Registry {
 		},
 	})
 	Register(r, Spec[badInversePayload]{
-		Type: noteBadInverse, Capability: authz.ListMembers, Touches: touches,
+		Type: noteBadInverse, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
 		Inverse: func(_ context.Context, tx *Tx, p badInversePayload) ([]Step, error) {
 			if p.Changes {
 				if err := tx.Changed(ids.Node, noteUUID(p.ID), 1<<40); err != nil {
@@ -315,7 +322,8 @@ func noteRegistry() *Registry {
 		Apply: func(context.Context, *Tx, badInversePayload) error { return nil },
 	})
 	Register(r, Spec[meterPayload]{
-		Type: noteMeter, Capability: authz.ListMembers, Touches: touches, NonUndoable: true,
+		Type: noteMeter, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
+		NonUndoable: true,
 		Limits: []Limit[meterPayload]{{Key: entitlements.Projects, Adds: func(_ context.Context, _ *Tx,
 			p meterPayload) (int64, error) {
 			if p.Key == string(entitlements.Projects) && !p.Undeclared {
@@ -326,11 +334,18 @@ func noteRegistry() *Registry {
 		Apply: func(_ context.Context, tx *Tx, p meterPayload) error { return tx.AddUsage(usage.Key(p.Key), p.Delta) },
 	})
 	Register(r, Spec[noteIDPayload]{
-		Type: noteTouch, Capability: authz.ListMembers, Touches: touches, NonUndoable: true, Archived: true,
+		Type: noteTouch, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
+		NonUndoable: true, Archived: true,
 		Apply: func(context.Context, *Tx, noteIDPayload) error { return nil },
 	})
 	Register(r, Spec[noteIDPayload]{
-		Type: noteRevive, Capability: authz.ListMembers, Touches: touches, NonUndoable: true, Archived: true,
+		Type: notePublish, Capability: authz.ListMembers, Scope: scope.SnapshotWrite, Touches: touches,
+		NonUndoable: true,
+		Apply:       func(context.Context, *Tx, noteIDPayload) error { return nil },
+	})
+	Register(r, Spec[noteIDPayload]{
+		Type: noteRevive, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
+		NonUndoable: true, Archived: true,
 		Trashed: true,
 		Apply:   func(context.Context, *Tx, noteIDPayload) error { return nil },
 	})

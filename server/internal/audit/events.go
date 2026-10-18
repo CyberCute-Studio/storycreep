@@ -144,6 +144,37 @@ const (
 	ActionProjectGrantCreate Action = "project_grant.create"
 	ActionProjectGrantChange Action = "project_grant.change"
 	ActionProjectGrantRemove Action = "project_grant.remove"
+	// ActionTokenCreate is the creation of an API token (FR-AUTH-04), by its
+	// owner, its actor, or by the operator's storycreep create-token, without
+	// an actor, for the owner that its metadata's user_id names. Its
+	// metadata's project_id names the project that it is narrowed to, if
+	// any, its scopes the scopes that it holds, and its expires_at when it
+	// expires, if it does. It belongs to the token's workspace, and its
+	// subject is the token. An entry never holds the token's name, which its
+	// owner wrote, nor its secret.
+	ActionTokenCreate Action = "token.create"
+	// ActionTokenRevoke is the revocation of an API token, after which every
+	// request made with it is refused: by its owner, or by an owner or admin
+	// of its workspace, its actor, or by the removal of its owner's
+	// membership, whose actor it has, and whose membership its metadata's
+	// membership_id names (ActionMembershipRemove). Its metadata's user_id
+	// names the token's owner, and its project_id the project that it is
+	// narrowed to, if any.
+	ActionTokenRevoke Action = "token.revoke"
+	// ActionTokenUseDenied is a request made with an API token that is
+	// refused, though the token is one: its actor is the token, and its
+	// owner, and its metadata's reason says why: revoked, expired,
+	// owner_inactive, when its owner's account is not active, owner_not_member,
+	// when its owner is no longer a member of its workspace, session_required,
+	// on a route that takes no token, or insufficient_scope, on one that
+	// needs a scope that it does not hold, which its scope names (NFR-SEC-05).
+	// It belongs to the token's workspace, and its subject is the token. A
+	// token's refusals are recorded once a minute at most, the first of each
+	// minute, so that a client that repeats a refused request does not flood
+	// the log (package apitoken). A request with a secret that is no token's
+	// is recorded nowhere, because it belongs to no workspace that the server
+	// knows of.
+	ActionTokenUseDenied Action = "token.use_denied"
 	// ActionInstanceAdminGrant makes an account an instance admin, as the
 	// operator's storycreep create-user --instance-admin and grant-role do,
 	// and ActionInstanceAdminRevoke makes it no longer one, as grant-role
@@ -227,6 +258,12 @@ var events = []eventSpec{
 		metadata: []string{"project_id", "role", "previous_role"}},
 	{action: ActionProjectGrantRemove, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
 		metadata: []string{"project_id", "role"}},
+	{action: ActionTokenCreate, inWorkspace: true, subject: "api_token", results: []Result{ResultSuccess},
+		metadata: []string{"user_id", "project_id", "scopes", "expires_at"}},
+	{action: ActionTokenRevoke, inWorkspace: true, subject: "api_token", results: []Result{ResultSuccess},
+		metadata: []string{"user_id", "project_id", "membership_id"}},
+	{action: ActionTokenUseDenied, inWorkspace: true, subject: "api_token", results: []Result{ResultDenied},
+		metadata: []string{"reason", "scope"}},
 	{action: ActionInstanceAdminGrant, subject: "user", results: []Result{ResultSuccess}},
 	{action: ActionInstanceAdminRevoke, subject: "user", results: []Result{ResultSuccess}},
 }

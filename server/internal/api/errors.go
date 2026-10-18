@@ -33,6 +33,8 @@ const (
 	CodeCSRFFailed            Code = "csrf_failed"
 	CodeWrongPassword         Code = "wrong_password"
 	CodeInsufficientRole      Code = "insufficient_role"
+	CodeInsufficientScope     Code = "insufficient_scope"
+	CodeSessionRequired       Code = "session_required"
 	CodeOwnerRequired         Code = "owner_required"
 	CodeOwnerNotGrantable     Code = "owner_not_grantable"
 	CodeSignupClosed          Code = "signup_closed"
@@ -98,7 +100,15 @@ var codes = []codeSpec{
 			"answers with it to a request without the session cookie that `POST /api/v1/auth/login` sets, or " +
 			"with the cookie of a session that has ended: signed out, revoked, unused for " +
 			"`STORYCREEP_SESSION_IDLE_TIMEOUT`, past `STORYCREEP_SESSION_LIFETIME`, or of an account that can no " +
-			"longer sign in. The answer then clears the cookie. `/metrics` answers with it to a request without " +
+			"longer sign in. The answer then clears the cookie. A route that takes an API token answers with it, " +
+			"and a `WWW-Authenticate` header of the `Bearer` scheme with `error=\"invalid_token\"` (RFC 6750), to a " +
+			"request whose `Authorization: Bearer` token is not one, or is revoked or expired, or whose owner's " +
+			"account is not active or is no longer a member of the token's workspace (PRD FR-AUTH-04 AC4); a " +
+			"session-only route answers so too, as it would answer `session_required` to a valid token. A route " +
+			"that takes an API token also sends the `Bearer` scheme's challenge, without an `error`, to a request " +
+			"without credentials or with the cookie of a session that has ended. A " +
+			"`Bearer` credential that does not start with `scp_` is not taken for a token, and the request is " +
+			"authenticated by its session cookie instead. `/metrics` answers with it to a request without " +
 			"`STORYCREEP_METRICS_TOKEN` as its bearer token, and its `WWW-Authenticate` header names the scheme."},
 	{CodeInvalidCredentials, http.StatusUnauthorized, i18n.K("error.invalid_credentials"),
 		"`POST /api/v1/auth/login` was given an email address that belongs to no account, a password that is " +
@@ -128,6 +138,20 @@ var codes = []codeSpec{
 			"AC4). A user who has no role in the workspace or on the project that the route " +
 			"names, as one who is not a member of the workspace, or a `guest` without a grant on the project, is " +
 			"answered with `not_found` instead, so that the answer does not tell that it exists (§5.5)."},
+	{CodeInsufficientScope, http.StatusForbidden, i18n.K("error.insufficient_scope"),
+		"The request was made with an API token that does not hold the scope that the route needs, nor a scope " +
+			"that implies it (PRD FR-AUTH-04 AC2): `project:read` to read a project's draft, which `project:write` " +
+			"implies, and `project:write` to change it. `details.scope` names the scope that the route needs, and " +
+			"so does the `WWW-Authenticate` header, with the `Bearer` scheme's `error=\"insufficient_scope\"` and " +
+			"`scope` (RFC 6750 §3.1). A token never does more than its owner's role allows either, which is " +
+			"answered with `insufficient_role` when the token holds the scope."},
+	{CodeSessionRequired, http.StatusForbidden, i18n.K("error.session_required"),
+		"The route takes no API token, whatever its scopes, and needs the session cookie of a signed-in user " +
+			"instead, which `POST /api/v1/auth/login` sets (PRD FR-AUTH-04): every route of an account, its " +
+			"sessions, and its password, of a workspace's members, invitations, and project grants, and of API " +
+			"tokens, so that a token cannot make another, change a credential, or change who has access. So far " +
+			"only reading a project, and changing its name, description, and settings, and archiving and " +
+			"unarchiving it, take a token."},
 	{CodeOwnerRequired, http.StatusForbidden, i18n.K("error.owner_required"),
 		"Only an `owner` of the workspace may do this, and the signed-in user is an `admin`: grant the role " +
 			"`owner`, by a role change or an invitation, send an invitation as `owner` anew, demote or remove an " +
@@ -193,7 +217,9 @@ var codes = []codeSpec{
 		"No route matches the path, or the resource it names does not exist, or is in its workspace's trash, as " +
 			"a deleted project is to every route but the one that restores it (PRD FR-PROJ-01 AC3), or the " +
 			"signed-in user's role in it, or in its workspace, is none, as it is for a user who is not a member of " +
-			"the workspace, so that the answer does not tell that it exists (PRD §5.5, FR-TEN-04 AC6)."},
+			"the workspace, or the request's API token does not cover it, as a token of another workspace, or one " +
+			"narrowed to another project, does not, so that the answer does not tell that it exists (PRD §5.5, " +
+			"FR-TEN-04 AC6, FR-AUTH-04 AC3)."},
 	{CodeSlugTaken, http.StatusConflict, i18n.K("error.slug_taken"),
 		"Another workspace has the slug, which is unique on the instance (PRD FR-TEN-01 AC3). `details.errors` " +
 			"names the field, with its `location` and a `message`, as for `validation_failed`."},
@@ -287,7 +313,7 @@ var codes = []codeSpec{
 			"`details.bucket` is `auth` for signing in, registering, changing a password, completing first-run " +
 			"setup, asking for a link that resets a password or verifies an email address, using such a link, " +
 			"an instance admin's taking one as text, inviting someone to a workspace or sending an invitation " +
-			"anew, and reading, accepting, or registering with an invitation's link."},
+			"anew, reading, accepting, or registering with an invitation's link, and making an API token."},
 	{CodeInternal, http.StatusInternalServerError, i18n.K("error.internal_error"),
 		"The server failed. Its log has the cause, under the envelope's `request_id`."},
 	{CodeNotReady, http.StatusServiceUnavailable, i18n.K("error.not_ready"),

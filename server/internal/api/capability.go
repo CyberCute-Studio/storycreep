@@ -57,6 +57,19 @@ const (
 	// settings, and archiving and unarchiving it, which needs owner or admin
 	// as the effective role on the project (§5.6).
 	ChangeProjectSettings Capability = "project.settings"
+	// ManageWorkspaceTokens is creating, listing, and revoking a workspace's
+	// API tokens of the whole workspace: one's own, which needs owner,
+	// admin, or editor in the workspace, and other members', which needs
+	// owner or admin (§5.6 "Manage own workspace-wide API tokens", "Manage
+	// API tokens (others')"). The routes of tokens are session-only, so that
+	// a token cannot make another (FR-AUTH-04).
+	ManageWorkspaceTokens Capability = "workspace.tokens"
+	// ManageProjectTokens is creating, listing, and revoking the API tokens
+	// narrowed to a project: one's own, which needs owner, admin, or editor
+	// as the effective role on the project, and other members', which needs
+	// owner or admin in its workspace (§5.6 "Manage own API tokens narrowed
+	// to this project", "Manage API tokens (others')").
+	ManageProjectTokens Capability = "project.tokens"
 	// ManageInstance is the instance-admin area (PRD FR-ADMIN-03), which
 	// needs a signed-in instance admin, whom the service checks (package
 	// account).
@@ -82,6 +95,8 @@ var capabilities = map[Capability]bool{
 	ManageProjectGrants:     true,
 	ReadProject:             true,
 	ChangeProjectSettings:   true,
+	ManageWorkspaceTokens:   true,
+	ManageProjectTokens:     true,
 	ManageInstance:          true,
 }
 

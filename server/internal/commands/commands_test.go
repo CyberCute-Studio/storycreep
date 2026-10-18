@@ -29,6 +29,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
@@ -103,7 +104,8 @@ func TestApplyAppendsTheOperation(t *testing.T) {
 	again := command(t, noteUpdate, notePayload{ID: aID, Body: "third"}, nil)
 	// The second batch is applied with an API token, by a client whose
 	// address and user agent the audit log records.
-	byToken := Actor{UserID: w.users[ownerUser], TokenID: ids.New(),
+	byToken := Actor{UserID: w.users[ownerUser],
+		Token:  &scope.Token{ID: ids.New(), WorkspaceID: w.ws, Scopes: []scope.Scope{scope.ProjectWrite}},
 		Client: audit.Client{IP: netip.MustParseAddr("192.0.2.7"), UserAgent: "importer/1.0"}}
 	res, err = p.Apply(ctx, byToken, w.project, []Command{update, createB, again})
 	if err != nil {
@@ -124,7 +126,7 @@ func TestApplyAppendsTheOperation(t *testing.T) {
 	second := w.operation(t, 2)
 	if second.typ != batchType || !slices.Equal(second.commandIDs, []ids.UUID{update.ID, createB.ID, again.ID}) ||
 		second.actor == nil || *second.actor != byToken.UserID || second.token == nil ||
-		*second.token != byToken.TokenID {
+		*second.token != byToken.Token.ID {
 		t.Errorf("the second operation: %s of %v by %v with %v", second.typ, second.commandIDs, second.actor,
 			second.token)
 	}
@@ -168,7 +170,7 @@ func TestApplyAppendsTheOperation(t *testing.T) {
 		t.Errorf("%d of the audit entries are the batches' actor's in their workspace, want 2", n)
 	}
 	if n := w.count(t, "SELECT count(*) FROM audit_entry WHERE workspace_id = $1 AND actor_user_id = $2 "+
-		"AND actor_token_id = $3 AND ip = $4 AND user_agent = $5", w.ws, byToken.UserID, byToken.TokenID,
+		"AND actor_token_id = $3 AND ip = $4 AND user_agent = $5", w.ws, byToken.UserID, byToken.Token.ID,
 		byToken.Client.IP, byToken.Client.UserAgent); n != 1 {
 		t.Errorf("%d of the audit entries are the second batch's, with its token and client, want 1", n)
 	}
@@ -428,6 +430,117 @@ func TestAuthorisation(t *testing.T) {
 				w.exec(t, "UPDATE note SET deleted_at = NULL WHERE id = $1", x)
 			}
 		})
+	}
+}
+
+// TestTokenBatch checks that a batch applied with an API token is held to the
+// token (PRD FR-AUTH-04, §5.6): one of another workspace, or narrowed to
+// another project, is told that the project does not exist (AC3), one
+// without the scope of each of the batch's commands, project:write for the
+// notes, snapshot:write for publishing, is refused with ErrInsufficientScope,
+// which names the scope that it lacks, whatever its owner's role (AC2), and
+// one that holds them does no more than its owner's role allows; and that a
+// refused batch changes nothing.
+//
+// Verifies: FR-AUTH-04/AC2, FR-AUTH-04/AC3
+func TestTokenBatch(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	p := w.pipeline(t, nil)
+	x, xID := newNote()
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteCreate, notePayload{ID: xID, Body: "x"}, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	write := []scope.Scope{scope.ProjectWrite}
+	for _, tt := range []struct {
+		name  string
+		user  string
+		token scope.Token
+		// create and delete are what a batch that creates a note, and one
+		// that deletes x, which needs owner or admin, end with.
+		create, delete error
+	}{
+		{name: "the owner's token of the workspace", user: ownerUser,
+			token: scope.Token{WorkspaceID: w.ws, Scopes: write}},
+		{name: "the owner's token narrowed to the project", user: ownerUser,
+			token: scope.Token{WorkspaceID: w.ws, ProjectID: w.project, Scopes: write}},
+		{name: "every scope but project:write", user: ownerUser,
+			token: scope.Token{WorkspaceID: w.ws, Scopes: []scope.Scope{scope.ProjectRead, scope.SnapshotRead,
+				scope.SnapshotWrite, scope.ExportRead}},
+			create: ErrInsufficientScope, delete: ErrInsufficientScope},
+		{name: "narrowed to another project", user: ownerUser,
+			token:  scope.Token{WorkspaceID: w.ws, ProjectID: ids.New(), Scopes: write},
+			create: ErrNotFound, delete: ErrNotFound},
+		{name: "of another workspace", user: ownerUser, token: scope.Token{WorkspaceID: ids.New(), Scopes: write},
+			create: ErrNotFound, delete: ErrNotFound},
+		{name: "an editor's token", user: editorUser, token: scope.Token{WorkspaceID: w.ws, Scopes: write},
+			delete: ErrInsufficientRole},
+		{name: "a viewer's token without project:write", user: viewerUser,
+			token:  scope.Token{WorkspaceID: w.ws, Scopes: []scope.Scope{scope.ProjectRead}},
+			create: ErrInsufficientScope, delete: ErrInsufficientScope},
+		{name: "a guest's token", user: guestUser, token: scope.Token{WorkspaceID: w.ws, Scopes: write},
+			create: ErrNotFound, delete: ErrNotFound},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.token.ID = ids.New()
+			actor := Actor{UserID: w.users[tt.user], Token: &tt.token}
+			before := w.written(t)
+			_, id := newNote()
+			_, err := p.Apply(ctx, actor, w.project, []Command{command(t, noteCreate,
+				notePayload{ID: id, Body: "made"}, nil)})
+			if !errors.Is(err, tt.create) || (tt.create == nil) != (err == nil) {
+				t.Errorf("creating a note: %v, want %v", err, tt.create)
+			}
+			if tt.create != nil {
+				if after := w.written(t); after != before {
+					t.Errorf("the refused batch wrote %+v, where there was %+v", after, before)
+				}
+			}
+			before = w.written(t)
+			_, err = p.Apply(ctx, actor, w.project, []Command{command(t, noteDelete, noteIDPayload{ID: xID}, nil),
+				command(t, noteUpdate, notePayload{ID: xID, Body: "undeleted"}, nil)})
+			if !errors.Is(err, tt.delete) || (tt.delete == nil) != (err == nil) {
+				t.Errorf("deleting the note: %v, want %v", err, tt.delete)
+			}
+			if tt.delete != nil {
+				if after := w.written(t); after != before {
+					t.Errorf("the refused batch wrote %+v, where there was %+v", after, before)
+				}
+			} else {
+				w.exec(t, "UPDATE note SET deleted_at = NULL WHERE id = $1", x)
+			}
+		})
+	}
+
+	// Each command needs its own scope, which another does not imply.
+	for _, tt := range []struct {
+		held []scope.Scope
+		// lacks is the scope that the batch is refused for, if any.
+		lacks scope.Scope
+	}{
+		{write, scope.SnapshotWrite},
+		{[]scope.Scope{scope.SnapshotWrite}, scope.ProjectWrite},
+		{[]scope.Scope{scope.ProjectWrite, scope.SnapshotWrite}, ""},
+	} {
+		actor := Actor{UserID: w.users[ownerUser], Token: &scope.Token{ID: ids.New(), WorkspaceID: w.ws,
+			Scopes: tt.held}}
+		before := w.written(t)
+		_, err := p.Apply(ctx, actor, w.project, []Command{
+			command(t, noteUpdate, notePayload{ID: xID, Body: "published"}, nil),
+			command(t, notePublish, noteIDPayload{ID: xID}, nil)})
+		var insufficient *scope.InsufficientError
+		switch {
+		case tt.lacks == "" && err != nil:
+			t.Errorf("publishing with %v: %v", tt.held, err)
+		case tt.lacks == "":
+		case !errors.As(err, &insufficient) || !errors.Is(err, ErrInsufficientScope) || insufficient.Scope != tt.lacks:
+			t.Errorf("publishing with %v: %v, want it refused for want of %s", tt.held, err, tt.lacks)
+		default:
+			if after := w.written(t); after != before {
+				t.Errorf("the batch refused for want of %s wrote %+v, where there was %+v", tt.lacks, after, before)
+			}
+		}
 	}
 }
 

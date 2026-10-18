@@ -64,6 +64,19 @@ const (
 	// description, default locale, entry board and node, and
 	// publish_min_role (FR-SNAP-01 AC3), and archiving and unarchiving it.
 	ChangeProjectSettings Operation = "project.settings"
+	// ManageOwnProjectTokens is creating, listing, and revoking one's own API
+	// tokens narrowed to a project (P, "Manage own API tokens narrowed to
+	// this project", FR-AUTH-04).
+	ManageOwnProjectTokens Operation = "project.tokens.own"
+	// ManageOwnWorkspaceTokens is creating, listing, and revoking one's own
+	// API tokens of the whole workspace (W, "Manage own workspace-wide API
+	// tokens").
+	ManageOwnWorkspaceTokens Operation = "workspace.tokens.own"
+	// ManageTokens is listing and revoking the other members' API tokens,
+	// those of the whole workspace and those narrowed to a project alike (W,
+	// "Manage API tokens (others')"), which no project grant authorises
+	// (FR-TEN-04 AC4).
+	ManageTokens Operation = "workspace.tokens"
 )
 
 // Scope is what an operation acts on, which says which role authorises it
@@ -114,6 +127,10 @@ var matrix = map[Operation]rule{
 	ManageProjectGrants:     {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
 	ReadProject:             {scope: Project, least: role.Viewer, denied: ErrInsufficientRole},
 	ChangeProjectSettings:   {scope: Project, least: role.Admin, denied: ErrInsufficientRole},
+	ManageOwnProjectTokens:  {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
+	// The workspace's own tokens and the others' are rows of their own.
+	ManageOwnWorkspaceTokens: {scope: Workspace, least: role.Editor, denied: ErrInsufficientRole},
+	ManageTokens:             {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
 }
 
 // Operations returns the operations of the matrix, in order of their names.

@@ -53,6 +53,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
@@ -488,11 +489,30 @@ func (s *Service) workspaceOf(ctx context.Context, userID, projectID ids.UUID) (
 	return ws.Bytes, nil
 }
 
-// Get returns the project projectID, with the role that the user userID acts
-// with on it, or ErrNotFound if it does not exist, is in the trash, or the
-// user's effective role on it is none.
-func (s *Service) Get(ctx context.Context, userID, projectID ids.UUID) (Visible, error) {
-	workspaceID, err := s.workspaceOf(ctx, userID, projectID)
+// actorWorkspace returns the workspace that the actor acts in on the project
+// projectID: that of their API token (scope.Token.Workspace), which acts in
+// no other, so that a transaction of it does not find a project of another
+// workspace, or else the project's, through the context bootstrap
+// (workspaceOf). It returns ErrNotFound as workspaceOf does, and for a
+// project other than the one that the token is narrowed to.
+func (s *Service) actorWorkspace(ctx context.Context, actor commands.Actor, projectID ids.UUID) (ids.UUID, error) {
+	if actor.Token == nil {
+		return s.workspaceOf(ctx, actor.UserID, projectID)
+	}
+	if ws, ok := actor.Token.Workspace(projectID); ok {
+		return ws, nil
+	}
+	return ids.UUID{}, ErrNotFound
+}
+
+// Get returns the project projectID, with the role that the actor acts with
+// on it, or ErrNotFound if it does not exist, is in the trash, the actor's
+// effective role on it is none, or the actor's API token does not cover it,
+// as one of another workspace, or narrowed to another project, does not
+// (FR-AUTH-04 AC3). The token's scopes are the route's to check.
+func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID ids.UUID) (Visible, error) {
+	userID := actor.UserID
+	workspaceID, err := s.actorWorkspace(ctx, actor, projectID)
 	if err != nil {
 		return Visible{}, err
 	}
@@ -629,13 +649,14 @@ type Patch struct {
 // the description lose the white space around them, the description's line
 // breaks are written as line feeds (input.LineFeeds), and the default locale
 // takes its canonical form. It returns ErrNotFound if the project does not
-// exist, is in the trash, or the actor's effective role on it is none,
-// ErrInsufficientRole unless the role is owner or admin (§5.6), then
-// input.FieldErrors if a field of p is not valid, commands.ErrProjectArchived
-// if the project is archived, and a *commands.RevisionConflictError if p
-// expects a revision that the project does not have, and changes nothing
-// then. A patch that names no change is not applied, and returns the
-// project, whatever revision it expects.
+// exist, is in the trash, the actor's effective role on it is none, or the
+// actor's API token does not cover it, commands.ErrInsufficientScope if the
+// token does not hold project:write, ErrInsufficientRole unless the role is
+// owner or admin (§5.6), then input.FieldErrors if a field of p is not
+// valid, commands.ErrProjectArchived if the project is archived, and a
+// *commands.RevisionConflictError if p expects a revision that the project
+// does not have, and changes nothing then. A patch that names no change is
+// not applied, and returns the project, whatever revision it expects.
 func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID ids.UUID, p Patch) (Visible, error) {
 	var steps []commands.Step
 	var errs input.FieldErrors
@@ -677,7 +698,7 @@ func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID id
 		// checks it before a command's payload would reach the project, and a
 		// patch that names no change is answered with the project that the
 		// check reads.
-		v, err := s.authorise(ctx, actor.UserID, projectID, authz.ChangeProjectSettings)
+		v, err := s.authorise(ctx, actor, projectID, patchOperation, patchScope)
 		switch {
 		case err != nil:
 			return Visible{}, err
@@ -690,14 +711,20 @@ func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID id
 }
 
 // authorise returns the project projectID, with the actor's effective role on
-// it, or ErrNotFound if the project does not exist, is in the trash, or the
-// role is none, and the error of authz.Check if the role does not allow op,
-// which is one of the project-scoped operations (P).
-func (s *Service) authorise(ctx context.Context, userID, projectID ids.UUID, op authz.Operation) (Visible,
-	error) {
-	p, err := s.Get(ctx, userID, projectID)
+// it, for a change of it by commands that need the operation op, one of the
+// project-scoped operations (P), and the scope needed of an API token, as
+// they are registered (Register), as the pipeline would apply them: it
+// returns the errors of Get, then commands.ErrInsufficientScope, as a
+// *scope.InsufficientError, if the actor's API token does not hold needed,
+// and the error of authz.Check if the role does not allow op.
+func (s *Service) authorise(ctx context.Context, actor commands.Actor, projectID ids.UUID, op authz.Operation,
+	needed scope.Scope) (Visible, error) {
+	p, err := s.Get(ctx, actor, projectID)
 	if err != nil {
 		return Visible{}, err
+	}
+	if !actor.Token.Allows(needed) {
+		return Visible{}, &scope.InsufficientError{Scope: needed}
 	}
 	if err := authz.Check(p.Role, op); err != nil {
 		return Visible{}, err
@@ -752,7 +779,7 @@ func (s *Service) apply(ctx context.Context, actor commands.Actor, projectID ids
 	if _, err := s.pipeline.Apply(ctx, actor, projectID, batch(projectID, rev, steps...)); err != nil {
 		return Visible{}, mapErr(err)
 	}
-	return s.Get(ctx, actor.UserID, projectID)
+	return s.Get(ctx, actor, projectID)
 }
 
 // batch returns the steps as a batch of commands of the project projectID,

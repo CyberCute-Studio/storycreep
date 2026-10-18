@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
@@ -30,10 +31,14 @@ var matrixRoles = []string{"owner", "admin", "editor", "commenter", "viewer", "g
 // rolesFixture is a workspace with a signed-in account of each of
 // matrixRoles, the owner's from first-run setup.
 type rolesFixture struct {
-	s  *server
-	d  *dbtest.Database
-	ws string
-	as map[string]signedIn
+	s *server
+	d *dbtest.Database
+	// admin is a connection to the database as the superuser, which the
+	// fixture's helpers share, rather than each open one that lasts as long
+	// as the test.
+	admin *pgx.Conn
+	ws    string
+	as    map[string]signedIn
 	// grants are the grants that each project that the fixture adds
 	// (project) gives the accounts of matrixRoles: the role of the grant of
 	// each account's membership, by the account's role in the workspace, as
@@ -46,7 +51,7 @@ type rolesFixture struct {
 func newRolesFixture(t *testing.T) *rolesFixture {
 	t.Helper()
 	s, d, owner, ws := inviteServer(t, "open", nil)
-	f := &rolesFixture{s: s, d: d, ws: ws, as: map[string]signedIn{"owner": owner}}
+	f := &rolesFixture{s: s, d: d, admin: d.Admin(t), ws: ws, as: map[string]signedIn{"owner": owner}}
 	for _, r := range matrixRoles[1:] {
 		// Not admin@example.com, which is the owner's.
 		email := "as-" + r + "@example.com"
@@ -70,7 +75,7 @@ func newRolesFixture(t *testing.T) *rolesFixture {
 func (f *rolesFixture) member(t *testing.T, role string) string {
 	t.Helper()
 	ctx := context.Background()
-	admin := f.d.Admin(t)
+	admin := f.admin
 	user, id := ids.New(), ids.New()
 	if _, err := admin.Exec(ctx, `INSERT INTO "user" (id, email, display_name) VALUES ($1, $2, 'Member')`, user,
 		user.String()+"@example.com"); err != nil {
@@ -89,7 +94,7 @@ func (f *rolesFixture) invite(t *testing.T, role string) string {
 	t.Helper()
 	id := ids.New()
 	owner := decode(t, ids.User, f.as["owner"].body.UserID)
-	if _, err := f.d.Admin(t).Exec(context.Background(), `INSERT INTO invite
+	if _, err := f.admin.Exec(context.Background(), `INSERT INTO invite
 		(id, workspace_id, role, token_hash, expires_at, created_by, link_holder)
 		VALUES ($1, $2, $3, $4, now() + interval '14 days', $5, $5)`, id, decode(t, ids.Workspace, f.ws), role,
 		isolationtest.TokenHash(), owner); err != nil {
@@ -104,7 +109,7 @@ func (f *rolesFixture) invite(t *testing.T, role string) string {
 func (f *rolesFixture) project(t *testing.T, state string) string {
 	t.Helper()
 	id := ids.New()
-	if _, err := f.d.Admin(t).Exec(context.Background(), `INSERT INTO project
+	if _, err := f.admin.Exec(context.Background(), `INSERT INTO project
 		(id, workspace_id, name, settings, archived_at, deleted_at, hard_delete_after)
 		VALUES ($1, $2, 'Lighthouse', '{"default_locale": "en", "publish_min_role": "editor", "entry": {}}',
 			CASE WHEN $3 = 'archived' THEN now() END, CASE WHEN $3 = 'deleted' THEN now() END,
@@ -124,7 +129,7 @@ func (f *rolesFixture) project(t *testing.T, state string) string {
 func (f *rolesFixture) membership(t *testing.T, r string) string {
 	t.Helper()
 	var id ids.UUID
-	if err := f.d.Admin(t).QueryRow(context.Background(), `SELECT id FROM membership
+	if err := f.admin.QueryRow(context.Background(), `SELECT id FROM membership
 		WHERE workspace_id = $1 AND user_id = $2`, decode(t, ids.Workspace, f.ws),
 		decode(t, ids.User, f.as[r].body.UserID)).Scan(&id); err != nil {
 		t.Fatalf("the membership of the %s: %v", r, err)
@@ -135,7 +140,7 @@ func (f *rolesFixture) membership(t *testing.T, r string) string {
 // grant gives the membership the role on the project, as the superuser.
 func (f *rolesFixture) grant(t *testing.T, membership, project, role string) {
 	t.Helper()
-	if _, err := f.d.Admin(t).Exec(context.Background(), `INSERT INTO project_grant
+	if _, err := f.admin.Exec(context.Background(), `INSERT INTO project_grant
 		(id, workspace_id, membership_id, project_id, role) VALUES ($1, $2, $3, $4, $5)`, ids.New(),
 		decode(t, ids.Workspace, f.ws), decode(t, ids.Membership, membership), decode(t, ids.Project, project),
 		role); err != nil {
@@ -433,6 +438,70 @@ var permissionMatrix = []struct {
 				}},
 		},
 	},
+	{
+		row:     "Manage own API tokens narrowed to this project",
+		op:      authz.ManageOwnProjectTokens,
+		allowed: [5]bool{true, true, true, false, false},
+		ops: []matrixOp{
+			{name: "make a token narrowed to a project", project: true, success: http.StatusCreated,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, projectTokensPath(f.project(t, "")),
+						tokenRequest(t, "project:read"), si.header(true))
+				}},
+			{name: "list a project's tokens", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, projectTokensPath(f.project(t, "")), nil, si.header(false))
+				}},
+			{name: "revoke one's own token narrowed to a project", project: true, success: http.StatusNoContent,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					token := f.tokenFor(t, decode(t, ids.User, si.body.UserID), p)
+					return call(f.s.main, http.MethodDelete, projectTokenPath(p, token), nil, si.header(true))
+				}},
+		},
+	},
+	{
+		row:     "Manage own workspace-wide API tokens",
+		op:      authz.ManageOwnWorkspaceTokens,
+		allowed: [5]bool{true, true, true, false, false},
+		ops: []matrixOp{
+			{name: "make a token of the workspace", success: http.StatusCreated,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, workspaceTokensPath(f.ws), tokenRequest(t, "snapshot:read"),
+						si.header(true))
+				}},
+			{name: "list the workspace's tokens", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, workspaceTokensPath(f.ws), nil, si.header(false))
+				}},
+			{name: "revoke one's own token of the workspace", success: http.StatusNoContent,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					token := f.tokenFor(t, decode(t, ids.User, si.body.UserID), "")
+					return call(f.s.main, http.MethodDelete, workspaceTokenPath(f.ws, token), nil, si.header(true))
+				}},
+		},
+	},
+	{
+		row:     "Manage API tokens (others')",
+		op:      authz.ManageTokens,
+		allowed: [5]bool{true, true, false, false, false},
+		ops: []matrixOp{
+			{name: "revoke another member's token of the workspace", success: http.StatusNoContent,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodDelete, workspaceTokenPath(f.ws, f.otherToken(t, "")), nil,
+						si.header(true))
+				}},
+			// A grant on the project shows it, but authorises nothing of the
+			// workspace (FR-TEN-04 AC4).
+			{name: "revoke another member's token narrowed to a project", project: true,
+				success: http.StatusNoContent,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodDelete, projectTokenPath(p, f.otherToken(t, p)), nil,
+						si.header(true))
+				}},
+		},
+	},
 }
 
 // TestPermissionMatrix checks that permissionMatrix has a row for each
@@ -560,6 +629,9 @@ var viewerReads = map[api.Capability]bool{
 	api.ManageProjectGrants:     false,
 	api.ReadProject:             true,
 	api.ChangeProjectSettings:   false,
+	// Listing tokens is managing them, which needs editor at least.
+	api.ManageWorkspaceTokens: false,
+	api.ManageProjectTokens:   false,
 }
 
 // sampleValue returns a value that the schema s accepts, with registry for
@@ -593,6 +665,12 @@ func sampleValue(t *testing.T, registry huma.Registry, s *huma.Schema) any {
 		return 1
 	case s.Type == "boolean":
 		return true
+	case s.Type == "array" && s.MinItems != nil && *s.MinItems > 0 && s.Items != nil:
+		v := make([]any, *s.MinItems)
+		for i := range v {
+			v[i] = sampleValue(t, registry, s.Items)
+		}
+		return v
 	case s.Type == "array":
 		return []any{}
 	}
@@ -668,15 +746,18 @@ func routeCalls(t *testing.T, f *rolesFixture, params map[string]string) []route
 }
 
 // routeParams returns a value for each parameter of the paths of the
-// fixture's routes: its workspace, and a membership, an invitation, and a
-// project of it, which the fixture adds.
+// fixture's routes: its workspace, and a membership, an invitation, a
+// project, and the owner's API token narrowed to the project, of it, which
+// the fixture adds.
 func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 	t.Helper()
+	p := f.project(t, "")
 	return map[string]string{
 		"workspace_id":  f.ws,
 		"membership_id": f.member(t, "editor"),
 		"invite_id":     f.invite(t, "editor"),
-		"project_id":    f.project(t, ""),
+		"project_id":    p,
+		"token_id":      f.token(t, "owner", p),
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -14,9 +15,12 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/apitoken"
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
 
@@ -150,15 +154,28 @@ func refuseCrossSite(next http.Handler) http.Handler {
 
 type currentKey struct{}
 
-// current is the session that a request is made with, and its secret.
+// current is who makes a request: the user, and the session that they make
+// it with, and its secret, or else the API token that they make it with. A
+// route that takes no token (api.TokenScope) always has the session, because
+// the authenticator refuses a token there.
 type current struct {
+	userID  ids.UUID
 	session account.Session
 	secret  secret.Value
+	// token is the API token of a request made with one, and what it
+	// restricts the user to, or nil for a request made with a session.
+	token *scope.Token
 }
 
-// currentFrom returns the session of a request's context, which the
+// actor returns the user of the request as the actor of the commands that it
+// applies, and of the reads that a token is held to.
+func (c current) actor(ctx context.Context) commands.Actor {
+	return commands.Actor{UserID: c.userID, Token: c.token, Client: clientFrom(ctx)}
+}
+
+// currentFrom returns who makes a request, from its context, which the
 // authenticator put there, or unauthenticated if it has none, which only a
-// route that does not need a session could have.
+// route that does not need an authenticated caller could have.
 func currentFrom(ctx context.Context) (current, error) {
 	c, ok := ctx.Value(currentKey{}).(current)
 	if !ok {
@@ -167,38 +184,116 @@ func currentFrom(ctx context.Context) (current, error) {
 	return c, nil
 }
 
-// authenticator returns the Authenticator of the API (api.MuxOptions): it
-// finds the session that a request's cookie holds the secret of, and, for a
-// request that changes something, checks its CSRF token first, so that a
-// request without one is refused before the database is asked. A request
-// without the cookie, or with one of a session that has ended, is answered
-// with unauthenticated, and the answer clears the cookie in the second case.
-func authenticator(accounts *account.Service, cookie sessionCookie) api.Authenticator {
-	return func(hctx huma.Context) (context.Context, error) {
+// authenticator returns the Authenticator of the API (api.MuxOptions). A
+// request whose Authorization header holds an API token (bearerToken) is
+// made with the token, whatever cookie it has, and tokens checks it against
+// the scope that the route takes a token with, or refuses it on a route that
+// takes none (PRD FR-AUTH-04). It needs no CSRF token, because no browser
+// sends an Authorization header that a page of another site chose. Any
+// other request is made with its session: the authenticator finds the
+// session that its cookie holds the secret of, and, for a request that
+// changes something, checks its CSRF token first, so that a request without
+// one is refused before the database is asked. A request without the
+// cookie, or with one of a session that has ended, is answered with
+// unauthenticated, and the answer clears the cookie in the second case. On a
+// route that takes a token, every answer of unauthenticated and of
+// insufficient_scope carries the challenge of the Bearer scheme that RFC 6750
+// §3 gives it, so that a client of the API learns what a token needs there.
+func authenticator(accounts *account.Service, tokens *apitoken.Service, cookie sessionCookie) api.Authenticator {
+	return func(hctx huma.Context, needed scope.Scope) (context.Context, error) {
 		r, _ := humachi.Unwrap(hctx)
 		ctx := hctx.Context()
+		if value, ok := bearerToken(r); ok {
+			cred, err := tokens.Authenticate(ctx, value, needed, clientFrom(ctx))
+			switch {
+			case errors.Is(err, apitoken.ErrInvalid):
+				return nil, unauthenticated(needed, `error="invalid_token"`, nil)
+			case errors.Is(err, apitoken.ErrSessionRequired):
+				return nil, api.NewError(api.CodeSessionRequired)
+			case errors.Is(err, apitoken.ErrInsufficientScope):
+				return nil, insufficientScope(needed)
+			case err != nil:
+				return nil, err
+			}
+			return context.WithValue(ctx, currentKey{}, current{userID: cred.UserID, token: &cred.Token}), nil
+		}
 		value, ok := cookie.read(r)
 		if !ok {
-			return nil, api.NewError(api.CodeUnauthenticated)
+			return nil, unauthenticated(needed, "", nil)
 		}
 		if !safeMethod(r.Method) && !validCSRF(r.Header.Get(csrfHeader), value) {
 			return nil, api.NewError(api.CodeCSRFFailed)
 		}
 		session, err := accounts.Session(ctx, value)
 		if errors.Is(err, account.ErrNoSession) {
-			return nil, signedOut(cookie)
+			return nil, signedOut(needed, cookie)
 		}
 		if err != nil {
 			return nil, err
 		}
-		return context.WithValue(ctx, currentKey{}, current{session: session, secret: value}), nil
+		return context.WithValue(ctx, currentKey{}, current{userID: session.UserID, session: session,
+			secret: value}), nil
 	}
 }
 
+// bearerToken returns the API token that r's Authorization header holds, as
+// the credential of the Bearer scheme (RFC 6750 §2.1), and false if it holds
+// none. A credential that does not start with the prefix of a token's secret
+// is no API token, and is left alone, so that a proxy in front of the server
+// that authenticates its users with a header of its own, as basic
+// authentication, keeps working with the session cookie.
+func bearerToken(r *http.Request) (secret.Value, bool) {
+	credential, ok := bearerCredential(r)
+	if !ok || !strings.HasPrefix(credential, apitoken.Prefix) {
+		return secret.Value{}, false
+	}
+	return secret.New(credential), true
+}
+
+// bearerChallenge returns the challenge of the Bearer scheme (RFC 6750 §3)
+// that an answer of the API carries in its WWW-Authenticate header, with the
+// attributes attrs after the realm, if there are any.
+func bearerChallenge(attrs string) string {
+	if attrs == "" {
+		return `Bearer realm="storycreep"`
+	}
+	return `Bearer realm="storycreep", ` + attrs
+}
+
+// unauthenticated returns unauthenticated, with the headers h, if any, and,
+// on a route that takes an API token (needed is not ""), the challenge of the
+// Bearer scheme, with the attributes attrs (bearerChallenge): RFC 6750 §3
+// gives one to the answer to a request without a token as to one whose
+// token is not valid (error="invalid_token"). A session-only route asks for
+// no token, because it takes none, but answers one that is not valid with
+// error="invalid_token" all the same.
+func unauthenticated(needed scope.Scope, attrs string, h http.Header) error {
+	if needed != "" || attrs != "" {
+		if h == nil {
+			h = http.Header{}
+		}
+		h.Set(api.WWWAuthenticateHeader, bearerChallenge(attrs))
+	}
+	if h == nil {
+		return api.NewError(api.CodeUnauthenticated)
+	}
+	return huma.ErrorWithHeaders(api.NewError(api.CodeUnauthenticated), h)
+}
+
+// insufficientScope returns insufficient_scope, for a request made with an
+// API token that does not hold needed, with the challenge of the Bearer
+// scheme that RFC 6750 §3.1 gives it, which names the scope too.
+func insufficientScope(needed scope.Scope) error {
+	return huma.ErrorWithHeaders(&api.Error{Code: api.CodeInsufficientScope, Details: map[string]any{"scope": needed}},
+		http.Header{api.WWWAuthenticateHeader: {bearerChallenge(`error="insufficient_scope", scope="` +
+			string(needed) + `"`)}})
+}
+
 // signedOut returns unauthenticated, with the header that clears the
-// cookie of a session that has ended.
-func signedOut(cookie sessionCookie) error {
-	return huma.ErrorWithHeaders(api.NewError(api.CodeUnauthenticated), http.Header{"Set-Cookie": {cookie.clear()}})
+// cookie of a session that has ended, on a route that takes an API token
+// that holds needed, or "" for one that takes none, as unauthenticated does.
+func signedOut(needed scope.Scope, cookie sessionCookie) error {
+	return unauthenticated(needed, "", http.Header{"Set-Cookie": {cookie.clear()}})
 }
 
 // sessionBody is a session, as the API shows it.
@@ -539,7 +634,8 @@ func registerSessions(m *api.Mux, accounts *account.Service, limits *ratelimit.L
 				"errors": []api.Problem{{Location: "body.current_password", Message: "is not the account's password"}},
 			}}
 		case errors.Is(err, account.ErrNoSession):
-			return nil, signedOut(cookie)
+			// The route takes no token.
+			return nil, signedOut("", cookie)
 		case errors.As(err, &weak):
 			return nil, weakPasswordError(weak, "body.new_password")
 		case err != nil:

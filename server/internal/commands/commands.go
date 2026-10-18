@@ -30,9 +30,17 @@
 // and once it commits, the Notifier is told its seq (§10.2 step 7). A batch
 // that does not apply changes nothing at all (FR-API-03 AC2).
 //
-// Token scopes join the authorisation with API tokens (plan item 26), and
-// the idempotency of command IDs and the multi-batch form with the command
-// endpoint (plan item 28).
+// A batch applied with an API token is authorised by its owner's roles, as
+// any other, and by the token on top (FR-AUTH-04, §5.6): a token that does
+// not cover the project, as one of another workspace, or one narrowed to
+// another project, is told that the project does not exist, before anything
+// of it is read (AC3), and one that does not hold the scope of every command
+// of the batch (Spec.Scope), as project:write for a change of the draft, is
+// refused with a *scope.InsufficientError that names the scope (AC2),
+// whatever the owner's role.
+//
+// The idempotency of command IDs and the multi-batch form join with the
+// command endpoint (plan item 28).
 package commands
 
 import (
@@ -57,6 +65,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
@@ -79,6 +88,10 @@ var (
 	// for one whose operation only an owner may do, as package authz decides.
 	ErrInsufficientRole = authz.ErrInsufficientRole
 	ErrOwnerRequired    = authz.ErrOwnerRequired
+	// ErrInsufficientScope is returned, as a *scope.InsufficientError that
+	// names the scope, for a batch applied with an API token that does not
+	// hold the scope of one of its commands (Spec.Scope, FR-AUTH-04 AC2).
+	ErrInsufficientScope = scope.ErrInsufficientScope
 )
 
 // Ref names an entity: its kind and its ID.
@@ -113,9 +126,9 @@ type Command struct {
 // Actor is who applies a batch.
 type Actor struct {
 	UserID ids.UUID
-	// TokenID is the API token that the user acts with, or zero for a
-	// session (FR-AUTH-04).
-	TokenID ids.UUID
+	// Token is the API token that the user acts with, and what it restricts
+	// them to, or nil for a session (FR-AUTH-04).
+	Token *scope.Token
 	// Client is what the audit log records of the client.
 	Client audit.Client
 }
@@ -237,7 +250,10 @@ func (p *Pipeline) Collector() prometheus.Collector {
 // *InvalidError if the batch is not valid; ErrNotFound if the project does not
 // exist, its workspace's deletion is pending, the actor's effective role on
 // it is none, or it is in the trash and a command does not apply there
-// (Spec.Trashed); ErrInsufficientRole or ErrOwnerRequired if the actor's role
+// (Spec.Trashed), or the actor's API token does not cover the project;
+// ErrInsufficientScope, as a *scope.InsufficientError, if the token does not
+// hold a command's scope (Spec.Scope);
+// ErrInsufficientRole or ErrOwnerRequired if the actor's role
 // does not allow a command's operation; ErrProjectArchived if the project is
 // archived and a command does not apply to it then (Spec.Archived); an
 // *entitlements.LimitError if the
@@ -264,20 +280,22 @@ func (p *Pipeline) Apply(ctx context.Context, actor Actor, projectID ids.UUID, b
 
 // apply applies the decoded commands cmds.
 func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, cmds []decoded) (Result, error) {
-	workspaceID, err := p.workspaceOf(ctx, actor.UserID, projectID)
+	workspaceID, err := p.actorWorkspace(ctx, actor, projectID)
 	if err != nil {
 		return Result{}, err
 	}
 	var res Result
 	err = p.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		// workspaceOf found the workspace active in a transaction of its own,
-		// so the batch's reads it again, before the roles, so that a deletion
-		// requested in between refuses the batch as well, and with 404,
-		// whatever the actor's role would allow (FR-TEN-05 AC1). The same read
-		// finds whether the project is in the trash, where it is not found by
-		// a batch that may not apply there, before the actor's role is, so
-		// that a refusal of the role does not tell that it exists.
+		// workspaceOf, or the authentication of the actor's API token, found
+		// the workspace active in a transaction of its own, so the batch's
+		// reads it again, before the roles, so that a deletion requested in
+		// between refuses the batch as well, and with 404, whatever the
+		// actor's role would allow (FR-TEN-05 AC1). The same read finds
+		// whether the project is in the trash, where it is not found by a
+		// batch that may not apply there, before the actor's role is, so that
+		// a refusal of the role does not tell that it exists, and finds no
+		// project of another workspace than a token's.
 		deleted, err := q.ProjectInTrash(ctx, queries.ProjectInTrashParams{WorkspaceID: nullUUID(workspaceID),
 			ID: nullUUID(projectID)})
 		switch {
@@ -291,6 +309,13 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		roles, err := p.roles(ctx, q, actor.UserID, workspaceID, projectID)
 		if err != nil {
 			return err
+		}
+		// A token needs the scope of each command, whatever its owner's role
+		// allows.
+		for _, c := range cmds {
+			if !actor.Token.Allows(c.spec.scope) {
+				return &scope.InsufficientError{Scope: c.spec.scope}
+			}
 		}
 		for _, c := range cmds {
 			if err := authz.Check(roles[c.spec.capability.Scope()], c.spec.capability); err != nil {
@@ -401,6 +426,23 @@ func archived(c decoded) bool { return c.spec.archived }
 // allApply reports whether every command of cmds applies, as applies says.
 func allApply(cmds []decoded, applies func(decoded) bool) bool {
 	return !slices.ContainsFunc(cmds, func(c decoded) bool { return !applies(c) })
+}
+
+// actorWorkspace returns the workspace that the actor acts in on the
+// project: that of their API token (scope.Token.Workspace), which acts in no
+// other, so that the batch's transaction does not find a project of another
+// workspace, which it answers with ErrNotFound before anything of it is read
+// but whether it exists, or else the project's (workspaceOf). It returns
+// ErrNotFound as workspaceOf does, and for a project other than the one that
+// the token is narrowed to.
+func (p *Pipeline) actorWorkspace(ctx context.Context, actor Actor, projectID ids.UUID) (ids.UUID, error) {
+	if actor.Token == nil {
+		return p.workspaceOf(ctx, actor.UserID, projectID)
+	}
+	if ws, ok := actor.Token.Workspace(projectID); ok {
+		return ws, nil
+	}
+	return ids.UUID{}, ErrNotFound
 }
 
 // workspaceOf returns the workspace of the project, through the context
@@ -697,7 +739,7 @@ func (p *Pipeline) record(ctx context.Context, q *queries.Queries, t *Tx, cmds [
 	ws, project := nullUUID(t.workspace), nullUUID(t.project)
 	if err := q.InsertOperation(ctx, queries.InsertOperationParams{ID: nullUUID(ids.New()), WorkspaceID: ws,
 		ProjectID: project, Seq: res.Seq, CommandIds: commandIDs, ActorUserID: nullUUID(t.actor.UserID),
-		ActorTokenID: nullUUID(t.actor.TokenID), Type: typ, Payload: encodedPayload, Inverse: inverse,
+		ActorTokenID: nullUUID(t.actor.Token.TokenID()), Type: typ, Payload: encodedPayload, Inverse: inverse,
 		EntityRefs: encodedRefs}); err != nil {
 		return fmt.Errorf("commands: append the operation: %w", err)
 	}

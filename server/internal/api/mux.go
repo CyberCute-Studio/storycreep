@@ -28,6 +28,7 @@ import (
 	"golang.org/x/text/language"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
 
 // DefaultMaxBodyBytes is the largest request body a route accepts unless it
@@ -74,6 +75,9 @@ type Mux struct {
 	router *chi.Mux
 	api    huma.API
 	routes map[Route]Capability
+	// tokens are the routes that take an API token, each with the scope
+	// that the token must hold (TokenScope).
+	tokens map[Route]scope.Scope
 	// pages are the patterns that HandlePage registered.
 	pages map[string]bool
 	// authenticate is MuxOptions.Authenticate.
@@ -102,11 +106,14 @@ type MuxOptions struct {
 
 // Authenticator finds who makes a request of an operation whose capability
 // needs an authenticated caller, before the operation reads the request's
-// parameters or body, as Guard checks. It returns the context that the
-// operation runs with, which says who the caller is, or the error that the
-// request is answered with, as Register answers a handler's error, such as
-// unauthenticated for a request without credentials.
-type Authenticator func(ctx huma.Context) (context.Context, error)
+// parameters or body, as Guard checks. token is the scope that the route
+// takes an API token with (TokenScope), or "" for a route that takes none,
+// which the Authenticator refuses a token on (PRD FR-AUTH-04). It returns
+// the context that the operation runs with, which says who the caller is, or
+// the error that the request is answered with, as Register answers a
+// handler's error, such as unauthenticated for a request without
+// credentials.
+type Authenticator func(ctx huma.Context, token scope.Scope) (context.Context, error)
 
 // NewMux returns a Mux without routes.
 func NewMux(opts MuxOptions) *Mux {
@@ -118,8 +125,8 @@ func NewMux(opts MuxOptions) *Mux {
 	if locales == nil {
 		locales = i18n.Default()
 	}
-	m := &Mux{router: chi.NewRouter(), routes: map[Route]Capability{}, pages: map[string]bool{},
-		authenticate: opts.Authenticate}
+	m := &Mux{router: chi.NewRouter(), routes: map[Route]Capability{}, tokens: map[Route]scope.Scope{},
+		pages: map[string]bool{}, authenticate: opts.Authenticate}
 	m.router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			next.ServeHTTP(w, r.WithContext(withLogger(r.Context(), log)))
@@ -183,6 +190,13 @@ const (
 	RateLimitResetHeader     = "RateLimit-Reset"
 	RetryAfterHeader         = "Retry-After"
 )
+
+// WWWAuthenticateHeader names the scheme of the credentials that an answer
+// of 401 unauthenticated wants (RFC 9110 §11.6.1), which package httpserver
+// sets, as the challenge of the Bearer scheme (RFC 6750 §3), on a route that
+// takes an API token, for a token that is not valid, and for one without the
+// route's scope, and the error response documents (errorResponse).
+const WWWAuthenticateHeader = "WWW-Authenticate"
 
 // replacedHeaders are the headers that an operation's error replaces, rather
 // than adds to (replaceHeaders), by their canonical names: Cache-Control,
@@ -288,6 +302,24 @@ func (m *Mux) IsPage(r Route) bool {
 	return r.Method == http.MethodGet && m.pages[r.Pattern]
 }
 
+// Option is an option of a route that Register registers.
+type Option func(*routeOptions)
+
+// routeOptions are what a route's Options set.
+type routeOptions struct {
+	token scope.Scope
+}
+
+// TokenScope says that a route takes an API token too, besides a session,
+// and that the token must hold the scope s, or a scope that implies it (PRD
+// FR-AUTH-04): the Mux's Authenticator is told s. A route registered
+// without it is session-only, and the Authenticator refuses a token there.
+// Register panics on TokenScope for a capability that needs no
+// authenticated caller, or with a value that is not a scope.
+func TokenScope(s scope.Scope) Option {
+	return func(o *routeOptions) { o.token = s }
+}
+
 // Register registers a huma operation that requires c. Its request body is
 // limited to DefaultMaxBodyBytes, unless op.MaxBodyBytes sets another limit,
 // or a negative one for none, and must arrive within a minute, unless
@@ -297,18 +329,34 @@ func (m *Mux) IsPage(r Route) bool {
 //
 // If c needs an authenticated caller, the Mux's Authenticator runs before
 // the operation's own middleware, and handler runs with the context that it
-// returns. A route therefore cannot declare such a capability and forget to
+// returns, with the scope of the route's TokenScope, if opts have one. A
+// route therefore cannot declare such a capability and forget to
 // authenticate its caller. Register panics if the Mux has no Authenticator
 // then.
-func Register[I, O any](m *Mux, c Capability, op huma.Operation, handler func(context.Context, *I) (*O, error)) {
+func Register[I, O any](m *Mux, c Capability, op huma.Operation, handler func(context.Context, *I) (*O, error),
+	opts ...Option) {
+	var o routeOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	switch {
+	case o.token != "" && !c.Authenticated():
+		panic(fmt.Sprintf("api: %s %s requires %s, which needs no authenticated caller, so it takes no API token",
+			op.Method, op.Path, c))
+	case o.token != "" && !o.token.Known():
+		panic(fmt.Sprintf("api: %s %s takes an API token with the unknown scope %q", op.Method, op.Path, o.token))
+	}
 	if c.Authenticated() {
 		if m.authenticate == nil {
 			panic(fmt.Sprintf("api: %s %s requires %s, which needs an authenticated caller, and the Mux has no "+
 				"Authenticator", op.Method, op.Path, c))
 		}
-		op.Middlewares = append(huma.Middlewares{authenticateWith(m.authenticate)}, op.Middlewares...)
+		op.Middlewares = append(huma.Middlewares{authenticateWith(m.authenticate, o.token)}, op.Middlewares...)
 	}
 	m.declare(op.Method, op.Path, c)
+	if o.token != "" {
+		m.tokens[Route{op.Method, op.Path}] = o.token
+	}
 	// huma documents the envelope as the default response only for an
 	// operation that documents no other response than its success, so an
 	// operation that does, such as one that answers 304 too, would have its
@@ -362,11 +410,11 @@ func Guard(check func(context.Context) error) func(huma.Context, func(huma.Conte
 }
 
 // authenticateWith returns middleware for an operation that runs it with the
-// context that authenticate returns, or answers the request with its error,
-// as Guard does.
-func authenticateWith(authenticate Authenticator) func(huma.Context, func(huma.Context)) {
+// context that authenticate returns, given the scope that the route takes an
+// API token with, or answers the request with its error, as Guard does.
+func authenticateWith(authenticate Authenticator, token scope.Scope) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		authenticated, err := authenticate(ctx)
+		authenticated, err := authenticate(ctx, token)
 		if err != nil {
 			r, w := humachi.Unwrap(ctx)
 			WriteError(w, r, err)
@@ -379,6 +427,13 @@ func authenticateWith(authenticate Authenticator) func(huma.Context, func(huma.C
 // Routes returns every route registered, with the capability it requires.
 func (m *Mux) Routes() map[Route]Capability {
 	return maps.Clone(m.routes)
+}
+
+// TokenScopes returns the routes that take an API token, each with the scope
+// that the token must hold (TokenScope). Every other route is session-only,
+// or needs no authenticated caller.
+func (m *Mux) TokenScopes() map[Route]scope.Scope {
+	return maps.Clone(m.tokens)
 }
 
 // Walk calls fn for every route that the router has, whether or not it was
