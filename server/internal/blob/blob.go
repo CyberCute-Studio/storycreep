@@ -60,9 +60,10 @@ type Store interface {
 	Delete(ctx context.Context, key string) error
 	// List calls fn with the Info of each blob whose key starts with
 	// prefix, which is "" or a key's first segments, each followed by a
-	// slash, as "{workspace}/", in the order of their keys, until fn returns
-	// an error, which List returns.
-	List(ctx context.Context, prefix string, fn func(Info) error) error
+	// slash, as "{workspace}/", and sorts after after, which is "" for every
+	// one, or any string, which need not be a key, in the order of their
+	// keys, until fn returns an error, which List returns.
+	List(ctx context.Context, prefix, after string, fn func(Info) error) error
 	// SignedURL returns a URL that reads the blob of key, until ttl has
 	// passed, with the content type and the Content-Disposition that it
 	// names, and a Cache-Control that lets the browser that reads it keep

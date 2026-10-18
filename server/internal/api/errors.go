@@ -323,13 +323,18 @@ var codes = []codeSpec{
 		"The uploaded file is not an image that an upload takes (PRD FR-ASSET-02): a PNG, JPEG, GIF, WebP, or " +
 			"SVG image, which the server tells from the file's content, never from its name or the request's " +
 			"`Content-Type`. Nothing is stored. `details.reason` says why: `type`, for a file that is none of " +
-			"them, as text whose name ends in `.png` (FR-ASSET-02 AC1), or an SVG file whose root is not an " +
-			"`svg` element of SVG's namespace; `malformed`, for one that starts as an image does but whose " +
-			"header does not decode, or an SVG file that is not well-formed XML in UTF-8, nests its elements more " +
-			"than 256 deep, or whose document type declares an entity that is not text; or `dimensions`, for an " +
-			"image of more than 25,000,000 pixels, or of more than 16,384 on a side. `details.errors` names the " +
-			"body, with its `location` and a `message`, as for `validation_failed`. An SVG file that holds a script " +
-			"or refers to something outside itself is not refused: the server stores it without them."},
+			"them, as text whose name ends in `.png` (FR-ASSET-02 AC1), or an SVG file whose root is not an `svg` " +
+			"element of SVG's namespace; `malformed`, for one that starts as an image does but whose header does " +
+			"not decode, or an SVG file that is not well-formed XML in UTF-8, as one of more than one document " +
+			"type; `unsupported`, for an SVG file that is well-formed, but that declares an encoding other than " +
+			"UTF-8, or a version of XML other than 1.0, nests its elements more than 256 deep, has an element of " +
+			"more than 1,024 attributes, or elements that enclose one another and declare more than 1,024 " +
+			"namespaces in all, or whose document type declares an entity that is not text of at most 1,024 " +
+			"bytes, more than 64 entities, or entities whose references expand to more than 4 MiB in all; or " +
+			"`dimensions`, for an image of more than 25,000,000 pixels, or of more than 16,384 on a side. " +
+			"`details.errors` names the body, with its `location` and a `message` that says what is wrong, as for " +
+			"`validation_failed`. An SVG file that holds a script or refers to something outside itself is not " +
+			"refused: the server stores it without them."},
 	{CodeSlugInvalid, http.StatusUnprocessableEntity, i18n.K("error.slug_invalid"),
 		"A slug is not one that the route takes (PRD FR-TEN-01 AC3). A workspace's slug is groups of lowercase " +
 			"ASCII letters and digits joined by single hyphens, as `harbour-team`, of at most 64 characters, and " +

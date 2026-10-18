@@ -160,7 +160,7 @@ func Suite(t *testing.T, store blob.Store) {
 			t.Errorf("the workspace lists %q, want %q in order", keys, want)
 		}
 		sizes := map[string]int64{}
-		if err := store.List(ctx, mine+"/", func(i blob.Info) error {
+		if err := store.List(ctx, mine+"/", "", func(i blob.Info) error {
 			sizes[i.Key] = i.Size
 			return nil
 		}); err != nil {
@@ -184,9 +184,29 @@ func Suite(t *testing.T, store blob.Store) {
 		if keys := list(t, store, nested+"/"); !slices.Equal(keys, ordered) {
 			t.Errorf("the nested keys list %q, want %q in order", keys, ordered)
 		}
+		// A listing after a key, or any string, lists the keys that sort after
+		// it, in a directory too, and none of a directory whose keys all sort
+		// before it.
+		for _, tt := range []struct {
+			prefix, after string
+			want          []string
+		}{
+			{mine + "/", mine + "/a.png", want[1:]},
+			{mine + "/", mine + "/b", want[1:]},
+			{mine + "/", mine + "/c.jpg", nil},
+			{mine + "/", "", want},
+			{nested + "/", nested + "/a-1/x.png", ordered[1:]},
+			{nested + "/", nested + "/a/", ordered[2:]},
+			{nested + "/", nested + "/a/x.png", ordered[3:]},
+			{nested + "/", nested + "/b/c", ordered[3:]},
+		} {
+			if keys := listAfter(t, store, tt.prefix, tt.after); !slices.Equal(keys, tt.want) {
+				t.Errorf("the keys of %s after %q list %q, want %q", tt.prefix, tt.after, keys, tt.want)
+			}
+		}
 		stop := errors.New("stop")
 		calls := 0
-		err := store.List(ctx, mine+"/", func(blob.Info) error {
+		err := store.List(ctx, mine+"/", "", func(blob.Info) error {
 			calls++
 			return stop
 		})
@@ -206,7 +226,7 @@ func Suite(t *testing.T, store blob.Store) {
 			}
 		}
 		for _, prefix := range []string{"a", "../", "a/../"} {
-			if err := store.List(ctx, prefix, func(blob.Info) error { return nil }); err == nil {
+			if err := store.List(ctx, prefix, "", func(blob.Info) error { return nil }); err == nil {
 				t.Errorf("List takes the prefix %q", prefix)
 			}
 		}
@@ -278,8 +298,14 @@ func read(t *testing.T, store blob.Store, key string) []byte {
 // list returns the keys that store lists under prefix.
 func list(t *testing.T, store blob.Store, prefix string) []string {
 	t.Helper()
+	return listAfter(t, store, prefix, "")
+}
+
+// listAfter returns the keys that store lists under prefix after after.
+func listAfter(t *testing.T, store blob.Store, prefix, after string) []string {
+	t.Helper()
 	var keys []string
-	if err := store.List(context.Background(), prefix, func(i blob.Info) error {
+	if err := store.List(context.Background(), prefix, after, func(i blob.Info) error {
 		keys = append(keys, i.Key)
 		return nil
 	}); err != nil {

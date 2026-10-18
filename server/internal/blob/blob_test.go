@@ -120,7 +120,7 @@ func TestLocalStaysInItsDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	var keys []string
-	if err := store.List(ctx, "w2/", func(i blob.Info) error {
+	if err := store.List(ctx, "w2/", "", func(i blob.Info) error {
 		keys = append(keys, i.Key)
 		return nil
 	}); err != nil {

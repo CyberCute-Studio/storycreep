@@ -172,8 +172,9 @@ const staleTemp = time.Hour
 // directory a follow those of a-1, because a hyphen sorts before a slash. It
 // skips the files that Put is writing, and removes those that a Put left
 // behind more than staleTemp ago, as when the process died while it wrote,
-// which no key names, and nothing else would ever remove.
-func (l *Local) List(ctx context.Context, prefix string, fn func(Info) error) error {
+// which no key names, and nothing else would ever remove, and the files whose
+// keys sort before after, and goes into no directory whose keys all do.
+func (l *Local) List(ctx context.Context, prefix, after string, fn func(Info) error) error {
 	if err := checkPrefix(prefix); err != nil {
 		return err
 	}
@@ -181,7 +182,7 @@ func (l *Local) List(ctx context.Context, prefix string, fn func(Info) error) er
 	if start == "" {
 		start = "."
 	}
-	err := l.walk(ctx, start, true, fn)
+	err := l.walk(ctx, start, after, true, fn)
 	if err != nil {
 		return fmt.Errorf("blob: list %s: %w", prefix, err)
 	}
@@ -189,9 +190,10 @@ func (l *Local) List(ctx context.Context, prefix string, fn func(Info) error) er
 }
 
 // walk calls fn with the Info of each file of the directory dir, and of its
-// directories, in the order of their keys (List). The directory of the
-// prefix, which is top, may not exist, which lists nothing.
-func (l *Local) walk(ctx context.Context, dir string, top bool, fn func(Info) error) error {
+// directories, whose key sorts after after, in the order of their keys
+// (List), and goes into no directory whose keys all sort before it. The
+// directory of the prefix, which is top, may not exist, which lists nothing.
+func (l *Local) walk(ctx context.Context, dir, after string, top bool, fn func(Info) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -220,11 +222,17 @@ func (l *Local) walk(ctx context.Context, dir string, top bool, fn func(Info) er
 		case strings.HasPrefix(e.Name(), "."):
 			continue
 		case e.IsDir():
-			if err := l.walk(ctx, p, false, fn); err != nil {
+			// Every key of the directory starts with its path and a slash, so
+			// all of them sort before after if after sorts after that, and
+			// does not start with it.
+			if d := p + "/"; after > d && !strings.HasPrefix(after, d) {
+				continue
+			}
+			if err := l.walk(ctx, p, after, false, fn); err != nil {
 				return err
 			}
 			continue
-		case !e.Type().IsRegular():
+		case !e.Type().IsRegular() || p <= after:
 			continue
 		}
 		info, err := e.Info()

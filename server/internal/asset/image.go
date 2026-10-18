@@ -54,6 +54,13 @@ const (
 	// ReasonMalformed is a file that starts as one of the types, but whose
 	// header does not decode, or an SVG that is not well-formed XML.
 	ReasonMalformed = "malformed"
+	// ReasonUnsupported is an SVG that is well-formed XML, but that the
+	// server does not take: one that declares another encoding than UTF-8,
+	// or another version of XML than 1.0, whose elements nest too deeply, or
+	// have, or declare, too many attributes or namespaces, or whose document
+	// type declares entities that the server does not read, or that expand
+	// too far (sanitizeSVG).
+	ReasonUnsupported = "unsupported"
 	// ReasonDimensions is an image larger than MaxPixels or MaxSide.
 	ReasonDimensions = "dimensions"
 )
@@ -153,11 +160,14 @@ var exifTag = []byte("Exif\x00\x00")
 // jpegOrientation returns the orientation that the EXIF data of the JPEG
 // file data says that its pixels are shown in, 1 to 8 (orient), or 1 if it
 // says none, or data is not a JPEG file whose segments read up to it. Only
-// the segments before the image data are read, as EXIF is among them.
+// the segments before the first scan are read, as EXIF is among them.
 func jpegOrientation(data []byte) int {
 	o := 1
 	jpegSegments(data, func(marker byte, segment []byte) bool {
-		if marker == 0xe1 && bytes.HasPrefix(segment, exifTag) {
+		switch {
+		case marker == 0xda:
+			return false
+		case marker == 0xe1 && bytes.HasPrefix(segment, exifTag):
 			o = tiffOrientation(segment[len(exifTag):])
 			return false
 		}
@@ -167,23 +177,33 @@ func jpegOrientation(data []byte) int {
 }
 
 // jpegSegments calls fn with the marker and the data of each segment of the
-// JPEG file data that precedes its image data, in order, until fn returns
-// false, or a segment does not read, or data is not a JPEG file. It reads
-// the markers as image/jpeg's own decoder does, so that it finds the same
-// frame header that the decoder acts on: it skips the extraneous bytes that
-// may fall between segments, and the escaped 0xff00 of entropy-coded data,
-// rather than read either as a segment, which a crafted file could otherwise
-// use to show this reader a smaller frame than the decoder reads, and so a
-// smaller estimate of the memory that decoding it takes (jpegDecodeBytes).
+// JPEG file data, in order, a scan's header among them, until fn returns
+// false, or the file ends, or a segment does not read, or data is not a JPEG
+// file. It reads the markers as image/jpeg's own decoder does, so that it
+// finds every segment that the decoder acts on, those between and after the
+// scans too, and the same frame header: it skips the extraneous bytes that
+// may fall between segments, the entropy-coded data of a scan, whose bytes
+// the decoder reads as data until a marker, the escaped 0xff00 of that data,
+// and the restart markers, rather than read any of them as a segment, which
+// a crafted file could otherwise use to show this reader another frame, or
+// other segments, than the decoder reads, and so a smaller estimate of the
+// memory that decoding it takes (jpegDecodeBytes). The decoder refuses a
+// marker that it does not know, as it does a frame's header of a type that
+// it does not decode, without decoding the image; this reader passes them on.
 func jpegSegments(data []byte, fn func(marker byte, segment []byte) bool) {
 	if len(data) < 2 || data[0] != 0xff || data[1] != 0xd8 {
 		return
 	}
 	for i := 2; i+2 <= len(data); {
 		if data[i] != 0xff {
-			// An extraneous byte between segments, which the decoder skips,
-			// one at a time, until it reaches the next marker.
-			i++
+			// An extraneous byte between segments, or a byte of a scan's
+			// entropy-coded data, which the decoder reads past until it
+			// reaches the next marker.
+			next := bytes.IndexByte(data[i:], 0xff)
+			if next < 0 {
+				return
+			}
+			i += next
 			continue
 		}
 		marker := data[i+1]
@@ -196,12 +216,11 @@ func jpegSegments(data []byte, fn func(marker byte, segment []byte) bool) {
 			// A fill byte, which the marker follows.
 			i--
 			continue
-		case marker == 0xd9 || marker == 0xda:
-			// The end of the file, or a scan, after which no segment that
-			// this reads is left.
+		case marker == 0xd9:
+			// The end of the image, at which the decoder stops.
 			return
-		case marker >= 0xd0 && marker <= 0xd7 || marker == 0x01:
-			// A marker without a segment.
+		case marker >= 0xd0 && marker <= 0xd7:
+			// A restart marker, which has no segment.
 			continue
 		}
 		// The length that follows the marker includes its own two bytes.

@@ -15,6 +15,7 @@
   "error.image_invalid.dimensions": "The image is too large: it may have at most {pixels, number} pixels, and {side, number} on each side.",
   "error.image_invalid.malformed": "The file starts like an image, but it is damaged.",
   "error.image_invalid.type": "The file is not a PNG, JPEG, GIF, WebP, or SVG image.",
+  "error.image_invalid.unsupported": "The SVG image is not damaged, but the server does not take it: it is not in UTF-8, or its elements nest too deeply, or it has too many attributes or entities.",
   "error.instance_admin_required": "Only an instance admin may do this.",
   "error.insufficient_role": "Your role does not allow this.",
   "error.insufficient_scope": "This API token does not hold the scope that this needs.",

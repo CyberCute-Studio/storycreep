@@ -118,13 +118,16 @@ func (s *S3) Delete(ctx context.Context, key string) error {
 }
 
 // List lists the objects of prefix, a page at a time, which S3 returns in
-// the order of their keys.
-func (s *S3) List(ctx context.Context, prefix string, fn func(Info) error) error {
+// the order of their keys, from the first after after (StartAfter).
+func (s *S3) List(ctx context.Context, prefix, after string, fn func(Info) error) error {
 	if err := checkPrefix(prefix); err != nil {
 		return err
 	}
-	pages := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket),
-		Prefix: aws.String(prefix)})
+	in := &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix)}
+	if after != "" {
+		in.StartAfter = aws.String(after)
+	}
+	pages := s3.NewListObjectsV2Paginator(s.client, in)
 	for pages.HasMorePages() {
 		page, err := pages.NextPage(ctx)
 		if err != nil {

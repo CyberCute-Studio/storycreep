@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math/rand/v2"
 	"regexp"
 	"slices"
 	"strings"
@@ -183,8 +184,19 @@ var workspaceKey = regexp.MustCompile(`^[0-9a-f-]{36}/([0-9a-f]{64})\.(?:` +
 	strings.Join(slices.Sorted(maps.Values(extensions)), "|") + `|thumb\.png)$`)
 
 // errSpent stops the listing of a workspace's blobs once the run has spent
-// its budget.
+// its budget, or the listing its share of it (listBudget).
 var errSpent = errors.New("asset: the run has spent its budget")
+
+// errListed stops the listing of a workspace's blobs once it has gone past
+// the last to the first and reached the key that it started after.
+var errListed = errors.New("asset: the workspace's blobs are listed")
+
+// listBudget is how much of a run's budget the listing of a workspace's blobs
+// may take, so that the run has time left to delete the blobs that the
+// listing found that no asset refers to, and to mend the thumbnails, of a
+// workspace whose listing takes longer, as one of hundreds of thousands of
+// blobs in a slow bucket, which takes a request for each thousand.
+const listBudget = sweep.Budget / 2
 
 // Reconcile deletes every blob of a workspace that no asset of the workspace
 // refers to, as its file or its thumbnail, as after the assets' project is
@@ -200,113 +212,188 @@ var errSpent = errors.New("asset: the run has spent its budget")
 // going on from a workspace picked at random (sweep.Workspaces), and it
 // leaves alone a key that this package would not write. So it is safe to
 // repeat. The blobs of a workspace that no longer exists are deleted with it
-// (plan item 110).
+// (plan item 110). It opens the store once it reaches a workspace, so that a
+// run of an instance whose setup is pending, which has none, does nothing.
 //
-// Once it has listed a workspace's blobs whole, it mends the thumbnails of
-// the contents whose files the store has (mendThumbnails): it enqueues the
-// job of a content that has no thumbnail, as when its job ran out of
-// attempts while the store did not answer, unless one waits, and forgets
-// a thumbnail that the store lost, and enqueues its job, so that the
-// thumbnail route serves neither a large file for good nor nothing.
+// It lists a workspace's blobs from a key picked at random, past the last to
+// the first, for listBudget at most, so that a run that cannot list all of a
+// workspace's blobs in that time leaves others than the run before did, and
+// a run after another reaches them. It then mends the thumbnails of the
+// contents whose files the listing found, and whose thumbnails it reached
+// (mendThumbnails): it enqueues the job of a content that has no thumbnail,
+// as when its job ran out of attempts while the store did not answer, unless
+// one waits, and forgets a thumbnail that the store lost, and enqueues its
+// job, so that the thumbnail route serves neither a large file for good nor
+// nothing.
 func (s *Service) Reconcile(ctx context.Context) (int, error) {
-	store, err := s.storage.Store(ctx)
+	var store blob.Store
+	var openErr error
+	deleted := 0
+	more := sweep.Within(sweep.Budget)
+	// A store that cannot be opened ends the run, at the first workspace.
+	goOn := func() bool { return openErr == nil && more() }
+	err := sweep.Workspaces(ctx, s.db, goOn, func(workspaceID ids.UUID) error {
+		if store == nil {
+			if store, openErr = s.storage.Store(ctx); openErr != nil {
+				return openErr
+			}
+		}
+		n, err := s.reconcileWorkspace(ctx, store, workspaceID, more)
+		deleted += n
+		return err
+	})
+	return deleted, err
+}
+
+// reconcileWorkspace reconciles the blobs of the workspace in store, as
+// Reconcile says, for as long as more reports that the run has time left,
+// and returns how many it deleted.
+func (s *Service) reconcileWorkspace(ctx context.Context, store blob.Store, workspaceID ids.UUID,
+	more func() bool) (int, error) {
+	var contents []queries.ContentKeysRow
+	if err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
+		var err error
+		contents, err = queries.New(tx).ContentKeys(ctx, nullUUID(workspaceID))
+		return err
+	}); err != nil {
+		return 0, fmt.Errorf("asset: read the blobs that workspace %s refers to: %w", workspaceID, err)
+	}
+	known := make(map[string]bool, len(contents))
+	for _, c := range contents {
+		known[c.StorageKey] = true
+		if c.ThumbnailKey.Valid {
+			known[c.ThumbnailKey.String] = true
+		}
+	}
+	// The blobs that no row referred to when the rows were read; each is
+	// checked again under its lock before it is deleted.
+	l, err := listWorkspace(ctx, store, workspaceID, more)
 	if err != nil {
 		return 0, err
 	}
 	deleted := 0
-	more := sweep.Within(sweep.Budget)
-	err = sweep.Workspaces(ctx, s.db, more, func(workspaceID ids.UUID) error {
-		var contents []queries.ContentKeysRow
-		if err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
-			var err error
-			contents, err = queries.New(tx).ContentKeys(ctx, nullUUID(workspaceID))
-			return err
-		}); err != nil {
-			return fmt.Errorf("asset: read the blobs that workspace %s refers to: %w", workspaceID, err)
+	for _, key := range l.ordered {
+		if known[key] {
+			continue
 		}
-		known := make(map[string]bool, len(contents))
-		for _, c := range contents {
-			known[c.StorageKey] = true
-			if c.ThumbnailKey.Valid {
-				known[c.ThumbnailKey.String] = true
-			}
+		// The run stops within its budget, here too, and leaves the rest to
+		// the next run.
+		if !more() {
+			return deleted, nil
 		}
-		// The blobs that no row referred to when the rows were read; each is
-		// checked again under its lock before it is deleted. The listing of
-		// a workspace of many blobs, which takes a request for each thousand
-		// of a bucket's, stops within the run's budget too.
-		listed := map[string]bool{}
-		var unreferenced []string
-		switch err := store.List(ctx, workspaceID.String()+"/", func(i blob.Info) error {
-			if !more() {
-				return errSpent
+		m := workspaceKey.FindStringSubmatch(key)
+		if m == nil {
+			continue
+		}
+		sum, _ := hex.DecodeString(m[1])
+		var gone bool
+		err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
+			q := queries.New(tx)
+			if err := lockBlob(ctx, q, workspaceID, sum); err != nil {
+				return err
 			}
-			listed[i.Key] = true
-			if !known[i.Key] {
-				unreferenced = append(unreferenced, i.Key)
+			referenced, err := q.BlobReferenced(ctx, queries.BlobReferencedParams{
+				WorkspaceID: nullUUID(workspaceID), Key: key})
+			if err != nil || referenced {
+				return err
 			}
+			if err := store.Delete(ctx, key); err != nil {
+				return fmt.Errorf("asset: %w", err)
+			}
+			gone = true
 			return nil
-		}); {
-		case errors.Is(err, errSpent):
-			return nil
-		case err != nil:
-			return fmt.Errorf("asset: list the blobs of workspace %s: %w", workspaceID, err)
+		})
+		if err != nil {
+			return deleted, fmt.Errorf("asset: reconcile the blob %s: %w", key, err)
 		}
-		for _, key := range unreferenced {
-			// The run stops within its budget, here too, and leaves the rest
-			// to the next run.
-			if !more() {
-				return nil
-			}
-			m := workspaceKey.FindStringSubmatch(key)
-			if m == nil {
-				continue
-			}
-			sum, _ := hex.DecodeString(m[1])
-			var gone bool
-			err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
-				q := queries.New(tx)
-				if err := lockBlob(ctx, q, workspaceID, sum); err != nil {
-					return err
-				}
-				referenced, err := q.BlobReferenced(ctx, queries.BlobReferencedParams{
-					WorkspaceID: nullUUID(workspaceID), Key: key})
-				if err != nil || referenced {
-					return err
-				}
-				if err := store.Delete(ctx, key); err != nil {
-					return fmt.Errorf("asset: %w", err)
-				}
-				gone = true
-				return nil
-			})
-			if err != nil {
-				return fmt.Errorf("asset: reconcile the blob %s: %w", key, err)
-			}
-			if gone {
-				deleted++
-			}
+		if gone {
+			deleted++
 		}
-		return s.mendThumbnails(ctx, store, workspaceID, contents, listed, more)
-	})
-	return deleted, err
+	}
+	return deleted, s.mendThumbnails(ctx, store, workspaceID, contents, l, more)
+}
+
+// listing is what a run listed of a workspace's blobs: from after the key
+// from, past the last to the first, up to last, or all of them once done.
+type listing struct {
+	// ordered are the keys, in the order listed, and keys the same keys.
+	ordered []string
+	keys    map[string]bool
+	from    string
+	// last is the last key listed since the listing went on from the first,
+	// if wrapped is set, or else the last key listed.
+	last    string
+	wrapped bool
+	done    bool
+}
+
+// covers reports whether the listing reached key, so that it lists key if
+// the store has it.
+func (l *listing) covers(key string) bool {
+	switch {
+	case l.done:
+		return true
+	case key > l.from:
+		return l.wrapped || key <= l.last
+	}
+	return l.wrapped && key <= l.last
+}
+
+// listWorkspace lists the workspace's blobs in store from after a key of the
+// workspace picked at random, past the last to the first, until it reaches
+// that key again, or the listing has taken listBudget, or more reports that
+// the run has no time left.
+func listWorkspace(ctx context.Context, store blob.Store, workspaceID ids.UUID, more func() bool) (*listing,
+	error) {
+	prefix := workspaceID.String() + "/"
+	// The key that the listing starts after has the form of a blob's key,
+	// with no extension, so that it is none.
+	from := prefix + fmt.Sprintf("%016x%016x%016x%016x", rand.Uint64(), rand.Uint64(), rand.Uint64(),
+		rand.Uint64())
+	l := &listing{keys: map[string]bool{}, from: from}
+	within := sweep.Within(listBudget)
+	visit := func(i blob.Info) error {
+		if l.wrapped && i.Key > l.from {
+			return errListed
+		}
+		if !more() || !within() {
+			return errSpent
+		}
+		l.ordered = append(l.ordered, i.Key)
+		l.keys[i.Key] = true
+		l.last = i.Key
+		return nil
+	}
+	err := store.List(ctx, prefix, l.from, visit)
+	if err == nil {
+		l.wrapped, l.last = true, ""
+		err = store.List(ctx, prefix, "", visit)
+	}
+	switch {
+	case err == nil || errors.Is(err, errListed):
+		l.done = true
+	case !errors.Is(err, errSpent):
+		return nil, fmt.Errorf("asset: list the blobs of workspace %s: %w", workspaceID, err)
+	}
+	return l, nil
 }
 
 // mendThumbnails mends the thumbnails of the contents of the workspace's
 // assets whose files are among the keys that the store listed, which were
 // read before the store was listed: it enqueues the job of a content that has
 // no thumbnail, unless one waits (enqueueThumbnail), and, for a content
-// whose thumbnail the store did not list, under the blob's lock, once it has
-// asked the store again, forgets the thumbnail, and enqueues its job. A
-// content whose file the store lost is left alone, which only an upload of
-// the file mends. It stops once more reports that the run has spent its
-// budget.
+// whose thumbnail the listing reached but did not find, under the blob's
+// lock, once it has asked the store again, forgets the thumbnail, and
+// enqueues its job. A content whose file the store lost is left alone, which
+// only an upload of the file mends. It stops once more reports that the run
+// has spent its budget.
 func (s *Service) mendThumbnails(ctx context.Context, store blob.Store, workspaceID ids.UUID,
-	contents []queries.ContentKeysRow, listed map[string]bool, more func() bool) error {
+	contents []queries.ContentKeysRow, l *listing, more func() bool) error {
 	scope := database.Scope{WorkspaceID: workspaceID}
 	for _, c := range contents {
-		lost := c.ThumbnailKey.Valid && c.ThumbnailKey.String != c.StorageKey && !listed[c.ThumbnailKey.String]
-		if !listed[c.StorageKey] || c.ThumbnailKey.Valid && !lost {
+		thumb := c.ThumbnailKey.String
+		lost := c.ThumbnailKey.Valid && thumb != c.StorageKey && l.covers(thumb) && !l.keys[thumb]
+		if !l.keys[c.StorageKey] || c.ThumbnailKey.Valid && !lost {
 			continue
 		}
 		if !more() {

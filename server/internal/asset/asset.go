@@ -224,7 +224,8 @@ func uploadable(p project.Visible) error {
 // holds the blob's lock, which checks again what may have changed since, the
 // actor's role, the project's state, and the storage, and stores the blob
 // again in the rare case that the orphan reconciliation deleted it in
-// between, before the lock was taken. An upload of a file that the project
+// between, before the lock was taken, waiting for the store under the lock
+// for lockedStoreTimeout at most. An upload of a file that the project
 // has already stores its blob again too if the store lost it, and enqueues
 // the job of its thumbnail again if it needs one and has none, as when the
 // job ran out of attempts while the store did not answer, or found no file,
@@ -267,16 +268,14 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		return Asset{}, false, err
 	}
 	if st.found {
-		if st.thumbless && needsThumbnail(img) {
-			// The job that the asset's upload enqueued may still wait, which
-			// keeps an equal job from being enqueued (enqueueThumbnail).
+		if st.mendsThumbnail(img) {
 			if err := s.db.InTx(ctx, scope, func(tx pgx.Tx) error {
-				return s.enqueueThumbnail(ctx, tx, workspaceID, st.id)
+				return s.enqueueThumbnail(ctx, tx, workspaceID, st.existing.ID.Bytes)
 			}); err != nil {
 				return Asset{}, false, err
 			}
 		}
-		return st.asset, false, nil
+		return assetOf(st.existing), false, nil
 	}
 	var out Asset
 	created := false
@@ -292,12 +291,9 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		case err != nil:
 			return err
 		case again.found:
-			out = again.asset
-			// As the found path outside the lock does, enqueue the thumbnail's
-			// job again if the asset needs one and has none, as when its
-			// earlier job ran out of attempts.
-			if again.thumbless && needsThumbnail(img) {
-				return s.enqueueThumbnail(ctx, tx, workspaceID, again.id)
+			out = assetOf(again.existing)
+			if again.mendsThumbnail(img) {
+				return s.enqueueThumbnail(ctx, tx, workspaceID, again.existing.ID.Bytes)
 			}
 			return nil
 		}
@@ -305,7 +301,10 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		// lock, which it may have done after the blob was stored, before this
 		// transaction took the lock, and cannot do now until the asset is
 		// added.
-		if err := ensureBlob(ctx, store, key, img); err != nil {
+		storeCtx, cancel := context.WithTimeout(ctx, lockedStoreTimeout)
+		err = ensureBlob(storeCtx, store, key, img)
+		cancel()
+		if err != nil {
 			return err
 		}
 		// The project is locked, so that it is neither archived nor deleted
@@ -385,17 +384,34 @@ func (s *Service) enqueueThumbnail(ctx context.Context, tx pgx.Tx, workspaceID, 
 	return nil
 }
 
+// lockedStoreTimeout bounds how long the transaction that holds a blob's lock
+// waits for the store, which the S3 driver's client does not bound, so that a
+// store that does not answer fails the upload, which its client may send
+// again, rather than keep one of the few connections of the pool for as long
+// as the client waits, while every upload of the instance may do the same.
+// The store answers a HEAD in milliseconds, and the PUT that follows only in
+// the rare case that the reconciliation deleted the blob since the upload
+// stored it stores the file that it took moments before.
+const lockedStoreTimeout = 30 * time.Second
+
 // stored is what checkStorage finds of an upload's file in its workspace.
 type stored struct {
-	// asset is the project's asset of the file, and id its ID, if found is
-	// set, and thumbless is set if the asset has no thumbnail yet.
-	asset     Asset
-	id        ids.UUID
-	found     bool
-	thumbless bool
+	// existing is the project's asset of the file, if found is set.
+	existing queries.Asset
+	found    bool
 	// referenced is set if an asset of the workspace refers to the file's
 	// blob, which then counts towards its storage_bytes already.
 	referenced bool
+}
+
+// mendsThumbnail reports whether an upload of img, which found the project's
+// asset of its file, enqueues the job of the asset's thumbnail again: if the
+// asset needs one and has none, as when its earlier job ran out of attempts
+// while the store did not answer. The job that the asset's upload enqueued
+// may still wait, which keeps an equal job from being enqueued
+// (enqueueThumbnail).
+func (st stored) mendsThumbnail(img Image) bool {
+	return st.found && !st.existing.ThumbnailKey.Valid && needsThumbnail(img)
 }
 
 // checkStorage returns the project's asset of the content sum, if it has
@@ -409,8 +425,7 @@ func (s *Service) checkStorage(ctx context.Context, tx pgx.Tx, workspaceID, proj
 		ProjectID: nullUUID(projectID), Sha256: sum})
 	switch {
 	case err == nil:
-		return stored{asset: assetOf(existing), id: existing.ID.Bytes, found: true,
-			thumbless: !existing.ThumbnailKey.Valid, referenced: true}, nil
+		return stored{existing: existing, found: true, referenced: true}, nil
 	case !errors.Is(err, pgx.ErrNoRows):
 		return stored{}, fmt.Errorf("asset: read the project's assets: %w", err)
 	}

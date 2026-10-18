@@ -39,8 +39,11 @@ const uploadReadTimeout = 5 * time.Minute
 // of them to end before its file is read (holdSlot), so that a burst of
 // large uploads, or many that send their files slowly, cannot make the
 // server run out of memory. A file takes up to about twice its size while it
-// arrives, and an SVG image another copy, of at most the same size, once it
-// is sanitized (asset.ErrTooLarge).
+// arrives, and an SVG image a few times more while it is sanitized, as one
+// whose path is a single attribute of megabytes, which the decoder and the
+// sanitizer each hold a copy of, and the file that it writes, of at most the
+// same size (asset.ErrTooLarge), but no more, whatever its elements and their
+// attributes, which the sanitizer bounds before the decoder reads them.
 const uploadMemory = 256 << 20
 
 // uploadSlots returns how many uploads of files of at most maxBytes may hold
@@ -486,6 +489,8 @@ func imageMessage(e *asset.ImageError) i18n.Message {
 		return i18n.Message{Key: i18n.K("error.image_invalid.type")}
 	case asset.ReasonMalformed:
 		return i18n.Message{Key: i18n.K("error.image_invalid.malformed")}
+	case asset.ReasonUnsupported:
+		return i18n.Message{Key: i18n.K("error.image_invalid.unsupported")}
 	case asset.ReasonDimensions:
 		return i18n.Message{Key: i18n.K("error.image_invalid.dimensions"),
 			Args: i18n.Args{"pixels": asset.MaxPixels, "side": asset.MaxSide}}

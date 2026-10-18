@@ -2,6 +2,7 @@ package asset
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"image"
 	"image/gif"
@@ -40,10 +41,11 @@ var decoders = map[string]func([]byte) (image.Image, error){
 // the file itself (decodeBytes): enough for an image of MaxPixels pixels in
 // the encodings that photos and drawings are mostly saved in, a baseline
 // JPEG, a progressive one whose colours are subsampled 4:2:0, a PNG of up to
-// 16 bits a channel, or a WebP, and not for one in an encoding whose decoder
-// takes two or three times as much for each pixel, as a progressive JPEG
-// whose colours are not subsampled, or an interlaced PNG of 16 bits a
-// channel, which is then its own thumbnail.
+// 16 bits a channel, or a lossy WebP without alpha, and for a lossless WebP,
+// or one with alpha, of about 9 million pixels, and not for one in an
+// encoding whose decoder takes two or three times as much for each pixel, as
+// a progressive JPEG whose colours are not subsampled, or an interlaced PNG
+// of 16 bits a channel, which is then its own thumbnail.
 const maxDecodeBytes = 256 << 20
 
 // Thumbnail returns the thumbnail of data, an image of the raster type mime,
@@ -125,12 +127,62 @@ func decodeBytes(img Image) int64 {
 		// The first frame's index of each pixel.
 		return n + w*h
 	}
-	// A WebP image: a lossless one decodes to 4 bytes a pixel, which a
-	// transform's output takes as much again of, 8 in all, and a lossy one
-	// with alpha decodes the alpha as a lossless image of 4 bytes a pixel,
-	// which the garbage collector may not have freed before the frame's own
-	// 1.5 bytes and the byte of the copied-out alpha are held, so 11 in all.
-	return n + 11*w*h
+	// A WebP image, whose lossy decoder copies the frame's data out of the
+	// file first.
+	if !webpLossless(img.Data) {
+		// A lossy image without alpha decodes to 1.5 bytes a pixel, of whole
+		// macroblocks of 16 × 16 pixels.
+		return n + 384*((w+15)/16)*((h+15)/16) + int64(len(img.Data))
+	}
+	// A lossless image decodes to 4 bytes a pixel, which a transform's output
+	// takes as much again of, 8 in all, and a lossy one with alpha decodes
+	// the alpha as a lossless image, of as many, which the garbage collector
+	// may not have freed before the frame's own 1.5 bytes and the byte of the
+	// copied-out alpha are held, so 11 in all; and the decoder of a lossless
+	// image holds the Huffman codes that the file declares, which take up to
+	// webpCodesBytes, whatever the image's size.
+	return n + 11*w*h + webpCodesBytes + int64(len(img.Data))
+}
+
+// webpCodesBytes is the most memory that golang.org/x/image's decoder of a
+// lossless WebP image holds of the Huffman codes that the file declares: up
+// to 2,600 groups of 5 codes, which it refuses more of, each of a table of
+// 512 bytes and a slice of 24, and of nodes of 8 bytes, 2 for each symbol of
+// its alphabet, but one, of 2,328 symbols for the first code, 256 for each of
+// the next three, and 40 for the last, so about 131 MiB, which a file of less
+// than a megabyte can make it hold.
+const webpCodesBytes = 2600 * (5*(512+24) + 8*(2*(2328+3*256+40)-5))
+
+// webpLossless reports whether decoding the WebP file data reads a lossless
+// image, whose decoder holds the Huffman codes that it declares: one whose
+// image is lossless, a VP8L chunk, or whose VP8X chunk says that it has
+// alpha, which a lossy image's ALPH chunk codes as a lossless image. The
+// decoder reads the chunks in order up to the first that holds an image, as
+// this does, so a file of a lossy image without alpha, a VP8 chunk, is the
+// only one that is not, and a file whose chunks do not read up to an image
+// counts as lossless.
+func webpLossless(data []byte) bool {
+	for i := 12; i+8 <= len(data); {
+		size := int64(binary.LittleEndian.Uint32(data[i+4:]))
+		switch string(data[i : i+4]) {
+		case "VP8 ":
+			return false
+		case "VP8L":
+			return true
+		case "VP8X":
+			const alpha = 1 << 4
+			if i+9 > len(data) || data[i+8]&alpha != 0 {
+				return true
+			}
+		}
+		// A chunk's data is padded to an even length.
+		next := int64(i) + 8 + size + size&1
+		if next > int64(len(data)) {
+			return true
+		}
+		i = int(next)
+	}
+	return true
 }
 
 // jpegDecodeBytes returns how many bytes image/jpeg allocates to decode the
@@ -140,7 +192,11 @@ func decodeBytes(img Image) int64 {
 // progressive image's a coefficient of 4 bytes for each too, which the
 // decoder keeps between its scans, and an image of 4 components, which is
 // CMYK, or of 3 that are RGB rather than YCbCr, is converted to an image of 4
-// bytes for each pixel.
+// bytes for each pixel. Whether 3 components are RGB the decoder decides once
+// it has read the whole file, from the last JFIF or other APP0 segment that
+// it read, and the last Adobe segment, which may come after the frame's
+// header, or between the scans, so every segment of the file is read
+// (jpegSegments), and the decoder's own rule followed.
 func jpegDecodeBytes(data []byte) (int64, bool) {
 	var jfif, adobeRGB, found, progressive bool
 	var width, height, n int64
@@ -151,14 +207,23 @@ func jpegDecodeBytes(data []byte) (int64, bool) {
 	jpegSegments(data, func(marker byte, s []byte) bool {
 		switch marker {
 		case 0xe0:
-			jfif = jfif || bytes.HasPrefix(s, []byte("JFIF\x00"))
+			// Each APP0 segment of at least 5 bytes says anew whether the file
+			// is JFIF, whose 3 components are YCbCr.
+			if len(s) >= 5 {
+				jfif = bytes.HasPrefix(s, []byte("JFIF\x00"))
+			}
 		case 0xee:
 			// An Adobe segment whose transform is 0 says that 3 components
-			// are RGB.
+			// are RGB, unless a later Adobe segment says otherwise.
 			if len(s) >= 12 && bytes.HasPrefix(s, []byte("Adobe")) {
 				adobeRGB = s[11] == 0
 			}
 		case 0xc0, 0xc1, 0xc2:
+			// The decoder refuses a file of more than one frame's header, so
+			// only the first counts.
+			if found {
+				break
+			}
 			if len(s) < 6 {
 				return false
 			}
@@ -176,7 +241,6 @@ func jpegDecodeBytes(data []byte) (int64, bool) {
 				comps[0].h, comps[0].v = 1, 1
 			}
 			found, progressive = true, marker == 0xc2
-			return false
 		}
 		return true
 	})

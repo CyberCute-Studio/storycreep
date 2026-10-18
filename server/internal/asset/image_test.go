@@ -11,6 +11,7 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -167,6 +168,12 @@ func TestJPEGOrientation(t *testing.T) {
 	if o := jpegOrientation(junk); o != 6 {
 		t.Errorf("a stray byte before the EXIF segment: %d, want 6", o)
 	}
+	// EXIF data after the first scan is not read, as decoders read the
+	// segments before it alone.
+	exif := withOrientation([]byte{0xff, 0xd8}, 6, true)[2:]
+	if o := jpegOrientation(jpegFile(nil, nil, exif, 0xc0, 8, 8, [2]byte{1, 0x11})); o != 1 {
+		t.Errorf("EXIF data after the scan: %d, want 1", o)
+	}
 	cut := withOrientation(jpg, 6, true)[:30]
 	if o := jpegOrientation(cut); o != 1 {
 		t.Errorf("EXIF data cut short: %d, want 1", o)
@@ -305,6 +312,9 @@ func TestThumbnail(t *testing.T) {
 var (
 	jfifSegment     = []byte("\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00")
 	adobeRGBSegment = []byte("\xff\xee\x00\x0eAdobe\x00\x64\x00\x00\x00\x00\x00")
+	// jfxxSegment is an APP0 segment of a JFIF extension, which says anew that
+	// the file is not JFIF.
+	jfxxSegment = []byte("\xff\xe0\x00\x08JFXX\x00\x10")
 )
 
 // jpegHeader returns a JPEG file of the segments app, and then a frame's
@@ -321,6 +331,37 @@ func jpegHeader(app []byte, sof byte, width, height int, comps ...[2]byte) []byt
 	return append(b, 0xff, 0xda, 0, 8, 1, comps[0][0], 0, 0, 63, 0)
 }
 
+// jpegFile returns a JPEG file of the segments before, a frame's header of
+// the marker sof, of width × height pixels, whose components have the
+// identifiers and the samplings of comps, the segments afterFrame, a scan's
+// header and entropy-coded data, with an escaped 0xff and a restart marker,
+// the segments afterScan, and the end of the image.
+func jpegFile(before, afterFrame, afterScan []byte, sof byte, width, height int, comps ...[2]byte) []byte {
+	b := jpegHeader(before, sof, width, height, comps...)
+	// jpegHeader ends with a scan's header of 10 bytes.
+	scan := slices.Clone(b[len(b)-10:])
+	b = append(b[:len(b)-10], afterFrame...)
+	b = append(b, scan...)
+	b = append(b, 0x12, 0x34, 0xff, 0x00, 0x56, 0xff, 0xd0, 0x78)
+	b = append(b, afterScan...)
+	return append(b, 0xff, 0xd9)
+}
+
+// webpOf returns a WebP file of the chunks, each a FourCC and its data.
+func webpOf(chunks ...string) []byte {
+	b := []byte("RIFF\x00\x00\x00\x00WEBP")
+	for i := 0; i+1 < len(chunks); i += 2 {
+		b = append(b, chunks[i]...)
+		b = binary.LittleEndian.AppendUint32(b, uint32(len(chunks[i+1])))
+		b = append(b, chunks[i+1]...)
+		if len(chunks[i+1])%2 == 1 {
+			b = append(b, 0)
+		}
+	}
+	binary.LittleEndian.PutUint32(b[4:], uint32(len(b)-8))
+	return b
+}
+
 // TestDecodeBytes checks the memory that making a thumbnail takes, as an
 // image's header says, against what the decoders allocate for each encoding,
 // and that Thumbnail decodes no image that would take more than
@@ -333,6 +374,16 @@ func TestDecodeBytes(t *testing.T) {
 	all := [2]byte{1, 0x11}
 	cmyk := jpegHeader(adobeRGBSegment, 0xc2, side, side, all, [2]byte{2, 0x11}, [2]byte{3, 0x11}, [2]byte{4, 0x11})
 	rgb := [][2]byte{{'R', 0x11}, {'G', 0x11}, {'B', 0x11}}
+	// 313 × 313 units of 4 blocks of luma and 2 of chroma, each of 64 samples
+	// and 64 coefficients of 4 bytes.
+	sub := [][2]byte{{1, 0x22}, {2, 0x11}, {3, 0x11}}
+	rgbSub := [][2]byte{{'R', 0x22}, {'G', 0x11}, {'B', 0x11}}
+	const sub420 = 313 * 313 * 6 * (64 + 256)
+	// side - 1 in 14 bits, twice, as VP8L's and VP8's headers say it.
+	lossy := webpOf("VP8 ", "\x10\x00\x00\x9d\x01\x2a\x88\x13\x88\x13")
+	lossless := webpOf("VP8L", "\x2f\x87\xd3\xe1\x04")
+	alpha := webpOf("VP8X", "\x10\x00\x00\x00\x87\x13\x00\x87\x13\x00", "ALPH", "\x00", "VP8 ",
+		"\x10\x00\x00\x9d\x01\x2a\x88\x13\x88\x13")
 	for _, tt := range []struct {
 		name string
 		mime string
@@ -359,6 +410,20 @@ func TestDecodeBytes(t *testing.T) {
 		// rather than a smaller one that its bytes would spell as a length.
 		{"a JPEG with an escaped 0xff before its frame", MimeJPEG,
 			jpegHeader(append(slices.Clone(jfifSegment), 0xff, 0x00), 0xc0, side, side, all), 625*625*64 + scale},
+		// image/jpeg decides whether 3 components are RGB once it has read the
+		// whole file, from the last APP0 segment, and the last Adobe segment,
+		// which may follow the frame's header, or a scan.
+		{"an Adobe segment after the frame's header", MimeJPEG, jpegFile(nil, adobeRGBSegment, nil, 0xc2, side,
+			side, sub...), sub420 + 4*side*side + scale},
+		{"an Adobe segment after a scan", MimeJPEG, jpegFile(nil, nil, adobeRGBSegment, 0xc2, side, side, sub...),
+			sub420 + 4*side*side + scale},
+		{"JFIF, and then another APP0 segment, of R, G, and B", MimeJPEG, jpegFile(append(slices.Clone(jfifSegment),
+			jfxxSegment...), nil, nil, 0xc2, side, side, rgbSub...), sub420 + 4*side*side + scale},
+		{"JFIF after a scan, of R, G, and B", MimeJPEG, jpegFile(nil, nil, jfifSegment, 0xc2, side, side, rgbSub...),
+			sub420 + scale},
+		{"a lossy WebP", MimeWebP, lossy, 384*313*313 + int64(len(lossy)) + scale},
+		{"a lossless WebP", MimeWebP, lossless, 11*side*side + webpCodesBytes + int64(len(lossless)) + scale},
+		{"a WebP that has alpha", MimeWebP, alpha, 11*side*side + webpCodesBytes + int64(len(alpha)) + scale},
 		{"an RGBA PNG", MimePNG, pngWith(side, side, 8, 6, false), 4*side*side + scale},
 		{"a paletted PNG", MimePNG, pngWith(side, side, 8, 3, false), side*side + scale},
 		{"a grey PNG of 16 bits", MimePNG, pngWith(side, side, 16, 0, false), 8*side*side + scale},
@@ -400,6 +465,27 @@ func TestDecodeBytes(t *testing.T) {
 	if needsThumbnail(costly) || !needsThumbnail(photo) {
 		t.Errorf("a thumbnail of its own: %t for the CMYK image, %t for the photo; want false and true",
 			needsThumbnail(costly), needsThumbnail(photo))
+	}
+	// A progressive photo whose Adobe segment, after its scan, makes the
+	// decoder convert it to RGBA takes more than a thumbnail may, and a lossy
+	// WebP of as many pixels less.
+	for _, tt := range []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{"a progressive JPEG made RGB after its scan", jpegFile(nil, nil, adobeRGBSegment, 0xc2, side, side, sub...),
+			false},
+		{"a lossy WebP", lossy, true},
+		{"a lossless WebP", lossless, false},
+	} {
+		img, err := Sniff(tt.data, testLimit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := needsThumbnail(img); got != tt.want {
+			t.Errorf("%s of %d pixels: a thumbnail of its own %t, want %t", tt.name, side*side, got, tt.want)
+		}
 	}
 }
 
@@ -466,6 +552,19 @@ func TestOrient(t *testing.T) {
 	}
 }
 
+// namespaced returns the start tag of a g element that declares n
+// namespaces, and those of SVG's namespace, so that the namespaces in scope
+// can be counted (maxSVGAttrs).
+func namespaced(n int) string {
+	var b strings.Builder
+	b.WriteString(`<g`)
+	for i := range n {
+		fmt.Fprintf(&b, ` xmlns:n%d="urn:n"`, i)
+	}
+	b.WriteString(`>`)
+	return b.String()
+}
+
 // svgWithAttrs returns an SVG whose rect element has n distinct attributes,
 // so that an element's attributes can be counted (maxSVGAttrs).
 func svgWithAttrs(n int) string {
@@ -488,6 +587,14 @@ func TestSanitizeSVG(t *testing.T) {
 	// An element of exactly the most attributes is kept, one more refused.
 	if _, err := sanitizeSVG([]byte(svgWithAttrs(maxSVGAttrs)), testLimit); err != nil {
 		t.Errorf("an element of %d attributes: %v", maxSVGAttrs, err)
+	}
+	// Elements that declare as many namespaces each one after another, rather
+	// than one inside another, are kept: an element's namespaces are out of
+	// scope once it ends.
+	siblings := `<svg xmlns="http://www.w3.org/2000/svg">` + namespaced(maxSVGAttrs/2) + `</g>` +
+		namespaced(maxSVGAttrs/2) + `</g>` + namespaced(maxSVGAttrs/2) + `</g></svg>`
+	if _, err := sanitizeSVG([]byte(siblings), testLimit); err != nil {
+		t.Errorf("elements one after another that declare %d namespaces each: %v", maxSVGAttrs/2, err)
 	}
 	for _, tt := range []struct {
 		name     string
@@ -516,6 +623,22 @@ func TestSanitizeSVG(t *testing.T) {
 				`<a><text>t</text></a>`, "<feImage></feImage>"},
 			drop: []string{"x.example", "svg+xml", "javascript"},
 			w:    65, h: 32,
+		},
+		{
+			name: "URLs in other attributes",
+			in: `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">` +
+				`<a href="#x" ping="https://t.example/p"><text>t</text></a><rect ping="a https://t.example/q"/>` +
+				`<rect ping="https&#9;://t.example/r"/><rect attributionsrc="//t.example/s"/>` +
+				`<rect ping=" / /t.example/u"/><rect data-path="a/b" class="c d"/></svg>`,
+			keep: []string{`<a href="#x"><text>t</text></a>`, `<rect data-path="a/b" class="c d"></rect>`},
+			drop: []string{"t.example", "ping", "attributionsrc"},
+		},
+		{
+			name: "repeated attributes",
+			in: `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">` +
+				`<use xlink:href="#a" href="#b"/><rect fill="red" fill="blue"/></svg>`,
+			keep: []string{`<use href="#a"></use>`, `<rect fill="red"></rect>`},
+			drop: []string{"#b", "blue"},
 		},
 		{
 			name: "CSS",
@@ -603,9 +726,9 @@ func TestSanitizeSVG(t *testing.T) {
 			ReasonMalformed},
 		{"an unknown entity", `<svg xmlns="http://www.w3.org/2000/svg">&x;</svg>`, ReasonMalformed},
 		{"an external entity", `<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///etc/passwd">]>` +
-			`<svg xmlns="http://www.w3.org/2000/svg">&x;</svg>`, ReasonMalformed},
+			`<svg xmlns="http://www.w3.org/2000/svg">&x;</svg>`, ReasonUnsupported},
 		{"nested entities", `<!DOCTYPE svg [<!ENTITY a "1"><!ENTITY b "&a;&a;">]>` +
-			`<svg xmlns="http://www.w3.org/2000/svg">&b;</svg>`, ReasonMalformed},
+			`<svg xmlns="http://www.w3.org/2000/svg">&b;</svg>`, ReasonUnsupported},
 		// Each document type would have the references counted again.
 		{"two document types", `<!DOCTYPE svg [<!ENTITY a "1">]><!DOCTYPE svg [<!ENTITY b "2">]>` +
 			`<svg xmlns="http://www.w3.org/2000/svg">&a;&b;</svg>`, ReasonMalformed},
@@ -614,19 +737,70 @@ func TestSanitizeSVG(t *testing.T) {
 		// 5,000 references of 3 bytes to an entity of 1,000 expand to 5 MB.
 		{"entities that expand too far", `<!DOCTYPE svg [<!ENTITY a "` + strings.Repeat("A", 1000) + `">]>` +
 			`<svg xmlns="http://www.w3.org/2000/svg"><text>` + strings.Repeat("&a;", 5000) + `</text></svg>`,
-			ReasonMalformed},
+			ReasonUnsupported},
 		{"too deep", `<svg xmlns="http://www.w3.org/2000/svg">` + strings.Repeat("<g>", maxSVGDepth) +
-			strings.Repeat("</g>", maxSVGDepth) + `</svg>`, ReasonMalformed},
+			strings.Repeat("</g>", maxSVGDepth) + `</svg>`, ReasonUnsupported},
 		// An element of far more attributes than a drawing has, which the
 		// decoder would otherwise hold at once.
-		{"too many attributes", svgWithAttrs(maxSVGAttrs + 1), ReasonMalformed},
+		{"too many attributes", svgWithAttrs(maxSVGAttrs + 1), ReasonUnsupported},
+		// The equals signs that follow a tag count its attributes, so text of
+		// more than a drawing has is refused with them.
+		{"equals signs after a tag", `<svg xmlns="http://www.w3.org/2000/svg"><!--` +
+			strings.Repeat("=", maxSVGAttrs+1) + `--></svg>`, ReasonUnsupported},
+		{"many equals signs in a file that is no SVG", "<p>" + strings.Repeat("=", maxSVGAttrs+1), ReasonType},
+		// Elements that enclose one another, each of which declares fewer
+		// namespaces than an element may have attributes, but which the
+		// decoder holds together, until they end.
+		{"too many namespaces in scope", `<svg xmlns="http://www.w3.org/2000/svg">` +
+			namespaced(maxSVGAttrs/2) + namespaced(maxSVGAttrs/2) + `</g></g></svg>`, ReasonUnsupported},
 		{"another encoding", `<?xml version="1.0" encoding="ISO-8859-1"?><svg xmlns="http://www.w3.org/2000/svg"/>`,
-			ReasonMalformed},
+			ReasonUnsupported},
+		{"another version", `<?xml version="1.1"?><svg xmlns="http://www.w3.org/2000/svg"/>`, ReasonUnsupported},
 	} {
 		_, err := sanitizeSVG([]byte(tt.in), testLimit)
 		var ie *ImageError
 		if !errors.As(err, &ie) || ie.Reason != tt.reason {
 			t.Errorf("%s: %v, want an ImageError of %s", tt.name, err, tt.reason)
+		}
+	}
+}
+
+// TestManyAttributes checks that an element of more attributes than one may
+// have is refused before the decoder reads any of them, which it would hold
+// at many times the bytes that they take in the file, as a megabyte of
+// namespace declarations would take tens of megabytes of memory.
+func TestManyAttributes(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`<svg xmlns="http://www.w3.org/2000/svg"`)
+	for i := 0; b.Len() < 1<<20; i++ {
+		fmt.Fprintf(&b, ` xmlns:a%d=""`, i)
+	}
+	b.WriteString(`/>`)
+	data := []byte(b.String())
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err := sanitizeSVG(data, testLimit)
+	runtime.ReadMemStats(&after)
+	if ie, ok := errors.AsType[*ImageError](err); !ok || ie.Reason != ReasonUnsupported {
+		t.Errorf("an element of %d bytes of attributes: %v, want an ImageError of %s", len(data), err,
+			ReasonUnsupported)
+	}
+	if n := after.TotalAlloc - before.TotalAlloc; n > uint64(len(data)) {
+		t.Errorf("refusing an element of %d bytes of attributes allocated %d bytes", len(data), n)
+	}
+	for _, tt := range []struct {
+		in   string
+		want bool
+	}{
+		{svgWithAttrs(maxSVGAttrs), false},
+		{svgWithAttrs(maxSVGAttrs + 1), true},
+		// The equals signs between two tags count once, not twice.
+		{`<a ` + strings.Repeat("=", maxSVGAttrs) + `><b ` + strings.Repeat("=", maxSVGAttrs) + `>`, false},
+		{strings.Repeat("=", 2*maxSVGAttrs) + "<a>", false},
+		{"<a>" + strings.Repeat("=", maxSVGAttrs+1), true},
+	} {
+		if got := manyAttributes([]byte(tt.in)); got != tt.want {
+			t.Errorf("manyAttributes of %.40q…: %t, want %t", tt.in, got, tt.want)
 		}
 	}
 }
