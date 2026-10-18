@@ -72,34 +72,34 @@ const (
 )
 
 // commandsBody is the body of POST /api/v1/projects/{project_id}/commands
-// as it is decoded: one batch of commands, or a list of batches, each command
-// as its JSON, which the pipeline reads (commands.Pipeline.Parse), so that a
-// command that it cannot read refuses its own batch alone. Its schema in the
-// OpenAPI document is commandsSchemas', which describes each type of
-// command.
+// as huma decodes it, once it has validated it with commandsForm: one batch
+// of commands, each command as its JSON, or a list of batches, each batch as
+// its JSON, which the handler decodes (batchBody), and the pipeline reads
+// each command of (commands.Pipeline.Parse), so that a batch, or a command,
+// that cannot be read refuses its own batch alone. Its schema in the OpenAPI
+// document is commandsSchemas', which describes each type of command.
 type commandsBody struct {
 	Commands []json.RawMessage `json:"commands"`
-	Batches  []batchBody       `json:"batches"`
+	Batches  []json.RawMessage `json:"batches"`
 }
 
-// batchBody is a batch of a list of batches.
+// commandsForm returns the schema that huma validates the command endpoint's
+// body with, which holds it to the keys of the two forms, written exactly
+// (PRD FR-API-01 AC2), and leaves its batches and their commands to the
+// handler and the pipeline. huma refuses a body that is not JSON before it
+// validates it, with 400 invalid_request, or 415 unsupported_media_type, as
+// on every other route.
+func commandsForm() *huma.Schema {
+	// An empty schema takes any value.
+	return &huma.Schema{Type: "object", AdditionalProperties: false, Properties: map[string]*huma.Schema{
+		"commands": {Type: "array", Items: &huma.Schema{}}, "batches": {Type: "array", Items: &huma.Schema{}}}}
+}
+
+// batchBody is a batch of a list of batches, which the handler decodes with
+// its keys written exactly as its schema names them (commands.DecodeObject),
+// as huma's validation has the body's.
 type batchBody struct {
 	Commands []json.RawMessage `json:"commands"`
-}
-
-// UnmarshalJSON decodes the body, which huma does not validate, with its keys
-// written exactly as its schema names them (commands.DecodeObject), as huma's
-// validation has the API's other bodies (PRD FR-API-01 AC2).
-func (b *commandsBody) UnmarshalJSON(data []byte) error {
-	type plain commandsBody
-	return commands.DecodeObject(data, (*plain)(b))
-}
-
-// UnmarshalJSON decodes a batch of a list, as commandsBody's UnmarshalJSON
-// decodes the body.
-func (b *batchBody) UnmarshalJSON(data []byte) error {
-	type plain batchBody
-	return commands.DecodeObject(data, (*plain)(b))
 }
 
 type commandsInput struct {
@@ -160,7 +160,7 @@ func newCommandResult(res commands.Result) commandResultBody {
 // type that registry holds (commands.Registry.Document), or a list of
 // batches; and what one batch did, or what each batch of a list did.
 func commandsSchemas(doc huma.Registry, registry *commands.Registry) (body, answer *huma.Schema) {
-	const prefix = "#/components/schemas/"
+	const prefix = commands.SchemaPrefix
 	schemas := doc.Map()
 	command := registry.Document(doc)
 	schemas["CommandBody"] = command
@@ -171,7 +171,7 @@ func commandsSchemas(doc huma.Registry, registry *commands.Registry) (body, answ
 		AdditionalProperties: false,
 		Required:             []string{"commands"},
 		Properties: map[string]*huma.Schema{
-			"commands": {Type: "array", MinItems: &one, MaxItems: ptr(maxBatchCommands),
+			"commands": {Type: "array", MinItems: &one, MaxItems: new(maxBatchCommands),
 				Items: &huma.Schema{Ref: prefix + "CommandBody"},
 				Description: fmt.Sprintf("The batch's commands, in the order to apply them: at least one, and at "+
 					"most %d. Every command_id of the batch is its own.", maxBatchCommands)},
@@ -185,13 +185,14 @@ func commandsSchemas(doc huma.Registry, registry *commands.Registry) (body, answ
 		AdditionalProperties: false,
 		Required:             []string{"batches"},
 		Properties: map[string]*huma.Schema{
-			"batches": {Type: "array", MinItems: &one, MaxItems: ptr(maxBatches),
+			"batches": {Type: "array", MinItems: &one, MaxItems: new(maxBatches),
 				Items:       &huma.Schema{Ref: prefix + "CommandBatchBody"},
 				Description: fmt.Sprintf("The batches, at least one, and at most %d.", maxBatches)},
 		},
 	}
 	schemas["CommandBatchesBody"] = batches
-	for _, s := range []*huma.Schema{command, batch, batches} {
+	// Document has computed command's messages.
+	for _, s := range []*huma.Schema{batch, batches} {
 		s.PrecomputeMessages()
 	}
 	body = &huma.Schema{OneOf: []*huma.Schema{{Ref: prefix + "CommandBatchBody"}, {Ref: prefix + "CommandBatchesBody"}}}
@@ -202,17 +203,15 @@ func commandsSchemas(doc huma.Registry, registry *commands.Registry) (body, answ
 	return body, answer
 }
 
-// ptr returns a pointer to v.
-func ptr(v int) *int { return &v }
-
 // registerCommands registers the command endpoint (PRD FR-API-03, §10.5),
 // which applies batches of the commands of registry with pipeline.
 func registerCommands(m *api.Mux, pipeline *commands.Pipeline, registry *commands.Registry) {
+	const path = "/api/v1/projects/{project_id}/commands"
 	body, answer := commandsSchemas(m.OpenAPI().Components.Schemas, registry)
 	api.Register(m, api.ApplyCommands, huma.Operation{
 		OperationID: "applyCommands",
 		Method:      http.MethodPost,
-		Path:        "/api/v1/projects/{project_id}/commands",
+		Path:        path,
 		Summary:     "Apply batches of commands to a project",
 		Description: "Applies a batch of commands to a project, every change of whose content is a command of a " +
 			"type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, " +
@@ -244,18 +243,22 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline, registry *command
 				"the list, and is answered with 200 and a result of each, applied or rejected with its error, so "+
 				"that a rejected batch, of any of the refusals above, never keeps the later ones from applying. "+
 				"A body that is neither form, or has more than %d batches, is answered with 422 "+
-				"validation_failed, and a batch of more than %d commands is rejected so.", maxBatches,
-				maxBatchCommands) +
+				"validation_failed, and a batch of more than %d commands is rejected so. The body is at most "+
+				"%d MB, as every route's, and a larger one is answered with 413 request_too_large, so that a "+
+				"request of many large batches may need to be split.", maxBatches, maxBatchCommands,
+				api.DefaultMaxBodyBytes>>20) +
 			tokenChangeDoc(scope.ProjectWrite),
 		Tags: []string{"Projects"},
+		// huma validates the body with the schema that the operation is
+		// registered with, commandsForm, which it keeps, and the document
+		// describes the body with body, which replaces it below: the pipeline
+		// checks each batch's commands, so that one that it cannot apply
+		// refuses its own batch alone, with the location of each problem,
+		// where huma, validating with body, would refuse the whole request,
+		// and a command whose type's schema refuses it as one that matches
+		// none of the types.
 		RequestBody: &huma.RequestBody{Required: true, Content: map[string]*huma.MediaType{
-			"application/json": {Schema: body}}},
-		// The pipeline checks each batch's commands, so that one that it
-		// cannot apply refuses its own batch alone, with the location of each
-		// problem, where huma would refuse the whole request, and a command
-		// whose type's schema refuses it as one that matches none of the
-		// types.
-		SkipValidateBody: true,
+			"application/json": {Schema: commandsForm()}}},
 		Responses: map[string]*huma.Response{"200": {Description: "OK", Content: map[string]*huma.MediaType{
 			"application/json": {Schema: answer}}}},
 	}, func(ctx context.Context, in *commandsInput) (*commandsOutput, error) {
@@ -282,8 +285,8 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline, registry *command
 		}
 		out := &commandsOutput{}
 		results := commandResultsBody{Results: make([]commandOutcomeBody, len(in.Body.Batches))}
-		for i, b := range in.Body.Batches {
-			res, err := applyBatch(ctx, pipeline, actor, id, b.Commands, fmt.Sprintf("body.batches[%d].commands", i))
+		for i, raw := range in.Body.Batches {
+			res, err := applyListed(ctx, pipeline, actor, id, raw, fmt.Sprintf("body.batches[%d]", i))
 			if err != nil {
 				if ctx.Err() != nil {
 					// The client went away, and reads no answer; the batches
@@ -303,6 +306,9 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline, registry *command
 		out.Body = results
 		return out, nil
 	}, api.TokenScope(scope.ProjectWrite))
+	// huma took commandsForm to validate with when the operation was
+	// registered, so the document's schema changes the document alone.
+	m.OpenAPI().Paths[path].Post.RequestBody.Content["application/json"].Schema = body
 }
 
 // applyBatch applies the batch of the commands raw, as a client sent them at
@@ -320,6 +326,23 @@ func applyBatch(ctx context.Context, pipeline *commands.Pipeline, actor commands
 		return commands.Result{}, commandError(err, at)
 	}
 	return res, nil
+}
+
+// applyListed applies the batch raw, a batch of a list of batches, at the
+// location at of the request, as body.batches[2], as applyBatch does, once it
+// has decoded it, or returns validation_failed, at its location, if it
+// cannot, so that it refuses its own batch alone.
+func applyListed(ctx context.Context, pipeline *commands.Pipeline, actor commands.Actor, projectID ids.UUID,
+	raw json.RawMessage, at string) (commands.Result, error) {
+	var b batchBody
+	if err := commands.DecodeObject(raw, &b); err != nil {
+		d := err.(*commands.DecodeError)
+		if d.Field != "" {
+			at += "." + d.Field
+		}
+		return commands.Result{}, bodyProblem(at, d.Message)
+	}
+	return applyBatch(ctx, pipeline, actor, projectID, b.Commands, at+".commands")
 }
 
 // bodyProblem returns validation_failed, with the one problem msg, at the

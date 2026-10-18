@@ -72,7 +72,8 @@ func Prune(ctx context.Context, db sweep.DB) (int64, error) {
 				return fmt.Errorf("commands: prune the idempotency records of workspace %s: %w", workspaceID, err)
 			}
 			pruned += n.Batches
-			// A transaction that stops short of pruneRows found no more.
+			// A transaction that stops short of pruneRows found no more but
+			// those that batches held, which the next run prunes.
 			if n.Rows < pruneRows {
 				return nil
 			}

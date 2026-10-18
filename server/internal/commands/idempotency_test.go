@@ -67,8 +67,8 @@ func TestReplay(t *testing.T) {
 	p := w.pipeline(t, nil)
 	a, aID := newNote()
 	batch := []Command{
-		command(t, noteCreate, notePayload{ID: aID, Body: "first"}, nil),
-		command(t, noteUpdate, notePayload{ID: aID, Body: "second"}, nil),
+		sentCommand(t, noteCreate, notePayload{ID: aID, Body: "first"}, nil),
+		sentCommand(t, noteUpdate, notePayload{ID: aID, Body: "second"}, nil),
 	}
 	first, err := p.Apply(ctx, w.as(ownerUser), w.project, batch)
 	if err != nil {
@@ -123,12 +123,12 @@ func TestReplayAfterPruning(t *testing.T) {
 	p := w.pipeline(t, nil)
 	a, aID := newNote()
 	b, bID := newNote()
-	create := []Command{command(t, noteCreate, notePayload{ID: aID, Body: "old"}, nil),
-		command(t, noteCreate, notePayload{ID: bID, Body: "old too"}, nil)}
+	create := []Command{sentCommand(t, noteCreate, notePayload{ID: aID, Body: "old"}, nil),
+		sentCommand(t, noteCreate, notePayload{ID: bID, Body: "old too"}, nil)}
 	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, create); err != nil {
 		t.Fatal(err)
 	}
-	update := []Command{command(t, noteUpdate, notePayload{ID: aID, Body: "new"}, nil)}
+	update := []Command{sentCommand(t, noteUpdate, notePayload{ID: aID, Body: "new"}, nil)}
 	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, update); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestReplayAtLimit(t *testing.T) {
 		})
 	}
 	a, aID := newNote()
-	create := []Command{command(t, noteCreate, notePayload{ID: aID, Body: "the last"}, nil)}
+	create := []Command{sentCommand(t, noteCreate, notePayload{ID: aID, Body: "the last"}, nil)}
 	first, err := limited(0).Apply(ctx, w.as(ownerUser), w.project, create)
 	if err != nil {
 		t.Fatal(err)
@@ -231,8 +231,8 @@ func TestRegroupedBatch(t *testing.T) {
 	p := w.pipeline(t, nil)
 	a, aID := newNote()
 	b, bID := newNote()
-	c1 := command(t, noteCreate, notePayload{ID: aID, Body: "a"}, nil)
-	c2 := command(t, noteCreate, notePayload{ID: bID, Body: "b"}, nil)
+	c1 := sentCommand(t, noteCreate, notePayload{ID: aID, Body: "a"}, nil)
+	c2 := sentCommand(t, noteCreate, notePayload{ID: bID, Body: "b"}, nil)
 	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{c1, c2}); err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestRegroupedBatch(t *testing.T) {
 	}
 
 	_, cID := newNote()
-	c3 := command(t, noteCreate, notePayload{ID: cID, Body: "c"}, nil)
+	c3 := sentCommand(t, noteCreate, notePayload{ID: cID, Body: "c"}, nil)
 	_, err = p.Apply(ctx, w.as(ownerUser), w.project, []Command{c3, c1})
 	var mismatch *IdempotencyMismatchError
 	if !errors.As(err, &mismatch) || !slices.Equal(mismatch.Applied, []ids.UUID{c1.ID}) {
@@ -388,6 +388,14 @@ func TestRememberedRefusal(t *testing.T) {
 		if res, err := p.Apply(ctx, w.as(ownerUser), w.project, update); err != nil || res.Status != Applied {
 			t.Errorf("the change applied again once the project is unarchived = %+v, %v, want it applied", res, err)
 		}
+		// Nor does it leave a record once it applies: its commands are
+		// recognised by applied_command alone.
+		if rows, _ := w.records(t); rows != rowsBefore {
+			t.Errorf("the applied batch left %d rows of records, where there were %d", rows, rowsBefore)
+		}
+		if res, err := p.Apply(ctx, w.as(ownerUser), w.project, update); err != nil || res.Status != AlreadyApplied {
+			t.Errorf("the applied batch applied again = %+v, %v, want it already applied", res, err)
+		}
 	})
 
 	t.Run("not remembered", func(t *testing.T) {
@@ -419,7 +427,7 @@ func TestConcurrentReplays(t *testing.T) {
 	w := newWorld(t)
 	p := w.pipeline(t, nil)
 	_, id := newNote()
-	batch := []Command{command(t, noteCreate, notePayload{ID: id, Body: "once"}, nil)}
+	batch := []Command{sentCommand(t, noteCreate, notePayload{ID: id, Body: "once"}, nil)}
 	const n = 8
 	results := make([]Result, n)
 	var wg sync.WaitGroup
@@ -486,10 +494,14 @@ func TestParse(t *testing.T) {
 	}
 	// The keys are read in their order, in which the uppercase spelling of the
 	// note comes first.
-	want := []at{{0, "payload.body"}, {1, "command_id"}, {1, "type"}, {2, ""}, {3, "expected_rev." + aID},
-		{3, "expected_rev.xx_1"}, {4, ""}}
+	want := []at{{0, "payload.body"}, {1, "command_id"}, {1, "type"}, {2, "command_id"},
+		{3, "expected_rev." + aID}, {3, "expected_rev.xx_1"}, {4, "extra"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("the problems %+v, want them at %+v", invalid.Problems, want)
+	}
+	// A value of the wrong JSON type is told so in JSON's terms, not Go's.
+	if pr := invalid.Problems[3]; pr.Message != "expected string, got number" {
+		t.Errorf("the problem of a command_id that is a number: %+v", pr)
 	}
 
 	// A key that differs from a field's name only in case is no field, where
@@ -504,7 +516,7 @@ func TestParse(t *testing.T) {
 			"expected_rev": {%q: 0}}`, ids.New(), aID, lower)),
 	}, 0)
 	if !errors.As(err, &invalid) || len(invalid.Problems) != 2 ||
-		invalid.Problems[0] != (Problem{Command: 0, Message: `does not decode: unknown field "Type"`}) ||
+		invalid.Problems[0] != (Problem{Command: 0, Field: "Type", Message: "unexpected property"}) ||
 		invalid.Problems[1].Command != 1 || invalid.Problems[1].Field != "expected_rev."+lower {
 		t.Errorf("Parse of a key in another case, and of a revision at a lowercase key: %v", err)
 	}
@@ -518,6 +530,15 @@ func TestParse(t *testing.T) {
 		t.Errorf("the check of a revision at a lowercase key: %v, want it located at expected_rev.%s", err, lower)
 	}
 
+	// The nil UUID is a UUID, but no command's ID, which a command without one
+	// would be taken for.
+	_, err = p.Parse([]json.RawMessage{raw(fmt.Sprintf(`{"command_id": %q, "type": "note.update",
+		"payload": {"id": %q, "body": "z"}}`, ids.UUID{}, aID))}, 0)
+	if !errors.As(err, &invalid) || !reflect.DeepEqual(invalid.Problems, []Problem{{Command: 0, Field: "command_id",
+		Message: "is the nil UUID, which is no command's ID"}}) {
+		t.Errorf("Parse of a command whose ID is the nil UUID: %v", err)
+	}
+
 	// A batch of more commands than its sender may send is refused whole.
 	_, err = p.Parse(make([]json.RawMessage, 3), 2)
 	if !errors.As(err, &invalid) || !reflect.DeepEqual(invalid.Problems,
@@ -526,8 +547,8 @@ func TestParse(t *testing.T) {
 	}
 	// Each batch that Parse refuses counts as invalid, as one that Apply
 	// refuses would.
-	if got := gather(t, p)[`storycreep_command_batches_total{result="invalid"}`]; got != 3 {
-		t.Errorf("the metrics count %v invalid batches, want the 3 that Parse refused", got)
+	if got := gather(t, p)[`storycreep_command_batches_total{result="invalid"}`]; got != 4 {
+		t.Errorf("the metrics count %v invalid batches, want the 4 that Parse refused", got)
 	}
 }
 

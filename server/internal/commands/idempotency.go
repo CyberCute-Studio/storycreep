@@ -84,11 +84,14 @@ type (
 	}
 )
 
-// The reasons of a remembered refusal, as the metrics name them.
+// The reasons of a remembered refusal, as the records keep them, which
+// outlive a release of the server for as long as the records are kept, so
+// that they are literals of their own, which renaming a metric's label or an
+// API's code leaves as they are.
 const (
-	reasonArchived         = resultArchived
-	reasonLimit            = resultOverLimit
-	reasonRevisionConflict = resultRevisionConflict
+	reasonArchived         = "archived"
+	reasonLimit            = "limit"
+	reasonRevisionConflict = "stale_revisions"
 )
 
 // refusalOf returns the refusal that remembers err, or nil if err is not one
@@ -169,29 +172,28 @@ func parseRef(kind, id string) (Ref, error) {
 }
 
 // replay is the answer to a batch whose commands were sent before: the
-// Result of a batch that applied, or the error that refused it.
+// Result of a batch that applied, or the error that refused it, which its
+// idempotency record remembers.
 type replay struct {
 	res Result
 	err error
 }
 
-// idempotent returns the answer to the batch of the commands cmds, in t, its
-// transaction, which holds the project's lock, if the batch was sent before
-// (FR-API-03), or nil if it is to be checked and applied as a new batch. A
-// batch whose commands are those of a batch whose idempotency record is kept,
-// in the same order, is answered as that batch was, applied or refused. Any
-// other batch whose commands were all applied is answered with
-// AlreadyApplied; one with commands that were applied and commands that were
-// not, with an *IdempotencyMismatchError; and one with none that were applied
-// is new: its commands' records, of refused batches, are deleted, so that
-// sending one of those batches again checks it again too. A new batch, whose
-// commands have neither, costs one read.
-func (p *Pipeline) idempotent(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded) (*replay, error) {
+// idempotent returns the answer to the batch of the commands cmds, whose IDs
+// are commandIDs, in t, its transaction, which holds the project's lock, if
+// the batch was sent before (FR-API-03), or nil if it is to be checked and
+// applied as a new batch. A batch whose commands are those of a batch whose
+// idempotency record is kept, in the same order, is answered as that batch
+// was, applied or refused. Any other batch whose commands were all applied is
+// answered with AlreadyApplied; one with commands that were applied and
+// commands that were not is refused with an *IdempotencyMismatchError, which
+// idempotent returns as its error, having written nothing; and one with none
+// that were applied is new: its commands' records, of refused batches, are
+// deleted, so that sending one of those batches again checks it again too. A
+// new batch, whose commands have neither, costs one read.
+func (p *Pipeline) idempotent(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded,
+	commandIDs []pgtype.UUID) (*replay, error) {
 	ws, project := nullUUID(t.workspace), nullUUID(t.project)
-	commandIDs := make([]pgtype.UUID, len(cmds))
-	for i, c := range cmds {
-		commandIDs[i] = nullUUID(c.ID)
-	}
 	states, err := q.CommandStates(ctx, queries.CommandStatesParams{WorkspaceID: ws, ProjectID: project,
 		CommandIds: commandIDs})
 	if err != nil {
@@ -242,7 +244,7 @@ func (p *Pipeline) idempotent(ctx context.Context, q *queries.Queries, t *Tx, cm
 				mismatch.Applied = append(mismatch.Applied, c.ID)
 			}
 		}
-		return &replay{err: mismatch}, nil
+		return nil, mismatch
 	}
 	res, err := p.alreadyApplied(ctx, q, t, seqs)
 	if err != nil {
@@ -339,13 +341,9 @@ func (p *Pipeline) alreadyApplied(ctx context.Context, q *queries.Queries, t *Tx
 	return res, nil
 }
 
-// remember records a, the answer to the batch of the commands cmds, as its
-// idempotency record, in q's transaction, the batch's.
-func remember(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded, a answer) error {
-	commandIDs := make([]pgtype.UUID, len(cmds))
-	for i, c := range cmds {
-		commandIDs[i] = nullUUID(c.ID)
-	}
+// remember records a, the answer to the batch of the commands commandIDs, in
+// order, as its idempotency record, in q's transaction, the batch's.
+func remember(ctx context.Context, q *queries.Queries, t *Tx, commandIDs []pgtype.UUID, a answer) error {
 	doc, err := json.Marshal(a)
 	if err != nil {
 		return fmt.Errorf("commands: encode the batch's answer: %w", err)

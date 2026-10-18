@@ -171,7 +171,7 @@ type Registry struct {
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
 	return &Registry{specs: map[Type]*spec{}, entities: map[ids.Kind]Entity{},
-		schemas: huma.NewMapRegistry("#/components/schemas/", schemaName)}
+		schemas: huma.NewMapRegistry(SchemaPrefix, schemaName)}
 }
 
 // schemaName names the schema of a payload, and of each struct that it

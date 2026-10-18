@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -330,12 +331,13 @@ func TestCommandEndpointMismatch(t *testing.T) {
 // holds more batches or commands than the endpoint takes, is answered with
 // 422 validation_failed, and that every problem of a batch's commands is
 // located in the body, as body.commands[1].command_id, so that a client can
-// tell which command to mend.
+// tell which command to mend; and that in a list of batches, a batch that
+// cannot be read, or has too many commands, refuses its own batch alone.
 func TestCommandEndpointBody(t *testing.T) {
 	t.Parallel()
 	f := newRolesFixture(t)
 	admin := f.as["admin"]
-	p := f.project(t, "")
+	p, other := f.project(t, ""), f.project(t, "")
 	rename := wireCommand{Type: "project.rename", Payload: map[string]string{"name": "Pier"}}
 	many := func(n int) []wireCommand {
 		out := make([]wireCommand, n)
@@ -356,6 +358,7 @@ func TestCommandEndpointBody(t *testing.T) {
 		{"both forms", jsonBody(t, map[string]any{"commands": withIDs([]wireCommand{rename}),
 			"batches": []any{map[string]any{"commands": withIDs([]wireCommand{rename})}}}), []string{"body"}},
 		{"neither form", []byte(`{}`), []string{"body"}},
+		{"no object", []byte(`[]`), []string{"body"}},
 		{"no batches", []byte(`{"batches": []}`), []string{"body.batches"}},
 		{"too many batches", commandBatches(t, batches...), []string{"body.batches"}},
 		{"no commands", []byte(`{"commands": []}`), []string{"body.commands"}},
@@ -367,33 +370,87 @@ func TestCommandEndpointBody(t *testing.T) {
 				"expected_rev": map[string]any{"xx_1": 1}},
 			map[string]any{"command_id": ids.New().String(), "type": "project.archive", "payload": map[string]any{},
 				"surplus": true},
+			map[string]any{"command_id": 7, "type": "project.archive", "payload": map[string]any{}},
 		}}), []string{"body.commands[1].command_id", "body.commands[1].payload.name",
-			"body.commands[2].expected_rev.xx_1", "body.commands[2].payload", "body.commands[3]"}},
+			"body.commands[2].expected_rev.xx_1", "body.commands[2].payload", "body.commands[3].surplus",
+			"body.commands[4].command_id"}},
+		// Only the batch's project has a revision that its commands may
+		// expect, which would otherwise be taken for a project that no longer
+		// exists.
+		{"another project's revision", commandBatch(t, wireCommand{Type: "project.rename",
+			Payload: map[string]string{"name": "Pier"}, ExpectedRev: map[string]int64{other: 1}}),
+			[]string{"body.commands[0].expected_rev." + other}},
 		// A key that differs from a field's name only in case is no field of
-		// the body, of a batch, or of a command, where encoding/json would take
-		// it for one, and keep the last of the two.
+		// the body, or of a command, where encoding/json would take it for
+		// one, and keep the last of the two.
 		{"a body's key in another case", jsonBody(t, map[string]any{"Commands": withIDs([]wireCommand{rename})}),
-			[]string{"body"}},
-		{"a batch's key in another case", jsonBody(t, map[string]any{"batches": []any{
-			map[string]any{"COMMANDS": withIDs([]wireCommand{rename})}}}), []string{"body"}},
+			[]string{"body.Commands"}},
 		{"a command's key in another case", jsonBody(t, map[string]any{"commands": []any{
 			map[string]any{"command_id": ids.New().String(), "type": "project.rename", "Type": "project.delete",
-				"payload": map[string]any{"name": "Pier"}}}}), []string{"body.commands[0]"}},
+				"payload": map[string]any{"name": "Pier"}}}}), []string{"body.commands[0].Type"}},
 	} {
 		if got := problems(t, call(f.s.main, http.MethodPost, commandsPath(p), tt.body, admin.header(true))); !slices.Equal(
 			got, tt.want) {
 			t.Errorf("%s: the problems are at %q, want %q", tt.name, got, tt.want)
 		}
 	}
-	// A batch of too many commands, in a list, refuses its own batch alone.
-	res := call(f.s.main, http.MethodPost, commandsPath(p), commandBatches(t, many(maxBatchCommands+1),
-		[]wireCommand{rename}), admin.header(true))
-	if res.status != http.StatusOK || !strings.Contains(string(res.body), `"location":"body.batches[0].commands"`) ||
-		!strings.Contains(string(res.body), `"seq":1`) {
-		t.Errorf("a list with a batch of too many commands: %d %s", res.status, res.body)
+	// In a list, a batch of too many commands, or one that cannot be read,
+	// as one with a key in another case, refuses its own batch alone.
+	describe := wireCommand{Type: "project.describe", Payload: map[string]string{"description": "Quay"}}
+	res := call(f.s.main, http.MethodPost, commandsPath(p), jsonBody(t, map[string]any{"batches": []any{
+		map[string]any{"commands": withIDs(many(maxBatchCommands + 1))},
+		map[string]any{"COMMANDS": withIDs([]wireCommand{describe})},
+		map[string]any{"commands": 5},
+		7,
+		map[string]any{"commands": withIDs([]wireCommand{rename})},
+	}}), admin.header(true))
+	var body struct {
+		Results []commandOutcomeBody `json:"results"`
+	}
+	if res.status != http.StatusOK || json.Unmarshal(res.body, &body) != nil || len(body.Results) != 5 {
+		t.Fatalf("a list with batches that cannot be applied: %d %s, want 200 and 5 results", res.status, res.body)
+	}
+	for i, at := range []string{"body.batches[0].commands", "body.batches[1].COMMANDS", "body.batches[2].commands",
+		"body.batches[3]"} {
+		r := body.Results[i]
+		if r.Status != "rejected" || r.Error == nil || r.Error.Code != api.CodeValidationFailed {
+			t.Errorf("batch %d's result: %+v", i, r)
+			continue
+		}
+		if got := r.Error.Details["errors"].([]any)[0].(map[string]any)["location"]; got != at {
+			t.Errorf("batch %d's problem is at %v, want %s", i, got, at)
+		}
+	}
+	if r := body.Results[4]; r.Status != "applied" || r.Seq != 1 {
+		t.Errorf("the last batch's result: %+v", r)
 	}
 	if pr := projectFrom(t, call(f.s.main, http.MethodGet, projectPath(p), nil, admin.header(false)),
-		http.StatusOK); pr.Name != "Pier" || pr.Seq != 1 {
+		http.StatusOK); pr.Name != "Pier" || pr.Description != "" || pr.Seq != 1 {
+		t.Errorf("the project after the requests: %+v", pr)
+	}
+}
+
+// TestCommandEndpointNotJSON checks that a body that is not JSON that the
+// API takes is answered as on every other route: one that is not JSON, or
+// has a key twice, with 400 invalid_request, and one of another type than
+// JSON with 415 unsupported_media_type.
+func TestCommandEndpointNotJSON(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	admin := f.as["admin"]
+	p := f.project(t, "")
+	for _, body := range []string{`{"commands": [`, `{"commands": [], "commands": []}`} {
+		wantCode(t, body, call(f.s.main, http.MethodPost, commandsPath(p), []byte(body), admin.header(true)),
+			http.StatusBadRequest, api.CodeInvalidRequest)
+	}
+	header := http.Header{}
+	maps.Copy(header, admin.header(true))
+	maps.Copy(header, newClient())
+	wantCode(t, "a body of text", send(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t,
+		wireCommand{Type: "project.rename", Payload: map[string]string{"name": "Pier"}}), "text/plain", header),
+		http.StatusUnsupportedMediaType, api.CodeUnsupportedMediaType)
+	if pr := projectFrom(t, call(f.s.main, http.MethodGet, projectPath(p), nil, admin.header(false)),
+		http.StatusOK); pr.Seq != 0 {
 		t.Errorf("the project after the requests: %+v", pr)
 	}
 }
@@ -402,14 +459,17 @@ func TestCommandEndpointBody(t *testing.T) {
 // only a session may apply, deleting or restoring the project, which
 // FR-AUTH-04 makes session-only, is refused to an API token of an owner,
 // with every scope, with 403 session_required, alone or in a list of
-// batches, and applies nothing, while the owner's session applies it.
+// batches, and applies nothing, while the owner's session applies it; and
+// that the audit log records the token's first refusal, as it records a
+// route's (NFR-SEC-05).
 //
 // Verifies: FR-AUTH-04/AC6
 func TestCommandEndpointSessionOnly(t *testing.T) {
 	t.Parallel()
 	f := newRolesFixture(t)
 	owner := f.as["owner"]
-	every := bearer(makeToken(t, f.s.main, owner, workspaceTokensPath(f.ws), scope.Names(scope.All())...).Secret)
+	token := makeToken(t, f.s.main, owner, workspaceTokensPath(f.ws), scope.Names(scope.All())...)
+	every := bearer(token.Secret)
 	p, deleted := f.project(t, ""), f.project(t, "deleted")
 	wantCode(t, "a token's deletion", call(f.s.main, http.MethodPost, commandsPath(p),
 		commandBatch(t, wireCommand{Type: "project.delete"}), every), http.StatusForbidden, api.CodeSessionRequired)
@@ -431,6 +491,11 @@ func TestCommandEndpointSessionOnly(t *testing.T) {
 	if n := f.count(t, "SELECT count(*) FROM project WHERE id = $1 AND deleted_at IS NOT NULL",
 		decode(t, ids.Project, deleted)); n != 1 {
 		t.Errorf("the deleted project was restored")
+	}
+	// The three refusals came within a minute, so only the first is recorded.
+	if got := f.tokenAudit(t, token.ID); !slices.Equal(got, []string{"token.create success",
+		"token.use_denied denied session_required"}) {
+		t.Errorf("the audit log of the token, refused 3 times, is %q, want its creation and its first refusal", got)
 	}
 	resultFrom(t, call(f.s.main, http.MethodPost, commandsPath(deleted),
 		commandBatch(t, wireCommand{Type: "project.restore"}), owner.header(true)))

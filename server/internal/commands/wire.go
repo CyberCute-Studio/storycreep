@@ -1,8 +1,8 @@
 package commands
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/validation"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
@@ -42,9 +43,9 @@ type wireCommand struct {
 // one that Apply refuses as invalid does.
 //
 // The commands that Parse returns are the client's, which it may send again:
-// Apply remembers a refusal of their batch that the project's state decides,
-// as one of stale revisions, in the batch's idempotency record, where it
-// would not of a batch of the server's own.
+// Apply remembers the answer to their batch in the batch's idempotency
+// record, a refusal that the project's state decides, as one of stale
+// revisions, included, where it would not of a batch of the server's own.
 func (p *Pipeline) Parse(raw []json.RawMessage, maxCommands int) ([]Command, error) {
 	start := time.Now()
 	cmds, err := p.registry.parse(raw, maxCommands)
@@ -69,15 +70,21 @@ func (r *Registry) parse(raw []json.RawMessage, maxCommands int) ([]Command, err
 		add := func(field, msg string) { problems = append(problems, Problem{Command: i, Field: field, Message: msg}) }
 		var w wireCommand
 		if err := DecodeObject(data, &w); err != nil {
-			add("", "does not decode: "+strings.TrimPrefix(err.Error(), "json: "))
+			d := err.(*DecodeError)
+			add(d.Field, d.Message)
 			skip[i] = true
 			continue
 		}
 		c := Command{Type: w.Type, Payload: w.Payload, sent: true}
 		if w.CommandID != "" {
 			id, err := ids.ParseUUID(w.CommandID)
-			if err != nil {
+			switch {
+			case err != nil:
 				add("command_id", "is not a UUID in the form xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+			case id == (ids.UUID{}):
+				add("command_id", "is the nil UUID, which is no command's ID")
+			}
+			if err != nil || id == (ids.UUID{}) {
 				// An ID of its own, so that the check below neither finds it
 				// missing nor takes it for another command's.
 				id = ids.New()
@@ -118,27 +125,39 @@ func (r *Registry) parse(raw []json.RawMessage, maxCommands int) ([]Command, err
 	return nil, &InvalidError{Problems: problems}
 }
 
+// DecodeError is why DecodeObject could not decode a JSON object, as a
+// client reads it: the key of the field whose value is not of the field's
+// type, or that is no field, or "" for the value itself, and what is wrong
+// with it, in the words of the API's validation of its other bodies, as
+// "expected string, got number", without the Go types that encoding/json
+// names.
+type DecodeError struct {
+	Field   string
+	Message string
+}
+
+func (e *DecodeError) Error() string {
+	if e.Field == "" {
+		return e.Message
+	}
+	return e.Field + ": " + e.Message
+}
+
 // DecodeObject decodes data, a JSON object or null, into v, a pointer to a
-// struct without embedded fields, as encoding/json does with
-// DisallowUnknownFields, but takes a key only if it names one of the
-// struct's fields exactly, as its json tag does (PRD FR-API-01 AC2).
-// encoding/json also takes a key that differs from a field's name only in
-// case for the field, and keeps the last of two such keys, so that
+// struct without embedded fields, as encoding/json does, but takes a key only
+// if it names one of the struct's fields exactly, as its json tag does (PRD
+// FR-API-01 AC2), and returns a *DecodeError if it cannot. encoding/json also
+// takes a key that differs from a field's name only in case for the field,
+// and keeps the last of two such keys, so that
 // {"type": "project.rename", "Type": "project.delete"} would decode as a
 // deletion. huma's validation refuses such a key in the API's other bodies,
-// but the command endpoint decodes its body without it, batch by batch, with
-// this. A key that is no field's exactly is refused with the error that
-// encoding/json gives for an unknown field.
+// but the command endpoint decodes its batches and their commands without
+// it, batch by batch, with this. A key that is no field's exactly is refused
+// as an unexpected property, as huma's validation refuses it.
 func DecodeObject(data []byte, v any) error {
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	if err := d.Decode(v); err != nil {
-		return err
-	}
-	// v decoded, so data is an object, or null, which has no keys.
 	var keys map[string]json.RawMessage
 	if err := json.Unmarshal(data, &keys); err != nil {
-		return err
+		return decodeError(err)
 	}
 	t := reflect.TypeOf(v).Elem()
 	names := make(map[string]bool, t.NumField())
@@ -155,15 +174,52 @@ func DecodeObject(data []byte, v any) error {
 	}
 	for _, key := range slices.Sorted(maps.Keys(keys)) {
 		if !names[key] {
-			return fmt.Errorf("json: unknown field %q", key)
+			return &DecodeError{Field: key, Message: validation.MsgUnexpectedProperty}
 		}
+	}
+	// Every key is a field's, so none is unknown.
+	if err := json.Unmarshal(data, v); err != nil {
+		return decodeError(err)
 	}
 	return nil
 }
 
-// schemaPrefix is where the API's OpenAPI document keeps its named schemas,
+// decodeError returns the *DecodeError that says why encoding/json could not
+// decode a value: of the wrong JSON type, or not JSON at all.
+func decodeError(err error) *DecodeError {
+	var typ *json.UnmarshalTypeError
+	if !errors.As(err, &typ) {
+		return &DecodeError{Message: "is not valid JSON"}
+	}
+	got, _, _ := strings.Cut(typ.Value, " ")
+	if got == "bool" {
+		got = "boolean"
+	}
+	return &DecodeError{Field: typ.Field, Message: fmt.Sprintf("expected %s, got %s", jsonType(typ.Type), got)}
+}
+
+// jsonType returns the JSON type that encoding/json decodes into a value of
+// the Go type t, as the API's schemas name it.
+func jsonType(t reflect.Type) string {
+	switch t.Kind() {
+	case reflect.String:
+		return "string"
+	case reflect.Bool:
+		return "boolean"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8,
+		reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "integer"
+	case reflect.Float32, reflect.Float64:
+		return "number"
+	case reflect.Slice, reflect.Array:
+		return "array"
+	}
+	return "object"
+}
+
+// SchemaPrefix is where the API's OpenAPI document keeps its named schemas,
 // which a reference to one starts with.
-const schemaPrefix = "#/components/schemas/"
+const SchemaPrefix = "#/components/schemas/"
 
 // Document adds to reg, the registry of the schemas of the API's OpenAPI
 // document (PRD FR-API-02), the schema of a command of each registered type,
@@ -183,7 +239,7 @@ func (r *Registry) Document(reg huma.Registry) *huma.Schema {
 			panic(fmt.Sprintf("commands: the API's document has a schema named %s already", name))
 		}
 		schemas[name] = s
-		return schemaPrefix + name
+		return SchemaPrefix + name
 	}
 	union := &huma.Schema{Description: "A command of the batch: its ID, its type, its payload, as the type's schema " +
 		"says, and the revisions that it expects (PRD FR-API-03)."}

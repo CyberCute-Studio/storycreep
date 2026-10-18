@@ -336,24 +336,30 @@ func (q *Queries) ProjectWorkspace(ctx context.Context, projectID pgtype.UUID) (
 }
 
 const pruneBatchRecords = `-- name: PruneBatchRecords :one
-WITH candidate AS (
+WITH oldest AS (
+    -- Each batch has a row at least, so no more than max_rows can be needed.
     SELECT r.project_id, r.command_id, r.created_at, cardinality(r.command_ids) AS n
     FROM idempotency_record r
     WHERE r.workspace_id = $1 AND r.command_id = r.batch_command_id
         AND r.created_at < now() - $2::interval
     ORDER BY r.created_at, r.project_id, r.command_id
     LIMIT $3::bigint
-    FOR UPDATE SKIP LOCKED
-), chosen AS (
+), ordered AS (
     -- The rows of the batches before each.
-    SELECT c.project_id, c.command_id,
-        sum(c.n) OVER (ORDER BY c.created_at, c.project_id, c.command_id) - c.n AS before
-    FROM candidate c
+    SELECT o.project_id, o.command_id,
+        sum(o.n) OVER (ORDER BY o.created_at, o.project_id, o.command_id) - o.n AS before
+    FROM oldest o
+), chosen AS (
+    SELECT r.project_id, r.command_id
+    FROM idempotency_record r
+    JOIN ordered o ON o.project_id = r.project_id AND o.command_id = r.command_id
+    WHERE r.workspace_id = $1 AND o.before < $3::bigint
+    FOR UPDATE OF r SKIP LOCKED
 ), deleted AS (
     DELETE FROM idempotency_record d
     USING chosen
     WHERE d.workspace_id = $1 AND d.project_id = chosen.project_id
-        AND d.command_id = chosen.command_id AND chosen.before < $3::bigint
+        AND d.command_id = chosen.command_id
     RETURNING cardinality(d.command_ids) AS n
 )
 SELECT count(*)::bigint AS batches, coalesce(sum(n), 0)::bigint AS rows FROM deleted
@@ -375,8 +381,9 @@ type PruneBatchRecordsRow struct {
 // command, which deletes the batch's other rows, until it has deleted
 // max_rows rows, of which the last batch may take it past by its own rows
 // alone, and returns how many batches' records and how many rows it deleted.
-// It skips a record that a batch of commands holds, as one that deletes it,
-// which a later run deletes.
+// It reads the oldest batches without locking them, and locks only those
+// that it deletes, skipping a record that a batch of commands holds, as one
+// that deletes it, which a later run deletes.
 func (q *Queries) PruneBatchRecords(ctx context.Context, arg PruneBatchRecordsParams) (PruneBatchRecordsRow, error) {
 	row := q.db.QueryRow(ctx, pruneBatchRecords, arg.WorkspaceID, arg.Retention, arg.MaxRows)
 	var i PruneBatchRecordsRow
