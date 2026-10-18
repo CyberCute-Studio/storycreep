@@ -293,6 +293,12 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 			return err
 		case again.found:
 			out = again.asset
+			// As the found path outside the lock does, enqueue the thumbnail's
+			// job again if the asset needs one and has none, as when its
+			// earlier job ran out of attempts.
+			if again.thumbless && needsThumbnail(img) {
+				return s.enqueueThumbnail(ctx, tx, workspaceID, again.id)
+			}
 			return nil
 		}
 		// The reconciliation deletes a blob that no row refers to under its

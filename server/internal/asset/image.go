@@ -168,34 +168,51 @@ func jpegOrientation(data []byte) int {
 
 // jpegSegments calls fn with the marker and the data of each segment of the
 // JPEG file data that precedes its image data, in order, until fn returns
-// false, or a segment does not read, or data is not a JPEG file.
+// false, or a segment does not read, or data is not a JPEG file. It reads
+// the markers as image/jpeg's own decoder does, so that it finds the same
+// frame header that the decoder acts on: it skips the extraneous bytes that
+// may fall between segments, and the escaped 0xff00 of entropy-coded data,
+// rather than read either as a segment, which a crafted file could otherwise
+// use to show this reader a smaller frame than the decoder reads, and so a
+// smaller estimate of the memory that decoding it takes (jpegDecodeBytes).
 func jpegSegments(data []byte, fn func(marker byte, segment []byte) bool) {
 	if len(data) < 2 || data[0] != 0xff || data[1] != 0xd8 {
 		return
 	}
-	for i := 2; i+4 <= len(data); {
+	for i := 2; i+2 <= len(data); {
 		if data[i] != 0xff {
-			return
-		}
-		marker := data[i+1]
-		switch {
-		case marker == 0xff:
-			// A fill byte before a marker.
+			// An extraneous byte between segments, which the decoder skips,
+			// one at a time, until it reaches the next marker.
 			i++
 			continue
-		case marker == 0xda || marker == 0xd9:
-			// The image data, or the end of the file.
+		}
+		marker := data[i+1]
+		i += 2
+		switch {
+		case marker == 0x00:
+			// An escaped 0xff of entropy-coded data, which is not a marker.
+			continue
+		case marker == 0xff:
+			// A fill byte, which the marker follows.
+			i--
+			continue
+		case marker == 0xd9 || marker == 0xda:
+			// The end of the file, or a scan, after which no segment that
+			// this reads is left.
 			return
-		case marker >= 0xd0 && marker <= 0xd8 || marker == 0x01:
+		case marker >= 0xd0 && marker <= 0xd7 || marker == 0x01:
 			// A marker without a segment.
-			i += 2
 			continue
 		}
-		end := i + 2 + int(binary.BigEndian.Uint16(data[i+2:]))
-		if end < i+4 || end > len(data) || !fn(marker, data[i+4:end]) {
+		// The length that follows the marker includes its own two bytes.
+		if i+2 > len(data) {
 			return
 		}
-		i = end
+		n := int(binary.BigEndian.Uint16(data[i:]))
+		if n < 2 || i+n > len(data) || !fn(marker, data[i+2:i+n]) {
+			return
+		}
+		i += n
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/color/palette"
@@ -159,6 +160,12 @@ func TestJPEGOrientation(t *testing.T) {
 	bad := withOrientation(jpg, 9, true)
 	if o := jpegOrientation(bad); o != 1 {
 		t.Errorf("the orientation 9: %d, want 1", o)
+	}
+	// A stray byte between the start and the EXIF segment, which image/jpeg
+	// skips, does not hide the orientation.
+	junk := slices.Insert(withOrientation(jpg, 6, true), 2, byte(0))
+	if o := jpegOrientation(junk); o != 6 {
+		t.Errorf("a stray byte before the EXIF segment: %d, want 6", o)
 	}
 	cut := withOrientation(jpg, 6, true)[:30]
 	if o := jpegOrientation(cut); o != 1 {
@@ -343,10 +350,15 @@ func TestDecodeBytes(t *testing.T) {
 			3*625*625*64 + 4*side*side + scale},
 		{"a grey JPEG, whose sampling is ignored", MimeJPEG, jpegHeader(jfifSegment, 0xc0, side, side,
 			[2]byte{1, 0x22}), 625*625*64 + scale},
-		// Junk before a segment, which image/jpeg skips, but this reader does
-		// not, counts as the costliest encoding.
-		{"a JPEG whose header does not read", MimeJPEG, jpegHeader(append(slices.Clone(jfifSegment), 0), 0xc0,
-			side, side, all), 24*side*side + scale},
+		// Junk before a segment, which image/jpeg skips, and which this reader
+		// skips too, so the frame's header is read all the same.
+		{"a JPEG with a stray byte before its frame", MimeJPEG, jpegHeader(append(slices.Clone(jfifSegment), 0),
+			0xc0, side, side, all), 625*625*64 + scale},
+		// An escaped 0xff00 before the frame, which the decoder treats as
+		// extraneous data, not a segment, so this reader reads the real frame
+		// rather than a smaller one that its bytes would spell as a length.
+		{"a JPEG with an escaped 0xff before its frame", MimeJPEG,
+			jpegHeader(append(slices.Clone(jfifSegment), 0xff, 0x00), 0xc0, side, side, all), 625*625*64 + scale},
 		{"an RGBA PNG", MimePNG, pngWith(side, side, 8, 6, false), 4*side*side + scale},
 		{"a paletted PNG", MimePNG, pngWith(side, side, 8, 3, false), side*side + scale},
 		{"a grey PNG of 16 bits", MimePNG, pngWith(side, side, 16, 0, false), 8*side*side + scale},
@@ -454,6 +466,18 @@ func TestOrient(t *testing.T) {
 	}
 }
 
+// svgWithAttrs returns an SVG whose rect element has n distinct attributes,
+// so that an element's attributes can be counted (maxSVGAttrs).
+func svgWithAttrs(n int) string {
+	var b strings.Builder
+	b.WriteString(`<svg xmlns="http://www.w3.org/2000/svg"><rect`)
+	for i := range n {
+		fmt.Fprintf(&b, ` a%d="1"`, i)
+	}
+	b.WriteString(`/></svg>`)
+	return b.String()
+}
+
 // TestSanitizeSVG checks what an SVG keeps and what it loses: its scripts,
 // event handlers, animations, foreign content, and every reference outside
 // it go, and what draws the image stays, with the namespaces of its
@@ -461,6 +485,10 @@ func TestOrient(t *testing.T) {
 //
 // Verifies: FR-ASSET-02/AC2
 func TestSanitizeSVG(t *testing.T) {
+	// An element of exactly the most attributes is kept, one more refused.
+	if _, err := sanitizeSVG([]byte(svgWithAttrs(maxSVGAttrs)), testLimit); err != nil {
+		t.Errorf("an element of %d attributes: %v", maxSVGAttrs, err)
+	}
 	for _, tt := range []struct {
 		name     string
 		in       string
@@ -589,6 +617,9 @@ func TestSanitizeSVG(t *testing.T) {
 			ReasonMalformed},
 		{"too deep", `<svg xmlns="http://www.w3.org/2000/svg">` + strings.Repeat("<g>", maxSVGDepth) +
 			strings.Repeat("</g>", maxSVGDepth) + `</svg>`, ReasonMalformed},
+		// An element of far more attributes than a drawing has, which the
+		// decoder would otherwise hold at once.
+		{"too many attributes", svgWithAttrs(maxSVGAttrs + 1), ReasonMalformed},
 		{"another encoding", `<?xml version="1.0" encoding="ISO-8859-1"?><svg xmlns="http://www.w3.org/2000/svg"/>`,
 			ReasonMalformed},
 	} {

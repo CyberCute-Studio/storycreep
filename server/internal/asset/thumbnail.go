@@ -125,10 +125,12 @@ func decodeBytes(img Image) int64 {
 		// The first frame's index of each pixel.
 		return n + w*h
 	}
-	// A WebP image: a lossless one's pixels, of 4 bytes, in the decoder's
-	// buffer and in the image, or a lossy one's 1.5 bytes and its alpha's
-	// pixels, which are decoded as a lossless image is.
-	return n + 8*w*h
+	// A WebP image: a lossless one decodes to 4 bytes a pixel, which a
+	// transform's output takes as much again of, 8 in all, and a lossy one
+	// with alpha decodes the alpha as a lossless image of 4 bytes a pixel,
+	// which the garbage collector may not have freed before the frame's own
+	// 1.5 bytes and the byte of the copied-out alpha are held, so 11 in all.
+	return n + 11*w*h
 }
 
 // jpegDecodeBytes returns how many bytes image/jpeg allocates to decode the

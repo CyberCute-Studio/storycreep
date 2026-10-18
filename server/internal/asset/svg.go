@@ -62,6 +62,14 @@ const (
 // maxSVGDepth bounds how deeply an SVG's elements nest.
 const maxSVGDepth = 256
 
+// maxSVGAttrs bounds how many attributes an element may have, its namespace
+// declarations among them, so that a single element of a million attributes
+// cannot make the decoder, which reads all of an element's attributes into
+// memory at once, take many times the file's size: enough for a drawing
+// whose elements an editor wrote with many, and little next to what a file
+// of a few megabytes holds.
+const maxSVGAttrs = 1024
+
 // The bounds of the entities that an SVG's document type may declare, and of
 // the bytes that the references to them may expand to in all: enough for a
 // drawing whose every element takes its style from an entity, as Illustrator
@@ -163,6 +171,10 @@ func sanitizeSVG(data []byte, limit int) (Image, error) {
 			if depth > maxSVGDepth {
 				return Image{}, &ImageError{Reason: ReasonMalformed,
 					Detail: fmt.Sprintf("its elements nest more than %d deep", maxSVGDepth)}
+			}
+			if len(t.Attr) > maxSVGAttrs {
+				return Image{}, &ImageError{Reason: ReasonMalformed,
+					Detail: fmt.Sprintf("an element has more than %d attributes", maxSVGAttrs)}
 			}
 			if !rootSeen {
 				rootSeen = true
