@@ -30,7 +30,7 @@ export interface Asset {
   content_type: "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/svg+xml";
   /** When it was uploaded */
   created_at: string;
-  /** The image's height in pixels, as it is shown, unless it is an SVG that does not say it */
+  /** The image's height in pixels, as it is shown, unless it is an SVG that does not say it, or says a size of more than 16,384 pixels on a side */
   height?: number;
   /** The asset's ID */
   id: string;
@@ -40,7 +40,7 @@ export interface Asset {
   sha256: string;
   /** The ID of the account that uploaded it, unless the account has been deleted */
   uploaded_by?: string;
-  /** The image's width in pixels, as it is shown, unless it is an SVG that does not say it */
+  /** The image's width in pixels, as it is shown, unless it is an SVG that does not say it, or says a size of more than 16,384 pixels on a side */
   width?: number;
 }
 

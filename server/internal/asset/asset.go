@@ -101,8 +101,8 @@ type Asset struct {
 	ProjectID   string    `json:"project_id" doc:"The ID of the asset's project"`
 	ContentType string    `json:"content_type" enum:"image/png,image/jpeg,image/gif,image/webp,image/svg+xml" doc:"The image's type, which the server found from its content"`
 	Bytes       int64     `json:"bytes" doc:"The size of the file as it is stored, in bytes: for an SVG, once the server has removed what it does not allow"`
-	Width       int       `json:"width,omitempty" doc:"The image's width in pixels, as it is shown, unless it is an SVG that does not say it"`
-	Height      int       `json:"height,omitempty" doc:"The image's height in pixels, as it is shown, unless it is an SVG that does not say it"`
+	Width       int       `json:"width,omitempty" doc:"The image's width in pixels, as it is shown, unless it is an SVG that does not say it, or says a size of more than 16,384 pixels on a side"`
+	Height      int       `json:"height,omitempty" doc:"The image's height in pixels, as it is shown, unless it is an SVG that does not say it, or says a size of more than 16,384 pixels on a side"`
 	SHA256      string    `json:"sha256" doc:"The SHA-256 hash of the file as it is stored, in lowercase hex"`
 	UploadedBy  string    `json:"uploaded_by,omitempty" doc:"The ID of the account that uploaded it, unless the account has been deleted"`
 	CreatedAt   time.Time `json:"created_at" doc:"When it was uploaded"`
@@ -399,8 +399,10 @@ func (s *Service) enqueueThumbnail(ctx context.Context, tx pgx.Tx, workspaceID, 
 // The store answers a HEAD in milliseconds, and the PUT that follows only in
 // the rare case that the reconciliation deleted the blob since the upload
 // stored it stores the file that it took moments before. It bounds the
-// thumbnail job's PUT of a thumbnail under the lock too, but not the orphan
-// reconciliation's deletions (orphanBatch).
+// thumbnail job's PUT of a thumbnail under the lock too, and the HEAD with
+// which the orphan reconciliation asks the store again for a thumbnail that
+// its listing did not find (mendThumbnails), but not the reconciliation's
+// deletions (orphanBatch).
 const lockedStoreTimeout = 30 * time.Second
 
 // stored is what checkStorage finds of an upload's file in its workspace.

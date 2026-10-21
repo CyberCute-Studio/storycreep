@@ -247,10 +247,9 @@ var codes = []codeSpec{
 			"`storage_bytes`; `details.usage` is how much of it the workspace uses, and `details.limit` the most " +
 			"that it may use (FR-ENT-03 AC1). The storage limit, `storage_bytes`, which an upload passes, is " +
 			"answered with `storage_limit_exceeded` instead. `details.upgrade_url` is the public site's page that " +
-			"offers the " +
-			"plans, `/pricing`, where the instance both bills for plans and serves the public site, as hosted mode " +
-			"does unless `STORYCREEP_PUBLIC_SITE` is `off`, the limit is the plan's rather than a cap of the " +
-			"instance, and another plan allows more. A self-hosted instance never sends it (FR-ENT-03 AC2). A " +
+			"offers the plans, `/pricing`, where the instance both bills for plans and serves the public site, as " +
+			"hosted mode does unless `STORYCREEP_PUBLIC_SITE` is `off`, the limit is the plan's rather than a cap " +
+			"of the instance, and another plan allows more. A self-hosted instance never sends it (FR-ENT-03 AC2). A " +
 			"workspace past a limit already, as after its plan changed, keeps what it has, but cannot add more."},
 	{CodeRevisionConflict, http.StatusConflict, i18n.K("error.revision_conflict"),
 		"Commands of the batch expect revisions of entities that the entities no longer have, because they changed " +

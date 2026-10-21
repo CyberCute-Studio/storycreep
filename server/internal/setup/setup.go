@@ -285,9 +285,9 @@ func (s *Service) checkCode(ctx context.Context, code string) error {
 // as account.CheckRegistration names them but under owner., as owner.email,
 // for the workspace's name, as workspace.name, for the signup policy, as
 // signup_policy, for the SMTP server's settings, under smtp., as smtp.host,
-// and for the bucket's, under storage., as storage.bucket; then a *workspace.SlugError if the workspace's slug is not
-// valid; and then an *account.PasswordError if the owner's password breaks
-// the policy. Completing setup adds that the owner's email address must
+// and for the bucket's, under storage., as storage.bucket; then a
+// *workspace.SlugError if the workspace's slug is not valid; and then an
+// *account.PasswordError if the owner's password breaks the policy. Completing setup adds that the owner's email address must
 // belong to no account, as owner.email.
 func (s *Service) check(ctx context.Context, req Request) (workspace.Draft, error) {
 	var fields input.FieldErrors

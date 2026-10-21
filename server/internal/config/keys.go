@@ -267,11 +267,14 @@ var keys = []key{
 			"browsers too, whose images a page of the application over HTTPS does not load, so it suits only an " +
 			"instance that is itself served over plain HTTP, as on a local network. A client of the API that reads " +
 			"a file with fetch, rather than showing it as an image, needs the bucket's CORS rules to allow GET " +
-			"from `STORYCREEP_PUBLIC_URL`'s origin. Set, the key overrides the bucket that first-run setup chose (PRD FR-ADMIN-02) for as long as " +
-			"it is set; not set, self-hosted mode stores the files in the bucket that setup chose, or else in `" +
-			DefaultAssetDir + "`, which the `BlobDriver` capability shows as `setup`. The directory is created if " +
-			"it does not exist. Hosted mode, which stores no file on the instance's disk, requires an `s3://` URL. " +
-			"Where the URL is shown, its secret key is `" + secret.Redacted + "`.",
+			"from `STORYCREEP_PUBLIC_URL`'s origin. Set, the key overrides the bucket that first-run setup chose " +
+			"(PRD FR-ADMIN-02) for as long as it is set; not set, self-hosted mode stores the files in the bucket " +
+			"that setup chose, or else in `" + DefaultAssetDir + "`, which the `BlobDriver` capability shows as " +
+			"`setup`. The directory is created if it does not exist. Hosted mode, which stores no file on the " +
+			"instance's disk, requires an `s3://` URL. The server deletes every file of its workspaces that its own " +
+			"database does not refer to, so two instances never share a bucket: one that runs on a copy of " +
+			"another's database, which names the bucket that setup chose, sets this key to a bucket or a " +
+			"directory of its own. Where the URL is shown, its secret key is `" + secret.Redacted + "`.",
 		valuesDoc:  "The absolute path of a directory, or an `s3://` URL",
 		example:    "s3://AKIAEXAMPLE:secret@s3.eu-central-1.amazonaws.com/storycreep?region=eu-central-1",
 		requiredIn: modeHosted,

@@ -45,12 +45,14 @@ CREATE TABLE asset (
 	-- The type that the server found the file to be, from its content.
 	mime text NOT NULL CHECK (mime IN ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml')),
 	bytes bigint NOT NULL CHECK (bytes > 0),
-	-- The image's size in pixels, or null for an SVG that does not say it.
+	-- The image's size in pixels, or null for an SVG that does not say it, or
+	-- says one of more than 16,384 pixels on a side.
 	width integer CHECK (width > 0),
 	height integer CHECK (height > 0),
 	-- The key of the file in the store, {workspace}/{sha256}.{ext}, and of
-	-- its thumbnail, or null until the thumbnail job has made one, and for an
-	-- image that needs none, which is its own thumbnail.
+	-- its thumbnail: the file's own for an image that needs none, which is
+	-- its own thumbnail, as one that does not decode is, or else null until
+	-- the thumbnail job has made one.
 	storage_key text NOT NULL,
 	thumbnail_key text,
 	-- The user who uploaded it, or null once their account is deleted.

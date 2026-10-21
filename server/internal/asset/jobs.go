@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/blob"
+	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
@@ -28,9 +29,10 @@ import (
 
 // thumbnailAttempts is how many attempts the job of a thumbnail has: enough
 // that its retries, the first a second after the first attempt fails and
-// each after twice as long as the last (package jobs), span more than 8
-// minutes, so that a store that fails for a few minutes, at once or by not
-// answering, has answered again before the last, but not the 25 of a job
+// each after twice as long as the last (package jobs), span about 8½
+// minutes, and at least 7½ with the 10% that the waits vary by at random, so
+// that a store that fails for a few minutes, at once or by not answering,
+// has answered again before the last, but not the 25 of a job
 // that must happen, because the image is its own thumbnail until then, and
 // the orphan reconciliation enqueues the job again of a thumbnail that is
 // missing (mendThumbnails).
@@ -138,11 +140,13 @@ func (s *Service) makeThumbnail(ctx context.Context, args thumbnailJob) error {
 		return fmt.Errorf("asset: %w", err)
 	}
 	// The buffer has room for the file, of the size that the store says, up
-	// to the most that an upload takes, and for the read that finds its end,
-	// so that it is not grown while the file is read, which would hold the
-	// file about twice before it is decoded.
+	// to the most that an upload takes on any instance, which a file stored
+	// before STORYCREEP_ASSET_MAX_BYTES was lowered may take, and for the
+	// read that finds its end, so that it is not grown while the file is
+	// read, which would hold the file about twice before it is decoded. A
+	// store that says less than the file has grows it, as io.ReadAll would.
 	var buf bytes.Buffer
-	buf.Grow(int(min(max(info.Size, 0), s.maxBytes)) + bytes.MinRead)
+	buf.Grow(int(min(max(info.Size, 0), config.MaxAssetMaxBytes)) + bytes.MinRead)
 	_, err = buf.ReadFrom(r)
 	_ = r.Close()
 	if err != nil {
@@ -566,8 +570,12 @@ func (s *Service) mendThumbnails(ctx context.Context, store blob.Store, workspac
 			}
 			// A thumbnail is stored before it is recorded, so one that the
 			// listing missed is missing still, but the store has the last
-			// word.
-			switch _, err := store.Stat(ctx, thumb); {
+			// word, which it has lockedStoreTimeout to say, as under the lock
+			// of an upload.
+			storeCtx, cancel := context.WithTimeout(ctx, lockedStoreTimeout)
+			_, err := store.Stat(storeCtx, thumb)
+			cancel()
+			switch {
 			case err == nil:
 				return nil
 			case !errors.Is(err, blob.ErrNotFound):

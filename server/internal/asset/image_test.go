@@ -644,6 +644,16 @@ func svgWithAttrs(n int) string {
 	return b.String()
 }
 
+// utf16Of returns s, which is ASCII, in UTF-16 of the byte order, after its
+// byte order mark, as an editor on Windows may write an SVG.
+func utf16Of(order binary.AppendByteOrder, s string) string {
+	b := order.AppendUint16(nil, 0xfeff)
+	for _, c := range []byte(s) {
+		b = order.AppendUint16(b, uint16(c))
+	}
+	return string(b)
+}
+
 // TestSanitizeSVG checks what an SVG keeps and what it loses: its scripts,
 // event handlers, animations, foreign content, and every reference outside
 // it go, and what draws the image stays, with the namespaces of its
@@ -830,6 +840,22 @@ func TestSanitizeSVG(t *testing.T) {
 			in:   `<svg xmlns="http://www.w3.org/2000/svg" width="2em" height="2em" viewBox="0 0 16 8"/>`,
 			w:    16, h: 8,
 		},
+		// A size of more than MaxSide on a side is none, rather than a size
+		// that the viewBox's proportions make of the other side.
+		{
+			name: "a side of more than MaxSide",
+			in:   `<svg xmlns="http://www.w3.org/2000/svg" width="20000" height="100" viewBox="0 0 10 10"/>`,
+		},
+		{
+			name: "a viewBox whose proportions make a side of more than MaxSide",
+			in:   `<svg xmlns="http://www.w3.org/2000/svg" height="100" viewBox="0 0 1000 1"/>`,
+		},
+		// A viewBox's user units are no pixels once a side is given.
+		{
+			name: "a viewBox of more than MaxSide user units",
+			in:   `<svg xmlns="http://www.w3.org/2000/svg" width="100" viewBox="0 0 100000 50000"/>`,
+			w:    100, h: 50,
+		},
 	} {
 		img, err := sanitizeSVG([]byte(tt.in), testLimit)
 		if err != nil {
@@ -865,6 +891,12 @@ func TestSanitizeSVG(t *testing.T) {
 		{"not XML", `{"svg": true}`, ReasonType},
 		{"text not in UTF-8", "a caption\xff", ReasonType},
 		{"not UTF-8", "<svg xmlns=\"http://www.w3.org/2000/svg\">\xff</svg>", ReasonMalformed},
+		// XML in UTF-16 starts with its byte order mark, which no file in
+		// UTF-8 holds.
+		{"UTF-16", utf16Of(binary.LittleEndian, `<svg xmlns="http://www.w3.org/2000/svg"/>`), ReasonMalformed},
+		{"UTF-16, big-endian", utf16Of(binary.BigEndian, `<?xml version="1.0" encoding="UTF-16"?><svg:svg `+
+			`xmlns:svg="http://www.w3.org/2000/svg"/>`), ReasonMalformed},
+		{"text in UTF-16", utf16Of(binary.LittleEndian, "a caption <b>"), ReasonType},
 		{"a broken root", `<svg xmlns="http://www.w3.org/2000/svg" width="10" <rect/>`, ReasonMalformed},
 		{"a broken prefixed root", `<?xml version="1.0"?><s:svg xmlns:s="http://www.w3.org/2000/svg" a=1/>`,
 			ReasonMalformed},

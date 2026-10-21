@@ -84,7 +84,7 @@ type Image struct {
 	// key.
 	Mime, Ext string
 	// Width and Height are its size in pixels, as it is shown, or 0 for an
-	// SVG that does not say it.
+	// SVG that does not say it, or says one of more than MaxSide on a side.
 	Width, Height int
 	// Data is the file.
 	Data []byte

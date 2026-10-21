@@ -2,6 +2,7 @@ package asset
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -131,7 +132,8 @@ var entityDecl = regexp.MustCompile(`<!ENTITY\s+([A-Za-z_][A-Za-z0-9_.-]*)\s+(?:
 // sanitizeSVG returns the SVG image that data holds, sanitized, or an
 // *ImageError: errNotImage if data is not XML whose root is an svg element of
 // SVG's namespace, ReasonMalformed if it is, or its first element is an svg
-// element (startsAsSVG), but it is not well-formed XML in UTF-8, and
+// element (startsAsSVG), in UTF-8 or in UTF-16 (utf16ASCII), but it is not
+// well-formed XML in UTF-8, and
 // ReasonUnsupported if it is well-formed, but declares another encoding, or
 // another version of XML, or goes past one of the bounds of its elements'
 // depth and attributes, or of its entities, or ErrTooLarge if the image,
@@ -139,7 +141,7 @@ var entityDecl = regexp.MustCompile(`<!ENTITY\s+([A-Za-z_][A-Za-z0-9_.-]*)\s+(?:
 func sanitizeSVG(data []byte, limit int) (Image, error) {
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	if !utf8.Valid(data) {
-		if startsAsSVG(data) {
+		if startsAsSVG(data) || startsAsSVG(utf16ASCII(data)) {
 			return Image{}, &ImageError{Reason: ReasonMalformed, Detail: "it is an SVG that is not in UTF-8"}
 		}
 		return Image{}, errNotImage
@@ -520,6 +522,33 @@ func startsAsSVG(data []byte) bool {
 	return string(name) == "svg"
 }
 
+// utf16ASCII returns the text of data, if it starts with a byte order mark
+// of UTF-16, as an editor on Windows may write an SVG, which XML requires of
+// a file in UTF-16, with each character that is not ASCII as a space, so that
+// startsAsSVG reads the names of its elements as it reads those of a file in
+// UTF-8, or nil if it does not start with one. A character that is not ASCII
+// is none of a name's that startsAsSVG matches, nor its less-than sign.
+func utf16ASCII(data []byte) []byte {
+	var order binary.ByteOrder
+	switch {
+	case bytes.HasPrefix(data, []byte{0xff, 0xfe}):
+		order = binary.LittleEndian
+	case bytes.HasPrefix(data, []byte{0xfe, 0xff}):
+		order = binary.BigEndian
+	default:
+		return nil
+	}
+	text := make([]byte, 0, len(data)/2)
+	for i := 2; i+2 <= len(data); i += 2 {
+		c := order.Uint16(data[i:])
+		if c >= utf8.RuneSelf {
+			c = ' '
+		}
+		text = append(text, byte(c))
+	}
+	return text
+}
+
 // declareEntities adds to d's entities those that the document type dir of
 // the file data declares in its internal subset with values that are text,
 // or returns an *ImageError of ReasonUnsupported for a document type that
@@ -787,7 +816,12 @@ var svgUnits = map[string]float64{"": 1, "px": 1, "in": 96, "cm": 96 / 2.54, "mm
 // attrs, in pixels, rounded up, as a browser shows it: its width and height;
 // or else, if it says one of them, that one, and the other in the proportions
 // of its viewBox; or else its viewBox's size; or 0, 0 if it says too little
-// for any of these, or a size of more than MaxSide on a side.
+// for any of these, or a size of more than MaxSide on a side. The bound is of
+// the size that it says, not of the lengths that it is made from, so that a
+// width of more than MaxSide is no size, rather than one that the viewBox's
+// proportions give from the height, and a viewBox of more than MaxSide user
+// units on a side, which are no pixels when the width or the height is
+// given, still gives the other side.
 func svgSize(attrs []xml.Attr) (int, int) {
 	var width, height, viewBox string
 	for _, a := range attrs {
@@ -825,7 +859,8 @@ func svgSize(attrs []xml.Attr) (int, int) {
 			w, h = vw, vh
 		}
 	}
-	if w > MaxSide || h > MaxSide {
+	// A side that the proportions make too large to be a number is not one.
+	if !(w <= MaxSide && h <= MaxSide) {
 		return 0, 0
 	}
 	return wholePixels(w), wholePixels(h)
@@ -840,9 +875,9 @@ func wholePixels(f float64) int {
 
 // svgPixels returns a length v of SVG's width or height in pixels, or, if
 // viewBox is set, a width or height of its viewBox, which has no unit, in
-// user units, and true, or false for one that is not a positive length of at
-// most MaxSide pixels in one of svgUnits, or that has a unit, if viewBox is
-// set.
+// user units, and true, or false for one that is not a positive, finite
+// length in one of svgUnits, or that has a unit, if viewBox is set. It does
+// not bound the length: svgSize bounds the size that the lengths give.
 func svgPixels(v string, viewBox bool) (float64, bool) {
 	m := svgLength.FindStringSubmatch(v)
 	if m == nil || viewBox && m[2] != "" {
@@ -853,7 +888,7 @@ func svgPixels(v string, viewBox bool) (float64, bool) {
 		return 0, false
 	}
 	f, err := strconv.ParseFloat(m[1], 64)
-	if f *= unit; err != nil || f <= 0 || f > MaxSide {
+	if f *= unit; err != nil || f <= 0 || math.IsInf(f, 0) {
 		return 0, false
 	}
 	return f, true
