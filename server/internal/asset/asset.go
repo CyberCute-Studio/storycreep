@@ -143,8 +143,8 @@ type Options struct {
 	// is refused with ErrTooLarge. It is required.
 	MaxBytes int64
 	// Log is where the orphan reconciliation warns that it deletes nothing
-	// in a store that another database owns (Reconcile), or nil for
-	// nowhere.
+	// in a store that another database owns, or that a copy of this one
+	// writes too (Reconcile), or nil for nowhere.
 	Log *slog.Logger
 }
 
@@ -615,8 +615,14 @@ func thumbnailKey(workspaceID ids.UUID, sum []byte) string {
 // is sum until the transaction of q ends (database.BlobLock), whose second
 // integer is the content's (database.LockObject).
 func lockBlob(ctx context.Context, q *queries.Queries, workspaceID ids.UUID, sum []byte) error {
-	if err := q.LockBlob(ctx, queries.LockBlobParams{Class: database.BlobLock,
-		Object: database.LockObject(workspaceID, sum)}); err != nil {
+	return lockBlobs(ctx, q, []int32{database.LockObject(workspaceID, sum)})
+}
+
+// lockBlobs takes the locks of a workspace's blobs whose second integers are
+// objects (database.LockObject), in their order, in one statement, until the
+// transaction of q ends.
+func lockBlobs(ctx context.Context, q *queries.Queries, objects []int32) error {
+	if err := q.LockBlobs(ctx, queries.LockBlobsParams{Class: database.BlobLock, Objects: objects}); err != nil {
 		return fmt.Errorf("asset: lock the blob: %w", err)
 	}
 	return nil

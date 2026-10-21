@@ -26,6 +26,21 @@ ALTER TABLE instance
 GRANT UPDATE (s3_host, s3_port, s3_security, s3_bucket, s3_region, s3_access_key_id, s3_secret_access_key)
 	ON instance TO storycreep_app;
 
+-- The claim of the store that the orphan reconciliation of package asset
+-- writes each hour to the store's blob storycreep-owner, with the
+-- database's identity, so that it deletes blobs only in a store that its
+-- database owns: the token that it wrote last, and the one before, which
+-- the blob still holds if the store refused the last, and when it last
+-- found there a token of the database's identity that this database did not
+-- write, as a copy of its cluster's files, which has the same identity,
+-- writes, which keeps both from deleting for a week, or null.
+ALTER TABLE instance
+	ADD COLUMN asset_store_claim text,
+	ADD COLUMN asset_store_claim_previous text,
+	ADD COLUMN asset_store_conflict_at timestamptz;
+GRANT UPDATE (asset_store_claim, asset_store_claim_previous, asset_store_conflict_at) ON instance
+	TO storycreep_app;
+
 -- An asset of a project: one row for each file that the project's users
 -- uploaded, which an upload of the same file to the project again answers
 -- with, rather than adding another. Rows of the workspace that have the same

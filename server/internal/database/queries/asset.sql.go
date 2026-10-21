@@ -221,7 +221,7 @@ WHERE name IN ('idle_in_transaction_session_timeout', 'transaction_timeout')
 // KeepSession sets, until the transaction ends, the timeouts that the
 // server, the database, or the login may set, and that end a session whose
 // transaction runs for long, or waits idle, as for the store, and with it
-// the advisory locks that the transaction holds (LockBlob): it switches off
+// the advisory locks that the transaction holds (LockBlobs): it switches off
 // the one of a transaction that runs for long, as database.timeoutsOff does
 // for the migrations' lock, and makes the one of a transaction that waits
 // idle idle_timeout milliseconds, which the caller makes longer than it ever
@@ -235,25 +235,32 @@ func (q *Queries) KeepSession(ctx context.Context, idleTimeout string) error {
 	return err
 }
 
-const lockBlob = `-- name: LockBlob :exec
+const lockBlobs = `-- name: LockBlobs :exec
 
-SELECT pg_advisory_xact_lock($1::integer, $2::integer)
+SELECT pg_advisory_xact_lock($1::integer, o.object)
+FROM unnest($2::integer[]) WITH ORDINALITY AS o (object, n)
+ORDER BY o.n
 `
 
-type LockBlobParams struct {
-	Class  int32
-	Object int32
+type LockBlobsParams struct {
+	Class   int32
+	Objects []int32
 }
 
 // Assets (package asset, PRD FR-ASSET-01, FR-ASSET-02): the files that a
 // project's users upload, whose blobs a store of package blob keeps. Every
 // query runs in a transaction of the asset's workspace, under row-level
 // security, and names the workspace too.
-// LockBlob takes the transaction-scoped advisory lock of a blob of a
-// workspace, by its content's hash (database.BlobLock), until the
-// transaction ends.
-func (q *Queries) LockBlob(ctx context.Context, arg LockBlobParams) error {
-	_, err := q.db.Exec(ctx, lockBlob, arg.Class, arg.Object)
+// LockBlobs takes the transaction-scoped advisory locks of blobs of a
+// workspace, by their contents' hashes (database.BlobLock), one after
+// another in the order of objects, in one statement, until the transaction
+// ends: unnest yields the array's elements in their order, which ORDER BY
+// keeps, and PostgreSQL computes a volatile function of the select list
+// after any sort, so the locks are taken in the order of the array, which
+// the caller sorts, so that no two transactions that take several of them
+// wait for each other.
+func (q *Queries) LockBlobs(ctx context.Context, arg LockBlobsParams) error {
+	_, err := q.db.Exec(ctx, lockBlobs, arg.Class, arg.Objects)
 	return err
 }
 

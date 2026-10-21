@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/riverqueue/river"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/blob"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
@@ -85,7 +87,8 @@ func TestReconcileGoesOn(t *testing.T) {
 	slices.Sort(keys)
 	store := refusingStore{Store: local, refuse: keys[0], slow: keys[orphanBatch]}
 	s := &Service{db: d.Open(t)}
-	deleted, err := s.reconcileWorkspace(ctx, store, workspaceID, true, func() bool { return true })
+	cl := claimed(t, local, "a")
+	deleted, err := s.reconcileWorkspace(ctx, store, workspaceID, cl, func() bool { return true })
 	joined, _ := err.(interface{ Unwrap() []error })
 	if !errors.Is(err, errRefused) || joined == nil || len(joined.Unwrap()) != 1 || deleted != len(keys)-1 {
 		t.Errorf("the reconciliation deleted %d blobs, and failed with %v; want %d deleted, and the refused "+
@@ -100,6 +103,109 @@ func TestReconcileGoesOn(t *testing.T) {
 	}
 	if !slices.Equal(left, keys[:1]) {
 		t.Errorf("the store holds %v, want the blob that it refused to delete alone", left)
+	}
+}
+
+// TestDeleteBlobsOutlastContext checks that a deletion of a batch of orphans
+// that was sent before the job's context ended is not given up on when it
+// ends, as the store might carry it out after the batch's locks are
+// released, but waited for, and that none is sent once the context has less
+// than orphanDeleteTimeout left, which is left to the next run.
+func TestDeleteBlobsOutlastContext(t *testing.T) {
+	local, err := blob.OpenLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	workspaceID := ids.New()
+	put := func(b byte) string {
+		key := blobKey(workspaceID, []byte{b}, "png")
+		if err := local.Put(context.Background(), key, []byte("x"), MimePNG); err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	stored := func(key string) bool {
+		_, err := local.Stat(context.Background(), key)
+		return err == nil
+	}
+	slow := put(1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(100*time.Millisecond, cancel)
+	if n, err := deleteBlobs(ctx, refusingStore{Store: local, slow: slow}, []string{slow}); n != 1 || err != nil ||
+		stored(slow) {
+		t.Errorf("a deletion whose context ended while it went on deleted %d blobs: %v, stored %t; want 1", n, err,
+			stored(slow))
+	}
+	late := put(2)
+	short, cancelShort := context.WithTimeout(context.Background(), orphanDeleteTimeout/2)
+	defer cancelShort()
+	if n, err := deleteBlobs(short, local, []string{late}); n != 0 || err != nil || !stored(late) {
+		t.Errorf("a batch with less than orphanDeleteTimeout left deleted %d blobs: %v; want none, and no error", n,
+			err)
+	}
+}
+
+// claimed writes the store's owner blob as a run of the database whose
+// identity is self writes it, and returns the run's claim.
+func claimed(t *testing.T, store blob.Store, self string) *claim {
+	t.Helper()
+	cl := &claim{self: self, content: self + " token\n"}
+	if err := store.Put(context.Background(), OwnerKey, []byte(cl.content), "text/plain"); err != nil {
+		t.Fatal(err)
+	}
+	return cl
+}
+
+// TestCheckClaim checks that a run that finds the store's owner blob changed
+// before a batch of deletions, as by an instance that claimed the store at
+// the same moment, on a copy of its database's files or on another
+// database, or deleted, deletes no more blobs, and says why, and that one
+// that finds its own claim deletes them.
+func TestCheckClaim(t *testing.T) {
+	ctx := context.Background()
+	local, err := blob.OpenLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	workspaceID := ids.New()
+	key := blobKey(workspaceID, make([]byte, 32), "png")
+	s := &Service{db: dbtest.New(t).Open(t)}
+	always := func() bool { return true }
+	for _, tt := range []struct {
+		name, blob, owner string
+		copy              bool
+	}{
+		{"a copy of the database", "a other\n", "a", true},
+		{"another database", "b other\n", "b", false},
+		{"no blob", "", "", false},
+	} {
+		if err := local.Put(ctx, key, []byte("x"), MimePNG); err != nil {
+			t.Fatal(err)
+		}
+		cl := claimed(t, local, "a")
+		if tt.blob == "" {
+			err = local.Delete(ctx, OwnerKey)
+		} else {
+			err = local.Put(ctx, OwnerKey, []byte(tt.blob), "text/plain")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := s.reconcileWorkspace(ctx, local, workspaceID, cl, always)
+		_, statErr := local.Stat(ctx, key)
+		if n != 0 || err != nil || statErr != nil || cl.refused == nil || cl.refused.Owner != tt.owner ||
+			cl.refused.Copy != tt.copy {
+			t.Errorf("%s: the run deleted %d blobs: %v, refused %+v; want none, refused by %q, a copy %t", tt.name,
+				n, err, cl.refused, tt.owner, tt.copy)
+		}
+	}
+	cl := claimed(t, local, "a")
+	if n, err := s.reconcileWorkspace(ctx, local, workspaceID, cl, always); n != 1 || err != nil ||
+		cl.refused != nil {
+		t.Errorf("the run that finds its own claim deleted %d blobs: %v, refused %+v; want 1", n, err, cl.refused)
 	}
 }
 
@@ -161,46 +267,71 @@ func TestKeepSession(t *testing.T) {
 	}
 }
 
-// TestListWorkspace checks that a workspace's listing, which starts after a
-// key picked at random, lists each of its blobs once, and no other
-// workspace's, whatever key it starts after, which it holds in their order,
-// and covers every key once it is done.
+// TestListWorkspace checks that a workspace's listing lists each of its blobs
+// once, and no other workspace's, which it holds in their order, and covers
+// every key once it is done: in one request from the first, for a workspace
+// of at most smallListing blobs, and otherwise from after a key picked at
+// random, whatever that key is.
 func TestListWorkspace(t *testing.T) {
-	store, err := blob.OpenLocal(t.TempDir())
+	dir := t.TempDir()
+	local, err := blob.OpenLocal(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { _ = local.Close() })
+	store := &countingStore{Store: local}
 	ctx := context.Background()
-	mine, theirs := ids.New(), ids.New()
-	var want []string
-	for i := range 40 {
-		sum := []byte{byte(i * 6), byte(i)}
-		key := blobKey(mine, sum, "png")
-		want = append(want, key)
-		for _, k := range []string{key, blobKey(theirs, sum, "png")} {
-			if err := store.Put(ctx, k, []byte("x"), MimePNG); err != nil {
+	for _, n := range []int{40, smallListing + 40} {
+		mine, theirs := ids.New(), ids.New()
+		var want []string
+		for i := range n {
+			sum := []byte{byte(i * 6), byte(i), byte(i >> 8)}
+			key := blobKey(mine, sum, "png")
+			want = append(want, key)
+			// The files are written as the local driver keeps them, without
+			// its syncs, which a thousand of would take seconds.
+			for _, k := range []string{key, blobKey(theirs, sum, "png")} {
+				if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(k)), 0o750); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, k), []byte("x"), 0o640); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		slices.Sort(want)
+		for range 20 {
+			store.lists = 0
+			l, err := listWorkspace(ctx, store, mine, func() bool { return true })
+			if err != nil {
 				t.Fatal(err)
+			}
+			if !l.done || !slices.Equal(l.keys, want) {
+				t.Fatalf("the listing of %d blobs after %s, done %t, lists %d keys, want each once, in order", n,
+					l.from, l.done, len(l.keys))
+			}
+			if n <= smallListing && store.lists != 1 {
+				t.Errorf("the listing of %d blobs took %d requests, want 1", n, store.lists)
+			}
+			if !l.has(want[0]) || !l.has(want[len(want)-1]) || l.has(blobKey(theirs, []byte{0, 0, 0}, "png")) {
+				t.Errorf("a listing that is done does not have its own keys, or has another workspace's")
+			}
+			if !l.covers(want[0]) || !l.covers(want[len(want)-1]) {
+				t.Errorf("a listing that is done does not cover every key")
 			}
 		}
 	}
-	slices.Sort(want)
-	for range 20 {
-		l, err := listWorkspace(ctx, store, mine, func() bool { return true })
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !l.done || !slices.Equal(l.keys, want) {
-			t.Fatalf("the listing after %s, done %t, lists %d keys, want each of %d once, in order", l.from, l.done,
-				len(l.keys), len(want))
-		}
-		if !l.has(want[0]) || !l.has(want[len(want)-1]) || l.has(blobKey(theirs, []byte{0}, "png")) {
-			t.Errorf("a listing that is done does not have its own keys, or has another workspace's")
-		}
-		if !l.covers(want[0]) || !l.covers(want[len(want)-1]) {
-			t.Errorf("a listing that is done does not cover every key")
-		}
-	}
+}
+
+// countingStore is a store that counts its listings.
+type countingStore struct {
+	blob.Store
+	lists int
+}
+
+func (s *countingStore) List(ctx context.Context, prefix, after string, fn func(blob.Info) error) error {
+	s.lists++
+	return s.Store.List(ctx, prefix, after, fn)
 }
 
 // TestListingCovers checks which keys a listing that stopped early covers:
@@ -289,12 +420,19 @@ func TestReconcileWithoutWorkspaces(t *testing.T) {
 // TestReconcileOwner checks that the orphan reconciliation deletes blobs only
 // in a store that its database owns: it does nothing until first-run setup
 // has completed, as setup may yet choose another store, and then claims the
-// store for its database; a second database, as a copy of the first restored
-// into a database of its own to try a new version on, which has the same
-// workspaces, deletes none of the blobs that the first stores, which its own
-// rows do not refer to, and says why; and once the first has not claimed the
-// store for longer than ownerTakeover, as when it is gone, the second takes
-// the store over, and the first deletes nothing then.
+// store for its database; once a copy of its database's files, which has its
+// identity, claims the store with a token of its own, it deletes nothing,
+// still claims the store, so that the copy finds its claim in turn, and goes
+// on deleting nothing, although the store holds its own claim again, until
+// the owner blob is deleted, as once the copy is gone; a claim whose write
+// the store refused leaves the token before, which it takes as its own; a
+// second database, as a copy of the first restored into a database of its
+// own to try a new version on, which has the same workspaces, deletes none of
+// the blobs that the first stores, which its own rows do not refer to, and
+// says why, also when a workspace fails, whose job is then attempted again;
+// and once the first has not claimed the store for longer than
+// ownerTakeover, as when it is gone, the second takes the store over, and
+// the first deletes nothing then.
 func TestReconcileOwner(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -352,6 +490,40 @@ func TestReconcileOwner(t *testing.T) {
 		t.Fatalf("after setup, the reconciliation deleted %d blobs, and claimed the store %t: %v; want 1, and the "+
 			"store claimed", n, stored(OwnerKey), err)
 	}
+	self, _, _ := strings.Cut(owner(), " ")
+
+	write := func(content string) {
+		if err := local.Put(ctx, OwnerKey, []byte(content), "text/plain"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	orphan = put(5)
+	write(self + " copy\n")
+	for i := range 2 {
+		n, err := first.Reconcile(ctx)
+		if oe, ok := errors.AsType[*OwnerError](err); n != 0 || !ok || !oe.Copy || !stored(orphan) ||
+			!errors.As(err, new(*river.JobCancelError)) || strings.HasSuffix(owner(), " copy\n") {
+			t.Errorf("run %d once a copy claimed the store deleted %d blobs, and claimed the store %t: %v; want "+
+				"none, the store claimed, and a cancelled OwnerError of a copy", i, n,
+				!strings.HasSuffix(owner(), " copy\n"), err)
+		}
+	}
+	if err := local.Delete(ctx, OwnerKey); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := first.Reconcile(ctx); n != 1 || err != nil || stored(orphan) {
+		t.Errorf("once the owner blob was deleted, the reconciliation deleted %d blobs: %v; want 1", n, err)
+	}
+	before := owner()
+	if _, err := first.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	write(before)
+	orphan = put(6)
+	if n, err := first.Reconcile(ctx); n != 1 || err != nil || stored(orphan) {
+		t.Errorf("after a claim whose write the store refused, the reconciliation deleted %d blobs: %v; want 1", n,
+			err)
+	}
 	claimed := owner()
 
 	second, d2 := reconciler()
@@ -360,10 +532,28 @@ func TestReconcileOwner(t *testing.T) {
 	// second's rows do not refer to.
 	orphan = put(2)
 	n, err := second.Reconcile(ctx)
-	if oe, ok := errors.AsType[*OwnerError](err); n != 0 || !ok || oe.Owner+"\n" != claimed || !stored(orphan) ||
-		owner() != claimed {
+	if oe, ok := errors.AsType[*OwnerError](err); n != 0 || !ok || oe.Owner != self || oe.Copy || !stored(orphan) ||
+		owner() != claimed || !errors.As(err, new(*river.JobCancelError)) {
 		t.Errorf("the second database's reconciliation deleted %d blobs, and claimed the store %t: %v; want none, "+
-			"and an OwnerError of the first", n, owner() != claimed, err)
+			"and a cancelled OwnerError of the first", n, owner() != claimed, err)
+	}
+	// A workspace whose blobs the store does not list, as a file stands where
+	// their directory would be.
+	broken := ids.New()
+	if _, err := d2.Admin(t).Exec(ctx, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Broken', "+
+		"'broken', 'unlimited')", broken); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, broken.String()), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n, err = second.Reconcile(ctx)
+	if n != 0 || !errors.As(err, new(*OwnerError)) || errors.As(err, new(*river.JobCancelError)) || !stored(orphan) {
+		t.Errorf("the second database's reconciliation, with a workspace that fails, deleted %d blobs: %v; want "+
+			"none, and an OwnerError of a job attempted again", n, err)
+	}
+	if err := os.Remove(filepath.Join(dir, broken.String())); err != nil {
+		t.Fatal(err)
 	}
 
 	// The first has not claimed the store for longer than ownerTakeover.

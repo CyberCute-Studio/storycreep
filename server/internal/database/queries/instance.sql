@@ -44,10 +44,33 @@ FROM instance;
 -- which each database of a cluster has of its own. So a backup restored with
 -- pg_restore, into another server or into another database of the same
 -- one, has another identity, and a copy of the cluster's files, as a
--- snapshot of its volume, or a replica of it, has the same.
+-- snapshot of its volume, or a replica of it, has the same, which the claim
+-- of the store tells apart once the two have written it (StoreClaim). Every
+-- login may call pg_control_system(), which PostgreSQL grants to PUBLIC.
 SELECT ((SELECT c.system_identifier FROM pg_catalog.pg_control_system() c)::text || '/' || d.oid::text)::text AS identity
 FROM pg_catalog.pg_database d
 WHERE d.datname = current_database();
+
+-- name: StoreClaim :one
+-- StoreClaim returns the tokens that the orphan reconciliation of the
+-- assets' blobs last wrote, with the database's identity, to the store's
+-- owner blob (package asset), the last and the one before, and when it last
+-- found there a token of the same identity that this database did not
+-- write, as a copy of its cluster's files writes, or null.
+SELECT asset_store_claim, asset_store_claim_previous, asset_store_conflict_at FROM instance;
+
+-- name: LockStoreClaim :one
+-- LockStoreClaim is StoreClaim, and locks the row until the transaction
+-- ends, so that of two runs of the reconciliation that claim the store at
+-- once, the second reads the claim that the first recorded.
+SELECT asset_store_claim, asset_store_claim_previous, asset_store_conflict_at FROM instance FOR UPDATE;
+
+-- name: SetStoreClaim :exec
+-- SetStoreClaim records the token that the orphan reconciliation writes to
+-- the store's owner blob next, as the last, and the last as the one before,
+-- and when it last found a copy's token there, or null.
+UPDATE instance SET asset_store_claim_previous = asset_store_claim, asset_store_claim = @claim::text,
+    asset_store_conflict_at = sqlc.narg(conflict_at)::timestamptz;
 
 -- name: SetupCodeKey :one
 -- SetupCodeKey returns the key that the setup code is made of.

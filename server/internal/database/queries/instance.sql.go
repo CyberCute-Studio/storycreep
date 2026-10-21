@@ -72,7 +72,9 @@ WHERE d.datname = current_database()
 // which each database of a cluster has of its own. So a backup restored with
 // pg_restore, into another server or into another database of the same
 // one, has another identity, and a copy of the cluster's files, as a
-// snapshot of its volume, or a replica of it, has the same.
+// snapshot of its volume, or a replica of it, has the same, which the claim
+// of the store tells apart once the two have written it (StoreClaim). Every
+// login may call pg_control_system(), which PostgreSQL grants to PUBLIC.
 func (q *Queries) DatabaseIdentity(ctx context.Context) (string, error) {
 	row := q.db.QueryRow(ctx, databaseIdentity)
 	var identity string
@@ -186,6 +188,44 @@ func (q *Queries) LockInstanceSetup(ctx context.Context) (LockInstanceSetupRow, 
 	return i, err
 }
 
+const lockStoreClaim = `-- name: LockStoreClaim :one
+SELECT asset_store_claim, asset_store_claim_previous, asset_store_conflict_at FROM instance FOR UPDATE
+`
+
+type LockStoreClaimRow struct {
+	AssetStoreClaim         pgtype.Text
+	AssetStoreClaimPrevious pgtype.Text
+	AssetStoreConflictAt    pgtype.Timestamptz
+}
+
+// LockStoreClaim is StoreClaim, and locks the row until the transaction
+// ends, so that of two runs of the reconciliation that claim the store at
+// once, the second reads the claim that the first recorded.
+func (q *Queries) LockStoreClaim(ctx context.Context) (LockStoreClaimRow, error) {
+	row := q.db.QueryRow(ctx, lockStoreClaim)
+	var i LockStoreClaimRow
+	err := row.Scan(&i.AssetStoreClaim, &i.AssetStoreClaimPrevious, &i.AssetStoreConflictAt)
+	return i, err
+}
+
+const setStoreClaim = `-- name: SetStoreClaim :exec
+UPDATE instance SET asset_store_claim_previous = asset_store_claim, asset_store_claim = $1::text,
+    asset_store_conflict_at = $2::timestamptz
+`
+
+type SetStoreClaimParams struct {
+	Claim      string
+	ConflictAt pgtype.Timestamptz
+}
+
+// SetStoreClaim records the token that the orphan reconciliation writes to
+// the store's owner blob next, as the last, and the last as the one before,
+// and when it last found a copy's token there, or null.
+func (q *Queries) SetStoreClaim(ctx context.Context, arg SetStoreClaimParams) error {
+	_, err := q.db.Exec(ctx, setStoreClaim, arg.Claim, arg.ConflictAt)
+	return err
+}
+
 const setupCodeKey = `-- name: SetupCodeKey :one
 SELECT key FROM instance_key WHERE name = 'setup_code'
 `
@@ -196,4 +236,26 @@ func (q *Queries) SetupCodeKey(ctx context.Context) ([]byte, error) {
 	var key []byte
 	err := row.Scan(&key)
 	return key, err
+}
+
+const storeClaim = `-- name: StoreClaim :one
+SELECT asset_store_claim, asset_store_claim_previous, asset_store_conflict_at FROM instance
+`
+
+type StoreClaimRow struct {
+	AssetStoreClaim         pgtype.Text
+	AssetStoreClaimPrevious pgtype.Text
+	AssetStoreConflictAt    pgtype.Timestamptz
+}
+
+// StoreClaim returns the tokens that the orphan reconciliation of the
+// assets' blobs last wrote, with the database's identity, to the store's
+// owner blob (package asset), the last and the one before, and when it last
+// found there a token of the same identity that this database did not
+// write, as a copy of its cluster's files writes, or null.
+func (q *Queries) StoreClaim(ctx context.Context) (StoreClaimRow, error) {
+	row := q.db.QueryRow(ctx, storeClaim)
+	var i StoreClaimRow
+	err := row.Scan(&i.AssetStoreClaim, &i.AssetStoreClaimPrevious, &i.AssetStoreConflictAt)
+	return i, err
 }

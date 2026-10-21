@@ -3,17 +3,24 @@
 -- query runs in a transaction of the asset's workspace, under row-level
 -- security, and names the workspace too.
 
--- name: LockBlob :exec
--- LockBlob takes the transaction-scoped advisory lock of a blob of a
--- workspace, by its content's hash (database.BlobLock), until the
--- transaction ends.
-SELECT pg_advisory_xact_lock(@class::integer, @object::integer);
+-- name: LockBlobs :exec
+-- LockBlobs takes the transaction-scoped advisory locks of blobs of a
+-- workspace, by their contents' hashes (database.BlobLock), one after
+-- another in the order of objects, in one statement, until the transaction
+-- ends: unnest yields the array's elements in their order, which ORDER BY
+-- keeps, and PostgreSQL computes a volatile function of the select list
+-- after any sort, so the locks are taken in the order of the array, which
+-- the caller sorts, so that no two transactions that take several of them
+-- wait for each other.
+SELECT pg_advisory_xact_lock(@class::integer, o.object)
+FROM unnest(@objects::integer[]) WITH ORDINALITY AS o (object, n)
+ORDER BY o.n;
 
 -- name: KeepSession :exec
 -- KeepSession sets, until the transaction ends, the timeouts that the
 -- server, the database, or the login may set, and that end a session whose
 -- transaction runs for long, or waits idle, as for the store, and with it
--- the advisory locks that the transaction holds (LockBlob): it switches off
+-- the advisory locks that the transaction holds (LockBlobs): it switches off
 -- the one of a transaction that runs for long, as database.timeoutsOff does
 -- for the migrations' lock, and makes the one of a transaction that waits
 -- idle idle_timeout milliseconds, which the caller makes longer than it ever

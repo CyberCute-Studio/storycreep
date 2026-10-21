@@ -289,8 +289,11 @@ func TestEveryRouteRateLimited(t *testing.T) {
 		}
 	}
 
-	// A project that an upload may name, whose guard lets it through.
-	project := createProject(t, f.s.main, f.as["owner"], f.ws, "Harbour").ID
+	// A project that an upload may name, whose guard lets it through, which
+	// the fixture adds to the database rather than through the API, whose
+	// request would count in the owner's write bucket in the window of the
+	// requests below, which the policy then lets make one request each.
+	project := f.project(t, "")
 	once := ratelimit.DefaultPolicy()
 	for b, r := range once.Rates {
 		for k := range r.Limits {

@@ -109,17 +109,22 @@ func (s *Storage) store(ctx context.Context, final bool) (blob.Store, error) {
 	if f := s.final.Load(); f != nil {
 		return *f, nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if f := s.final.Load(); f != nil {
-		return *f, nil
-	}
+	// The settings are read before mu is taken, so that no caller waits for
+	// another's transaction, as each does until the store is final, nor
+	// holds mu for one that waits for a connection of the pool, whatever
+	// its own context: once one caller has stored the final store, mu
+	// gives it to those that read the settings before.
 	settings, isFinal, err := s.settings(ctx)
 	switch {
 	case err != nil:
 		return nil, err
 	case final && !isFinal:
 		return nil, ErrSetupRequired
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if f := s.final.Load(); f != nil {
+		return *f, nil
 	}
 	// The settings as the configuration writes them, with a bucket's secret
 	// key, which tells two buckets apart, and stays in this map.
