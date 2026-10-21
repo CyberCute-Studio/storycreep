@@ -1,16 +1,17 @@
 package asset
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"math/rand/v2"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,10 +26,15 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/sweep"
 )
 
-// thumbnailAttempts is how many attempts the job of a thumbnail has: a few,
-// for a store that does not answer for a while, but not the 25 of a job
-// that must happen, because the image is its own thumbnail until then.
-const thumbnailAttempts = 5
+// thumbnailAttempts is how many attempts the job of a thumbnail has: enough
+// that its retries, the first a second after the first attempt fails and
+// each after twice as long as the last (package jobs), span more than 8
+// minutes, so that a store that fails for a few minutes, at once or by not
+// answering, has answered again before the last, but not the 25 of a job
+// that must happen, because the image is its own thumbnail until then, and
+// the orphan reconciliation enqueues the job again of a thumbnail that is
+// missing (mendThumbnails).
+const thumbnailAttempts = 10
 
 // thumbnailJob is the job that makes the thumbnail of an asset (FR-JOBS-01,
 // FR-ASSET-02). Its jobs run one at a time in a process, on a queue of their
@@ -124,18 +130,25 @@ func (s *Service) makeThumbnail(ctx context.Context, args thumbnailJob) error {
 	if err != nil {
 		return err
 	}
-	r, _, err := store.Open(ctx, a.StorageKey)
+	r, info, err := store.Open(ctx, a.StorageKey)
 	switch {
 	case errors.Is(err, blob.ErrNotFound):
 		return jobs.Cancel(fmt.Errorf("asset: the store has no file of asset %s", assetID))
 	case err != nil:
 		return fmt.Errorf("asset: %w", err)
 	}
-	data, err := io.ReadAll(r)
+	// The buffer has room for the file, of the size that the store says, up
+	// to the most that an upload takes, and for the read that finds its end,
+	// so that it is not grown while the file is read, which would hold the
+	// file about twice before it is decoded.
+	var buf bytes.Buffer
+	buf.Grow(int(min(max(info.Size, 0), s.maxBytes)) + bytes.MinRead)
+	_, err = buf.ReadFrom(r)
 	_ = r.Close()
 	if err != nil {
 		return fmt.Errorf("asset: read the file of asset %s: %w", assetID, err)
 	}
+	data := buf.Bytes()
 	thumb, failed := Thumbnail(data, a.Mime)
 	if ctx.Err() != nil {
 		return fmt.Errorf("asset: make the thumbnail of asset %s: %w", assetID, ctx.Err())
@@ -350,48 +363,56 @@ type orphan struct {
 	sum []byte
 }
 
+// keepSessionIdle is how long the transaction of a batch of orphans may wait
+// idle before the database ends its session (queries.KeepSession): longer
+// than the batch ever waits for the store, whose deletions end with the
+// job's context, a minute after the job starts, so that its locks hold until
+// they end, and short enough that the locks of a worker that went away
+// without closing its connection, as when its host failed, are released
+// within minutes, and an upload of one of the batch's contents waits no
+// longer.
+const keepSessionIdle = 5 * time.Minute
+
 // deleteOrphans deletes the blobs of batch, of the workspace, in store, that
 // no row refers to, and returns how many it deleted. It takes their locks in
 // a transaction of the workspace, in the order of their integers
 // (database.LockObject), so that no other transaction that takes several of
 // them waits for one that this one holds while it holds one that this one
-// waits for, checks each blob's rows again, and deletes those that no row
-// refers to, orphanDeletes at once, before the transaction ends, so that no
-// upload or thumbnail job refers to one of them in between. The locks hold
-// only for as long as the session does, so the transaction first switches
-// off the timeouts that would end it while it waits for the store
-// (queries.KeepSession), as an operator may set one that ends a transaction
-// that waits idle for a few seconds, which would release the locks while the
-// deletions go on.
+// waits for, checks the blobs' rows again, in one query, and deletes the
+// blobs that no row refers to, orphanDeletes at once, before the transaction
+// ends, so that no upload or thumbnail job refers to one of them in between.
+// The locks hold only for as long as the session does, so the transaction
+// first switches off the timeout of a transaction that runs for long, and
+// makes that of one that waits idle keepSessionIdle (queries.KeepSession),
+// as an operator may set one that ends a transaction that waits idle for a
+// few seconds, which would release the locks while the deletions go on.
 func (s *Service) deleteOrphans(ctx context.Context, store blob.Store, workspaceID ids.UUID, batch []orphan) (int,
 	error) {
 	batch = slices.Clone(batch)
 	slices.SortFunc(batch, func(a, b orphan) int {
 		return cmp.Compare(database.LockObject(workspaceID, a.sum), database.LockObject(workspaceID, b.sum))
 	})
+	keys := make([]string, len(batch))
+	for i, o := range batch {
+		keys[i] = o.key
+	}
 	deleted := 0
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		if err := q.KeepSession(ctx); err != nil {
-			return fmt.Errorf("asset: switch off the timeouts of the session: %w", err)
+		if err := q.KeepSession(ctx, strconv.FormatInt(keepSessionIdle.Milliseconds(), 10)); err != nil {
+			return fmt.Errorf("asset: set the timeouts of the session: %w", err)
 		}
 		for _, o := range batch {
 			if err := lockBlob(ctx, q, workspaceID, o.sum); err != nil {
 				return err
 			}
 		}
-		var gone []string
-		for _, o := range batch {
-			referenced, err := q.BlobReferenced(ctx, queries.BlobReferencedParams{
-				WorkspaceID: nullUUID(workspaceID), Key: o.key})
-			if err != nil {
-				return fmt.Errorf("asset: read the assets of the blob %s: %w", o.key, err)
-			}
-			if !referenced {
-				gone = append(gone, o.key)
-			}
+		refs, err := q.ReferencedBlobs(ctx, queries.ReferencedBlobsParams{WorkspaceID: nullUUID(workspaceID),
+			Keys: keys})
+		if err != nil {
+			return fmt.Errorf("asset: read the assets of the blobs: %w", err)
 		}
-		var err error
+		gone := slices.DeleteFunc(slices.Clone(keys), func(key string) bool { return slices.Contains(refs, key) })
 		deleted, err = deleteBlobs(ctx, store, gone)
 		return err
 	})

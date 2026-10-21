@@ -438,11 +438,12 @@ func (s *Service) checkStorage(ctx context.Context, tx pgx.Tx, workspaceID, proj
 	case !errors.Is(err, pgx.ErrNoRows):
 		return stored{}, fmt.Errorf("asset: read the project's assets: %w", err)
 	}
-	referenced, err := q.BlobReferenced(ctx, queries.BlobReferencedParams{WorkspaceID: nullUUID(workspaceID),
-		Key: key})
+	refs, err := q.ReferencedBlobs(ctx, queries.ReferencedBlobsParams{WorkspaceID: nullUUID(workspaceID),
+		Keys: []string{key}})
 	if err != nil {
 		return stored{}, fmt.Errorf("asset: read the assets of the blob: %w", err)
 	}
+	referenced := len(refs) > 0
 	if !referenced {
 		// The blob is new to the workspace, so it adds to its storage.
 		if err := s.ent.Check(ctx, tx, workspaceID, entitlements.StorageBytes, int64(len(img.Data))); err != nil {

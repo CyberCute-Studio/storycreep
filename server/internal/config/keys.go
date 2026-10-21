@@ -541,7 +541,7 @@ var keys = []key{
 			"only to its own database: a shared login would reach all of them, and migrating one would change the " +
 			"password the others log in with. The pool parameters, such as `pool_max_conns`, configure the pool " +
 			"that serves requests. A server that runs the background jobs opens a second pool of the login for " +
-			"them, configured the same way but with at most 7 connections, whatever `pool_max_conns` says. Query " +
+			"them, configured the same way but with at most 8 connections, whatever `pool_max_conns` says. Query " +
 			"parameters, such as `sslmode`, are read as libpq reads them, " +
 			"with an `=` in a value percent-encoded as `%3D`, and the libpq environment variables, such as " +
 			"`PGSSLMODE`, fill in settings the URL leaves out. A space anywhere in the URL is written as `%20`. " +

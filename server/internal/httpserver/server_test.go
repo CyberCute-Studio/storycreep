@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"slices"
@@ -586,6 +587,21 @@ func TestInlineWorkers(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("/metrics lacks %v:\n%s", want, body)
 		}
+	}
+}
+
+// TestJobsPoolDocumented checks that the reference of
+// STORYCREEP_DATABASE_URL says how many connections the pool of the server's
+// job workers takes, as jobs.Registry.PoolSize counts them, which a serial
+// kind of job adds one to, so that an operator who sizes the database's
+// connections by it counts them all.
+func TestJobsPoolDocumented(t *testing.T) {
+	t.Parallel()
+	s := newServer(loadConfig(t, nil), slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { _ = s.assets.Storage().Close() })
+	want := fmt.Sprintf("with at most %d connections, whatever `pool_max_conns` says", s.serverJobs().PoolSize())
+	if !strings.Contains(config.Reference(), want) {
+		t.Errorf("the reference of STORYCREEP_DATABASE_URL does not say %q", want)
 	}
 }
 

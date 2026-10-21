@@ -129,8 +129,12 @@ func (s *slots) take(ctx context.Context, user ids.UUID) (func(), error) {
 // request's body, and frees it once the operation has answered, so that no
 // more requests than s has room for read their bodies, and hold them, at
 // once, and no user's more than their share. A request whose context ends
-// while it waits, as when its client goes away, is answered with the
-// context's error.
+// while it waits, as when its client goes away over HTTP/2, is answered with
+// the context's error. Over HTTP/1.1, Go's server notices that a client went
+// away only once it has read the request's body, which a request that waits
+// has not, so such a request waits for its turn, holding a slot of its
+// user's if it has one, and then fails at once, as the body it reads has
+// ended, and frees its slots.
 func holdSlot(s *slots) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
 		// The route needs an authenticated user, whom the authenticator
@@ -283,7 +287,9 @@ func registerAssets(m *api.Mux, assets *asset.Service) {
 			"with the new asset, or 200 with the asset that the project has of the same file already, which makes " +
 			"an upload that a client sends again harmless. A file that the workspace does not store yet must fit " +
 			"in its storage: an upload that would take the workspace past its plan's storage_bytes is answered " +
-			"with 413 storage_limit_exceeded, with the workspace's usage and limit. Only an owner, an admin, or an " +
+			"with 413 storage_limit_exceeded, with the workspace's usage and limit. Uploads that run at once are " +
+			"each checked against the usage before any of them adds to it, so together they may take the " +
+			"workspace past its limit by as much as their own files (PRD FR-ENT-02). Only an owner, an admin, or an " +
 			"editor of the project may upload, and anyone else with a role on it is answered with 403 " +
 			"insufficient_role, before the file is read. The server reads only so many files at once, and a " +
 			"quarter of them of one user's, so an upload may wait for others to end before its file is read." +
@@ -386,7 +392,7 @@ func fileResponses(thumbnail bool) map[string]*huma.Response {
 	pending, pendingFound := "", ""
 	if thumbnail {
 		pending = ", or " + pendingCache + " while the thumbnail is not made yet"
-		pendingFound = ", or, while the thumbnail is not made yet, the file's own route, /content"
+		pendingFound = ", or, while the thumbnail is not made yet, the path of the file's own route, /content"
 	}
 	ok := &huma.Response{
 		Description: "The file, which the local driver keeps",
@@ -408,7 +414,7 @@ func fileResponses(thumbnail bool) map[string]*huma.Response {
 			Description: "Found: the file is in an S3 bucket, and Location is a URL of it that the server signed " +
 				"for 5 minutes" + pendingFound,
 			Headers: map[string]*huma.Header{
-				"Location":      header("The signed URL of the file"),
+				"Location":      header("The signed URL of the file" + pendingFound),
 				"Cache-Control": header(redirectCache + ": a minute less than the URL works" + pending),
 			},
 		},

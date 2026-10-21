@@ -10,13 +10,21 @@
 SELECT pg_advisory_xact_lock(@class::integer, @object::integer);
 
 -- name: KeepSession :exec
--- KeepSession switches off, until the transaction ends, the timeouts that
--- the server, the database, or the login may set, and that end a session
--- whose transaction waits idle, as for the store, or runs for long, and with
--- it the advisory locks that the transaction holds (LockBlob), as
--- database.timeoutsOff does for the migrations' lock: each of them that the
--- server has, as PostgreSQL 17 added transaction_timeout.
-SELECT set_config(name, '0', true) FROM pg_catalog.pg_settings
+-- KeepSession sets, until the transaction ends, the timeouts that the
+-- server, the database, or the login may set, and that end a session whose
+-- transaction runs for long, or waits idle, as for the store, and with it
+-- the advisory locks that the transaction holds (LockBlob): it switches off
+-- the one of a transaction that runs for long, as database.timeoutsOff does
+-- for the migrations' lock, and makes the one of a transaction that waits
+-- idle idle_timeout milliseconds, which the caller makes longer than it ever
+-- waits, so that the session of a client that went away without closing its
+-- connection, as when its host failed, still ends within that time, and its
+-- locks with it, rather than once TCP's keepalive finds the connection dead,
+-- hours later. It sets each of them that the server has, as PostgreSQL 17
+-- added transaction_timeout.
+SELECT set_config(name, CASE name WHEN 'idle_in_transaction_session_timeout' THEN @idle_timeout::text ELSE '0' END,
+    true)
+FROM pg_catalog.pg_settings
 WHERE name IN ('idle_in_transaction_session_timeout', 'transaction_timeout');
 
 -- name: ProjectAsset :one
@@ -24,14 +32,17 @@ WHERE name IN ('idle_in_transaction_session_timeout', 'transaction_timeout');
 -- one.
 SELECT * FROM asset WHERE workspace_id = @workspace_id AND project_id = @project_id AND sha256 = @sha256;
 
--- name: BlobReferenced :one
--- BlobReferenced reports whether a row of the workspace refers to the key,
--- as the file of an asset or as its thumbnail.
-SELECT (EXISTS (
-    SELECT FROM asset a WHERE a.workspace_id = @workspace_id AND a.storage_key = @key
+-- name: ReferencedBlobs :many
+-- ReferencedBlobs returns those of the keys that a row of the workspace
+-- refers to, as the file of an asset or as its thumbnail: the check that
+-- keeps a blob from the orphan reconciliation, which an upload makes of its
+-- one blob, and the reconciliation of a batch of blobs in one query.
+SELECT k.key::text AS key FROM unnest(@keys::text[]) AS k (key)
+WHERE EXISTS (
+    SELECT FROM asset a WHERE a.workspace_id = @workspace_id AND a.storage_key = k.key
 ) OR EXISTS (
-    SELECT FROM asset a WHERE a.workspace_id = @workspace_id AND a.thumbnail_key = @key
-))::boolean AS referenced;
+    SELECT FROM asset a WHERE a.workspace_id = @workspace_id AND a.thumbnail_key = k.key
+);
 
 -- name: InsertAsset :one
 -- InsertAsset adds an asset, and returns when it was created.

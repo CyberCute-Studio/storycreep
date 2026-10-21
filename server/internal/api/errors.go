@@ -295,7 +295,9 @@ var codes = []codeSpec{
 		"The upload would take the workspace past its storage limit, `storage_bytes`, so it stores nothing (PRD " +
 			"FR-ASSET-02 AC4, FR-ENT-03): its plan's, or the cap that the instance puts on every workspace " +
 			"(`STORYCREEP_WORKSPACE_LIMITS`). A file that the workspace stores already, in this project or another, " +
-			"takes up no more, and is never refused so. `details` are those of `limit_exceeded`: `details.key` is " +
+			"takes up no more, and is never refused so. Uploads that run at once are each checked against the " +
+			"usage before any of them adds to it, so together they may take the workspace past its limit by as " +
+			"much as their own files (FR-ENT-02). `details` are those of `limit_exceeded`: `details.key` is " +
 			"`storage_bytes`, `details.usage` how many bytes the workspace's files take up, `details.limit` the " +
 			"most that they may, and `details.upgrade_url` the page that offers the plans, where " +
 			"`limit_exceeded` would have it."},

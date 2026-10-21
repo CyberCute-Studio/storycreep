@@ -3,9 +3,11 @@ package asset
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
@@ -95,6 +98,64 @@ func TestReconcileGoesOn(t *testing.T) {
 	}
 	if !slices.Equal(left, keys[:1]) {
 		t.Errorf("the store holds %v, want the blob that it refused to delete alone", left)
+	}
+}
+
+// TestKeepSession checks the timeouts that a batch of orphans sets for its
+// transaction (queries.KeepSession): whatever the database sets, the
+// transaction may wait idle for keepSessionIdle, and run for as long as it
+// needs, and once it ends, its connection has the database's timeouts again.
+func TestKeepSession(t *testing.T) {
+	ctx := context.Background()
+	d := dbtest.New(t)
+	conn := d.Admin(t)
+	if _, err := conn.Exec(ctx, "SET idle_in_transaction_session_timeout = '1s'"); err != nil {
+		t.Fatal(err)
+	}
+	// The settings that the server has, as PostgreSQL 17 added
+	// transaction_timeout, with what each is in milliseconds.
+	settings := func() map[string]string {
+		t.Helper()
+		rows, err := conn.Query(ctx, "SELECT name, setting FROM pg_catalog.pg_settings WHERE name IN "+
+			"('idle_in_transaction_session_timeout', 'transaction_timeout')")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]string{}
+		for rows.Next() {
+			var name, setting string
+			if err := rows.Scan(&name, &setting); err != nil {
+				t.Fatal(err)
+			}
+			got[name] = setting
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	before := settings()
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.New(tx).KeepSession(ctx, strconv.FormatInt(keepSessionIdle.Milliseconds(), 10)); err != nil {
+		t.Fatal(err)
+	}
+	in := settings()
+	if want := strconv.FormatInt(keepSessionIdle.Milliseconds(), 10); in["idle_in_transaction_session_timeout"] !=
+		want {
+		t.Errorf("in the transaction, idle_in_transaction_session_timeout is %s, want %s",
+			in["idle_in_transaction_session_timeout"], want)
+	}
+	if v, ok := in["transaction_timeout"]; ok && v != "0" {
+		t.Errorf("in the transaction, transaction_timeout is %s, want 0", v)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if after := settings(); !maps.Equal(after, before) || after["idle_in_transaction_session_timeout"] != "1000" {
+		t.Errorf("after the transaction, the connection's timeouts are %v, want %v", after, before)
 	}
 }
 

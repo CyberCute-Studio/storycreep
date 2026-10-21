@@ -245,7 +245,8 @@ var authRoutes = map[api.Route]bool{
 // signed-in user the owner, from an address that has made no request, so that
 // a route that does not count its requests against their user fails. Only
 // the routes whose guards refuse the request before the limit counts it
-// answer otherwise (guardedFirst).
+// answer otherwise (guardedFirst), and an upload that its guard lets through,
+// to a project of the owner's, is refused by the limit too.
 //
 // Verifies: FR-API-04/AC3, NFR-SEC-06
 func TestEveryRouteRateLimited(t *testing.T) {
@@ -288,6 +289,8 @@ func TestEveryRouteRateLimited(t *testing.T) {
 		}
 	}
 
+	// A project that an upload may name, whose guard lets it through.
+	project := createProject(t, f.s.main, f.as["owner"], f.ws, "Harbour").ID
 	once := ratelimit.DefaultPolicy()
 	for b, r := range once.Rates {
 		for k := range r.Limits {
@@ -328,6 +331,14 @@ func TestEveryRouteRateLimited(t *testing.T) {
 			headerInt(res, limitHeader) != 1 {
 			t.Errorf("%s over the limit of the %s bucket: %d %s %v", r, b, res.status, res.body, res.header)
 		}
+	}
+	// The walk's upload names no project, which its guard refuses before the
+	// limit counts it; an upload that the guard lets through is counted, and
+	// refused over the limit, before it waits for a slot (api.AfterLimit), or
+	// its file is read.
+	if res := uploadFile(f.s.main, owner, project, []byte("file"), "application/octet-stream"); res.status !=
+		http.StatusTooManyRequests || res.code() != api.CodeRateLimited {
+		t.Errorf("an upload to the owner's project over the limit: %d %s", res.status, res.body)
 	}
 }
 

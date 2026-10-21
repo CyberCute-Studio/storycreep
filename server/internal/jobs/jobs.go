@@ -62,15 +62,6 @@ const schema = "public"
 // (Serial).
 const concurrency = 4
 
-// poolSize returns the size of the workers' pool of a registry that has
-// serial kinds of job (Serial): a connection for each job
-// that runs (Job.DB), one that River holds for LISTEN, and two for River's
-// own queries, which take jobs, finish them, and, on the leader, maintain
-// the queue.
-func poolSize(serial int) int32 {
-	return int32(concurrency + serial + 3)
-}
-
 // startTimeout is how long Start waits for the database to answer before it
 // starts the workers.
 const startTimeout = 10 * time.Second
@@ -216,6 +207,17 @@ func Serial(r *Registry, args Args) {
 		panic(fmt.Sprintf("jobs: the kind %s is serial already", kind))
 	}
 	r.serial = append(r.serial, kind)
+}
+
+// PoolSize returns the size of the pool of the workers that run the jobs
+// of r, which Open opens: a connection for each job that runs (Job.DB),
+// concurrency of the kinds that are not serial and one of each serial kind
+// (Serial), one that River holds for LISTEN, and two for River's own
+// queries, which take jobs, finish them, and, on the leader, maintain the
+// queue. The reference of STORYCREEP_DATABASE_URL says how many the server's
+// jobs take (package config), which a test of the server holds to this.
+func (r *Registry) PoolSize() int {
+	return concurrency + len(r.serial) + 3
 }
 
 // queueOf returns the name of the queue of River that the jobs of kind go
@@ -365,7 +367,7 @@ func Open(ctx context.Context, db *database.DB, app config.DatabaseURL, opts Opt
 	pool := db.Pool()
 	if q.runsJobs() {
 		workers, err := database.OpenWith(ctx, app, func(c *pgxpool.Config) {
-			size := poolSize(len(q.serial))
+			size := int32(reg.PoolSize())
 			c.MaxConns = size
 			c.MinConns = min(c.MinConns, size)
 			c.MinIdleConns = min(c.MinIdleConns, size)
@@ -397,7 +399,7 @@ func Open(ctx context.Context, db *database.DB, app config.DatabaseURL, opts Opt
 	}
 	q.client = client
 	// The count runs on the request pool, so that a scrape does not wait for
-	// the workers' connections, which poolSize leaves none of for it.
+	// the workers' connections, which PoolSize leaves none of for it.
 	q.metrics = newMetrics(db.Pool(), q.kinds, append([]string{river.QueueDefault}, q.serial...))
 	return q, nil
 }
