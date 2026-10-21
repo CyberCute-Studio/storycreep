@@ -398,7 +398,9 @@ func (s *Service) enqueueThumbnail(ctx context.Context, tx pgx.Tx, workspaceID, 
 // as the client waits, while every upload of the instance may do the same.
 // The store answers a HEAD in milliseconds, and the PUT that follows only in
 // the rare case that the reconciliation deleted the blob since the upload
-// stored it stores the file that it took moments before.
+// stored it stores the file that it took moments before. It bounds the
+// thumbnail job's PUT of a thumbnail under the lock too, but not the orphan
+// reconciliation's deletions (orphanBatch).
 const lockedStoreTimeout = 30 * time.Second
 
 // stored is what checkStorage finds of an upload's file in its workspace.

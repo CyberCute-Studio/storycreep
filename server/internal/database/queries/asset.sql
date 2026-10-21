@@ -9,6 +9,16 @@
 -- transaction ends.
 SELECT pg_advisory_xact_lock(@class::integer, @object::integer);
 
+-- name: KeepSession :exec
+-- KeepSession switches off, until the transaction ends, the timeouts that
+-- the server, the database, or the login may set, and that end a session
+-- whose transaction waits idle, as for the store, or runs for long, and with
+-- it the advisory locks that the transaction holds (LockBlob), as
+-- database.timeoutsOff does for the migrations' lock: each of them that the
+-- server has, as PostgreSQL 17 added transaction_timeout.
+SELECT set_config(name, '0', true) FROM pg_catalog.pg_settings
+WHERE name IN ('idle_in_transaction_session_timeout', 'transaction_timeout');
+
 -- name: ProjectAsset :one
 -- ProjectAsset returns the project's asset of the content sha256, if it has
 -- one.

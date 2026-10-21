@@ -39,6 +39,7 @@ func pendingServer(t *testing.T, env map[string]string) (*server, *dbtest.Databa
 	t.Helper()
 	d := dbtest.New(t)
 	s := newServer(loadConfig(t, env), slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { _ = s.assets.Storage().Close() })
 	db := d.Open(t)
 	s.ready.db.Store(db)
 	q, err := jobs.Open(context.Background(), db, config.DatabaseURL{}, jobs.Options{Registry: s.serverJobs()})

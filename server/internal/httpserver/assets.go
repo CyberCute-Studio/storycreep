@@ -209,11 +209,16 @@ var redirectCache = blob.CacheControl(asset.SignedURLLifetime - time.Minute)
 
 // pendingCache is the Cache-Control of what the thumbnail route answers with
 // while the asset's thumbnail job has not made its thumbnail yet: the file
-// itself, or the redirect to it, which a browser keeps for half a minute
-// rather than fileCache's 5 minutes, so that it asks for the thumbnail again
-// soon after the job, which takes moments, has made it, rather than keep
-// showing the large file, which it decodes whole, as a board of the images
-// that were just uploaded would.
+// itself, or the redirect to the file's own route, which a browser keeps for
+// half a minute rather than fileCache's 5 minutes, so that it asks for the
+// thumbnail again soon after the job, which takes moments, has made it,
+// rather than keep showing the large file, which it decodes whole, as a
+// board of the images that were just uploaded would. The redirect of an S3
+// bucket's file goes to the file's route rather than to the bucket, whose
+// URL the server signs anew each time, so that the browser that asks again
+// follows the redirect of the file's route that it keeps for redirectCache,
+// to the file that it keeps too, rather than read the file from the bucket
+// anew every half a minute.
 var pendingCache = blob.CacheControl(30 * time.Second)
 
 // fileDoc says how an operation that serves an asset's file answers.
@@ -289,8 +294,7 @@ func registerAssets(m *api.Mux, assets *asset.Service) {
 		RequestBody:     uploadBody,
 		MaxBodyBytes:    maxBytes,
 		BodyReadTimeout: uploadReadTimeout,
-		// A request that the guard refuses takes no slot.
-		Middlewares: huma.Middlewares{checkUpload, holdSlot(newSlots(uploadSlots(maxBytes)))},
+		Middlewares:     huma.Middlewares{checkUpload},
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The project's asset of the same file, which it has already",
 				Content: map[string]*huma.MediaType{"application/json": {Schema: assetSchema}}},
@@ -313,7 +317,12 @@ func registerAssets(m *api.Mux, assets *asset.Service) {
 			out.Location = "/api/v1/projects/" + a.ProjectID + "/assets/" + a.ID
 		}
 		return out, nil
-	}, api.TokenScope(scope.ProjectWrite))
+	}, api.TokenScope(scope.ProjectWrite),
+		// A request that the guard refuses takes no slot, nor does one that the
+		// rate limit refuses, which counts every request before it waits for
+		// one, so that a client cannot keep more requests waiting than its
+		// limit lets it send.
+		api.AfterLimit(holdSlot(newSlots(uploadSlots(maxBytes)))))
 
 	api.Register(m, api.ReadProject, huma.Operation{
 		OperationID: "getAsset",
@@ -345,8 +354,10 @@ func registerAssets(m *api.Mux, assets *asset.Service) {
 			"Serves an asset's thumbnail: a PNG image that fits in 256 × 256 pixels, of a PNG, JPEG, GIF, or WebP " +
 				"image larger than that, or else the file itself, which is also served until the thumbnail is made, " +
 				"soon after the upload, and for an image whose thumbnail cannot be made. Until the thumbnail is " +
-				"made, the file, the redirect to it, and a 304 have Cache-Control: " + pendingCache + " instead, so " +
-				"that a browser asks for the thumbnail again soon after it is made."},
+				"made, the local driver's file, and a 304, have Cache-Control: " + pendingCache + " instead, and " +
+				"an S3 bucket's is answered with 302 Found to the file's own route, /content, with Cache-Control: " +
+				pendingCache + ", so that a browser asks for the thumbnail again soon after it is made, and reads " +
+				"the file meanwhile as it keeps it from that route."},
 	} {
 		api.Register(m, api.ReadProject, huma.Operation{
 			OperationID: file.id,
@@ -370,10 +381,12 @@ func fileResponses(thumbnail bool) map[string]*huma.Response {
 		return &huma.Header{Schema: &huma.Schema{Type: huma.TypeString, Description: doc}}
 	}
 	// pending is what the thumbnail route says of the Cache-Control of its
-	// answers while the thumbnail is not made yet.
-	pending := ""
+	// answers while the thumbnail is not made yet, and pendingFound of where
+	// its redirect goes then.
+	pending, pendingFound := "", ""
 	if thumbnail {
 		pending = ", or " + pendingCache + " while the thumbnail is not made yet"
+		pendingFound = ", or, while the thumbnail is not made yet, the file's own route, /content"
 	}
 	ok := &huma.Response{
 		Description: "The file, which the local driver keeps",
@@ -393,7 +406,7 @@ func fileResponses(thumbnail bool) map[string]*huma.Response {
 		"200": ok,
 		"302": {
 			Description: "Found: the file is in an S3 bucket, and Location is a URL of it that the server signed " +
-				"for 5 minutes",
+				"for 5 minutes" + pendingFound,
 			Headers: map[string]*huma.Header{
 				"Location":      header("The signed URL of the file"),
 				"Cache-Control": header(redirectCache + ": a minute less than the URL works" + pending),
@@ -410,7 +423,9 @@ func fileResponses(thumbnail bool) map[string]*huma.Response {
 // gives, without opening it, or with the file, which a HEAD request, which
 // the route answers as GET (middleware.GetHead), is answered without. A
 // thumbnail that is not made yet, whose file is served instead, is answered
-// with pendingCache rather than fileCache or redirectCache.
+// with pendingCache rather than fileCache or redirectCache, and, if the
+// store signs URLs, with a redirect to the file's own route rather than to
+// the store (pendingCache).
 func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, thumbnail bool) (
 	*huma.StreamResponse, error) {
 	pid, aid, actor, err := assetActor(ctx, in.ProjectID, in.AssetID)
@@ -433,6 +448,9 @@ func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, 
 	case err != nil:
 		return nil, assetError(err)
 	case signed:
+		if loc.Pending {
+			url = "/api/v1/projects/" + loc.Asset.ProjectID + "/assets/" + loc.Asset.ID + "/content"
+		}
 		return &huma.StreamResponse{Body: func(hc huma.Context) {
 			hc.SetHeader("Content-Security-Policy", sandboxCSP)
 			hc.SetHeader("Location", url)

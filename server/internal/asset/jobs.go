@@ -160,7 +160,15 @@ func (s *Service) makeThumbnail(ctx context.Context, args thumbnailJob) error {
 		case !errors.Is(err, pgx.ErrNoRows):
 			return fmt.Errorf("asset: read the thumbnail of the content: %w", err)
 		case failed == nil:
-			if err := store.Put(ctx, key, thumb, MimePNG); err != nil {
+			// The store has lockedStoreTimeout to take the thumbnail, as an
+			// upload's file under the lock, so that one that does not answer
+			// keeps an upload of the content waiting no longer; a thumbnail that
+			// it stores after all is one that no row refers to, which the
+			// reconciliation deletes.
+			storeCtx, cancel := context.WithTimeout(ctx, lockedStoreTimeout)
+			err := store.Put(storeCtx, key, thumb, MimePNG)
+			cancel()
+			if err != nil {
 				return fmt.Errorf("asset: %w", err)
 			}
 		}
@@ -210,8 +218,10 @@ const listBudget = sweep.Budget / 2
 // holds while it checks that the store has its blob and adds the row that
 // refers to it, and the thumbnail job while it stores a thumbnail and
 // records it, and checks the rows again, so that it never deletes a blob
-// that a row is about to refer to. It starts no workspace, and lists or
-// checks no blob, once it has run for sweep.Budget, going on from a
+// that a row is about to refer to. A batch that fails, as one of a blob that
+// the store refuses to delete, is left to the next run, and the batches after
+// it, and the thumbnails, still have their turn. It starts no workspace, and
+// lists or checks no blob, once it has run for sweep.Budget, going on from a
 // workspace picked at random (sweep.Workspaces), and it leaves alone a key
 // that this package would not write. So it is safe to repeat. The blobs of a
 // workspace that no longer exists are deleted with it (plan item 110). It
@@ -287,19 +297,30 @@ func (s *Service) reconcileWorkspace(ctx context.Context, store blob.Store, work
 		candidates = append(candidates, orphan{key: key, sum: sum})
 	}
 	deleted := 0
+	var errs []error
 	for batch := range slices.Chunk(candidates, orphanBatch) {
 		// The run stops within its budget, here too, and leaves the rest to
 		// the next run.
 		if !more() {
-			return deleted, nil
+			return deleted, errors.Join(errs...)
 		}
+		if err := ctx.Err(); err != nil {
+			return deleted, errors.Join(append(errs, err)...)
+		}
+		// A batch that fails, as one of a blob that the store refuses to
+		// delete, keeps neither the next ones nor the thumbnails from their
+		// turn: the candidates are in the order of their keys, so a blob that
+		// the store refuses every time would keep every one after it for good.
 		n, err := s.deleteOrphans(ctx, store, workspaceID, batch)
 		deleted += n
 		if err != nil {
-			return deleted, err
+			errs = append(errs, err)
 		}
 	}
-	return deleted, s.mendThumbnails(ctx, store, workspaceID, contents, l, more)
+	if err := s.mendThumbnails(ctx, store, workspaceID, contents, l, more); err != nil {
+		errs = append(errs, err)
+	}
+	return deleted, errors.Join(errs...)
 }
 
 // orphanBatch is how many of a workspace's blobs that no row referred to the
@@ -310,7 +331,12 @@ func (s *Service) reconcileWorkspace(ctx context.Context, store blob.Store, work
 // rather than one request after another, each of which waits for the last,
 // as a bucket answers a few dozen a second. A batch holds a worker's
 // connection, as the job does, and makes an upload of one of its contents
-// wait for its deletions, which take moments.
+// wait for its deletions, which take moments. Its deletions are not cut
+// short, as an upload's store requests under the lock are
+// (lockedStoreTimeout), but for the end of the job's own time: the store
+// may carry out a deletion that its client gave up on, after the locks are
+// released, and so after an upload found the blob and added the row that
+// refers to it.
 const (
 	orphanBatch   = 64
 	orphanDeletes = 8
@@ -331,7 +357,12 @@ type orphan struct {
 // them waits for one that this one holds while it holds one that this one
 // waits for, checks each blob's rows again, and deletes those that no row
 // refers to, orphanDeletes at once, before the transaction ends, so that no
-// upload or thumbnail job refers to one of them in between.
+// upload or thumbnail job refers to one of them in between. The locks hold
+// only for as long as the session does, so the transaction first switches
+// off the timeouts that would end it while it waits for the store
+// (queries.KeepSession), as an operator may set one that ends a transaction
+// that waits idle for a few seconds, which would release the locks while the
+// deletions go on.
 func (s *Service) deleteOrphans(ctx context.Context, store blob.Store, workspaceID ids.UUID, batch []orphan) (int,
 	error) {
 	batch = slices.Clone(batch)
@@ -341,6 +372,9 @@ func (s *Service) deleteOrphans(ctx context.Context, store blob.Store, workspace
 	deleted := 0
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
+		if err := q.KeepSession(ctx); err != nil {
+			return fmt.Errorf("asset: switch off the timeouts of the session: %w", err)
+		}
 		for _, o := range batch {
 			if err := lockBlob(ctx, q, workspaceID, o.sum); err != nil {
 				return err
@@ -369,6 +403,8 @@ func (s *Service) deleteOrphans(ctx context.Context, store blob.Store, workspace
 
 // deleteBlobs deletes the blobs of keys from store, orphanDeletes at once,
 // and returns how many it deleted, and the errors of those that it did not.
+// Once ctx ends, it sends no more deletions, and waits for those that it
+// sent.
 func deleteBlobs(ctx context.Context, store blob.Store, keys []string) (int, error) {
 	var (
 		wg      sync.WaitGroup
@@ -379,6 +415,12 @@ func deleteBlobs(ctx context.Context, store blob.Store, keys []string) (int, err
 	sending := make(chan struct{}, orphanDeletes)
 	for _, key := range keys {
 		sending <- struct{}{}
+		if err := ctx.Err(); err != nil {
+			mu.Lock()
+			errs = append(errs, err)
+			mu.Unlock()
+			break
+		}
 		wg.Go(func() {
 			defer func() { <-sending }()
 			err := store.Delete(ctx, key)

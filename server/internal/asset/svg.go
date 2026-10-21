@@ -41,7 +41,10 @@ import (
 //   - an id or a class, whatever its value, which names the element, and
 //     which a browser reads neither as a URL nor as CSS, so that a reference
 //     to an element whose id an editor wrote from a layer's name, as
-//     "icon@2x" or "Layer: 1", still finds it.
+//     "icon@2x" or "Layer: 1", still finds it, and requiredExtensions or
+//     requiredFeatures, whatever its value, a list of URLs that a browser
+//     compares with what it has, and never requests, so that a child of a
+//     switch element that names an editor's extension stays hidden.
 //
 // It drops comments, processing instructions, and the document type, and
 // reads only the entities of the document type's internal subset whose values
@@ -290,57 +293,151 @@ func unsupported(detail string) *ImageError {
 }
 
 // manyAttributes reports whether data may hold an element of more than
-// maxSVGAttrs attributes, before the decoder reads any: whether a start tag
-// has more than maxSVGAttrs equals signs outside its attributes' quoted
-// values. Each attribute of a start tag has an equals sign before its value,
-// which the decoder requires, and no attribute's value has a less-than sign,
-// which the decoder refuses there, so a start tag's attributes are all
-// between its less-than sign and the first greater-than sign outside their
-// quotes, or else the next less-than sign, where the decoder stops reading
-// them. The decoder reads what follows a less-than sign as a start tag
-// unless it is an exclamation mark, a question mark, or a slash, which start
-// a comment, a section of CDATA, or a declaration, a processing instruction,
-// and an end tag, none of which has attributes, so what follows one of them
-// is read past to the next less-than sign, uncounted, as the text between
-// the tags is, as a style element's CSS, which a file may hold any number of
-// equals signs in. A less-than sign inside one of them that a name follows,
-// as in a comment, is counted as a start tag, which only refuses more. It
-// reads data once.
+// maxSVGAttrs attributes, before the decoder reads any (attributesPast).
 func manyAttributes(data []byte) bool {
+	return attributesPast(data, maxSVGAttrs)
+}
+
+// attributesPast reports whether a start tag of data has more than limit
+// equals signs outside its attributes' quoted values. Each attribute of a
+// start tag has an equals sign before its value, which the decoder requires,
+// and no attribute's value has a less-than sign, which the decoder refuses
+// there, so a start tag's attributes are all between its less-than sign and
+// the first greater-than sign outside their quotes, or else the next
+// less-than sign, where the decoder stops reading them. What has no
+// attributes is read past as the decoder reads it, uncounted: a comment, to
+// the first "-->"; a section of CDATA, to the first "]]>"; a processing
+// instruction, to the first "?>"; a declaration, as the document type, to
+// the greater-than sign that ends it (directiveEnd); and an end tag, and the
+// text between the tags, as a style element's CSS, to the next less-than
+// sign. So a less-than sign that one of them holds, as a script's in a
+// section of CDATA, or a string's in the document type, starts no start tag
+// here, as it starts none of the decoder's, and a start tag after one of
+// them is counted whatever it holds. The decoder reads nothing past where it
+// refuses the file, as a comment's "--" that no greater-than sign follows,
+// so what follows that counts for nothing. It reads data once.
+func attributesPast(data []byte, limit int) bool {
 	for i := 0; ; {
 		start := bytes.IndexByte(data[i:], '<')
 		if start < 0 {
 			return false
 		}
 		i += start + 1
-		if i < len(data) && (data[i] == '!' || data[i] == '?' || data[i] == '/') {
+		rest := data[i:]
+		next := -1
+		switch {
+		case bytes.HasPrefix(rest, []byte("!--")):
+			next = past(data, i+len("!--"), "-->")
+		case bytes.HasPrefix(rest, []byte("![CDATA[")):
+			next = past(data, i+len("![CDATA["), "]]>")
+		case bytes.HasPrefix(rest, []byte("?")):
+			next = past(data, i+len("?"), "?>")
+		case bytes.HasPrefix(rest, []byte("!")):
+			next = directiveEnd(data, i+len("!"))
+		case bytes.HasPrefix(rest, []byte("/")):
+			continue
+		default:
+			n := 0
+			var quote byte
+		tag:
+			for ; i < len(data); i++ {
+				switch c := data[i]; {
+				case c == '<':
+					break tag
+				case quote != 0:
+					if c == quote {
+						quote = 0
+					}
+				case c == '"' || c == '\'':
+					quote = c
+				case c == '>':
+					break tag
+				case c == '=':
+					if n++; n > limit {
+						return true
+					}
+				}
+			}
+			if i >= len(data) {
+				return false
+			}
 			continue
 		}
-		n := 0
-		var quote byte
-	tag:
-		for ; i < len(data); i++ {
-			switch c := data[i]; {
-			case c == '<':
-				break tag
+		if next < 0 {
+			return false
+		}
+		i = next
+	}
+}
+
+// past returns the index of data just past the first sep that starts at i
+// or after it, or -1 if none does.
+func past(data []byte, i int, sep string) int {
+	j := bytes.Index(data[i:], []byte(sep))
+	if j < 0 {
+		return -1
+	}
+	return i + j + len(sep)
+}
+
+// directiveEnd returns the index of data just past the greater-than sign that
+// ends the declaration whose first byte after its "<!" is at i, or -1 if none
+// does, as the decoder reads one: it takes that first byte as it is, and then
+// ends the declaration at the first greater-than sign outside quotes and
+// outside the declarations nested in it, which a less-than sign starts, and
+// reads a comment inside it, which a less-than sign, an exclamation mark, and
+// two hyphens start, to the first "-->"; a less-than sign that does not start
+// a comment starts a nested declaration, and the first byte that is not the
+// comment's is read again as the declaration's.
+func directiveEnd(data []byte, i int) int {
+	if i >= len(data) {
+		return -1
+	}
+	var quote byte
+	depth := 0
+	for i++; i < len(data); {
+		b := data[i]
+		i++
+		if quote == 0 && b == '>' && depth == 0 {
+			return i
+		}
+		for again := true; again; {
+			again = false
+			switch {
+			case b == quote:
+				quote = 0
 			case quote != 0:
-				if c == quote {
-					quote = 0
+			case b == '\'' || b == '"':
+				quote = b
+			case b == '>':
+				depth--
+			case b == '<':
+				const comment = "!--"
+				k := 0
+				for ; k < len(comment); k++ {
+					if i >= len(data) {
+						return -1
+					}
+					if b = data[i]; b != comment[k] {
+						break
+					}
+					i++
 				}
-			case c == '"' || c == '\'':
-				quote = c
-			case c == '>':
-				break tag
-			case c == '=':
-				if n++; n > maxSVGAttrs {
-					return true
+				if k < len(comment) {
+					// The byte that is not the comment's, which the decoder has read,
+					// is read again.
+					i++
+					depth++
+					again = true
+					continue
+				}
+				if i = past(data, i, "-->"); i < 0 {
+					return -1
 				}
 			}
 		}
-		if i >= len(data) {
-			return false
-		}
 	}
+	return -1
 }
 
 // namespaces returns how many of attrs, the attributes of an element that
@@ -529,16 +626,21 @@ func attrName(n xml.Name) (string, bool) {
 
 // keepAttr reports whether an attribute name, as attrName writes it, of the
 // element, keeps the value v: a reference, only to a fragment of the file, or
-// a data: URL of an image's raster type, an id or a class, whatever it is,
+// a data: URL of an image's raster type; an id or a class, whatever it is,
 // which names the element, and which a browser neither requests nor reads
-// as CSS, a style, which CSS reads, only if it is safe (unsafeCSS), and any
-// other only if it is safe as CSS too, as a presentation attribute is CSS,
-// and it names no URL outside the file (namesURL), as ping's do.
+// as CSS; requiredExtensions or requiredFeatures, whatever it is, a list of
+// URLs that a browser compares with the extensions and features that it
+// has, and never requests, so that an element that one of them keeps from
+// being shown, as a child of a switch element is that names an editor's
+// extension, stays hidden; a style, which CSS reads, only if it is safe
+// (unsafeCSS); and any other only if it is safe as CSS too, as a
+// presentation attribute is CSS, and it names no URL outside the file
+// (namesURL), as ping's do.
 func keepAttr(element, name, v string) bool {
 	switch {
 	case name == "href":
 		return strings.HasPrefix(v, "#") || element == "image" && dataImage.MatchString(v)
-	case name == "id" || name == "class":
+	case name == "id" || name == "class" || name == "requiredExtensions" || name == "requiredFeatures":
 		return true
 	case name != "style" && namesURL(v):
 		return false
@@ -548,14 +650,13 @@ func keepAttr(element, name, v string) bool {
 
 // namesURL reports whether v, the value of an attribute, may be read as a URL
 // of something outside the file: whether it starts as an absolute URL does,
-// once the spaces, tabs, line feeds, and control characters that a browser
-// drops from a URL that it parses are dropped from it, or any word of it
-// does, as a list of URLs separated by spaces, as ping's, is read. A relative
-// URL refers to the origin that the file is served from, whose requests reach
-// nothing outside it. A value of another kind that starts with a word and a
-// colon, as "Note: …" might, is dropped with them, which only words that no
-// drawing needs to show it do. It reads v without copying it, as a path's
-// data, of megabytes, may be.
+// as a browser parses one (absoluteURL), or any word of it does, as a list of
+// URLs separated by spaces, as ping's, is read. A relative URL refers to the
+// origin that the file is served from, whose requests reach nothing outside
+// it. A value of another kind that has a word that ends with a colon, as
+// "Note: …" has, is dropped with them, which only words that no drawing needs
+// to show it do, as an aria-label's or a title's. It reads v without copying
+// it, as a path's data, of megabytes, may be.
 func namesURL(v string) bool {
 	if absoluteURL(v) {
 		return true
@@ -568,16 +669,22 @@ func namesURL(v string) bool {
 	return false
 }
 
-// absoluteURL reports whether s, without its spaces and control characters,
-// starts as a URL that says where it is does: with a scheme, as https: or
-// data:, or with two slashes, as //host/path, which is relative to the scheme
-// alone.
+// absoluteURL reports whether s starts as a URL that says where it is does,
+// as a browser parses one: with a scheme, as https: or data:, or with two
+// slashes, as //host/path, which is relative to the scheme alone. A browser
+// drops the spaces and control characters that a URL starts with, and the
+// tabs, line feeds, and carriage returns that it holds anywhere, so this
+// does too; but a space after its start ends a scheme, so that "Layer 1:
+// copy", as an editor names a layer, is no URL, as it is none of a browser's.
 func absoluteURL(s string) bool {
 	i := 0
-	// next returns the next byte of s that is not a space or a control
-	// character, and false at its end.
+	for i < len(s) && s[i] <= ' ' {
+		i++
+	}
+	// next returns the next byte of s that is not a tab, a line feed, or a
+	// carriage return, and false at its end.
 	next := func() (byte, bool) {
-		for i < len(s) && s[i] <= ' ' {
+		for i < len(s) && (s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
 			i++
 		}
 		if i == len(s) {
@@ -621,6 +728,17 @@ var cssURL = regexp.MustCompile(`(?i)url\(\s*['"]?`)
 var cssDangers = []string{"image-set(", "image(", "expression(", "src(", "element(", "javascript:", "vbscript:",
 	"behavior:", "-moz-binding"}
 
+// cssDangerStarts holds the bytes that one of cssDangers starts with, in
+// either case, so that unsafeCSS compares a byte that none starts with,
+// which most of a path's data is, with none of them.
+var cssDangerStarts = func() (starts [256]bool) {
+	for _, bad := range cssDangers {
+		starts[bad[0]] = true
+		starts[strings.ToUpper(bad[:1])[0]] = true
+	}
+	return starts
+}()
+
 // unsafeCSS reports whether v, a value that CSS may read, as a style
 // attribute, a style element's text, or a presentation attribute, could load
 // or run something: a url() of anything but a fragment of the file, a
@@ -634,9 +752,13 @@ func unsafeCSS(v string) bool {
 		return true
 	}
 	for i := range len(v) {
-		c := lowerASCII(v[i])
+		if !cssDangerStarts[v[i]] {
+			continue
+		}
+		// cssDangers are ASCII, so a slice of v of as many bytes that holds
+		// another character has fewer characters, and is none of them.
 		for _, bad := range cssDangers {
-			if c == bad[0] && hasPrefixFold(v[i:], bad) {
+			if len(v)-i >= len(bad) && strings.EqualFold(v[i:i+len(bad)], bad) {
 				return true
 			}
 		}
@@ -649,34 +771,9 @@ func unsafeCSS(v string) bool {
 	return false
 }
 
-// lowerASCII returns c in lowercase if it is an ASCII letter, or else c.
-func lowerASCII(c byte) byte {
-	if c >= 'A' && c <= 'Z' {
-		return c + 'a' - 'A'
-	}
-	return c
-}
-
-// hasPrefixFold reports whether s starts with prefix, which is in lowercase,
-// its ASCII letters in either case alike.
-func hasPrefixFold(s, prefix string) bool {
-	if len(s) < len(prefix) {
-		return false
-	}
-	for i := range len(prefix) {
-		if lowerASCII(s[i]) != prefix[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// svgLength matches a length of SVG's width or height, a number and its
-// unit, if it has one, and svgNumber a number of its viewBox, which has none.
-var (
-	svgLength = regexp.MustCompile(`^\s*([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)\s*([A-Za-z]*)\s*$`)
-	svgNumber = regexp.MustCompile(`^([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)$`)
-)
+// svgLength matches a length of SVG's width or height, or of its viewBox, a
+// number and its unit, if it has one.
+var svgLength = regexp.MustCompile(`^\s*([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)\s*([A-Za-z]*)\s*$`)
 
 // svgUnits are the pixels of a user unit, as a length without a unit is, and
 // of each absolute unit of CSS, which a width or a height of SVG may be in,
@@ -706,8 +803,8 @@ func svgSize(attrs []xml.Attr) (int, int) {
 			viewBox = a.Value
 		}
 	}
-	w, wok := svgPixels(width)
-	h, hok := svgPixels(height)
+	w, wok := svgPixels(width, false)
+	h, hok := svgPixels(height, false)
 	if !wok || !hok {
 		fields := strings.FieldsFunc(viewBox, func(r rune) bool {
 			return r == ' ' || r == ',' || r == '\t' || r == '\n' || r == '\r'
@@ -715,8 +812,8 @@ func svgSize(attrs []xml.Attr) (int, int) {
 		if len(fields) != 4 {
 			return 0, 0
 		}
-		vw, vwok := svgViewBoxLength(fields[2])
-		vh, vhok := svgViewBoxLength(fields[3])
+		vw, vwok := svgPixels(fields[2], true)
+		vh, vhok := svgPixels(fields[3], true)
 		switch {
 		case !vwok || !vhok:
 			return 0, 0
@@ -741,12 +838,14 @@ func wholePixels(f float64) int {
 	return max(1, int(math.Ceil(f-1e-9)))
 }
 
-// svgPixels returns a length of SVG's width or height in pixels, and true,
-// or false for one that is not a positive length of at most MaxSide pixels
-// in one of svgUnits.
-func svgPixels(v string) (float64, bool) {
+// svgPixels returns a length v of SVG's width or height in pixels, or, if
+// viewBox is set, a width or height of its viewBox, which has no unit, in
+// user units, and true, or false for one that is not a positive length of at
+// most MaxSide pixels in one of svgUnits, or that has a unit, if viewBox is
+// set.
+func svgPixels(v string, viewBox bool) (float64, bool) {
 	m := svgLength.FindStringSubmatch(v)
-	if m == nil {
+	if m == nil || viewBox && m[2] != "" {
 		return 0, false
 	}
 	unit, ok := svgUnits[strings.ToLower(m[2])]
@@ -755,20 +854,6 @@ func svgPixels(v string) (float64, bool) {
 	}
 	f, err := strconv.ParseFloat(m[1], 64)
 	if f *= unit; err != nil || f <= 0 || f > MaxSide {
-		return 0, false
-	}
-	return f, true
-}
-
-// svgViewBoxLength returns the width or height of a viewBox, in user units,
-// and true, or false for one that is not a positive number of at most
-// MaxSide.
-func svgViewBoxLength(v string) (float64, bool) {
-	if !svgNumber.MatchString(v) {
-		return 0, false
-	}
-	f, err := strconv.ParseFloat(v, 64)
-	if err != nil || f <= 0 || f > MaxSide {
 		return 0, false
 	}
 	return f, true

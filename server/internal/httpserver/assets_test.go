@@ -480,7 +480,7 @@ func TestThumbnailsAndOrphans(t *testing.T) {
 		header.Get("Cache-Control") != "private, max-age=300" {
 		t.Errorf("the file while its thumbnail is not made: Cache-Control %q", content.header.Get("Cache-Control"))
 	}
-	startWorkers(t, s, d)
+	workers := startWorkers(t, s, d)
 	var cfg image.Config
 	for deadline := time.Now().Add(30 * time.Second); ; {
 		res := thumb()
@@ -524,6 +524,12 @@ func TestThumbnailsAndOrphans(t *testing.T) {
 	// Another project shares the small file, whose blob stays.
 	other := createProject(t, s.main, owner, ws, "Harbour").ID
 	upload(t, s.main, owner, other, small, http.StatusCreated)
+	// The workers stop before the purge, so that the reconciliation that
+	// they run once they start, which a busy machine may leave until now,
+	// does not run beside this test's.
+	if err := workers.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	// The purge of a project deletes its assets by the cascade of their
 	// foreign key, as purging it does.
 	admin := d.Admin(t)
@@ -978,6 +984,17 @@ func TestS3Assets(t *testing.T) {
 	jo := newNamedAccount(t, s.main, "jo@example.com", "Jo")
 	wantCode(t, "another workspace's user", call(s.main, http.MethodGet, assetPath(p, a.ID)+"/content", nil,
 		jo.header(false)), http.StatusNotFound, api.CodeNotFound)
+
+	// Until its thumbnail is made, the thumbnail of a large image redirects
+	// to the file's own route for half a minute, whose redirect to the bucket
+	// the browser keeps, rather than to a URL of the bucket signed anew.
+	large := upload(t, s.main, owner, p, testPNG(t, 600, 300), http.StatusCreated)
+	pending := call(s.main, http.MethodGet, assetPath(p, large.ID)+"/thumbnail", nil, owner.header(false))
+	if pending.status != http.StatusFound || pending.header.Get("Location") != assetPath(p, large.ID)+"/content" ||
+		pending.header.Get("Cache-Control") != "private, max-age=30" {
+		t.Errorf("the thumbnail before its job: %d, Location %q, Cache-Control %q; want a redirect to the file's "+
+			"route, kept for 30 s", pending.status, pending.header.Get("Location"), pending.header.Get("Cache-Control"))
+	}
 }
 
 // TestAssetsTokenScopes checks that an API token uploads with project:write

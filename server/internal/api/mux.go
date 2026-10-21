@@ -370,6 +370,7 @@ type routeOptions struct {
 	sessionOnly bool
 	bucket      Bucket
 	unlimited   bool
+	afterLimit  huma.Middlewares
 }
 
 // TokenScope says that a route takes an API token too, besides a session,
@@ -448,6 +449,17 @@ func Unlimited() Option {
 	return func(o *routeOptions) { o.unlimited = true }
 }
 
+// AfterLimit says that the middleware mw runs after the rate limit has
+// counted the route's request, rather than before it, as the operation's own
+// middleware does: middleware that may keep a request waiting, as for one of
+// a few slots, so that a request that the limit refuses does not wait first,
+// and every request that waits has been counted. It runs after the
+// operation's own middleware, in its order, on a route that no limit counts
+// too.
+func AfterLimit(mw ...func(huma.Context, func(huma.Context))) Option {
+	return func(o *routeOptions) { o.afterLimit = append(o.afterLimit, mw...) }
+}
+
 // IsAPIPath reports whether path is the API's, under /api/, whose every
 // route a rate limit counts, and which needs the database.
 func IsAPIPath(path string) bool {
@@ -471,10 +483,11 @@ func IsAPIPath(path string) bool {
 //
 // Unless opts say that the route is Unlimited, the Mux's RateLimiter counts
 // each request in the route's bucket (RateLimit) after the operation's own
-// middleware, the operation's description ends with what the RateLimiter's
-// Doc says of the limit, and each of its responses in the OpenAPI document
-// but the default documents the RateLimit headers. Register panics if the
-// Mux has no RateLimiter then.
+// middleware, and before the middleware that AfterLimit names, the
+// operation's description ends with what the RateLimiter's Doc says of the
+// limit, and each of its responses in the OpenAPI document but the default
+// documents the RateLimit headers. Register panics if the Mux has no
+// RateLimiter then.
 func Register[I, O any](m *Mux, c Capability, op huma.Operation, handler func(context.Context, *I) (*O, error),
 	opts ...Option) {
 	var o routeOptions
@@ -535,6 +548,9 @@ func Register[I, O any](m *Mux, c Capability, op huma.Operation, handler func(co
 		// array of middleware that another operation shares.
 		op.Middlewares = append(slices.Clip(op.Middlewares), limitWith(m.limiter, bucket))
 		op.Description = strings.TrimSpace(op.Description + m.limiter.Doc(bucket, callers))
+	}
+	if len(o.afterLimit) > 0 {
+		op.Middlewares = append(slices.Clip(op.Middlewares), o.afterLimit...)
 	}
 	m.declare(op.Method, op.Path, c)
 	switch {

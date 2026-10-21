@@ -36,8 +36,9 @@ func smtpEnv(server *emailtest.Server) map[string]string {
 }
 
 // startWorkers runs the jobs of s on its database d, as an instance's
-// workers do, until the test ends.
-func startWorkers(t *testing.T, s *server, d *dbtest.Database) {
+// workers do, until the test ends, or the test stops the queue that it
+// returns.
+func startWorkers(t *testing.T, s *server, d *dbtest.Database) *jobs.Queue {
 	t.Helper()
 	ctx := context.Background()
 	q, err := jobs.Open(ctx, d.Open(t), d.AppURL, jobs.Options{Registry: s.serverJobs(), Work: true})
@@ -55,6 +56,7 @@ func startWorkers(t *testing.T, s *server, d *dbtest.Database) {
 		}
 		q.Close()
 	})
+	return q
 }
 
 // emailJobs returns how many jobs that email a link the database d holds,

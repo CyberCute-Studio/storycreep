@@ -3,6 +3,7 @@ package asset
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"image"
@@ -11,6 +12,8 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"io"
+	"math/rand/v2"
 	"runtime"
 	"slices"
 	"strings"
@@ -491,6 +494,68 @@ func TestDecodeBytes(t *testing.T) {
 	}
 }
 
+// TestDecodeBytesBoundsDecoders checks decodeBytes against what making a
+// thumbnail allocates in fact, of images in the encodings that the standard
+// library writes, a baseline JPEG of YCbCr whose colours are subsampled
+// 4:2:0, or grey, a PNG of RGBA of 8 or 16 bits a channel, or paletted, or
+// grey, and a GIF, so that a decoder of a later Go, or of golang.org/x/image,
+// that allocates more for each pixel than decodeBytes counts fails it, rather
+// than let a thumbnail take more than maxDecodeBytes unnoticed. Besides what
+// decodeBytes counts, a thumbnail takes about 1.5 MiB whatever the image's
+// size, as the encoder of its PNG does, which is less than slack. Progressive
+// JPEGs and WebP images, which no encoder of Go writes, are checked by
+// TestDecodeBytes alone.
+func TestDecodeBytesBoundsDecoders(t *testing.T) {
+	const w, h, slack = 2400, 1600, 2 << 20
+	nrgba := image.NewNRGBA(image.Rect(0, 0, w, h))
+	deep := image.NewNRGBA64(image.Rect(0, 0, w, h))
+	paletted := image.NewPaletted(image.Rect(0, 0, w, h), palette.Plan9)
+	grey := image.NewGray(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			c := color.NRGBA{R: uint8(x), G: uint8(y), B: uint8(x ^ y), A: 255}
+			nrgba.SetNRGBA(x, y, c)
+			deep.Set(x, y, c)
+			paletted.SetColorIndex(x, y, uint8((x+y)%200))
+			grey.SetGray(x, y, color.Gray{Y: uint8(x * y)})
+		}
+	}
+	for _, tt := range []struct {
+		name   string
+		mime   string
+		encode func(*bytes.Buffer) error
+	}{
+		{"a baseline JPEG", MimeJPEG, func(b *bytes.Buffer) error { return jpeg.Encode(b, nrgba, nil) }},
+		{"a grey JPEG", MimeJPEG, func(b *bytes.Buffer) error { return jpeg.Encode(b, grey, nil) }},
+		{"an RGBA PNG", MimePNG, func(b *bytes.Buffer) error { return png.Encode(b, nrgba) }},
+		{"an RGBA PNG of 16 bits", MimePNG, func(b *bytes.Buffer) error { return png.Encode(b, deep) }},
+		{"a paletted PNG", MimePNG, func(b *bytes.Buffer) error { return png.Encode(b, paletted) }},
+		{"a grey PNG", MimePNG, func(b *bytes.Buffer) error { return png.Encode(b, grey) }},
+		{"a GIF", MimeGIF, func(b *bytes.Buffer) error { return gif.Encode(b, paletted, nil) }},
+	} {
+		var b bytes.Buffer
+		if err := tt.encode(&b); err != nil {
+			t.Fatal(err)
+		}
+		data := b.Bytes()
+		img, err := Sniff(data, len(data))
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		_, err = Thumbnail(data, tt.mime)
+		runtime.ReadMemStats(&after)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if got, want := int64(after.TotalAlloc-before.TotalAlloc), decodeBytes(img); got > want+slack {
+			t.Errorf("%s of %d × %d: its thumbnail allocated %d bytes, and decodeBytes counts %d", tt.name, w, h,
+				got, want)
+		}
+	}
+}
+
 // TestGIFThumbnail checks that the thumbnail of a GIF image whose first
 // frame covers only part of the image's screen shows the whole screen, with
 // the frame in its place, scaled as the screen is, and the rest transparent,
@@ -631,9 +696,27 @@ func TestSanitizeSVG(t *testing.T) {
 			in: `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">` +
 				`<a href="#x" ping="https://t.example/p"><text>t</text></a><rect ping="a https://t.example/q"/>` +
 				`<rect ping="https&#9;://t.example/r"/><rect attributionsrc="//t.example/s"/>` +
-				`<rect ping=" / /t.example/u"/><rect data-path="a/b" class="c d"/></svg>`,
+				`<rect ping=" /&#10;/t.example/u"/><rect data-path="a/b" class="c d"/></svg>`,
 			keep: []string{`<a href="#x"><text>t</text></a>`, `<rect data-path="a/b" class="c d"></rect>`},
 			drop: []string{"t.example", "ping", "attributionsrc"},
+		},
+		{
+			// A browser drops a space only where a URL starts, so a space before
+			// a colon makes no scheme, and a path whose second slash a space
+			// follows is no host's. requiredExtensions names an extension that
+			// a browser compares, and never requests, and keeps an element that
+			// names one that it does not have from being shown. A word that
+			// ends with a colon is dropped all the same.
+			name: "names and conditions",
+			in: `<svg xmlns="http://www.w3.org/2000/svg"><switch>` +
+				`<g requiredExtensions="http://ns.adobe.com/AdobeIllustrator/10.0/" data-name="Layer 1: copy"/>` +
+				`<g requiredFeatures="http://www.w3.org/TR/SVG11/feature#Extensibility" data-path="/ /x"/>` +
+				`</switch><rect aria-label="Note: see below"/></svg>`,
+			keep: []string{`<g requiredExtensions="http://ns.adobe.com/AdobeIllustrator/10.0/" ` +
+				`data-name="Layer 1: copy"></g>`,
+				`<g requiredFeatures="http://www.w3.org/TR/SVG11/feature#Extensibility" data-path="/ /x"></g>`,
+				`<rect></rect>`},
+			drop: []string{"Note"},
 		},
 		{
 			name: "repeated attributes",
@@ -878,9 +961,93 @@ func TestManyAttributes(t *testing.T) {
 		{"<?pi " + strings.Repeat(`a="b" `, 2*maxSVGAttrs) + "?><a/>", false},
 		{"<!DOCTYPE a " + strings.Repeat("=", 2*maxSVGAttrs) + "><a/>", false},
 		{"<a></a " + strings.Repeat("=", 2*maxSVGAttrs) + ">", false},
+		// A less-than sign that a name follows inside one of them, as a
+		// script's in a section of CDATA, is no start tag, as it is none of
+		// the decoder's.
+		{"<a><script><![CDATA[for(i=0;i<n;i++){" + strings.Repeat("a=b;", 2*maxSVGAttrs) + "}]]></script></a>", false},
+		{"<a><!-- <g " + strings.Repeat("x=1 ", 2*maxSVGAttrs) + "--></a>", false},
+		{"<?pi <x " + strings.Repeat("a=1 ", 2*maxSVGAttrs) + "?><a/>", false},
+		{"<!DOCTYPE a [<!-- <x " + strings.Repeat("=", 2*maxSVGAttrs) + "> -->]><a/>", false},
+		// A start tag after one of them counts, wherever the markup that a
+		// quoted string of the document type, or a section of CDATA, holds
+		// would have it end, and a declaration nested in the document type,
+		// or a comment there, does not end it.
+		{`<!DOCTYPE a "<!--"><a ` + strings.Repeat("=", maxSVGAttrs+1) + `> -->`, true},
+		{`<!DOCTYPE a '<?'><a ` + strings.Repeat("=", maxSVGAttrs+1) + `> ?>`, true},
+		{`<![CDATA[<!--]]><a ` + strings.Repeat("=", maxSVGAttrs+1) + `> -->`, true},
+		{`<!-- <![CDATA[ --><a ` + strings.Repeat("=", maxSVGAttrs+1) + `> ]]>`, true},
+		{`<?pi <!-- ?><a ` + strings.Repeat("=", maxSVGAttrs+1) + `> -->`, true},
+		{`<!DOCTYPE a [<!ENTITY e "v"> <!-- > --> ]><a ` + strings.Repeat("=", maxSVGAttrs+1) + `>`, true},
+		{`<!DOCTYPE a [<x> <a ` + strings.Repeat("=", maxSVGAttrs+1) + `>]>`, false},
 	} {
 		if got := manyAttributes([]byte(tt.in)); got != tt.want {
 			t.Errorf("manyAttributes of %.40q…: %t, want %t", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestAttributesPastAgreesWithDecoder checks attributesPast against the
+// decoder that sanitizeSVG reads with, on documents made of pieces of markup
+// picked at random: it reports a start tag of more attributes than the limit
+// whenever the decoder returns one, so that no comment, section of CDATA,
+// processing instruction, or declaration hides one from it, and, of a
+// document that the decoder reads whole, only then, so that none of them
+// makes it count attributes that no start tag has.
+func TestAttributesPastAgreesWithDecoder(t *testing.T) {
+	pieces := []string{"<a", "<b:c", ` x="1"`, " y='2'", ` z = "3"`, "=", ">", "/>", "</a>", "</b:c>", "<", "!",
+		"<!--", "-->", "--", "-", "<![CDATA[", "]]>", "]", "[", "<?p ", "?>", "?", "<!DOCTYPE a ", "<!ENTITY e 'v'>",
+		`"`, "'", "<!", "t", " ", "\n", "&amp;"}
+	r := rand.New(rand.NewPCG(29, 37))
+	runs := 300000
+	if testing.Short() {
+		runs = 30000
+	}
+	read := 0
+	for range runs {
+		var b strings.Builder
+		for range 1 + r.IntN(16) {
+			b.WriteString(pieces[r.IntN(len(pieces))])
+		}
+		doc := b.String()
+		most, whole := decodedAttributes(doc)
+		if whole {
+			read++
+		}
+		for limit := range 3 {
+			got := attributesPast([]byte(doc), limit)
+			switch {
+			case most > limit && !got:
+				t.Fatalf("%q: the decoder returns a start tag of %d attributes, and attributesPast with %d finds "+
+					"none of more", doc, most, limit)
+			case whole && got != (most > limit):
+				t.Fatalf("%q, which the decoder reads whole, with start tags of %d attributes at most: "+
+					"attributesPast with %d reports %t", doc, most, limit, got)
+			}
+		}
+	}
+	// The documents that the decoder reads whole are what can show that
+	// attributesPast counts too many.
+	if read < runs/50 {
+		t.Errorf("the decoder read %d of %d documents whole, too few to show anything", read, runs)
+	}
+}
+
+// decodedAttributes returns the most attributes of a start tag that the
+// decoder returns of doc, which reads it as sanitizeSVG does, without
+// checking that its end tags match, so that it reads as many start tags as it
+// can, and whether it reads doc whole.
+func decodedAttributes(doc string) (int, bool) {
+	d := xml.NewDecoder(strings.NewReader(doc))
+	d.Strict = true
+	d.CharsetReader = nil
+	most := 0
+	for {
+		tok, err := d.RawToken()
+		if err != nil {
+			return most, errors.Is(err, io.EOF)
+		}
+		if s, ok := tok.(xml.StartElement); ok {
+			most = max(most, len(s.Attr))
 		}
 	}
 }

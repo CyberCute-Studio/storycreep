@@ -226,6 +226,22 @@ func (q *Queries) InsertAsset(ctx context.Context, arg InsertAssetParams) (pgtyp
 	return created_at, err
 }
 
+const keepSession = `-- name: KeepSession :exec
+SELECT set_config(name, '0', true) FROM pg_catalog.pg_settings
+WHERE name IN ('idle_in_transaction_session_timeout', 'transaction_timeout')
+`
+
+// KeepSession switches off, until the transaction ends, the timeouts that
+// the server, the database, or the login may set, and that end a session
+// whose transaction waits idle, as for the store, or runs for long, and with
+// it the advisory locks that the transaction holds (LockBlob), as
+// database.timeoutsOff does for the migrations' lock: each of them that the
+// server has, as PostgreSQL 17 added transaction_timeout.
+func (q *Queries) KeepSession(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, keepSession)
+	return err
+}
+
 const lockBlob = `-- name: LockBlob :exec
 
 SELECT pg_advisory_xact_lock($1::integer, $2::integer)

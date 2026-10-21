@@ -667,11 +667,20 @@ func TestRateLimit(t *testing.T) {
 		RateLimit(BucketAuth))
 	Register(m, Public, huma.Operation{OperationID: "probe", Method: http.MethodGet, Path: "/probe"}, handler,
 		Unlimited())
+	// Middleware that may keep a request waiting runs once the limit has
+	// counted it.
+	waits := func(ctx huma.Context, next func(huma.Context)) {
+		order = append(order, "after the limit")
+		next(ctx)
+	}
+	Register(m, OwnAccount, huma.Operation{OperationID: "postThing", Method: http.MethodPost, Path: "/api/things",
+		Middlewares: own}, handler, SessionOnly(), AfterLimit(waits))
 
 	want := map[Route]Bucket{
-		{http.MethodGet, "/api/things"}: BucketRead,
-		{http.MethodPut, "/api/things"}: BucketWrite,
-		{http.MethodPost, "/api/login"}: BucketAuth,
+		{http.MethodGet, "/api/things"}:  BucketRead,
+		{http.MethodPut, "/api/things"}:  BucketWrite,
+		{http.MethodPost, "/api/things"}: BucketWrite,
+		{http.MethodPost, "/api/login"}:  BucketAuth,
 	}
 	if got := m.Buckets(); !maps.Equal(got, want) {
 		t.Errorf("Buckets() = %v, want %v", got, want)
@@ -696,6 +705,7 @@ func TestRateLimit(t *testing.T) {
 	}{
 		{http.MethodGet, []string{"own middleware", "limit", "operation"}},
 		{http.MethodPut, []string{"authenticate", "own middleware", "limit", "operation"}},
+		{http.MethodPost, []string{"authenticate", "own middleware", "limit", "after the limit", "operation"}},
 	} {
 		order = nil
 		serve(m, c.method, "/api/things", "", nil)
@@ -722,6 +732,12 @@ func TestRateLimit(t *testing.T) {
 	}
 	if ran != 0 {
 		t.Errorf("%d requests over the limit reached their operation", ran)
+	}
+	order = nil
+	if res := serve(m, http.MethodPost, "/api/things", "", nil); res.status != http.StatusTooManyRequests ||
+		slices.Contains(order, "after the limit") {
+		t.Errorf("a request over the limit: %d, ran %q; want 429 before the middleware after the limit", res.status,
+			order)
 	}
 
 	doc := m.OpenAPI()

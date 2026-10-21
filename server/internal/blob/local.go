@@ -197,12 +197,33 @@ func (l *Local) walk(ctx context.Context, dir, after string, top bool, fn func(I
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	entries, err := fs.ReadDir(l.root.FS(), dir)
+	entries, err := l.readDir(dir)
 	switch {
 	case top && errors.Is(err, fs.ErrNotExist):
 		return nil
 	case err != nil:
 		return err
+	}
+	// Only the entries that may hold a key after after are sorted, so that
+	// two listings of a directory of many files, one after a key and one up
+	// to it, as the orphan reconciliation makes, sort each of them once.
+	listed := entries[:0]
+	for _, e := range entries {
+		p := path.Join(dir, e.Name())
+		switch {
+		case strings.HasPrefix(e.Name(), tempPrefix) && e.Type().IsRegular():
+			l.removeStale(e, p)
+		case strings.HasPrefix(e.Name(), "."):
+		case e.IsDir():
+			// Every key of the directory starts with its path and a slash, so
+			// all of them sort before after if after sorts after that, and
+			// does not start with it.
+			if d := p + "/"; after <= d || strings.HasPrefix(after, d) {
+				listed = append(listed, e)
+			}
+		case e.Type().IsRegular() && p > after:
+			listed = append(listed, e)
+		}
 	}
 	// A directory sorts as its name and a slash would, which its keys start
 	// with.
@@ -212,27 +233,13 @@ func (l *Local) walk(ctx context.Context, dir, after string, top bool, fn func(I
 		}
 		return e.Name()
 	}
-	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(sortName(a), sortName(b)) })
-	for _, e := range entries {
+	slices.SortFunc(listed, func(a, b fs.DirEntry) int { return strings.Compare(sortName(a), sortName(b)) })
+	for _, e := range listed {
 		p := path.Join(dir, e.Name())
-		switch {
-		case strings.HasPrefix(e.Name(), tempPrefix) && e.Type().IsRegular():
-			l.removeStale(e, p)
-			continue
-		case strings.HasPrefix(e.Name(), "."):
-			continue
-		case e.IsDir():
-			// Every key of the directory starts with its path and a slash, so
-			// all of them sort before after if after sorts after that, and
-			// does not start with it.
-			if d := p + "/"; after > d && !strings.HasPrefix(after, d) {
-				continue
-			}
+		if e.IsDir() {
 			if err := l.walk(ctx, p, after, false, fn); err != nil {
 				return err
 			}
-			continue
-		case !e.Type().IsRegular() || p <= after:
 			continue
 		}
 		info, err := e.Info()
@@ -248,6 +255,17 @@ func (l *Local) walk(ctx context.Context, dir, after string, top bool, fn func(I
 		}
 	}
 	return nil
+}
+
+// readDir returns the entries of the directory dir, in the order that the
+// file system keeps them, rather than sorted, as fs.ReadDir returns them.
+func (l *Local) readDir(dir string) ([]fs.DirEntry, error) {
+	f, err := l.root.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.ReadDir(-1)
 }
 
 // removeStale removes the file e, at p, that Put was writing, if it was last

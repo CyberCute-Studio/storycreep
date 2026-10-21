@@ -124,6 +124,9 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 		return ErrNoAdminURL
 	}
 	s := newServer(cfg, log)
+	// The store of the assets' files is closed last, once the requests and
+	// the jobs that read it have stopped.
+	defer func() { _ = s.assets.Storage().Close() }()
 
 	ln, adminLn := opts.Listener, opts.AdminListener
 	if s.admin == nil && adminLn != nil {

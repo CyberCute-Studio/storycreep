@@ -2,7 +2,9 @@ package asset
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -112,6 +114,23 @@ func (s *Storage) Store(ctx context.Context) (blob.Store, error) {
 		s.final.Store(&store)
 	}
 	return store, nil
+}
+
+// Close closes the stores that Storage opened, as the local driver's, which
+// holds its directory open, once nothing reads them any longer, as when the
+// server stops. A call of Store after it opens a store anew.
+func (s *Storage) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.final.Store(nil)
+	var errs []error
+	for _, store := range s.opened {
+		if c, ok := store.(io.Closer); ok {
+			errs = append(errs, c.Close())
+		}
+	}
+	s.opened = nil
+	return errors.Join(errs...)
 }
 
 // settings returns the settings of the store, and whether they are final:
