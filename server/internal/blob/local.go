@@ -204,9 +204,11 @@ func (l *Local) walk(ctx context.Context, dir, after string, top bool, fn func(I
 	case err != nil:
 		return err
 	}
-	// Only the entries that may hold a key after after are sorted, so that
-	// two listings of a directory of many files, one after a key and one up
-	// to it, as the orphan reconciliation makes, sort each of them once.
+	// Only the entries that may hold a key after after are sorted, so that a
+	// listing after a key of a directory of many files, as the orphan
+	// reconciliation makes first, sorts only those. A listing from the
+	// first, which it makes next, until it reaches that key, sorts them all,
+	// as List has no key to end at.
 	listed := entries[:0]
 	for _, e := range entries {
 		p := path.Join(dir, e.Name())

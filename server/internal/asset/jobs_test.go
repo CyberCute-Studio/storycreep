@@ -3,6 +3,8 @@ package asset
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -83,7 +85,7 @@ func TestReconcileGoesOn(t *testing.T) {
 	slices.Sort(keys)
 	store := refusingStore{Store: local, refuse: keys[0], slow: keys[orphanBatch]}
 	s := &Service{db: d.Open(t)}
-	deleted, err := s.reconcileWorkspace(ctx, store, workspaceID, func() bool { return true })
+	deleted, err := s.reconcileWorkspace(ctx, store, workspaceID, true, func() bool { return true })
 	joined, _ := err.(interface{ Unwrap() []error })
 	if !errors.Is(err, errRefused) || joined == nil || len(joined.Unwrap()) != 1 || deleted != len(keys)-1 {
 		t.Errorf("the reconciliation deleted %d blobs, and failed with %v; want %d deleted, and the refused "+
@@ -281,5 +283,128 @@ func TestReconcileWithoutWorkspaces(t *testing.T) {
 	s := &Service{db: noWorkspace{}, storage: storage}
 	if n, err := s.Reconcile(context.Background()); n != 0 || err != nil {
 		t.Errorf("the reconciliation of an instance without workspaces: %d, %v; want 0, nil", n, err)
+	}
+}
+
+// TestReconcileOwner checks that the orphan reconciliation deletes blobs only
+// in a store that its database owns: it does nothing until first-run setup
+// has completed, as setup may yet choose another store, and then claims the
+// store for its database; a second database, as a copy of the first restored
+// into a database of its own to try a new version on, which has the same
+// workspaces, deletes none of the blobs that the first stores, which its own
+// rows do not refer to, and says why; and once the first has not claimed the
+// store for longer than ownerTakeover, as when it is gone, the second takes
+// the store over, and the first deletes nothing then.
+func TestReconcileOwner(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	local, err := blob.OpenLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	workspaceID := ids.New()
+	// reconciler returns the service of a new database that has the
+	// workspace, whose store is dir until setup chooses one, and the
+	// database.
+	reconciler := func() (*Service, *dbtest.Database) {
+		d := dbtest.New(t)
+		if _, err := d.Admin(t).Exec(ctx, "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Harbour', "+
+			"'harbour', 'unlimited')", workspaceID); err != nil {
+			t.Fatal(err)
+		}
+		db := d.Open(t)
+		storage := NewStorage(db, StorageOptions{Dir: dir})
+		t.Cleanup(func() { _ = storage.Close() })
+		return &Service{db: db, storage: storage, log: slog.New(slog.DiscardHandler)}, d
+	}
+	// put stores the blob of the content whose hash ends in b, which no row
+	// refers to.
+	put := func(b byte) string {
+		var sum [32]byte
+		sum[31] = b
+		key := blobKey(workspaceID, sum[:], "png")
+		if err := local.Put(ctx, key, []byte("x"), MimePNG); err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	stored := func(key string) bool {
+		_, err := local.Stat(ctx, key)
+		return err == nil
+	}
+	owner := func() string {
+		data, err := os.ReadFile(filepath.Join(dir, OwnerKey))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	first, d := reconciler()
+	orphan := put(1)
+	if n, err := first.Reconcile(ctx); n != 0 || err != nil || !stored(orphan) || stored(OwnerKey) {
+		t.Errorf("before setup, the reconciliation deleted %d blobs, and claimed the store %t: %v; want none, "+
+			"and nothing claimed", n, stored(OwnerKey), err)
+	}
+	d.MarkSetUp(t)
+	if n, err := first.Reconcile(ctx); n != 1 || err != nil || stored(orphan) || !stored(OwnerKey) {
+		t.Fatalf("after setup, the reconciliation deleted %d blobs, and claimed the store %t: %v; want 1, and the "+
+			"store claimed", n, stored(OwnerKey), err)
+	}
+	claimed := owner()
+
+	second, d2 := reconciler()
+	d2.MarkSetUp(t)
+	// A file that the first stores after the copy was made, which the
+	// second's rows do not refer to.
+	orphan = put(2)
+	n, err := second.Reconcile(ctx)
+	if oe, ok := errors.AsType[*OwnerError](err); n != 0 || !ok || oe.Owner+"\n" != claimed || !stored(orphan) ||
+		owner() != claimed {
+		t.Errorf("the second database's reconciliation deleted %d blobs, and claimed the store %t: %v; want none, "+
+			"and an OwnerError of the first", n, owner() != claimed, err)
+	}
+
+	// The first has not claimed the store for longer than ownerTakeover.
+	long := time.Now().Add(-ownerTakeover - time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, OwnerKey), long, long); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := second.Reconcile(ctx); n != 1 || err != nil || stored(orphan) || owner() == claimed {
+		t.Errorf("the second database's reconciliation, once the first's claim is old, deleted %d blobs, and "+
+			"claimed the store %t: %v; want 1, and the store claimed", n, owner() != claimed, err)
+	}
+	orphan = put(3)
+	if n, err := first.Reconcile(ctx); n != 0 || !errors.As(err, new(*OwnerError)) || !stored(orphan) {
+		t.Errorf("the first database's reconciliation, once the second claimed the store, deleted %d blobs: %v; "+
+			"want none, and an OwnerError", n, err)
+	}
+}
+
+// TestFinalStore checks that the store is final, which an upload needs,
+// once first-run setup has completed, or at once if the configuration names
+// it, and that before then the default store is returned, but is not final,
+// and that asking for the final one opens none.
+func TestFinalStore(t *testing.T) {
+	ctx := context.Background()
+	// noWorkspace reads an instance whose setup is pending, and that names
+	// no bucket.
+	dir := filepath.Join(t.TempDir(), "assets")
+	pending := NewStorage(noWorkspace{}, StorageOptions{Dir: dir})
+	t.Cleanup(func() { _ = pending.Close() })
+	if _, err := pending.FinalStore(ctx); !errors.Is(err, ErrSetupRequired) {
+		t.Errorf("the final store before setup: %v, want ErrSetupRequired", err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("asking for the final store before setup made its directory: %v", err)
+	}
+	if _, err := pending.Store(ctx); err != nil {
+		t.Errorf("the store before setup: %v", err)
+	}
+	fixed := NewStorage(noWorkspace{}, StorageOptions{Configured: &config.AssetStorage{Dir: t.TempDir()}})
+	t.Cleanup(func() { _ = fixed.Close() })
+	if _, err := fixed.FinalStore(ctx); err != nil {
+		t.Errorf("the final store that the configuration names, before setup: %v", err)
 	}
 }

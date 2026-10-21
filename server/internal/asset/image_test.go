@@ -891,12 +891,25 @@ func TestSanitizeSVG(t *testing.T) {
 		{"not XML", `{"svg": true}`, ReasonType},
 		{"text not in UTF-8", "a caption\xff", ReasonType},
 		{"not UTF-8", "<svg xmlns=\"http://www.w3.org/2000/svg\">\xff</svg>", ReasonMalformed},
-		// XML in UTF-16 starts with its byte order mark, which no file in
-		// UTF-8 holds.
-		{"UTF-16", utf16Of(binary.LittleEndian, `<svg xmlns="http://www.w3.org/2000/svg"/>`), ReasonMalformed},
+		{"not the UTF-8 that it declares", `<?xml version="1.0" encoding="UTF-8"?>` +
+			"<svg xmlns=\"http://www.w3.org/2000/svg\"><title>Caf\xe9</title></svg>", ReasonMalformed},
+		// A file in UTF-16 is well-formed XML, which the decoder has no reader
+		// of, as it has none of ISO-8859-1, whether or not the file's bytes
+		// happen to be UTF-8 too, as they are when it holds only ASCII.
+		{"UTF-16", utf16Of(binary.LittleEndian, `<svg xmlns="http://www.w3.org/2000/svg"/>`), ReasonUnsupported},
 		{"UTF-16, big-endian", utf16Of(binary.BigEndian, `<?xml version="1.0" encoding="UTF-16"?><svg:svg `+
-			`xmlns:svg="http://www.w3.org/2000/svg"/>`), ReasonMalformed},
+			`xmlns:svg="http://www.w3.org/2000/svg"/>`), ReasonUnsupported},
+		{"UTF-16 without a byte order mark", utf16Of(binary.LittleEndian,
+			`<svg xmlns="http://www.w3.org/2000/svg"/>`)[2:], ReasonUnsupported},
+		{"UTF-16, big-endian, without a byte order mark", utf16Of(binary.BigEndian,
+			`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>`)[2:], ReasonUnsupported},
+		{"UTF-16 of an odd length", utf16Of(binary.LittleEndian, `<svg xmlns="http://www.w3.org/2000/svg"/>`) +
+			"\x00", ReasonUnsupported},
 		{"text in UTF-16", utf16Of(binary.LittleEndian, "a caption <b>"), ReasonType},
+		{"a PNG after a byte order mark", "\xff\xfe\x89PNG\r\n\x1a\n", ReasonType},
+		{"a byte order mark alone", "\xff\xfe", ReasonType},
+		{"another encoding, in its bytes too", `<?xml version="1.0" encoding="ISO-8859-1"?>` +
+			"<svg xmlns=\"http://www.w3.org/2000/svg\"><title>Caf\xe9</title></svg>", ReasonUnsupported},
 		{"a broken root", `<svg xmlns="http://www.w3.org/2000/svg" width="10" <rect/>`, ReasonMalformed},
 		{"a broken prefixed root", `<?xml version="1.0"?><s:svg xmlns:s="http://www.w3.org/2000/svg" a=1/>`,
 			ReasonMalformed},

@@ -32,8 +32,12 @@ type DB interface {
 //
 // Setup chooses once, so once setup has completed, the store that Storage
 // finds stays the same until the server stops, and Storage keeps it. Before
-// that, no workspace exists, and so no asset, but Storage finds the default
-// store anew each time, so that what setup chooses applies at once.
+// that, Storage finds the default store anew each time, so that what setup
+// chooses applies at once, and it is not final: an account that `storycreep
+// create-user` made may sign in, and have workspaces, before setup has
+// completed, but an upload is refused until then (FinalStore), so that no
+// file is stored where setup's bucket would leave it behind, and the orphan
+// reconciliation deletes nothing until then either.
 type Storage struct {
 	db         DB
 	fixed      *config.AssetStorage
@@ -78,21 +82,44 @@ func (s *Storage) Fixed() bool {
 	return s.fixed != nil
 }
 
+// ErrSetupRequired is returned for an upload while first-run setup has not
+// completed, and the configuration names no store, as setup may yet choose a
+// bucket, which would leave behind a file stored before it, in the local
+// driver's default directory (FinalStore).
+var ErrSetupRequired = errors.New("asset: first-run setup has not completed, and may yet choose the store")
+
 // Store returns the store of the instance's blobs, which it opens on first
 // use. It returns an error if the store cannot be opened, as when the local
 // driver's directory cannot be created, and opens it again on the next call.
 func (s *Storage) Store(ctx context.Context) (blob.Store, error) {
-	if final := s.final.Load(); final != nil {
-		return *final, nil
+	return s.store(ctx, false)
+}
+
+// FinalStore returns the store of the instance's blobs as Store does, once
+// it is final: the configuration's, or the one that first-run setup chose,
+// or the default directory, once setup has completed. Until then, it returns
+// ErrSetupRequired, and opens none.
+func (s *Storage) FinalStore(ctx context.Context) (blob.Store, error) {
+	return s.store(ctx, true)
+}
+
+// store returns the store of the instance's blobs, as Store does, or, if
+// final is set, as FinalStore does.
+func (s *Storage) store(ctx context.Context, final bool) (blob.Store, error) {
+	if f := s.final.Load(); f != nil {
+		return *f, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if final := s.final.Load(); final != nil {
-		return *final, nil
+	if f := s.final.Load(); f != nil {
+		return *f, nil
 	}
-	settings, final, err := s.settings(ctx)
-	if err != nil {
+	settings, isFinal, err := s.settings(ctx)
+	switch {
+	case err != nil:
 		return nil, err
+	case final && !isFinal:
+		return nil, ErrSetupRequired
 	}
 	// The settings as the configuration writes them, with a bucket's secret
 	// key, which tells two buckets apart, and stays in this map.
@@ -110,7 +137,7 @@ func (s *Storage) Store(ctx context.Context) (blob.Store, error) {
 		}
 		s.opened[name] = store
 	}
-	if final {
+	if isFinal {
 		s.final.Store(&store)
 	}
 	return store, nil

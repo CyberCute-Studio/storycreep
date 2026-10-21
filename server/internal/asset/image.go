@@ -52,14 +52,15 @@ const (
 	// when its content is not (FR-ASSET-02 AC1).
 	ReasonType = "type"
 	// ReasonMalformed is a file that starts as one of the types, but whose
-	// header does not decode, or an SVG that is not well-formed XML.
+	// header does not decode, or an SVG that is not well-formed XML, as one
+	// that names no encoding other than UTF-8, but is not in UTF-8.
 	ReasonMalformed = "malformed"
 	// ReasonUnsupported is an SVG that is well-formed XML, but that the
-	// server does not take: one that declares another encoding than UTF-8,
-	// or another version of XML than 1.0, whose elements nest too deeply, or
-	// have, or declare, too many attributes or namespaces, or whose document
-	// type declares entities that the server does not read, or that expand
-	// too far (sanitizeSVG).
+	// server does not take: one in UTF-16, or that declares another encoding
+	// than UTF-8, or another version of XML than 1.0, whose elements nest too
+	// deeply, or have, or declare, too many attributes or namespaces, or
+	// whose document type declares entities that the server does not read,
+	// or that expand too far (sanitizeSVG).
 	ReasonUnsupported = "unsupported"
 	// ReasonDimensions is an image larger than MaxPixels or MaxSide.
 	ReasonDimensions = "dimensions"

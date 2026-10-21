@@ -26,10 +26,12 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
 	"github.com/CyberCute-Studio/storycreep/server/internal/blob/blobtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
@@ -420,13 +422,52 @@ func TestAssetOfAnotherWorkspace(t *testing.T) {
 	}
 }
 
+// TestUploadBeforeSetup checks that an account that `storycreep create-user`
+// made, which may sign in, and make a workspace and its projects, before
+// first-run setup has completed, may upload no file until setup has, as setup
+// may yet choose a bucket, which a file stored before it in the local
+// driver's default directory would be left out of, unless
+// STORYCREEP_ASSET_STORAGE names the store, which setup does not change.
+func TestUploadBeforeSetup(t *testing.T) {
+	t.Parallel()
+	for _, fixed := range []bool{false, true} {
+		env := inviteEnv("open", map[string]string{"STORYCREEP_ASSET_STORAGE": ""})
+		if fixed {
+			env["STORYCREEP_ASSET_STORAGE"] = t.TempDir()
+		}
+		s, d := pendingServer(t, env)
+		if _, err := account.Create(context.Background(), d.Open(t), account.NewHasher(), account.Registration{
+			Email: "jo@example.com", DisplayName: "Jo", Password: secret.New(testPassword)}, false); err != nil {
+			t.Fatal(err)
+		}
+		jo := signIn(t, s.main, "jo@example.com")
+		res := call(s.main, http.MethodPost, workspacesPath, jsonBody(t, map[string]string{"name": "Harbour"}),
+			jo.header(true))
+		var ws struct {
+			ID string `json:"id"`
+		}
+		if res.status != http.StatusCreated || json.Unmarshal(res.body, &ws) != nil {
+			t.Fatalf("create a workspace before setup: %d %s, want 201", res.status, res.body)
+		}
+		p := createProject(t, s.main, jo, ws.ID, "Lighthouse").ID
+		if fixed {
+			upload(t, s.main, jo, p, testPNG(t, 7, 7), http.StatusCreated)
+			continue
+		}
+		wantCode(t, "an upload before setup", uploadFile(s.main, jo, p, testPNG(t, 7, 7), "image/png"),
+			http.StatusForbidden, api.CodeSetupRequired)
+	}
+}
+
 // storedFiles returns the paths of the files under dir, the local driver's
-// directory, relative to it.
+// directory, relative to it, but for the owner blob that the orphan
+// reconciliation writes (asset.OwnerKey), as the workers that a test starts
+// may run it at any moment.
 func storedFiles(t *testing.T, dir string) []string {
 	t.Helper()
 	var out []string
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil || d.IsDir() || p == filepath.Join(dir, asset.OwnerKey) {
 			return err
 		}
 		rel, err := filepath.Rel(dir, p)

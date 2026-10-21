@@ -59,6 +59,27 @@ func (q *Queries) CompleteSetup(ctx context.Context, arg CompleteSetupParams) er
 	return err
 }
 
+const databaseIdentity = `-- name: DatabaseIdentity :one
+SELECT ((SELECT c.system_identifier FROM pg_catalog.pg_control_system() c)::text || '/' || d.oid::text)::text AS identity
+FROM pg_catalog.pg_database d
+WHERE d.datname = current_database()
+`
+
+// DatabaseIdentity returns what tells the database apart from a copy of it,
+// which the orphan reconciliation of the assets' blobs names the store's
+// owner with (package asset): the system identifier of its server's cluster,
+// which initdb picks anew for each cluster, and the database's object ID,
+// which each database of a cluster has of its own. So a backup restored with
+// pg_restore, into another server or into another database of the same
+// one, has another identity, and a copy of the cluster's files, as a
+// snapshot of its volume, or a replica of it, has the same.
+func (q *Queries) DatabaseIdentity(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, databaseIdentity)
+	var identity string
+	err := row.Scan(&identity)
+	return identity, err
+}
+
 const instanceS3 = `-- name: InstanceS3 :one
 SELECT (setup_completed_at IS NOT NULL)::boolean AS setup_completed, s3_host, s3_port, s3_security, s3_bucket,
     s3_region, s3_access_key_id, s3_secret_access_key

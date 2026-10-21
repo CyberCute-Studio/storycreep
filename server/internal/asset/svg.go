@@ -59,7 +59,8 @@ import (
 // once for each of a million declarations that a file of a few megabytes
 // could hold. The file must be UTF-8, and its root an svg element of SVG's
 // namespace. A file that is well-formed, but that goes past one of these
-// bounds, or those of its elements' depth and attributes, is refused as
+// bounds, or those of its elements' depth and attributes, or that is in
+// another encoding, as UTF-16, or declares one, is refused as
 // ReasonUnsupported, rather than as a damaged one.
 //
 // What it writes may take more bytes than what it read, as a character that
@@ -131,20 +132,32 @@ var entityDecl = regexp.MustCompile(`<!ENTITY\s+([A-Za-z_][A-Za-z0-9_.-]*)\s+(?:
 
 // sanitizeSVG returns the SVG image that data holds, sanitized, or an
 // *ImageError: errNotImage if data is not XML whose root is an svg element of
-// SVG's namespace, ReasonMalformed if it is, or its first element is an svg
-// element (startsAsSVG), in UTF-8 or in UTF-16 (utf16ASCII), but it is not
-// well-formed XML in UTF-8, and
-// ReasonUnsupported if it is well-formed, but declares another encoding, or
-// another version of XML, or goes past one of the bounds of its elements'
-// depth and attributes, or of its entities, or ErrTooLarge if the image,
-// sanitized, would take more than limit bytes.
+// SVG's namespace; ReasonUnsupported if it is in UTF-16 (utf16ASCII), or its
+// XML declaration names another encoding than UTF-8, or another version of
+// XML than 1.0, whatever its bytes, or it goes past one of the bounds of its
+// elements' depth and attributes, or of its entities, as a file that is
+// well-formed, but that the server does not take; ReasonMalformed if it, or
+// its first element, is an svg element (startsAsSVG), but it is not
+// well-formed XML, as one that says it is in UTF-8, by naming no other
+// encoding, when its bytes are not; or ErrTooLarge if the image, sanitized,
+// would take more than limit bytes.
 func sanitizeSVG(data []byte, limit int) (Image, error) {
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
+	// The decoder has no reader of UTF-16, as of any encoding but UTF-8, and
+	// reads a file in it as one that is not well-formed, so it is told apart
+	// first.
+	if startsAsSVG(utf16ASCII(data)) {
+		return Image{}, unsupported("it is an SVG in UTF-16, and an SVG must be in UTF-8")
+	}
 	if !utf8.Valid(data) {
-		if startsAsSVG(data) || startsAsSVG(utf16ASCII(data)) {
-			return Image{}, &ImageError{Reason: ReasonMalformed, Detail: "it is an SVG that is not in UTF-8"}
+		switch {
+		case !startsAsSVG(data):
+			return Image{}, errNotImage
+		case refusedDeclaration(data):
+			return Image{}, errDeclaration
 		}
-		return Image{}, errNotImage
+		return Image{}, &ImageError{Reason: ReasonMalformed,
+			Detail: "it is an SVG that names no encoding other than UTF-8, but is not in UTF-8"}
 	}
 	if manyAttributes(data) {
 		if !startsAsSVG(data) {
@@ -188,8 +201,7 @@ func sanitizeSVG(data []byte, limit int) (Image, error) {
 			// those of an XML declaration that names a version other than 1.0,
 			// or an encoding that it has no reader of, as ISO-8859-1, are not.
 			if _, syntax := errors.AsType[*xml.SyntaxError](err); !syntax {
-				return Image{}, unsupported("it is an SVG whose XML declaration names a version other than 1.0, " +
-					"or an encoding other than UTF-8")
+				return Image{}, errDeclaration
 			}
 			return Image{}, &ImageError{Reason: ReasonMalformed,
 				Detail: "it is an SVG that is not well-formed XML in UTF-8"}
@@ -292,6 +304,29 @@ type svgOut struct {
 // but that the server does not take, for the reason detail.
 func unsupported(detail string) *ImageError {
 	return &ImageError{Reason: ReasonUnsupported, Detail: detail}
+}
+
+// errDeclaration is the *ImageError of an SVG file whose XML declaration the
+// decoder refuses (refusedDeclaration).
+var errDeclaration = unsupported("it is an SVG whose XML declaration names a version other than 1.0, or an " +
+	"encoding other than UTF-8")
+
+// refusedDeclaration reports whether data starts with an XML declaration
+// that the decoder refuses before it reads anything after it: one that names
+// a version other than 1.0, or an encoding other than UTF-8, which it has no
+// reader of, so that an SVG that declares another encoding is told so
+// whether or not its bytes are UTF-8, as they are when it holds only ASCII,
+// and are not when it holds a character in ISO-8859-1. The decoder reads no
+// more of data than its first token, the declaration.
+func refusedDeclaration(data []byte) bool {
+	if !bytes.HasPrefix(data, []byte("<?xml")) {
+		return false
+	}
+	d := xml.NewDecoder(bytes.NewReader(data))
+	d.Strict = true
+	_, err := d.Token()
+	_, syntax := errors.AsType[*xml.SyntaxError](err)
+	return err != nil && !syntax
 }
 
 // manyAttributes reports whether data may hold an element of more than
@@ -522,24 +557,32 @@ func startsAsSVG(data []byte) bool {
 	return string(name) == "svg"
 }
 
-// utf16ASCII returns the text of data, if it starts with a byte order mark
-// of UTF-16, as an editor on Windows may write an SVG, which XML requires of
-// a file in UTF-16, with each character that is not ASCII as a space, so that
-// startsAsSVG reads the names of its elements as it reads those of a file in
-// UTF-8, or nil if it does not start with one. A character that is not ASCII
-// is none of a name's that startsAsSVG matches, nor its less-than sign.
+// utf16ASCII returns the text of data, if it is in UTF-16, as an editor on
+// Windows may write an SVG, with each character that is not ASCII as a space,
+// so that startsAsSVG reads the names of its elements as it reads those of a
+// file in UTF-8, or nil if it is not. A file in UTF-16 starts with a byte
+// order mark, which XML requires of it, or else, as XML's appendix F reads
+// one that has none, with a less-than sign, as an SVG does, in either byte
+// order, whose other byte is zero, which no file in UTF-8 that is XML holds.
+// A character that is not ASCII is none of a name's that startsAsSVG matches,
+// nor its less-than sign.
 func utf16ASCII(data []byte) []byte {
 	var order binary.ByteOrder
+	start := 2
 	switch {
 	case bytes.HasPrefix(data, []byte{0xff, 0xfe}):
 		order = binary.LittleEndian
 	case bytes.HasPrefix(data, []byte{0xfe, 0xff}):
 		order = binary.BigEndian
+	case bytes.HasPrefix(data, []byte{'<', 0}):
+		order, start = binary.LittleEndian, 0
+	case bytes.HasPrefix(data, []byte{0, '<'}):
+		order, start = binary.BigEndian, 0
 	default:
 		return nil
 	}
 	text := make([]byte, 0, len(data)/2)
-	for i := 2; i+2 <= len(data); i += 2 {
+	for i := start; i+2 <= len(data); i += 2 {
 		c := order.Uint16(data[i:])
 		if c >= utf8.RuneSelf {
 			c = ' '

@@ -59,6 +59,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"path"
 	"strings"
 	"time"
@@ -141,6 +142,10 @@ type Options struct {
 	// which an SVG image may take once it is sanitized too, or the upload
 	// is refused with ErrTooLarge. It is required.
 	MaxBytes int64
+	// Log is where the orphan reconciliation warns that it deletes nothing
+	// in a store that another database owns (Reconcile), or nil for
+	// nowhere.
+	Log *slog.Logger
 }
 
 // Service keeps the assets.
@@ -151,6 +156,7 @@ type Service struct {
 	storage  *Storage
 	queue    Queue
 	maxBytes int64
+	log      *slog.Logger
 }
 
 // New returns a Service that keeps the assets in db, with opts. It panics if
@@ -168,8 +174,12 @@ func New(db DB, opts Options) *Service {
 	case opts.MaxBytes <= 0:
 		panic("asset: a Service needs the most bytes that an upload's file may take")
 	}
+	log := opts.Log
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
 	return &Service{db: db, projects: opts.Projects, ent: opts.Entitlements, storage: opts.Storage,
-		queue: opts.Queue, maxBytes: opts.MaxBytes}
+		queue: opts.Queue, maxBytes: opts.MaxBytes, log: log}
 }
 
 // Storage returns the storage of the blobs.
@@ -186,15 +196,21 @@ func (s *Service) MaxBytes() int64 {
 // the actor would be refused with whatever its file holds, as Upload checks
 // it, so that a route can refuse the upload before it reads the file: the
 // errors of project.Service.Get, then ErrInsufficientRole unless the actor's
-// effective role on the project is owner, admin, or editor, and
-// commands.ErrProjectArchived if the project is archived. The scope of the
-// actor's API token is the route's to check.
+// effective role on the project is owner, admin, or editor,
+// commands.ErrProjectArchived if the project is archived, and
+// ErrSetupRequired while first-run setup may yet choose the store
+// (Storage.FinalStore). The scope of the actor's API token is the route's to
+// check.
 func (s *Service) CheckUpload(ctx context.Context, actor commands.Actor, projectID ids.UUID) error {
 	p, err := s.projects.Get(ctx, actor, projectID)
 	if err != nil {
 		return err
 	}
-	return uploadable(p)
+	if err := uploadable(p); err != nil {
+		return err
+	}
+	_, err = s.storage.FinalStore(ctx)
+	return err
 }
 
 // uploadable returns the error that an upload to the project p is refused
@@ -249,7 +265,7 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 	thumbnail := needsThumbnail(img)
 	sum := sha256.Sum256(img.Data)
 	key := blobKey(workspaceID, sum[:], img.Ext)
-	store, err := s.storage.Store(ctx)
+	store, err := s.storage.FinalStore(ctx)
 	if err != nil {
 		return Asset{}, false, err
 	}

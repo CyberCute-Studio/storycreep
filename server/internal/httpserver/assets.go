@@ -291,8 +291,11 @@ func registerAssets(m *api.Mux, assets *asset.Service) {
 			"each checked against the usage before any of them adds to it, so together they may take the " +
 			"workspace past its limit by as much as their own files (PRD FR-ENT-02). Only an owner, an admin, or an " +
 			"editor of the project may upload, and anyone else with a role on it is answered with 403 " +
-			"insufficient_role, before the file is read. The server reads only so many files at once, and a " +
-			"quarter of them of one user's, so an upload may wait for others to end before its file is read." +
+			"insufficient_role, before the file is read. Until the instance's first-run setup has completed, " +
+			"which may yet choose a bucket for the files, an upload is answered with 403 setup_required, before " +
+			"the file is read, unless STORYCREEP_ASSET_STORAGE names where the files are stored. The server " +
+			"reads only so many files at once, and a quarter of them of one user's, so an upload may wait for " +
+			"others to end before its file is read." +
 			projectNotFoundDoc + tokenNotFoundDoc +
 			archivedDoc + tokenChangeDoc(scope.ProjectWrite),
 		Tags:            []string{"Assets"},
@@ -508,14 +511,17 @@ func assetActor(ctx context.Context, projectID, assetID string) (ids.UUID, ids.U
 // assetError returns the error that the API answers err with, an error of
 // package asset, of package project, which reads the asset's project, or of
 // the entitlements, or err itself if it is none of them: the storage limit
-// with 413 storage_limit_exceeded (FR-ASSET-02 AC4), and a file that is not
-// an image that an upload takes with 422 image_invalid.
+// with 413 storage_limit_exceeded (FR-ASSET-02 AC4), a file that is not an
+// image that an upload takes with 422 image_invalid, and an upload before
+// first-run setup has completed with 403 setup_required.
 func assetError(err error) error {
 	var img *asset.ImageError
 	var limit *entitlements.LimitError
 	switch {
 	case errors.Is(err, asset.ErrNotFound):
 		return api.NewError(api.CodeNotFound)
+	case errors.Is(err, asset.ErrSetupRequired):
+		return api.NewError(api.CodeSetupRequired)
 	case errors.As(err, &img):
 		return &api.Error{
 			Code:    api.CodeImageInvalid,

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"math/rand/v2"
 	"regexp"
@@ -229,11 +230,11 @@ const listBudget = sweep.Budget / 2
 // refers to, as its file or its thumbnail, as after the assets' project is
 // purged, or an upload stored its blob and failed, and returns how many it
 // deleted (ADR-009). It works on each workspace in transactions of the
-// workspace (§5.4): one that reads the keys that its rows refer to, and then
-// one for each batch of the blobs of the store that none referred to
-// (deleteOrphans), which takes the blobs' locks, one of which an upload
-// holds while it checks that the store has its blob and adds the row that
-// refers to it, and the thumbnail job while it stores a thumbnail and
+// workspace (§5.4): one that reads the keys that its rows refer to, of the
+// blobs that it listed, and then one for each batch of those that none
+// referred to (deleteOrphans), which takes the blobs' locks, one of which an
+// upload holds while it checks that the store has its blob and adds the row
+// that refers to it, and the thumbnail job while it stores a thumbnail and
 // records it, and checks the rows again, so that it never deletes a blob
 // that a row is about to refer to. A batch that fails, as one of a blob that
 // the store refuses to delete, is left to the next run, and the batches after
@@ -242,13 +243,26 @@ const listBudget = sweep.Budget / 2
 // workspace picked at random (sweep.Workspaces), and it leaves alone a key
 // that this package would not write. So it is safe to repeat. The blobs of a
 // workspace that no longer exists are deleted with it (plan item 110). It
-// opens the store once it reaches a workspace, so that a run of an instance
-// whose setup is pending, which has none, does nothing.
+// opens the store once it reaches a workspace, and does nothing until
+// first-run setup has completed, unless the configuration names the store
+// (Storage.FinalStore), as setup may yet choose another.
+//
+// It deletes blobs only in a store that its database owns (claimStore): an
+// instance that runs on a copy of another's database, as one to try a new
+// version on, or to rehearse a restore, has the same workspaces, and the
+// bucket that setup chose, and would otherwise delete every file that the
+// other stores after the copy was made, which its own rows do not refer to.
+// In a store that another database owns, it deletes nothing, mends the
+// thumbnails all the same, warns in the service's log, and returns an
+// *OwnerError, which ends its job cancelled, with the error, rather than
+// attempt it again, as the next hour's run does.
 //
 // It lists a workspace's blobs from a key picked at random, past the last to
 // the first, for listBudget at most, so that a run that cannot list all of a
 // workspace's blobs in that time leaves others than the run before did, and
-// a run after another reaches them. It then mends the thumbnails of the
+// a run after another reaches them, and then reads the rows of those blobs
+// alone, so that the rows of a workspace of more assets than a run lists the
+// blobs of are not all read each time. It then mends the thumbnails of the
 // contents whose files the listing found, and whose thumbnails it reached
 // (mendThumbnails): it enqueues the job of a content that has no thumbnail,
 // as when its job ran out of attempts while the store did not answer, unless
@@ -257,53 +271,148 @@ const listBudget = sweep.Budget / 2
 // nothing.
 func (s *Service) Reconcile(ctx context.Context) (int, error) {
 	var store blob.Store
-	var openErr error
+	// owner is set if another database owns the store, whose blobs the run
+	// then deletes none of, and stop if the store is not final, or cannot be
+	// opened or claimed, which ends the run at the first workspace.
+	var owner *OwnerError
+	var stop error
 	deleted := 0
 	more := sweep.Within(sweep.Budget)
-	// A store that cannot be opened ends the run, at the first workspace.
-	goOn := func() bool { return openErr == nil && more() }
+	goOn := func() bool { return stop == nil && more() }
 	err := sweep.Workspaces(ctx, s.db, goOn, func(workspaceID ids.UUID) error {
 		if store == nil {
-			if store, openErr = s.storage.Store(ctx); openErr != nil {
-				return openErr
+			st, err := s.storage.FinalStore(ctx)
+			if err == nil {
+				owner, err = s.claimStore(ctx, st)
 			}
+			if err != nil {
+				stop = err
+				return err
+			}
+			store = st
 		}
-		n, err := s.reconcileWorkspace(ctx, store, workspaceID, more)
+		n, err := s.reconcileWorkspace(ctx, store, workspaceID, owner == nil, more)
 		deleted += n
 		return err
 	})
+	switch {
+	case errors.Is(stop, ErrSetupRequired):
+		return 0, nil
+	case err == nil && owner != nil:
+		s.log.WarnContext(ctx, "the orphan reconciliation deletes no file of the assets, because another database "+
+			"owns their store", "error", owner)
+		return deleted, jobs.Cancel(owner)
+	}
 	return deleted, err
 }
 
+// OwnerKey is the key of the blob of a store that names the database whose
+// orphan reconciliation deletes blobs in it (claimStore). It is no
+// workspace's, so no listing of a workspace's blobs finds it.
+const OwnerKey = "storycreep-owner"
+
+// ownerTakeover is how long after the database that a store's owner blob
+// names last wrote it, as its reconciliation does each hour, another
+// database's reconciliation takes the store over: long enough that an
+// instance that is stopped for days keeps its store from a second instance
+// that runs meanwhile on a copy of its database, and short enough that an
+// instance that replaces it, restored from a backup into another server of
+// PostgreSQL, as after a disaster, or into another major version, deletes
+// orphans again within a week, which until then only take up space.
+const ownerTakeover = 7 * 24 * time.Hour
+
+// OwnerError is the error of an orphan reconciliation that deletes no blob,
+// because the store's owner blob names another database (claimStore).
+type OwnerError struct {
+	// Owner is the identity of the database that the owner blob names
+	// (queries.DatabaseIdentity), and Written when it last wrote it.
+	Owner   string
+	Written time.Time
+}
+
+func (e *OwnerError) Error() string {
+	return fmt.Sprintf("asset: the store belongs to another database, %q, whose orphan reconciliation last "+
+		"claimed it at %s, so this one deletes none of its blobs, which would delete the files that the other "+
+		"stores: two instances never share a store. If this instance replaces the other one, it takes the store "+
+		"over a week after that, or as soon as the blob %s is deleted from the store", e.Owner,
+		e.Written.UTC().Format(time.RFC3339), OwnerKey)
+}
+
+// claimStore writes the store's owner blob, OwnerKey, anew, naming this
+// database (queries.DatabaseIdentity), and returns nil, so that the orphan
+// reconciliation deletes blobs in store, if the store has no owner blob, as
+// a new one, or one that names this database, or one that the database that
+// it names last wrote more than ownerTakeover ago; or else it writes nothing,
+// and returns an *OwnerError. A database's reconciliation writes the blob
+// each run, so that while it runs, no other database's takes the store over,
+// as one restored from its backup into another server, or another database
+// of its own, which has another identity, does. A copy of the database
+// that runs from a copy of its cluster's files has the same identity, which
+// the blob cannot tell apart, so such a copy needs a store of its own.
+func (s *Service) claimStore(ctx context.Context, store blob.Store) (*OwnerError, error) {
+	var self string
+	if err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		var err error
+		self, err = queries.New(tx).DatabaseIdentity(ctx)
+		return err
+	}); err != nil {
+		return nil, fmt.Errorf("asset: read the database's identity: %w", err)
+	}
+	r, info, err := store.Open(ctx, OwnerKey)
+	switch {
+	case errors.Is(err, blob.ErrNotFound):
+	case err != nil:
+		return nil, fmt.Errorf("asset: %w", err)
+	default:
+		data, err := io.ReadAll(io.LimitReader(r, maxOwnerBytes))
+		_ = r.Close()
+		if err != nil {
+			return nil, fmt.Errorf("asset: read the store's owner: %w", err)
+		}
+		if owner := strings.TrimSpace(string(data)); owner != self && time.Since(info.Modified) < ownerTakeover {
+			return &OwnerError{Owner: owner, Written: info.Modified}, nil
+		}
+	}
+	if err := store.Put(ctx, OwnerKey, []byte(self+"\n"), "text/plain"); err != nil {
+		return nil, fmt.Errorf("asset: claim the store: %w", err)
+	}
+	return nil, nil
+}
+
+// maxOwnerBytes is the most of the owner blob that claimStore reads: more
+// than an identity takes.
+const maxOwnerBytes = 256
+
 // reconcileWorkspace reconciles the blobs of the workspace in store, as
 // Reconcile says, for as long as more reports that the run has time left,
-// and returns how many it deleted.
-func (s *Service) reconcileWorkspace(ctx context.Context, store blob.Store, workspaceID ids.UUID,
+// and returns how many it deleted, which is none unless deletes is set.
+func (s *Service) reconcileWorkspace(ctx context.Context, store blob.Store, workspaceID ids.UUID, deletes bool,
 	more func() bool) (int, error) {
+	l, err := listWorkspace(ctx, store, workspaceID, more)
+	if err != nil || len(l.keys) == 0 {
+		return 0, err
+	}
+	// The rows of the blobs that the listing found; each blob that none
+	// referred to is checked again under its lock before it is deleted.
 	var contents []queries.ContentKeysRow
 	if err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
 		var err error
-		contents, err = queries.New(tx).ContentKeys(ctx, nullUUID(workspaceID))
+		contents, err = queries.New(tx).ContentKeys(ctx, queries.ContentKeysParams{
+			WorkspaceID: nullUUID(workspaceID), Keys: l.keys})
 		return err
 	}); err != nil {
 		return 0, fmt.Errorf("asset: read the blobs that workspace %s refers to: %w", workspaceID, err)
 	}
-	known := make(map[string]bool, len(contents))
+	known := make(map[string]bool, 2*len(contents))
 	for _, c := range contents {
 		known[c.StorageKey] = true
 		if c.ThumbnailKey.Valid {
 			known[c.ThumbnailKey.String] = true
 		}
 	}
-	// The blobs that no row referred to when the rows were read; each is
-	// checked again under its lock before it is deleted.
-	l, err := listWorkspace(ctx, store, workspaceID, more)
-	if err != nil {
-		return 0, err
-	}
 	var candidates []orphan
 	for _, key := range l.keys {
-		if known[key] {
+		if !deletes || known[key] {
 			continue
 		}
 		m := workspaceKey.FindStringSubmatch(key)
@@ -535,7 +644,7 @@ func listWorkspace(ctx context.Context, store blob.Store, workspaceID ids.UUID, 
 
 // mendThumbnails mends the thumbnails of the contents of the workspace's
 // assets whose files are among the keys that the store listed, which were
-// read before the store was listed: for a content whose thumbnail the
+// read once the store was listed: for a content whose thumbnail the
 // listing reached but did not find, under the blob's lock, once it has asked
 // the store again, it forgets the thumbnail, and enqueues its job, and it
 // enqueues the job of each content that has no thumbnail, unless one waits
@@ -569,9 +678,9 @@ func (s *Service) mendThumbnails(ctx context.Context, store blob.Store, workspac
 				return err
 			}
 			// A thumbnail is stored before it is recorded, so one that the
-			// listing missed is missing still, but the store has the last
-			// word, which it has lockedStoreTimeout to say, as under the lock
-			// of an upload.
+			// listing missed was stored after the listing passed its key, if
+			// it was stored at all: the store has the last word, which it has
+			// lockedStoreTimeout to say, as under the lock of an upload.
 			storeCtx, cancel := context.WithTimeout(ctx, lockedStoreTimeout)
 			_, err := store.Stat(storeCtx, thumb)
 			cancel()

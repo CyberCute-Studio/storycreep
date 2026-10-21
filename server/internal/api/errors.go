@@ -181,7 +181,10 @@ var codes = []codeSpec{
 		"The instance's first-run setup has not completed, so `POST /api/v1/auth/register` creates no " +
 			"account, and nor does `POST /api/v1/invites/register`, whatever the signup policy and whatever the " +
 			"request holds, so that the first account is always the owner that setup creates (PRD FR-ADMIN-02 " +
-			"AC4). `POST /api/v1/setup` completes it."},
+			"AC4). An upload of an asset is refused too, unless `STORYCREEP_ASSET_STORAGE` names where the files " +
+			"are stored, as setup may yet choose a bucket for them (FR-ASSET-01), which an account that " +
+			"`storycreep create-user` made before setup would otherwise have stored files outside of. " +
+			"`POST /api/v1/setup` completes it."},
 	{CodeInvalidSetupCode, http.StatusForbidden, i18n.K("error.invalid_setup_code"),
 		"`POST /api/v1/setup` was given a setup code that is not the instance's, so setup stays pending. The " +
 			"server writes the code to its log while setup is pending (PRD FR-ADMIN-02)."},
@@ -326,13 +329,14 @@ var codes = []codeSpec{
 			"`Content-Type`. Nothing is stored. `details.reason` says why: `type`, for a file that is none of " +
 			"them, as text whose name ends in `.png` (FR-ASSET-02 AC1), or an SVG file whose root is not an `svg` " +
 			"element of SVG's namespace; `malformed`, for one that starts as an image does but whose header does " +
-			"not decode, or an SVG file that is not well-formed XML in UTF-8, as one of more than one document " +
-			"type; `unsupported`, for an SVG file that is well-formed, but that declares an encoding other than " +
-			"UTF-8, or a version of XML other than 1.0, nests its elements more than 256 deep, has an element of " +
-			"more than 1,024 attributes, or elements that enclose one another and declare more than 1,024 " +
-			"namespaces in all, or whose document type declares an entity that is not text of at most 1,024 " +
-			"bytes, more than 64 entities, or entities whose references expand to more than 4 MiB in all; or " +
-			"`dimensions`, for an image of more than 25,000,000 pixels, or of more than 16,384 on a side. " +
+			"not decode, or an SVG file that is not well-formed XML, as one of more than one document type, or " +
+			"one that names no encoding other than UTF-8 but whose bytes are not UTF-8; `unsupported`, for an " +
+			"SVG file that is well-formed, but that is in UTF-16, or declares an encoding other than UTF-8, " +
+			"whatever its bytes, or a version of XML other than 1.0, nests its elements more than 256 deep, has " +
+			"an element of more than 1,024 attributes, or elements that enclose one another and declare more " +
+			"than 1,024 namespaces in all, or whose document type declares an entity that is not text of at most " +
+			"1,024 bytes, more than 64 entities, or entities whose references expand to more than 4 MiB in all; " +
+			"or `dimensions`, for an image of more than 25,000,000 pixels, or of more than 16,384 on a side. " +
 			"`details.errors` names the body, with its `location` and a `message` that says what is wrong, as for " +
 			"`validation_failed`. An SVG file that holds a script or refers to something outside itself is not " +
 			"refused: the server stores it without them."},

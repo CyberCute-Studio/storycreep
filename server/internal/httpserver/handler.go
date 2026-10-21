@@ -107,6 +107,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		Storage:      asset.NewStorage(readyDB{s.ready}, asset.StorageOptions{Configured: cfg.AssetStorage}),
 		Queue:        s.queue,
 		MaxBytes:     cfg.AssetMaxBytes,
+		Log:          log,
 	})
 	s.tokens = apitoken.New(readyDB{s.ready}, apitoken.Options{
 		Policy: role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},

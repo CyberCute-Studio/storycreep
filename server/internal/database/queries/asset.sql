@@ -101,15 +101,17 @@ WHERE workspace_id = @workspace_id AND id = @id
 FOR SHARE;
 
 -- name: ContentKeys :many
--- ContentKeys returns each content of the workspace's assets, with the key
--- of its blob, the key of its thumbnail, or null until it has one, and the
--- ID of one of its assets: the keys of the blobs that the assets refer to,
--- as their files or their thumbnails, each once, and what the orphan
--- reconciliation mends. A content's assets share its thumbnail, so each
+-- ContentKeys returns each content of the workspace's assets whose blob, or
+-- thumbnail, is one of the keys, with the key of its blob, the key of its
+-- thumbnail, or null until it has one, and the ID of one of its assets: the
+-- keys of those blobs that the assets refer to, as their files or their
+-- thumbnails, each once, and what the orphan reconciliation mends of the
+-- blobs that it listed. A content's assets share its thumbnail, so each
 -- content is returned once, unless a change of the thumbnail that has not
 -- yet reached every asset is seen, which no transaction commits.
 SELECT DISTINCT ON (a.sha256, a.thumbnail_key) a.id, a.sha256, a.storage_key, a.thumbnail_key FROM asset a
 WHERE a.workspace_id = @workspace_id
+    AND (a.storage_key = ANY(@keys::text[]) OR a.thumbnail_key = ANY(@keys::text[]))
 ORDER BY a.sha256, a.thumbnail_key, a.id;
 
 -- name: ForgetThumbnail :execrows
