@@ -87,7 +87,7 @@ func (f *fixture) actor() commands.Actor {
 func (f *fixture) state(t *testing.T, id string) string {
 	t.Helper()
 	var s string
-	if err := f.d.Admin(t).QueryRow(context.Background(), `SELECT concat_ws('|', name, description,
+	if err := f.d.Admin(t).QueryRow(context.Background(), `SELECT concat_ws('|', name, slug, description,
 		settings::text, archived_at IS NOT NULL, deleted_at IS NOT NULL) FROM project WHERE id = $1`,
 		decode(t, id)).Scan(&s); err != nil {
 		t.Fatal(err)
@@ -98,7 +98,13 @@ func (f *fixture) state(t *testing.T, id string) string {
 // decode returns the UUID of a project's ID.
 func decode(t *testing.T, id string) ids.UUID {
 	t.Helper()
-	u, err := ids.Decode(ids.Project, id)
+	return decodeAs(t, ids.Project, id)
+}
+
+// decodeAs returns the UUID of an ID of the kind.
+func decodeAs(t *testing.T, kind ids.Kind, id string) ids.UUID {
+	t.Helper()
+	u, err := ids.Decode(kind, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +119,8 @@ func TestCreate(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
 	p := f.create(t, "Harbour")
-	if p.DefaultLocale != "cs" || p.PublishMinRole != project.PublishEditor || p.Role != role.Owner || p.Rev != 1 {
+	if p.DefaultLocale != "cs" || p.PublishMinRole != project.PublishEditor || p.Role != role.Owner || p.Rev != 1 ||
+		p.Slug != "harbour" {
 		t.Errorf("the new project is %+v", p)
 	}
 	q, err := f.svc.Create(ctx, f.owner, f.ws, project.Settings{Name: "Lighthouse", DefaultLocale: "en-gb"},
@@ -141,11 +148,17 @@ func TestUndo(t *testing.T) {
 	f := newFixture(t)
 	p := f.create(t, "Harbour")
 	board, node := ids.Encode(ids.Board, ids.New()), ids.Encode(ids.Node, ids.New())
+	// The entry's board is one of the project's (package board, N32).
+	if _, err := f.d.Admin(t).Exec(ctx, `INSERT INTO board (id, workspace_id, project_id, "order", name, slug)
+		VALUES ($1, $2, $3, 'V', 'Harbour', 'harbour')`, decodeAs(t, ids.Board, board), f.ws, decode(t, p.ID)); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct {
 		typ     commands.Type
 		payload string
 	}{
 		{project.Rename, `{"name": "Lighthouse"}`},
+		{project.SetSlug, `{"slug": "lighthouse"}`},
 		{project.Describe, `{"description": "Elara's harbour"}`},
 		{project.UpdateSettings, `{"default_locale": "en", "publish_min_role": "admin", "entry": {"board_id": "` +
 			board + `", "node_id": "` + node + `"}}`},

@@ -16,6 +16,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/apitoken"
 	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
+	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
@@ -52,6 +53,9 @@ type server struct {
 	commands *commands.Pipeline
 	// projects keeps the projects.
 	projects *project.Service
+	// boards reads the projects' boards and folders, which their commands
+	// change (package board).
+	boards *board.Service
 	// assets keeps the projects' assets, and their files.
 	assets *asset.Service
 	// tokens keeps the API tokens, and authenticates the requests made with
@@ -88,6 +92,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	})
 	registry := commands.NewRegistry()
 	project.Register(registry)
+	board.Register(registry)
 	s.queue = &queueRef{}
 	s.commands = commands.New(readyDB{s.ready}, commands.Options{
 		Registry:     registry,
@@ -101,6 +106,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		Entitlements: s.entitlements,
 		Pipeline:     s.commands,
 	})
+	s.boards = board.New(readyDB{s.ready}, board.Options{Projects: s.projects})
 	s.assets = asset.New(readyDB{s.ready}, asset.Options{
 		Projects:     s.projects,
 		Entitlements: s.entitlements,
@@ -181,6 +187,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerUsage(s.main, s.workspaces)
 	registerProjects(s.main, s.projects)
 	registerCommands(s.main, s.commands)
+	registerBoards(s.main, s.boards)
 	registerAssets(s.main, s.assets)
 	registerGrants(s.main, s.projects)
 	registerTokens(s.main, s.tokens)

@@ -34,8 +34,8 @@ func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) 
 
 const insertProject = `-- name: InsertProject :one
 
-INSERT INTO project (id, workspace_id, name, description, settings, created_by, updated_by)
-VALUES ($1, $2, $3, $4, $5, $6, $6)
+INSERT INTO project (id, workspace_id, name, slug, description, settings, created_by, updated_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
 RETURNING created_at, updated_at
 `
 
@@ -43,6 +43,7 @@ type InsertProjectParams struct {
 	ID          pgtype.UUID
 	WorkspaceID pgtype.UUID
 	Name        string
+	Slug        string
 	Description string
 	Settings    []byte
 	CreatedBy   pgtype.UUID
@@ -63,6 +64,7 @@ func (q *Queries) InsertProject(ctx context.Context, arg InsertProjectParams) (I
 		arg.ID,
 		arg.WorkspaceID,
 		arg.Name,
+		arg.Slug,
 		arg.Description,
 		arg.Settings,
 		arg.CreatedBy,
@@ -73,7 +75,7 @@ func (q *Queries) InsertProject(ctx context.Context, arg InsertProjectParams) (I
 }
 
 const project = `-- name: Project :one
-SELECT project.id, project.workspace_id, project.created_at, project.updated_at, project.seq, project.name, project.description, project.settings, project.rev, project.archived_at, project.deleted_at, project.hard_delete_after, project.created_by, project.updated_by
+SELECT project.id, project.workspace_id, project.created_at, project.updated_at, project.seq, project.name, project.description, project.settings, project.rev, project.archived_at, project.deleted_at, project.hard_delete_after, project.created_by, project.updated_by, project.slug
 FROM project
 WHERE workspace_id = $1 AND id = $2 AND deleted_at IS NULL
 `
@@ -107,12 +109,13 @@ func (q *Queries) Project(ctx context.Context, arg ProjectParams) (ProjectRow, e
 		&i.Project.HardDeleteAfter,
 		&i.Project.CreatedBy,
 		&i.Project.UpdatedBy,
+		&i.Project.Slug,
 	)
 	return i, err
 }
 
 const projectAny = `-- name: ProjectAny :one
-SELECT project.id, project.workspace_id, project.created_at, project.updated_at, project.seq, project.name, project.description, project.settings, project.rev, project.archived_at, project.deleted_at, project.hard_delete_after, project.created_by, project.updated_by
+SELECT project.id, project.workspace_id, project.created_at, project.updated_at, project.seq, project.name, project.description, project.settings, project.rev, project.archived_at, project.deleted_at, project.hard_delete_after, project.created_by, project.updated_by, project.slug
 FROM project
 WHERE workspace_id = $1 AND id = $2 AND (hard_delete_after IS NULL OR hard_delete_after > now())
 `
@@ -147,6 +150,7 @@ func (q *Queries) ProjectAny(ctx context.Context, arg ProjectAnyParams) (Project
 		&i.Project.HardDeleteAfter,
 		&i.Project.CreatedBy,
 		&i.Project.UpdatedBy,
+		&i.Project.Slug,
 	)
 	return i, err
 }
@@ -191,7 +195,7 @@ func (q *Queries) ProjectRevs(ctx context.Context, arg ProjectRevsParams) ([]Pro
 }
 
 const projects = `-- name: Projects :many
-SELECT p.id, p.workspace_id, p.created_at, p.updated_at, p.seq, p.name, p.description, p.settings, p.rev, p.archived_at, p.deleted_at, p.hard_delete_after, p.created_by, p.updated_by, g.role AS grant_role
+SELECT p.id, p.workspace_id, p.created_at, p.updated_at, p.seq, p.name, p.description, p.settings, p.rev, p.archived_at, p.deleted_at, p.hard_delete_after, p.created_by, p.updated_by, p.slug, g.role AS grant_role
 FROM project p
 LEFT JOIN project_grant g
     ON g.workspace_id = p.workspace_id AND g.project_id = p.id AND g.membership_id = $1::uuid
@@ -255,6 +259,7 @@ func (q *Queries) Projects(ctx context.Context, arg ProjectsParams) ([]ProjectsR
 			&i.Project.HardDeleteAfter,
 			&i.Project.CreatedBy,
 			&i.Project.UpdatedBy,
+			&i.Project.Slug,
 			&i.GrantRole,
 		); err != nil {
 			return nil, err
@@ -344,7 +349,7 @@ func (q *Queries) TrashProject(ctx context.Context, arg TrashProjectParams) (int
 }
 
 const trashedProjects = `-- name: TrashedProjects :many
-SELECT project.id, project.workspace_id, project.created_at, project.updated_at, project.seq, project.name, project.description, project.settings, project.rev, project.archived_at, project.deleted_at, project.hard_delete_after, project.created_by, project.updated_by
+SELECT project.id, project.workspace_id, project.created_at, project.updated_at, project.seq, project.name, project.description, project.settings, project.rev, project.archived_at, project.deleted_at, project.hard_delete_after, project.created_by, project.updated_by, project.slug
 FROM project
 WHERE workspace_id = $1 AND deleted_at IS NOT NULL AND hard_delete_after > now()
     AND ($2::uuid IS NULL OR id > $2::uuid)
@@ -389,6 +394,7 @@ func (q *Queries) TrashedProjects(ctx context.Context, arg TrashedProjectsParams
 			&i.Project.HardDeleteAfter,
 			&i.Project.CreatedBy,
 			&i.Project.UpdatedBy,
+			&i.Project.Slug,
 		); err != nil {
 			return nil, err
 		}
@@ -494,6 +500,33 @@ type UpdateProjectSettingsParams struct {
 func (q *Queries) UpdateProjectSettings(ctx context.Context, arg UpdateProjectSettingsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, updateProjectSettings,
 		arg.Settings,
+		arg.UpdatedBy,
+		arg.WorkspaceID,
+		arg.ID,
+	)
+	var rev int64
+	err := row.Scan(&rev)
+	return rev, err
+}
+
+const updateProjectSlug = `-- name: UpdateProjectSlug :one
+UPDATE project SET slug = $1, rev = rev + 1, updated_at = now(), updated_by = $2
+WHERE workspace_id = $3 AND id = $4 AND slug <> $1
+RETURNING rev
+`
+
+type UpdateProjectSlugParams struct {
+	Slug        string
+	UpdatedBy   pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ID          pgtype.UUID
+}
+
+// UpdateProjectSlug changes the project's slug, unless it has the slug
+// already, and returns its new revision, or no row if it does.
+func (q *Queries) UpdateProjectSlug(ctx context.Context, arg UpdateProjectSlugParams) (int64, error) {
+	row := q.db.QueryRow(ctx, updateProjectSlug,
+		arg.Slug,
 		arg.UpdatedBy,
 		arg.WorkspaceID,
 		arg.ID,

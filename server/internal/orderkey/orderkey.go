@@ -1,0 +1,67 @@
+// Package orderkey checks and makes the keys that order a parent's children
+// among themselves, as the folders and the boards of a folder (PRD
+// FR-PROJ-02), so that moving one child to another place changes that child
+// alone: its key, which the client picks between the keys of the children
+// that it lands between, rather than every child's position (§5.7, ADR-006).
+// Two clients that move different children never conflict, and the inverse of
+// a move is the move back to the key that the child had.
+//
+// A key is a string of base-62 digits, 0-9, A-Z, and a-z, in that order,
+// which is the order of their bytes, of at most MaxLength digits, that does
+// not end in 0: the digits of a fraction between 0 and 1, as 0.V for V, so
+// that there is always a key between two others, and before and after any.
+// Keys compare as their bytes do, and children with the same key, as two
+// clients may pick for two children dropped at one place, are ordered by
+// their IDs: by their UUIDs, which the characters of their IDs after the
+// prefix, bd_ or fld_, order alike, so that a client orders a board and a
+// folder with the same key as the server does, without their prefixes.
+package orderkey
+
+import (
+	"regexp"
+	"strings"
+)
+
+// MaxLength is the most digits that a key may have.
+const MaxLength = 128
+
+// First is the key of a parent's first child.
+const First = "V"
+
+// Pattern is the pattern of a key, as a JSON schema writes it.
+const Pattern = `^[0-9A-Za-z]*[1-9A-Za-z]$`
+
+// digits are the digits of a key, in order.
+const digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+var form = regexp.MustCompile(Pattern)
+
+// Valid reports whether k is a key.
+func Valid(k string) bool {
+	return len(k) <= MaxLength && form.MatchString(k)
+}
+
+// After returns a key after k, a key or "" for none, which is First, as short
+// as the digits of k allow: k with its last digit that is not z incremented,
+// and the digits after it dropped, as W for Vz, or k with the digit 1 after
+// it if every digit is z. So a parent whose children are each added after the
+// last has keys one digit longer every 61 children at most. It returns false
+// if k is not a key, or if the key after it would have more than MaxLength
+// digits.
+func After(k string) (string, bool) {
+	if k == "" {
+		return First, true
+	}
+	if !Valid(k) {
+		return "", false
+	}
+	for i := len(k) - 1; i >= 0; i-- {
+		if d := strings.IndexByte(digits, k[i]); d < len(digits)-1 {
+			return k[:i] + string(digits[d+1]), true
+		}
+	}
+	if len(k) == MaxLength {
+		return "", false
+	}
+	return k + "1", true
+}

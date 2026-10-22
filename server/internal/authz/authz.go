@@ -65,9 +65,17 @@ const (
 	// component's portrait, then refers to.
 	UploadAssets Operation = "project.assets.upload"
 	// ChangeProjectSettings is changing a project's settings (P): its name,
-	// description, default locale, entry board and node, and
+	// slug, description, default locale, entry board and node, and
 	// publish_min_role (FR-SNAP-01 AC3), and archiving and unarchiving it.
 	ChangeProjectSettings Operation = "project.settings"
+	// ManageBoards is creating a project's boards, and renaming,
+	// describing, colouring, moving, deleting, and restoring them, and
+	// changing their slugs (P, "Create/rename/archive boards", FR-PROJ-02).
+	ManageBoards Operation = "project.boards"
+	// ManageFolders is creating, renaming, moving, deleting, and restoring a
+	// project's folders, of boards, variables, and components alike (P,
+	// "Create, rename, move, and delete folders", FR-PROJ-02).
+	ManageFolders Operation = "project.folders"
 	// ManageOwnProjectTokens is creating, listing, and revoking one's own API
 	// tokens narrowed to a project (P, "Manage own API tokens narrowed to
 	// this project", FR-AUTH-04).
@@ -132,6 +140,8 @@ var matrix = map[Operation]rule{
 	ReadProject:             {scope: Project, least: role.Viewer, denied: ErrInsufficientRole},
 	UploadAssets:            {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	ChangeProjectSettings:   {scope: Project, least: role.Admin, denied: ErrInsufficientRole},
+	ManageBoards:            {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
+	ManageFolders:           {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	ManageOwnProjectTokens:  {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	// The workspace's own tokens and the others' are rows of their own.
 	ManageOwnWorkspaceTokens: {scope: Workspace, least: role.Editor, denied: ErrInsufficientRole},

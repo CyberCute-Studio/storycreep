@@ -82,11 +82,12 @@ type tokenChangeProjectInput struct {
 // field that it leaves out, or sets to null, which huma takes for a field
 // left out, stays as it is.
 type updateProjectBody struct {
-	Name           *string               `json:"name,omitempty" maxLength:"100" doc:"The project's new name, as for POST /api/v1/workspaces/{workspace_id}/projects"`
+	Name           *string               `json:"name,omitempty" maxLength:"100" doc:"The project's new name, as for POST /api/v1/workspaces/{workspace_id}/projects. The project keeps its slug."`
+	Slug           *string               `json:"slug,omitempty" doc:"The project's new slug, which the published format's manifest shows: groups of lowercase ASCII letters and digits joined by single hyphens, as harbour, of at most 64 characters, that is not a name that Windows reserves for a device, such as con or com1. A slug that is not one is answered with 422 slug_invalid."`
 	Description    *string               `json:"description,omitempty" maxLength:"2000" doc:"The project's new description, as for POST /api/v1/workspaces/{workspace_id}/projects; empty for none"`
 	DefaultLocale  *string               `json:"default_locale,omitempty" maxLength:"64" doc:"The new locale of the project's text, as a BCP 47 tag of a language"`
 	PublishMinRole *string               `json:"publish_min_role,omitempty" enum:"editor,admin" doc:"The least role that may publish the project's snapshots: editor, or admin to keep editors from publishing (PRD FR-SNAP-01 AC3). A change is recorded in the audit log."`
-	Entry          *project.ProjectEntry `json:"entry,omitempty" doc:"The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. Neither the board nor the node needs to exist yet."`
+	Entry          *project.ProjectEntry `json:"entry,omitempty" doc:"The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. A board other than the entry's is one of the project's boards, in its trash or not, or the answer is 422 validation_failed; the node needs not exist yet."`
 	ExpectedRev    int64                 `json:"expected_rev,omitempty" minimum:"1" doc:"The project's revision that the change was made against. If the project has another, the answer is 409 revision_conflict, and nothing changes. Without it, the change is made whatever the revision. A body that names no field to change changes nothing, so it is answered with the project, whatever its revision."`
 }
 
@@ -239,21 +240,22 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 		OperationID: "updateProject",
 		Method:      http.MethodPatch,
 		Path:        "/api/v1/projects/{project_id}",
-		Summary:     "Change a project's name, description, or settings",
-		Description: "Changes a project's name, description, default locale, publish_min_role, or entry, in one " +
+		Summary:     "Change a project's name, slug, description, or settings",
+		Description: "Changes a project's name, slug, description, default locale, publish_min_role, or entry, in one " +
 			"batch of the project's commands; a field that the body leaves out, or sets to null, stays as it is. " +
 			"Only an owner or an admin of the project may, and anyone else with a role on it is answered with 403 " +
 			"insufficient_role." + projectNotFoundDoc + tokenNotFoundDoc + " A field whose value it does not " +
-			"allow is answered with 422 validation_failed." + archivedDoc + tokenChangeDoc(scope.ProjectWrite),
+			"allow is answered with 422 validation_failed, and a slug that is not one with 422 slug_invalid." +
+			archivedDoc + tokenChangeDoc(scope.ProjectWrite),
 		Tags: []string{"Projects"},
 	}, func(ctx context.Context, in *updateProjectInput) (*projectOutput, error) {
 		id, actor, err := projectActor(ctx, in.ProjectID)
 		if err != nil {
 			return nil, err
 		}
-		p, err := projects.Update(ctx, actor, id, project.Patch{Name: in.Body.Name, Description: in.Body.Description,
-			DefaultLocale: in.Body.DefaultLocale, PublishMinRole: in.Body.PublishMinRole, Entry: in.Body.Entry,
-			ExpectedRev: in.Body.ExpectedRev})
+		p, err := projects.Update(ctx, actor, id, project.Patch{Name: in.Body.Name, Slug: in.Body.Slug,
+			Description: in.Body.Description, DefaultLocale: in.Body.DefaultLocale,
+			PublishMinRole: in.Body.PublishMinRole, Entry: in.Body.Entry, ExpectedRev: in.Body.ExpectedRev})
 		if err != nil {
 			return nil, projectError(err)
 		}
@@ -361,9 +363,7 @@ func registerProjects(m *api.Mux, projects *project.Service) {
 // project's UUID, in the form that cursorID reads, rather than its ID as the
 // API writes it.
 func projectKey(p project.Project) idKey {
-	// The ID is the service's encoding of the project's UUID, which decodes.
-	id, _ := ids.Decode(ids.Project, p.ID)
-	return idKey{ID: id.String()}
+	return uuidKey(ids.Project, p.ID)
 }
 
 // projectActor returns the project that the path names as projectID, and

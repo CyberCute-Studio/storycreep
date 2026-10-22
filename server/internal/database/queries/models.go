@@ -23,6 +23,42 @@ type Asset struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type Board struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	FolderID    pgtype.UUID
+	FolderKind  string
+	Order       string
+	Name        string
+	Slug        string
+	Description string
+	Color       string
+	EntryNodeID pgtype.UUID
+	Rev         int64
+	DeletedAt   pgtype.Timestamptz
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type Folder struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Kind        string
+	ParentID    pgtype.UUID
+	Name        string
+	Order       string
+	Rev         int64
+	DeletedAt   pgtype.Timestamptz
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type Project struct {
 	ID              pgtype.UUID
 	WorkspaceID     pgtype.UUID
@@ -38,6 +74,7 @@ type Project struct {
 	HardDeleteAfter pgtype.Timestamptz
 	CreatedBy       pgtype.UUID
 	UpdatedBy       pgtype.UUID
+	Slug            string
 }
 
 type ProjectGrant struct {

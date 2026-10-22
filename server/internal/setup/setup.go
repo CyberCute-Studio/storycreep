@@ -543,7 +543,7 @@ func configError(err error) error {
 		problems = append(problems, config.Problem{Key: keyOwnerPassword, Msg: weak.Problem()})
 	case errors.As(err, &slug):
 		problems = append(problems, config.Problem{Key: keyWorkspaceSlug, Msg: strings.TrimPrefix(slug.Error(),
-			"workspace: ")})
+			"slug: ")})
 	case errors.Is(err, workspace.ErrSlugTaken):
 		problems = append(problems, config.Problem{Key: keyWorkspaceSlug, Msg: "is another workspace's slug"})
 	default:

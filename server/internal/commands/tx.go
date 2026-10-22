@@ -49,6 +49,19 @@ type Tx struct {
 	usage     map[usage.Key]int64
 	usageKeys []usage.Key
 	checked   map[entitlements.LimitKey]int64
+	// counts are what the batch's commands add to the workspace's usage once
+	// every command of the batch has applied (AddUsageOnceApplied), in the
+	// order of their reports.
+	counts []usageCount
+}
+
+// usageCount is what the command spec adds to the workspace's usage of key
+// once every command of its batch has applied: what count returns then
+// (AddUsageOnceApplied).
+type usageCount struct {
+	spec  *spec
+	key   usage.Key
+	count func(ctx context.Context) (int64, error)
 }
 
 // Exec runs a statement in the batch's transaction.
@@ -148,6 +161,44 @@ func (t *Tx) AddUsage(key usage.Key, delta int64) error {
 		t.usageKeys = append(t.usageKeys, key)
 	}
 	t.usage[key] = sum + delta
+	return nil
+}
+
+// AddUsageOnceApplied reports that the command adds to the workspace's usage
+// of key what count returns once every command of the batch has applied, as
+// AddUsage adds a delta, for a delta that depends on what the batch's later
+// commands do: as deleting a project takes its boards from the workspace's,
+// among them those that a later command of the batch creates or restores,
+// whose own deltas add them, so that the batch's deltas add up to the same
+// whatever the order of its commands. The pipeline calls count in the batch's
+// transaction, after the last command's Apply, and adds what it returns as
+// the command's AddUsage would, which may refuse the batch then. It returns
+// an error, which the command returns to refuse the batch, unless it is
+// called from the command's Apply.
+func (t *Tx) AddUsageOnceApplied(key usage.Key, count func(ctx context.Context) (int64, error)) error {
+	if t.current == nil {
+		return errors.New("commands: AddUsageOnceApplied is called outside a command's Apply")
+	}
+	t.counts = append(t.counts, usageCount{spec: t.current, key: key, count: count})
+	return nil
+}
+
+// addCounts adds to the workspace's usage what each count that the batch's
+// commands reported (AddUsageOnceApplied) returns, once every command of the
+// batch has applied, as the command that reported it would add it.
+func (t *Tx) addCounts(ctx context.Context) error {
+	for _, c := range t.counts {
+		delta, err := c.count(ctx)
+		if err != nil {
+			return fmt.Errorf("commands: what %s adds to %s: %w", c.spec.typ, c.key, err)
+		}
+		t.current = c.spec
+		err = t.AddUsage(c.key, delta)
+		t.current = nil
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

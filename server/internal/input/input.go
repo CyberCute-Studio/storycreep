@@ -64,6 +64,28 @@ func CheckText(text string, maxChars int) string {
 	return ""
 }
 
+// CheckTrimmedName says what is wrong with a name that is sent without the
+// white space around it, as a command's payload sends it, which the server
+// keeps as it is sent, or returns "": "has white space around it", or what
+// CheckName finds.
+func CheckTrimmedName(name string, maxChars int) string {
+	if strings.TrimSpace(name) != name {
+		return "has white space around it"
+	}
+	return CheckName(name, maxChars)
+}
+
+// CheckTrimmedText says what is wrong with a text of several lines that is
+// sent without the white space around it, and with its line breaks written as
+// line feeds, as a command's payload sends it, or returns "": "has white
+// space around it", or what CheckText finds.
+func CheckTrimmedText(text string, maxChars int) string {
+	if strings.TrimSpace(text) != text {
+		return "has white space around it"
+	}
+	return CheckText(text, maxChars)
+}
+
 // LineFeeds returns text with each line break that is written as CR LF, as
 // on Windows, or as a CR alone, written as a line feed, the one line break
 // that CheckText takes, so that such a text keeps its lines rather than being
