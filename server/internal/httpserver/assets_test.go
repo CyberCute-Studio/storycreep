@@ -896,6 +896,21 @@ func TestReconcileMendsThumbnails(t *testing.T) {
 	}
 	startWorkers(t, s, d)
 	made := thumbnail()
+	// River records that a job completed a moment after the job returns, in
+	// a batch, so the job that made the thumbnail may still be running when
+	// the thumbnail is served; a job enqueued for the asset until then would
+	// be taken for a duplicate of it, and never run. The reconciliation below
+	// enqueues one, so the test waits until no thumbnail's job waits or runs.
+	live := func() int {
+		return countRows(t, d, `SELECT count(*) FROM river_job WHERE kind = 'asset_thumbnail'
+			AND state NOT IN ('completed', 'cancelled', 'discarded')`)
+	}
+	for deadline := time.Now().Add(30 * time.Second); live() != 0; {
+		if time.Now().After(deadline) {
+			t.Fatal("River did not record that the thumbnail's job completed")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	var thumb string
 	for _, f := range storedFiles(t, dir) {
 		if strings.HasSuffix(f, ".thumb.png") {
