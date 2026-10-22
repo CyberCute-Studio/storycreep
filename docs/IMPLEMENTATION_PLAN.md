@@ -379,7 +379,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-PROJ-02 AC1, AC3, and AC4 pass.
 
 ### 31. Trash and restore framework
-**Status:** todo · **Depends on:** 30
+**Status:** done ([#35](https://github.com/CyberCute-Studio/storycreep/pull/35)) · **Depends on:** 30
 **PRD:** FR-PROJ-06 (framework, boards)
 - `deleted_at` semantics and shared "live rows" query helpers, so trashed rows are excluded from search, exports, and snapshots: a `security_invoker` view of each table whose rows go to the trash, as `live_board` (N39).
 - A project trash list, and a purge job (30 days, which item 112 makes configurable), which takes the project's lock as a batch of commands does (N30, N39). Each kind's restore command restores in place, as boards' does (item 30); the reference-reconnection hook lands with its first user, a restored node's connections, in item 36 (N39).
