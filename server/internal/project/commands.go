@@ -17,6 +17,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
+	"github.com/CyberCute-Studio/storycreep/server/internal/slug"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
@@ -24,9 +25,10 @@ import (
 // of its batch, which it names by its batch alone, so that its payload names
 // no project.
 const (
-	// Rename renames the project, and Describe changes its description.
-	// Renaming it back undoes each.
+	// Rename renames the project, and keeps its slug; SetSlug changes its
+	// slug, and Describe its description. Changing each back undoes it.
 	Rename   commands.Type = "project.rename"
+	SetSlug  commands.Type = "project.set_slug"
 	Describe commands.Type = "project.describe"
 	// UpdateSettings changes the settings that its payload names: the
 	// project's default locale, its publish_min_role (FR-SNAP-01 AC3), and its
@@ -47,6 +49,11 @@ type renamePayload struct {
 	Name string `json:"name" maxLength:"100" doc:"The project's new name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
 }
 
+// slugPayload is SetSlug's payload.
+type slugPayload struct {
+	Slug string `json:"slug" doc:"The project's new slug: groups of lowercase ASCII letters and digits joined by single hyphens, as harbour, of at most 64 characters, that is not a name that Windows reserves for a device, such as con or com1. A slug that is not one is answered with 422 slug_invalid."`
+}
+
 // describePayload is Describe's payload.
 type describePayload struct {
 	Description string `json:"description" maxLength:"2000" doc:"The project's new description, of at most 2000 characters, which may be empty, without white space around it, and without control characters but line feeds and tabs"`
@@ -57,7 +64,7 @@ type describePayload struct {
 type settingsPayload struct {
 	DefaultLocale  *string       `json:"default_locale,omitempty" maxLength:"64" doc:"The locale of the project's text, as a BCP 47 tag of a language in its canonical form, such as en or cs-CZ"`
 	PublishMinRole *string       `json:"publish_min_role,omitempty" enum:"editor,admin" doc:"The least role that may publish the project's snapshots"`
-	Entry          *ProjectEntry `json:"entry,omitempty" doc:"The project's entry, which replaces its entry: without a board, the project has none. Neither the board nor the node needs to exist."`
+	Entry          *ProjectEntry `json:"entry,omitempty" doc:"The project's entry, which replaces its entry: without a board, the project has none. A board other than the entry's is one of the project's boards, in its trash or not, or the command is answered with 422 validation_failed; the node needs not exist yet."`
 }
 
 // emptyPayload is the payload of a command that needs nothing but its
@@ -80,10 +87,11 @@ const (
 // Register registers in r the project as an entity of the pipeline, whose
 // revision a command expects as it does any entity's, and the project's
 // commands, each of which changes its draft, so that an API token needs
-// project:write for it (FR-AUTH-04). Neither the board nor the node of an
-// entry is checked to exist, which the boards and the nodes do once they are
-// added (plan items 30 and 35); the validation reports one that does not
-// (FR-DEP-04).
+// project:write for it (FR-AUTH-04). A change of the entry's board checks
+// that the board is one of the project's, in its trash or not, and the node
+// is not checked to exist, which the nodes do once they are added (plan item
+// 35); the validation reports an entry that no longer exists, or whose board
+// is in the trash (FR-DEP-03, FR-DEP-04).
 func Register(r *commands.Registry) {
 	commands.RegisterEntity(r, commands.Entity{
 		Kind: ids.Project,
@@ -127,6 +135,26 @@ func Register(r *commands.Registry) {
 		},
 		Apply: func(ctx context.Context, tx *commands.Tx, p renamePayload) error {
 			return changed(tx)(queries.New(tx).UpdateProjectName(ctx, queries.UpdateProjectNameParams{Name: p.Name,
+				UpdatedBy: nullUUID(tx.Actor().UserID), WorkspaceID: nullUUID(tx.WorkspaceID()),
+				ID: nullUUID(tx.ProjectID())}))
+		},
+	})
+
+	commands.Register(r, commands.Spec[slugPayload]{
+		Type: SetSlug, Capability: patchOperation, Scope: patchScope, Touches: touches,
+		Inverse: func(ctx context.Context, tx *commands.Tx, _ slugPayload) ([]commands.Step, error) {
+			p, err := read(ctx, tx)
+			if err != nil {
+				return nil, err
+			}
+			return []commands.Step{{Type: SetSlug, Payload: slugPayload{Slug: p.Slug}}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p slugPayload) error {
+			var e *slug.Error
+			if errors.As(slug.Check(p.Slug), &e) {
+				return commands.Refuse("slug", e.Problem(), e)
+			}
+			return changed(tx)(queries.New(tx).UpdateProjectSlug(ctx, queries.UpdateProjectSlugParams{Slug: p.Slug,
 				UpdatedBy: nullUUID(tx.Actor().UserID), WorkspaceID: nullUUID(tx.WorkspaceID()),
 				ID: nullUUID(tx.ProjectID())}))
 		},
@@ -290,8 +318,8 @@ func counted(p queries.Project) int64 {
 // deletes, or restores the batch's project with update, which returns the
 // project's new revision, or pgx.ErrNoRows if the project is as the command
 // would leave it already, and which records what the change adds to the
-// workspace's projects, or takes from them, and, unless action is "", the
-// event action in the audit log.
+// workspace's projects, or takes from them, and to its boards, and, unless
+// action is "", the event action in the audit log.
 func lifecycle(update func(ctx context.Context, q *queries.Queries, by queries.ArchiveProjectParams) (int64, error),
 	action audit.Action) func(ctx context.Context, tx *commands.Tx, _ emptyPayload) error {
 	return func(ctx context.Context, tx *commands.Tx, _ emptyPayload) error {
@@ -317,6 +345,33 @@ func lifecycle(update func(ctx context.Context, q *queries.Queries, by queries.A
 		}
 		if err := tx.AddUsage(usage.Projects, counted(after)-counted(before)); err != nil {
 			return err
+		}
+		// The boards of a project in the workspace's trash count for nothing,
+		// so that its purge, whose cascade records no delta, leaves the
+		// workspace's boards as they are: deleting the project takes its
+		// boards that are not in its own trash from them, and restoring it
+		// adds them back. They are counted once every command of the batch
+		// has applied, so that a board that a later command of the batch
+		// creates, deletes, or restores, whose own delta counts it as a board
+		// of a project that is not in the trash, is counted with the others,
+		// and the batch adds the same to the boards whatever the order of its
+		// commands. The batch holds the project's lock, under which its boards
+		// change, so they are as counted until it commits.
+		if before.DeletedAt.Valid != after.DeletedAt.Valid {
+			sign := int64(1)
+			if after.DeletedAt.Valid {
+				sign = -1
+			}
+			if err := tx.AddUsageOnceApplied(usage.Boards, func(ctx context.Context) (int64, error) {
+				boards, err := q.ProjectBoardCount(ctx, queries.ProjectBoardCountParams{
+					WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID())})
+				if err != nil {
+					return 0, fmt.Errorf("project: count the project's boards: %w", err)
+				}
+				return sign * boards, nil
+			}); err != nil {
+				return err
+			}
 		}
 		if action == "" {
 			return nil
@@ -361,6 +416,9 @@ func applySettings(ctx context.Context, tx *commands.Tx, p settingsPayload) erro
 		set.PublishMinRole = *p.PublishMinRole
 	}
 	if p.Entry != nil {
+		if err := checkEntryBoard(ctx, tx, previous.Entry, *p.Entry); err != nil {
+			return err
+		}
 		set.Entry = *p.Entry
 	}
 	doc, err := json.Marshal(set)
@@ -378,6 +436,34 @@ func applySettings(ctx context.Context, tx *commands.Tx, p settingsPayload) erro
 	return tx.Audit(ctx, audit.Entry{Action: audit.ActionProjectPublishPolicyChange, SubjectID: tx.ProjectID(),
 		Result: audit.ResultSuccess, Metadata: map[string]any{"publish_min_role": set.PublishMinRole,
 			"previous_publish_min_role": previous.PublishMinRole}})
+}
+
+// checkEntryBoard refuses the batch unless the board of the project's new
+// entry is none, the board of its entry before, which may no longer exist,
+// so that a change that keeps it is not refused for it, or one of the
+// project's boards, in its trash or not (N32), so that the undo of a change
+// of the entry from a board that was deleted since, which sets the board
+// back, is not refused for it either; the validation reports an entry whose
+// board is deleted (FR-DEP-03's ref_dangling). An ID names its board whatever
+// the case of its letters, which the stored entry keeps as they were sent.
+func checkEntryBoard(ctx context.Context, tx *commands.Tx, before, entry ProjectEntry) error {
+	if entry.BoardID == "" {
+		return nil
+	}
+	// Check refused an entry whose board's ID does not decode.
+	board, _ := ids.Decode(ids.Board, entry.BoardID)
+	if kept, err := ids.Decode(ids.Board, before.BoardID); err == nil && kept == board {
+		return nil
+	}
+	_, err := queries.New(tx).BoardAny(ctx, queries.BoardAnyParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+		ProjectID: nullUUID(tx.ProjectID()), ID: nullUUID(board)})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return commands.Refuse("entry.board_id", "is not a board of the project", nil)
+	case err != nil:
+		return fmt.Errorf("project: read the entry's board: %w", err)
+	}
+	return nil
 }
 
 // field returns the problem msg of the payload's field name, or none if msg

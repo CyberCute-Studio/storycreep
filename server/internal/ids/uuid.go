@@ -39,6 +39,13 @@ func newV7(ms int64, r [10]byte) UUID {
 	return u
 }
 
+// IsV7 reports whether u is a UUIDv7 of RFC 9562: its version is 7, and its
+// variant that of the RFC, as New makes, and a client must make the ID of an
+// entity that it creates (PRD §5.2).
+func (u UUID) IsV7() bool {
+	return u[6]>>4 == 7 && u[8]>>6 == 2
+}
+
 // String returns u in the lowercase hyphenated form of RFC 9562, such as
 // "017f22e2-79b0-7cc3-98c4-dc0c0c07398f".
 func (u UUID) String() string {

@@ -121,11 +121,14 @@ type badInversePayload struct {
 }
 
 // meterPayload is noteMeter's payload. Undeclared makes the command declare
-// that it adds nothing to the projects limit, whatever it adds.
+// that it adds nothing to the projects limit, whatever it adds, and Later
+// makes it add its delta once every command of the batch has applied
+// (Tx.AddUsageOnceApplied).
 type meterPayload struct {
 	Key        string `json:"key"`
 	Delta      int64  `json:"delta"`
 	Undeclared bool   `json:"undeclared,omitempty"`
+	Later      bool   `json:"later,omitempty"`
 }
 
 // noteState is a note as the States of its entity show it.
@@ -331,7 +334,14 @@ func noteRegistry() *Registry {
 			}
 			return 0, nil
 		}}},
-		Apply: func(_ context.Context, tx *Tx, p meterPayload) error { return tx.AddUsage(usage.Key(p.Key), p.Delta) },
+		Apply: func(_ context.Context, tx *Tx, p meterPayload) error {
+			if p.Later {
+				return tx.AddUsageOnceApplied(usage.Key(p.Key), func(context.Context) (int64, error) {
+					return p.Delta, nil
+				})
+			}
+			return tx.AddUsage(usage.Key(p.Key), p.Delta)
+		},
 	})
 	Register(r, Spec[noteIDPayload]{
 		Type: noteTouch, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,

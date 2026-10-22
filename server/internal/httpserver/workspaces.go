@@ -278,15 +278,13 @@ func slugTakenError(location string) *api.Error {
 }
 
 // slugInvalidError returns the error that the API answers slug with, for the
-// slug at location, such as body.slug.
+// slug at location, such as body.slug, with the problem that package slug
+// says, as a command's refusal of a board's or a project's slug has it
+// (refusalError), so that a slug is answered alike on every route.
 func slugInvalidError(slug *workspace.SlugError, location string) *api.Error {
-	message := "is not groups of lowercase letters and digits joined by single hyphens, of at most 64 characters"
-	if slug.Reason == workspace.SlugReserved {
-		message = "is a reserved word"
-	}
 	return &api.Error{Code: api.CodeSlugInvalid, Details: map[string]any{
 		"reason": slug.Reason,
-		"errors": []api.Problem{{Location: location, Message: message}},
+		"errors": []api.Problem{{Location: location, Message: slug.Problem()}},
 	}}
 }
 

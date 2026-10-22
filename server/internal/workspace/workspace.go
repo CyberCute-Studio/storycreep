@@ -39,13 +39,10 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/text/language"
-	"golang.org/x/text/unicode/norm"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
@@ -57,6 +54,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
+	"github.com/CyberCute-Studio/storycreep/server/internal/slug"
 )
 
 // Limits of a workspace's fields.
@@ -64,7 +62,7 @@ const (
 	// MaxNameLength is the most characters that a workspace's name may have.
 	MaxNameLength = 100
 	// MaxSlugLength is the most characters that a slug may have.
-	MaxSlugLength = 64
+	MaxSlugLength = slug.MaxLength
 )
 
 var (
@@ -85,35 +83,25 @@ var (
 	ErrEmailUnverified = errors.New("workspace: the user has not verified their email address")
 )
 
-// SlugReason says why a slug is not valid.
-type SlugReason string
+// SlugReason says why a slug is not valid, and SlugError is a slug that is
+// not valid, as package slug says.
+type (
+	SlugReason = slug.Reason
+	SlugError  = slug.Error
+)
 
 const (
 	// SlugFormat is a slug that is not groups of lowercase ASCII letters and
 	// digits joined by single hyphens, of at most MaxSlugLength characters.
-	SlugFormat SlugReason = "format"
+	SlugFormat = slug.Format
 	// SlugReserved is a slug that is one of the reserved words.
-	SlugReserved SlugReason = "reserved"
+	SlugReserved = slug.Reserved
 )
 
-// SlugError is a slug that is not valid.
-type SlugError struct {
-	Reason SlugReason
-}
-
-func (e *SlugError) Error() string {
-	if e.Reason == SlugReserved {
-		return "workspace: the slug is a reserved word"
-	}
-	return fmt.Sprintf("workspace: a slug is groups of lowercase letters and digits joined by single hyphens, "+
-		"of at most %d characters", MaxSlugLength)
-}
-
-// reserved are the words that no workspace's slug may be: the paths and
-// names that the product uses or may use for itself, so that a workspace
-// never looks like one of its pages, and the names that Windows reserves for
-// devices, so that a slug is a file name on every platform, as an export's
-// may be (FR-PROJ-02 AC4).
+// reserved are the words that no workspace's slug may be, besides the names
+// that Windows reserves for devices, which no slug may be (package slug): the
+// paths and names that the product uses or may use for itself, so that a
+// workspace never looks like one of its pages.
 var reserved = []string{
 	"about", "account", "accounts", "admin", "administrator", "api", "app", "apps", "assets", "auth", "billing",
 	"blog", "changelog", "contact", "dashboard", "demo", "docs", "documentation", "download", "downloads",
@@ -122,41 +110,18 @@ var reserved = []string{
 	"release", "releases", "reset", "root", "security", "settings", "setup", "signin", "signout", "signup",
 	"site", "static", "status", "storycreep", "support", "system", "terms", "user", "users", "verify",
 	"version", "workspaces", "www",
-	"aux", "con", "nul", "prn",
-	"com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
-	"lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
 }
 
-// CheckSlug returns a *SlugError if slug is not one that a workspace may
-// have, and nil if it is.
-func CheckSlug(slug string) error {
-	if !wellFormed(slug) {
-		return &SlugError{Reason: SlugFormat}
+// CheckSlug returns a *SlugError if s is not one that a workspace may have,
+// and nil if it is.
+func CheckSlug(s string) error {
+	if err := slug.Check(s); err != nil {
+		return err
 	}
-	if slices.Contains(reserved, slug) {
+	if slices.Contains(reserved, s) {
 		return &SlugError{Reason: SlugReserved}
 	}
 	return nil
-}
-
-// wellFormed reports whether slug has the form that the database checks:
-// groups of lowercase ASCII letters and digits joined by single hyphens, of
-// at most MaxSlugLength characters.
-func wellFormed(slug string) bool {
-	if slug == "" || len(slug) > MaxSlugLength || slug[0] == '-' || slug[len(slug)-1] == '-' ||
-		strings.Contains(slug, "--") {
-		return false
-	}
-	for _, c := range []byte(slug) {
-		if !slugChar(c) && c != '-' {
-			return false
-		}
-	}
-	return true
-}
-
-func slugChar(c byte) bool {
-	return 'a' <= c && c <= 'z' || '0' <= c && c <= '9'
 }
 
 // DB runs a transaction of the application login, as *database.DB does.
@@ -476,7 +441,7 @@ func candidates(name string) iter.Seq[string] {
 // withSuffix returns base with suffix, which starts with a hyphen, cut so
 // that the slug has at most MaxSlugLength characters.
 func withSuffix(base, suffix string) string {
-	return strings.TrimRight(base[:min(len(base), MaxSlugLength-len(suffix))], "-") + suffix
+	return slug.WithSuffix(base, suffix)
 }
 
 // randomSuffix returns 8 random lowercase letters and digits: 40 bits.
@@ -492,45 +457,16 @@ func randomSuffix() string {
 	return string(b)
 }
 
-// folded are the lowercase letters that baseSlug spells in ASCII although
-// Unicode does not decompose them into an ASCII letter and marks.
-var folded = map[rune]string{
-	'ß': "ss", 'æ': "ae", 'œ': "oe", 'ø': "o", 'ł': "l", 'đ': "d", 'ð': "d", 'þ': "th", 'ı': "i", 'ħ': "h",
-}
-
 // baseSlug returns the slug of a workspace named name: its letters and
 // digits in lowercase ASCII, without their accents, as tomas-novak for Tomáš
 // Novák, each run of other characters a hyphen, cut to MaxSlugLength
 // characters at most, or "workspace" if that leaves nothing, as for a name
-// in a script other than Latin.
+// in a script other than Latin (slug.Base).
 func baseSlug(name string) string {
-	var b strings.Builder
-	gap := false
-	add := func(s string) {
-		if gap && b.Len() > 0 {
-			b.WriteByte('-')
-		}
-		gap = false
-		b.WriteString(s)
+	if s := slug.Base(name); s != "" {
+		return s
 	}
-	for _, r := range norm.NFKD.String(name) {
-		r = unicode.ToLower(r)
-		switch {
-		case unicode.Is(unicode.Mn, r):
-			// An accent of the letter before it.
-		case r < unicode.MaxASCII && slugChar(byte(r)):
-			add(string(r))
-		case folded[r] != "":
-			add(folded[r])
-		default:
-			gap = true
-		}
-	}
-	slug := strings.TrimRight(b.String()[:min(b.Len(), MaxSlugLength)], "-")
-	if slug == "" {
-		return "workspace"
-	}
-	return slug
+	return "workspace"
 }
 
 // localeProblem says what is wrong with a default locale that the server
@@ -656,8 +592,7 @@ func (s *Service) Update(ctx context.Context, userID, id ids.UUID, p Patch) (Wor
 		}
 		updated, err := q.UpdateWorkspace(ctx, queries.UpdateWorkspaceParams{ID: nullUUID(id), Name: w.Name,
 			Slug: w.Slug, DefaultLocale: w.DefaultLocale.String()})
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "workspace_slug_key" {
+		if database.UniqueViolation(err, "workspace_slug_key") {
 			return ErrSlugTaken
 		}
 		if err != nil {

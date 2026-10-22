@@ -32,7 +32,7 @@ type meteredUsageBody struct {
 // client of this one ignores, as an enum's new value would not be.
 type usageBody struct {
 	Projects     limitUsageBody   `json:"projects" doc:"The workspace's projects that count towards its limit: those that are neither archived nor in its trash"`
-	Boards       meteredUsageBody `json:"boards" doc:"The boards of the workspace's projects"`
+	Boards       meteredUsageBody `json:"boards" doc:"The boards of the workspace's projects that are in no trash: neither in their project's nor, with their project, in the workspace's"`
 	Nodes        meteredUsageBody `json:"nodes" doc:"The nodes of the workspace's projects"`
 	Members      limitUsageBody   `json:"members" doc:"The workspace's members, guests included"`
 	StorageBytes limitUsageBody   `json:"storage_bytes" doc:"The bytes that the workspace's stored files take up. Uploads that run at once may take it past its limit by what they add together."`

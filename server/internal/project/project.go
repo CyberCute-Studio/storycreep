@@ -54,6 +54,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
+	"github.com/CyberCute-Studio/storycreep/server/internal/slug"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
@@ -108,6 +109,7 @@ type Project struct {
 	ID             string       `json:"id" doc:"The project's ID"`
 	WorkspaceID    string       `json:"workspace_id" doc:"The ID of the project's workspace"`
 	Name           string       `json:"name" doc:"The project's name"`
+	Slug           string       `json:"slug" doc:"The project's slug, which the published format's manifest shows (PRD §6.5): derived from the project's name when it was created, and changed only when it is changed itself, never when the project is renamed. Projects may share a slug."`
 	Description    string       `json:"description" doc:"The project's description, which may be empty"`
 	DefaultLocale  string       `json:"default_locale" doc:"The locale of the project's text, as a BCP 47 tag"`
 	PublishMinRole string       `json:"publish_min_role" enum:"editor,admin" doc:"The least role that may publish the project's snapshots: editor, or admin once raised (PRD FR-SNAP-01 AC3)"`
@@ -158,7 +160,7 @@ func decodeSettings(doc []byte) settings {
 func stateOf(p queries.Project) Project {
 	set := decodeSettings(p.Settings)
 	return Project{ID: ids.Encode(ids.Project, p.ID.Bytes), WorkspaceID: ids.Encode(ids.Workspace, p.WorkspaceID.Bytes),
-		Name: p.Name, Description: p.Description, DefaultLocale: set.DefaultLocale,
+		Name: p.Name, Slug: p.Slug, Description: p.Description, DefaultLocale: set.DefaultLocale,
 		PublishMinRole: set.PublishMinRole, Entry: set.Entry, Rev: p.Rev, Seq: p.Seq, ArchivedAt: timeOf(p.ArchivedAt),
 		DeletedAt: timeOf(p.DeletedAt), HardDeleteAfter: timeOf(p.HardDeleteAfter), CreatedAt: p.CreatedAt.Time,
 		UpdatedAt: p.UpdatedAt.Time}
@@ -227,7 +229,9 @@ type Settings struct {
 // *entitlements.LimitError if the workspace has as many projects as its plan
 // allows (FR-ENT-01), and creates nothing then. The name and the description
 // lose the white space around them, and the description's line breaks are
-// written as line feeds (input.LineFeeds).
+// written as line feeds (input.LineFeeds). The project's slug is derived
+// from its name, as a board's is, or is project for a name without one
+// (slug.Derive).
 func (s *Service) Create(ctx context.Context, userID, workspaceID ids.UUID, in Settings, client audit.Client) (
 	Visible, error) {
 	in.Description = input.LineFeeds(in.Description)
@@ -262,8 +266,9 @@ func (s *Service) Create(ctx context.Context, userID, workspaceID ids.UUID, in S
 		}
 		id := ids.New()
 		name, description := strings.TrimSpace(in.Name), strings.TrimSpace(in.Description)
+		projectSlug := slug.Derive(name, "project")
 		row, err := q.InsertProject(ctx, queries.InsertProjectParams{ID: nullUUID(id),
-			WorkspaceID: nullUUID(workspaceID), Name: name, Description: description, Settings: doc,
+			WorkspaceID: nullUUID(workspaceID), Name: name, Slug: projectSlug, Description: description, Settings: doc,
 			CreatedBy: nullUUID(userID)})
 		if err != nil {
 			return fmt.Errorf("project: add the project: %w", err)
@@ -277,8 +282,8 @@ func (s *Service) Create(ctx context.Context, userID, workspaceID ids.UUID, in S
 			return err
 		}
 		out = Visible{Role: s.policy.Effective(a.admin, a.member, role.None), Project: stateOf(queries.Project{
-			ID: nullUUID(id), WorkspaceID: nullUUID(workspaceID), Name: name, Description: description, Settings: doc,
-			Rev: 1, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})}
+			ID: nullUUID(id), WorkspaceID: nullUUID(workspaceID), Name: name, Slug: projectSlug, Description: description,
+			Settings: doc, Rev: 1, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})}
 		return nil
 	})
 	if err != nil {
@@ -341,19 +346,13 @@ func workspaceLocale(doc []byte) string {
 
 // checkName says what is wrong with a project's name, or returns "".
 func checkName(name string) string {
-	if strings.TrimSpace(name) != name {
-		return "has white space around it"
-	}
-	return input.CheckName(name, MaxNameLength)
+	return input.CheckTrimmedName(name, MaxNameLength)
 }
 
 // checkDescription says what is wrong with a project's description, or
 // returns "".
 func checkDescription(description string) string {
-	if strings.TrimSpace(description) != description {
-		return "has white space around it"
-	}
-	return input.CheckText(description, MaxDescriptionLength)
+	return input.CheckTrimmedText(description, MaxDescriptionLength)
 }
 
 // canonicalLocale returns the BCP 47 tag v in its canonical form, as en-US
@@ -662,10 +661,10 @@ func (s *Service) Trash(ctx context.Context, userID, workspaceID, after ids.UUID
 	return out, err
 }
 
-// Patch is a change of a project's name, description, and settings. A nil
-// field stays as it is.
+// Patch is a change of a project's name, slug, description, and settings. A
+// nil field stays as it is.
 type Patch struct {
-	Name, Description, DefaultLocale *string
+	Name, Slug, Description, DefaultLocale *string
 	// PublishMinRole is PublishEditor or PublishAdmin.
 	PublishMinRole *string
 	// Entry replaces the project's entry: an entry without a board removes
@@ -685,9 +684,11 @@ type Patch struct {
 // actor's API token does not cover it, commands.ErrInsufficientScope if the
 // token does not hold project:write, ErrInsufficientRole unless the role is
 // owner or admin (§5.6), then input.FieldErrors if a field of p is not
-// valid, commands.ErrProjectArchived if the project is archived, and a
+// valid, commands.ErrProjectArchived if the project is archived, a
 // *commands.RevisionConflictError if p expects a revision that the project
-// does not have, and changes nothing then. A patch that names no change is
+// does not have, and a *commands.RefusedError if the slug is not one, or the
+// entry names a board that the project does not have, in its trash or not,
+// and changes nothing then. A patch that names no change is
 // not applied, and returns the project, whatever revision it expects.
 func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID ids.UUID, p Patch) (Visible, error) {
 	var steps []commands.Step
@@ -698,6 +699,10 @@ func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID id
 			errs = append(errs, input.FieldError{Field: "name", Message: msg})
 		}
 		steps = append(steps, commands.Step{Type: Rename, Payload: renamePayload{Name: name}})
+	}
+	if p.Slug != nil {
+		// The command refuses a slug that is not one, as slug_invalid.
+		steps = append(steps, commands.Step{Type: SetSlug, Payload: slugPayload{Slug: *p.Slug}})
 	}
 	if p.Description != nil {
 		description := strings.TrimSpace(input.LineFeeds(*p.Description))

@@ -12,9 +12,11 @@ import (
 	"golang.org/x/text/language"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
+	"github.com/CyberCute-Studio/storycreep/server/internal/slug"
 )
 
 // conflictBody is an entity of the details of an answer of
@@ -235,7 +237,13 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			"409 project_archived, unless each of its commands applies to an archived project, and a batch that " +
 			"would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that " +
 			"its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose " +
-			"details locate each problem, as body.commands[2].payload.name." +
+			"details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch " +
+			"for what the project's state makes of its payload, at the payload's field, as " +
+			"body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not " +
+			"take, as the ID of a folder that the project does not have, or that is deleted, or with the code that " +
+			"the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a " +
+			"slug that another board has, or 409 folder_not_empty for a folder to delete that holds folders or " +
+			"boards." +
 			"\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch " +
 			"sent again, as when its answer was lost, is answered as it was the first time and applies nothing " +
 			"again, before the project's state and the workspace's limits are checked: the same batch, with the " +
@@ -366,13 +374,22 @@ func bodyProblem(at, msg string) error {
 // the pipeline that applied a batch of commands sent at the location at of
 // the request, as body.commands, or err itself if it is none of them: the
 // problems of a batch that is not valid, each at its command's location, as
-// body.commands[2].payload.name, 422 idempotency_mismatch, whose details
-// list as applied the command_ids of the batch that were applied, and the
-// pipeline's other refusals as every route answers them (pipelineError).
+// body.commands[2].payload.name, a command's refusal of the batch at the
+// location of its payload's field (refusalError), 422 idempotency_mismatch,
+// whose details list as applied the command_ids of the batch that were
+// applied, and the pipeline's other refusals as every route answers them
+// (pipelineError).
 func commandError(err error, at string) error {
 	var invalid *commands.InvalidError
 	var mismatch *commands.IdempotencyMismatchError
+	var refused *commands.RefusedError
 	switch {
+	case errors.As(err, &refused):
+		loc := at + fmt.Sprintf("[%d].payload", refused.Command)
+		if refused.Field != "" {
+			loc += "." + refused.Field
+		}
+		return refusalError(refused, loc)
 	case errors.As(err, &invalid):
 		problems := make([]api.Problem, len(invalid.Problems))
 		for i, p := range invalid.Problems {
@@ -400,13 +417,22 @@ func commandError(err error, at string) error {
 // of the command pipeline's refusals that every route that applies commands
 // answers alike, or err itself otherwise: of a project that is not found, of
 // the actor's role, or of their API token, of an archived project, of a limit
-// of the workspace's plan, and of stale revisions. The error mapper of each
-// such route calls it once it has mapped what it answers its own way, as the
-// problems of a batch that is not valid, so that a refusal that the pipeline
-// adds is answered alike on every route.
+// of the workspace's plan, of stale revisions, and of a command, for a field
+// of its payload, which a route that dispatches commands names as the field
+// of its body that it came from, as body.slug (refusalError). The error
+// mapper of each such route calls it once it has mapped what it answers its
+// own way, as the problems of a batch that is not valid, so that a refusal
+// that the pipeline adds is answered alike on every route.
 func pipelineError(err error) error {
 	var insufficient *scope.InsufficientError
+	var refused *commands.RefusedError
 	switch {
+	case errors.As(err, &refused):
+		loc := "body"
+		if refused.Field != "" {
+			loc += "." + refused.Field
+		}
+		return refusalError(refused, loc)
 	case errors.Is(err, commands.ErrNotFound):
 		return api.NewError(api.CodeNotFound)
 	case errors.Is(err, commands.ErrInsufficientRole):
@@ -424,4 +450,28 @@ func pipelineError(err error) error {
 		return api.NewError(api.CodeProjectArchived)
 	}
 	return revisionConflictError(limitExceededError(err))
+}
+
+// refusalError returns the error that the API answers a command's refusal of
+// its batch with (commands.Refuse), for the field of the request at the
+// location loc, as body.commands[2].payload.slug: 422 slug_invalid, with the
+// rule that the slug breaks as details.reason, for a slug that is not one,
+// 409 slug_taken for a slug that another board has, 409 folder_not_empty for
+// a folder to delete that holds something, and 422 validation_failed for any
+// other value that the project's state does not take, as an ID of a board
+// that the project does not have, each with the field's problem in
+// details.errors.
+func refusalError(r *commands.RefusedError, loc string) *api.Error {
+	problems := []api.Problem{{Location: loc, Message: r.Message}}
+	var invalid *slug.Error
+	switch {
+	case errors.As(r.Reason, &invalid):
+		return &api.Error{Code: api.CodeSlugInvalid, Details: map[string]any{"reason": invalid.Reason,
+			"errors": problems}}
+	case errors.Is(r.Reason, board.ErrSlugTaken):
+		return &api.Error{Code: api.CodeSlugTaken, Details: map[string]any{"errors": problems}}
+	case errors.Is(r.Reason, board.ErrFolderNotEmpty):
+		return &api.Error{Code: api.CodeFolderNotEmpty, Details: map[string]any{"errors": problems}}
+	}
+	return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
 }
