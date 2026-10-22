@@ -12,9 +12,9 @@ import (
 )
 
 const board = `-- name: Board :one
-SELECT board.id, board.workspace_id, board.project_id, board.folder_id, board.folder_kind, board."order", board.name, board.slug, board.description, board.color, board.entry_node_id, board.rev, board.deleted_at, board.created_by, board.updated_by, board.created_at, board.updated_at
-FROM board
-WHERE workspace_id = $1 AND project_id = $2 AND id = $3 AND deleted_at IS NULL
+SELECT live_board.id, live_board.workspace_id, live_board.project_id, live_board.folder_id, live_board.folder_kind, live_board."order", live_board.name, live_board.slug, live_board.description, live_board.color, live_board.entry_node_id, live_board.rev, live_board.deleted_at, live_board.created_by, live_board.updated_by, live_board.created_at, live_board.updated_at
+FROM live_board
+WHERE workspace_id = $1 AND project_id = $2 AND id = $3
 `
 
 type BoardParams struct {
@@ -24,7 +24,7 @@ type BoardParams struct {
 }
 
 type BoardRow struct {
-	Board Board
+	LiveBoard LiveBoard
 }
 
 // Board returns a board of the project that is not in the trash, and no row
@@ -33,23 +33,23 @@ func (q *Queries) Board(ctx context.Context, arg BoardParams) (BoardRow, error) 
 	row := q.db.QueryRow(ctx, board, arg.WorkspaceID, arg.ProjectID, arg.ID)
 	var i BoardRow
 	err := row.Scan(
-		&i.Board.ID,
-		&i.Board.WorkspaceID,
-		&i.Board.ProjectID,
-		&i.Board.FolderID,
-		&i.Board.FolderKind,
-		&i.Board.Order,
-		&i.Board.Name,
-		&i.Board.Slug,
-		&i.Board.Description,
-		&i.Board.Color,
-		&i.Board.EntryNodeID,
-		&i.Board.Rev,
-		&i.Board.DeletedAt,
-		&i.Board.CreatedBy,
-		&i.Board.UpdatedBy,
-		&i.Board.CreatedAt,
-		&i.Board.UpdatedAt,
+		&i.LiveBoard.ID,
+		&i.LiveBoard.WorkspaceID,
+		&i.LiveBoard.ProjectID,
+		&i.LiveBoard.FolderID,
+		&i.LiveBoard.FolderKind,
+		&i.LiveBoard.Order,
+		&i.LiveBoard.Name,
+		&i.LiveBoard.Slug,
+		&i.LiveBoard.Description,
+		&i.LiveBoard.Color,
+		&i.LiveBoard.EntryNodeID,
+		&i.LiveBoard.Rev,
+		&i.LiveBoard.DeletedAt,
+		&i.LiveBoard.CreatedBy,
+		&i.LiveBoard.UpdatedBy,
+		&i.LiveBoard.CreatedAt,
+		&i.LiveBoard.UpdatedAt,
 	)
 	return i, err
 }
@@ -195,9 +195,9 @@ func (q *Queries) BoardWithSlug(ctx context.Context, arg BoardWithSlugParams) (p
 }
 
 const boards = `-- name: Boards :many
-SELECT board.id, board.workspace_id, board.project_id, board.folder_id, board.folder_kind, board."order", board.name, board.slug, board.description, board.color, board.entry_node_id, board.rev, board.deleted_at, board.created_by, board.updated_by, board.created_at, board.updated_at
-FROM board
-WHERE workspace_id = $1 AND project_id = $2 AND deleted_at IS NULL
+SELECT live_board.id, live_board.workspace_id, live_board.project_id, live_board.folder_id, live_board.folder_kind, live_board."order", live_board.name, live_board.slug, live_board.description, live_board.color, live_board.entry_node_id, live_board.rev, live_board.deleted_at, live_board.created_by, live_board.updated_by, live_board.created_at, live_board.updated_at
+FROM live_board
+WHERE workspace_id = $1 AND project_id = $2
     AND ($3::uuid IS NULL OR id > $3::uuid)
 ORDER BY id
 LIMIT $4
@@ -211,7 +211,7 @@ type BoardsParams struct {
 }
 
 type BoardsRow struct {
-	Board Board
+	LiveBoard LiveBoard
 }
 
 // Boards returns the project's boards that are not in the trash, in the
@@ -232,23 +232,23 @@ func (q *Queries) Boards(ctx context.Context, arg BoardsParams) ([]BoardsRow, er
 	for rows.Next() {
 		var i BoardsRow
 		if err := rows.Scan(
-			&i.Board.ID,
-			&i.Board.WorkspaceID,
-			&i.Board.ProjectID,
-			&i.Board.FolderID,
-			&i.Board.FolderKind,
-			&i.Board.Order,
-			&i.Board.Name,
-			&i.Board.Slug,
-			&i.Board.Description,
-			&i.Board.Color,
-			&i.Board.EntryNodeID,
-			&i.Board.Rev,
-			&i.Board.DeletedAt,
-			&i.Board.CreatedBy,
-			&i.Board.UpdatedBy,
-			&i.Board.CreatedAt,
-			&i.Board.UpdatedAt,
+			&i.LiveBoard.ID,
+			&i.LiveBoard.WorkspaceID,
+			&i.LiveBoard.ProjectID,
+			&i.LiveBoard.FolderID,
+			&i.LiveBoard.FolderKind,
+			&i.LiveBoard.Order,
+			&i.LiveBoard.Name,
+			&i.LiveBoard.Slug,
+			&i.LiveBoard.Description,
+			&i.LiveBoard.Color,
+			&i.LiveBoard.EntryNodeID,
+			&i.LiveBoard.Rev,
+			&i.LiveBoard.DeletedAt,
+			&i.LiveBoard.CreatedBy,
+			&i.LiveBoard.UpdatedBy,
+			&i.LiveBoard.CreatedAt,
+			&i.LiveBoard.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -407,10 +407,10 @@ func (q *Queries) FolderAny(ctx context.Context, arg FolderAnyParams) (FolderAny
 
 const folderHolds = `-- name: FolderHolds :one
 SELECT (
-    EXISTS (SELECT 1 FROM folder f WHERE f.workspace_id = $1 AND f.project_id = $2
-        AND f.parent_id = $3 AND f.deleted_at IS NULL)
-    OR EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = $1 AND b.project_id = $2
-        AND b.folder_id = $3 AND b.deleted_at IS NULL)
+    EXISTS (SELECT 1 FROM live_folder f WHERE f.workspace_id = $1 AND f.project_id = $2
+        AND f.parent_id = $3)
+    OR EXISTS (SELECT 1 FROM live_board b WHERE b.workspace_id = $1 AND b.project_id = $2
+        AND b.folder_id = $3)
 )::boolean AS holds
 `
 
@@ -422,8 +422,8 @@ type FolderHoldsParams struct {
 
 // FolderHolds returns whether the folder id of the project holds a folder or
 // a board that is not deleted. A later table whose rows go into a folder, as
-// the variables and the components (plan items 34 and 36), adds its rows
-// here, which TestFolderChildren holds it to.
+// the variables and the components (plan items 33 and 34), adds its rows
+// here, and to PurgeFolders, which TestFolderChildren holds it to.
 func (q *Queries) FolderHolds(ctx context.Context, arg FolderHoldsParams) (bool, error) {
 	row := q.db.QueryRow(ctx, folderHolds, arg.WorkspaceID, arg.ProjectID, arg.ID)
 	var holds bool
@@ -471,9 +471,9 @@ func (q *Queries) FolderRevs(ctx context.Context, arg FolderRevsParams) ([]Folde
 }
 
 const folders = `-- name: Folders :many
-SELECT folder.id, folder.workspace_id, folder.project_id, folder.kind, folder.parent_id, folder.name, folder."order", folder.rev, folder.deleted_at, folder.created_by, folder.updated_by, folder.created_at, folder.updated_at
-FROM folder
-WHERE workspace_id = $1 AND project_id = $2 AND deleted_at IS NULL
+SELECT live_folder.id, live_folder.workspace_id, live_folder.project_id, live_folder.kind, live_folder.parent_id, live_folder.name, live_folder."order", live_folder.rev, live_folder.deleted_at, live_folder.created_by, live_folder.updated_by, live_folder.created_at, live_folder.updated_at
+FROM live_folder
+WHERE workspace_id = $1 AND project_id = $2
     AND ($3::text IS NULL OR kind = $3::text)
     AND ($4::uuid IS NULL OR id > $4::uuid)
 ORDER BY id
@@ -489,7 +489,7 @@ type FoldersParams struct {
 }
 
 type FoldersRow struct {
-	Folder Folder
+	LiveFolder LiveFolder
 }
 
 // Folders returns the project's folders that are not deleted, of the kind
@@ -511,19 +511,19 @@ func (q *Queries) Folders(ctx context.Context, arg FoldersParams) ([]FoldersRow,
 	for rows.Next() {
 		var i FoldersRow
 		if err := rows.Scan(
-			&i.Folder.ID,
-			&i.Folder.WorkspaceID,
-			&i.Folder.ProjectID,
-			&i.Folder.Kind,
-			&i.Folder.ParentID,
-			&i.Folder.Name,
-			&i.Folder.Order,
-			&i.Folder.Rev,
-			&i.Folder.DeletedAt,
-			&i.Folder.CreatedBy,
-			&i.Folder.UpdatedBy,
-			&i.Folder.CreatedAt,
-			&i.Folder.UpdatedAt,
+			&i.LiveFolder.ID,
+			&i.LiveFolder.WorkspaceID,
+			&i.LiveFolder.ProjectID,
+			&i.LiveFolder.Kind,
+			&i.LiveFolder.ParentID,
+			&i.LiveFolder.Name,
+			&i.LiveFolder.Order,
+			&i.LiveFolder.Rev,
+			&i.LiveFolder.DeletedAt,
+			&i.LiveFolder.CreatedBy,
+			&i.LiveFolder.UpdatedBy,
+			&i.LiveFolder.CreatedAt,
+			&i.LiveFolder.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -645,7 +645,9 @@ type InsertFolderParams struct {
 // are tenant tables, which a transaction of their workspace reads. The
 // commands of a project apply one batch at a time, under the lock of the
 // project's row, so what these queries read of the project's boards and
-// folders stays as it is until the batch changes it.
+// folders stays as it is until the batch changes it. What is not in the
+// project's trash is read through the live views, live_board and
+// live_folder (package trash).
 // InsertFolder adds a folder.
 func (q *Queries) InsertFolder(ctx context.Context, arg InsertFolderParams) error {
 	_, err := q.db.Exec(ctx, insertFolder,
@@ -799,8 +801,8 @@ func (q *Queries) MoveFolder(ctx context.Context, arg MoveFolderParams) (int64, 
 }
 
 const projectBoardCount = `-- name: ProjectBoardCount :one
-SELECT count(*) FROM board
-WHERE workspace_id = $1 AND project_id = $2 AND deleted_at IS NULL
+SELECT count(*) FROM live_board
+WHERE workspace_id = $1 AND project_id = $2
 `
 
 type ProjectBoardCountParams struct {

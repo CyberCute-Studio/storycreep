@@ -2,7 +2,9 @@
 -- are tenant tables, which a transaction of their workspace reads. The
 -- commands of a project apply one batch at a time, under the lock of the
 -- project's row, so what these queries read of the project's boards and
--- folders stays as it is until the batch changes it.
+-- folders stays as it is until the batch changes it. What is not in the
+-- project's trash is read through the live views, live_board and
+-- live_folder (package trash).
 
 -- name: InsertFolder :exec
 -- InsertFolder adds a folder.
@@ -27,9 +29,9 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@id
 -- Folders returns the project's folders that are not deleted, of the kind
 -- kind, or of every kind if it is null, in the order of their IDs, after the
 -- folder after, or from the first if after is null.
-SELECT sqlc.embed(folder)
-FROM folder
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND deleted_at IS NULL
+SELECT sqlc.embed(live_folder)
+FROM live_folder
+WHERE workspace_id = @workspace_id AND project_id = @project_id
     AND (sqlc.narg(kind)::text IS NULL OR kind = sqlc.narg(kind)::text)
     AND (sqlc.narg(after)::uuid IS NULL OR id > sqlc.narg(after)::uuid)
 ORDER BY id
@@ -63,13 +65,13 @@ SELECT up.id, up.deleted::boolean AS deleted FROM up WHERE NOT up.is_cycle ORDER
 -- name: FolderHolds :one
 -- FolderHolds returns whether the folder id of the project holds a folder or
 -- a board that is not deleted. A later table whose rows go into a folder, as
--- the variables and the components (plan items 34 and 36), adds its rows
--- here, which TestFolderChildren holds it to.
+-- the variables and the components (plan items 33 and 34), adds its rows
+-- here, and to PurgeFolders, which TestFolderChildren holds it to.
 SELECT (
-    EXISTS (SELECT 1 FROM folder f WHERE f.workspace_id = @workspace_id AND f.project_id = @project_id
-        AND f.parent_id = @id AND f.deleted_at IS NULL)
-    OR EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = @workspace_id AND b.project_id = @project_id
-        AND b.folder_id = @id AND b.deleted_at IS NULL)
+    EXISTS (SELECT 1 FROM live_folder f WHERE f.workspace_id = @workspace_id AND f.project_id = @project_id
+        AND f.parent_id = @id)
+    OR EXISTS (SELECT 1 FROM live_board b WHERE b.workspace_id = @workspace_id AND b.project_id = @project_id
+        AND b.folder_id = @id)
 )::boolean AS holds;
 
 -- name: LastSortKeys :one
@@ -159,9 +161,9 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id;
 -- name: Board :one
 -- Board returns a board of the project that is not in the trash, and no row
 -- if the project has no such board, or it is.
-SELECT sqlc.embed(board)
-FROM board
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND deleted_at IS NULL;
+SELECT sqlc.embed(live_board)
+FROM live_board
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id;
 
 -- name: BoardsByID :many
 -- BoardsByID returns the boards of the project whose IDs are among ids,
@@ -174,9 +176,9 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@id
 -- Boards returns the project's boards that are not in the trash, in the
 -- order of their IDs, after the board after, or from the first if after is
 -- null.
-SELECT sqlc.embed(board)
-FROM board
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND deleted_at IS NULL
+SELECT sqlc.embed(live_board)
+FROM live_board
+WHERE workspace_id = @workspace_id AND project_id = @project_id
     AND (sqlc.narg(after)::uuid IS NULL OR id > sqlc.narg(after)::uuid)
 ORDER BY id
 LIMIT @max_rows;
@@ -192,8 +194,8 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@id
 -- ProjectBoardCount returns how many boards the project has that are not in
 -- its trash: what the project adds to its workspace's boards while it is not
 -- in the workspace's trash (package project).
-SELECT count(*) FROM board
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND deleted_at IS NULL;
+SELECT count(*) FROM live_board
+WHERE workspace_id = @workspace_id AND project_id = @project_id;
 
 -- name: BoardSlugsFrom :many
 -- BoardSlugsFrom returns the slugs of the project's boards, those in the

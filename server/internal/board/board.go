@@ -26,9 +26,11 @@
 //
 // A deleted board goes to the project's trash, from which restoring it
 // brings it back where it was, with the folders above it that were deleted
-// since (plan item 31 adds the trash's list and its purge). A folder is
-// deleted only once it holds nothing but what is in the trash, and stays,
-// deleted, so that the boards in the trash still name it.
+// since (package trash lists the trash, and purges what has been in it for
+// 30 days). A folder is deleted only once it holds nothing but what is in the
+// trash, and stays, deleted, so that the boards in the trash still name it.
+// The reads of what is not in the trash read the live views of the boards
+// and the folders, live_board and live_folder, which leave the trash out.
 //
 // Every command needs project:write of an API token (FR-AUTH-04), and of the
 // actor's role on the project (§5.6) "Create/rename/archive boards" for a
@@ -205,21 +207,15 @@ func New(db DB, opts Options) *Service {
 }
 
 // read runs fn in a transaction of the workspace of the project projectID,
-// once it has checked that the actor may read the project's content: it
-// returns the errors of project.Service.Get, as project.ErrNotFound for a
-// project that does not exist, is in the trash, on which the actor's role is
-// none, or that the actor's API token does not cover. The token's scopes are
-// the route's to check.
+// once it has checked that the actor may read the project's content
+// (project.Service.ReadContent): it returns the errors of
+// project.Service.Get, as project.ErrNotFound for a project that does not
+// exist, is in the trash, on which the actor's role is none, or that the
+// actor's API token does not cover. The token's scopes are the route's to
+// check.
 func (s *Service) read(ctx context.Context, actor commands.Actor, projectID ids.UUID,
 	fn func(q *queries.Queries, workspaceID pgtype.UUID) error) error {
-	workspaceID, err := s.projects.ActorWorkspace(ctx, actor, projectID)
-	if err != nil {
-		return err
-	}
-	return s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
-		if _, err := s.projects.GetIn(ctx, tx, actor, workspaceID, projectID); err != nil {
-			return err
-		}
+	return s.projects.ReadContent(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		return fn(queries.New(tx), nullUUID(workspaceID))
 	})
 }
@@ -238,7 +234,7 @@ func (s *Service) List(ctx context.Context, actor commands.Actor, projectID, aft
 			return fmt.Errorf("board: list the boards: %w", err)
 		}
 		for _, row := range rows {
-			out = append(out, boardOf(row.Board))
+			out = append(out, boardOf(queries.Board(row.LiveBoard)))
 		}
 		return nil
 	})
@@ -259,7 +255,7 @@ func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID, boar
 		case err != nil:
 			return fmt.Errorf("board: read the board: %w", err)
 		}
-		out = boardOf(row.Board)
+		out = boardOf(queries.Board(row.LiveBoard))
 		return nil
 	})
 	return out, err
@@ -280,7 +276,7 @@ func (s *Service) Folders(ctx context.Context, actor commands.Actor, projectID i
 			return fmt.Errorf("board: list the folders: %w", err)
 		}
 		for _, row := range rows {
-			out = append(out, folderOf(row.Folder))
+			out = append(out, folderOf(queries.Folder(row.LiveFolder)))
 		}
 		return nil
 	})

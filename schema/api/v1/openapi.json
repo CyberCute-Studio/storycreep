@@ -2178,6 +2178,29 @@
         ],
         "type": "object"
       },
+      "PageTrashItemBody": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TrashItemBody"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "PasswordBody": {
         "additionalProperties": false,
         "properties": {
@@ -3174,6 +3197,47 @@
         },
         "required": [
           "status"
+        ],
+        "type": "object"
+      },
+      "TrashItemBody": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted_at": {
+            "description": "When the entity was deleted to the trash",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "The entity's ID",
+            "type": "string"
+          },
+          "kind": {
+            "description": "What the entity is: a board, and, once they exist, a node, a variable, or a component (PRD FR-PROJ-06). The command of its kind, as board.restore, restores it with its ID as id.",
+            "enum": [
+              "board",
+              "node",
+              "variable",
+              "component"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "description": "The entity's name",
+            "type": "string"
+          },
+          "purge_after": {
+            "description": "When the entity's time in the trash ends. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "deleted_at",
+          "purge_after"
         ],
         "type": "object"
       },
@@ -8148,6 +8212,136 @@
         "summary": "Revoke an API token narrowed to a project",
         "tags": [
           "Tokens"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/trash": {
+      "get": {
+        "description": "Lists what is in the project's trash, the most recently deleted first: its boards, and, once they exist, its nodes, variables, and components, each with its kind. Each stays in the trash for 30 days from its deletion, until its purge_after, when a purge that runs every hour deletes it for good; until then, the command of its kind restores it where it was, as board.restore with its ID, through POST /api/v1/projects/{project_id}/commands. A deleted folder is not listed: restoring a board restores the deleted folders above it, and the purge deletes a deleted folder once its 30 days have passed and it holds nothing. Nothing in the trash is in the project's other reads. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listTrash",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageTrashItemBody"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List a project's trash",
+        "tags": [
+          "Trash"
         ]
       }
     },

@@ -689,6 +689,12 @@ export interface PageSessionBody {
   next_cursor: string | null;
 }
 
+export interface PageTrashItemBody {
+  items: Array<TrashItemBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PasswordBody {
   /** The account's password */
   current_password: string;
@@ -1031,6 +1037,19 @@ export interface SignedInBody {
 export interface StatusBody {
   /** ok for /healthz, and ready for /readyz */
   status: "ok" | "ready";
+}
+
+export interface TrashItemBody {
+  /** When the entity was deleted to the trash */
+  deleted_at: string;
+  /** The entity's ID */
+  id: string;
+  /** What the entity is: a board, and, once they exist, a node, a variable, or a component (PRD FR-PROJ-06). The command of its kind, as board.restore, restores it with its ID as id. */
+  kind: "board" | "node" | "variable" | "component";
+  /** The entity's name */
+  name: string;
+  /** When the entity's time in the trash ends. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored. */
+  purge_after: string;
 }
 
 export interface UpdateProjectBody {
@@ -1802,6 +1821,28 @@ export interface Operations {
     };
   };
   /**
+   * List a project's trash
+   *
+   * Lists what is in the project's trash, the most recently deleted first: its boards, and, once they exist, its nodes, variables, and components, each with its kind. Each stays in the trash for 30 days from its deletion, until its purge_after, when a purge that runs every hour deletes it for good; until then, the command of its kind restores it where it was, as board.restore with its ID, through POST /api/v1/projects/{project_id}/commands. A deleted folder is not listed: restoring a board restores the deleted folders above it, and the purge deletes a deleted folder once its 30 days have passed and it holds nothing. Nothing in the trash is in the project's other reads. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listTrash: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageTrashItemBody;
+    };
+  };
+  /**
    * List the projects in a workspace's trash
    *
    * Lists the workspace's projects that were deleted and can still be restored, in the order of their IDs, oldest first. A deleted project stays in the trash for 30 days, until its hard_delete_after, and is then deleted for good, with all of its content. Only an owner or an admin of the workspace may list them, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
@@ -2323,6 +2364,7 @@ export const routes = {
   listProjectTokens: { method: "GET", path: "/api/v1/projects/{project_id}/tokens" },
   listProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/projects" },
   listSessions: { method: "GET", path: "/api/v1/auth/sessions" },
+  listTrash: { method: "GET", path: "/api/v1/projects/{project_id}/trash" },
   listTrashedProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/trash/projects" },
   listWorkspaceTokens: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/tokens" },
   listWorkspaces: { method: "GET", path: "/api/v1/workspaces" },

@@ -556,15 +556,8 @@ func (loc Located) File() Located {
 // job has not run yet is its file. It returns the errors of Get.
 func (s *Service) Locate(ctx context.Context, actor commands.Actor, projectID, assetID ids.UUID, thumbnail bool) (
 	Located, error) {
-	workspaceID, err := s.projects.ActorWorkspace(ctx, actor, projectID)
-	if err != nil {
-		return Located{}, err
-	}
 	var out Located
-	err = s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
-		if _, err := s.projects.GetIn(ctx, tx, actor, workspaceID, projectID); err != nil {
-			return err
-		}
+	err := s.projects.ReadContent(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		a, err := queries.New(tx).Asset(ctx, queries.AssetParams{WorkspaceID: nullUUID(workspaceID),
 			ProjectID: nullUUID(projectID), ID: nullUUID(assetID)})
 		switch {

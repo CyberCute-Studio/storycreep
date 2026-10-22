@@ -630,9 +630,11 @@ func TestOrder(t *testing.T) {
 
 // TestFolderChildren checks that the tables whose rows go into a folder, by a
 // foreign key to it, are the folders' and the boards', which alone a folder's
-// deletion finds in it (FolderHolds), so that a later table of rows in a
-// folder, as the variables' (plan item 34), fails it until a folder that holds
-// its rows that are not deleted is refused its deletion too.
+// deletion finds in it (FolderHolds), and the purge of the trash
+// (PurgeFolders), so that a later table of rows in a folder, as the
+// variables' (plan item 33), fails it until a folder that holds its rows that
+// are not deleted is refused its deletion too, and one that holds any of its
+// rows is not purged.
 func TestFolderChildren(t *testing.T) {
 	t.Parallel()
 	d := dbtest.New(t)
@@ -646,7 +648,8 @@ func TestFolderChildren(t *testing.T) {
 		t.Fatal(err)
 	}
 	if want := []string{"board", "folder"}; !slices.Equal(tables, want) {
-		t.Errorf("the tables whose rows go into a folder are %v, want %v, which FolderHolds counts", tables, want)
+		t.Errorf("the tables whose rows go into a folder are %v, want %v, which FolderHolds and PurgeFolders count",
+			tables, want)
 	}
 }
 
