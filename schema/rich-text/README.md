@@ -1,6 +1,6 @@
 # Rich text
 
-The rich text of a project's content, node bodies, connection labels, and component descriptions, is a ProseMirror document of a constrained schema, stored as JSON (PRD FR-TEXT-01, ADR-020, plan note N40). The schema's nodes and marks are TipTap's, so that the editor's extensions write the documents that the server stores.
+The rich text of a project's content, node bodies, connection labels, and component descriptions, is a ProseMirror document of a constrained schema, stored as JSON (PRD FR-TEXT-01, ADR-020, plan note N40). The schema's nodes and marks are TipTap's, so that the editor's extensions, with only the attributes that the table below gives them, write the documents that the server stores. ProseMirror writes every attribute of a node, `null` when it is not set, as a value reference's `decimals`; the editor leaves such an attribute out before it sends a document, since the server refuses a `null` wherever it is.
 
 | File | Contents |
 | --- | --- |
@@ -21,9 +21,9 @@ The rich text of a project's content, node bodies, connection labels, and compon
 | `mention` | `attrs.id`; `marks`, optional | A component (`cmp_…`), which the text shows by its name (FR-TEXT-03). |
 | `valueRef` | `attrs.ref`, `attrs.attribute`, `attrs.decimals`; `marks`, optional | A value, which the text shows as the runtime renders it (FR-TEXT-02): a variable's (`ref` is a `var_…`, and there is no `attribute`), or a component's runtime attribute's (`ref` is a `cmp_…` and `attribute` the attribute definition's `atr_…`). `decimals`, from 0 to 6, shows a number with that many digits after the point, rounded half away from zero (PRD §5.8.9); a value that is not a number is shown as it is. |
 
-The marks are `bold`, `italic`, `strike`, `code`, and `link`, whose `attrs.href` is the URL. A node has each mark at most once, and the code mark with no other, as the editor's code mark excludes the others. Every node and mark is an object with a `type`, and has no field that the table does not give it, so `attrs` on a paragraph, or a link's `target`, is refused. An ID is read regardless of case, as [`../ids/README.md`](../ids/README.md) says.
+The marks are `bold`, `italic`, `strike`, `code`, and `link`, whose `attrs.href` is the URL. A node has each mark at most once, and the code mark with no other, as the editor's code mark excludes the others. Every node and mark is an object with a `type`, and has no field that the table does not give it, so `attrs` on a paragraph, or a link's `target`, is refused, and no field is `null`, which is refused with `wrong_type`. An ID is read regardless of case, as [`../ids/README.md`](../ids/README.md) says.
 
-A link is an absolute `http` or `https` URL with a host, or a `mailto` URL with an address, of at most 2,048 characters, none of them white space (Unicode's `White_Space`), a control character, or U+FEFF (PRD NFR-SEC-08). `javascript:`, `data:`, `file:`, and relative URLs are refused.
+A link is an absolute `http` or `https` URL with a host, which a port alone is not (`https://:80/` has none), or a `mailto` URL with an address, of at most 2,048 characters, none of them white space (Unicode's `White_Space`), a control character (`Cc`), or a format character (`Cf`, as U+200B, U+202E, or U+FEFF), which would hide or reorder what a reader sees of it (PRD NFR-SEC-08). `javascript:`, `data:`, `file:`, and relative URLs are refused.
 
 ### Limits and what the server checks beyond the schema
 
@@ -33,7 +33,8 @@ Every document that the server accepts validates against the JSON Schema. The se
 - Lists nested more than 5 deep: a list in no list is at depth 1.
 - A list item that does not start with a paragraph.
 - A mark twice, as two links, or the code mark with another.
-- A link that is not a URL, as one with a `%` that starts no escape, or with white space beyond ASCII.
+- A link that is not a URL, as one with a `%` that starts no escape, or with white space beyond ASCII; one with a format character; and an `http` or `https` link with a port but no host.
+- A string that escapes a lone surrogate, as `"a\ud800b"`, which is no character and which no UTF-8 holds. `JSON.parse` keeps it in the string, where Go would read U+FFFD, so the server refuses the document with `invalid_json`, and so does the client.
 
 The vectors mark each document of these that the schema accepts with `schema_accepts`.
 
@@ -53,8 +54,8 @@ The server refuses a document with a reason and a JSON Pointer (RFC 6901) to the
 
 | Reason | Meaning |
 | --- | --- |
-| `invalid_json` | The input is not one JSON value in UTF-8. |
-| `wrong_type` | A value has another JSON type than the schema's, as a string for an array, or a number that is not an integer. |
+| `invalid_json` | The input is not one JSON value in UTF-8, or one of its strings escapes a lone surrogate. |
+| `wrong_type` | A value has another JSON type than the schema's, as a string for an array, `null`, or a number that is not an integer. |
 | `unknown_node` | A node's `type` is not one of the schema's. |
 | `unknown_mark` | A mark's `type` is not one of the schema's. |
 | `unknown_field` | An object has a field that the schema does not give it. |
@@ -101,7 +102,7 @@ The published format holds a document as its segments, which a runtime walks ins
 
 The text export (FR-TEXT-05) and the writing statistics (FR-TEXT-06) read a document's plain text, derived from its segments:
 
-- **Plain text.** The texts and the mentions' names as they are, and each value as its `name` in braces, as `{met_elara}`. Each segment that begins a paragraph, a list item, or a line break, but the first segment, is a line feed. An item segment then writes two spaces for each list that holds its list, and `• ` (U+2022 and a space), or its number and `. `. A paragraph or a line break within a list item is indented as far as the item's text: two spaces for each depth. The segments above are `Pack:\n• Rope\n  3. Oil\nThen go.`.
+- **Plain text.** The texts and the mentions' names as they are, and each value as its `name` in braces, as `{met_elara}`. Each `paragraph` and `break` segment is a line feed, and so is each `item` segment but one that is the first segment. So a document that starts with a list starts with its first item, as does one whose empty first paragraph a list follows, since its segments are the same; but a document whose first segment is a `break`, or a `paragraph` after an empty first paragraph, starts with a line feed. An item segment then writes two spaces for each list that holds its list, and `• ` (U+2022 and a space), or its number and `. `. A `paragraph` or `break` segment within a list item then writes two spaces for each depth, which is as far as a bulleted item's text but not always as far as a numbered one's: `9. a`, a line break, and `b` are `9. a\n  b`. The segments above are `Pack:\n• Rope\n  3. Oil\nThen go.`.
 - **Preview.** The plain text with each run of white space written as one space and none around it. When that is longer than 100 code points, the preview is its first 100, cut back to the last space among them when the cut falls within a word, without the spaces at its end, and an ellipsis (`…`, U+2026).
 - **Words.** The words of the plain text without the bullets and numbers of its list items. A word is a run of characters that are not white space (Unicode's `White_Space`) with at least one letter or number among them (Unicode's `L` and `N`), so a dash between spaces is no word, and a run of Chinese or Japanese without spaces is one.
 - **Hash.** `sha256:` and the lowercase hexadecimal SHA-256 of the plain text's UTF-8.

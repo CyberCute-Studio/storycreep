@@ -1,13 +1,12 @@
 package richtext
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Names gives the names that a document's derivations show for what it
@@ -121,13 +120,7 @@ func (s Segment) MarshalJSON() ([]byte, error) {
 			w.Number = &s.Number
 		}
 	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(w); err != nil {
-		return nil, err
-	}
-	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+	return marshalNoEscape(w)
 }
 
 // Derived is what is derived from a document.
@@ -223,11 +216,15 @@ func (sg *segmenter) inlines(inlines []Inline) {
 
 // PlainText returns the plain text of a document's segments, as the text
 // export shows it: its texts and the names of its mentions, each value as its
-// name in braces, as {met_elara}, and a line feed where each paragraph, list
-// item, and line break begins, but the first segment. A list item starts with
-// "• ", or its number and ". ", after two spaces for each list that holds its
-// list, and a paragraph or a line break within an item is indented as far as
-// the item's text.
+// name in braces, as {met_elara}, and a line feed for each paragraph and
+// break segment, and for each item segment but one that is the first
+// segment, so that a document that starts with a list starts with its first
+// item, and one whose first segment is a paragraph segment, after an empty
+// first paragraph, or a break segment starts with a line feed. A list item
+// starts with "• ", or its number and ". ", after two spaces for each list
+// that holds its list, and a paragraph or a line break within an item is
+// indented by two spaces for each depth, as far as a bulleted item's text
+// but not a numbered one's.
 func PlainText(segs []Segment) string {
 	var b strings.Builder
 	depth := 0
@@ -239,17 +236,17 @@ func PlainText(segs []Segment) string {
 			b.WriteString("{" + s.Name + "}")
 		case SegmentBreak:
 			b.WriteByte('\n')
-			b.WriteString(strings.Repeat("  ", depth))
+			b.WriteString(indent(depth))
 		case SegmentParagraph:
 			depth = s.Depth
 			b.WriteByte('\n')
-			b.WriteString(strings.Repeat("  ", depth))
+			b.WriteString(indent(depth))
 		case SegmentItem:
 			depth = s.Depth
 			if i > 0 {
 				b.WriteByte('\n')
 			}
-			b.WriteString(strings.Repeat("  ", depth-1))
+			b.WriteString(indent(depth - 1))
 			if s.List == ListOrdered {
 				b.WriteString(strconv.Itoa(s.Number) + ". ")
 			} else {
@@ -258,6 +255,12 @@ func PlainText(segs []Segment) string {
 		}
 	}
 	return b.String()
+}
+
+// indent returns two spaces for each of n levels, and none for a level below
+// 1, which a segment that a program builds may have.
+func indent(n int) string {
+	return strings.Repeat("  ", max(n, 0))
 }
 
 // WordCount returns the number of words of a document's segments: the words
@@ -311,21 +314,37 @@ const PreviewChars = 100
 // last space among them when the cut falls within a word, without the
 // spaces at its end, and an ellipsis (…).
 func Preview(plain string) string {
-	collapsed := strings.Join(strings.Fields(plain), " ")
-	r := []rune(collapsed)
-	if len(r) <= PreviewChars {
-		return collapsed
-	}
-	cut := r[:PreviewChars]
-	if r[PreviewChars] != ' ' {
-		for i := len(cut) - 1; i > 0; i-- {
-			if cut[i] == ' ' {
-				cut = cut[:i]
-				break
-			}
+	// The text collapsed, as far as the code point after the first
+	// PreviewChars, which says whether the cut falls within a word.
+	var b strings.Builder
+	n := 0
+	for field := range strings.FieldsSeq(plain) {
+		if n > 0 {
+			b.WriteByte(' ')
+			n++
+		}
+		b.WriteString(field)
+		n += utf8.RuneCountInString(field)
+		if n > PreviewChars {
+			break
 		}
 	}
-	return strings.TrimRight(string(cut), " ") + "…"
+	collapsed := b.String()
+	if n <= PreviewChars {
+		return collapsed
+	}
+	cut := 0
+	for range PreviewChars {
+		_, size := utf8.DecodeRuneInString(collapsed[cut:])
+		cut += size
+	}
+	head := collapsed[:cut]
+	if collapsed[cut] != ' ' {
+		if i := strings.LastIndexByte(head, ' '); i > 0 {
+			head = head[:i]
+		}
+	}
+	return strings.TrimRight(head, " ") + "…"
 }
 
 // Hash returns the hash of a plain text, as the text export shows it

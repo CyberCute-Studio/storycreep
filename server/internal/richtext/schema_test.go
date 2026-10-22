@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -91,8 +92,8 @@ func TestSchemaExamples(t *testing.T) {
 // and so does its canonical form, and the schema refuses every document that
 // Parse refuses, except those that the vectors mark schema_accepts, which it
 // accepts, because what is wrong with them is beyond what JSON Schema
-// expresses. The schema is validated with huma's validator, with which the
-// API validates requests.
+// expresses. The schema is validated with huma's validator, as Doc gives it
+// to huma, with which the API validates requests.
 func TestSchemaAgreesWithParse(t *testing.T) {
 	validate := humaValidator(t, publishedSchema(t))
 	v := readVectors(t)
@@ -120,16 +121,23 @@ func TestSchemaAgreesWithParse(t *testing.T) {
 	}
 }
 
-// humaValidator returns a function that validates a JSON document against
-// the JSON Schema s with huma, and returns the problems that it finds.
+func init() {
+	// The API and the commands' pipeline match a field's name in its case
+	// (package api, package commands), and so does the validation here.
+	huma.ValidateStrictCasing = true
+}
+
+// humaValidator returns a function that validates a JSON document with huma,
+// against the schema that Doc gives huma, and returns the problems that it
+// finds. That schema is converted from the definitions of Schema, which
+// TestSchemaFile holds the published schema s to.
 func humaValidator(t *testing.T, s map[string]any) func(doc []byte) []error {
 	t.Helper()
-	reg := huma.NewMapRegistry("#/$defs/", huma.DefaultSchemaNamer)
-	defs, _ := s["$defs"].(map[string]any)
-	for name, def := range defs {
-		reg.Map()[name] = toHuma(t, def)
+	if !reflect.DeepEqual(s["$defs"], schemaDefinitions()) {
+		t.Fatal("the published schema's definitions are not those that Doc gives huma")
 	}
-	root := toHuma(t, map[string]any{"$ref": s["$ref"]})
+	reg := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
+	root := huma.SchemaFromType(reg, reflect.TypeFor[Doc]())
 	return func(doc []byte) []error {
 		var v any
 		if err := json.Unmarshal(doc, &v); err != nil {
@@ -141,67 +149,56 @@ func humaValidator(t *testing.T, s map[string]any) func(doc []byte) []error {
 	}
 }
 
-// toHuma converts the schema v, as JSON decodes it, into huma's. It fails on
-// a keyword that it does not convert, so that a keyword that huma would not
-// check cannot pass unnoticed.
-func toHuma(t *testing.T, v any) *huma.Schema {
-	t.Helper()
-	m, ok := v.(map[string]any)
-	if !ok {
-		t.Fatalf("a schema is not an object: %v", v)
+// TestDocField checks that a request's body or a command's payload can hold
+// a document in a field: huma validates the field against the document's
+// schema, which it names in its registry, and the field reads as Parse
+// reads it, with null leaving it as it is.
+func TestDocField(t *testing.T) {
+	type payload struct {
+		Text Doc `json:"text"`
 	}
-	s := &huma.Schema{}
-	intOf := func(x any) *int { n := int(x.(float64)); return &n }
-	floatOf := func(x any) *float64 { f := x.(float64); return &f }
-	for k, x := range m {
-		switch k {
-		case "$ref":
-			s.Ref = x.(string)
-		case "type":
-			s.Type = x.(string)
-		case "description":
-			s.Description = x.(string)
-		case "const":
-			s.Const = x
-		case "pattern":
-			s.Pattern = x.(string)
-		case "minLength":
-			s.MinLength = intOf(x)
-		case "maxLength":
-			s.MaxLength = intOf(x)
-		case "minItems":
-			s.MinItems = intOf(x)
-		case "maxItems":
-			s.MaxItems = intOf(x)
-		case "uniqueItems":
-			s.UniqueItems = x.(bool)
-		case "minimum":
-			s.Minimum = floatOf(x)
-		case "maximum":
-			s.Maximum = floatOf(x)
-		case "additionalProperties":
-			s.AdditionalProperties = x.(bool)
-		case "required":
-			for _, r := range x.([]any) {
-				s.Required = append(s.Required, r.(string))
-			}
-		case "items":
-			s.Items = toHuma(t, x)
-		case "properties":
-			s.Properties = map[string]*huma.Schema{}
-			for name, p := range x.(map[string]any) {
-				s.Properties[name] = toHuma(t, p)
-			}
-		case "oneOf":
-			for _, o := range x.([]any) {
-				s.OneOf = append(s.OneOf, toHuma(t, o))
-			}
-		default:
-			t.Fatalf("the schema has the keyword %s, which the test does not convert for huma", k)
+	reg := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
+	schema := huma.SchemaFromType(reg, reflect.TypeFor[payload]())
+	if _, ok := reg.Map()["RichTextBlock"]; !ok {
+		t.Errorf("the registry holds no RichTextBlock, but %v", reg.Map())
+	}
+	validate := func(body string) []error {
+		var v any
+		if err := json.Unmarshal([]byte(body), &v); err != nil {
+			t.Fatal(err)
+		}
+		res := &huma.ValidateResult{}
+		huma.Validate(reg, schema, huma.NewPathBuffer([]byte{}, 0), huma.ModeWriteToServer, v, res)
+		return res.Errors
+	}
+	body := `{"text":{"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[` +
+		`{"type":"paragraph","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}]}]}]}}`
+	if problems := validate(body); problems != nil {
+		t.Errorf("a document: %v", problems)
+	}
+	var p payload
+	if err := json.Unmarshal([]byte(body), &p); err != nil {
+		t.Fatal(err)
+	}
+	if got := marshal(t, p.Text); string(got) != `{"content":[{"content":[{"content":[{"content":[`+
+		`{"text":"ab","type":"text"}],"type":"paragraph"}],"type":"listItem"}],"type":"bulletList"}],"type":"doc"}` {
+		t.Errorf("read %s", got)
+	}
+	for _, body := range []string{
+		`{"text":{"type":"doc","content":[{"type":"heading"}]}}`,
+		`{"text":{"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[` +
+			`{"type":"paragraph","content":[{"type":"text","text":"a","marks":[{"type":"underline"}]}]}]}]}]}}`,
+		`{"text":{"Type":"doc","content":[{"type":"paragraph"}]}}`,
+		`{"text":null}`,
+	} {
+		if validate(body) == nil {
+			t.Errorf("%s validates", body)
 		}
 	}
-	s.PrecomputeMessages()
-	return s
+	p = payload{Text: Doc{Blocks: []Block{&Paragraph{Inlines: []Inline{&Text{Text: "kept"}}}}}}
+	if err := json.Unmarshal([]byte(`{"text":null}`), &p); err != nil || len(p.Text.Blocks) != 1 {
+		t.Errorf("null: %v, %+v", err, p.Text)
+	}
 }
 
 // TestSchemaPatterns checks that the schema's patterns refuse what Parse

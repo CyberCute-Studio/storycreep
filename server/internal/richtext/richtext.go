@@ -51,8 +51,9 @@ const (
 	MaxDecimals = 6
 )
 
-// Doc is a document: its blocks, of which it has at least one. The editor's
-// empty document is one empty paragraph.
+// Doc is a document: its blocks, of which Parse returns at least one. The
+// editor's empty document is one empty paragraph, and so is a Doc without
+// blocks, as the zero Doc, which MarshalJSON writes as one.
 type Doc struct {
 	Blocks []Block
 }
@@ -299,13 +300,79 @@ func Parse(data []byte) (*Doc, error) {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, &Error{Reason: InvalidJSON, Message: "the document is followed by more JSON"}
 	}
+	if loneSurrogate(data) {
+		return nil, &Error{Reason: InvalidJSON, Message: "the document escapes a lone surrogate, which is not a character"}
+	}
 	var p parser
 	return p.doc(v)
 }
 
+// loneSurrogate reports whether a string of data, which is one JSON value,
+// escapes a UTF-16 surrogate that is not one of a pair, as "\ud800", which no
+// UTF-8 holds. encoding/json reads one as U+FFFD, and JSON.parse keeps it as
+// it is, so that the server would store other text than the client holds.
+func loneSurrogate(data []byte) bool {
+	if !bytes.Contains(data, []byte(`\u`)) {
+		return false
+	}
+	inString := false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		switch {
+		case !inString:
+			inString = c == '"'
+		case c == '"':
+			inString = false
+		case c == '\\':
+			i++
+			if data[i] != 'u' {
+				continue
+			}
+			u := hex4(data[i+1 : i+5])
+			i += 4
+			switch {
+			case u >= 0xD800 && u < 0xDC00:
+				// A string ends with a quote, so an escape that follows
+				// has its four digits.
+				if data[i+1] == '\\' && data[i+2] == 'u' {
+					if low := hex4(data[i+3 : i+7]); low >= 0xDC00 && low < 0xE000 {
+						i += 6
+						continue
+					}
+				}
+				return true
+			case u >= 0xDC00 && u < 0xE000:
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hex4 returns the value of four hexadecimal digits.
+func hex4(digits []byte) rune {
+	var r rune
+	for _, c := range digits {
+		r <<= 4
+		switch {
+		case c >= '0' && c <= '9':
+			r |= rune(c - '0')
+		case c >= 'a' && c <= 'f':
+			r |= rune(c - 'a' + 10)
+		case c >= 'A' && c <= 'F':
+			r |= rune(c - 'A' + 10)
+		}
+	}
+	return r
+}
+
 // UnmarshalJSON reads a document as Parse does, so that a request's or a
-// payload's field can hold one.
+// payload's field can hold one. JSON's null leaves the document as it is, as
+// encoding/json leaves any other field that null is written to.
 func (d *Doc) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
 	parsed, err := Parse(data)
 	if err != nil {
 		return err
@@ -410,18 +477,19 @@ func (p *parser) node(v any, w where) (map[string]any, string, error) {
 }
 
 // fields checks that object o, of the node, mark, or attributes what, has no
-// field but those allowed, and type, which every node and mark has.
+// field but those allowed, and type, which every node and mark has. Of
+// several fields that it may not have, it names the first in sorted order,
+// whatever order the map holds them in.
 func (p *parser) fields(o map[string]any, what string, allowed []string) error {
-	keys := make([]string, 0, len(o))
+	unknown, found := "", false
 	for k := range o {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	for _, k := range keys {
-		if k != "type" && !slices.Contains(allowed, k) {
-			p.push(k)
-			return p.fail(UnknownField, "%s has no field %.40q", what, k)
+		if k != "type" && !slices.Contains(allowed, k) && (!found || k < unknown) {
+			unknown, found = k, true
 		}
+	}
+	if found {
+		p.push(unknown)
+		return p.fail(UnknownField, "%s has no field %.40q", what, unknown)
 	}
 	return nil
 }
@@ -590,7 +658,7 @@ func (p *parser) paragraph(o map[string]any) (*Paragraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	para := &Paragraph{}
+	inlines := make([]Inline, 0, len(content))
 	for i, v := range content {
 		p.push(strconv.Itoa(i))
 		in, err := p.inline(v)
@@ -598,18 +666,43 @@ func (p *parser) paragraph(o map[string]any) (*Paragraph, error) {
 			return nil, err
 		}
 		p.pop()
-		// The canonical form joins texts with the same marks, as
-		// ProseMirror does.
-		if t, ok := in.(*Text); ok && len(para.Inlines) > 0 {
-			if prev, ok := para.Inlines[len(para.Inlines)-1].(*Text); ok && prev.Marks == t.Marks {
-				prev.Text += t.Text
-				continue
-			}
-		}
-		para.Inlines = append(para.Inlines, in)
+		inlines = append(inlines, in)
 	}
 	p.pop()
-	return para, nil
+	return &Paragraph{Inlines: joinTexts(inlines)}, nil
+}
+
+// joinTexts joins each run of neighbouring texts with the same marks into
+// one, as the canonical form does and as ProseMirror does, and returns the
+// inlines, which it reuses. It writes each run's text once, so that a
+// paragraph of many short texts costs no more than their length.
+func joinTexts(inlines []Inline) []Inline {
+	out := inlines[:0]
+	for i := 0; i < len(inlines); {
+		in := inlines[i]
+		j := i + 1
+		if t, ok := in.(*Text); ok {
+			n := len(t.Text)
+			for ; j < len(inlines); j++ {
+				next, ok := inlines[j].(*Text)
+				if !ok || next.Marks != t.Marks {
+					break
+				}
+				n += len(next.Text)
+			}
+			if j > i+1 {
+				var b strings.Builder
+				b.Grow(n)
+				for _, run := range inlines[i:j] {
+					b.WriteString(run.(*Text).Text)
+				}
+				t.Text = b.String()
+			}
+		}
+		out = append(out, in)
+		i = j
+	}
+	return out
 }
 
 func (p *parser) inline(v any) (Inline, error) {
@@ -672,12 +765,10 @@ func (p *parser) text(o map[string]any) (*Text, error) {
 	return &Text{Text: s}, nil
 }
 
-// The characters that text and links may not hold besides the control
-// characters (Cc) and, in links, white space.
+// The characters that text may not hold besides the control characters (Cc).
 const (
 	lineSeparator      = 0x2028
 	paragraphSeparator = 0x2029
-	byteOrderMark      = 0xFEFF
 )
 
 // isControl reports whether text may not hold r: a control character, or a
@@ -715,10 +806,15 @@ func (p *parser) value(o map[string]any) (*Value, error) {
 		return nil, err
 	}
 	val := &Value{Ref: ref}
-	_, named := attrs["attribute"]
+	attribute, named := attrs["attribute"]
 	switch {
 	case strings.HasPrefix(ref, ids.Variable.Prefix()+"_") && named:
 		p.push("attribute")
+		// An attribute that is null, as ProseMirror writes one that is not
+		// set, is of the wrong type, as a null is wherever it is.
+		if _, ok := attribute.(string); !ok {
+			return nil, p.fail(WrongType, "a value reference's attribute is not a string")
+		}
 		return nil, p.fail(Reference, "a reference to a variable names no attribute")
 	case strings.HasPrefix(ref, ids.Component.Prefix()+"_") && !named:
 		return nil, p.fail(Reference, "a reference to a component names its attribute")
@@ -856,9 +952,11 @@ func (p *parser) link(mo map[string]any) (string, error) {
 
 // CheckHref says what is wrong with the URL of a link, or returns "". A link
 // is an absolute http or https URL with a host, or a mailto URL with an
-// address, of at most MaxHrefChars characters, none of them white space or a
-// control character (PRD NFR-SEC-08), so that no link runs a script or
-// reads a file when it is followed.
+// address, of at most MaxHrefChars characters, none of them white space, a
+// control character, or a format character (Unicode's Cf, as U+200B, U+202E,
+// or U+FEFF), which would hide or reorder what a reader sees of the URL (PRD
+// NFR-SEC-08), so that no link runs a script or reads a file when it is
+// followed.
 func CheckHref(href string) string {
 	switch {
 	case href == "":
@@ -866,9 +964,9 @@ func CheckHref(href string) string {
 	case utf8.RuneCountInString(href) > MaxHrefChars:
 		return fmt.Sprintf("is longer than %d characters", MaxHrefChars)
 	case strings.IndexFunc(href, func(r rune) bool {
-		return unicode.IsSpace(r) || unicode.IsControl(r) || r == byteOrderMark
+		return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
 	}) >= 0:
-		return "holds white space or a control character"
+		return "holds white space, a control character, or a format character"
 	}
 	u, err := url.Parse(href)
 	if err != nil {
@@ -876,7 +974,8 @@ func CheckHref(href string) string {
 	}
 	switch u.Scheme {
 	case "http", "https":
-		if u.Host == "" {
+		// A port is no host: https://:80/ has none.
+		if u.Hostname() == "" {
 			return "has no host"
 		}
 	case "mailto":
@@ -897,11 +996,31 @@ func CheckHref(href string) string {
 // paragraph's neighbouring texts with the same marks joined, and every
 // object's keys sorted. It does not escape HTML, which an encoder that
 // escapes it, as json.Marshal does, escapes in what it writes too.
+//
+// A Doc without blocks, as the zero Doc, is the empty document, which it
+// writes as one empty paragraph. A Doc that a program builds must hold what
+// Parse returns: MarshalJSON refuses one with a nil block or inline node, a
+// list without items, an item that does not start with a paragraph, or an
+// empty text, rather than write what Parse would refuse.
 func (d Doc) MarshalJSON() ([]byte, error) {
+	blocks := d.Blocks
+	if len(blocks) == 0 {
+		blocks = []Block{&Paragraph{}}
+	}
+	content, err := wireBlocks(blocks)
+	if err != nil {
+		return nil, err
+	}
+	return marshalNoEscape(wireNode{Type: nodeDoc, Content: content})
+}
+
+// marshalNoEscape encodes v as JSON without escaping HTML (PRD §6.2) and
+// without the line feed that an Encoder ends it with.
+func marshalNoEscape(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(wireNode{Type: nodeDoc, Content: wireBlocks(d.Blocks)}); err != nil {
+	if err := enc.Encode(v); err != nil {
 		return nil, err
 	}
 	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
@@ -939,13 +1058,23 @@ type wireValue struct {
 	Ref       string `json:"ref"`
 }
 
-func wireBlocks(blocks []Block) []wireNode {
+func wireBlocks(blocks []Block) ([]wireNode, error) {
 	nodes := make([]wireNode, len(blocks))
 	for i, b := range blocks {
 		switch b := b.(type) {
 		case *Paragraph:
-			nodes[i] = wireNode{Type: nodeParagraph, Content: wireInlines(b.Inlines)}
+			if b == nil {
+				return nil, errors.New("richtext: a paragraph is nil")
+			}
+			inlines, err := wireInlines(b.Inlines)
+			if err != nil {
+				return nil, err
+			}
+			nodes[i] = wireNode{Type: nodeParagraph, Content: inlines}
 		case *List:
+			if b == nil || len(b.Items) == 0 {
+				return nil, errors.New("richtext: a list has no items")
+			}
 			n := wireNode{Type: nodeBulletList}
 			if b.Ordered {
 				n.Type = nodeOrderedList
@@ -954,29 +1083,55 @@ func wireBlocks(blocks []Block) []wireNode {
 				}
 			}
 			for _, item := range b.Items {
-				n.Content = append(n.Content, wireNode{Type: nodeListItem, Content: wireBlocks(item.Blocks)})
+				if len(item.Blocks) == 0 {
+					return nil, errors.New("richtext: a list item has no blocks")
+				}
+				if _, ok := item.Blocks[0].(*Paragraph); !ok {
+					return nil, errors.New("richtext: a list item does not start with a paragraph")
+				}
+				content, err := wireBlocks(item.Blocks)
+				if err != nil {
+					return nil, err
+				}
+				n.Content = append(n.Content, wireNode{Type: nodeListItem, Content: content})
 			}
 			nodes[i] = n
+		default:
+			return nil, errors.New("richtext: a block is nil")
 		}
 	}
-	return nodes
+	return nodes, nil
 }
 
-func wireInlines(inlines []Inline) []wireNode {
+func wireInlines(inlines []Inline) ([]wireNode, error) {
 	nodes := make([]wireNode, len(inlines))
 	for i, in := range inlines {
 		switch in := in.(type) {
 		case *Text:
+			if in == nil || in.Text == "" {
+				return nil, errors.New("richtext: a text is empty")
+			}
 			nodes[i] = wireNode{Type: nodeText, Text: in.Text, Marks: wireMarks(in.Marks)}
 		case *Break:
+			if in == nil {
+				return nil, errors.New("richtext: a line break is nil")
+			}
 			nodes[i] = wireNode{Type: nodeHardBreak, Marks: wireMarks(in.Marks)}
 		case *Mention:
+			if in == nil {
+				return nil, errors.New("richtext: a mention is nil")
+			}
 			nodes[i] = wireNode{Type: nodeMention, Attrs: wireMention{in.Component}, Marks: wireMarks(in.Marks)}
 		case *Value:
+			if in == nil {
+				return nil, errors.New("richtext: a value reference is nil")
+			}
 			nodes[i] = wireNode{Type: nodeValueRef, Attrs: wireValue{in.Attribute, in.Decimals, in.Ref}, Marks: wireMarks(in.Marks)}
+		default:
+			return nil, errors.New("richtext: an inline node is nil")
 		}
 	}
-	return nodes
+	return nodes, nil
 }
 
 func wireMarks(m Marks) []wireMark {

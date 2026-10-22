@@ -606,7 +606,7 @@
       "hash": "sha256:c1a239168a8ef85348410a1b4bfb565cd9152aee49bd3d54da3ac1692e5e609a"
     },
     {
-      "note": "a list item's later paragraph and its line breaks are indented as far as its text",
+      "note": "a list item's later paragraph and its line breaks are indented two spaces for each depth, as far as a bulleted item's text",
       "doc": {
         "type": "doc",
         "content": [
@@ -680,6 +680,191 @@
       "preview": "• First More lines",
       "words": 3,
       "hash": "sha256:db06d859d22f7495f064c577b9af3ee6e6715a1b0ce3a471c9cb9f0ad5479b53"
+    },
+    {
+      "note": "a numbered item's later lines are indented two spaces for each depth too, not as far as its text",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      },
+                      {
+                        "type": "hardBreak"
+                      },
+                      {
+                        "type": "text",
+                        "text": "b"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "c"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "d"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 9
+            }
+          }
+        ]
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "ordered",
+          "number": 9
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "a"
+        },
+        {
+          "kind": "break"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "b"
+        },
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "ordered",
+          "number": 10
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "c"
+        },
+        {
+          "kind": "paragraph",
+          "depth": 1
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "d"
+        }
+      ],
+      "text": "9. a\n  b\n10. c\n  d",
+      "preview": "9. a b 10. c d",
+      "words": 4,
+      "hash": "sha256:74b9f76675296b127720452770c4e2d96437c380be2cc55bc4ff36dc7b5ac8f2"
+    },
+    {
+      "note": "a document whose first segment is a line break starts with a line feed",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "hardBreak"
+              },
+              {
+                "type": "text",
+                "text": "After"
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "kind": "break"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "After"
+        }
+      ],
+      "text": "\nAfter",
+      "preview": "After",
+      "words": 1,
+      "hash": "sha256:7ade159e33ad72af11ed911edb6ba8b5624c695e1aa5852484b0bb5747c56f3c"
+    },
+    {
+      "note": "a document's empty first paragraph has no segment, so a list after it starts the plain text",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph"
+          },
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Rope"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Rope"
+        }
+      ],
+      "text": "• Rope",
+      "preview": "• Rope",
+      "words": 1,
+      "hash": "sha256:8a17ea5a75d9acb8e85ce428871bca41ebd0e7bdeac4d96cf0a9f6b103da4b9e"
     },
     {
       "note": "lists nest 5 deep at most",
@@ -1031,9 +1216,57 @@
       "preview": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy — 東京タワー 3 km",
       "words": 9,
       "hash": "sha256:f40ad5ba8fb127eeb990de1536ba5af0a6c62bdba97795c5f7cd0f26cfb467ce"
+    },
+    {
+      "note": "an escaped surrogate pair is the character it stands for",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Go \ud83d\udc34"
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Go 🐴"
+        }
+      ],
+      "text": "Go 🐴",
+      "preview": "Go 🐴",
+      "words": 1,
+      "hash": "sha256:55066f4dafda1097717a8629b188846b9cf0f26bd7447cd20d20d19db7d93744"
     }
   ],
   "invalid": [
+    {
+      "note": "a text that escapes a lone surrogate, which no UTF-8 holds, though JSON.parse keeps it",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "a\ud800b"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "invalid_json",
+      "pointer": "",
+      "schema_accepts": true
+    },
     {
       "note": "a document that is not an object",
       "doc": "Harbour",
@@ -1049,6 +1282,19 @@
     {
       "note": "a document without a type",
       "doc": {
+        "content": [
+          {
+            "type": "paragraph"
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": ""
+    },
+    {
+      "note": "a type spelt in another case, which is no type",
+      "doc": {
+        "Type": "doc",
         "content": [
           {
             "type": "paragraph"
@@ -2444,6 +2690,90 @@
       "pointer": "/content/0/content/0/marks/0/attrs/href"
     },
     {
+      "note": "an https link with a port and no host",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://:80/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a right-to-left override, which reorders what a reader sees",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://exa‮moc.elpm/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a zero-width space",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/a​b"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
       "note": "an http link that is not hierarchical",
       "doc": {
         "type": "doc",
@@ -2899,6 +3229,28 @@
         ]
       },
       "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/attribute"
+    },
+    {
+      "note": "a value of a variable whose attribute is null, as ProseMirror writes an attribute that is not set",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "attribute": null
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
       "pointer": "/content/0/content/0/attrs/attribute"
     },
     {

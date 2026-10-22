@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,13 +47,11 @@ func lists(depth int) []byte {
 // method writes too.
 func marshal(t *testing.T, v any) []byte {
 	t.Helper()
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
+	data, err := marshalNoEscape(v)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return bytes.TrimSuffix(buf.Bytes(), []byte{'\n'})
+	return data
 }
 
 // wantError checks that err is an *Error of reason at pointer.
@@ -102,6 +101,30 @@ func TestLimits(t *testing.T) {
 		// JSON nested more than 10,000 deep, which TestParseJSON tries.
 		_, err = Parse(lists(2000))
 		wantError(t, err, TooDeep, "/content/0"+strings.Repeat("/content/0/content/1", MaxListDepth))
+	})
+	t.Run("joined texts", func(t *testing.T) {
+		// A paragraph of the most texts with the same marks that fit in
+		// MaxBytes is joined in time and memory that grow with its length,
+		// not with its length times the number of texts.
+		const node = `{"type":"text","text":"ab"},`
+		head, tail := `{"type":"doc","content":[{"type":"paragraph","content":[`, `{"type":"text","text":"ab"}]}]}`
+		n := (MaxBytes - len(head) - len(tail)) / len(node)
+		doc := []byte(head + strings.Repeat(node, n) + tail)
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		parsed, err := Parse(doc)
+		runtime.ReadMemStats(&after)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := parsed.Blocks[0].(*Paragraph).Inlines; len(got) != 1 || got[0].(*Text).Text != strings.Repeat("ab", n+1) {
+			t.Errorf("%d texts are not joined into one", n+1)
+		}
+		// Reading the JSON allocates about 20 times its size; joining
+		// each text onto the run so far allocated gigabytes.
+		if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 100*MaxBytes {
+			t.Errorf("Parse allocated %d MB to join %d texts", allocated>>20, n+1)
+		}
 	})
 	t.Run("link", func(t *testing.T) {
 		link := func(href string) []byte {
@@ -196,6 +219,52 @@ func TestUnmarshalJSON(t *testing.T) {
 	}
 	err := json.Unmarshal([]byte(`{"text":{"type":"doc","content":[{"type":"heading"}]}}`), &payload)
 	wantError(t, err, UnknownNode, "/content/0")
+
+	// null leaves a field that holds a Doc as it is, as encoding/json
+	// leaves any other.
+	var field struct {
+		Text Doc `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(`{"text":null}`), &field); err != nil || field.Text.Blocks != nil {
+		t.Errorf("null: %v, %+v", err, field.Text)
+	}
+	_, err = Parse([]byte(`null`))
+	wantError(t, err, WrongType, "")
+}
+
+// TestMarshalBuilt checks the canonical form of a Doc that a program builds:
+// the zero Doc is the empty document, and a Doc that Parse would never
+// return is refused rather than written as a document that Parse refuses.
+func TestMarshalBuilt(t *testing.T) {
+	if got := marshal(t, Doc{}); string(got) != `{"content":[{"type":"paragraph"}],"type":"doc"}` {
+		t.Errorf("the zero Doc: %s", got)
+	}
+	var nilParagraph *Paragraph
+	for name, d := range map[string]Doc{
+		"a nil block":              {Blocks: []Block{nil}},
+		"a nil paragraph":          {Blocks: []Block{nilParagraph}},
+		"a list without items":     {Blocks: []Block{&List{}}},
+		"an item without blocks":   {Blocks: []Block{&List{Items: []Item{{}}}}},
+		"an item that is a list":   {Blocks: []Block{&List{Items: []Item{{Blocks: []Block{&List{}}}}}}},
+		"an empty text":            {Blocks: []Block{&Paragraph{Inlines: []Inline{&Text{}}}}},
+		"a nil inline":             {Blocks: []Block{&Paragraph{Inlines: []Inline{nil}}}},
+		"a nil text in a list":     {Blocks: []Block{&List{Items: []Item{{Blocks: []Block{&Paragraph{Inlines: []Inline{(*Text)(nil)}}}}}}}},
+		"a nil value in paragraph": {Blocks: []Block{&Paragraph{Inlines: []Inline{(*Value)(nil)}}}},
+	} {
+		if got, err := json.Marshal(d); err == nil {
+			t.Errorf("%s: %s", name, got)
+		}
+	}
+}
+
+// TestPlainTextBuilt checks that PlainText takes segments that a program
+// builds, without a depth, as it takes those of a document.
+func TestPlainTextBuilt(t *testing.T) {
+	got := PlainText([]Segment{{Kind: SegmentItem, List: ListBullet}, {Kind: SegmentText, Value: "a"},
+		{Kind: SegmentParagraph, Depth: -1}, {Kind: SegmentText, Value: "b"}})
+	if got != "• a\nb" {
+		t.Errorf("PlainText = %q", got)
+	}
 }
 
 // TestCheckHref checks the links' allowlist: http and https URLs with a host,
@@ -236,11 +305,52 @@ func TestCheckHref(t *testing.T) {
 		"https://exa\tmple.com",
 		"https:example.com",
 		"https://",
+		"https://:80/",
+		"https://user@:80/",
+		"http://[]/",
 		"mailto:",
 		"https://example.com:port",
+		// Format characters, which hide or reorder what a reader sees.
+		"https://exa" + string(rune(0x202E)) + "moc.elpm/",
+		"https://example.com/" + string(rune(0x200B)),
+		"https://example.com/" + string(rune(0x00AD)) + "a",
+		"https://example.com/" + string(rune(0x2066)) + "a",
 	} {
 		if CheckHref(href) == "" {
 			t.Errorf("CheckHref(%q) accepts it", href)
+		}
+	}
+}
+
+// TestLoneSurrogate checks that a string that escapes a lone surrogate is
+// refused wherever it is, which encoding/json would read as U+FFFD, and that
+// an escaped pair is the character it stands for.
+//
+// Verifies: NFR-SEC-07
+func TestLoneSurrogate(t *testing.T) {
+	text := func(s string) []byte {
+		return []byte(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"` + s + `"}]}]}`)
+	}
+	for _, s := range []string{`\ud800`, `a\uD800b`, `\udc00`, `\ud800A`, `\ud800\ud800`, `\udfff\ud800`, `a\ud83d`} {
+		_, err := Parse(text(s))
+		wantError(t, err, InvalidJSON, "")
+	}
+	_, err := Parse([]byte(`{"type":"doc","content":[{"type":"paragraph","\ud800":1}]}`))
+	wantError(t, err, InvalidJSON, "")
+	for s, want := range map[string]string{
+		`🐴`:       string(rune(0x1F434)),
+		`🐴!`:      string(rune(0x1F434)) + "!",
+		`\\ud800`: `\ud800`,
+		`\\🐴`:     `\` + string(rune(0x1F434)),
+		`é\"퟿`:    "é\"" + string(rune(0xD7FF)),
+	} {
+		doc, err := Parse(text(s))
+		if err != nil {
+			t.Errorf("%s: %v", s, err)
+			continue
+		}
+		if got := doc.Blocks[0].(*Paragraph).Inlines[0].(*Text).Text; got != want {
+			t.Errorf("%s: %q, want %q", s, got, want)
 		}
 	}
 }
