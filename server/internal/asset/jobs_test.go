@@ -110,6 +110,51 @@ func TestReconcileGoesOn(t *testing.T) {
 	}
 }
 
+// orphanStore returns a local store in a directory of the test's, a function
+// that stores a blob, of a workspace, older than orphanAge, and returns its
+// key, and one that reports whether the store has the blob of a key.
+func orphanStore(t *testing.T) (local *blob.Local, put func(b byte) string, stored func(key string) bool) {
+	t.Helper()
+	dir := t.TempDir()
+	local, err := blob.OpenLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	workspaceID := ids.New()
+	put = func(b byte) string {
+		t.Helper()
+		key := blobKey(workspaceID, []byte{b}, "png")
+		if err := local.Put(context.Background(), key, []byte("x"), MimePNG); err != nil {
+			t.Fatal(err)
+		}
+		age(t, dir, key)
+		return key
+	}
+	stored = func(key string) bool {
+		_, err := local.Stat(context.Background(), key)
+		return err == nil
+	}
+	return local, put, stored
+}
+
+// cancellingStore is a store whose deletion ends the job's context, by
+// cancel, as the job's time that ends, or the server that cancels its jobs,
+// does while a deletion goes on, and then fails if that ended the deletion's
+// own context too.
+type cancellingStore struct {
+	blob.Store
+	cancel context.CancelFunc
+}
+
+func (s cancellingStore) Delete(ctx context.Context, key string) error {
+	s.cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.Store.Delete(ctx, key)
+}
+
 // TestDeleteBlobsOutlastContext checks that a deletion of a batch of orphans
 // that was sent before the job's context ended is not given up on when it
 // ends, as the store might carry it out after the batch's locks are
@@ -117,117 +162,208 @@ func TestReconcileGoesOn(t *testing.T) {
 // than orphanStatTimeout and orphanDeleteTimeout left, which is left to the
 // next run.
 func TestDeleteBlobsOutlastContext(t *testing.T) {
-	dir := t.TempDir()
-	local, err := blob.OpenLocal(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = local.Close() })
-	workspaceID := ids.New()
-	put := func(b byte) string {
-		key := blobKey(workspaceID, []byte{b}, "png")
-		if err := local.Put(context.Background(), key, []byte("x"), MimePNG); err != nil {
-			t.Fatal(err)
-		}
-		age(t, dir, key)
-		return key
-	}
-	stored := func(key string) bool {
-		_, err := local.Stat(context.Background(), key)
-		return err == nil
-	}
-	slow := put(1)
+	local, put, stored := orphanStore(t)
+	key := put(1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	time.AfterFunc(100*time.Millisecond, cancel)
-	if n, err := deleteBlobs(ctx, refusingStore{Store: local, slow: slow}, []string{slow}); n != 1 || err != nil ||
-		stored(slow) {
+	if n, err := deleteBlobs(ctx, nil, cancellingStore{Store: local, cancel: cancel}, []string{key}); n != 1 ||
+		err != nil || stored(key) {
 		t.Errorf("a deletion whose context ended while it went on deleted %d blobs: %v, stored %t; want 1", n, err,
-			stored(slow))
+			stored(key))
 	}
 	late := put(2)
 	short, cancelShort := context.WithTimeout(context.Background(), orphanDeleteTimeout+orphanStatTimeout/2)
 	defer cancelShort()
-	if n, err := deleteBlobs(short, local, []string{late}); n != 0 || err != nil || !stored(late) {
+	if n, err := deleteBlobs(short, nil, local, []string{late}); n != 0 || err != nil || !stored(late) {
 		t.Errorf("a batch with less than orphanStatTimeout and orphanDeleteTimeout left deleted %d blobs: %v; want "+
 			"none, and no error", n, err)
 	}
 }
 
-// slowStatStore is a store that takes statDelay to say how old a blob is,
-// or, if stall is set, says nothing until the context ends, and records how
-// long each deletion's context gave it.
-type slowStatStore struct {
+// question is when a store was asked how old a blob is, when the question's
+// context was to end, and the error of a context that ended it.
+type question struct {
+	at, end time.Time
+	err     error
+}
+
+// timedStore is a store that calls onStat, if set, when it is asked how old a
+// blob is, as a job's context that ends, or a server that begins to stop,
+// while the store answers, and then says nothing until the context ends, if
+// stall is set, or else answers after statDelay, whatever the context, as a
+// local disk does; it records each question, and when each deletion's
+// context was to end.
+type timedStore struct {
 	blob.Store
 	statDelay time.Duration
 	stall     bool
+	onStat    func()
 	mu        sync.Mutex
-	deletes   []time.Duration
+	questions []question
+	deletes   []time.Time
 }
 
-func (s *slowStatStore) Stat(ctx context.Context, key string) (blob.Info, error) {
-	var wait <-chan time.Time
-	if !s.stall {
-		wait = time.After(s.statDelay)
+func (s *timedStore) Stat(ctx context.Context, key string) (blob.Info, error) {
+	q := question{at: time.Now()}
+	q.end, _ = ctx.Deadline()
+	if s.onStat != nil {
+		s.onStat()
 	}
-	select {
-	case <-wait:
-	case <-ctx.Done():
-		return blob.Info{}, ctx.Err()
+	if s.stall {
+		<-ctx.Done()
+		q.err = ctx.Err()
+	} else {
+		time.Sleep(s.statDelay)
 	}
-	return s.Store.Stat(ctx, key)
+	s.mu.Lock()
+	s.questions = append(s.questions, q)
+	s.mu.Unlock()
+	if q.err != nil {
+		return blob.Info{}, q.err
+	}
+	return s.Store.Stat(context.Background(), key)
 }
 
-func (s *slowStatStore) Delete(ctx context.Context, key string) error {
+func (s *timedStore) Delete(ctx context.Context, key string) error {
 	end, _ := ctx.Deadline()
 	s.mu.Lock()
-	s.deletes = append(s.deletes, time.Until(end))
+	s.deletes = append(s.deletes, end)
 	s.mu.Unlock()
 	return s.Store.Delete(ctx, key)
 }
 
-// TestDeleteOldTimeouts checks that the time that the store takes to say how
-// old an orphan is leaves its deletion the whole of orphanDeleteTimeout from
-// when it is sent, so that a store slow to answer does not shorten the wait
-// that keeps the batch's locks until the deletion ends, and that a question
-// that the job's context cuts short sends no deletion.
+// TestDeleteOldTimeouts checks that the store has orphanStatTimeout at most
+// to say how old an orphan is, and that the time that it takes leaves the
+// deletion the whole of orphanDeleteTimeout from when it is sent, so that a
+// store slow to answer does not shorten the wait that keeps the batch's locks
+// until the deletion ends, and that no deletion is sent once the job's
+// context has ended, whether it cut the question short or the store answered
+// after it ended. It compares the deadlines of the contexts that the store
+// was given, so that a test runner that is slow to run it cannot fail it.
 func TestDeleteOldTimeouts(t *testing.T) {
-	dir := t.TempDir()
-	local, err := blob.OpenLocal(dir)
+	local, put, stored := orphanStore(t)
+	const delay = 300 * time.Millisecond
+	slow := &timedStore{Store: local, statDelay: delay}
+	key := put(1)
+	n, err := deleteBlobs(context.Background(), nil, slow, []string{key})
+	switch {
+	case n != 1 || err != nil || stored(key) || len(slow.questions) != 1 || len(slow.deletes) != 1:
+		t.Errorf("a deletion after a slow question deleted %d blobs: %v, stored %t, asked %d times, and sent %d "+
+			"deletions; want 1 of each", n, err, stored(key), len(slow.questions), len(slow.deletes))
+	case slow.questions[0].end.IsZero() || slow.questions[0].end.Sub(slow.questions[0].at) > orphanStatTimeout:
+		t.Errorf("the question had until %v, from %v; want orphanStatTimeout at most", slow.questions[0].end,
+			slow.questions[0].at)
+	case slow.deletes[0].Sub(slow.questions[0].end) < orphanDeleteTimeout-orphanStatTimeout+delay:
+		// The deletion was sent once the store had answered, after delay,
+		// and has orphanDeleteTimeout from then.
+		t.Errorf("the deletion after a slow question had until %v, %v after the question's end; want "+
+			"orphanDeleteTimeout from when it was sent", slow.deletes[0],
+			slow.deletes[0].Sub(slow.questions[0].end))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stalled := &timedStore{Store: local, stall: true, onStat: cancel}
+	key = put(2)
+	if n, err := deleteBlobs(ctx, nil, stalled, []string{key}); n != 0 || !errors.Is(err, context.Canceled) ||
+		!stored(key) || len(stalled.deletes) != 0 || len(stalled.questions) != 1 ||
+		!errors.Is(stalled.questions[0].err, context.Canceled) {
+		t.Errorf("a question that the job's context cut short deleted %d blobs: %v, stored %t, asked %v, and sent "+
+			"%d deletions; want none, and the context's error", n, err, stored(key), stalled.questions,
+			len(stalled.deletes))
+	}
+
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	late := &timedStore{Store: local, onStat: cancel}
+	if n, err := deleteBlobs(ctx, nil, late, []string{key}); n != 0 || !errors.Is(err, context.Canceled) ||
+		!stored(key) || len(late.deletes) != 0 {
+		t.Errorf("a question that the store answered once the job's context had ended deleted %d blobs: %v, stored "+
+			"%t, and sent %d deletions; want none, and the context's error", n, err, stored(key), len(late.deletes))
+	}
+}
+
+// TestDeleteBlobsStopping checks that a batch of orphans sends no deletion
+// once the server has begun to stop (jobs.Stopping), whether it had before it
+// asked the store how old the blob is, or began while the store answered, so
+// that the deletions that it sent end before the server cancels its jobs and
+// exits, and that it leaves the blobs to the next run without an error.
+func TestDeleteBlobsStopping(t *testing.T) {
+	local, put, stored := orphanStore(t)
+	stopping := make(chan struct{})
+	answering := &timedStore{Store: local, onStat: func() { close(stopping) }}
+	key := put(1)
+	if n, err := deleteBlobs(context.Background(), stopping, answering, []string{key}); n != 0 || err != nil ||
+		!stored(key) || len(answering.questions) != 1 || len(answering.deletes) != 0 {
+		t.Errorf("a batch whose server began to stop while the store answered deleted %d blobs: %v, stored %t, "+
+			"asked %d times, and sent %d deletions; want one question, and none deleted", n, err, stored(key),
+			len(answering.questions), len(answering.deletes))
+	}
+	after := &timedStore{Store: local}
+	if n, err := deleteBlobs(context.Background(), stopping, after, []string{key, put(2)}); n != 0 || err != nil ||
+		!stored(key) || len(after.questions) != 0 || len(after.deletes) != 0 {
+		t.Errorf("a batch whose server had begun to stop deleted %d blobs: %v, stored %t, asked %d times, and sent "+
+			"%d deletions; want none", n, err, stored(key), len(after.questions), len(after.deletes))
+	}
+}
+
+// errUnanswered is the error of a question that statRefusingStore fails.
+var errUnanswered = errors.New("the store fails to say anything of the blob")
+
+// statRefusingStore is a store that fails to say anything of the blob of the
+// key refuse, as one whose every HEAD of that object fails, and records the
+// keys that it was asked about.
+type statRefusingStore struct {
+	blob.Store
+	refuse string
+	mu     sync.Mutex
+	asked  []string
+}
+
+func (s *statRefusingStore) Stat(ctx context.Context, key string) (blob.Info, error) {
+	s.mu.Lock()
+	s.asked = append(s.asked, key)
+	s.mu.Unlock()
+	if key == s.refuse {
+		return blob.Info{}, errUnanswered
+	}
+	return s.Store.Stat(ctx, key)
+}
+
+// TestMendThumbnailsGoesOn checks that the mending of a workspace's
+// thumbnails goes on past a content whose thumbnail the store fails to say
+// anything of, and returns the error, so that a content after it, in the
+// order of their hashes, still has its lost thumbnail mended, rather than
+// none after the first that fails every time.
+func TestMendThumbnailsGoesOn(t *testing.T) {
+	ctx := context.Background()
+	local, err := blob.OpenLocal(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = local.Close() })
 	workspaceID := ids.New()
-	put := func(b byte) string {
-		key := blobKey(workspaceID, []byte{b}, "png")
-		if err := local.Put(context.Background(), key, []byte("x"), MimePNG); err != nil {
+	var contents []queries.ContentKeysRow
+	var keys []string
+	for i := range byte(2) {
+		sum := make([]byte, 32)
+		sum[31] = i
+		key := blobKey(workspaceID, sum, "png")
+		if err := local.Put(ctx, key, []byte("x"), MimePNG); err != nil {
 			t.Fatal(err)
 		}
-		age(t, dir, key)
-		return key
+		contents = append(contents, queries.ContentKeysRow{ID: nullUUID(ids.New()), Sha256: sum, StorageKey: key,
+			ThumbnailKey: textOf(thumbnailKey(workspaceID, sum))})
+		keys = append(keys, key)
 	}
-	stored := func(key string) bool {
-		_, err := local.Stat(context.Background(), key)
-		return err == nil
-	}
-	const delay = 300 * time.Millisecond
-	slow := &slowStatStore{Store: local, statDelay: delay}
-	key := put(1)
-	if n, err := deleteBlobs(context.Background(), slow, []string{key}); n != 1 || err != nil || stored(key) ||
-		len(slow.deletes) != 1 || slow.deletes[0] < orphanDeleteTimeout-delay/3 {
-		t.Errorf("a deletion after a slow question deleted %d blobs: %v, stored %t, with %v left; want 1, with "+
-			"orphanDeleteTimeout left", n, err, stored(key), slow.deletes)
-	}
-	stalled := &slowStatStore{Store: local, stall: true}
-	key = put(2)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	time.AfterFunc(100*time.Millisecond, cancel)
-	if n, err := deleteBlobs(ctx, stalled, []string{key}); n != 0 || !errors.Is(err, context.Canceled) ||
-		!stored(key) || len(stalled.deletes) != 0 {
-		t.Errorf("a question cut short deleted %d blobs: %v, stored %t, and sent %d deletions; want none, and the "+
-			"context's error", n, err, stored(key), len(stalled.deletes))
+	// The listing found both files, and neither thumbnail.
+	l := &listing{keys: keys, from: workspaceID.String() + "/", done: true}
+	store := &statRefusingStore{Store: local, refuse: contents[0].ThumbnailKey.String}
+	s := &Service{db: dbtest.New(t).Open(t)}
+	err = s.mendThumbnails(ctx, store, workspaceID, contents, l, func() bool { return true })
+	if !errors.Is(err, errUnanswered) || !slices.Contains(store.asked, contents[1].ThumbnailKey.String) {
+		t.Errorf("the mending returned %v, and asked the store about %v; want the store's error, and the second "+
+			"thumbnail asked about too", err, store.asked)
 	}
 }
 

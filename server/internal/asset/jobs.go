@@ -254,10 +254,12 @@ const listBudget = sweep.Budget / 2
 // that a row is about to refer to. A batch that fails, as one of a blob that
 // the store refuses to delete, is left to the next run, and the batches after
 // it, and the thumbnails, still have their turn. It starts no workspace, and
-// lists or checks no blob, once it has run for sweep.Budget, going on from a
-// workspace picked at random (sweep.Workspaces), and it leaves alone a key
-// that this package would not write. So it is safe to repeat. The blobs of a
-// workspace that no longer exists are deleted with it (plan item 110). It
+// lists or checks no blob, once it has run for sweep.Budget, or the server
+// has begun to stop (jobs.Stopping), going on from a workspace picked at
+// random (sweep.Workspaces), and it leaves alone a key that this package
+// would not write. So it is safe to repeat. It reaches only the workspaces
+// that exist, so the deletion of a workspace, which plan item 110 adds, and
+// which nothing does until then, must delete the workspace's blobs itself. It
 // opens the store once it reaches a workspace, and does nothing until
 // first-run setup has completed, unless the configuration names the store
 // (Storage.FinalStore), as setup may yet choose another.
@@ -300,7 +302,8 @@ func (s *Service) Reconcile(ctx context.Context) (int, error) {
 	var cl *claim
 	var stop error
 	deleted := 0
-	more := sweep.Within(sweep.Budget)
+	within, stopping := sweep.Within(sweep.Budget), jobs.Stopping(ctx)
+	more := func() bool { return within() && !stopped(stopping) }
 	goOn := func() bool { return stop == nil && more() }
 	err := sweep.Workspaces(ctx, s.db, goOn, func(workspaceID ids.UUID) error {
 		if store == nil {
@@ -669,8 +672,9 @@ func (s *Service) reconcileWorkspace(ctx context.Context, store blob.Store, work
 // lock are after lockedStoreTimeout, because the store may carry out a
 // deletion that its client gave up on, after the locks are released, and so
 // after an upload found the blob and added the row that refers to it: the
-// batch sends no deletion that might not end before the job's time does, and
-// waits orphanDeleteTimeout for each that it sent (deleteBlobs).
+// batch sends no deletion that might not end before the job's time does, nor
+// any once the server has begun to stop, and waits orphanDeleteTimeout for
+// each that it sent (deleteBlobs).
 const (
 	orphanBatch   = 64
 	orphanDeletes = 8
@@ -685,7 +689,12 @@ const (
 // than this and orphanStatTimeout left (deleteBlobs), so that the job ends in
 // its time. The time that the store takes to say how old the blob is, just
 // before, is not part of it, so that a store slow to answer the one leaves
-// the other its whole time.
+// the other its whole time. It is shorter than the 20 seconds that a server
+// that stops gives its jobs to finish before it cancels them (package
+// httpserver's shutdownTimeout), in which a batch sends no more deletions
+// (jobs.Stopping), so that those that it sent end, and are waited for, before
+// the process exits, which would release the locks while the store might
+// still carry them out.
 const orphanDeleteTimeout = 15 * time.Second
 
 // orphanStatTimeout is how long the reconciliation waits for the store to
@@ -755,7 +764,7 @@ func (s *Service) deleteOrphans(ctx context.Context, store blob.Store, workspace
 			return fmt.Errorf("asset: read the assets of the blobs: %w", err)
 		}
 		gone := slices.DeleteFunc(slices.Clone(keys), func(key string) bool { return slices.Contains(refs, key) })
-		deleted, err = deleteBlobs(ctx, store, gone)
+		deleted, err = deleteBlobs(ctx, jobs.Stopping(ctx), store, gone)
 		return err
 	})
 	if err != nil {
@@ -775,11 +784,12 @@ func (s *Service) deleteOrphans(ctx context.Context, store blob.Store, workspace
 // old, and added the row that refers to it. Such an upload that stores the
 // blob in the moment between the question and the deletion still loses its
 // file, which is one reason why two instances never share a store. Once ctx
-// ends, or has less than orphanStatTimeout and orphanDeleteTimeout left, it
-// asks for no more blobs, and leaves the rest to the next run, and it waits
-// for each deletion that it sent for orphanDeleteTimeout, however soon ctx
-// ends.
-func deleteBlobs(ctx context.Context, store blob.Store, keys []string) (int, error) {
+// ends, or has less than orphanStatTimeout and orphanDeleteTimeout left, or
+// stopping, the channel of jobs.Stopping, is closed, as the server has begun
+// to stop, it asks for no more blobs, and leaves the rest to the next run,
+// and it waits for each deletion that it sent for orphanDeleteTimeout,
+// however soon ctx ends.
+func deleteBlobs(ctx context.Context, stopping <-chan struct{}, store blob.Store, keys []string) (int, error) {
 	var (
 		wg      sync.WaitGroup
 		mu      sync.Mutex
@@ -795,12 +805,13 @@ func deleteBlobs(ctx context.Context, store blob.Store, keys []string) (int, err
 			mu.Unlock()
 			break
 		}
-		if end, ok := ctx.Deadline(); ok && time.Until(end) < orphanStatTimeout+orphanDeleteTimeout {
+		if end, ok := ctx.Deadline(); (ok && time.Until(end) < orphanStatTimeout+orphanDeleteTimeout) ||
+			stopped(stopping) {
 			break
 		}
 		wg.Go(func() {
 			defer func() { <-sending }()
-			gone, err := deleteOld(ctx, store, key)
+			gone, err := deleteOld(ctx, stopping, store, key)
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
@@ -818,11 +829,11 @@ func deleteBlobs(ctx context.Context, store blob.Store, keys []string) (int, err
 // deleteOld deletes the blob of key from store if the store says that it was
 // stored at least orphanAge ago, and reports whether it deleted it. It waits
 // for the store to say for orphanStatTimeout at most, or until ctx ends, and
-// then sends no deletion, and for the deletion that it sends for
-// orphanDeleteTimeout from when it sends it, however soon ctx ends, as the
-// store may carry out a deletion that its client gave up on, after the
-// batch's locks are released.
-func deleteOld(ctx context.Context, store blob.Store, key string) (bool, error) {
+// then sends no deletion, nor once stopping is closed, and waits for the
+// deletion that it sends for orphanDeleteTimeout from when it sends it,
+// however soon ctx ends, as the store may carry out a deletion that its
+// client gave up on, after the batch's locks are released.
+func deleteOld(ctx context.Context, stopping <-chan struct{}, store blob.Store, key string) (bool, error) {
 	statCtx, cancel := context.WithTimeout(ctx, orphanStatTimeout)
 	info, err := store.Stat(statCtx, key)
 	cancel()
@@ -837,12 +848,26 @@ func deleteOld(ctx context.Context, store blob.Store, key string) (bool, error) 
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	if stopped(stopping) {
+		return false, nil
+	}
 	deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanDeleteTimeout)
 	defer cancel()
 	if err := store.Delete(deleteCtx, key); err != nil {
 		return false, fmt.Errorf("asset: %w", err)
 	}
 	return true, nil
+}
+
+// stopped reports whether stopping, a channel of jobs.Stopping, is closed,
+// as once the server has begun to stop; a nil channel never is.
+func stopped(stopping <-chan struct{}) bool {
+	select {
+	case <-stopping:
+		return true
+	default:
+		return false
+	}
 }
 
 // listing is what a run listed of a workspace's blobs: from after the key
@@ -974,12 +999,17 @@ func listWorkspace(ctx context.Context, store blob.Store, workspaceID ids.UUID, 
 // (enqueueThumbnail), mendBatch of them in a transaction, as many may have
 // none while their jobs wait, after a burst of uploads, which a transaction
 // each would spend the run on. A content whose file the store lost is left
-// alone, which only an upload of the file mends. It stops once more reports
-// that the run has spent its budget.
+// alone, which only an upload of the file mends. It goes on past a content
+// whose thumbnail it fails to mend, as one that the store keeps refusing to
+// say anything of, and returns the errors, as the contents are in the order
+// of their hashes, so that one that fails every time would otherwise keep
+// those after it from their turn for good. It stops once more reports that
+// the run has spent its budget.
 func (s *Service) mendThumbnails(ctx context.Context, store blob.Store, workspaceID ids.UUID,
 	contents []queries.ContentKeysRow, l *listing, more func() bool) error {
 	scope := database.Scope{WorkspaceID: workspaceID}
 	var missing []queries.ContentKeysRow
+	var errs []error
 	for _, c := range contents {
 		if !l.has(c.StorageKey) {
 			continue
@@ -993,7 +1023,10 @@ func (s *Service) mendThumbnails(ctx context.Context, store blob.Store, workspac
 			continue
 		}
 		if !more() {
-			return nil
+			return errors.Join(errs...)
+		}
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(errs, err)...)
 		}
 		err := s.db.InTx(ctx, scope, func(tx pgx.Tx) error {
 			q := queries.New(tx)
@@ -1021,12 +1054,15 @@ func (s *Service) mendThumbnails(ctx context.Context, store blob.Store, workspac
 			return s.enqueueThumbnail(ctx, tx, workspaceID, c.ID.Bytes)
 		})
 		if err != nil {
-			return fmt.Errorf("asset: mend the thumbnail of %s: %w", c.StorageKey, err)
+			errs = append(errs, fmt.Errorf("asset: mend the thumbnail of %s: %w", c.StorageKey, err))
 		}
 	}
 	for batch := range slices.Chunk(missing, mendBatch) {
 		if !more() {
-			return nil
+			break
+		}
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(errs, err)...)
 		}
 		if err := s.db.InTx(ctx, scope, func(tx pgx.Tx) error {
 			for _, c := range batch {
@@ -1036,10 +1072,10 @@ func (s *Service) mendThumbnails(ctx context.Context, store blob.Store, workspac
 			}
 			return nil
 		}); err != nil {
-			return fmt.Errorf("asset: mend the thumbnails of workspace %s: %w", workspaceID, err)
+			errs = append(errs, fmt.Errorf("asset: mend the thumbnails of workspace %s: %w", workspaceID, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // mendBatch is how many jobs of thumbnails that are missing mendThumbnails

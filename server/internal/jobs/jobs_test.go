@@ -611,6 +611,46 @@ func TestStopCancelsJobs(t *testing.T) {
 	}
 }
 
+// TestStopping checks that a job's work learns that the queue stops as soon
+// as Stop is called, while its context still runs, so that it can stop
+// sending requests that it must wait for, and finish them, before Stop
+// cancels it, and that a context of no job never stops.
+func TestStopping(t *testing.T) {
+	t.Parallel()
+	if ch := Stopping(context.Background()); ch != nil {
+		t.Errorf("a context of no job stops on %v, want nil", ch)
+	}
+	d := dbtest.New(t)
+	started := make(chan int64, 1)
+	live := make(chan error, 1)
+	reg := NewRegistry()
+	Register(reg, func(ctx context.Context, job *Job[recordArgs]) error {
+		started <- job.ID
+		<-Stopping(ctx)
+		live <- ctx.Err()
+		return nil
+	})
+	q, db := open(t, d, reg, true)
+	e := enqueue(t, q, db, recordArgs{}, nil)
+	receive(t, started)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := q.Stop(ctx); err != nil {
+		t.Fatalf("Stop returned %v, want nil once the job finished", err)
+	}
+	if err := receive(t, live); err != nil {
+		t.Errorf("the job learnt that the queue stops once its context had ended: %v", err)
+	}
+	job, err := q.client.JobGet(context.Background(), e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.State != rivertype.JobStateCompleted {
+		t.Errorf("the job that finished while the queue stopped is %s, want completed", job.State)
+	}
+}
+
 // TestStopStuckJobs checks that Stop returns an error once a job that does
 // not return when it is cancelled has had its time, and that Close does not
 // wait for the job then.

@@ -58,7 +58,11 @@ const (
 	// when it stops. It is shorter than the 30 seconds that Kubernetes waits
 	// by default before it kills a container. Docker and Docker Compose wait
 	// only 10 seconds by default, so a deployment with them sets a longer
-	// grace period, such as a compose file's stop_grace_period.
+	// grace period, such as a compose file's stop_grace_period. It is longer
+	// than the 15 seconds that the orphan reconciliation of the assets waits
+	// for a deletion that it sent (package asset), which sends none once the
+	// server stops (jobs.Stopping), so that those deletions end before the
+	// jobs are cancelled and the process exits.
 	shutdownTimeout = 20 * time.Second
 	// defaultPollInterval is how often a server without auto-migration
 	// checks whether the pending migrations have been applied.

@@ -105,6 +105,23 @@ type Job[T Args] struct {
 // job's work the workers' pool.
 type workersDB struct{}
 
+// stoppingKey is the context key under which the queue's middleware hands a
+// job's work the channel that Stop closes (Stopping).
+type stoppingKey struct{}
+
+// Stopping returns a channel that is closed once the queue whose job's work
+// ctx is begins to stop (Queue.Stop), while the job's context still has the
+// time that Stop gives the jobs in progress to finish before it cancels them:
+// for work that sends requests that it cannot take back, and must wait for,
+// as the orphan reconciliation's deletions (package asset), to send no more
+// once the server stops, so that those that it sent end, and are waited for,
+// before Stop cancels the job and the process exits. It returns nil, which
+// is never closed, for a context that is no job's.
+func Stopping(ctx context.Context) <-chan struct{} {
+	ch, _ := ctx.Value(stoppingKey{}).(chan struct{})
+	return ch
+}
+
 // Registry holds the kinds of job that the server runs, and its periodic
 // jobs. Register a kind before Open.
 type Registry struct {
@@ -311,6 +328,8 @@ type Queue struct {
 	// hardStop is how long Stop waits for the jobs once it has cancelled
 	// them.
 	hardStop time.Duration
+	// stopping is closed when Stop is first called (Stopping).
+	stopping chan struct{}
 
 	mu sync.Mutex
 	// started is set while the workers run. stuck is set if they did not
@@ -338,7 +357,7 @@ func Open(ctx context.Context, db *database.DB, app config.DatabaseURL, opts Opt
 		reg = NewRegistry()
 	}
 	q := &Queue{log: log, work: opts.Work, kinds: slices.Clone(reg.kinds), serial: slices.Clone(reg.serial),
-		hardStop: opts.hardStop}
+		hardStop: opts.hardStop, stopping: make(chan struct{})}
 	if q.hardStop <= 0 {
 		q.hardStop = hardStopTimeout
 	}
@@ -382,10 +401,12 @@ func Open(ctx context.Context, db *database.DB, app config.DatabaseURL, opts Opt
 		}
 		cfg.PeriodicJobs = reg.periodic
 		// The jobs' work receives the workers' pool through its context,
-		// which Register's worker hands it in Job.DB.
+		// which Register's worker hands it in Job.DB, and the channel that
+		// Stop closes (Stopping).
 		cfg.Middleware = []rivertype.Middleware{river.WorkerMiddlewareFunc(
 			func(ctx context.Context, _ *rivertype.JobRow, doInner func(context.Context) error) error {
-				return doInner(context.WithValue(ctx, workersDB{}, workers))
+				ctx = context.WithValue(ctx, workersDB{}, workers)
+				return doInner(context.WithValue(ctx, stoppingKey{}, q.stopping))
 			})}
 		if opts.pollInterval > 0 {
 			cfg.FetchPollInterval = opts.pollInterval
@@ -497,16 +518,20 @@ func (q *Queue) Start(ctx context.Context) error {
 }
 
 // Stop stops the workers, if they run, and keeps Start from starting them
-// afterwards. The workers take no more jobs, and the jobs they run have until
-// ctx ends to finish. Then Stop cancels the jobs' contexts, and waits up to 5
-// seconds more for them to return. A job whose work returns the context's
-// error because of that is attempted again later, without counting the
-// attempt (Register). Stop returns an error if jobs still have not returned.
-// Their rows stay running until River's rescuer takes them for stuck, an hour
+// afterwards. The workers take no more jobs, and the jobs they run, whose
+// work learns that the queue stops (Stopping), have until ctx ends to
+// finish. Then Stop cancels the jobs' contexts, and waits up to 5 seconds
+// more for them to return. A job whose work returns the context's error
+// because of that is attempted again later, without counting the attempt
+// (Register). Stop returns an error if jobs still have not returned. Their
+// rows stay running until River's rescuer takes them for stuck, an hour
 // later.
 func (q *Queue) Stop(ctx context.Context) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	if !q.stopped {
+		close(q.stopping)
+	}
 	q.stopped = true
 	if !q.started {
 		return nil
