@@ -369,7 +369,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-ASSET-01 AC1–AC2 and FR-ASSET-02 AC1–AC4 pass, and the FR-ENT-01 AC1 test for `storage_bytes` reaches the limit through an upload. AC3 (deleting a workspace deletes its blobs) is in item 110.
 
 ### 30. Boards and folders
-**Status:** todo · **Depends on:** 24, 28
+**Status:** done ([#33](https://github.com/CyberCute-Studio/storycreep/pull/33)) · **Depends on:** 24, 28
 **PRD:** FR-PROJ-02 (AC1, AC3, AC4), FR-PROJ-06 (board deletion and restore), FR-ENT-02 (boards)
 - `folder` entities of kind `board`, `variable`, and `component`, with tree nesting and drag-reorder order, by keys that the boards of a folder share with its subfolders (N38).
 - Board commands: create, rename, describe, colour, set the slug, move, delete to the trash, and restore. Folder commands: create, rename, move, delete once empty, and restore. Routes that read the boards and the folders (N38). The entry-node field (set in item 35). `boards` usage deltas (metered, not limited), and their recount for reconciliation (N31).
