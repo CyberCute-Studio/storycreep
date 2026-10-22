@@ -41,7 +41,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/text/language"
 
@@ -593,8 +592,7 @@ func (s *Service) Update(ctx context.Context, userID, id ids.UUID, p Patch) (Wor
 		}
 		updated, err := q.UpdateWorkspace(ctx, queries.UpdateWorkspaceParams{ID: nullUUID(id), Name: w.Name,
 			Slug: w.Slug, DefaultLocale: w.DefaultLocale.String()})
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "workspace_slug_key" {
+		if database.UniqueViolation(err, "workspace_slug_key") {
 			return ErrSlugTaken
 		}
 		if err != nil {

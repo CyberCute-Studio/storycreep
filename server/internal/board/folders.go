@@ -10,6 +10,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
@@ -53,13 +54,18 @@ type renameFolderPayload struct {
 type moveFolderPayload struct {
 	ID       string `json:"id" doc:"The folder's ID"`
 	ParentID string `json:"parent_id,omitempty" doc:"The ID of the folder of the same kind that the folder goes into, which is not deleted, and neither the folder itself nor a folder inside it. Without it, the folder goes to the top."`
-	Order    string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The folder's place among the children of its new parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child, or stays where it is if it is the last child of its parent already."`
+	Order    string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The folder's place among the children of its new parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child, or stays where it is if it is the last child of its parent already that is not deleted."`
 }
 
 // folderIDPayload is the payload of a command that needs nothing but its
 // folder's ID.
 type folderIDPayload struct {
 	ID string `json:"id" doc:"The folder's ID"`
+}
+
+// deleteFolderPayload is DeleteFolder's payload.
+type deleteFolderPayload struct {
+	ID string `json:"id" doc:"The ID of the folder to delete, which holds no folder and no board that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, and stays in the folder, which restoring it restores too."`
 }
 
 // Register registers in r the folder and the board as entities of the
@@ -72,55 +78,31 @@ func Register(r *commands.Registry) {
 	commands.RegisterEntity(r, commands.Entity{
 		Kind: ids.Folder,
 		Revs: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]int64, error) {
-			rows, err := queries.New(tx).FolderRevs(ctx, queries.FolderRevsParams{
-				WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)})
-			if err != nil {
-				return nil, err
-			}
-			revs := make(map[ids.UUID]int64, len(rows))
-			for _, row := range rows {
-				revs[row.ID.Bytes] = row.Rev
-			}
-			return revs, nil
+			return byID(func(row queries.FolderRevsRow) (pgtype.UUID, int64) {
+				return row.ID, row.Rev
+			})(queries.New(tx).FolderRevs(ctx, queries.FolderRevsParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+				ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)}))
 		},
 		States: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]any, error) {
-			rows, err := queries.New(tx).FoldersByID(ctx, queries.FoldersByIDParams{
-				WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)})
-			if err != nil {
-				return nil, err
-			}
-			states := make(map[ids.UUID]any, len(rows))
-			for _, row := range rows {
-				states[row.Folder.ID.Bytes] = folderOf(row.Folder)
-			}
-			return states, nil
+			return byID(func(row queries.FoldersByIDRow) (pgtype.UUID, any) {
+				return row.Folder.ID, folderOf(row.Folder)
+			})(queries.New(tx).FoldersByID(ctx, queries.FoldersByIDParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+				ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)}))
 		},
 	})
 	commands.RegisterEntity(r, commands.Entity{
 		Kind: ids.Board,
 		Revs: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]int64, error) {
-			rows, err := queries.New(tx).BoardRevs(ctx, queries.BoardRevsParams{
-				WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)})
-			if err != nil {
-				return nil, err
-			}
-			revs := make(map[ids.UUID]int64, len(rows))
-			for _, row := range rows {
-				revs[row.ID.Bytes] = row.Rev
-			}
-			return revs, nil
+			return byID(func(row queries.BoardRevsRow) (pgtype.UUID, int64) {
+				return row.ID, row.Rev
+			})(queries.New(tx).BoardRevs(ctx, queries.BoardRevsParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+				ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)}))
 		},
 		States: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]any, error) {
-			rows, err := queries.New(tx).BoardsByID(ctx, queries.BoardsByIDParams{
-				WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)})
-			if err != nil {
-				return nil, err
-			}
-			states := make(map[ids.UUID]any, len(rows))
-			for _, row := range rows {
-				states[row.Board.ID.Bytes] = boardOf(row.Board)
-			}
-			return states, nil
+			return byID(func(row queries.BoardsByIDRow) (pgtype.UUID, any) {
+				return row.Board.ID, boardOf(row.Board)
+			})(queries.New(tx).BoardsByID(ctx, queries.BoardsByIDParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+				ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)}))
 		},
 	})
 	registerBoards(r)
@@ -139,7 +121,7 @@ func registerFolders(r *commands.Registry) {
 			return append(errs, optionalID(ids.Folder, "parent_id", p.ParentID)...)
 		},
 		Inverse: func(_ context.Context, _ *commands.Tx, p createFolderPayload) ([]commands.Step, error) {
-			return []commands.Step{{Type: DeleteFolder, Payload: folderIDPayload{ID: p.ID}}}, nil
+			return []commands.Step{{Type: DeleteFolder, Payload: deleteFolderPayload{ID: p.ID}}}, nil
 		},
 		Apply: applyCreateFolder,
 	})
@@ -147,7 +129,7 @@ func registerFolders(r *commands.Registry) {
 	commands.Register(r, commands.Spec[renameFolderPayload]{
 		Type: RenameFolder, Capability: authz.ManageFolders, Scope: scope.ProjectWrite, Touches: folder,
 		Check: func(p renameFolderPayload) input.FieldErrors {
-			return append(folderID(p.ID), field("name", checkName(p.Name))...)
+			return append(entityID(ids.Folder, "id", p.ID), field("name", checkName(p.Name))...)
 		},
 		Inverse: func(ctx context.Context, tx *commands.Tx, p renameFolderPayload) ([]commands.Step, error) {
 			f, err := liveFolderOf(ctx, tx, p.ID)
@@ -169,7 +151,7 @@ func registerFolders(r *commands.Registry) {
 	commands.Register(r, commands.Spec[moveFolderPayload]{
 		Type: MoveFolder, Capability: authz.ManageFolders, Scope: scope.ProjectWrite, Touches: folder,
 		Check: func(p moveFolderPayload) input.FieldErrors {
-			return append(folderID(p.ID), optionalID(ids.Folder, "parent_id", p.ParentID)...)
+			return append(entityID(ids.Folder, "id", p.ID), optionalID(ids.Folder, "parent_id", p.ParentID)...)
 		},
 		Inverse: func(ctx context.Context, tx *commands.Tx, p moveFolderPayload) ([]commands.Step, error) {
 			f, err := liveFolderOf(ctx, tx, p.ID)
@@ -182,19 +164,19 @@ func registerFolders(r *commands.Registry) {
 		Apply: applyMoveFolder,
 	})
 
-	commands.Register(r, commands.Spec[folderIDPayload]{
+	commands.Register(r, commands.Spec[deleteFolderPayload]{
 		Type: DeleteFolder, Capability: authz.ManageFolders, Scope: scope.ProjectWrite, Touches: folder,
-		Check: func(p folderIDPayload) input.FieldErrors { return folderID(p.ID) },
+		Check: func(p deleteFolderPayload) input.FieldErrors { return entityID(ids.Folder, "id", p.ID) },
 		// Deleting a folder that is deleted already does nothing, and its
 		// undo nothing either.
-		Inverse: func(ctx context.Context, tx *commands.Tx, p folderIDPayload) ([]commands.Step, error) {
+		Inverse: func(ctx context.Context, tx *commands.Tx, p deleteFolderPayload) ([]commands.Step, error) {
 			f, err := anyFolder(ctx, tx, p.ID)
 			if err != nil || f.DeletedAt.Valid {
 				return []commands.Step{}, err
 			}
 			return []commands.Step{{Type: RestoreFolder, Payload: folderIDPayload{ID: p.ID}}}, nil
 		},
-		Apply: func(ctx context.Context, tx *commands.Tx, p folderIDPayload) error {
+		Apply: func(ctx context.Context, tx *commands.Tx, p deleteFolderPayload) error {
 			f, err := anyFolder(ctx, tx, p.ID)
 			if err != nil || f.DeletedAt.Valid {
 				return err
@@ -216,7 +198,7 @@ func registerFolders(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[folderIDPayload]{
 		Type: RestoreFolder, Capability: authz.ManageFolders, Scope: scope.ProjectWrite, Touches: folder,
-		Check: func(p folderIDPayload) input.FieldErrors { return folderID(p.ID) },
+		Check: func(p folderIDPayload) input.FieldErrors { return entityID(ids.Folder, "id", p.ID) },
 		// Restoring a folder that is not deleted does nothing, and its undo
 		// nothing either. The undo of a restore deletes the folder, and then
 		// the folders that the restore restored above it, from the nearest.
@@ -231,7 +213,8 @@ func registerFolders(r *commands.Registry) {
 			}
 			steps := make([]commands.Step, len(deleted))
 			for i, d := range deleted {
-				steps[i] = commands.Step{Type: DeleteFolder, Payload: folderIDPayload{ID: ids.Encode(ids.Folder, d.Bytes)}}
+				steps[i] = commands.Step{Type: DeleteFolder, Payload: deleteFolderPayload{
+					ID: ids.Encode(ids.Folder, d.Bytes)}}
 			}
 			return steps, nil
 		},
@@ -250,6 +233,8 @@ func applyCreateFolder(ctx context.Context, tx *commands.Tx, p createFolderPaylo
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.Folder, p.ID)
+	// A folder of the project with the ID is refused for its ID before
+	// anything else is checked, as a board's is (applyCreate).
 	if _, err := q.FolderAny(ctx, queries.FolderAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
 		return commands.Refuse("id", "is the ID of a folder that exists already", nil)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -265,7 +250,7 @@ func applyCreateFolder(ctx context.Context, tx *commands.Tx, p createFolderPaylo
 	}
 	err = q.InsertFolder(ctx, queries.InsertFolderParams{ID: id, WorkspaceID: ws, ProjectID: project, Kind: p.Kind,
 		ParentID: parent, Name: p.Name, SortKey: order, CreatedBy: by(tx)})
-	if taken(err, "folder_pkey") {
+	if database.UniqueViolation(err, "folder_pkey") {
 		return commands.Refuse("id", "is the ID of a folder that exists already", nil)
 	}
 	if err != nil {
@@ -373,13 +358,23 @@ func restoreAncestors(ctx context.Context, tx *commands.Tx, q *queries.Queries, 
 	return nil
 }
 
-// folderID returns the problem of id, the ID of the folder that a command is
-// about, unless it is a folder's ID.
-func folderID(id string) input.FieldErrors {
-	if _, err := ids.Decode(ids.Folder, id); err != nil {
-		return field("id", "is not a folder's ID: "+err.Error())
+// byID returns a function that returns the rows that a query returned, with
+// its error, by the UUIDs of their entities, each with the value that of
+// returns with the entity's UUID, as the revisions or the states of the
+// entities whose IDs the pipeline asks for (commands.Entity), or the query's
+// error.
+func byID[R, V any](of func(R) (pgtype.UUID, V)) func(rows []R, err error) (map[ids.UUID]V, error) {
+	return func(rows []R, err error) (map[ids.UUID]V, error) {
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[ids.UUID]V, len(rows))
+		for _, row := range rows {
+			id, v := of(row)
+			out[id.Bytes] = v
+		}
+		return out, nil
 	}
-	return nil
 }
 
 // uuids returns entities as uuid columns.

@@ -588,6 +588,15 @@ func SetMaintenanceRole(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
+// UniqueViolation reports whether err is a violation of the unique constraint
+// named constraint, as by an insert or an update that gives a row a key that
+// another row has, which its caller answers as a key that is taken.
+func UniqueViolation(err error, constraint string) bool {
+	var pgErr *pgconn.PgError
+	// unique_violation.
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraint
+}
+
 // querier is what pgx.Conn, pgxpool.Pool, and pgx.Tx have in common for
 // reading.
 type querier interface {

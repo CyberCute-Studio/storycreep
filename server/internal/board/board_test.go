@@ -489,7 +489,8 @@ func TestFolderTree(t *testing.T) {
 // without one goes after the folder's last, boards and folders alike, and
 // after its last that is not deleted once a deleted child's key has no key
 // after it, a move to a key places a child between two others, and a move
-// without one of the folder's last child into its folder changes nothing.
+// without one of the folder's last child that is not deleted into its folder
+// changes nothing.
 func TestOrder(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -523,6 +524,16 @@ func TestOrder(t *testing.T) {
 		t.Errorf("the keys of the last child and of the one moved after it are %q and %q, want W and X", c.Order,
 			got.Order)
 	}
+	// So does the folder's last child that is not deleted while a deleted one
+	// comes after it, which, restored, comes after it again.
+	f.must(t, cmd{board.Delete, map[string]any{"id": a.ID}})
+	if res := f.must(t, cmd{board.Move, map[string]any{"id": c.ID, "folder_id": folder}}); len(res.Revisions) != 0 {
+		t.Errorf("moving the folder's last child that is not deleted into it changed %v", res.Revisions)
+	}
+	f.must(t, cmd{board.Restore, map[string]any{"id": a.ID}})
+	if got := f.get(t, c.ID); got.Order != "W" {
+		t.Errorf("the last child that is not deleted, moved to the end, is at %q, want W, before X", got.Order)
+	}
 	sub := folderID()
 	f.must(t, cmd{board.CreateFolder, map[string]any{"id": sub, "kind": "board", "name": "Scenes",
 		"parent_id": folder}})
@@ -541,6 +552,28 @@ func TestOrder(t *testing.T) {
 	f.must(t, cmd{board.Delete, map[string]any{"id": last.ID}})
 	if b := f.create(t, "After", map[string]any{"folder_id": folder}); b.Order != "Z" {
 		t.Errorf("a board added after a deleted child whose key has no key after it is at %q, want Z", b.Order)
+	}
+}
+
+// TestFolderChildren checks that the tables whose rows go into a folder, by a
+// foreign key to it, are the folders' and the boards', which alone a folder's
+// deletion finds in it (FolderHolds), so that a later table of rows in a
+// folder, as the variables' (plan item 34), fails it until a folder that holds
+// its rows that are not deleted is refused its deletion too.
+func TestFolderChildren(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	rows, err := d.Admin(t).Query(context.Background(), `SELECT DISTINCT conrelid::regclass::text FROM pg_constraint
+		WHERE contype = 'f' AND confrelid = 'folder'::regclass ORDER BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tables, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"board", "folder"}; !slices.Equal(tables, want) {
+		t.Errorf("the tables whose rows go into a folder are %v, want %v, which FolderHolds counts", tables, want)
 	}
 }
 
@@ -638,9 +671,10 @@ func TestUndo(t *testing.T) {
 }
 
 // TestBoardUsage checks that creating, deleting, and restoring a board add to
-// the workspace's boards and take from them, so that its usage is a recount
-// of its boards that are not in the trash, to which reconciliation corrects
-// it once it is corrupted.
+// the workspace's boards and take from them, and deleting and restoring its
+// project too, so that its usage is a recount of its boards that are in no
+// trash, to which reconciliation corrects it once it is corrupted, and which
+// the purge of a project in the trash leaves as it is.
 func TestBoardUsage(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -672,6 +706,32 @@ func TestBoardUsage(t *testing.T) {
 	}
 	if used := read(); used != 2 {
 		t.Errorf("after reconciliation, the workspace uses %d boards, want 2", used)
+	}
+	// The boards of a project in the workspace's trash count for nothing, so
+	// that its purge, whose cascade records no delta, leaves no drift.
+	f.must(t, cmd{project.Delete, map[string]any{}})
+	if used := read(); used != 0 {
+		t.Errorf("with the project in the trash, the workspace uses %d boards, want 0", used)
+	}
+	f.must(t, cmd{project.Restore, map[string]any{}})
+	if used := read(); used != 2 {
+		t.Errorf("with the project restored, the workspace uses %d boards, want 2", used)
+	}
+	f.must(t, cmd{project.Delete, map[string]any{}})
+	admin := f.d.Admin(t)
+	if _, err := admin.Exec(ctx, "UPDATE project SET hard_delete_after = now() - interval '1 second' WHERE id = $1",
+		f.project); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := project.Purge(ctx, f.db); err != nil || n != 1 {
+		t.Fatalf("the purge deleted %d projects, %v; want 1", n, err)
+	}
+	var left int
+	if err := admin.QueryRow(ctx, "SELECT count(*) FROM board WHERE workspace_id = $1", f.ws).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if used := read(); used != 0 || left != 0 {
+		t.Errorf("after the purge, the workspace uses %d boards and has %d, want none of either", used, left)
 	}
 }
 

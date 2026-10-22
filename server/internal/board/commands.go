@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
@@ -84,7 +84,7 @@ type slugPayload struct {
 type movePayload struct {
 	ID       string `json:"id" doc:"The board's ID"`
 	FolderID string `json:"folder_id,omitempty" doc:"The ID of the folder of boards that the board goes into, which is not deleted. Without it, the board goes to the top."`
-	Order    string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child, or stays where it is if it is the last child of the folder already."`
+	Order    string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted."`
 }
 
 // idPayload is the payload of a command that needs nothing but its board's
@@ -118,7 +118,7 @@ func registerBoards(r *commands.Registry) {
 	commands.Register(r, commands.Spec[renamePayload]{
 		Type: Rename, Capability: authz.ManageBoards, Scope: scope.ProjectWrite, Touches: board,
 		Check: func(p renamePayload) input.FieldErrors {
-			return append(boardID(p.ID), field("name", checkName(p.Name))...)
+			return append(entityID(ids.Board, "id", p.ID), field("name", checkName(p.Name))...)
 		},
 		Inverse: func(ctx context.Context, tx *commands.Tx, p renamePayload) ([]commands.Step, error) {
 			b, err := liveBoard(ctx, tx, p.ID)
@@ -140,7 +140,7 @@ func registerBoards(r *commands.Registry) {
 	commands.Register(r, commands.Spec[describePayload]{
 		Type: Describe, Capability: authz.ManageBoards, Scope: scope.ProjectWrite, Touches: board,
 		Check: func(p describePayload) input.FieldErrors {
-			return append(boardID(p.ID), field("description", checkDescription(p.Description))...)
+			return append(entityID(ids.Board, "id", p.ID), field("description", checkDescription(p.Description))...)
 		},
 		Inverse: func(ctx context.Context, tx *commands.Tx, p describePayload) ([]commands.Step, error) {
 			b, err := liveBoard(ctx, tx, p.ID)
@@ -163,7 +163,7 @@ func registerBoards(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[colorPayload]{
 		Type: SetColor, Capability: authz.ManageBoards, Scope: scope.ProjectWrite, Touches: board,
-		Check: func(p colorPayload) input.FieldErrors { return boardID(p.ID) },
+		Check: func(p colorPayload) input.FieldErrors { return entityID(ids.Board, "id", p.ID) },
 		Inverse: func(ctx context.Context, tx *commands.Tx, p colorPayload) ([]commands.Step, error) {
 			b, err := liveBoard(ctx, tx, p.ID)
 			if err != nil {
@@ -183,7 +183,7 @@ func registerBoards(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[slugPayload]{
 		Type: SetSlug, Capability: authz.ManageBoards, Scope: scope.ProjectWrite, Touches: board,
-		Check: func(p slugPayload) input.FieldErrors { return boardID(p.ID) },
+		Check: func(p slugPayload) input.FieldErrors { return entityID(ids.Board, "id", p.ID) },
 		Inverse: func(ctx context.Context, tx *commands.Tx, p slugPayload) ([]commands.Step, error) {
 			b, err := liveBoard(ctx, tx, p.ID)
 			if err != nil {
@@ -208,7 +208,7 @@ func registerBoards(r *commands.Registry) {
 	commands.Register(r, commands.Spec[movePayload]{
 		Type: Move, Capability: authz.ManageBoards, Scope: scope.ProjectWrite, Touches: inFolder,
 		Check: func(p movePayload) input.FieldErrors {
-			return append(boardID(p.ID), optionalID(ids.Folder, "folder_id", p.FolderID)...)
+			return append(entityID(ids.Board, "id", p.ID), optionalID(ids.Folder, "folder_id", p.FolderID)...)
 		},
 		Inverse: func(ctx context.Context, tx *commands.Tx, p movePayload) ([]commands.Step, error) {
 			b, err := liveBoard(ctx, tx, p.ID)
@@ -240,7 +240,7 @@ func registerBoards(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[idPayload]{
 		Type: Delete, Capability: authz.ManageBoards, Scope: scope.ProjectWrite, Touches: board,
-		Check: func(p idPayload) input.FieldErrors { return boardID(p.ID) },
+		Check: func(p idPayload) input.FieldErrors { return entityID(ids.Board, "id", p.ID) },
 		// Deleting a board that is in the trash already does nothing, and
 		// its undo nothing either.
 		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
@@ -269,7 +269,7 @@ func registerBoards(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[idPayload]{
 		Type: Restore, Capability: authz.ManageBoards, Scope: scope.ProjectWrite, Touches: inFolder,
-		Check: func(p idPayload) input.FieldErrors { return boardID(p.ID) },
+		Check: func(p idPayload) input.FieldErrors { return entityID(ids.Board, "id", p.ID) },
 		// Restoring a board that is not in the trash does nothing, and its
 		// undo nothing either. The undo of a restore deletes the board, and
 		// then the folders that the restore restored above it, from the
@@ -285,7 +285,7 @@ func registerBoards(r *commands.Registry) {
 				return nil, err
 			}
 			for _, f := range deleted {
-				steps = append(steps, commands.Step{Type: DeleteFolder, Payload: folderIDPayload{
+				steps = append(steps, commands.Step{Type: DeleteFolder, Payload: deleteFolderPayload{
 					ID: ids.Encode(ids.Folder, f.Bytes)}})
 			}
 			return steps, nil
@@ -313,6 +313,12 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.Board, p.ID)
+	// A board of the project with the ID is refused for its ID before
+	// anything else is checked, so that a create sent again with a new
+	// command ID, as an offline client's keep-mine sends it (FR-OFF-04), is
+	// refused for its ID rather than for the slug that its board has taken;
+	// the insert below refuses the ID of a board that this transaction does
+	// not see.
 	if _, err := q.BoardAny(ctx, queries.BoardAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
 		return commands.Refuse("id", "is the ID of a board that exists already", nil)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -340,7 +346,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	}
 	err = q.InsertBoard(ctx, queries.InsertBoardParams{ID: id, WorkspaceID: ws, ProjectID: project, FolderID: folder,
 		SortKey: order, Name: p.Name, Slug: s, Description: p.Description, Color: color, CreatedBy: by(tx)})
-	if taken(err, "board_pkey") {
+	if database.UniqueViolation(err, "board_pkey") {
 		// The ID is another workspace's, or another project's, whose rows
 		// this transaction does not see.
 		return commands.Refuse("id", "is the ID of a board that exists already", nil)
@@ -352,13 +358,6 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 		return err
 	}
 	return tx.AddUsage(usage.Boards, 1)
-}
-
-// taken reports whether err is a unique violation of the constraint, as an
-// insert of a row whose key another row has.
-func taken(err error, constraint string) bool {
-	var pg *pgconn.PgError
-	return errors.As(err, &pg) && pg.Code == "23505" && pg.ConstraintName == constraint
 }
 
 // anyBoard returns the board of the batch's project whose ID is id, a board's
@@ -430,8 +429,10 @@ type child struct {
 // every child from being added after the others, or it refuses the batch if
 // that key has none after it either. moving is the child that moves there,
 // or nil for a new one: it is none of the children that it goes after, and
-// it keeps its key if it is in parent already, after every other child, so
-// that moving the last child to the end changes nothing.
+// it keeps its key if it is in parent already, after every other child that
+// is not deleted, so that moving the last child to the end changes nothing,
+// as it shows nothing, even while a deleted child comes after it, which,
+// restored, then comes after it again, where it was.
 func sortKey(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, kind string, parent pgtype.UUID,
 	given string, moving *child) (string, error) {
 	if given != "" {
@@ -445,7 +446,7 @@ func sortKey(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, k
 	if err != nil {
 		return "", fmt.Errorf("board: read the folder's last keys: %w", err)
 	}
-	if moving != nil && sameUUID(moving.parent, parent) && moving.key > last.Last {
+	if moving != nil && sameUUID(moving.parent, parent) && moving.key > last.LastLive {
 		return moving.key, nil
 	}
 	for _, k := range []string{last.Last, last.LastLive} {
@@ -575,25 +576,23 @@ func newID(kind ids.Kind, id string) input.FieldErrors {
 	return nil
 }
 
-// boardID returns the problem of id, the ID of the board that a command is
-// about, unless it is a board's ID.
-func boardID(id string) input.FieldErrors {
-	if _, err := ids.Decode(ids.Board, id); err != nil {
-		return field("id", "is not a board's ID: "+err.Error())
-	}
-	return nil
-}
-
-// optionalID returns the problem of the payload's field name, unless its
-// value id is "" or an ID of the kind.
-func optionalID(kind ids.Kind, name, id string) input.FieldErrors {
-	if id == "" {
-		return nil
-	}
+// entityID returns the problem of the payload's field name, unless its value
+// id is an ID of the kind, as the id of the board or the folder that a
+// command is about.
+func entityID(kind ids.Kind, name, id string) input.FieldErrors {
 	if _, err := ids.Decode(kind, id); err != nil {
 		return field(name, fmt.Sprintf("is not a %s's ID: %v", kind, err))
 	}
 	return nil
+}
+
+// optionalID returns the problem of the payload's field name as entityID
+// does, unless its value id is "", for none.
+func optionalID(kind ids.Kind, name, id string) input.FieldErrors {
+	if id == "" {
+		return nil
+	}
+	return entityID(kind, name, id)
 }
 
 // checkName says what is wrong with a board's or a folder's name, or returns

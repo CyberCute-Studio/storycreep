@@ -41,7 +41,8 @@ func (q *Queries) AddUsageCounters(ctx context.Context, arg AddUsageCountersPara
 
 const boardDrift = `-- name: BoardDrift :one
 SELECT (
-    (SELECT count(*) FROM board b WHERE b.workspace_id = $1 AND b.deleted_at IS NULL)
+    (SELECT count(*) FROM board b JOIN project p ON p.workspace_id = b.workspace_id AND p.id = b.project_id
+        WHERE b.workspace_id = $1 AND b.deleted_at IS NULL AND p.deleted_at IS NULL)
     - coalesce((SELECT c.value FROM usage_counter c WHERE c.workspace_id = $1 AND c.key = 'boards'), 0)
     - coalesce((SELECT sum(d.delta) FROM usage_delta d WHERE d.workspace_id = $1 AND d.key = 'boards'),
         0)
@@ -49,8 +50,9 @@ SELECT (
 `
 
 // BoardDrift returns how many boards the workspace's projects have that are
-// not in their trash, less its usage of boards: what reconciliation adds to
-// its usage so that the usage is the count again.
+// in no trash, neither their project's nor, with their project, the
+// workspace's, less its usage of boards: what reconciliation adds to its
+// usage so that the usage is the count again.
 func (q *Queries) BoardDrift(ctx context.Context, workspaceID pgtype.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, boardDrift, workspaceID)
 	var drift int64

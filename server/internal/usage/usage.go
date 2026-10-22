@@ -63,8 +63,10 @@ const (
 	// nor in its trash, which alone count towards its projects limit (PRD
 	// FR-PROJ-01, package project). It is counted exactly.
 	Projects Key = "projects"
-	// Boards is how many boards a workspace's projects have that are not in
-	// their trash.
+	// Boards is how many boards a workspace's projects have that are in no
+	// trash: neither in their project's (package board) nor, with their
+	// project, in the workspace's (package project), so that the purge of a
+	// project in the trash, whose cascade records no delta, leaves no drift.
 	Boards Key = "boards"
 	// Nodes is how many nodes a workspace's projects have.
 	Nodes Key = "nodes"

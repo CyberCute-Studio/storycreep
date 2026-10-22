@@ -681,7 +681,8 @@ func TestUpgradeMatchesFreshInstall(t *testing.T) {
 // boards' migration gives each project the slug that a project of its name
 // is given when it is created (slug.Derive), so that a name in Czech, German,
 // or Danish keeps its words whole, rather than having them split at each
-// letter outside ASCII.
+// letter outside ASCII, and a mark that is not an accent is dropped, or
+// splits the name, as slug.Derive has it.
 func TestProjectSlugBackfill(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -714,6 +715,9 @@ func TestProjectSlugBackfill(t *testing.T) {
 	for _, name := range []string{
 		"Příliš žluťoučký kůň", "Tomáš Novák", "Straße am Hafen", "ØRESUND — Łódź", "Þingvellir Ærø", "İstanbul",
 		"ǅemal Ⅻ", "ＦＵＬＬ ｗｉｄｔｈ", "最初の出会い", "CON", "Com0", "Harbour Intro",
+		// A variation selector is dropped, as a nonspacing mark, and an
+		// enclosing mark, as a keycap's, splits the name.
+		"Act x️y", "Keycap 1️⃣ Two", "A⃝B", "v⃗ field",
 		strings.TrimSpace(strings.Repeat("Lighthouse ", 9)),
 	} {
 		var id string

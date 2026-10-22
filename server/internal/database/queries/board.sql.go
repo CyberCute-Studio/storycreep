@@ -421,7 +421,9 @@ type FolderHoldsParams struct {
 }
 
 // FolderHolds returns whether the folder id of the project holds a folder or
-// a board that is not deleted.
+// a board that is not deleted. A later table whose rows go into a folder, as
+// the variables and the components (plan items 34 and 36), adds its rows
+// here, which TestFolderChildren holds it to.
 func (q *Queries) FolderHolds(ctx context.Context, arg FolderHoldsParams) (bool, error) {
 	row := q.db.QueryRow(ctx, folderHolds, arg.WorkspaceID, arg.ProjectID, arg.ID)
 	var holds bool
@@ -774,6 +776,26 @@ func (q *Queries) MoveFolder(ctx context.Context, arg MoveFolderParams) (int64, 
 	var rev int64
 	err := row.Scan(&rev)
 	return rev, err
+}
+
+const projectBoardCount = `-- name: ProjectBoardCount :one
+SELECT count(*) FROM board
+WHERE workspace_id = $1 AND project_id = $2 AND deleted_at IS NULL
+`
+
+type ProjectBoardCountParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+}
+
+// ProjectBoardCount returns how many boards the project has that are not in
+// its trash: what the project adds to its workspace's boards while it is not
+// in the workspace's trash (package project).
+func (q *Queries) ProjectBoardCount(ctx context.Context, arg ProjectBoardCountParams) (int64, error) {
+	row := q.db.QueryRow(ctx, projectBoardCount, arg.WorkspaceID, arg.ProjectID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const restoreBoard = `-- name: RestoreBoard :one

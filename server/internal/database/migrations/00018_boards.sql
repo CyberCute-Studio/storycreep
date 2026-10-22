@@ -16,16 +16,24 @@
 -- a rename. Projects do not share files, so two may have the same slug. The
 -- projects that exist already are given one from their names as package slug
 -- derives it (slug.Derive): the name in Unicode's compatibility decomposition
--- (NFKD), without the accents and the other marks that it puts after a
--- letter, with the letters that do not decompose, as the German sharp s,
--- spelled in ASCII as slug.Base spells them, and in lowercase, each run of
--- what is then not an ASCII letter or digit a hyphen, so that a name in Czech
--- keeps its words whole. The patterns name those letters by their code
--- points, so that the migration holds no letter outside ASCII, and a database
--- whose encoding is not UTF-8, which normalize needs, keeps the name's letters
--- outside ASCII instead, each of which then splits the name as a space does.
--- Their owners can change it. A row added without one, as by a test, has
--- project.
+-- (NFKD), without the nonspacing marks that it puts after a letter, the
+-- accents among them, with the letters that do not decompose, as the German
+-- sharp s, spelled in ASCII as slug.Base spells them, and in lowercase, each
+-- run of what is then not an ASCII letter or digit a hyphen, an enclosing
+-- mark, as a keycap's, among them, so that a name in Czech keeps its words
+-- whole. The marks dropped are the nonspacing marks of Unicode's blocks of
+-- combining marks, which are those of the names in Latin, Greek, and Cyrillic
+-- script, and the variation selectors, of Unicode 15.0, as package slug's
+-- tables have them. slug.Base drops every nonspacing mark, so a mark of
+-- another block, as a Hebrew point or a Devanagari sign, splits the name here
+-- where slug.Derive drops it, which gives another slug only where the mark
+-- comes between two of the letters and digits that the slug keeps, rather
+-- than after a letter of its own script, which splits the name anyway. The
+-- patterns name those characters by their code points, so that the migration
+-- holds no letter outside ASCII, and a database whose encoding is not UTF-8,
+-- which normalize needs, keeps the name's letters outside ASCII instead, each
+-- of which then splits the name as a space does. Their owners can change it.
+-- A row added without one, as by a test, has project.
 ALTER TABLE project ADD COLUMN slug text NOT NULL DEFAULT 'project';
 UPDATE project p SET slug = CASE
 		WHEN d.s = '' THEN 'project'
@@ -42,7 +50,8 @@ FROM (
 			regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(
 			regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(
 				normalize(name, NFKD),
-				E'[\\u0300-\\u036f\\u1ab0-\\u1aff\\u1dc0-\\u1dff\\u20d0-\\u20ff\\ufe20-\\ufe2f]', '', 'g'),
+				E'[\\u0300-\\u036f\\u1ab0-\\u1abd\\u1abf-\\u1ace\\u1dc0-\\u1dff\\u20d0-\\u20dc\\u20e1'
+					|| E'\\u20e5-\\u20f0\\ufe00-\\ufe0f\\ufe20-\\ufe2f]', '', 'g'),
 				E'[\\u00df\\u1e9e]', 'ss', 'g'),
 				E'[\\u00e6\\u00c6]', 'ae', 'g'),
 				E'[\\u0153\\u0152]', 'oe', 'g'),

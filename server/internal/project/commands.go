@@ -318,8 +318,8 @@ func counted(p queries.Project) int64 {
 // deletes, or restores the batch's project with update, which returns the
 // project's new revision, or pgx.ErrNoRows if the project is as the command
 // would leave it already, and which records what the change adds to the
-// workspace's projects, or takes from them, and, unless action is "", the
-// event action in the audit log.
+// workspace's projects, or takes from them, and to its boards, and, unless
+// action is "", the event action in the audit log.
 func lifecycle(update func(ctx context.Context, q *queries.Queries, by queries.ArchiveProjectParams) (int64, error),
 	action audit.Action) func(ctx context.Context, tx *commands.Tx, _ emptyPayload) error {
 	return func(ctx context.Context, tx *commands.Tx, _ emptyPayload) error {
@@ -345,6 +345,25 @@ func lifecycle(update func(ctx context.Context, q *queries.Queries, by queries.A
 		}
 		if err := tx.AddUsage(usage.Projects, counted(after)-counted(before)); err != nil {
 			return err
+		}
+		// The boards of a project in the workspace's trash count for nothing,
+		// so that its purge, whose cascade records no delta, leaves the
+		// workspace's boards as they are: deleting the project takes its
+		// boards that are not in its own trash from them, and restoring it
+		// adds them back. The batch holds the project's lock, under which its
+		// boards change, so they are as counted until it commits.
+		if before.DeletedAt.Valid != after.DeletedAt.Valid {
+			boards, err := q.ProjectBoardCount(ctx, queries.ProjectBoardCountParams{
+				WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID())})
+			if err != nil {
+				return fmt.Errorf("project: count the project's boards: %w", err)
+			}
+			if after.DeletedAt.Valid {
+				boards = -boards
+			}
+			if err := tx.AddUsage(usage.Boards, boards); err != nil {
+				return err
+			}
 		}
 		if action == "" {
 			return nil

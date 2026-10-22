@@ -62,7 +62,9 @@ SELECT up.id, up.deleted::boolean AS deleted FROM up WHERE NOT up.is_cycle ORDER
 
 -- name: FolderHolds :one
 -- FolderHolds returns whether the folder id of the project holds a folder or
--- a board that is not deleted.
+-- a board that is not deleted. A later table whose rows go into a folder, as
+-- the variables and the components (plan items 34 and 36), adds its rows
+-- here, which TestFolderChildren holds it to.
 SELECT (
     EXISTS (SELECT 1 FROM folder f WHERE f.workspace_id = @workspace_id AND f.project_id = @project_id
         AND f.parent_id = @id AND f.deleted_at IS NULL)
@@ -168,6 +170,13 @@ LIMIT @max_rows;
 -- revisions that a batch expects.
 SELECT id, rev FROM board
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[]);
+
+-- name: ProjectBoardCount :one
+-- ProjectBoardCount returns how many boards the project has that are not in
+-- its trash: what the project adds to its workspace's boards while it is not
+-- in the workspace's trash (package project).
+SELECT count(*) FROM board
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND deleted_at IS NULL;
 
 -- name: BoardSlugsFrom :many
 -- BoardSlugsFrom returns the slugs of the project's boards, those in the

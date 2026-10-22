@@ -237,7 +237,13 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			"409 project_archived, unless each of its commands applies to an archived project, and a batch that " +
 			"would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that " +
 			"its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose " +
-			"details locate each problem, as body.commands[2].payload.name." +
+			"details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch " +
+			"for what the project's state makes of its payload, at the payload's field, as " +
+			"body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not " +
+			"take, as the ID of a folder that the project does not have, or that is deleted, or with the code that " +
+			"the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a " +
+			"slug that another board has, or 409 folder_not_empty for a folder to delete that holds folders or " +
+			"boards." +
 			"\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch " +
 			"sent again, as when its answer was lost, is answered as it was the first time and applies nothing " +
 			"again, before the project's state and the workspace's limits are checked: the same batch, with the " +
