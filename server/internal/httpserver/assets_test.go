@@ -480,6 +480,25 @@ func storedFiles(t *testing.T, dir string) []string {
 	return out
 }
 
+// ageFiles makes every blob in the local driver's directory dir a day old,
+// as the orphan reconciliation deletes a blob that no row refers to only
+// once it was stored a day ago, but no file whose name starts with a dot,
+// as one that Put left half written, which the driver's listing removes
+// once it is an hour old.
+func ageFiles(t *testing.T, dir string) {
+	t.Helper()
+	long := time.Now().Add(-25 * time.Hour)
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || strings.HasPrefix(d.Name(), ".") {
+			return err
+		}
+		return os.Chtimes(p, long, long)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestThumbnailsAndOrphans checks the jobs of the assets: the thumbnail job
 // makes a PNG thumbnail of a large image, which the thumbnail route serves
 // once it is made, and the file until then, which a browser keeps for half a
@@ -572,7 +591,8 @@ func TestThumbnailsAndOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The purge of a project deletes its assets by the cascade of their
-	// foreign key, as purging it does.
+	// foreign key, as purging it does, a day after their files were stored.
+	ageFiles(t, dir)
 	admin := d.Admin(t)
 	if _, err := admin.Exec(context.Background(), "DELETE FROM project WHERE id = ANY($1)",
 		[]ids.UUID{decode(t, ids.Project, p), decode(t, ids.Project, cove)}); err != nil {
@@ -620,6 +640,7 @@ func TestReconcileManyOrphans(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	ageFiles(t, dir)
 	deleted, err := s.assets.Reconcile(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -884,12 +905,23 @@ func TestReconcileMendsThumbnails(t *testing.T) {
 	if thumb == "" {
 		t.Fatalf("the store holds %v, want a thumbnail", storedFiles(t, dir))
 	}
-	// The store lost the thumbnail, which the route then finds nothing of.
+	// The store lost the thumbnail, in whose place the route serves the
+	// file, as before the thumbnail was made.
 	if err := os.Remove(filepath.Join(dir, filepath.FromSlash(thumb))); err != nil {
 		t.Fatal(err)
 	}
 	res := call(s.main, http.MethodGet, assetPath(p, a.ID)+"/thumbnail", nil, owner.header(false))
-	wantCode(t, "a thumbnail that the store lost", res, http.StatusNotFound, api.CodeNotFound)
+	if res.status != http.StatusOK || !bytes.Equal(res.body, large) || res.header.Get("Cache-Control") != pendingCache ||
+		res.header.Get("Content-Type") != asset.MimePNG {
+		t.Errorf("a thumbnail that the store lost: %d, %d bytes, %v; want the file, with Cache-Control %q",
+			res.status, len(res.body), res.header, pendingCache)
+	}
+	conditional := owner.header(false)
+	conditional.Set("If-None-Match", res.header.Get("ETag"))
+	if again := call(s.main, http.MethodGet, assetPath(p, a.ID)+"/thumbnail", nil, conditional); again.status !=
+		http.StatusNotModified {
+		t.Errorf("a thumbnail that the store lost, asked for again with the file's ETag: %d, want 304", again.status)
+	}
 	reconcile()
 	if again := thumbnail(); !bytes.Equal(again, made) {
 		t.Error("the thumbnail made again differs")

@@ -68,7 +68,8 @@ func TestReconcileGoesOn(t *testing.T) {
 		" SET idle_in_transaction_session_timeout = '100ms'"); err != nil {
 		t.Fatal(err)
 	}
-	local, err := blob.OpenLocal(t.TempDir())
+	dir := t.TempDir()
+	local, err := blob.OpenLocal(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,6 +83,7 @@ func TestReconcileGoesOn(t *testing.T) {
 		if err := local.Put(ctx, key, []byte("x"), MimePNG); err != nil {
 			t.Fatal(err)
 		}
+		age(t, dir, key)
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
@@ -147,6 +149,60 @@ func TestDeleteBlobsOutlastContext(t *testing.T) {
 	}
 }
 
+// age makes the blob of key, in the local driver's directory dir, older than
+// orphanAge, as one stored a day ago, which the reconciliation deletes if no
+// row refers to it.
+func age(t *testing.T, dir, key string) {
+	t.Helper()
+	long := time.Now().Add(-orphanAge - time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, filepath.FromSlash(key)), long, long); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReconcileKeepsYoungBlobs checks that the reconciliation deletes a blob
+// that no row refers to only once it was stored orphanAge ago, as the store
+// says, so that an instance on a copy of another's database just made, which
+// takes the store for its own until the other claims it again, deletes none
+// of the files that the other stored since the copy was made.
+func TestReconcileKeepsYoungBlobs(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	local, err := blob.OpenLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	workspaceID := ids.New()
+	put := func(b byte) string {
+		var sum [32]byte
+		sum[31] = b
+		key := blobKey(workspaceID, sum[:], "png")
+		if err := local.Put(ctx, key, []byte("x"), MimePNG); err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	stored := func(key string) bool {
+		_, err := local.Stat(ctx, key)
+		return err == nil
+	}
+	old, young := put(1), put(2)
+	age(t, dir, old)
+	s := &Service{db: dbtest.New(t).Open(t)}
+	always := func() bool { return true }
+	if n, err := s.reconcileWorkspace(ctx, local, workspaceID, claimed(t, local, "a"), always); n != 1 || err != nil ||
+		stored(old) || !stored(young) {
+		t.Errorf("the run deleted %d blobs: %v, kept the old %t and the young %t; want the old one deleted alone",
+			n, err, stored(old), stored(young))
+	}
+	age(t, dir, young)
+	if n, err := s.reconcileWorkspace(ctx, local, workspaceID, claimed(t, local, "a"), always); n != 1 || err != nil ||
+		stored(young) {
+		t.Errorf("once the young blob is old, the run deleted %d blobs: %v; want it deleted", n, err)
+	}
+}
+
 // claimed writes the store's owner blob as a run of the database whose
 // identity is self writes it, and returns the run's claim.
 func claimed(t *testing.T, store blob.Store, self string) *claim {
@@ -165,7 +221,8 @@ func claimed(t *testing.T, store blob.Store, self string) *claim {
 // that finds its own claim deletes them.
 func TestCheckClaim(t *testing.T) {
 	ctx := context.Background()
-	local, err := blob.OpenLocal(t.TempDir())
+	dir := t.TempDir()
+	local, err := blob.OpenLocal(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,6 +242,7 @@ func TestCheckClaim(t *testing.T) {
 		if err := local.Put(ctx, key, []byte("x"), MimePNG); err != nil {
 			t.Fatal(err)
 		}
+		age(t, dir, key)
 		cl := claimed(t, local, "a")
 		if tt.blob == "" {
 			err = local.Delete(ctx, OwnerKey)
@@ -424,8 +482,9 @@ func TestReconcileWithoutWorkspaces(t *testing.T) {
 // identity, claims the store with a token of its own, it deletes nothing,
 // still claims the store, so that the copy finds its claim in turn, and goes
 // on deleting nothing, although the store holds its own claim again, until
-// the owner blob is deleted, as once the copy is gone; a claim whose write
-// the store refused leaves the token before, which it takes as its own; a
+// the owner blob is deleted, as once the copy is gone; claims whose writes
+// the store refused, however many in a row, leave the token before, which it
+// takes as its own; a
 // second database, as a copy of the first restored into a database of its
 // own to try a new version on, which has the same workspaces, deletes none of
 // the blobs that the first stores, which its own rows do not refer to, and
@@ -465,6 +524,7 @@ func TestReconcileOwner(t *testing.T) {
 		if err := local.Put(ctx, key, []byte("x"), MimePNG); err != nil {
 			t.Fatal(err)
 		}
+		age(t, dir, key)
 		return key
 	}
 	stored := func(key string) bool {
@@ -514,15 +574,19 @@ func TestReconcileOwner(t *testing.T) {
 	if n, err := first.Reconcile(ctx); n != 1 || err != nil || stored(orphan) {
 		t.Errorf("once the owner blob was deleted, the reconciliation deleted %d blobs: %v; want 1", n, err)
 	}
+	// The store refuses the writes of two claims in a row, as when its disk
+	// is full, and then takes the next.
 	before := owner()
-	if _, err := first.Reconcile(ctx); err != nil {
-		t.Fatal(err)
+	for range 2 {
+		if _, err := first.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		write(before)
 	}
-	write(before)
 	orphan = put(6)
 	if n, err := first.Reconcile(ctx); n != 1 || err != nil || stored(orphan) {
-		t.Errorf("after a claim whose write the store refused, the reconciliation deleted %d blobs: %v; want 1", n,
-			err)
+		t.Errorf("after two claims in a row whose writes the store refused, the reconciliation deleted %d blobs: "+
+			"%v; want 1", n, err)
 	}
 	claimed := owner()
 

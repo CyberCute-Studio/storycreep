@@ -366,7 +366,9 @@ func registerAssets(m *api.Mux, assets *asset.Service) {
 				"made, the local driver's file, and a 304, have Cache-Control: " + pendingCache + " instead, and " +
 				"an S3 bucket's is answered with 302 Found to the file's own route, /content, with Cache-Control: " +
 				pendingCache + ", so that a browser asks for the thumbnail again soon after it is made, and reads " +
-				"the file meanwhile as it keeps it from that route."},
+				"the file meanwhile as it keeps it from that route. The local driver serves the file so too in " +
+				"place of a thumbnail that its directory lost, as one that was not copied with the files, until " +
+				"the server makes the thumbnail again."},
 	} {
 		api.Register(m, api.ReadProject, huma.Operation{
 			OperationID: file.id,
@@ -434,7 +436,10 @@ func fileResponses(thumbnail bool) map[string]*huma.Response {
 // thumbnail that is not made yet, whose file is served instead, is answered
 // with pendingCache rather than fileCache or redirectCache, and, if the
 // store signs URLs, with a redirect to the file's own route rather than to
-// the store (pendingCache).
+// the store (pendingCache), and so is the file that the local driver serves
+// in place of a thumbnail that the store lost, until the orphan
+// reconciliation makes it again. A URL that the store signs is not checked,
+// so a thumbnail that a bucket lost is not found until then.
 func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, thumbnail bool) (
 	*huma.StreamResponse, error) {
 	pid, aid, actor, err := assetActor(ctx, in.ProjectID, in.AssetID)
@@ -470,6 +475,19 @@ func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, 
 		return nil, api.NotModifiedWith(etag, cache)
 	}
 	body, size, err := assets.Open(ctx, loc)
+	if errors.Is(err, asset.ErrNotFound) && loc.Thumbnail {
+		// The store lost the thumbnail, as one that was not copied with the
+		// files, which the orphan reconciliation makes again: the file is
+		// served meanwhile, as before the thumbnail was made.
+		if loc, err = assets.Locate(ctx, actor, pid, aid, false); err != nil {
+			return nil, assetError(err)
+		}
+		etag, cache = api.ETag([]byte(loc.Key)), pendingCache
+		if api.IfNoneMatch(in.IfNoneMatch, etag) {
+			return nil, api.NotModifiedWith(etag, cache)
+		}
+		body, size, err = assets.Open(ctx, loc)
+	}
 	if err != nil {
 		return nil, assetError(err)
 	}

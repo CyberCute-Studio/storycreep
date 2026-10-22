@@ -272,15 +272,16 @@ var keys = []key{
 			"that setup chose, or else in `" + DefaultAssetDir + "`, which the `BlobDriver` capability shows as " +
 			"`setup`. The directory is created if it does not exist. Hosted mode, which stores no file on the " +
 			"instance's disk, requires an `s3://` URL. The server deletes every file of its workspaces that its own " +
-			"database does not refer to, and writes the store's object `storycreep-owner`, which names its " +
-			"database, with a token that the database records, each hour, unless the object names another " +
-			"database that wrote it within the week, when it deletes nothing, so that an instance that runs on a " +
-			"copy of another's database restored from a dump, which names the bucket that setup chose, deletes " +
-			"none of the other's files. But the other deletes the copy's, and a copy of the database's files, as " +
-			"a snapshot, a point-in-time restore, or a branch of a managed database, is the same database, which " +
-			"may delete the files that the other stored since the copy was made before the two find each other's " +
-			"tokens, when neither deletes any for a week, so two instances never share a bucket: such an " +
-			"instance sets this key to a bucket or a directory of its own. Where the URL is shown, its secret key " +
+			"database does not refer to, once the file is a day old, and writes the store's object " +
+			"`storycreep-owner`, which names its database, with a token that the database records, each hour, " +
+			"unless the object names another database that wrote it within the week, when it deletes nothing, so " +
+			"that an instance that runs on a copy of another's database restored from a dump, which names the " +
+			"bucket that setup chose, deletes none of the other's files. But the other deletes the copy's, and a " +
+			"copy of the database's files, as a snapshot, a point-in-time restore, or a branch of a managed " +
+			"database, is the same database until the two find each other's tokens, within the hour, after which " +
+			"neither deletes any file for a week, and before which neither finds the files that the other stored " +
+			"since the copy was made a day old, so two instances never share a bucket: such an instance sets this " +
+			"key to a bucket or a directory of its own. Where the URL is shown, its secret key " +
 			"is `" + secret.Redacted + "`.",
 		valuesDoc:  "The absolute path of a directory, or an `s3://` URL",
 		example:    "s3://AKIAEXAMPLE:secret@s3.eu-central-1.amazonaws.com/storycreep?region=eu-central-1",

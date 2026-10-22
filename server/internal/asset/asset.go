@@ -236,7 +236,7 @@ func uploadable(p project.Visible) error {
 // An upload that the checks under the blob's lock refuse, as when another
 // upload took the workspace's storage meanwhile, or the actor's role was
 // revoked, has stored its blob already, which no asset refers to, and which
-// the orphan reconciliation deletes within the hour (Reconcile).
+// the orphan reconciliation deletes a day later (Reconcile).
 //
 // It checks the upload in a transaction, then stores the blob outside any,
 // so that no connection of the pool, and no lock, waits for the store to
@@ -511,6 +511,9 @@ type Located struct {
 	// made it yet, so that Key is the asset's file, which the thumbnail
 	// route serves until then.
 	Pending bool
+	// Thumbnail is set if Key is a thumbnail that the job made, rather than
+	// the asset's file.
+	Thumbnail bool
 }
 
 // Locate returns the file of the asset assetID of the project projectID, or
@@ -540,7 +543,7 @@ func (s *Service) Locate(ctx context.Context, actor commands.Actor, projectID, a
 		out = Located{Asset: assetOf(a), Key: a.StorageKey, ContentType: a.Mime,
 			Pending: thumbnail && !a.ThumbnailKey.Valid}
 		if thumbnail && a.ThumbnailKey.Valid && a.ThumbnailKey.String != a.StorageKey {
-			out.Key, out.ContentType = a.ThumbnailKey.String, MimePNG
+			out.Key, out.ContentType, out.Thumbnail = a.ThumbnailKey.String, MimePNG, true
 		}
 		return nil
 	})

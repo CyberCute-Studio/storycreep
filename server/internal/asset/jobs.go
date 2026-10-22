@@ -54,9 +54,19 @@ func (thumbnailJob) Kind() string { return "asset_thumbnail" }
 
 // reconciliationInterval is how often the orphan reconciliation runs. A blob
 // that no asset refers to any longer, as after its project is purged, is
-// deleted within this long, or, on an instance with more workspaces than a
-// run reaches, by a later run.
+// deleted within this long once it is orphanAge old, or, on an instance with
+// more workspaces than a run reaches, by a later run.
 const reconciliationInterval = time.Hour
+
+// orphanAge is how long ago a blob that no asset refers to must have been
+// stored for the orphan reconciliation to delete it, as the store says: long
+// enough that an instance on a copy of another's database, which takes the
+// store for its own until the other claims it again, within the hour
+// (claimStore), finds none of the files that the other stored since the copy
+// was made old enough by then, while the files of a purged project, which
+// were uploaded before it was, go at once, and those of an upload that
+// failed a day later, which take up no storage_bytes meanwhile.
+const orphanAge = 24 * time.Hour
 
 // orphans is the job that deletes the blobs that no asset refers to (ADR-009).
 type orphans struct{}
@@ -229,13 +239,14 @@ const listBudget = sweep.Budget / 2
 
 // Reconcile deletes every blob of a workspace that no asset of the workspace
 // refers to, as its file or its thumbnail, as after the assets' project is
-// purged, or an upload stored its blob and failed, and returns how many it
-// deleted (ADR-009). It works on each workspace in transactions of the
-// workspace (§5.4): one that reads the keys that its rows refer to, of the
-// blobs that it listed, and then one for each batch of those that none
-// referred to (deleteOrphans), which takes the blobs' locks, one of which an
-// upload holds while it checks that the store has its blob and adds the row
-// that refers to it, and the thumbnail job while it stores a thumbnail and
+// purged, or an upload stored its blob and failed, once the store says that
+// it was stored at least orphanAge ago, and returns how many it deleted
+// (ADR-009). It works on each workspace in transactions of the workspace
+// (§5.4): one that reads the keys that its rows refer to, of the blobs that
+// it listed, and then one for each batch of those that none referred to
+// (deleteOrphans), which takes the blobs' locks, one of which an upload
+// holds while it checks that the store has its blob and adds the row that
+// refers to it, and the thumbnail job while it stores a thumbnail and
 // records it, and checks the rows again, so that it never deletes a blob
 // that a row is about to refer to. A batch that fails, as one of a blob that
 // the store refuses to delete, is left to the next run, and the batches after
@@ -252,15 +263,16 @@ const listBudget = sweep.Budget / 2
 // instance that runs on a copy of another's database, as one to try a new
 // version on, or to rehearse a restore, has the same workspaces, and the
 // bucket that setup chose, and would otherwise delete every file that the
-// other stores after the copy was made, which its own rows do not refer to.
-// In a store that another database owns, or that a copy of this database's
-// files writes too, it deletes nothing, mends the thumbnails all the same,
-// warns in the service's log, and returns an *OwnerError, which ends its job
-// cancelled, with the error, rather than attempt it again, as the next
-// hour's run does, unless a workspace failed too, when it returns both, and
-// the job is attempted again. It reads the store's claim again before each
-// batch of deletions, and deletes no more once another has claimed the store
-// since, as one that claimed it at the same moment.
+// other stores after the copy was made, which its own rows do not refer to,
+// once it is orphanAge old. In a store that another database owns, or that a
+// copy of this database's files writes too, it deletes nothing, mends the
+// thumbnails all the same, warns in the service's log, and returns an
+// *OwnerError, which ends its job cancelled, with the error, rather than
+// attempt it again, as the next hour's run does, unless a workspace failed
+// too, when it returns both, and the job is attempted again. It reads the
+// store's claim again before each batch of deletions, and deletes no more
+// once another has claimed the store since, as one that claimed it at the
+// same moment.
 //
 // It lists a workspace's blobs from a key picked at random, past the last to
 // the first, for listBudget at most, so that a run that cannot list all of a
@@ -400,15 +412,24 @@ type claim struct {
 // tokens, until one of the two writes the blob again: the other then finds a
 // token of its identity that it did not record, which it records the time
 // of, and for ownerTakeover after the last time, it writes its own token
-// still, so that the other finds it, and deletes nothing either. So a copy
-// deletes another's files only if it runs before the other has claimed the
-// store since the copy was made, as within the hour, and only once.
+// still, so that the other finds it, and deletes nothing either. A copy that
+// runs before the other has claimed the store since the copy was made, as
+// one started at once on a copy just made, whose first run comes at its
+// start, takes the store for its own until then, but deletes none of the
+// files that the other stored since, which are younger than orphanAge, by
+// when the other has claimed the store again.
 //
-// It reads the blob, and records the token, in a transaction that locks the
-// instance's row, so that of two runs of this database at once, the second
-// finds what the first recorded, and asks the store for lockedStoreTimeout
-// at most meanwhile. It writes the blob once the transaction has committed,
-// so that a token that it writes is always recorded.
+// It writes a new token only once it finds the last one that it recorded in
+// the store, or none of this database's: if the blob still holds the token
+// before, as when the store refused to write the last, or has not written it
+// yet for another run of this database at the same time, it writes the last
+// again, and records nothing, so that the store holds one of the two tokens
+// recorded however many writes in a row fail. It reads the blob, and records
+// the token, in a transaction that locks the instance's row, so that of two
+// runs of this database at once, the second finds what the first recorded,
+// and asks the store for lockedStoreTimeout at most meanwhile. It writes the
+// blob once the transaction has committed, so that a token that it writes is
+// always recorded.
 func (s *Service) claimStore(ctx context.Context, store blob.Store) (*claim, error) {
 	var cl *claim
 	var conflict pgtype.Timestamptz
@@ -433,22 +454,27 @@ func (s *Service) claimStore(ctx context.Context, store blob.Store) (*claim, err
 		}
 		fresh := owner.found && time.Since(owner.written) < ownerTakeover
 		conflict = last.AssetStoreConflictAt
+		token = fmt.Sprintf("%016x%016x", rand.Uint64(), rand.Uint64())
+		record := true
 		switch {
 		case !owner.found, owner.identity != self && !fresh:
 			conflict = pgtype.Timestamptz{}
 		case owner.identity != self:
 			cl = &claim{self: self, refused: &OwnerError{Owner: owner.identity, Self: self, Since: owner.written}}
 			return nil
-		case owner.token != "" && (owner.token == last.AssetStoreClaim.String ||
-			owner.token == last.AssetStoreClaimPrevious.String):
+		case owner.token != "" && last.AssetStoreClaim.Valid && owner.token == last.AssetStoreClaimPrevious.String:
+			// The last token's write has not reached the store.
+			token, record = last.AssetStoreClaim.String, false
+		case owner.token != "" && owner.token == last.AssetStoreClaim.String:
 		case fresh:
 			conflict = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 		default:
 			conflict = pgtype.Timestamptz{}
 		}
-		token = fmt.Sprintf("%016x%016x", rand.Uint64(), rand.Uint64())
-		if err := q.SetStoreClaim(ctx, queries.SetStoreClaimParams{Claim: token, ConflictAt: conflict}); err != nil {
-			return fmt.Errorf("asset: record the claim of the store: %w", err)
+		if record {
+			if err := q.SetStoreClaim(ctx, queries.SetStoreClaimParams{Claim: token, ConflictAt: conflict}); err != nil {
+				return fmt.Errorf("asset: record the claim of the store: %w", err)
+			}
 		}
 		cl = &claim{self: self, content: self + " " + token + "\n"}
 		return nil
@@ -569,7 +595,7 @@ func (s *Service) reconcileWorkspace(ctx context.Context, store blob.Store, work
 	}
 	var candidates []orphan
 	for _, key := range l.keys {
-		if cl.refused != nil || known[key] {
+		if cl.refused != nil || known[key] || l.young[key] {
 			continue
 		}
 		m := workspaceKey.FindStringSubmatch(key)
@@ -762,6 +788,21 @@ type listing struct {
 	last    string
 	wrapped bool
 	done    bool
+	// young are the keys listed of the blobs stored less than orphanAge ago,
+	// which the run deletes none of.
+	young map[string]bool
+}
+
+// add adds the blob of i, the next that the store listed, to the listing.
+func (l *listing) add(i blob.Info) {
+	l.keys = append(l.keys, i.Key)
+	l.last = i.Key
+	if time.Since(i.Modified) < orphanAge {
+		if l.young == nil {
+			l.young = map[string]bool{}
+		}
+		l.young[i.Key] = true
+	}
 }
 
 // has reports whether the listing listed key.
@@ -813,8 +854,7 @@ func listWorkspace(ctx context.Context, store blob.Store, workspaceID ids.UUID, 
 		case !more() || !within():
 			return errSpent
 		}
-		l.keys = append(l.keys, i.Key)
-		l.last = i.Key
+		l.add(i)
 		return nil
 	})
 	switch {
@@ -838,8 +878,7 @@ func listWorkspace(ctx context.Context, store blob.Store, workspaceID ids.UUID, 
 		if !more() || !within() {
 			return errSpent
 		}
-		l.keys = append(l.keys, i.Key)
-		l.last = i.Key
+		l.add(i)
 		return nil
 	}
 	err = store.List(ctx, prefix, l.from, visit)
