@@ -357,7 +357,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-API-03 AC1–AC6 pass.
 
 ### 29. Blob storage and asset uploads
-**Status:** todo · **Depends on:** 8, 23
+**Status:** done ([#32](https://github.com/CyberCute-Studio/storycreep/pull/32)) · **Depends on:** 8, 23
 **PRD:** FR-ASSET-01 (AC1, AC2), FR-ASSET-02, FR-ADMIN-02 (storage step), FR-ENT-01 (`storage_bytes` limit), FR-ENT-02 (storage bytes), FR-ENT-03 (`storage_limit_exceeded`), NFR-SEC-10, ADR-009
 - The storage step of first-run setup, through the setup API and unattended, with the settings that the drivers read (N25): a bucket, which `STORYCREEP_ASSET_STORAGE` overrides (N37).
 - A driver interface with local-disk and S3 drivers, and one shared test suite (S3 via MinIO in CI). Content-addressed keys `{workspaceId}/{sha256}.{ext}`. In the container image, the local driver's directory is `/var/lib/storycreep/assets`, where `deploy/docker-compose.yml` mounts the asset volume (N18).
