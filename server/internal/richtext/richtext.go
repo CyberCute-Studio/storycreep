@@ -300,29 +300,24 @@ func (e *Error) Error() string {
 // the same one; the API refuses such a body before it reads a document in it
 // (FR-API-01 AC2).
 func Parse(data []byte) (*Doc, error) {
-	doc, _, err := parse(data)
-	return doc, err
-}
-
-// parse reads a document as Parse does, and returns its canonical form too,
-// which it writes to check its length.
-func parse(data []byte) (*Doc, []byte, error) {
 	doc, err := parseDoc(data)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+	// The canonical form is written to check its length, and kept for
+	// MarshalJSON.
 	canonical, err := doc.wire()
 	if err != nil {
-		// A document that Parse read holds no nil node, which is all that
-		// wire refuses.
+		// A document that Parse read holds no nil node and no string that is
+		// not UTF-8, which is all that wire refuses.
 		panic("richtext: a parsed document does not encode: " + err.Error())
 	}
 	if len(canonical) > MaxBytes {
-		return nil, nil, &Error{Reason: TooLarge,
+		return nil, &Error{Reason: TooLarge,
 			Message: fmt.Sprintf("the document's canonical form is longer than %d bytes", MaxBytes)}
 	}
 	doc.canonical = canonical
-	return doc, canonical, nil
+	return doc, nil
 }
 
 func parseDoc(data []byte) (*Doc, error) {
@@ -856,7 +851,7 @@ func (p *parser) mention(o map[string]any) (*Mention, error) {
 	if err := p.fields(attrs, "the mention's attrs", "id"); err != nil {
 		return nil, err
 	}
-	id, err := p.id(attrs, "id", "a mention", ids.Component)
+	_, id, err := p.id(attrs, "id", "a mention", ids.Component)
 	if err != nil {
 		return nil, err
 	}
@@ -872,14 +867,14 @@ func (p *parser) value(o map[string]any) (*Value, error) {
 	if err := p.fields(attrs, "the valueRef's attrs", "attribute", "decimals", "ref"); err != nil {
 		return nil, err
 	}
-	ref, err := p.id(attrs, "ref", "a value reference", ids.Variable, ids.Component)
+	kind, ref, err := p.id(attrs, "ref", "a value reference", ids.Variable, ids.Component)
 	if err != nil {
 		return nil, err
 	}
 	val := &Value{Ref: ref}
 	attribute, named := attrs["attribute"]
 	switch {
-	case strings.HasPrefix(ref, ids.Variable.Prefix()+"_") && named:
+	case kind == ids.Variable && named:
 		p.push("attribute")
 		// An attribute that is null, as ProseMirror writes one that is not
 		// set, is of the wrong type, as a null is wherever it is.
@@ -887,10 +882,10 @@ func (p *parser) value(o map[string]any) (*Value, error) {
 			return nil, p.fail(WrongType, "a value reference's attribute is not a string")
 		}
 		return nil, p.fail(Reference, "a reference to a variable names no attribute")
-	case strings.HasPrefix(ref, ids.Component.Prefix()+"_") && !named:
+	case kind == ids.Component && !named:
 		return nil, p.fail(Reference, "a reference to a component names its attribute")
 	case named:
-		if val.Attribute, err = p.id(attrs, "attribute", "a value reference's attribute", ids.AttributeDef); err != nil {
+		if _, val.Attribute, err = p.id(attrs, "attribute", "a value reference's attribute", ids.AttributeDef); err != nil {
 			return nil, err
 		}
 	}
@@ -908,16 +903,17 @@ func (p *parser) value(o map[string]any) (*Value, error) {
 }
 
 // id reads the ID in field key of attrs, of what, which must be the ID of an
-// entity of one of the kinds, and returns it in its canonical spelling.
-func (p *parser) id(attrs map[string]any, key, what string, kinds ...ids.Kind) (string, error) {
+// entity of one of the kinds, and returns its kind and the ID in its
+// canonical spelling.
+func (p *parser) id(attrs map[string]any, key, what string, kinds ...ids.Kind) (ids.Kind, string, error) {
 	v, ok := attrs[key]
 	if !ok {
-		return "", p.fail(MissingField, "%s has no %s", what, key)
+		return 0, "", p.fail(MissingField, "%s has no %s", what, key)
 	}
 	p.push(key)
 	s, ok := v.(string)
 	if !ok {
-		return "", p.fail(WrongType, "%s's %s is not a string", what, key)
+		return 0, "", p.fail(WrongType, "%s's %s is not a string", what, key)
 	}
 	kind, u, err := ids.DecodeAny(s)
 	if err != nil || !slices.Contains(kinds, kind) {
@@ -925,10 +921,10 @@ func (p *parser) id(attrs map[string]any, key, what string, kinds ...ids.Kind) (
 		for i, k := range kinds {
 			names[i] = k.String()
 		}
-		return "", p.fail(Reference, "%s's %s is not the ID of a %s", what, key, strings.Join(names, " or a "))
+		return 0, "", p.fail(Reference, "%s's %s is not the ID of a %s", what, key, strings.Join(names, " or a "))
 	}
 	p.pop()
-	return ids.Encode(kind, u), nil
+	return kind, ids.Encode(kind, u), nil
 }
 
 func (p *parser) marks(o map[string]any) (Marks, error) {
@@ -1023,12 +1019,13 @@ func (p *parser) link(mo map[string]any) (string, error) {
 
 // CheckHref says what is wrong with the URL of a link, or returns "", so that
 // no link runs a script or reads a file when it is followed, or hides where it
-// leads (PRD NFR-SEC-08). A link has at most MaxHrefChars characters, none of
-// them white space, a control character, or a format character (Unicode's
-// Cf, as U+200B, U+202E, or U+FEFF), which would hide or reorder what a reader
-// sees of it, and each % in it starts an escape, % and two hexadecimal
-// digits. It is a mailto URL with an address, or an http or https URL whose
-// authority, after the //, has a host, as authorityProblem reads it. A scheme
+// leads (PRD NFR-SEC-08). A link has at most MaxHrefChars characters, counted
+// as code points, none of them white space, a control character, or a format
+// character (Unicode's Cf, as U+200B, U+202E, or U+FEFF), which would hide or
+// reorder what a reader sees of it, and each % in it starts an escape, % and
+// two hexadecimal digits. It is a mailto URL with an address and only the
+// fields that mailtoProblem takes, or an http or https URL whose authority,
+// after the //, is a host and a port, as authorityProblem reads it. A scheme
 // is read regardless of ASCII case.
 //
 // CheckHref reads a link by these rules, which schema/rich-text/README.md
@@ -1059,49 +1056,68 @@ func CheckHref(href string) string {
 		}
 		return authorityProblem(authority)
 	case "mailto":
-		if i := strings.IndexAny(rest, "?#"); i >= 0 {
-			rest = rest[:i]
-		}
-		if rest == "" {
-			return "has no address"
-		}
-		return ""
+		return mailtoProblem(rest)
 	}
 	return "is not an http, https, or mailto URL"
 }
 
+// mailtoFields are the fields that a mailto link's query may set, in
+// lowercase: what a message is sent to and what it says, and not a field
+// that a mail client could read a file for, as attach.
+var mailtoFields = []string{"bcc", "body", "cc", "subject", "to"}
+
+// mailtoProblem says what is wrong with what follows the colon of a mailto
+// link, or returns "". Its address, what is before the first ? or #, is not
+// empty, and each of the fields that & separates in its query, what follows
+// that ? before a #, is empty or a name of mailtoFields, read regardless of
+// ASCII case, followed by =.
+func mailtoProblem(rest string) string {
+	if i := strings.IndexByte(rest, '#'); i >= 0 {
+		rest = rest[:i]
+	}
+	address, query, _ := strings.Cut(rest, "?")
+	if address == "" {
+		return "has no address"
+	}
+	for field := range strings.SplitSeq(query, "&") {
+		name, _, set := strings.Cut(field, "=")
+		if field != "" && (!set || !slices.Contains(mailtoFields, asciiLower(name))) {
+			return "sets a field other than to, cc, bcc, subject, or body"
+		}
+	}
+	return ""
+}
+
 // authorityProblem says what is wrong with the authority of an http or https
 // link, what is between its // and the first /, ?, or # after it, or returns
-// "". It is a host, after the userinfo and the last @ when there is one, and
-// before a colon and a port when there is one. The host is not empty: a name
-// of the ASCII letters and digits, -._~!$&'()*+,;=, and any character beyond
-// ASCII, or an IPv6 address in brackets, of hexadecimal digits, colons, and
-// dots; the port is ASCII digits, or nothing; the userinfo is what a name
-// holds, and colons, @, and escapes. So a backslash, which a browser reads as
-// a slash, cannot hide another host in the authority.
+// "". It is a host, then a colon and a port when it has one. The host is not
+// empty: an IPv6 address in brackets, of hexadecimal digits, colons, and
+// dots, followed by nothing or by the colon and the port; or a name of the
+// ASCII letters and digits, -._~!$&'()*+,;=, and any character beyond ASCII,
+// which the authority's last colon separates from the port. The port is ASCII
+// digits, or nothing. So an authority has no @, and a link no userinfo, as
+// https://example.com@evil.example/ has, whose host is evil.example, and a
+// backslash, which a browser reads as a slash, cannot hide another host in
+// it.
 func authorityProblem(authority string) string {
-	hostport := authority
-	if at := strings.LastIndexByte(authority, '@'); at >= 0 {
-		if !onlyRunes(authority[:at], func(r rune) bool { return isNameRune(r) || r == ':' || r == '@' || r == '%' }) {
-			return "has userinfo with a character that it may not hold"
-		}
-		hostport = authority[at+1:]
+	if strings.Contains(authority, "@") {
+		return "has a userinfo, before an @, which could show another host than the one that it leads to"
 	}
-	host, port, bracketed := hostport, "", strings.HasPrefix(hostport, "[")
+	host, port, bracketed := authority, "", strings.HasPrefix(authority, "[")
 	if bracketed {
-		end := strings.IndexByte(hostport, ']')
+		end := strings.IndexByte(authority, ']')
 		if end < 0 {
 			return "has an IPv6 address without its closing bracket"
 		}
-		host = hostport[1:end]
-		if after := hostport[end+1:]; after != "" {
+		host = authority[1:end]
+		if after := authority[end+1:]; after != "" {
 			var ok bool
 			if port, ok = strings.CutPrefix(after, ":"); !ok {
 				return "has a host followed by more than a port"
 			}
 		}
-	} else if colon := strings.LastIndexByte(hostport, ':'); colon >= 0 {
-		host, port = hostport[:colon], hostport[colon+1:]
+	} else if colon := strings.LastIndexByte(authority, ':'); colon >= 0 {
+		host, port = authority[:colon], authority[colon+1:]
 	}
 	switch {
 	case host == "":
@@ -1170,7 +1186,8 @@ func asciiLower(s string) string {
 // writes as one empty paragraph. A Doc that a program builds, as an import
 // does, is checked as one that a client sends is: MarshalJSON reads what it
 // writes with Parse, and refuses a Doc that Parse would refuse, as one with a
-// javascript: link, rather than write it, and writes the canonical form of
+// javascript: link, or with a string that is not UTF-8, which encoding/json
+// would change, rather than write it, and writes the canonical form of
 // one that Parse accepts, which Parse writes as it checks its length, so
 // that what is stored is always a document that Parse returns. A Doc that
 // Parse returned is not read again while its nodes write the canonical form
@@ -1184,11 +1201,11 @@ func (d Doc) MarshalJSON() ([]byte, error) {
 	if d.canonical != nil && bytes.Equal(data, d.canonical) {
 		return data, nil
 	}
-	_, canonical, err := parse(data)
+	parsed, err := Parse(data)
 	if err != nil {
 		return nil, fmt.Errorf("richtext: the document is not one that Parse accepts: %w", err)
 	}
-	return canonical, nil
+	return parsed.canonical, nil
 }
 
 // wire writes the document as JSON, as it holds it.
@@ -1249,8 +1266,10 @@ type wireValue struct {
 }
 
 // wireBlocks returns the nodes of blocks as JSON holds them. It refuses only
-// what JSON cannot hold, a nil node, and leaves the rest to Parse, which
-// MarshalJSON reads them with.
+// what JSON cannot hold, a nil node, and a string that is not UTF-8, which
+// encoding/json would write with U+FFFD in place of its bytes, so that Parse
+// would accept other text than the Doc holds; it leaves the rest to Parse,
+// which MarshalJSON reads them with.
 func wireBlocks(blocks []Block) ([]wireNode, error) {
 	nodes := make([]wireNode, len(blocks))
 	for i, b := range blocks {
@@ -1293,29 +1312,37 @@ func wireBlocks(blocks []Block) ([]wireNode, error) {
 func wireInlines(inlines []Inline) ([]wireNode, error) {
 	nodes := make([]wireNode, len(inlines))
 	for i, in := range inlines {
+		var utf8OK bool
 		switch in := in.(type) {
 		case *Text:
 			if in == nil {
 				return nil, errors.New("richtext: a text is nil")
 			}
+			utf8OK = utf8.ValidString(in.Text) && utf8.ValidString(in.Marks.Link)
 			nodes[i] = wireNode{Type: nodeText, Text: in.Text, Marks: wireMarks(in.Marks)}
 		case *Break:
 			if in == nil {
 				return nil, errors.New("richtext: a line break is nil")
 			}
+			utf8OK = utf8.ValidString(in.Marks.Link)
 			nodes[i] = wireNode{Type: nodeHardBreak, Marks: wireMarks(in.Marks)}
 		case *Mention:
 			if in == nil {
 				return nil, errors.New("richtext: a mention is nil")
 			}
+			utf8OK = utf8.ValidString(in.Component) && utf8.ValidString(in.Marks.Link)
 			nodes[i] = wireNode{Type: nodeMention, Attrs: wireMention{in.Component}, Marks: wireMarks(in.Marks)}
 		case *Value:
 			if in == nil {
 				return nil, errors.New("richtext: a value reference is nil")
 			}
+			utf8OK = utf8.ValidString(in.Ref) && utf8.ValidString(in.Attribute) && utf8.ValidString(in.Marks.Link)
 			nodes[i] = wireNode{Type: nodeValueRef, Attrs: wireValue{in.Attribute, in.Decimals, in.Ref}, Marks: wireMarks(in.Marks)}
 		default:
 			return nil, errors.New("richtext: an inline node is nil")
+		}
+		if !utf8OK {
+			return nil, errors.New("richtext: an inline node holds a string that is not UTF-8")
 		}
 	}
 	return nodes, nil

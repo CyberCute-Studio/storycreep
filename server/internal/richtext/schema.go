@@ -130,7 +130,11 @@ type humaConverter struct {
 
 // ref returns a reference to the definition name, which it registers in the
 // registry, with the definitions that it refers to, unless the registry has
-// it.
+// it. It writes the definitions into the registry's map, as no Go type stands
+// for them, so it panics when a Go type that huma registered holds the
+// definition's name, whose schema the reference would otherwise lead to, or
+// when the registry does not keep what is written into its map. (huma panics
+// at a Go type that it registers under a name that a definition holds.)
 func (c humaConverter) ref(name string) *huma.Schema {
 	key := c.base + strings.ToUpper(name[:1]) + name[1:]
 	schemas := c.r.Map()
@@ -142,7 +146,14 @@ func (c humaConverter) ref(name string) *huma.Schema {
 		// A definition that refers to itself, as a block does through a
 		// list, finds itself registered.
 		schemas[key] = &huma.Schema{}
+		if c.r.SchemaFromRef(c.prefix+key) == nil {
+			// It would not find itself registered either, and recur.
+			panic("richtext: the registry does not keep the schema " + key + " that is written into its map")
+		}
 		schemas[key] = c.schema(def)
+	} else if t := c.r.TypeFromRef(c.prefix + key); t != nil {
+		panic(fmt.Sprintf("richtext: the registry names the schema of %s %s, which is the name of the rich-text "+
+			"schema's definition %s; give the type another name", t, key, name))
 	}
 	return &huma.Schema{Ref: c.prefix + key}
 }

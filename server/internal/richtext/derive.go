@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
 // Names gives the names that a document's derivations show for what it
@@ -158,8 +160,12 @@ type Derived struct {
 
 // Derive derives from the document what the published format, the text
 // export, and the writing statistics show of it, with the names of what it
-// refers to. The document is one that Parse returned, as every stored one is,
-// since MarshalJSON stores no other: Derive does not check it again.
+// refers to, which names gives and which must not be nil. The document is one
+// that Parse returned, as every stored one is, since MarshalJSON stores no
+// other, or one that a program built and that MarshalJSON writes, which
+// derives what it derives once it is stored: its neighbouring texts with the
+// same marks are one text segment, and its IDs are in their canonical
+// spelling, as Parse writes them. Derive does not check the document.
 func (d *Doc) Derive(names Names) Derived {
 	segs := d.Segments(names)
 	text := PlainText(segs)
@@ -167,9 +173,15 @@ func (d *Doc) Derive(names Names) Derived {
 }
 
 // Segments returns the document's segments, with the names of what it
-// refers to. A document whose only block is an empty paragraph has none. The
-// document is one that Parse returned, as for Derive.
+// refers to, which names gives and which must not be nil. A document whose
+// only block is an empty paragraph has none. The document is one that Parse
+// returned or that MarshalJSON writes, as for Derive.
 func (d *Doc) Segments(names Names) Segments {
+	if names == nil {
+		// Only a document that refers to something asks for a name, so a
+		// nil Names would panic on some documents and not on others.
+		panic("richtext: Segments needs the Names of what a document refers to, not nil")
+	}
 	sg := segmenter{names: names, segs: Segments{}}
 	for i, b := range d.Blocks {
 		switch b := b.(type) {
@@ -212,20 +224,40 @@ func (sg *segmenter) list(l *List, depth int) {
 	}
 }
 
+// inlines adds the segments of a paragraph's inline nodes. It writes them as
+// they are once stored, so that a paragraph that a program built derives what
+// its canonical form does: it joins neighbouring texts with the same marks,
+// which a parsed paragraph never has, and spells IDs canonically.
 func (sg *segmenter) inlines(inlines []Inline) {
-	for _, in := range inlines {
+	for i := 0; i < len(inlines); i++ {
 		var s Segment
-		switch in := in.(type) {
+		switch in := inlines[i].(type) {
 		case *Text:
-			s = Segment{Kind: SegmentText, Marks: in.Marks.names(), Href: in.Marks.Link, Value: in.Text}
+			j := i + 1
+			for ; j < len(inlines); j++ {
+				if next, ok := inlines[j].(*Text); !ok || next.Marks != in.Marks {
+					break
+				}
+			}
+			text := in.Text
+			if j > i+1 {
+				var b strings.Builder
+				for _, run := range inlines[i:j] {
+					b.WriteString(run.(*Text).Text)
+				}
+				text, i = b.String(), j-1
+			}
+			s = Segment{Kind: SegmentText, Marks: in.Marks.names(), Href: in.Marks.Link, Value: text}
 		case *Break:
 			s = Segment{Kind: SegmentBreak}
 		case *Mention:
+			ref := canonicalID(in.Component)
 			s = Segment{Kind: SegmentMention, Marks: in.Marks.names(), Href: in.Marks.Link,
-				Ref: in.Component, Value: sg.names.Component(in.Component)}
+				Ref: ref, Value: sg.names.Component(ref)}
 		case *Value:
+			ref, attribute := canonicalID(in.Ref), canonicalID(in.Attribute)
 			s = Segment{Kind: SegmentValue, Marks: in.Marks.names(), Href: in.Marks.Link,
-				Ref: in.Ref, Attribute: in.Attribute, Name: sg.names.Value(in.Ref, in.Attribute)}
+				Ref: ref, Attribute: attribute, Name: sg.names.Value(ref, attribute)}
 			if in.Decimals != nil {
 				d := *in.Decimals
 				s.Decimals = &d
@@ -233,6 +265,15 @@ func (sg *segmenter) inlines(inlines []Inline) {
 		}
 		sg.segs = append(sg.segs, s)
 	}
+}
+
+// canonicalID returns id in its canonical spelling, as Parse writes it, or id
+// as it is when it is not an ID, as "" is not.
+func canonicalID(id string) string {
+	if kind, u, err := ids.DecodeAny(id); err == nil {
+		return ids.Encode(kind, u)
+	}
+	return id
 }
 
 // PlainText returns the plain text of a document's segments, as the text

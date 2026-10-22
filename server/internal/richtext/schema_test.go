@@ -328,6 +328,25 @@ func TestDocField(t *testing.T) {
 	}
 }
 
+// TestDocFieldNameTaken checks that a Doc field refuses a registry in which a
+// Go type holds the name of one of the schema's definitions, whose schema the
+// document's would otherwise refer to.
+func TestDocFieldNameTaken(t *testing.T) {
+	type RichTextList struct {
+		N int `json:"n"`
+	}
+	reg := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
+	if ref := reg.Schema(reflect.TypeFor[RichTextList](), true, "").Ref; ref != "#/components/schemas/RichTextList" {
+		t.Fatalf("the type is registered as %s", ref)
+	}
+	defer func() {
+		if r := recover(); r == nil || !strings.Contains(fmt.Sprint(r), "RichTextList") {
+			t.Errorf("a Doc in a registry that names another type RichTextList: %v", r)
+		}
+	}()
+	huma.SchemaFromType(reg, reflect.TypeFor[Doc]())
+}
+
 // TestDocFieldOpenAPI checks that the API's OpenAPI document, once a
 // request's body holds a Doc field, is one that package apicontract reads,
 // compares, and generates the TypeScript client's types from, as the API's

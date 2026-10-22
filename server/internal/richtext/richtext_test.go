@@ -331,6 +331,15 @@ func TestMarshalBuilt(t *testing.T) {
 			Attribute: "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF"}),
 		"a component without its attribute": para(&Value{Ref: "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"}),
 		"too many decimals":                 para(&Value{Ref: "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA", Decimals: &nine}),
+		// encoding/json writes U+FFFD for bytes that are not UTF-8, which
+		// Parse would then accept.
+		"a text that is not UTF-8": para(&Text{Text: "a\xffb"}),
+		"a link that is not UTF-8": para(&Text{Text: "a", Marks: Marks{Link: "https://example.com/\xff"}}),
+		"a break's link not UTF-8": para(&Break{Marks: Marks{Link: "https://example.com/\xc3"}}),
+		"a mention not UTF-8":      para(&Mention{Component: "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF\xff"}),
+		"a value's ref not UTF-8":  para(&Value{Ref: "var_\xff"}),
+		"a value's attribute not UTF-8": para(&Value{Ref: "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+			Attribute: "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF\xff"}),
 	} {
 		if got, err := json.Marshal(d); err == nil {
 			t.Errorf("%s: %s", name, got)
@@ -347,6 +356,53 @@ func TestMarshalBuilt(t *testing.T) {
 	if string(got) != want {
 		t.Errorf("a built Doc's canonical form\n%s\nwant\n%s", got, want)
 	}
+}
+
+// TestDeriveBuilt checks that a Doc that a program builds derives what it
+// derives once it is stored, as Parse reads it back: neighbouring texts with
+// the same marks are one segment, and IDs are spelt canonically, so that the
+// names of what it refers to are found.
+func TestDeriveBuilt(t *testing.T) {
+	names := readVectors(t).names()
+	two := 2
+	built := Doc{Blocks: []Block{&Paragraph{Inlines: []Inline{
+		&Text{Text: "a"}, &Text{Text: "b"}, &Text{Text: "c", Marks: Marks{Bold: true}}, &Text{Text: "d", Marks: Marks{Bold: true}},
+		&Mention{Component: "cmp_01hq8z7kd3m9p2w5xrtvnq4bcf"}, &Text{Text: " "},
+		&Value{Ref: "CMP_01HQ8Z7KD3M9P2W5XRTVNQ4BCF", Attribute: "atr_01hq8z8m4k7r2w9xtvnpq5dcbf", Decimals: &two},
+		&Text{Text: "e"}, &Break{}, &Text{Text: "f"}, &Text{Text: "g"},
+	}}}}
+	stored, err := Parse(marshal(t, built))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, want := built.Derive(names), stored.Derive(names)
+	if !bytes.Equal(marshal(t, got.Segments), marshal(t, want.Segments)) || got.Text != want.Text ||
+		got.Words != want.Words || got.Hash != want.Hash {
+		t.Errorf("a built Doc derives\n%s %q\nand the stored one\n%s %q", marshal(t, got.Segments), got.Text,
+			marshal(t, want.Segments), want.Text)
+	}
+	if want.Text != "abcdElara {elara.trust}e\nfg" {
+		t.Errorf("the stored Doc's text is %q", want.Text)
+	}
+	// Deriving leaves the built Doc as it was.
+	if len(built.Blocks[0].(*Paragraph).Inlines) != 11 {
+		t.Error("Derive changed the built Doc")
+	}
+}
+
+// TestDeriveNilNames checks that Derive refuses a nil Names whatever the
+// document holds, not only when the document refers to something.
+func TestDeriveNilNames(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("Derive(nil) of a document that refers to nothing does not panic")
+		}
+	}()
+	doc, err := Parse(paragraphs("a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.Derive(nil)
 }
 
 // TestMarshalParsed checks that a Doc that Parse returned is written in its
@@ -410,8 +466,10 @@ func TestPlainTextBuilt(t *testing.T) {
 	}
 }
 
-// TestCheckHref checks the links' allowlist: http and https URLs with a host,
-// and mailto URLs, and nothing that could run a script or read a file.
+// TestCheckHref checks the links' allowlist: http and https URLs with a host
+// and no userinfo, which could show another host, and mailto URLs that set no
+// field but to, cc, bcc, subject, and body, and nothing that could run a
+// script or read a file.
 //
 // Verifies: NFR-SEC-08
 func TestCheckHref(t *testing.T) {
@@ -419,8 +477,8 @@ func TestCheckHref(t *testing.T) {
 		"https://example.com",
 		"http://example.com/a?b=c#d",
 		"HTTPS://EXAMPLE.COM/",
-		"https://user@example.com:8080/path",
-		"https://user:pass%40word@example.com/",
+		"https://example.com:8080/path",
+		"https://example.com/a@b?c=d@e#f@g",
 		"https://[::1]/",
 		"https://[2001:db8::1]:8443/a",
 		"https://example.com:/",
@@ -433,6 +491,11 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com",
 		"MAILTO:keeper@example.com?subject=Light",
 		"mailto:/keeper",
+		// The fields that say what a message is sent to and what it says, in
+		// any ASCII case, and empty ones.
+		"mailto:keeper@example.com?to=mira@example.com&CC=a@example.com&Bcc=b@example.com&subject=a%26b&body=x=y",
+		"mailto:keeper@example.com?&subject=&&body=a?b#attach=x",
+		"mailto:keeper@example.com#x",
 	} {
 		if problem := CheckHref(href); problem != "" {
 			t.Errorf("CheckHref(%q) = %q, want none", href, problem)
@@ -470,13 +533,31 @@ func TestCheckHref(t *testing.T) {
 		"https://example.com/#%2",
 		"https://u%zz@example.com/",
 		"mailto:keeper%zz@example.com",
-		// A host or userinfo with what neither holds, as a backslash, which
-		// a browser reads as a slash, so that the host would be another.
+		// A userinfo, which shows a host that the link does not lead to.
+		"https://www.example.com@evil.example/login",
+		"https://example.com:443@evil.example/",
+		"https://user@example.com:8080/path",
+		"https://user:pass%40word@example.com/",
+		"https://@example.com/",
+		"https://[::1]@evil.example/",
+		// A mailto link's field that a mail client could read a file for, or
+		// any other than to, cc, bcc, subject, and body.
+		"mailto:keeper@example.com?attach=file:///home/keeper/.ssh/id_rsa",
+		"mailto:keeper@example.com?subject=Light&Attachment=/etc/passwd",
+		"mailto:keeper@example.com?%61ttach=/etc/passwd",
+		"mailto:keeper@example.com?subject",
+		"mailto:keeper@example.com?in-reply-to=x",
+		"mailto:keeper@example.com?subject=a&body=b&x-attach=c",
+		"mailto:?to=keeper@example.com",
+		"mailto:#a",
+		// A host with what it does not hold, as a backslash, which a browser
+		// reads as a slash, so that the host would be another.
 		"https://example.com\\@evil.example/",
 		"https://evil.example\\example.com/",
 		"https://exa<mple.com/",
 		"https://exa{mple.com/",
 		"https://exa%41mple.com/",
+		"https://exa%40mple.com/",
 		"https://exa[mple.com/",
 		"https://[example.com]/",
 		"https://[::1/",
