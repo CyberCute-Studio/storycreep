@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -71,9 +72,19 @@ func (c Change) String() string {
 //     request if it is readOnly, and not in a response if it is writeOnly.
 //
 // Schemas combined with oneOf, anyOf, or allOf are compared member by
-// member, and a change in the number of members breaks a client. Titles,
-// descriptions, examples, deprecation, and operation IDs are not on the wire,
-// and changing them breaks nothing.
+// member. If the members of a oneOf or an anyOf all refer to named schemas,
+// as those of the command endpoint's union of the types of command do, they
+// are matched by name, so that they may move: a request's may gain members,
+// because head then accepts more, and a response's may lose them, while a
+// member that a request's loses, or a response's gains, breaks a client. A
+// member that a request's oneOf gains must also take no value that one of
+// base's members takes, because huma's validator refuses a value that two
+// members of a oneOf take; the comparison tells that two members share no
+// value from their types, enums, and consts, and those of a property that both
+// require, as a command's type. Other members are matched by position, and a
+// change in the number of them breaks a client. Titles, descriptions,
+// examples, deprecation, and operation IDs are not on the wire, and changing
+// them breaks nothing.
 //
 // A change to a schema that several operations share is reported for each of
 // them, at the first place in the operation where the schema is.
@@ -698,22 +709,185 @@ func multipleWithin(w, n string) bool {
 	return r >= 1 && math.Abs(r-math.Round(r)) <= 1e-9*r
 }
 
-// composition compares the members of b's and h's oneOf, anyOf, and allOf.
-// headNull, that head takes null whatever its schema, holds for its members
-// too, because huma's validator lets that null through before it reads them.
+// composition compares the members of b's and h's oneOf, anyOf, and allOf:
+// those of a oneOf or an anyOf by name, as union does, if it can, and the
+// others by position. headNull, that head takes null whatever its schema,
+// holds for its members too, because huma's validator lets that null through
+// before it reads them.
 func (c *comparer) composition(loc string, b, h *Schema, dir direction, headNull bool) {
 	for _, k := range []struct {
 		name string
 		b, h []*Schema
 	}{{"oneOf", b.OneOf, h.OneOf}, {"anyOf", b.AnyOf, h.AnyOf}, {"allOf", b.AllOf, h.AllOf}} {
+		at := loc + "." + k.name
+		if k.name != "allOf" && c.union(at, k.name == "oneOf", k.b, k.h, dir, headNull) {
+			continue
+		}
 		if len(k.b) != len(k.h) {
 			c.report("%s: %s changed from %d schemas to %d", loc, k.name, len(k.b), len(k.h))
 			continue
 		}
 		for i := range k.b {
-			c.compare(fmt.Sprintf("%s.%s[%d]", loc, k.name, i), k.b[i], k.h[i], dir, headNull)
+			c.compare(fmt.Sprintf("%s[%d]", at, i), k.b[i], k.h[i], dir, headNull)
 		}
 	}
+}
+
+// union compares base's members b and head's members h of the oneOf or the
+// anyOf at loc, if every member of both refers to a named schema that no
+// other member of its list refers to, and reports whether it did. It matches
+// the members by the names of their schemas rather than by position, because
+// a list sorted by name, as the command endpoint's union of the types of
+// command is, moves its members when one is added before them. A request's
+// members may grow, because head then accepts more, and a response's may
+// shrink, because head then sends less. But huma's validator refuses a value
+// that more than one member of a oneOf takes, so a member that a request's
+// oneOf gains must take no value that one of base's members takes, as
+// disjoint judges.
+func (c *comparer) union(loc string, oneOf bool, b, h []*Schema, dir direction, headNull bool) bool {
+	bNames, hNames := memberNames(b), memberNames(h)
+	if bNames == nil || hNames == nil {
+		return false
+	}
+	for i, name := range bNames {
+		j := slices.Index(hNames, name)
+		switch {
+		case j >= 0:
+			c.compare(loc+"["+name+"]", b[i], h[j], dir, headNull)
+		case dir == request:
+			c.report("%s[%s] was removed", loc, name)
+		}
+	}
+	for j, name := range hNames {
+		switch {
+		case slices.Contains(bNames, name):
+		case dir == response:
+			c.report("%s[%s] was added", loc, name)
+		case oneOf:
+			var overlaps []string
+			for i, other := range bNames {
+				if !c.disjoint(b[i], h[j]) {
+					overlaps = append(overlaps, other)
+				}
+			}
+			if len(overlaps) > 0 {
+				c.report("%s[%s] was added, and may match a value of %s, which oneOf then refuses", loc, name,
+					strings.Join(overlaps, ", "))
+			}
+		}
+	}
+	return true
+}
+
+// memberNames returns the names of the schemas that the members of a oneOf
+// or an anyOf refer to, in order, or nil unless there are members, each of
+// which refers to a schema that no other one does.
+func memberNames(members []*Schema) []string {
+	var names []string
+	for _, m := range members {
+		if m == nil || m.Ref == "" || slices.Contains(names, refName(m.Ref)) {
+			return nil
+		}
+		names = append(names, refName(m.Ref))
+	}
+	return names
+}
+
+// disjoint reports whether no value matches both base's schema b and head's
+// schema h, as huma's validator reads them: because they share no value by
+// exclusive's reckoning, or because both take only objects and need a
+// property in a request whose schemas share none, as the property type of
+// the command endpoint's commands tells them apart. It reads only these
+// keywords, so it may miss that two schemas are disjoint, but never that
+// they are not.
+func (c *comparer) disjoint(b, h *Schema) bool {
+	b, _ = c.base.resolve(b)
+	h, _ = c.head.resolve(h)
+	if b == nil || h == nil {
+		return false
+	}
+	if exclusive(b, h) {
+		return true
+	}
+	if !onlyObjects(b) || !onlyObjects(h) {
+		return false
+	}
+	// huma's validator refuses an object that lacks a property that it needs,
+	// and, unless the object takes null, reads the property's schema even for
+	// a null value.
+	hNeeds := needed(h, request)
+	for _, name := range slices.Sorted(maps.Keys(needed(b, request))) {
+		if !hNeeds[name] {
+			continue
+		}
+		bp, _ := c.base.resolve(b.Properties[name])
+		hp, _ := c.head.resolve(h.Properties[name])
+		if bp != nil && hp != nil && exclusive(bp, hp) {
+			return true
+		}
+	}
+	return false
+}
+
+// exclusive reports whether a and b share no value: their enums or consts
+// list none in common, or they allow no type in common.
+func exclusive(a, b *Schema) bool {
+	av, aListed := listed(a)
+	bv, bListed := listed(b)
+	if aListed && bListed {
+		return !slices.ContainsFunc(av, func(v string) bool {
+			return slices.ContainsFunc(bv, func(w string) bool { return sameValue(v, w) })
+		})
+	}
+	at, aNull, aAny := allowed(a)
+	bt, bNull, bAny := allowed(b)
+	if aAny || bAny || aNull && bNull {
+		return false
+	}
+	for _, t := range at {
+		for _, u := range bt {
+			// Every integer is a number.
+			if t == u || t == "integer" && u == "number" || t == "number" && u == "integer" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// listed returns the values that s allows, as enumValues does, if its enum
+// or const lists any: huma's validator ignores an empty enum.
+func listed(s *Schema) ([]string, bool) {
+	if s.Const == nil && len(s.Enum) == 0 {
+		return nil, false
+	}
+	return enumValues(s)
+}
+
+// allowed returns the types that s allows, as typeSet does, or the types of
+// the values that its enum or const lists, which are all that it allows.
+func allowed(s *Schema) (types []string, nullable, anyType bool) {
+	if values, ok := listed(s); ok {
+		types, nullable = valueTypes(values)
+		return types, nullable, false
+	}
+	return typeSet(s)
+}
+
+// onlyObjects reports whether s allows objects and nothing else.
+func onlyObjects(s *Schema) bool {
+	types, nullable, anyType := allowed(s)
+	return !anyType && !nullable && slices.Equal(types, []string{"object"})
+}
+
+// sameValue reports whether the compact JSON values a and b may be the same
+// value, as 1 and 1.0 are, which huma's validator decodes alike.
+func sameValue(a, b string) bool {
+	var x, y any
+	if json.Unmarshal([]byte(a), &x) != nil || json.Unmarshal([]byte(b), &y) != nil {
+		return true
+	}
+	return reflect.DeepEqual(x, y)
 }
 
 // accepted reports whether s accepts properties it does not name, which

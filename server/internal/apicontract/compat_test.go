@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -583,6 +585,140 @@ func TestBreakingAdditionalProperties(t *testing.T) {
 			}},
 		{"a map names a property of its values' type", object(&Additional{Allowed: true, Schema: integer}, nil),
 			object(&Additional{Allowed: true, Schema: integer}, map[string]*Schema{"total": integer}), nil},
+	}
+	for _, tt := range tests {
+		if got := messages(Breaking(tt.base, tt.head)); !slices.Equal(got, tt.want) {
+			t.Errorf("%s: Breaking = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+// TestBreakingUnions checks the rules for a oneOf or an anyOf whose members
+// all refer to named schemas, as the command endpoint's union of the types of
+// command does: the members are matched by name, a request's may gain
+// members, provided that a oneOf's new one takes no value that another took,
+// and a response's may lose them.
+func TestBreakingUnions(t *testing.T) {
+	// tagged returns an object whose required property type has the one
+	// value v, a JSON value, as a command's type does.
+	tagged := func(v string) *Schema {
+		return &Schema{Type: Types{"object"}, Required: []string{"type"}, AdditionalProperties: &Additional{},
+			Properties: map[string]*Schema{"type": {Enum: []json.RawMessage{raw(v)}}}}
+	}
+	// doc returns a document whose operation takes and answers with one of the
+	// members, or any of them, as keyword says: a name refers to the schema
+	// of that name, which is tagged with the name in lower case unless named
+	// gives it.
+	doc := func(keyword string, named map[string]*Schema, members ...string) *Document {
+		schemas := map[string]*Schema{}
+		union := func() *Schema {
+			var refs []*Schema
+			for _, m := range members {
+				refs = append(refs, &Schema{Ref: refPrefix + m})
+				schemas[m] = named[m]
+				if schemas[m] == nil {
+					schemas[m] = tagged(strconv.Quote(strings.ToLower(m)))
+				}
+			}
+			if keyword == "anyOf" {
+				return &Schema{AnyOf: refs}
+			}
+			return &Schema{OneOf: refs}
+		}
+		return &Document{
+			OpenAPI: "3.1.0",
+			Paths: map[string]*PathItem{"/x": {Post: &Operation{
+				OperationID: "postX",
+				RequestBody: &RequestBody{Content: map[string]*MediaType{"application/json": {Schema: union()}}},
+				Responses: map[string]*Response{"200": {Content: map[string]*MediaType{"application/json": {
+					Schema: union(),
+				}}}},
+			}}},
+			Components: &Components{Schemas: schemas},
+		}
+	}
+	oneOf := func(members ...string) *Document { return doc("oneOf", nil, members...) }
+	anyOf := func(members ...string) *Document { return doc("anyOf", nil, members...) }
+	// withD is oneOf of the members, where D is the schema d.
+	withD := func(d *Schema, members ...string) *Document {
+		return doc("oneOf", map[string]*Schema{"D": d}, members...)
+	}
+	needsNote := tagged(`"b"`)
+	needsNote.Properties["note"] = &Schema{Type: Types{"string"}}
+	needsNote.Required = append(needsNote.Required, "note")
+	readOnlyType := tagged(`"d"`)
+	readOnlyType.Properties["type"].ReadOnly = true
+
+	tests := []struct {
+		name       string
+		base, head *Document
+		want       []string
+	}{
+		{"a oneOf is the same", oneOf("A", "B"), oneOf("A", "B"), nil},
+		{"a oneOf's members move", oneOf("A", "B", "C"), oneOf("C", "A", "B"), nil},
+		{"a oneOf gains a member", oneOf("A", "B"), oneOf("A", "B", "C"), []string{
+			"POST /x: the response 200 body.oneOf[C] was added",
+		}},
+		{"a oneOf gains a member before others", oneOf("A", "C"), oneOf("A", "B", "C"), []string{
+			"POST /x: the response 200 body.oneOf[B] was added",
+		}},
+		{"a oneOf loses a member", oneOf("A", "B", "C"), oneOf("A", "C"), []string{
+			"POST /x: the request body.oneOf[B] was removed",
+		}},
+		{"a oneOf's member changes", oneOf("A", "B"), doc("oneOf", map[string]*Schema{"B": needsNote}, "A", "B"),
+			[]string{"POST /x: the request body.oneOf[B].note is new and required"}},
+		{"a oneOf's member is replaced", oneOf("A", "B"), oneOf("A", "C"), []string{
+			"POST /x: the request body.oneOf[B] was removed",
+			"POST /x: the response 200 body.oneOf[C] was added",
+		}},
+		{"an anyOf gains a member", anyOf("A", "B"), anyOf("A", "B", "C"), []string{
+			"POST /x: the response 200 body.anyOf[C] was added",
+		}},
+		{"an anyOf loses a member", anyOf("A", "B", "C"), anyOf("B", "C"), []string{
+			"POST /x: the request body.anyOf[A] was removed",
+		}},
+
+		// A value that two members of a oneOf take is refused.
+		{"a oneOf gains a member of another type", oneOf("A", "B"),
+			withD(&Schema{Type: Types{"string"}}, "A", "B", "D"), []string{
+				"POST /x: the response 200 body.oneOf[D] was added",
+			}},
+		{"a oneOf gains a member whose type is another's", oneOf("A", "B"), withD(tagged(`"a"`), "A", "B", "D"),
+			[]string{
+				"POST /x: the request body.oneOf[D] was added, and may match a value of A, which oneOf then refuses",
+				"POST /x: the response 200 body.oneOf[D] was added",
+			}},
+		{"a oneOf gains a member whose type is another's written differently",
+			doc("oneOf", map[string]*Schema{"A": tagged("1")}, "A", "B"),
+			doc("oneOf", map[string]*Schema{"A": tagged("1"), "D": tagged("1.0")}, "A", "B", "D"), []string{
+				"POST /x: the request body.oneOf[D] was added, and may match a value of A, which oneOf then refuses",
+				"POST /x: the response 200 body.oneOf[D] was added",
+			}},
+		{"a oneOf gains a member that nothing tells apart", oneOf("A", "B"),
+			withD(&Schema{Type: Types{"object"}}, "A", "B", "D"), []string{
+				"POST /x: the request body.oneOf[D] was added, and may match a value of A, B, which oneOf then refuses",
+				"POST /x: the response 200 body.oneOf[D] was added",
+			}},
+		{"a oneOf gains a member whose type a request may leave out", oneOf("A", "B"),
+			withD(readOnlyType, "A", "B", "D"), []string{
+				"POST /x: the request body.oneOf[D] was added, and may match a value of A, B, which oneOf then refuses",
+				"POST /x: the response 200 body.oneOf[D] was added",
+			}},
+		{"an anyOf gains a member whose type is another's", anyOf("A", "B"),
+			doc("anyOf", map[string]*Schema{"D": tagged(`"a"`)}, "A", "B", "D"), []string{
+				"POST /x: the response 200 body.anyOf[D] was added",
+			}},
+
+		// Members that do not all refer to named schemas, or not to different
+		// ones, are compared by position.
+		{"a oneOf gains its first members", doc("oneOf", nil), oneOf("A"), []string{
+			"POST /x: the request body: oneOf changed from 0 schemas to 1",
+			"POST /x: the response 200 body: oneOf changed from 0 schemas to 1",
+		}},
+		{"a oneOf that names a schema twice gains a member", oneOf("A", "A"), oneOf("A", "A", "B"), []string{
+			"POST /x: the request body: oneOf changed from 2 schemas to 3",
+			"POST /x: the response 200 body: oneOf changed from 2 schemas to 3",
+		}},
 	}
 	for _, tt := range tests {
 		if got := messages(Breaking(tt.base, tt.head)); !slices.Equal(got, tt.want) {
