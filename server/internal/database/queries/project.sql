@@ -5,8 +5,8 @@
 
 -- name: InsertProject :one
 -- InsertProject adds a project, and returns its timestamps.
-INSERT INTO project (id, workspace_id, name, description, settings, created_by, updated_by)
-VALUES (@id, @workspace_id, @name, @description, @settings, @created_by, @created_by)
+INSERT INTO project (id, workspace_id, name, slug, description, settings, created_by, updated_by)
+VALUES (@id, @workspace_id, @name, @slug, @description, @settings, @created_by, @created_by)
 RETURNING created_at, updated_at;
 
 -- name: Project :one
@@ -74,6 +74,13 @@ RETURNING rev;
 -- does.
 UPDATE project SET description = @description, rev = rev + 1, updated_at = now(), updated_by = @updated_by
 WHERE workspace_id = @workspace_id AND id = @id AND description <> @description
+RETURNING rev;
+
+-- name: UpdateProjectSlug :one
+-- UpdateProjectSlug changes the project's slug, unless it has the slug
+-- already, and returns its new revision, or no row if it does.
+UPDATE project SET slug = @slug, rev = rev + 1, updated_at = now(), updated_by = @updated_by
+WHERE workspace_id = @workspace_id AND id = @id AND slug <> @slug
 RETURNING rev;
 
 -- name: UpdateProjectSettings :one

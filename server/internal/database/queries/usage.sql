@@ -93,6 +93,17 @@ SELECT (
         0)
 )::bigint AS drift;
 
+-- name: BoardDrift :one
+-- BoardDrift returns how many boards the workspace's projects have that are
+-- not in their trash, less its usage of boards: what reconciliation adds to
+-- its usage so that the usage is the count again.
+SELECT (
+    (SELECT count(*) FROM board b WHERE b.workspace_id = @workspace_id AND b.deleted_at IS NULL)
+    - coalesce((SELECT c.value FROM usage_counter c WHERE c.workspace_id = @workspace_id AND c.key = 'boards'), 0)
+    - coalesce((SELECT sum(d.delta) FROM usage_delta d WHERE d.workspace_id = @workspace_id AND d.key = 'boards'),
+        0)
+)::bigint AS drift;
+
 -- name: WorkspaceIDs :many
 -- WorkspaceIDs returns the IDs of the workspaces after the workspace after,
 -- or from the first if after is null, up to and including the workspace

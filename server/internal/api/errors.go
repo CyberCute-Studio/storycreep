@@ -51,6 +51,7 @@ const (
 	CodeInviteEmailMismatch   Code = "invite_email_mismatch"
 	CodeNotFound              Code = "not_found"
 	CodeSlugTaken             Code = "slug_taken"
+	CodeFolderNotEmpty        Code = "folder_not_empty"
 	CodeLastOwner             Code = "last_owner"
 	CodeAlreadyMember         Code = "already_member"
 	CodeInviteExists          Code = "invite_exists"
@@ -230,8 +231,14 @@ var codes = []codeSpec{
 			"narrowed to another project, does not, so that the answer does not tell that it exists (PRD §5.5, " +
 			"FR-TEN-04 AC6, FR-AUTH-04 AC3)."},
 	{CodeSlugTaken, http.StatusConflict, i18n.K("error.slug_taken"),
-		"Another workspace has the slug, which is unique on the instance (PRD FR-TEN-01 AC3). `details.errors` " +
-			"names the field, with its `location` and a `message`, as for `validation_failed`."},
+		"Another workspace has the slug, which is unique on the instance (PRD FR-TEN-01 AC3), or another board of " +
+			"the project has it, in the project's trash or not, which a board's is unique within (FR-PROJ-02 AC1). " +
+			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeFolderNotEmpty, http.StatusConflict, i18n.K("error.folder_not_empty"),
+		"A `folder.delete` command names a folder that still holds folders or boards that are not deleted, so " +
+			"nothing of its batch is applied (PRD FR-PROJ-02). Move them out of it, or delete them, first; what is in " +
+			"the trash does not count. `details.errors` names the field, with its `location` and a `message`, as for " +
+			"`validation_failed`."},
 	{CodeLastOwner, http.StatusConflict, i18n.K("error.last_owner"),
 		"The change would leave the workspace without an owner whose account is active, and a workspace keeps one " +
 			"(PRD FR-TEN-02 AC2): its last owner cannot be removed or demoted. An owner whose account's deletion is " +
@@ -343,11 +350,12 @@ var codes = []codeSpec{
 			"`validation_failed`. An SVG file that holds a script or refers to something outside itself is not " +
 			"refused: the server stores it without them."},
 	{CodeSlugInvalid, http.StatusUnprocessableEntity, i18n.K("error.slug_invalid"),
-		"A slug is not one that the route takes (PRD FR-TEN-01 AC3). A workspace's slug is groups of lowercase " +
-			"ASCII letters and digits joined by single hyphens, as `harbour-team`, of at most 64 characters, and " +
-			"not a reserved word, such as `admin`, `api`, or a name that Windows reserves for a device, such as " +
-			"`con`. `details.reason` says which rule it breaks: `format` or `reserved`. `details.errors` names the " +
-			"field, with its `location` and a `message`, as for `validation_failed`."},
+		"A slug is not one that the route or the command takes (PRD FR-TEN-01 AC3, FR-PROJ-02 AC4). A slug is " +
+			"groups of lowercase ASCII letters and digits joined by single hyphens, as `harbour-team`, of at most 64 " +
+			"characters, and not a reserved word: a name that Windows reserves for a device, such as `con` or " +
+			"`com1`, which no slug may be, and, for a workspace's, a word that the product keeps for itself, such as " +
+			"`admin` or `api`. `details.reason` says which rule it breaks: `format` or `reserved`. `details.errors` " +
+			"names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeRateLimited, http.StatusTooManyRequests, i18n.K("error.rate_limited"),
 		"The client made too many requests (PRD FR-API-04 AC3, NFR-SEC-06), or signing in with an email address " +
 			"failed too often in a row (FR-AUTH-05). The `Retry-After` header says how many seconds to wait. " +

@@ -121,9 +121,10 @@ func TestProjectLifecycle(t *testing.T) {
 
 	changed := projectFrom(t, call(s.main, http.MethodPatch, projectPath(p.ID), jsonBody(t, map[string]any{
 		"name": "Lighthouse", "description": "", "default_locale": "cs-cz",
-		"entry": map[string]string{"board_id": ids.Encode(ids.Board, ids.New())}}), admin.header(true)), http.StatusOK)
+		"entry": map[string]string{"board_id": createBoard(t, s.main, admin, p.ID, "Harbour Intro")}}),
+		admin.header(true)), http.StatusOK)
 	if changed.Name != "Lighthouse" || changed.Description != "" || changed.DefaultLocale != "cs-CZ" ||
-		changed.Entry.BoardID == "" || changed.Rev != 4 || changed.Seq != 1 {
+		changed.Entry.BoardID == "" || changed.Rev != 4 || changed.Seq != 2 {
 		t.Errorf("the changed project is %+v, want three changes in one operation", changed)
 	}
 
@@ -593,6 +594,8 @@ func TestProjectFields(t *testing.T) {
 		field string
 	}{
 		{map[string]any{"name": ""}, "body.name"},
+		// The entry's board is one of the project's (N32).
+		{map[string]any{"entry": map[string]string{"board_id": board}}, "body.entry.board_id"},
 		{map[string]any{"default_locale": "x-"}, "body.default_locale"},
 		{map[string]any{"default_locale": "und-Latn"}, "body.default_locale"},
 		{map[string]any{"default_locale": longLocale}, "body.default_locale"},
@@ -608,6 +611,7 @@ func TestProjectFields(t *testing.T) {
 		t.Errorf("after the refused changes, the project is %+v", got)
 	}
 	// An entry that names a node has its board, and an empty one removes it.
+	board = createBoard(t, s.main, owner, p.ID, "Harbour")
 	for _, entry := range []map[string]string{{"board_id": board, "node_id": node}, {}} {
 		got := projectFrom(t, call(s.main, http.MethodPatch, projectPath(p.ID),
 			jsonBody(t, map[string]any{"entry": entry}), owner.header(true)), http.StatusOK)

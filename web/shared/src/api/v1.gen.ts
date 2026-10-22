@@ -44,6 +44,195 @@ export interface Asset {
   width?: number;
 }
 
+export interface Board {
+  /** The board's colour, none or a name of the palette */
+  color: "none" | "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink" | "gray";
+  /** When the board was created */
+  created_at: string;
+  /** When the board was deleted to the project's trash, if it is there */
+  deleted_at?: string;
+  /** The board's description, which may be empty */
+  description: string;
+  /** The ID of the board's entry node, if it has one */
+  entry_node_id?: string;
+  /** The ID of the folder of boards that the board is in, if it is in one, or none for a board at the top */
+  folder_id?: string;
+  /** The board's ID */
+  id: string;
+  /** The board's name */
+  name: string;
+  /** The board's place among the folders and boards of its folder, or of the top: they are ordered by their order, compared by its bytes, then by their IDs (package orderkey) */
+  order: string;
+  /** The ID of the board's project */
+  project_id: string;
+  /** The board's revision, which every change of it increments, and which a change expects with expected_rev */
+  rev: number;
+  /** The board's slug, unique within the project, which names its file in the game project (PRD §6.3). It changes only when it is changed itself, never when the board is renamed (PRD FR-PROJ-02 AC1). */
+  slug: string;
+  /** When the board last changed */
+  updated_at: string;
+}
+
+/** A command of the type board.create. */
+export interface BoardCreateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BoardCreatePayload;
+  /** The command's type. */
+  type: "board.create";
+}
+
+/** The payload of a command of the type board.create. */
+export interface BoardCreatePayload {
+  /** The board's colour, none or a name of the palette. Without it, none. */
+  color?: "none" | "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink" | "gray";
+  /** The board's description, of at most 2000 characters, without white space around it, and without control characters but line feeds and tabs. Without it, the board has none. */
+  description?: string;
+  /** The ID of the folder of boards that the board goes into, which is not deleted. Without it, the board goes at the top. */
+  folder_id?: string;
+  /** The new board's ID, a bd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  id: string;
+  /** The board's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them */
+  name: string;
+  /** The board's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child. */
+  order?: string;
+  /** The board's slug, which names its file in the game project: groups of lowercase ASCII letters and digits joined by single hyphens, as harbour-intro, of at most 64 characters, that no other board of the project has, in its trash or not, and that is not a name that Windows reserves for a device, such as con or com1. A slug that is not one is answered with 422 slug_invalid, and one that another board has with 409 slug_taken. Without it, the server derives one from the name: its letters and digits in lowercase ASCII, without their accents, each run of other characters a hyphen, or board if that leaves nothing, with -board after a name that Windows reserves for a device, as con-board, and then with -2, -3, and so on, the first that no board of the project has (PRD FR-PROJ-02 AC1, AC4). */
+  slug?: string;
+}
+
+/** A command of the type board.delete. */
+export interface BoardDeleteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BoardDeletePayload;
+  /** The command's type. */
+  type: "board.delete";
+}
+
+/** The payload of a command of the type board.delete. */
+export interface BoardDeletePayload {
+  /** The board's ID */
+  id: string;
+}
+
+/** A command of the type board.describe. */
+export interface BoardDescribeCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BoardDescribePayload;
+  /** The command's type. */
+  type: "board.describe";
+}
+
+/** The payload of a command of the type board.describe. */
+export interface BoardDescribePayload {
+  /** The board's new description, of at most 2000 characters, which may be empty, without white space around it, and without control characters but line feeds and tabs */
+  description: string;
+  /** The board's ID */
+  id: string;
+}
+
+/** A command of the type board.move. */
+export interface BoardMoveCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BoardMovePayload;
+  /** The command's type. */
+  type: "board.move";
+}
+
+/** The payload of a command of the type board.move. */
+export interface BoardMovePayload {
+  /** The ID of the folder of boards that the board goes into, which is not deleted. Without it, the board goes to the top. */
+  folder_id?: string;
+  /** The board's ID */
+  id: string;
+  /** The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child. */
+  order?: string;
+}
+
+/** A command of the type board.rename. */
+export interface BoardRenameCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BoardRenamePayload;
+  /** The command's type. */
+  type: "board.rename";
+}
+
+/** The payload of a command of the type board.rename. */
+export interface BoardRenamePayload {
+  /** The board's ID */
+  id: string;
+  /** The board's new name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them. The board keeps its slug (PRD FR-PROJ-02 AC1). */
+  name: string;
+}
+
+/** A command of the type board.restore. */
+export interface BoardRestoreCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BoardRestorePayload;
+  /** The command's type. */
+  type: "board.restore";
+}
+
+/** The payload of a command of the type board.restore. */
+export interface BoardRestorePayload {
+  /** The board's ID */
+  id: string;
+}
+
+/** A command of the type board.set_color. */
+export interface BoardSetColorCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BoardSetColorPayload;
+  /** The command's type. */
+  type: "board.set_color";
+}
+
+/** The payload of a command of the type board.set_color. */
+export interface BoardSetColorPayload {
+  /** The board's new colour, none or a name of the palette */
+  color: "none" | "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink" | "gray";
+  /** The board's ID */
+  id: string;
+}
+
+/** A command of the type board.set_slug. */
+export interface BoardSetSlugCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BoardSetSlugPayload;
+  /** The command's type. */
+  type: "board.set_slug";
+}
+
+/** The payload of a command of the type board.set_slug. */
+export interface BoardSetSlugPayload {
+  /** The board's ID */
+  id: string;
+  /** The board's new slug, which renames its file in the game project: groups of lowercase ASCII letters and digits joined by single hyphens, as harbour-intro, of at most 64 characters, that no other board of the project has, in its trash or not, and that is not a name that Windows reserves for a device, such as con or com1. A slug that is not one is answered with 422 slug_invalid, and one that another board has with 409 slug_taken. */
+  slug: string;
+}
+
 export interface ChangeRoleBody {
   /** The membership's new role. Only an owner grants the role owner, and an admin is answered with 403 owner_required. */
   role: "owner" | "admin" | "editor" | "commenter" | "viewer" | "guest";
@@ -62,7 +251,7 @@ export interface CommandBatchesBody {
 }
 
 /** A command of the batch: its ID, its type, its payload, as the type's schema says, and the revisions that it expects (PRD FR-API-03). */
-export type CommandBody = ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand;
+export type CommandBody = BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetSlugCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand;
 
 export interface CommandOutcomeBody {
   /** Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it */
@@ -188,6 +377,128 @@ export interface ErrorBody {
 
 export interface ErrorEnvelope {
   error: ErrorBody;
+}
+
+export interface Folder {
+  /** When the folder was created */
+  created_at: string;
+  /** When the folder was deleted, if it is */
+  deleted_at?: string;
+  /** The folder's ID */
+  id: string;
+  /** What the folder holds: boards, variables, or components, each in a tree of folders of its own */
+  kind: "board" | "variable" | "component";
+  /** The folder's name */
+  name: string;
+  /** The folder's place among the folders, and for a folder of boards the boards, of its parent, or of the top: they are ordered by their order, compared by its bytes, then by their IDs (package orderkey) */
+  order: string;
+  /** The ID of the folder that the folder is in, of the same kind, if it is in one, or none for a folder at the top */
+  parent_id?: string;
+  /** The ID of the folder's project */
+  project_id: string;
+  /** The folder's revision, which every change of it increments, and which a change expects with expected_rev */
+  rev: number;
+  /** When the folder last changed */
+  updated_at: string;
+}
+
+/** A command of the type folder.create. */
+export interface FolderCreateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: FolderCreatePayload;
+  /** The command's type. */
+  type: "folder.create";
+}
+
+/** The payload of a command of the type folder.create. */
+export interface FolderCreatePayload {
+  /** The new folder's ID, a fld_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  id: string;
+  /** What the folder holds: boards, variables, or components, each in a tree of folders of its own */
+  kind: "board" | "variable" | "component";
+  /** The folder's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them */
+  name: string;
+  /** The folder's place among the children of its parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child. */
+  order?: string;
+  /** The ID of the folder of the same kind that the folder goes into, which is not deleted. Without it, the folder goes at the top. */
+  parent_id?: string;
+}
+
+/** A command of the type folder.delete. */
+export interface FolderDeleteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: FolderDeletePayload;
+  /** The command's type. */
+  type: "folder.delete";
+}
+
+/** The payload of a command of the type folder.delete. */
+export interface FolderDeletePayload {
+  /** The folder's ID */
+  id: string;
+}
+
+/** A command of the type folder.move. */
+export interface FolderMoveCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: FolderMovePayload;
+  /** The command's type. */
+  type: "folder.move";
+}
+
+/** The payload of a command of the type folder.move. */
+export interface FolderMovePayload {
+  /** The folder's ID */
+  id: string;
+  /** The folder's place among the children of its new parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child. */
+  order?: string;
+  /** The ID of the folder of the same kind that the folder goes into, which is not deleted, and neither the folder itself nor a folder inside it. Without it, the folder goes to the top. */
+  parent_id?: string;
+}
+
+/** A command of the type folder.rename. */
+export interface FolderRenameCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: FolderRenamePayload;
+  /** The command's type. */
+  type: "folder.rename";
+}
+
+/** The payload of a command of the type folder.rename. */
+export interface FolderRenamePayload {
+  /** The folder's ID */
+  id: string;
+  /** The folder's new name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them */
+  name: string;
+}
+
+/** A command of the type folder.restore. */
+export interface FolderRestoreCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: FolderRestorePayload;
+  /** The command's type. */
+  type: "folder.restore";
+}
+
+/** The payload of a command of the type folder.restore. */
+export interface FolderRestorePayload {
+  /** The folder's ID */
+  id: string;
 }
 
 export interface GrantBody {
@@ -324,6 +635,18 @@ export interface PageAPITokenBody {
   next_cursor: string | null;
 }
 
+export interface PageBoard {
+  items: Array<Board>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
+export interface PageFolder {
+  items: Array<Folder>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PageGrantBody {
   items: Array<GrantBody>;
   /** The cursor of the next page, or null if this is the last page */
@@ -403,6 +726,8 @@ export interface Project {
   rev: number;
   /** The sequence number of the project's latest operation, 0 before its first */
   seq: number;
+  /** The project's slug, which the published format's manifest shows (PRD §6.5): derived from the project's name when it was created, and changed only when it is changed itself, never when the project is renamed. Projects may share a slug. */
+  slug: string;
   /** When the project last changed */
   updated_at: string;
   /** The ID of the project's workspace */
@@ -450,6 +775,8 @@ export interface ProjectBody {
   role: "owner" | "admin" | "editor" | "commenter" | "viewer";
   /** The sequence number of the project's latest operation, 0 before its first */
   seq: number;
+  /** The project's slug, which the published format's manifest shows (PRD §6.5): derived from the project's name when it was created, and changed only when it is changed itself, never when the project is renamed. Projects may share a slug. */
+  slug: string;
   /** When the project last changed */
   updated_at: string;
   /** The ID of the project's workspace */
@@ -525,6 +852,23 @@ export interface ProjectRestoreCommand {
 /** The payload of a command of the type project.restore. */
 export type ProjectRestorePayload = Record<string, never>;
 
+/** A command of the type project.set_slug. */
+export interface ProjectSetSlugCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ProjectSetSlugPayload;
+  /** The command's type. */
+  type: "project.set_slug";
+}
+
+/** The payload of a command of the type project.set_slug. */
+export interface ProjectSetSlugPayload {
+  /** The project's new slug: groups of lowercase ASCII letters and digits joined by single hyphens, as harbour, of at most 64 characters, that is not a name that Windows reserves for a device, such as con or com1. A slug that is not one is answered with 422 slug_invalid. */
+  slug: string;
+}
+
 /** A command of the type project.unarchive. */
 export interface ProjectUnarchiveCommand {
   /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
@@ -554,7 +898,7 @@ export interface ProjectUpdateSettingsCommand {
 export interface ProjectUpdateSettingsPayload {
   /** The locale of the project's text, as a BCP 47 tag of a language in its canonical form, such as en or cs-CZ */
   default_locale?: string;
-  /** The project's entry, which replaces its entry: without a board, the project has none. Neither the board nor the node needs to exist. */
+  /** The project's entry, which replaces its entry: without a board, the project has none. A board other than the entry's is one of the project's boards, not in its trash, or the command is answered with 422 validation_failed; the node needs not exist yet. */
   entry?: ProjectEntry;
   /** The least role that may publish the project's snapshots */
   publish_min_role?: "editor" | "admin";
@@ -694,14 +1038,16 @@ export interface UpdateProjectBody {
   default_locale?: string;
   /** The project's new description, as for POST /api/v1/workspaces/{workspace_id}/projects; empty for none */
   description?: string;
-  /** The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. Neither the board nor the node needs to exist yet. */
+  /** The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. A board other than the entry's is one of the project's boards, not in its trash, or the answer is 422 validation_failed; the node needs not exist yet. */
   entry?: ProjectEntry;
   /** The project's revision that the change was made against. If the project has another, the answer is 409 revision_conflict, and nothing changes. Without it, the change is made whatever the revision. A body that names no field to change changes nothing, so it is answered with the project, whatever its revision. */
   expected_rev?: number;
-  /** The project's new name, as for POST /api/v1/workspaces/{workspace_id}/projects */
+  /** The project's new name, as for POST /api/v1/workspaces/{workspace_id}/projects. The project keeps its slug. */
   name?: string;
   /** The least role that may publish the project's snapshots: editor, or admin to keep editors from publishing (PRD FR-SNAP-01 AC3). A change is recorded in the audit log. */
   publish_min_role?: "editor" | "admin";
+  /** The project's new slug, which the published format's manifest shows: groups of lowercase ASCII letters and digits joined by single hyphens, as harbour, of at most 64 characters, that is not a name that Windows reserves for a device, such as con or com1. A slug that is not one is answered with 422 slug_invalid. */
+  slug?: string;
 }
 
 export interface UpdateWorkspaceBody {
@@ -1082,6 +1428,24 @@ export interface Operations {
       304: undefined;
     };
   };
+  /**
+   * Get a board
+   *
+   * Returns a board of the project. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types board.* and folder.* create, rename, move, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getBoard: {
+    input: {
+      path: {
+        /** The board's ID */
+        board_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: Board;
+    };
+  };
   /** Report that the process is alive */
   getHealth: {
     input: Record<string, never>;
@@ -1237,6 +1601,52 @@ export interface Operations {
     };
     responses: {
       201: LinkBody;
+    };
+  };
+  /**
+   * List a project's boards
+   *
+   * Lists the project's boards that are not in its trash, in the order of their IDs, oldest first. Each names its folder and its place among the folder's children, from which a client builds the tree of folders (GET /api/v1/projects/{project_id}/folders). They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types board.* and folder.* create, rename, move, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listBoards: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageBoard;
+    };
+  };
+  /**
+   * List a project's folders
+   *
+   * Lists the project's folders that are not deleted, of boards, variables, and components, or of the kind that kind names, in the order of their IDs, oldest first. Each names its parent and its place among the parent's children, from which a client builds each kind's tree. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types board.* and folder.* create, rename, move, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listFolders: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** What the folders hold: boards, variables, or components. Without it, folders of every kind. */
+        kind?: "board" | "variable" | "component";
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageFolder;
     };
   };
   /**
@@ -1795,9 +2205,9 @@ export interface Operations {
     };
   };
   /**
-   * Change a project's name, description, or settings
+   * Change a project's name, slug, description, or settings
    *
-   * Changes a project's name, description, default locale, publish_min_role, or entry, in one batch of the project's commands; a field that the body leaves out, or sets to null, stays as it is. Only an owner or an admin of the project may, and anyone else with a role on it is answered with 403 insufficient_role. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A field whose value it does not allow is answered with 422 validation_failed. An archived project is read-only, and the change is answered with 409 project_archived. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
+   * Changes a project's name, slug, description, default locale, publish_min_role, or entry, in one batch of the project's commands; a field that the body leaves out, or sets to null, stays as it is. Only an owner or an admin of the project may, and anyone else with a role on it is answered with 403 insufficient_role. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A field whose value it does not allow is answered with 422 validation_failed, and a slug that is not one with 422 slug_invalid. An archived project is read-only, and the change is answered with 409 project_archived. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
    */
   updateProject: {
     input: {
@@ -1891,6 +2301,7 @@ export const routes = {
   getAsset: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}" },
   getAssetContent: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}/content", blob: true },
   getAssetThumbnail: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}/thumbnail", blob: true },
+  getBoard: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}" },
   getHealth: { method: "GET", path: "/healthz" },
   getInstance: { method: "GET", path: "/api/v1/instance" },
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
@@ -1903,6 +2314,8 @@ export const routes = {
   getWorkspaceUsage: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/usage" },
   issuePasswordResetLink: { method: "POST", path: "/api/v1/admin/password-reset-links" },
   issueVerificationLink: { method: "POST", path: "/api/v1/admin/verification-links" },
+  listBoards: { method: "GET", path: "/api/v1/projects/{project_id}/boards" },
+  listFolders: { method: "GET", path: "/api/v1/projects/{project_id}/folders" },
   listInvites: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/invites" },
   listMemberGrants: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}/grants" },
   listMembers: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members" },

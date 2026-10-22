@@ -43,6 +43,10 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodGet, Pattern: assetsPath + "/{asset_id}"}:           scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: assetsPath + "/{asset_id}/content"}:   scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: assetsPath + "/{asset_id}/thumbnail"}: scope.ProjectRead,
+	// So are its boards and folders, which change through its commands.
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/boards"}:            scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/boards/{board_id}"}: scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/folders"}:           scope.ProjectRead,
 }
 
 // operationOf returns the operation of the route r in the OpenAPI document,

@@ -98,6 +98,7 @@ func RollUp(ctx context.Context, db DB) error {
 // requests that it counts.
 var drifts = map[Key]func(q *queries.Queries, ctx context.Context, workspaceID pgtype.UUID) (int64, error){
 	Projects:     (*queries.Queries).ProjectDrift,
+	Boards:       (*queries.Queries).BoardDrift,
 	Members:      (*queries.Queries).MemberDrift,
 	StorageBytes: (*queries.Queries).StorageDrift,
 }

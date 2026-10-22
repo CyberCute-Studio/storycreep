@@ -326,11 +326,12 @@ func (p *Pipeline) Collector() prometheus.Collector {
 // ErrProjectArchived if the project is archived and a command does not apply
 // to it then (Spec.Archived); an *entitlements.LimitError if the batch would
 // take the workspace past a limit of its plan; a *RevisionConflictError if a
-// command's expected revision is stale; and an error that wraps a command's
-// own if a command refuses the batch. A batch that was sent before is
-// answered as it was, and applies nothing again (FR-API-03): with the Result
-// that it had, or with the error that refused it, if its idempotency record
-// remembers that refusal, without checking it again. Whatever Apply returns
+// command's expected revision is stale; a *RefusedError if a command refuses
+// the batch for what the project's state makes of its payload (Refuse); and
+// an error that wraps a command's own if a command fails. A batch that was
+// sent before is answered as it was, and applies nothing again (FR-API-03):
+// with the Result that it had, or with the error that refused it, if its
+// idempotency record remembers that refusal, without checking it again. Whatever Apply returns
 // but a Result, it changes nothing of the project: at most, for a batch that
 // a client sent (Parse) that the project's state or the limits refuse, it
 // records that refusal as the batch's idempotency record, and for one that
@@ -562,6 +563,9 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 			if err == nil {
 				inverses[i], err = p.registry.checkSteps(steps)
 			}
+			if refused, ok := refusedBy(err, i, c); ok {
+				return Result{}, refused
+			}
 			if err != nil {
 				return Result{}, fmt.Errorf("commands: the inverse of command %d (%s): %w", i, c.spec.typ, err)
 			}
@@ -571,6 +575,9 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		t.current = c.spec
 		err := c.spec.apply(ctx, t, c.payload)
 		t.current = nil
+		if refused, ok := refusedBy(err, i, c); ok {
+			return Result{}, refused
+		}
 		if err != nil {
 			return Result{}, fmt.Errorf("commands: command %d (%s): %w", i, c.spec.typ, err)
 		}

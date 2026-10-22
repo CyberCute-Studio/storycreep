@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -153,6 +154,18 @@ var Tables = []Table{
 		key := fmt.Sprintf("%s/%x.png", w.ID, sum)
 		return Statement{id, "INSERT INTO asset (id, workspace_id, project_id, sha256, mime, bytes, storage_key) " +
 			"VALUES ($1, $2, $3, $4, 'image/png', 1, $5)", []any{id, w.ID, w.Rows["project"], sum, key}}, nil
+	}},
+	{Name: "folder", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		id := ids.New()
+		return Statement{id, `INSERT INTO folder (id, workspace_id, project_id, kind, name, "order") ` +
+			"VALUES ($1, $2, $3, 'board', 'Act 1', 'V')", []any{id, w.ID, w.Rows["project"]}}, nil
+	}},
+	{Name: "board", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A board's slug is unique within its project, which its ID makes.
+		id := ids.New()
+		args := []any{id, w.ID, w.Rows["project"], w.Rows["folder"], "harbour-" + strings.ReplaceAll(id.String(), "-", "")}
+		return Statement{id, `INSERT INTO board (id, workspace_id, project_id, folder_id, "order", name, slug) ` +
+			"VALUES ($1, $2, $3, $4, 'V', 'Harbour', $5)", args}, nil
 	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
