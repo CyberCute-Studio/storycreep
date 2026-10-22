@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
@@ -305,6 +306,12 @@ func TestSlugRules(t *testing.T) {
 			t.Errorf("the derived slug %q is not one: %v", b.Slug, err)
 		}
 	}
+	// A long name's slug, which a board has already, is cut to leave room for
+	// its number.
+	long := strings.TrimRight(strings.Repeat("lighthouse-", 6)[:64], "-")
+	if b := f.create(t, strings.TrimSpace(strings.Repeat("Lighthouse ", 9)), nil); b.Slug != long[:62]+"-2" {
+		t.Errorf("a second board of a long name has the slug %q, want %q", b.Slug, long[:62]+"-2")
+	}
 	taken := f.create(t, "Harbourmaster", map[string]any{"slug": "harbourmaster"})
 	for typed, reason := range map[string]slug.Reason{
 		"nul": slug.Reserved, "lpt9": slug.Reserved, "Harbour": slug.Format, "harbour_intro": slug.Format,
@@ -479,8 +486,10 @@ func TestFolderTree(t *testing.T) {
 }
 
 // TestOrder checks the keys that order a folder's children: a child added
-// without one goes after the folder's last, boards and folders alike, and a
-// move to a key places a child between two others.
+// without one goes after the folder's last, boards and folders alike, and
+// after its last that is not deleted once a deleted child's key has no key
+// after it, a move to a key places a child between two others, and a move
+// without one of the folder's last child into its folder changes nothing.
 func TestOrder(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -501,6 +510,76 @@ func TestOrder(t *testing.T) {
 	for _, order := range []string{"V0", "", "a-b", strings.Repeat("V", 129)} {
 		if _, err := f.apply(t, cmd{board.Move, map[string]any{"id": a.ID, "order": order}}); err == nil {
 			t.Errorf("the key %q was taken", order)
+		}
+	}
+	// The folder's last child, moved into the folder without a key, stays
+	// where it is, while another goes after it.
+	c := f.create(t, "C", map[string]any{"folder_id": folder})
+	if res := f.must(t, cmd{board.Move, map[string]any{"id": c.ID, "folder_id": folder}}); len(res.Revisions) != 0 {
+		t.Errorf("moving the folder's last child into it changed %v", res.Revisions)
+	}
+	f.must(t, cmd{board.Move, map[string]any{"id": a.ID, "folder_id": folder}})
+	if got := f.get(t, a.ID); c.Order != "W" || got.Order != "X" {
+		t.Errorf("the keys of the last child and of the one moved after it are %q and %q, want W and X", c.Order,
+			got.Order)
+	}
+	sub := folderID()
+	f.must(t, cmd{board.CreateFolder, map[string]any{"id": sub, "kind": "board", "name": "Scenes",
+		"parent_id": folder}})
+	if res := f.must(t, cmd{board.MoveFolder, map[string]any{"id": sub, "parent_id": folder}}); len(
+		res.Revisions) != 0 {
+		t.Errorf("moving the folder's last folder into it changed %v", res.Revisions)
+	}
+	// A key that has no key after it, which a client may pick, keeps children
+	// from being added after it while its child is not deleted, and no longer
+	// once it is.
+	last := f.create(t, "Last", map[string]any{"folder_id": folder, "order": strings.Repeat("z", 128)})
+	_, err := f.apply(t, cmd{board.Create, map[string]any{"id": boardID(), "name": "After", "folder_id": folder}})
+	if r := refused(t, err); r.Field != "order" {
+		t.Errorf("a board added after a key that has no key after it was refused at %q", r.Field)
+	}
+	f.must(t, cmd{board.Delete, map[string]any{"id": last.ID}})
+	if b := f.create(t, "After", map[string]any{"folder_id": folder}); b.Order != "Z" {
+		t.Errorf("a board added after a deleted child whose key has no key after it is at %q, want Z", b.Order)
+	}
+}
+
+// TestEnumerations checks that the database takes every colour of a board
+// and every kind of folder that the package lists, which their schemas take
+// too (TestSchemaEnums), and refuses as a board's or a project's slug every
+// name that Windows reserves for a device that package slug lists, as the
+// commands do (FR-PROJ-02 AC4), so that a name added to one list and not to
+// the database's checks fails.
+//
+// Verifies: FR-PROJ-02/AC4
+func TestEnumerations(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	for _, c := range board.Colors {
+		if b := f.create(t, "Pier", map[string]any{"color": c}); b.Color != c {
+			t.Errorf("a board created %s is %s", c, b.Color)
+		}
+	}
+	for _, k := range board.Kinds {
+		f.must(t, cmd{board.CreateFolder, map[string]any{"id": folderID(), "kind": k, "name": "Act 1"}})
+	}
+	b, err := ids.Decode(ids.Board, f.create(t, "Harbour", nil).ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := f.d.Admin(t)
+	for _, s := range append(slug.Devices(), "com10") {
+		for table, id := range map[string]ids.UUID{"board": b, "project": f.project} {
+			_, err := admin.Exec(ctx, "UPDATE "+table+" SET slug = $1 WHERE id = $2", s, id)
+			var pg *pgconn.PgError
+			switch refused := errors.As(err, &pg) && pg.Code == "23514"; {
+			case s == "com10" && err != nil:
+				t.Errorf("the slug %s of a %s was refused: %v", s, table, err)
+			case s != "com10" && !refused:
+				t.Errorf("the slug %s of a %s, a name that Windows reserves for a device, was not refused: %v", s,
+					table, err)
+			}
 		}
 	}
 }
@@ -596,31 +675,51 @@ func TestBoardUsage(t *testing.T) {
 	}
 }
 
-// TestEntryBoard checks that a project's entry board is one of its boards
-// that is not in its trash (N32), while an entry that keeps a board that no
-// longer exists is not refused for it.
+// TestEntryBoard checks that a project's entry board is one of its boards, in
+// its trash or not (N32), so that the undo of a change of the entry from a
+// board that was deleted since sets that board back, while an entry that
+// keeps a board that no longer exists, whatever the case of its ID's
+// letters, is not refused for it.
 func TestEntryBoard(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
+	entry := func(b string) (project.Visible, error) {
+		return f.projects.Update(ctx, f.actor(), f.project, project.Patch{Entry: &project.ProjectEntry{BoardID: b}})
+	}
+	_, err := entry(boardID())
+	if r := refused(t, err); r.Field != "entry.board_id" {
+		t.Errorf("an entry of a board that the project does not have was refused at %q", r.Field)
+	}
 	live, trashed := f.create(t, "Harbour", nil), f.create(t, "Pier", nil)
 	f.must(t, cmd{board.Delete, map[string]any{"id": trashed.ID}})
-	for _, b := range []string{trashed.ID, boardID()} {
-		_, err := f.projects.Update(ctx, f.actor(), f.project, project.Patch{Entry: &project.ProjectEntry{BoardID: b}})
-		if r := refused(t, err); r.Field != "entry.board_id" {
-			t.Errorf("an entry of %s was refused at %q", b, r.Field)
+	for _, b := range []string{trashed.ID, live.ID} {
+		if p, err := entry(b); err != nil || p.Entry.BoardID != b {
+			t.Fatalf("an entry of %s is %+v, %v", b, p.Entry, err)
 		}
 	}
-	p, err := f.projects.Update(ctx, f.actor(), f.project, project.Patch{Entry: &project.ProjectEntry{BoardID: live.ID}})
-	if err != nil || p.Entry.BoardID != live.ID {
-		t.Fatalf("the entry is %+v, %v", p.Entry, err)
-	}
-	// Once the board is in the trash, a change of the entry's node keeps it.
+	// The entry's board is deleted, and the entry changed to another board,
+	// whose undo sets the deleted board back.
 	f.must(t, cmd{board.Delete, map[string]any{"id": live.ID}})
+	other := f.create(t, "Lighthouse", nil)
+	res := f.must(t, cmd{project.UpdateSettings, map[string]any{"entry": map[string]string{"board_id": other.ID}}})
+	f.undo(t, res.Seq)
+	if p, err := f.projects.Get(ctx, f.actor(), f.project); err != nil || p.Entry.BoardID != live.ID {
+		t.Errorf("after the undo, the entry is %+v, %v; want %s", p.Entry, err, live.ID)
+	}
+	// An entry that keeps a board that does not exist, as one set before the
+	// boards were checked, is not refused for it, whatever the case of the
+	// letters of its ID.
+	gone := strings.ToLower(boardID())
+	if _, err := f.d.Admin(t).Exec(ctx, `UPDATE project SET settings = jsonb_set(settings, '{entry}',
+		jsonb_build_object('board_id', $1::text)) WHERE id = $2`, gone, f.project); err != nil {
+		t.Fatal(err)
+	}
 	node := ids.Encode(ids.Node, ids.New())
 	if _, err := f.projects.Update(ctx, f.actor(), f.project, project.Patch{
-		Entry: &project.ProjectEntry{BoardID: live.ID, NodeID: node}}); err != nil {
-		t.Errorf("changing the node of an entry whose board is in the trash: %v", err)
+		Entry: &project.ProjectEntry{BoardID: strings.ToUpper(gone), NodeID: node},
+	}); err != nil {
+		t.Errorf("changing the node of an entry whose board does not exist: %v", err)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/slug"
 )
 
 // withMigrations returns the embedded migrations plus extra, which maps file
@@ -672,6 +673,67 @@ func TestUpgradeMatchesFreshInstall(t *testing.T) {
 		t.Errorf("the upgraded schema differs from a fresh install's:\nupgraded:\n%s\nfresh:\n%s", u, f)
 	} else if !strings.Contains(u, "policy items_workspace") {
 		t.Errorf("the schema description misses the policy:\n%s", u)
+	}
+}
+
+// TestProjectSlugBackfill upgrades a database whose projects have no slugs
+// yet, as the migrations before the boards' left them, and checks that the
+// boards' migration gives each project the slug that a project of its name
+// is given when it is created (slug.Derive), so that a name in Czech, German,
+// or Danish keeps its words whole, rather than having them split at each
+// letter outside ASCII.
+func TestProjectSlugBackfill(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	before := fstest.MapFS{}
+	names, err := fs.Glob(database.Migrations(), "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		if name >= "00018" {
+			continue
+		}
+		data, err := fs.ReadFile(database.Migrations(), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[name] = &fstest.MapFile{Data: data}
+	}
+	d := dbtest.Empty(t)
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: before}); err != nil {
+		t.Fatal(err)
+	}
+	admin := d.Admin(t)
+	var ws string
+	if err := admin.QueryRow(ctx, `INSERT INTO workspace (id, name, slug, plan_key)
+		VALUES (gen_random_uuid(), 'Harbour', 'harbour', 'unlimited') RETURNING id::text`).Scan(&ws); err != nil {
+		t.Fatal(err)
+	}
+	projects := map[string]string{}
+	for _, name := range []string{
+		"Příliš žluťoučký kůň", "Tomáš Novák", "Straße am Hafen", "ØRESUND — Łódź", "Þingvellir Ærø", "İstanbul",
+		"ǅemal Ⅻ", "ＦＵＬＬ ｗｉｄｔｈ", "最初の出会い", "CON", "Com0", "Harbour Intro",
+		strings.TrimSpace(strings.Repeat("Lighthouse ", 9)),
+	} {
+		var id string
+		if err := admin.QueryRow(ctx, `INSERT INTO project (id, workspace_id, name)
+			VALUES (gen_random_uuid(), $1, $2) RETURNING id::text`, ws, name).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		projects[id] = name
+	}
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for id, name := range projects {
+		var got string
+		if err := admin.QueryRow(ctx, "SELECT slug FROM project WHERE id = $1", id).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if want := slug.Derive(name, "project"); got != want {
+			t.Errorf("the project %q has the slug %q, want %q", name, got, want)
+		}
 	}
 }
 

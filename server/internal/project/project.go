@@ -346,19 +346,13 @@ func workspaceLocale(doc []byte) string {
 
 // checkName says what is wrong with a project's name, or returns "".
 func checkName(name string) string {
-	if strings.TrimSpace(name) != name {
-		return "has white space around it"
-	}
-	return input.CheckName(name, MaxNameLength)
+	return input.CheckTrimmedName(name, MaxNameLength)
 }
 
 // checkDescription says what is wrong with a project's description, or
 // returns "".
 func checkDescription(description string) string {
-	if strings.TrimSpace(description) != description {
-		return "has white space around it"
-	}
-	return input.CheckText(description, MaxDescriptionLength)
+	return input.CheckTrimmedText(description, MaxDescriptionLength)
 }
 
 // canonicalLocale returns the BCP 47 tag v in its canonical form, as en-US
@@ -693,8 +687,8 @@ type Patch struct {
 // valid, commands.ErrProjectArchived if the project is archived, a
 // *commands.RevisionConflictError if p expects a revision that the project
 // does not have, and a *commands.RefusedError if the slug is not one, or the
-// entry names a board that the project does not have, or that is in its
-// trash, and changes nothing then. A patch that names no change is
+// entry names a board that the project does not have, in its trash or not,
+// and changes nothing then. A patch that names no change is
 // not applied, and returns the project, whatever revision it expects.
 func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID ids.UUID, p Patch) (Visible, error) {
 	var steps []commands.Step

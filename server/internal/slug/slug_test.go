@@ -17,7 +17,7 @@ var form = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // Verifies: FR-PROJ-02/AC4
 func TestCheck(t *testing.T) {
 	t.Parallel()
-	for _, s := range []string{"a", "0", "harbour-intro", "con-board", "com10", "lpt0", "conin", strings.Repeat("a", 64),
+	for _, s := range []string{"a", "0", "harbour-intro", "con-board", "com10", "lpt00", "conin", strings.Repeat("a", 64),
 		"a-b-c"} {
 		if err := Check(s); err != nil {
 			t.Errorf("%q: %v", s, err)
@@ -26,8 +26,8 @@ func TestCheck(t *testing.T) {
 	for s, reason := range map[string]Reason{
 		"": Format, "-": Format, "-a": Format, "a-": Format, "a--b": Format, "A": Format, "a_b": Format,
 		"a b": Format, "ž": Format, "a.b": Format, "ｊｏ": Format, strings.Repeat("a", 65): Format,
-		"con": Reserved, "prn": Reserved, "aux": Reserved, "nul": Reserved, "com1": Reserved, "com9": Reserved,
-		"lpt1": Reserved, "lpt9": Reserved,
+		"con": Reserved, "prn": Reserved, "aux": Reserved, "nul": Reserved, "com0": Reserved, "com1": Reserved,
+		"com9": Reserved, "lpt0": Reserved, "lpt1": Reserved, "lpt9": Reserved,
 	} {
 		var e *Error
 		if err := Check(s); !errors.As(err, &e) || e.Reason != reason {
@@ -60,6 +60,7 @@ func TestDerive(t *testing.T) {
 		"CON":                          "con-board",
 		"Com1":                         "com1-board",
 		"LPT9":                         "lpt9-board",
+		"COM0":                         "com0-board",
 		"con 2":                        "con-2",
 		strings.Repeat("ab ", 40):      strings.TrimRight(strings.Repeat("ab-", 22)[:64], "-"),
 		strings.Repeat("x", 63) + " y": strings.Repeat("x", 63),

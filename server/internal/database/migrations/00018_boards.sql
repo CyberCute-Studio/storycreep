@@ -14,27 +14,53 @@
 -- server derives it from the project's name when it creates the project, as
 -- it derives a board's, and only a change of the slug itself changes it, never
 -- a rename. Projects do not share files, so two may have the same slug. The
--- projects that exist already are given one from their names, spelled in
--- ASCII more simply than the server spells a name, since their letters
--- outside ASCII are dropped; their owners can change it. A row added without
--- one, as by a test, has project.
+-- projects that exist already are given one from their names as package slug
+-- derives it (slug.Derive): the name in Unicode's compatibility decomposition
+-- (NFKD), without the accents and the other marks that it puts after a
+-- letter, with the letters that do not decompose, as the German sharp s,
+-- spelled in ASCII as slug.Base spells them, and in lowercase, each run of
+-- what is then not an ASCII letter or digit a hyphen, so that a name in Czech
+-- keeps its words whole. The patterns name those letters by their code
+-- points, so that the migration holds no letter outside ASCII, and a database
+-- whose encoding is not UTF-8, which normalize needs, keeps the name's letters
+-- outside ASCII instead, each of which then splits the name as a space does.
+-- Their owners can change it. A row added without one, as by a test, has
+-- project.
 ALTER TABLE project ADD COLUMN slug text NOT NULL DEFAULT 'project';
 UPDATE project p SET slug = CASE
 		WHEN d.s = '' THEN 'project'
-		WHEN d.s IN ('aux', 'con', 'nul', 'prn', 'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8',
-			'com9', 'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9') THEN d.s || '-project'
+		WHEN d.s IN ('aux', 'con', 'nul', 'prn', 'com0', 'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7',
+			'com8', 'com9', 'lpt0', 'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9')
+			THEN d.s || '-project'
 		ELSE d.s
 	END
 FROM (
-	SELECT id, rtrim(left(trim(BOTH '-' FROM regexp_replace(lower(name COLLATE "C"), '[^a-z0-9]+', '-', 'g')), 64),
-		'-') AS s
-	FROM project
+	SELECT id, rtrim(left(trim(BOTH '-' FROM regexp_replace(lower(folded COLLATE "C"), '[^a-z0-9]+', '-', 'g')),
+		64), '-') AS s
+	FROM (
+		SELECT id, CASE WHEN current_setting('server_encoding') <> 'UTF8' THEN name ELSE
+			regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(
+			regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(
+				normalize(name, NFKD),
+				E'[\\u0300-\\u036f\\u1ab0-\\u1aff\\u1dc0-\\u1dff\\u20d0-\\u20ff\\ufe20-\\ufe2f]', '', 'g'),
+				E'[\\u00df\\u1e9e]', 'ss', 'g'),
+				E'[\\u00e6\\u00c6]', 'ae', 'g'),
+				E'[\\u0153\\u0152]', 'oe', 'g'),
+				E'[\\u00fe\\u00de]', 'th', 'g'),
+				E'[\\u00f8\\u00d8]', 'o', 'g'),
+				E'[\\u0142\\u0141]', 'l', 'g'),
+				E'[\\u0111\\u0110\\u00f0\\u00d0]', 'd', 'g'),
+				E'\\u0131', 'i', 'g'),
+				E'[\\u0127\\u0126]', 'h', 'g')
+		END AS folded
+		FROM project
+	) f
 ) d
 WHERE p.id = d.id;
 ALTER TABLE project ADD CONSTRAINT project_slug_form CHECK (
 	slug COLLATE "C" ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(slug) <= 64
-	AND slug NOT IN ('aux', 'con', 'nul', 'prn', 'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8',
-		'com9', 'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9')
+	AND slug NOT IN ('aux', 'con', 'nul', 'prn', 'com0', 'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7',
+		'com8', 'com9', 'lpt0', 'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9')
 );
 
 -- A folder of a project's boards, variables, or components, as its kind says,
@@ -87,7 +113,10 @@ CREATE POLICY workspace_isolation ON folder TO storycreep_app
 
 -- A board of a project: a named canvas, in a folder of boards or at the top.
 -- Its slug is unique within the project, the boards in its trash included, so
--- that restoring one never changes its slug (FR-PROJ-02 AC1). Its colour is
+-- that restoring one never changes its slug (FR-PROJ-02 AC1), and compared by
+-- its bytes, which a slug's ASCII sorts as its letters, so that the slugs
+-- that start with a name's, which a new board's derivation reads, are a range
+-- of the index of that uniqueness (package board). Its colour is
 -- none, or a name of the palette that the web app maps to an accessible
 -- colour. Its entry node is a node of the board, which the nodes (plan item
 -- 35) set and check, and the validation reports one that no longer exists
@@ -102,10 +131,10 @@ CREATE TABLE board (
 	folder_kind text NOT NULL DEFAULT 'board' CHECK (folder_kind = 'board'),
 	"order" text COLLATE "C" NOT NULL CHECK ("order" ~ '^[0-9A-Za-z]*[1-9A-Za-z]$' AND length("order") <= 128),
 	name text NOT NULL,
-	slug text NOT NULL CHECK (
-		slug COLLATE "C" ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(slug) <= 64
-		AND slug NOT IN ('aux', 'con', 'nul', 'prn', 'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8',
-			'com9', 'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9')
+	slug text COLLATE "C" NOT NULL CHECK (
+		slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(slug) <= 64
+		AND slug NOT IN ('aux', 'con', 'nul', 'prn', 'com0', 'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7',
+			'com8', 'com9', 'lpt0', 'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9')
 	),
 	description text NOT NULL DEFAULT '',
 	color text NOT NULL DEFAULT 'none'

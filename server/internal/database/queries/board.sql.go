@@ -136,19 +136,27 @@ func (q *Queries) BoardRevs(ctx context.Context, arg BoardRevsParams) ([]BoardRe
 	return items, nil
 }
 
-const boardSlugs = `-- name: BoardSlugs :many
-SELECT slug FROM board WHERE workspace_id = $1 AND project_id = $2
+const boardSlugsFrom = `-- name: BoardSlugsFrom :many
+SELECT slug FROM board
+WHERE workspace_id = $1 AND project_id = $2
+    AND slug >= $3::text AND slug < $3::text || '~'
 `
 
-type BoardSlugsParams struct {
+type BoardSlugsFromParams struct {
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
+	Stem        string
 }
 
-// BoardSlugs returns the slugs of the project's boards, those in the trash
-// included, whose slugs are unique within the project too.
-func (q *Queries) BoardSlugs(ctx context.Context, arg BoardSlugsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, boardSlugs, arg.WorkspaceID, arg.ProjectID)
+// BoardSlugsFrom returns the slugs of the project's boards, those in the
+// trash included, whose slugs are unique within the project too, that start
+// with stem: the slugs from stem up to stem with a tilde after it, which
+// every slug that starts with stem sorts before, because a slug's characters
+// sort before the tilde in the bytes that board's slugs are compared by, so
+// that the index of their uniqueness finds them, rather than every slug of
+// the project.
+func (q *Queries) BoardSlugsFrom(ctx context.Context, arg BoardSlugsFromParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, boardSlugsFrom, arg.WorkspaceID, arg.ProjectID, arg.Stem)
 	if err != nil {
 		return nil, err
 	}
@@ -651,62 +659,53 @@ func (q *Queries) InsertFolder(ctx context.Context, arg InsertFolderParams) erro
 	return err
 }
 
-const lastSortKey = `-- name: LastSortKey :one
-SELECT coalesce(max(c.sort_key), '')::text AS sort_key FROM (
-    SELECT f."order" AS sort_key FROM folder f
+const lastSortKeys = `-- name: LastSortKeys :one
+SELECT coalesce(max(c.sort_key), '')::text AS last,
+    coalesce(max(c.sort_key) FILTER (WHERE NOT c.deleted), '')::text AS last_live
+FROM (
+    SELECT f."order" AS sort_key, f.deleted_at IS NOT NULL AS deleted FROM folder f
     WHERE f.workspace_id = $1 AND f.project_id = $2 AND f.kind = $3
         AND (f.parent_id = $4::uuid OR $4::uuid IS NULL AND f.parent_id IS NULL)
+        AND f.id IS DISTINCT FROM $5::uuid
     UNION ALL
-    SELECT b."order" FROM board b
+    SELECT b."order", b.deleted_at IS NOT NULL FROM board b
     WHERE $3::text = 'board' AND b.workspace_id = $1 AND b.project_id = $2
         AND (b.folder_id = $4::uuid OR $4::uuid IS NULL AND b.folder_id IS NULL)
+        AND b.id IS DISTINCT FROM $5::uuid
 ) c
 `
 
-type LastSortKeyParams struct {
+type LastSortKeysParams struct {
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
 	Kind        string
 	ParentID    pgtype.UUID
+	Moved       pgtype.UUID
 }
 
-// LastSortKey returns the greatest order of the project's children of the
+type LastSortKeysRow struct {
+	Last     string
+	LastLive string
+}
+
+// LastSortKeys returns the greatest order of the project's children of the
 // folder parent_id of the kind kind, or of those at the top if parent_id is
-// null: its folders, and, for a folder of boards, its boards, deleted ones
-// included, so that one restored later keeps its place, or an empty string
-// if it has none.
-func (q *Queries) LastSortKey(ctx context.Context, arg LastSortKeyParams) (string, error) {
-	row := q.db.QueryRow(ctx, lastSortKey,
+// null, but for the child moved, if it is not null, which moves there: its
+// folders, and, for a folder of boards, its boards, deleted ones included, so
+// that one restored later keeps its place, as last, and the greatest of
+// those that are not deleted as last_live, each an empty string if there is
+// none.
+func (q *Queries) LastSortKeys(ctx context.Context, arg LastSortKeysParams) (LastSortKeysRow, error) {
+	row := q.db.QueryRow(ctx, lastSortKeys,
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.Kind,
 		arg.ParentID,
+		arg.Moved,
 	)
-	var sort_key string
-	err := row.Scan(&sort_key)
-	return sort_key, err
-}
-
-const liveBoard = `-- name: LiveBoard :one
-SELECT EXISTS (
-    SELECT 1 FROM board
-    WHERE workspace_id = $1 AND project_id = $2 AND id = $3 AND deleted_at IS NULL
-)::boolean AS live
-`
-
-type LiveBoardParams struct {
-	WorkspaceID pgtype.UUID
-	ProjectID   pgtype.UUID
-	ID          pgtype.UUID
-}
-
-// LiveBoard returns whether the project has the board id, and it is not in
-// the trash.
-func (q *Queries) LiveBoard(ctx context.Context, arg LiveBoardParams) (bool, error) {
-	row := q.db.QueryRow(ctx, liveBoard, arg.WorkspaceID, arg.ProjectID, arg.ID)
-	var live bool
-	err := row.Scan(&live)
-	return live, err
+	var i LastSortKeysRow
+	err := row.Scan(&i.Last, &i.LastLive)
+	return i, err
 }
 
 const moveBoard = `-- name: MoveBoard :one

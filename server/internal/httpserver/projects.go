@@ -87,7 +87,7 @@ type updateProjectBody struct {
 	Description    *string               `json:"description,omitempty" maxLength:"2000" doc:"The project's new description, as for POST /api/v1/workspaces/{workspace_id}/projects; empty for none"`
 	DefaultLocale  *string               `json:"default_locale,omitempty" maxLength:"64" doc:"The new locale of the project's text, as a BCP 47 tag of a language"`
 	PublishMinRole *string               `json:"publish_min_role,omitempty" enum:"editor,admin" doc:"The least role that may publish the project's snapshots: editor, or admin to keep editors from publishing (PRD FR-SNAP-01 AC3). A change is recorded in the audit log."`
-	Entry          *project.ProjectEntry `json:"entry,omitempty" doc:"The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. A board other than the entry's is one of the project's boards, not in its trash, or the answer is 422 validation_failed; the node needs not exist yet."`
+	Entry          *project.ProjectEntry `json:"entry,omitempty" doc:"The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. A board other than the entry's is one of the project's boards, in its trash or not, or the answer is 422 validation_failed; the node needs not exist yet."`
 	ExpectedRev    int64                 `json:"expected_rev,omitempty" minimum:"1" doc:"The project's revision that the change was made against. If the project has another, the answer is 409 revision_conflict, and nothing changes. Without it, the change is made whatever the revision. A body that names no field to change changes nothing, so it is answered with the project, whatever its revision."`
 }
 

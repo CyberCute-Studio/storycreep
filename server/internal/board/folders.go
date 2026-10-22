@@ -53,7 +53,7 @@ type renameFolderPayload struct {
 type moveFolderPayload struct {
 	ID       string `json:"id" doc:"The folder's ID"`
 	ParentID string `json:"parent_id,omitempty" doc:"The ID of the folder of the same kind that the folder goes into, which is not deleted, and neither the folder itself nor a folder inside it. Without it, the folder goes to the top."`
-	Order    string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The folder's place among the children of its new parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child."`
+	Order    string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The folder's place among the children of its new parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child, or stays where it is if it is the last child of its parent already."`
 }
 
 // folderIDPayload is the payload of a command that needs nothing but its
@@ -259,7 +259,7 @@ func applyCreateFolder(ctx context.Context, tx *commands.Tx, p createFolderPaylo
 	if err != nil {
 		return err
 	}
-	order, err := sortKey(ctx, q, ws, project, p.Kind, parent, p.Order)
+	order, err := sortKey(ctx, q, ws, project, p.Kind, parent, p.Order, nil)
 	if err != nil {
 		return err
 	}
@@ -299,7 +299,8 @@ func applyMoveFolder(ctx context.Context, tx *commands.Tx, p moveFolderPayload) 
 			}
 		}
 	}
-	order, err := sortKey(ctx, q, f.WorkspaceID, f.ProjectID, f.Kind, parent, p.Order)
+	order, err := sortKey(ctx, q, f.WorkspaceID, f.ProjectID, f.Kind, parent, p.Order,
+		&child{id: f.ID, parent: f.ParentID, key: f.Order})
 	if err != nil {
 		return err
 	}

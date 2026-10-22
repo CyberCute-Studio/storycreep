@@ -84,7 +84,7 @@ type slugPayload struct {
 type movePayload struct {
 	ID       string `json:"id" doc:"The board's ID"`
 	FolderID string `json:"folder_id,omitempty" doc:"The ID of the folder of boards that the board goes into, which is not deleted. Without it, the board goes to the top."`
-	Order    string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child."`
+	Order    string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child, or stays where it is if it is the last child of the folder already."`
 }
 
 // idPayload is the payload of a command that needs nothing but its board's
@@ -228,7 +228,8 @@ func registerBoards(r *commands.Registry) {
 			if err != nil {
 				return err
 			}
-			order, err := sortKey(ctx, q, b.WorkspaceID, b.ProjectID, KindBoard, folder, p.Order)
+			order, err := sortKey(ctx, q, b.WorkspaceID, b.ProjectID, KindBoard, folder, p.Order,
+				&child{id: b.ID, parent: b.FolderID, key: b.Order})
 			if err != nil {
 				return err
 			}
@@ -321,7 +322,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	if err != nil {
 		return err
 	}
-	order, err := sortKey(ctx, q, ws, project, KindBoard, folder, p.Order)
+	order, err := sortKey(ctx, q, ws, project, KindBoard, folder, p.Order, nil)
 	if err != nil {
 		return err
 	}
@@ -413,50 +414,90 @@ func liveFolder(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID
 	return row.Folder.ID, nil
 }
 
+// child is a child of a folder, or of the top, that moves: its ID, its
+// parent, null for the top, and its key.
+type child struct {
+	id, parent pgtype.UUID
+	key        string
+}
+
 // sortKey returns the key that a child of the kind that goes into the folder
 // parent, or to the top if it is null, is placed at: the key given, if it is
-// not "", or else one after the folder's last child's (orderkey.After), or it
-// refuses the batch if that key has no key after it.
+// not "", or else one after the parent's last child's (orderkey.After), the
+// deleted ones included, so that one restored later keeps its place, or, if
+// that key has no key after it, one after the parent's last child's that is
+// not deleted, so that a key that a deleted child used up does not keep
+// every child from being added after the others, or it refuses the batch if
+// that key has none after it either. moving is the child that moves there,
+// or nil for a new one: it is none of the children that it goes after, and
+// it keeps its key if it is in parent already, after every other child, so
+// that moving the last child to the end changes nothing.
 func sortKey(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, kind string, parent pgtype.UUID,
-	given string) (string, error) {
+	given string, moving *child) (string, error) {
 	if given != "" {
 		return given, nil
 	}
-	last, err := q.LastSortKey(ctx, queries.LastSortKeyParams{WorkspaceID: ws, ProjectID: project, Kind: kind,
-		ParentID: parent})
+	params := queries.LastSortKeysParams{WorkspaceID: ws, ProjectID: project, Kind: kind, ParentID: parent}
+	if moving != nil {
+		params.Moved = moving.id
+	}
+	last, err := q.LastSortKeys(ctx, params)
 	if err != nil {
-		return "", fmt.Errorf("board: read the folder's last key: %w", err)
+		return "", fmt.Errorf("board: read the folder's last keys: %w", err)
 	}
-	k, ok := orderkey.After(last)
-	if !ok {
-		return "", commands.Refuse("order", fmt.Sprintf("is needed, because the key of the folder's last child has "+
-			"no key after it of at most %d digits", orderkey.MaxLength), nil)
+	if moving != nil && sameUUID(moving.parent, parent) && moving.key > last.Last {
+		return moving.key, nil
 	}
-	return k, nil
+	for _, k := range []string{last.Last, last.LastLive} {
+		if after, ok := orderkey.After(k); ok {
+			return after, nil
+		}
+	}
+	return "", commands.Refuse("order", fmt.Sprintf("is needed, because the key of the folder's last child that is "+
+		"not deleted has no key after it of at most %d digits", orderkey.MaxLength), nil)
 }
+
+// sameUUID reports whether the columns a and b are the same: both null, or
+// both the same UUID.
+func sameUUID(a, b pgtype.UUID) bool {
+	return a.Valid == b.Valid && (!a.Valid || a.Bytes == b.Bytes)
+}
+
+// suffixDigits is the most digits that deriveSlug numbers a slug with, which
+// more boards than an instance holds would need.
+const suffixDigits = 10
 
 // deriveSlug returns the slug of a new board named name (FR-PROJ-02 AC1,
 // AC4): the name's slug, or board for a name without one, and con-board for
 // con and the other names that Windows reserves for devices (slug.Derive),
 // unless a board of the project has it, in the trash or not, and otherwise
-// the first of that with -2, -3, and so on, that none has.
+// the first of that with -2, -3, and so on, that none has. It reads only the
+// slugs that start as each of those does, which the index of their
+// uniqueness finds (BoardSlugsFrom), rather than every board's, so that a
+// batch that creates many boards of different names reads few slugs for
+// each.
 func deriveSlug(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, name string) (string, error) {
-	slugs, err := q.BoardSlugs(ctx, queries.BoardSlugsParams{WorkspaceID: ws, ProjectID: project})
+	base := slug.Derive(name, "board")
+	// Each slug tried starts with base cut to leave room for the longest
+	// number, without a hyphen at its end (slug.WithSuffix).
+	stem := strings.TrimRight(base[:min(len(base), slug.MaxLength-1-suffixDigits)], "-")
+	slugs, err := q.BoardSlugsFrom(ctx, queries.BoardSlugsFromParams{WorkspaceID: ws, ProjectID: project,
+		Stem: stem})
 	if err != nil {
 		return "", fmt.Errorf("board: read the boards' slugs: %w", err)
 	}
-	taken := make(map[string]bool, len(slugs))
+	used := make(map[string]bool, len(slugs))
 	for _, s := range slugs {
-		taken[s] = true
+		used[s] = true
 	}
-	base := slug.Derive(name, "board")
-	// The project has fewer boards than the numbers tried, so one is free.
+	// Fewer boards have the slugs read than the numbers tried, so one is
+	// free.
 	for n := 1; ; n++ {
 		s := base
 		if n > 1 {
 			s = slug.WithSuffix(base, fmt.Sprintf("-%d", n))
 		}
-		if !taken[s] {
+		if !used[s] {
 			return s, nil
 		}
 	}
@@ -558,19 +599,13 @@ func optionalID(kind ids.Kind, name, id string) input.FieldErrors {
 // checkName says what is wrong with a board's or a folder's name, or returns
 // "".
 func checkName(name string) string {
-	if strings.TrimSpace(name) != name {
-		return "has white space around it"
-	}
-	return input.CheckName(name, MaxNameLength)
+	return input.CheckTrimmedName(name, MaxNameLength)
 }
 
 // checkDescription says what is wrong with a board's description, or
 // returns "".
 func checkDescription(description string) string {
-	if strings.TrimSpace(description) != description {
-		return "has white space around it"
-	}
-	return input.CheckText(description, MaxDescriptionLength)
+	return input.CheckTrimmedText(description, MaxDescriptionLength)
 }
 
 // field returns the problem msg of the payload's field name, or none if msg

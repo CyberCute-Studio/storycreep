@@ -56,11 +56,14 @@ func (e *Error) Problem() string {
 		"characters", MaxLength)
 }
 
-// devices are the names that Windows reserves for devices (FR-PROJ-02 AC4).
+// devices are the names that Windows reserves for devices (FR-PROJ-02 AC4),
+// as Microsoft's rules for naming files list them, com0 and lpt0 among them,
+// so that a tool that follows those rules takes every board's file. The
+// rules' com and lpt with a superscript digit are not slugs.
 var devices = []string{
 	"aux", "con", "nul", "prn",
-	"com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
-	"lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+	"com0", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+	"lpt0", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
 }
 
 // Devices returns the names that Windows reserves for devices, which no slug

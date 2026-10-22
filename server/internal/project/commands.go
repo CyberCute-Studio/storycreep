@@ -64,7 +64,7 @@ type describePayload struct {
 type settingsPayload struct {
 	DefaultLocale  *string       `json:"default_locale,omitempty" maxLength:"64" doc:"The locale of the project's text, as a BCP 47 tag of a language in its canonical form, such as en or cs-CZ"`
 	PublishMinRole *string       `json:"publish_min_role,omitempty" enum:"editor,admin" doc:"The least role that may publish the project's snapshots"`
-	Entry          *ProjectEntry `json:"entry,omitempty" doc:"The project's entry, which replaces its entry: without a board, the project has none. A board other than the entry's is one of the project's boards, not in its trash, or the command is answered with 422 validation_failed; the node needs not exist yet."`
+	Entry          *ProjectEntry `json:"entry,omitempty" doc:"The project's entry, which replaces its entry: without a board, the project has none. A board other than the entry's is one of the project's boards, in its trash or not, or the command is answered with 422 validation_failed; the node needs not exist yet."`
 }
 
 // emptyPayload is the payload of a command that needs nothing but its
@@ -88,9 +88,10 @@ const (
 // revision a command expects as it does any entity's, and the project's
 // commands, each of which changes its draft, so that an API token needs
 // project:write for it (FR-AUTH-04). A change of the entry's board checks
-// that the board is one of the project's, not in its trash, and the node is
-// not checked to exist, which the nodes do once they are added (plan item
-// 35); the validation reports an entry that no longer exists (FR-DEP-04).
+// that the board is one of the project's, in its trash or not, and the node
+// is not checked to exist, which the nodes do once they are added (plan item
+// 35); the validation reports an entry that no longer exists, or whose board
+// is in the trash (FR-DEP-03, FR-DEP-04).
 func Register(r *commands.Registry) {
 	commands.RegisterEntity(r, commands.Entity{
 		Kind: ids.Project,
@@ -413,20 +414,27 @@ func applySettings(ctx context.Context, tx *commands.Tx, p settingsPayload) erro
 // checkEntryBoard refuses the batch unless the board of the project's new
 // entry is none, the board of its entry before, which may no longer exist,
 // so that a change that keeps it is not refused for it, or one of the
-// project's boards that is not in its trash (N32).
+// project's boards, in its trash or not (N32), so that the undo of a change
+// of the entry from a board that was deleted since, which sets the board
+// back, is not refused for it either; the validation reports an entry whose
+// board is deleted (FR-DEP-03's ref_dangling). An ID names its board whatever
+// the case of its letters, which the stored entry keeps as they were sent.
 func checkEntryBoard(ctx context.Context, tx *commands.Tx, before, entry ProjectEntry) error {
-	if entry.BoardID == "" || entry.BoardID == before.BoardID {
+	if entry.BoardID == "" {
 		return nil
 	}
 	// Check refused an entry whose board's ID does not decode.
 	board, _ := ids.Decode(ids.Board, entry.BoardID)
-	live, err := queries.New(tx).LiveBoard(ctx, queries.LiveBoardParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+	if kept, err := ids.Decode(ids.Board, before.BoardID); err == nil && kept == board {
+		return nil
+	}
+	_, err := queries.New(tx).BoardAny(ctx, queries.BoardAnyParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
 		ProjectID: nullUUID(tx.ProjectID()), ID: nullUUID(board)})
 	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return commands.Refuse("entry.board_id", "is not a board of the project", nil)
 	case err != nil:
 		return fmt.Errorf("project: read the entry's board: %w", err)
-	case !live:
-		return commands.Refuse("entry.board_id", "is not a board of the project, or is in its trash", nil)
 	}
 	return nil
 }

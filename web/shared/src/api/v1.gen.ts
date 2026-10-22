@@ -155,7 +155,7 @@ export interface BoardMovePayload {
   folder_id?: string;
   /** The board's ID */
   id: string;
-  /** The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child. */
+  /** The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child, or stays where it is if it is the last child of the folder already. */
   order?: string;
 }
 
@@ -459,7 +459,7 @@ export interface FolderMoveCommand {
 export interface FolderMovePayload {
   /** The folder's ID */
   id: string;
-  /** The folder's place among the children of its new parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child. */
+  /** The folder's place among the children of its new parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child, or stays where it is if it is the last child of its parent already. */
   order?: string;
   /** The ID of the folder of the same kind that the folder goes into, which is not deleted, and neither the folder itself nor a folder inside it. Without it, the folder goes to the top. */
   parent_id?: string;
@@ -898,7 +898,7 @@ export interface ProjectUpdateSettingsCommand {
 export interface ProjectUpdateSettingsPayload {
   /** The locale of the project's text, as a BCP 47 tag of a language in its canonical form, such as en or cs-CZ */
   default_locale?: string;
-  /** The project's entry, which replaces its entry: without a board, the project has none. A board other than the entry's is one of the project's boards, not in its trash, or the command is answered with 422 validation_failed; the node needs not exist yet. */
+  /** The project's entry, which replaces its entry: without a board, the project has none. A board other than the entry's is one of the project's boards, in its trash or not, or the command is answered with 422 validation_failed; the node needs not exist yet. */
   entry?: ProjectEntry;
   /** The least role that may publish the project's snapshots */
   publish_min_role?: "editor" | "admin";
@@ -1038,7 +1038,7 @@ export interface UpdateProjectBody {
   default_locale?: string;
   /** The project's new description, as for POST /api/v1/workspaces/{workspace_id}/projects; empty for none */
   description?: string;
-  /** The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. A board other than the entry's is one of the project's boards, not in its trash, or the answer is 422 validation_failed; the node needs not exist yet. */
+  /** The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. A board other than the entry's is one of the project's boards, in its trash or not, or the answer is 422 validation_failed; the node needs not exist yet. */
   entry?: ProjectEntry;
   /** The project's revision that the change was made against. If the project has another, the answer is 409 revision_conflict, and nothing changes. Without it, the change is made whatever the revision. A body that names no field to change changes nothing, so it is answered with the project, whatever its revision. */
   expected_rev?: number;

@@ -70,20 +70,26 @@ SELECT (
         AND b.folder_id = @id AND b.deleted_at IS NULL)
 )::boolean AS holds;
 
--- name: LastSortKey :one
--- LastSortKey returns the greatest order of the project's children of the
+-- name: LastSortKeys :one
+-- LastSortKeys returns the greatest order of the project's children of the
 -- folder parent_id of the kind kind, or of those at the top if parent_id is
--- null: its folders, and, for a folder of boards, its boards, deleted ones
--- included, so that one restored later keeps its place, or an empty string
--- if it has none.
-SELECT coalesce(max(c.sort_key), '')::text AS sort_key FROM (
-    SELECT f."order" AS sort_key FROM folder f
+-- null, but for the child moved, if it is not null, which moves there: its
+-- folders, and, for a folder of boards, its boards, deleted ones included, so
+-- that one restored later keeps its place, as last, and the greatest of
+-- those that are not deleted as last_live, each an empty string if there is
+-- none.
+SELECT coalesce(max(c.sort_key), '')::text AS last,
+    coalesce(max(c.sort_key) FILTER (WHERE NOT c.deleted), '')::text AS last_live
+FROM (
+    SELECT f."order" AS sort_key, f.deleted_at IS NOT NULL AS deleted FROM folder f
     WHERE f.workspace_id = @workspace_id AND f.project_id = @project_id AND f.kind = @kind
         AND (f.parent_id = sqlc.narg(parent_id)::uuid OR sqlc.narg(parent_id)::uuid IS NULL AND f.parent_id IS NULL)
+        AND f.id IS DISTINCT FROM sqlc.narg(moved)::uuid
     UNION ALL
-    SELECT b."order" FROM board b
+    SELECT b."order", b.deleted_at IS NOT NULL FROM board b
     WHERE @kind::text = 'board' AND b.workspace_id = @workspace_id AND b.project_id = @project_id
         AND (b.folder_id = sqlc.narg(parent_id)::uuid OR sqlc.narg(parent_id)::uuid IS NULL AND b.folder_id IS NULL)
+        AND b.id IS DISTINCT FROM sqlc.narg(moved)::uuid
 ) c;
 
 -- name: UpdateFolderName :one
@@ -163,23 +169,22 @@ LIMIT @max_rows;
 SELECT id, rev FROM board
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[]);
 
--- name: BoardSlugs :many
--- BoardSlugs returns the slugs of the project's boards, those in the trash
--- included, whose slugs are unique within the project too.
-SELECT slug FROM board WHERE workspace_id = @workspace_id AND project_id = @project_id;
+-- name: BoardSlugsFrom :many
+-- BoardSlugsFrom returns the slugs of the project's boards, those in the
+-- trash included, whose slugs are unique within the project too, that start
+-- with stem: the slugs from stem up to stem with a tilde after it, which
+-- every slug that starts with stem sorts before, because a slug's characters
+-- sort before the tilde in the bytes that board's slugs are compared by, so
+-- that the index of their uniqueness finds them, rather than every slug of
+-- the project.
+SELECT slug FROM board
+WHERE workspace_id = @workspace_id AND project_id = @project_id
+    AND slug >= @stem::text AND slug < @stem::text || '~';
 
 -- name: BoardWithSlug :one
 -- BoardWithSlug returns the ID of the project's board whose slug is slug,
 -- whether or not it is in the trash, and no row if none has it.
 SELECT id FROM board WHERE workspace_id = @workspace_id AND project_id = @project_id AND slug = @slug;
-
--- name: LiveBoard :one
--- LiveBoard returns whether the project has the board id, and it is not in
--- the trash.
-SELECT EXISTS (
-    SELECT 1 FROM board
-    WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND deleted_at IS NULL
-)::boolean AS live;
 
 -- name: UpdateBoardName :one
 -- UpdateBoardName renames the board, unless it has the name already, and

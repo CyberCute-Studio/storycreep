@@ -19,7 +19,9 @@
 // themselves by keys of package orderkey, which the client picks, so that
 // moving one changes it alone, and the boards of a folder of boards share
 // that order with its folders. A command that leaves the key out puts the
-// child after the folder's last.
+// child after the folder's last, the deleted ones included, or after its last
+// that is not deleted once no key comes after that, and a move that leaves it
+// out keeps the key of a child that is the folder's last already.
 //
 // A deleted board goes to the project's trash, from which restoring it
 // brings it back where it was, with the folders above it that were deleted
