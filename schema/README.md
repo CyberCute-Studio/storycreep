@@ -5,5 +5,6 @@ Everything that must agree between Go, TypeScript, and GDScript: the published J
 - [`api/v1/openapi.json`](api/v1/openapi.json) is the OpenAPI document of the REST API, which the server generates from its routes and serves at `/api/v1/openapi.json`. The TypeScript client's types are generated from it; see "The API contract" in [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 - [`ids/`](ids/) holds the vectors of the identifier encoding.
 - [`i18n/`](i18n/) holds the vectors of the message format, which the web app's i18next and the server's formatter both run.
+- [`rich-text/`](rich-text/) holds the JSON Schema of the rich-text documents of node bodies, connection labels, and component descriptions, which the server generates, and the vectors of their validation and of the segments, plain text, preview, word count, and hash derived from them.
 
 The plans of the hosted service, which the server enforces and the pricing page shows, are not here: they live in [`server/internal/entitlements/plans.json`](../server/internal/entitlements/plans.json), because the server embeds the file, and a Go module embeds only the files under its own directory (PRD FR-ENT-01 AC3).

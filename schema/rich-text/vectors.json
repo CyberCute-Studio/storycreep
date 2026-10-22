@@ -1,0 +1,3119 @@
+{
+  "names": {
+    "components": {
+      "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF": "Elara"
+    },
+    "values": [
+      {
+        "name": "met_elara",
+        "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
+      },
+      {
+        "name": "harbour_rumours",
+        "ref": "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"
+      },
+      {
+        "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
+        "name": "elara.trust",
+        "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+      }
+    ]
+  },
+  "valid": [
+    {
+      "note": "the editor's empty document: one empty paragraph",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph"
+          }
+        ]
+      },
+      "segments": [],
+      "text": "",
+      "preview": "",
+      "words": 0,
+      "hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "note": "the node of the PRD's example (section 6.5)",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Harbour's closed to strangers. State your business."
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Harbour's closed to strangers. State your business."
+        }
+      ],
+      "text": "Harbour's closed to strangers. State your business.",
+      "preview": "Harbour's closed to strangers. State your business.",
+      "words": 7,
+      "hash": "sha256:c837445da5f4925edceb14ff23a89dd81158e985f16b5d160c522201241629a4"
+    },
+    {
+      "note": "marks and a link: each segment lists its marks in alphabetical order, and a linked one has its href",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Ask the "
+              },
+              {
+                "type": "text",
+                "text": "keeper",
+                "marks": [
+                  {
+                    "type": "bold"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "text": " about the "
+              },
+              {
+                "type": "text",
+                "text": "old lighthouse",
+                "marks": [
+                  {
+                    "type": "italic"
+                  },
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/lighthouse"
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "text": ", not the "
+              },
+              {
+                "type": "text",
+                "text": "new",
+                "marks": [
+                  {
+                    "type": "strike"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "text": " one: "
+              },
+              {
+                "type": "text",
+                "text": "LIGHT_ON",
+                "marks": [
+                  {
+                    "type": "code"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "text": "."
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Ask the "
+        },
+        {
+          "kind": "text",
+          "marks": ["bold"],
+          "value": "keeper"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " about the "
+        },
+        {
+          "kind": "text",
+          "marks": ["italic", "link"],
+          "value": "old lighthouse",
+          "href": "https://example.com/lighthouse"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": ", not the "
+        },
+        {
+          "kind": "text",
+          "marks": ["strike"],
+          "value": "new"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " one: "
+        },
+        {
+          "kind": "text",
+          "marks": ["code"],
+          "value": "LIGHT_ON"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "."
+        }
+      ],
+      "text": "Ask the keeper about the old lighthouse, not the new one: LIGHT_ON.",
+      "preview": "Ask the keeper about the old lighthouse, not the new one: LIGHT_ON.",
+      "words": 12,
+      "hash": "sha256:38482a363c9b444dc6c51c0d74f0cdc4258281108cfcffe99cf3cf5333e7f057"
+    },
+    {
+      "note": "a mention shows the component's name, and a value its name in braces; a line break is a line feed",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {
+                  "id": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                }
+              },
+              {
+                "type": "text",
+                "text": " has heard "
+              },
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"
+                }
+              },
+              {
+                "type": "text",
+                "text": " rumours."
+              },
+              {
+                "type": "hardBreak"
+              },
+              {
+                "type": "text",
+                "text": "Trust: "
+              },
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+                  "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
+                  "decimals": 1
+                },
+                "marks": [
+                  {
+                    "type": "bold"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "kind": "mention",
+          "marks": [],
+          "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+          "value": "Elara"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " has heard "
+        },
+        {
+          "kind": "value",
+          "marks": [],
+          "name": "harbour_rumours",
+          "ref": "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " rumours."
+        },
+        {
+          "kind": "break"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Trust: "
+        },
+        {
+          "kind": "value",
+          "marks": ["bold"],
+          "name": "elara.trust",
+          "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+          "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
+          "decimals": 1
+        }
+      ],
+      "text": "Elara has heard {harbour_rumours} rumours.\nTrust: {elara.trust}",
+      "preview": "Elara has heard {harbour_rumours} rumours. Trust: {elara.trust}",
+      "words": 7,
+      "hash": "sha256:a893a22a46af838ba40fa316d53642a4a1aff5f8f5fb9243c0e8c1bafc16f087"
+    },
+    {
+      "note": "lists: an item segment begins each item, and a paragraph segment the paragraph after the list",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Pack for the climb:"
+              }
+            ]
+          },
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Rope"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Lamp"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "orderedList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Oil"
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "Wick"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ],
+                    "attrs": {
+                      "start": 3
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Then go."
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Pack for the climb:"
+        },
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Rope"
+        },
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Lamp"
+        },
+        {
+          "depth": 2,
+          "kind": "item",
+          "list": "ordered",
+          "number": 3
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Oil"
+        },
+        {
+          "depth": 2,
+          "kind": "item",
+          "list": "ordered",
+          "number": 4
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Wick"
+        },
+        {
+          "kind": "paragraph"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Then go."
+        }
+      ],
+      "text": "Pack for the climb:\n• Rope\n• Lamp\n  3. Oil\n  4. Wick\nThen go.",
+      "preview": "Pack for the climb: • Rope • Lamp 3. Oil 4. Wick Then go.",
+      "words": 10,
+      "hash": "sha256:e8da259d791343d935cfd1cc81bb8e5fc35a5f3c88806f63a6a58504d512e6f6"
+    },
+    {
+      "note": "the canonical form: marks in alphabetical order, neighbouring texts with the same marks joined, an ID in its canonical spelling, and no field that holds its default",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Go "
+              },
+              {
+                "type": "text",
+                "text": "now",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com"
+                    }
+                  },
+                  {
+                    "type": "bold"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "text": "!",
+                "marks": [
+                  {
+                    "type": "bold"
+                  },
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": []
+          },
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "mention",
+                        "attrs": {
+                          "id": "CMP_01hq8z7kd3m9p2w5xrtvnq4bcf"
+                        },
+                        "marks": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 1
+            }
+          }
+        ]
+      },
+      "canonical": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Go "
+              },
+              {
+                "type": "text",
+                "text": "now!",
+                "marks": [
+                  {
+                    "type": "bold"
+                  },
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "paragraph"
+          },
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "mention",
+                        "attrs": {
+                          "id": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Go "
+        },
+        {
+          "kind": "text",
+          "marks": ["bold", "link"],
+          "value": "now!",
+          "href": "https://example.com"
+        },
+        {
+          "kind": "paragraph"
+        },
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "ordered",
+          "number": 1
+        },
+        {
+          "kind": "mention",
+          "marks": [],
+          "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+          "value": "Elara"
+        }
+      ],
+      "text": "Go now!\n\n1. Elara",
+      "preview": "Go now! 1. Elara",
+      "words": 3,
+      "hash": "sha256:c1a239168a8ef85348410a1b4bfb565cd9152aee49bd3d54da3ac1692e5e609a"
+    },
+    {
+      "note": "a list item's later paragraph and its line breaks are indented as far as its text",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "First"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "More"
+                      },
+                      {
+                        "type": "hardBreak"
+                      },
+                      {
+                        "type": "text",
+                        "text": "lines"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "First"
+        },
+        {
+          "kind": "paragraph",
+          "depth": 1
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "More"
+        },
+        {
+          "kind": "break"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "lines"
+        }
+      ],
+      "text": "• First\n  More\n  lines",
+      "preview": "• First More lines",
+      "words": 3,
+      "hash": "sha256:db06d859d22f7495f064c577b9af3ee6e6715a1b0ce3a471c9cb9f0ad5479b53"
+    },
+    {
+      "note": "lists nest 5 deep at most",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "b"
+                              }
+                            ]
+                          },
+                          {
+                            "type": "bulletList",
+                            "content": [
+                              {
+                                "type": "listItem",
+                                "content": [
+                                  {
+                                    "type": "paragraph",
+                                    "content": [
+                                      {
+                                        "type": "text",
+                                        "text": "c"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "bulletList",
+                                    "content": [
+                                      {
+                                        "type": "listItem",
+                                        "content": [
+                                          {
+                                            "type": "paragraph",
+                                            "content": [
+                                              {
+                                                "type": "text",
+                                                "text": "d"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "type": "bulletList",
+                                            "content": [
+                                              {
+                                                "type": "listItem",
+                                                "content": [
+                                                  {
+                                                    "type": "paragraph",
+                                                    "content": [
+                                                      {
+                                                        "type": "text",
+                                                        "text": "e"
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "a"
+        },
+        {
+          "depth": 2,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "b"
+        },
+        {
+          "depth": 3,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "c"
+        },
+        {
+          "depth": 4,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "d"
+        },
+        {
+          "depth": 5,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "e"
+        }
+      ],
+      "text": "• a\n  • b\n    • c\n      • d\n        • e",
+      "preview": "• a • b • c • d • e",
+      "words": 5,
+      "hash": "sha256:6fe101a3ea01e1a4773d9acdb197846c3bcc313c3e21b010a023d9a85ce8bf4f"
+    },
+    {
+      "note": "an ordered list may start at 0; a line break's marks show in no segment; a linked value has its href",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Zero"
+                      },
+                      {
+                        "type": "hardBreak",
+                        "marks": [
+                          {
+                            "type": "italic"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "valueRef",
+                        "attrs": {
+                          "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
+                        },
+                        "marks": [
+                          {
+                            "type": "link",
+                            "attrs": {
+                              "href": "https://example.com/met"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 0
+            }
+          }
+        ]
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "ordered",
+          "number": 0
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Zero"
+        },
+        {
+          "kind": "break"
+        },
+        {
+          "kind": "value",
+          "marks": ["link"],
+          "name": "met_elara",
+          "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+          "href": "https://example.com/met"
+        }
+      ],
+      "text": "0. Zero\n  {met_elara}",
+      "preview": "0. Zero {met_elara}",
+      "words": 2,
+      "hash": "sha256:243d09d592f0b41f33aeea7e6bde7296f9c9ca2e184331a2b95d81c758078698"
+    },
+    {
+      "note": "an empty paragraph between others is an empty line, and a document's empty first paragraph has no segment",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph"
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "After"
+              }
+            ]
+          },
+          {
+            "type": "paragraph"
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "End"
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "kind": "paragraph"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "After"
+        },
+        {
+          "kind": "paragraph"
+        },
+        {
+          "kind": "paragraph"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "End"
+        }
+      ],
+      "text": "\nAfter\n\nEnd",
+      "preview": "After End",
+      "words": 2,
+      "hash": "sha256:30e3b27c2f59d6b100bc6789d2955ce36e588251dd38c1d9a7cc7c9b471ccc3c"
+    },
+    {
+      "note": "a preview of a long text is cut at the last space within its first 100 characters, with an ellipsis",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "The keeper climbed the spiral stairs of the old lighthouse, counting each of the hundred and twelve worn steps under her breath."
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "The keeper climbed the spiral stairs of the old lighthouse, counting each of the hundred and twelve worn steps under her breath."
+        }
+      ],
+      "text": "The keeper climbed the spiral stairs of the old lighthouse, counting each of the hundred and twelve worn steps under her breath.",
+      "preview": "The keeper climbed the spiral stairs of the old lighthouse, counting each of the hundred and twelve…",
+      "words": 22,
+      "hash": "sha256:e1a459cab5130ee07c2bbcaeed2b3cb1b2bd61e145902f96c6164aafccfddecd"
+    },
+    {
+      "note": "text in any script, with an emoji and a no-break space",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy  — 東京タワー 3 km"
+              }
+            ]
+          }
+        ]
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy  — 東京タワー 3 km"
+        }
+      ],
+      "text": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy  — 東京タワー 3 km",
+      "preview": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy — 東京タワー 3 km",
+      "words": 9,
+      "hash": "sha256:f40ad5ba8fb127eeb990de1536ba5af0a6c62bdba97795c5f7cd0f26cfb467ce"
+    }
+  ],
+  "invalid": [
+    {
+      "note": "a document that is not an object",
+      "doc": "Harbour",
+      "reason": "wrong_type",
+      "pointer": ""
+    },
+    {
+      "note": "a document that is an array",
+      "doc": [],
+      "reason": "wrong_type",
+      "pointer": ""
+    },
+    {
+      "note": "a document without a type",
+      "doc": {
+        "content": [
+          {
+            "type": "paragraph"
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": ""
+    },
+    {
+      "note": "a type that is not a string",
+      "doc": {
+        "type": 1,
+        "content": [
+          {
+            "type": "paragraph"
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/type"
+    },
+    {
+      "note": "a document that is not a doc node",
+      "doc": {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": "x"
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": ""
+    },
+    {
+      "note": "a document of an unknown type",
+      "doc": {
+        "type": "document",
+        "content": [
+          {
+            "type": "paragraph"
+          }
+        ]
+      },
+      "reason": "unknown_node",
+      "pointer": ""
+    },
+    {
+      "note": "a document without content",
+      "doc": {
+        "type": "doc"
+      },
+      "reason": "missing_field",
+      "pointer": ""
+    },
+    {
+      "note": "a document with no block",
+      "doc": {
+        "type": "doc",
+        "content": []
+      },
+      "reason": "content",
+      "pointer": "/content"
+    },
+    {
+      "note": "content that is not an array",
+      "doc": {
+        "type": "doc",
+        "content": {}
+      },
+      "reason": "wrong_type",
+      "pointer": "/content"
+    },
+    {
+      "note": "content that is null",
+      "doc": {
+        "type": "doc",
+        "content": null
+      },
+      "reason": "wrong_type",
+      "pointer": "/content"
+    },
+    {
+      "note": "a node that is not an object",
+      "doc": {
+        "type": "doc",
+        "content": ["paragraph"]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "a heading",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "heading",
+            "attrs": {
+              "level": 1
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_node",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "a blockquote",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "blockquote",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "x"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_node",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "a code block",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "codeBlock",
+            "content": [
+              {
+                "type": "text",
+                "text": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_node",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "an image",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "image",
+                "attrs": {
+                  "src": "https://example.com/a.png"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_node",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a node type in another case",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "Paragraph"
+          }
+        ]
+      },
+      "reason": "unknown_node",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "text directly in a document",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "text",
+            "text": "x"
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "a list item directly in a document",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "listItem",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "x"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "a paragraph in a paragraph",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "x"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a doc in a paragraph",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "doc",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a paragraph directly in a list",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "x"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a list item that starts with a list",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "x"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0/content/0/content/0",
+      "schema_accepts": true
+    },
+    {
+      "note": "a list without items",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": []
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0/content"
+    },
+    {
+      "note": "a list without content",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList"
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "a list item that holds nothing",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": []
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0/content/0/content"
+    },
+    {
+      "note": "attrs on a paragraph",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "attrs": {}
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/attrs"
+    },
+    {
+      "note": "a field that no node has",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "id": "a"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/content/0/id"
+    },
+    {
+      "note": "an attribute that an ordered list does not have",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 2,
+              "type": "a"
+            }
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/attrs/type"
+    },
+    {
+      "note": "an ordered list's attrs that are not an object",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": [2]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/attrs"
+    },
+    {
+      "note": "an ordered list starting below 0",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": -1
+            }
+          }
+        ]
+      },
+      "reason": "out_of_range",
+      "pointer": "/content/0/attrs/start"
+    },
+    {
+      "note": "an ordered list starting above 999,999",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 1000000
+            }
+          }
+        ]
+      },
+      "reason": "out_of_range",
+      "pointer": "/content/0/attrs/start"
+    },
+    {
+      "note": "an ordered list starting at a fraction",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 2.5
+            }
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/attrs/start"
+    },
+    {
+      "note": "an ordered list starting at a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": "3"
+            }
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/attrs/start"
+    },
+    {
+      "note": "lists nested 6 deep",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph"
+                          },
+                          {
+                            "type": "bulletList",
+                            "content": [
+                              {
+                                "type": "listItem",
+                                "content": [
+                                  {
+                                    "type": "paragraph"
+                                  },
+                                  {
+                                    "type": "bulletList",
+                                    "content": [
+                                      {
+                                        "type": "listItem",
+                                        "content": [
+                                          {
+                                            "type": "paragraph"
+                                          },
+                                          {
+                                            "type": "bulletList",
+                                            "content": [
+                                              {
+                                                "type": "listItem",
+                                                "content": [
+                                                  {
+                                                    "type": "paragraph"
+                                                  },
+                                                  {
+                                                    "type": "bulletList",
+                                                    "content": [
+                                                      {
+                                                        "type": "listItem",
+                                                        "content": [
+                                                          {
+                                                            "type": "paragraph"
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "too_deep",
+      "pointer": "/content/0/content/0/content/1/content/0/content/1/content/0/content/1/content/0/content/1/content/0/content/1",
+      "schema_accepts": true
+    },
+    {
+      "note": "a text without text",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "an empty text",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": ""
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "empty_text",
+      "pointer": "/content/0/content/0/text"
+    },
+    {
+      "note": "a text that is not a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": ["x"]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/text"
+    },
+    {
+      "note": "a line feed in text, which a hardBreak stands for",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "a\nb"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text"
+    },
+    {
+      "note": "a tab in text",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "a\tb"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text"
+    },
+    {
+      "note": "a C1 control in text",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "ab"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text"
+    },
+    {
+      "note": "a line separator in text",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "a b"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text"
+    },
+    {
+      "note": "marks that are not an array",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": "bold"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/marks"
+    },
+    {
+      "note": "a mark that is not an object",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": ["bold"]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "a mark without a type",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [{}]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "an underline mark",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "underline"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_mark",
+      "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "a highlight mark",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "highlight"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_mark",
+      "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "a node type as a mark",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_mark",
+      "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "attrs on a bold mark",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "bold",
+                    "attrs": {}
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/content/0/marks/0/attrs"
+    },
+    {
+      "note": "a mark twice",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "bold"
+                  },
+                  {
+                    "type": "bold"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "duplicate_mark",
+      "pointer": "/content/0/content/0/marks/1"
+    },
+    {
+      "note": "two links",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/a"
+                    }
+                  },
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/b"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "duplicate_mark",
+      "pointer": "/content/0/content/0/marks/1",
+      "schema_accepts": true
+    },
+    {
+      "note": "code with another mark",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "code"
+                  },
+                  {
+                    "type": "bold"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "excluded_mark",
+      "pointer": "/content/0/content/0/marks/1",
+      "schema_accepts": true
+    },
+    {
+      "note": "another mark with code",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com"
+                    }
+                  },
+                  {
+                    "type": "code"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "excluded_mark",
+      "pointer": "/content/0/content/0/marks/1",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link without attrs",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "a link without an href",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {}
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0/marks/0/attrs"
+    },
+    {
+      "note": "a link with a target",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com",
+                      "target": "_blank"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/content/0/marks/0/attrs/target"
+    },
+    {
+      "note": "an href that is not a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": 1
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a javascript: link",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "javascript:alert(1)"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a data: link",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "data:text/html,<script>alert(1)</script>"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a file: link",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "file:///etc/passwd"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "an ftp: link",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "ftp://example.com/a"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a relative link",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "/boards/harbour"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a link without a scheme",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "an empty link",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": ""
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "an https link without a host",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https:///path"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "an http link that is not hierarchical",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "http:example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link without an address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a subject and no address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:?subject=Light"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a space",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/a b"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a link with a no-break space",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/a b"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link longer than 2,048 characters",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a link that is not a URL",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com:port/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mention without attrs",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a mention without an id",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {}
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0/attrs"
+    },
+    {
+      "note": "a mention with a label",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {
+                  "id": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+                  "label": "Elara"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/content/0/attrs/label"
+    },
+    {
+      "note": "a mention of a variable",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {
+                  "id": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/id"
+    },
+    {
+      "note": "a mention whose id is not an ID",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {
+                  "id": "cmp_123"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/id"
+    },
+    {
+      "note": "a mention whose id overflows 128 bits",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {
+                  "id": "cmp_81HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/id"
+    },
+    {
+      "note": "a mention whose id is not a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {
+                  "id": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/attrs/id"
+    },
+    {
+      "note": "a value without attrs",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a value without a ref",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {}
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0/attrs"
+    },
+    {
+      "note": "a value of a board",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "bd_01HQ8ZAX6P3R9T1K7MWVND2CQJ"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/ref"
+    },
+    {
+      "note": "a value of a variable's attribute",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/attribute"
+    },
+    {
+      "note": "a value of a component without its attribute",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs"
+    },
+    {
+      "note": "a value whose attribute is a component",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+                  "attribute": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/attribute"
+    },
+    {
+      "note": "a value with a format other than decimals",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "format": "int"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/content/0/attrs/format"
+    },
+    {
+      "note": "a value with 7 decimals",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "decimals": 7
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "out_of_range",
+      "pointer": "/content/0/content/0/attrs/decimals"
+    },
+    {
+      "note": "a value with fewer than 0 decimals",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "decimals": -1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "out_of_range",
+      "pointer": "/content/0/content/0/attrs/decimals"
+    },
+    {
+      "note": "a value with a fraction of decimals",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "decimals": 1.5
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/attrs/decimals"
+    },
+    {
+      "note": "a value with decimals as a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "decimals": "2"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/attrs/decimals"
+    }
+  ],
+  "words": [
+    {
+      "note": "nothing",
+      "text": "",
+      "words": 0
+    },
+    {
+      "note": "white space alone",
+      "text": " \t\n ",
+      "words": 0
+    },
+    {
+      "note": "an apostrophe and punctuation stay in a word",
+      "text": "Don't stop, go!",
+      "words": 3
+    },
+    {
+      "note": "a dash between spaces is no word",
+      "text": "Wait — listen",
+      "words": 2
+    },
+    {
+      "note": "a hyphen joins a word",
+      "text": "well-known keeper",
+      "words": 2
+    },
+    {
+      "note": "a number is a word",
+      "text": "3 ships, 12 crew",
+      "words": 4
+    },
+    {
+      "note": "a no-break space separates words",
+      "text": "ten kilometres",
+      "words": 2
+    },
+    {
+      "note": "an ideographic space separates words",
+      "text": "東京　タワー",
+      "words": 2
+    },
+    {
+      "note": "a run of Japanese without spaces is one word",
+      "text": "東京タワーへ行く",
+      "words": 1
+    },
+    {
+      "note": "an emoji alone is no word",
+      "text": "Go 🐴",
+      "words": 1
+    },
+    {
+      "note": "a letter with a combining mark",
+      "text": "Café noir",
+      "words": 2
+    },
+    {
+      "note": "a zero-width space is not white space",
+      "text": "a​b",
+      "words": 1
+    }
+  ],
+  "previews": [
+    {
+      "note": "short text is kept",
+      "text": "Harbour's closed.",
+      "preview": "Harbour's closed."
+    },
+    {
+      "note": "white space is collapsed and trimmed",
+      "text": "  a\n\n\tb  ",
+      "preview": "a b"
+    },
+    {
+      "note": "exactly 100 characters are kept",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "note": "a word longer than the preview is cut",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut at a space keeps the whole last word",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab c",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab…"
+    },
+    {
+      "note": "a cut after a space drops the space",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cd",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut within a word goes back to the space",
+      "text": "aaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "preview": "aaaa…"
+    },
+    {
+      "note": "characters are code points",
+      "text": "🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴",
+      "preview": "🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴…"
+    }
+  ]
+}
