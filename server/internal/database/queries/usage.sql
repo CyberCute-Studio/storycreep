@@ -99,8 +99,8 @@ SELECT (
 -- workspace's, less its usage of boards: what reconciliation adds to its
 -- usage so that the usage is the count again.
 SELECT (
-    (SELECT count(*) FROM board b JOIN project p ON p.workspace_id = b.workspace_id AND p.id = b.project_id
-        WHERE b.workspace_id = @workspace_id AND b.deleted_at IS NULL AND p.deleted_at IS NULL)
+    (SELECT count(*) FROM live_board b JOIN project p ON p.workspace_id = b.workspace_id AND p.id = b.project_id
+        WHERE b.workspace_id = @workspace_id AND p.deleted_at IS NULL)
     - coalesce((SELECT c.value FROM usage_counter c WHERE c.workspace_id = @workspace_id AND c.key = 'boards'), 0)
     - coalesce((SELECT sum(d.delta) FROM usage_delta d WHERE d.workspace_id = @workspace_id AND d.key = 'boards'),
         0)

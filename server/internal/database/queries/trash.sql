@@ -10,31 +10,34 @@
 -- most recently deleted first, then by their kinds and their IDs, after the
 -- entity whose deletion, kind, and ID are after_deleted_at, after_kind, and
 -- after_id, or from the first if after_deleted_at is null, each with its
--- kind, its ID, its name, and when it was deleted.
+-- kind, its ID, its name, and when it was deleted. The bound on deleted_at
+-- alone, which the infinite time leaves open for the first page, lets the
+-- index of each table's trash start where the page does, rather than read
+-- every row that the pages before it held.
 SELECT t.kind::text AS kind, t.id::uuid AS id, t.name::text AS name, t.deleted_at::timestamptz AS deleted_at
 FROM (
     SELECT 'board' AS kind, b.id, b.name, b.deleted_at FROM board b
     WHERE b.workspace_id = @workspace_id AND b.project_id = @project_id AND b.deleted_at IS NOT NULL
 ) t
-WHERE sqlc.narg(after_deleted_at)::timestamptz IS NULL
-    OR t.deleted_at < sqlc.narg(after_deleted_at)::timestamptz
-    OR t.deleted_at = sqlc.narg(after_deleted_at)::timestamptz
-        AND (t.kind, t.id) > (@after_kind::text, @after_id::uuid)
+WHERE t.deleted_at <= coalesce(sqlc.narg(after_deleted_at)::timestamptz, 'infinity'::timestamptz)
+    AND (sqlc.narg(after_deleted_at)::timestamptz IS NULL
+        OR t.deleted_at < sqlc.narg(after_deleted_at)::timestamptz
+        OR (t.kind, t.id) > (@after_kind::text, @after_id::uuid))
 ORDER BY t.deleted_at DESC, t.kind, t.id
 LIMIT @max_rows;
 
 -- name: ProjectsToPurge :many
 -- ProjectsToPurge returns the workspace's projects whose trash holds a row
 -- that has been there for retention, which the purge deletes, in the order
--- of their IDs.
-SELECT t.project_id::uuid AS project_id FROM (
-    SELECT b.project_id FROM board b
-    WHERE b.workspace_id = @workspace_id AND b.deleted_at <= now() - @retention::interval
-    UNION
-    SELECT f.project_id FROM folder f
-    WHERE f.workspace_id = @workspace_id AND f.deleted_at <= now() - @retention::interval
-) t
-ORDER BY t.project_id;
+-- of their IDs. It looks for each project's oldest rows in the index of
+-- each table's trash, rather than read every row of the workspace's trash.
+SELECT p.id FROM project p
+WHERE p.workspace_id = @workspace_id AND (
+    EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = p.workspace_id AND b.project_id = p.id
+        AND b.deleted_at <= now() - @retention::interval)
+    OR EXISTS (SELECT 1 FROM folder f WHERE f.workspace_id = p.workspace_id AND f.project_id = p.id
+        AND f.deleted_at <= now() - @retention::interval))
+ORDER BY p.id;
 
 -- name: LockProjectToPurge :one
 -- LockProjectToPurge locks the project's row as a batch of its commands

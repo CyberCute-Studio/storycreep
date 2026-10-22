@@ -36,14 +36,13 @@ func (q *Queries) LockProjectToPurge(ctx context.Context, arg LockProjectToPurge
 }
 
 const projectsToPurge = `-- name: ProjectsToPurge :many
-SELECT t.project_id::uuid AS project_id FROM (
-    SELECT b.project_id FROM board b
-    WHERE b.workspace_id = $1 AND b.deleted_at <= now() - $2::interval
-    UNION
-    SELECT f.project_id FROM folder f
-    WHERE f.workspace_id = $1 AND f.deleted_at <= now() - $2::interval
-) t
-ORDER BY t.project_id
+SELECT p.id FROM project p
+WHERE p.workspace_id = $1 AND (
+    EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = p.workspace_id AND b.project_id = p.id
+        AND b.deleted_at <= now() - $2::interval)
+    OR EXISTS (SELECT 1 FROM folder f WHERE f.workspace_id = p.workspace_id AND f.project_id = p.id
+        AND f.deleted_at <= now() - $2::interval))
+ORDER BY p.id
 `
 
 type ProjectsToPurgeParams struct {
@@ -53,7 +52,8 @@ type ProjectsToPurgeParams struct {
 
 // ProjectsToPurge returns the workspace's projects whose trash holds a row
 // that has been there for retention, which the purge deletes, in the order
-// of their IDs.
+// of their IDs. It looks for each project's oldest rows in the index of
+// each table's trash, rather than read every row of the workspace's trash.
 func (q *Queries) ProjectsToPurge(ctx context.Context, arg ProjectsToPurgeParams) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, projectsToPurge, arg.WorkspaceID, arg.Retention)
 	if err != nil {
@@ -62,11 +62,11 @@ func (q *Queries) ProjectsToPurge(ctx context.Context, arg ProjectsToPurgeParams
 	defer rows.Close()
 	var items []pgtype.UUID
 	for rows.Next() {
-		var project_id pgtype.UUID
-		if err := rows.Scan(&project_id); err != nil {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		items = append(items, project_id)
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -158,10 +158,10 @@ FROM (
     SELECT 'board' AS kind, b.id, b.name, b.deleted_at FROM board b
     WHERE b.workspace_id = $1 AND b.project_id = $2 AND b.deleted_at IS NOT NULL
 ) t
-WHERE $3::timestamptz IS NULL
-    OR t.deleted_at < $3::timestamptz
-    OR t.deleted_at = $3::timestamptz
-        AND (t.kind, t.id) > ($4::text, $5::uuid)
+WHERE t.deleted_at <= coalesce($3::timestamptz, 'infinity'::timestamptz)
+    AND ($3::timestamptz IS NULL
+        OR t.deleted_at < $3::timestamptz
+        OR (t.kind, t.id) > ($4::text, $5::uuid))
 ORDER BY t.deleted_at DESC, t.kind, t.id
 LIMIT $6
 `
@@ -192,7 +192,10 @@ type TrashItemsRow struct {
 // most recently deleted first, then by their kinds and their IDs, after the
 // entity whose deletion, kind, and ID are after_deleted_at, after_kind, and
 // after_id, or from the first if after_deleted_at is null, each with its
-// kind, its ID, its name, and when it was deleted.
+// kind, its ID, its name, and when it was deleted. The bound on deleted_at
+// alone, which the infinite time leaves open for the first page, lets the
+// index of each table's trash start where the page does, rather than read
+// every row that the pages before it held.
 func (q *Queries) TrashItems(ctx context.Context, arg TrashItemsParams) ([]TrashItemsRow, error) {
 	rows, err := q.db.Query(ctx, trashItems,
 		arg.WorkspaceID,

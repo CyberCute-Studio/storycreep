@@ -34,11 +34,12 @@ func TestMain(m *testing.M) {
 }
 
 // fixture is a database of the test's own with a workspace whose owner is
-// owner, a project of it, and the pipeline of the projects' and the boards'
-// commands.
+// owner, a project of it, the pipeline of the projects' and the boards'
+// commands, and admin, a connection of the superuser to the database.
 type fixture struct {
 	d        *dbtest.Database
 	db       *database.DB
+	admin    *pgx.Conn
 	ws       ids.UUID
 	owner    ids.UUID
 	project  ids.UUID
@@ -52,8 +53,8 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	ctx := context.Background()
 	d := dbtest.New(t)
-	f := &fixture{d: d, db: d.Open(t), ws: ids.New()}
-	admin := d.Admin(t)
+	f := &fixture{d: d, db: d.Open(t), admin: d.Admin(t), ws: ids.New()}
+	admin := f.admin
 	var err error
 	if f.owner, err = isolationtest.NewUser(ctx, admin); err != nil {
 		t.Fatal(err)
@@ -157,7 +158,7 @@ func deleteFolder(id ids.UUID) cmd {
 // deleted to ago before now, as the superuser.
 func (f *fixture) deletedAgo(t *testing.T, table string, id ids.UUID, ago time.Duration) {
 	t.Helper()
-	tag, err := f.d.Admin(t).Exec(context.Background(), "UPDATE "+pgx.Identifier{table}.Sanitize()+
+	tag, err := f.admin.Exec(context.Background(), "UPDATE "+pgx.Identifier{table}.Sanitize()+
 		" SET deleted_at = now() - $2::interval WHERE id = $1", id, database.Interval(ago))
 	if err != nil || tag.RowsAffected() != 1 {
 		t.Fatalf("set when the %s %s was deleted: %v", table, id, err)
@@ -169,7 +170,7 @@ func (f *fixture) deletedAgo(t *testing.T, table string, id ids.UUID, ago time.D
 func (f *fixture) exists(t *testing.T, table string, id ids.UUID) bool {
 	t.Helper()
 	var n int
-	if err := f.d.Admin(t).QueryRow(context.Background(), "SELECT count(*) FROM "+pgx.Identifier{table}.Sanitize()+
+	if err := f.admin.QueryRow(context.Background(), "SELECT count(*) FROM "+pgx.Identifier{table}.Sanitize()+
 		" WHERE id = $1", id).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
@@ -193,12 +194,7 @@ func (f *fixture) list(t *testing.T, projectID ids.UUID, limit int) []trash.Item
 			return append(all, page...)
 		}
 		all = append(all, page[:limit]...)
-		last := page[limit-1]
-		_, u, err := ids.DecodeAny(last.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		after = trash.Cursor{DeletedAt: last.DeletedAt, Kind: last.Kind, ID: u}
+		after = page[limit-1].After()
 	}
 }
 
@@ -314,7 +310,7 @@ func TestPurge(t *testing.T) {
 	// be.
 	f.deletedAgo(t, "board", fresh, trash.Retention-time.Hour)
 	f.deletedAgo(t, "board", edge, trash.Retention-time.Minute)
-	admin := f.d.Admin(t)
+	admin := f.admin
 	var deltas, seq int64
 	if err := admin.QueryRow(ctx, `SELECT (SELECT count(*) FROM usage_delta), (SELECT seq FROM project WHERE id = $1)`,
 		f.project).Scan(&deltas, &seq); err != nil {
@@ -368,7 +364,7 @@ func TestPurgeMany(t *testing.T) {
 	f.must(t, newFolder(folder, board.KindBoard, ids.UUID{}), deleteFolder(folder))
 	f.deletedAgo(t, "folder", folder, trash.Retention+time.Minute)
 	const boards = 1001
-	if _, err := f.d.Admin(t).Exec(ctx, `INSERT INTO board (id, workspace_id, project_id, folder_id, "order", name, slug,
+	if _, err := f.admin.Exec(ctx, `INSERT INTO board (id, workspace_id, project_id, folder_id, "order", name, slug,
 		deleted_at) SELECT gen_random_uuid(), $1, $2, CASE WHEN i = $3 THEN $4::uuid END, 'V', 'Harbour',
 		'harbour-' || i, now() - interval '31 days' FROM generate_series(1, $3) i`, f.ws, f.project, boards,
 		folder); err != nil {
@@ -378,7 +374,7 @@ func TestPurgeMany(t *testing.T) {
 		t.Errorf("the purge deleted %d rows, %v; want %d", n, err, boards+1)
 	}
 	var left int
-	if err := f.d.Admin(t).QueryRow(ctx, "SELECT (SELECT count(*) FROM board) + (SELECT count(*) FROM folder)").Scan(
+	if err := f.admin.QueryRow(ctx, "SELECT (SELECT count(*) FROM board) + (SELECT count(*) FROM folder)").Scan(
 		&left); err != nil || left != 0 {
 		t.Errorf("after the purge, %d boards and folders are left, %v", left, err)
 	}
@@ -395,6 +391,7 @@ func TestPurgeSkipsALockedProject(t *testing.T) {
 	old := ids.New()
 	f.must(t, newBoard(old, "Harbour", ids.UUID{}), deleteBoard(old))
 	f.deletedAgo(t, "board", old, trash.Retention+time.Minute)
+	// The transaction that holds the lock has a connection of its own.
 	tx, err := f.d.Admin(t).Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -411,6 +408,47 @@ func TestPurgeSkipsALockedProject(t *testing.T) {
 	}
 	if n, err := trash.Purge(ctx, f.db); err != nil || n != 1 {
 		t.Errorf("the purge once the lock is free deleted %d rows, %v; want 1", n, err)
+	}
+}
+
+// TestPurgeGoesOnPastAFailure checks that the purge goes on to the
+// workspace's next project past one whose purge fails, and returns its
+// error, so that a project whose purge keeps failing keeps the others' trash
+// from none of the runs.
+func TestPurgeGoesOnPastAFailure(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	// The purge reaches the projects in the order of their IDs, so the one
+	// whose purge fails is the first.
+	failing, purged := f.project, f.newProject(t, "Lighthouse")
+	if bytes.Compare(failing[:], purged[:]) > 0 {
+		failing, purged = purged, failing
+	}
+	boards := map[ids.UUID]ids.UUID{failing: ids.New(), purged: ids.New()}
+	for p, b := range boards {
+		if _, err := f.admin.Exec(ctx, `INSERT INTO board (id, workspace_id, project_id, "order", name, slug,
+			deleted_at) VALUES ($1, $2, $3, 'V', 'Harbour', 'harbour', now() - interval '31 days')`, b, f.ws,
+			p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.admin.Exec(ctx, `CREATE FUNCTION fail_purge() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'the purge fails'; END $$`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.admin.Exec(ctx, "CREATE TRIGGER fail_purge BEFORE DELETE ON board FOR EACH ROW WHEN "+
+		"(OLD.project_id = '"+failing.String()+"') EXECUTE FUNCTION fail_purge()"); err != nil {
+		t.Fatal(err)
+	}
+	n, err := trash.Purge(ctx, f.db)
+	if err == nil || !strings.Contains(err.Error(), "the purge fails") || n != 1 {
+		t.Errorf("the purge of a workspace whose first project's purge fails deleted %d rows, %v; want 1, and "+
+			"the error", n, err)
+	}
+	if !f.exists(t, "board", boards[failing]) || f.exists(t, "board", boards[purged]) {
+		t.Errorf("after the purge, the board of the project whose purge fails exists: %t, the other's: %t; want "+
+			"only the first", f.exists(t, "board", boards[failing]), f.exists(t, "board", boards[purged]))
 	}
 }
 
@@ -582,9 +620,15 @@ func TestTrashTables(t *testing.T) {
 		}
 	}
 
-	// The purge deletes each row whose time has passed, and none of the
-	// other workspace's.
-	if _, err := trash.Purge(ctx, f.DB); err != nil {
+	// The purge of a workspace deletes each of its rows whose time has
+	// passed, and none of the other workspace's, whose time has passed too.
+	for _, tt := range trashTables {
+		if _, err := admin.Exec(ctx, "UPDATE "+pgx.Identifier{tt.name}.Sanitize()+
+			" SET deleted_at = now() - interval '31 days' WHERE id = $1", f.B.Rows[tt.name]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := trash.PurgeWorkspace(ctx, f.DB, f.A.ID); err != nil {
 		t.Fatal(err)
 	}
 	for _, tt := range trashTables {

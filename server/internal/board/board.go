@@ -207,21 +207,15 @@ func New(db DB, opts Options) *Service {
 }
 
 // read runs fn in a transaction of the workspace of the project projectID,
-// once it has checked that the actor may read the project's content: it
-// returns the errors of project.Service.Get, as project.ErrNotFound for a
-// project that does not exist, is in the trash, on which the actor's role is
-// none, or that the actor's API token does not cover. The token's scopes are
-// the route's to check.
+// once it has checked that the actor may read the project's content
+// (project.Service.ReadContent): it returns the errors of
+// project.Service.Get, as project.ErrNotFound for a project that does not
+// exist, is in the trash, on which the actor's role is none, or that the
+// actor's API token does not cover. The token's scopes are the route's to
+// check.
 func (s *Service) read(ctx context.Context, actor commands.Actor, projectID ids.UUID,
 	fn func(q *queries.Queries, workspaceID pgtype.UUID) error) error {
-	workspaceID, err := s.projects.ActorWorkspace(ctx, actor, projectID)
-	if err != nil {
-		return err
-	}
-	return s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
-		if _, err := s.projects.GetIn(ctx, tx, actor, workspaceID, projectID); err != nil {
-			return err
-		}
+	return s.projects.ReadContent(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		return fn(queries.New(tx), nullUUID(workspaceID))
 	})
 }

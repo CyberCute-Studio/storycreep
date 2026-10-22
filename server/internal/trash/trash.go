@@ -62,6 +62,13 @@ func Kinds() []string {
 	return out
 }
 
+// IsKind reports whether name is the name of a kind of entity that the trash
+// lists, as an Item's Kind names it.
+func IsKind(name string) bool {
+	_, ok := kindNamed(name)
+	return ok
+}
+
 // kindNamed returns the kind of entity that the trash lists whose name is
 // name, and whether there is one.
 func kindNamed(name string) (ids.Kind, bool) {
@@ -81,7 +88,16 @@ type Item struct {
 	// DeletedAt is when the entity was deleted to the trash.
 	DeletedAt time.Time `json:"deleted_at" doc:"When the entity was deleted to the trash"`
 	// PurgeAfter is DeletedAt and Retention.
-	PurgeAfter time.Time `json:"purge_after" doc:"When the entity's 30 days in the trash end. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored."`
+	PurgeAfter time.Time `json:"purge_after" doc:"When the entity's time in the trash ends. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored."`
+	// uuid is the UUID that ID encodes, by which the list orders the
+	// entities of a kind deleted at once.
+	uuid ids.UUID
+}
+
+// After returns the Cursor of the page of the trash's list that starts after
+// it.
+func (it Item) After() Cursor {
+	return Cursor{DeletedAt: it.DeletedAt, Kind: it.Kind, ID: it.uuid}
 }
 
 // Cursor is where a page of the trash's list starts: after the entity of the
@@ -129,15 +145,8 @@ func New(db DB, opts Options) *Service {
 // cover. The token's scopes are the route's to check.
 func (s *Service) List(ctx context.Context, actor commands.Actor, projectID ids.UUID, after Cursor, limit int) (
 	[]Item, error) {
-	workspaceID, err := s.projects.ActorWorkspace(ctx, actor, projectID)
-	if err != nil {
-		return nil, err
-	}
 	var out []Item
-	err = s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
-		if _, err := s.projects.GetIn(ctx, tx, actor, workspaceID, projectID); err != nil {
-			return err
-		}
+	err := s.projects.ReadContent(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		params := queries.TrashItemsParams{WorkspaceID: nullUUID(workspaceID), ProjectID: nullUUID(projectID),
 			MaxRows: int32(min(limit, 1<<20))}
 		if !after.DeletedAt.IsZero() {
@@ -155,7 +164,7 @@ func (s *Service) List(ctx context.Context, actor commands.Actor, projectID ids.
 				return fmt.Errorf("trash: the trash holds an entity of the kind %q, which it does not list", row.Kind)
 			}
 			out = append(out, Item{Kind: row.Kind, ID: ids.Encode(kind, row.ID.Bytes), Name: row.Name,
-				DeletedAt: row.DeletedAt.Time, PurgeAfter: row.DeletedAt.Time.Add(Retention)})
+				DeletedAt: row.DeletedAt.Time, PurgeAfter: row.DeletedAt.Time.Add(Retention), uuid: row.ID.Bytes})
 		}
 		return nil
 	})

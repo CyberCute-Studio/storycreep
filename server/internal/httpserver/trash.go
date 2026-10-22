@@ -3,7 +3,6 @@ package httpserver
 import (
 	"context"
 	"net/http"
-	"slices"
 	"strconv"
 	"time"
 
@@ -52,7 +51,8 @@ func registerTrash(m *api.Mux, items *trash.Service) {
 			"hour deletes it for good; until then, the command of its kind restores it where it was, as " +
 			"board.restore with its ID, through POST /api/v1/projects/{project_id}/commands. A deleted folder is " +
 			"not listed: restoring a board restores the deleted folders above it, and the purge deletes a deleted " +
-			"folder once it holds nothing. Nothing in the trash is in the project's other reads." +
+			"folder once its " + strconv.Itoa(trash.Days) + " days have passed and it holds nothing. Nothing in the " +
+			"trash is in the project's other reads." +
 			projectNotFoundDoc + tokenNotFoundDoc + tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Trash"},
 	}, func(ctx context.Context, in *projectTrashInput) (*projectTrashOutput, error) {
@@ -73,9 +73,8 @@ func registerTrash(m *api.Mux, items *trash.Service) {
 			bodies[i] = trashItemBody(it)
 		}
 		page, err := api.NewPage(in.PageParams, bodies, func(it trashItemBody) trashKey {
-			// The ID is the service's encoding of a UUID of its kind.
-			_, u, _ := ids.DecodeAny(it.ID)
-			return trashKey{DeletedAt: it.DeletedAt.UTC(), Kind: it.Kind, ID: u.String()}
+			after := trash.Item(it).After()
+			return trashKey{DeletedAt: after.DeletedAt.UTC(), Kind: after.Kind, ID: after.ID.String()}
 		})
 		if err != nil {
 			return nil, err
@@ -98,7 +97,7 @@ func trashCursor(cursor string) (trash.Cursor, error) {
 	}
 	id, err := ids.ParseUUID(key.ID)
 	if err != nil || id.String() != key.ID || key.DeletedAt.IsZero() || key.DeletedAt.Location() != time.UTC ||
-		!slices.Contains(trash.Kinds(), key.Kind) {
+		!trash.IsKind(key.Kind) {
 		return trash.Cursor{}, api.NewError(api.CodeInvalidCursor)
 	}
 	return trash.Cursor{DeletedAt: key.DeletedAt, Kind: key.Kind, ID: id}, nil

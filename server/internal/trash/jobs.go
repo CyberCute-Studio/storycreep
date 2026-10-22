@@ -49,43 +49,64 @@ func RegisterJobs(r *jobs.Registry) {
 // one project, which it locks as a batch of the project's commands does, so
 // that the batches see none of its deletions while they apply (plan note
 // N30), and which deletes purgeRows rows at most. It skips a project whose
-// lock a transaction holds, as a batch does, which its next run purges, and
-// stops once it has run for sweep.Budget, which leaves the projects that it
-// does not reach for its next run. So it is safe to repeat. It records no
-// operation: an undo that would restore a purged entity finds that it no
-// longer exists (§5.7).
+// lock a transaction holds, as a batch does, which its next run purges, goes
+// on past a project whose purge fails, so that a project whose purge keeps
+// failing keeps no other's trash from its purge, and returns the errors of
+// all of them, and stops once it has run for sweep.Budget, which leaves the
+// projects that it does not reach for its next run. So it is safe to repeat.
+// It records no operation: an undo that would restore a purged entity finds
+// that it no longer exists (§5.7).
 func Purge(ctx context.Context, db sweep.DB) (int64, error) {
 	more := sweep.Within(sweep.Budget)
 	retention := database.Interval(Retention)
 	var purged int64
 	err := sweep.Workspaces(ctx, db, more, func(workspaceID ids.UUID) error {
-		var projects []pgtype.UUID
-		err := db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
-			var err error
-			projects, err = queries.New(tx).ProjectsToPurge(ctx, queries.ProjectsToPurgeParams{
-				WorkspaceID: nullUUID(workspaceID), Retention: retention})
-			return err
-		})
-		if err != nil {
-			return fmt.Errorf("trash: find the projects of workspace %s whose trash to purge: %w", workspaceID, err)
-		}
-		for _, p := range projects {
-			for more() {
-				n, err := purgeProject(ctx, db, workspaceID, p, retention)
-				if err != nil {
-					return fmt.Errorf("trash: purge the trash of project %s: %w", ids.UUID(p.Bytes), err)
-				}
-				purged += n
-				// A transaction that deletes fewer rows than it may found no
-				// more, or found the project locked.
-				if n < purgeRows {
-					break
-				}
-			}
-		}
-		return nil
+		n, err := purgeWorkspace(ctx, db, more, workspaceID, retention)
+		purged += n
+		return err
 	})
 	return purged, err
+}
+
+// purgeWorkspace purges, as Purge does, the trash of each project of the
+// workspace workspaceID whose trash holds a row that has been there for
+// retention, for as long as more reports that the run has time left, and
+// returns how many rows it deleted. It goes on past a project whose purge
+// fails, and returns the errors of all of them, but stops at once when ctx
+// ends.
+func purgeWorkspace(ctx context.Context, db sweep.DB, more func() bool, workspaceID ids.UUID,
+	retention pgtype.Interval) (int64, error) {
+	var projects []pgtype.UUID
+	err := db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
+		var err error
+		projects, err = queries.New(tx).ProjectsToPurge(ctx, queries.ProjectsToPurgeParams{
+			WorkspaceID: nullUUID(workspaceID), Retention: retention})
+		return err
+	})
+	if err != nil {
+		return 0, fmt.Errorf("trash: find the projects of workspace %s whose trash to purge: %w", workspaceID, err)
+	}
+	var purged int64
+	var errs []error
+	for _, p := range projects {
+		for more() {
+			if err := ctx.Err(); err != nil {
+				return purged, errors.Join(append(errs, err)...)
+			}
+			n, err := purgeProject(ctx, db, workspaceID, p, retention)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("trash: purge the trash of project %s: %w", ids.UUID(p.Bytes), err))
+				break
+			}
+			purged += n
+			// A transaction that deletes fewer rows than it may found no
+			// more, or found the project locked.
+			if n < purgeRows {
+				break
+			}
+		}
+	}
+	return purged, errors.Join(errs...)
 }
 
 // purgeProject deletes, in a transaction of the workspace, at most purgeRows

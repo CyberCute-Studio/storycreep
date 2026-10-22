@@ -535,6 +535,26 @@ func (s *Service) ActorWorkspace(ctx context.Context, actor commands.Actor, proj
 	return s.actorWorkspace(ctx, actor, projectID)
 }
 
+// ReadContent runs fn in a transaction of db, of the workspace that the
+// actor acts in on the project projectID (ActorWorkspace), with the actor's
+// scope, once it has checked there that the actor may read the project's
+// content (GetIn), for a service that reads what belongs to the project, as
+// package board reads its boards and package trash its trash. It returns the
+// errors of Get, and fn's. The token's scopes are the route's to check.
+func (s *Service) ReadContent(ctx context.Context, db DB, actor commands.Actor, projectID ids.UUID,
+	fn func(tx pgx.Tx, workspaceID ids.UUID) error) error {
+	workspaceID, err := s.actorWorkspace(ctx, actor, projectID)
+	if err != nil {
+		return err
+	}
+	return db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
+		if _, err := s.GetIn(ctx, tx, actor, workspaceID, projectID); err != nil {
+			return err
+		}
+		return fn(tx, workspaceID)
+	})
+}
+
 // GetIn returns the project projectID as Get does, read in tx, a transaction
 // of its workspace workspaceID, which ActorWorkspace returns, for a service
 // that reads or changes what belongs to the project in the same
