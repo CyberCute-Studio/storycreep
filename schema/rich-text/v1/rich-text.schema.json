@@ -2,7 +2,7 @@
   "$defs": {
     "attributeId": {
       "description": "A component type's attribute definition's ID.",
-      "pattern": "^[Aa][Tt][Rr]_[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$",
+      "pattern": "^[Aa][Tt][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
       "type": "string"
     },
     "block": {
@@ -11,10 +11,7 @@
           "$ref": "#/$defs/paragraph"
         },
         {
-          "$ref": "#/$defs/bulletList"
-        },
-        {
-          "$ref": "#/$defs/orderedList"
+          "$ref": "#/$defs/list"
         }
       ]
     },
@@ -27,27 +24,6 @@
         }
       },
       "required": [
-        "type"
-      ],
-      "type": "object"
-    },
-    "bulletList": {
-      "additionalProperties": false,
-      "description": "A bulleted list. Lists nest at most 5 deep.",
-      "properties": {
-        "content": {
-          "items": {
-            "$ref": "#/$defs/listItem"
-          },
-          "minItems": 1,
-          "type": "array"
-        },
-        "type": {
-          "const": "bulletList"
-        }
-      },
-      "required": [
-        "content",
         "type"
       ],
       "type": "object"
@@ -67,7 +43,7 @@
     },
     "componentId": {
       "description": "A component's ID.",
-      "pattern": "^[Cc][Mm][Pp]_[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$",
+      "pattern": "^[Cc][Mm][Pp]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
       "type": "string"
     },
     "decimals": {
@@ -171,6 +147,66 @@
       ],
       "type": "object"
     },
+    "list": {
+      "additionalProperties": false,
+      "description": "A list, bulleted (bulletList) or numbered (orderedList), of at least one item. Lists nest at most 5 deep.",
+      "oneOf": [
+        {
+          "description": "A bulleted list, which has no attrs.",
+          "properties": {
+            "attrs": {
+              "not": {}
+            },
+            "type": {
+              "const": "bulletList"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "description": "A numbered list.",
+          "properties": {
+            "type": {
+              "const": "orderedList"
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "attrs": {
+          "additionalProperties": false,
+          "description": "An orderedList's attributes.",
+          "properties": {
+            "start": {
+              "description": "The number of the first item, 1 when it is not given.",
+              "maximum": 999999,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "content": {
+          "items": {
+            "$ref": "#/$defs/listItem"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "bulletList",
+            "orderedList"
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    },
     "listItem": {
       "additionalProperties": false,
       "description": "A list item: a paragraph, then any paragraphs and lists. That it starts with a paragraph is checked by the server, beyond this schema.",
@@ -193,7 +229,7 @@
       "type": "object"
     },
     "marks": {
-      "description": "The marks of an inline node, each at most once. The code mark is not combined with another.",
+      "description": "The marks of an inline node, each at most once, which the server checks beyond this schema. The code mark is not combined with another.",
       "items": {
         "oneOf": [
           {
@@ -214,8 +250,7 @@
         ]
       },
       "maxItems": 5,
-      "type": "array",
-      "uniqueItems": true
+      "type": "array"
     },
     "mention": {
       "additionalProperties": false,
@@ -242,39 +277,6 @@
       },
       "required": [
         "attrs",
-        "type"
-      ],
-      "type": "object"
-    },
-    "orderedList": {
-      "additionalProperties": false,
-      "description": "A numbered list. Lists nest at most 5 deep.",
-      "properties": {
-        "attrs": {
-          "additionalProperties": false,
-          "properties": {
-            "start": {
-              "description": "The number of the first item, 1 when it is not given.",
-              "maximum": 999999,
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "type": "object"
-        },
-        "content": {
-          "items": {
-            "$ref": "#/$defs/listItem"
-          },
-          "minItems": 1,
-          "type": "array"
-        },
-        "type": {
-          "const": "orderedList"
-        }
-      },
-      "required": [
-        "content",
         "type"
       ],
       "type": "object"
@@ -390,7 +392,7 @@
     },
     "variableId": {
       "description": "A variable's ID.",
-      "pattern": "^[Vv][Aa][Rr]_[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$",
+      "pattern": "^[Vv][Aa][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
       "type": "string"
     }
   },

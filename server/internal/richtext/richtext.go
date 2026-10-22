@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -192,17 +191,17 @@ const (
 // markOrder is every mark, in alphabetical order.
 var markOrder = []string{markBold, markCode, markItalic, markLink, markStrike}
 
-// nodeFields holds each node's fields other than type.
+// nodeFields holds each node's fields.
 var nodeFields = map[string][]string{
-	nodeDoc:         {"content"},
-	nodeParagraph:   {"content"},
-	nodeBulletList:  {"content"},
-	nodeOrderedList: {"attrs", "content"},
-	nodeListItem:    {"content"},
-	nodeText:        {"marks", "text"},
-	nodeHardBreak:   {"marks"},
-	nodeMention:     {"attrs", "marks"},
-	nodeValueRef:    {"attrs", "marks"},
+	nodeDoc:         {"content", "type"},
+	nodeParagraph:   {"content", "type"},
+	nodeBulletList:  {"content", "type"},
+	nodeOrderedList: {"attrs", "content", "type"},
+	nodeListItem:    {"content", "type"},
+	nodeText:        {"marks", "text", "type"},
+	nodeHardBreak:   {"marks", "type"},
+	nodeMention:     {"attrs", "marks", "type"},
+	nodeValueRef:    {"attrs", "marks", "type"},
 }
 
 // Reason says what is wrong with a document that Parse refuses. The values
@@ -290,8 +289,9 @@ func Parse(data []byte) (*Doc, error) {
 		return nil, &Error{Reason: InvalidJSON, Message: "the document is not UTF-8"}
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
-	// Numbers stay as they are written, so that an integer is checked as
-	// one, whatever its size.
+	// Numbers stay as they are written until integer reads them, so that one
+	// too large for a double, which JSON.parse reads as Infinity, is out of
+	// range rather than not JSON.
 	dec.UseNumber()
 	var v any
 	if err := dec.Decode(&v); err != nil {
@@ -470,20 +470,20 @@ func (p *parser) node(v any, w where) (map[string]any, string, error) {
 	if !w.holds(typ) {
 		return nil, "", p.fail(Content, "%s, not a %s", w.holdsWhat(), typ)
 	}
-	if err := p.fields(o, "a "+typ, nodeFields[typ]); err != nil {
+	if err := p.fields(o, "the "+typ, nodeFields[typ]...); err != nil {
 		return nil, "", err
 	}
 	return o, typ, nil
 }
 
 // fields checks that object o, of the node, mark, or attributes what, has no
-// field but those allowed, and type, which every node and mark has. Of
-// several fields that it may not have, it names the first in sorted order,
-// whatever order the map holds them in.
-func (p *parser) fields(o map[string]any, what string, allowed []string) error {
+// field but those allowed. Of several fields that it may not have, it names
+// the first in sorted order, whatever order the map holds them in, so a type
+// in attributes, which have none, is named as any other field is.
+func (p *parser) fields(o map[string]any, what string, allowed ...string) error {
 	unknown, found := "", false
 	for k := range o {
-		if k != "type" && !slices.Contains(allowed, k) && (!found || k < unknown) {
+		if !slices.Contains(allowed, k) && (!found || k < unknown) {
 			unknown, found = k, true
 		}
 	}
@@ -494,16 +494,6 @@ func (p *parser) fields(o map[string]any, what string, allowed []string) error {
 	return nil
 }
 
-// attrsFields checks that the attributes object attrs of what has no field
-// but those allowed. Unlike a node or a mark, it has no type.
-func (p *parser) attrsFields(attrs map[string]any, what string, allowed ...string) error {
-	if _, ok := attrs["type"]; ok {
-		p.push("type")
-		return p.fail(UnknownField, "%s has no field \"type\"", what)
-	}
-	return p.fields(attrs, what, allowed)
-}
-
 // content returns the content of node o, of type typ, which must have at
 // least one node when required, and may be missing otherwise. It leaves
 // "content" pushed for the caller, which pops it once it has read the nodes.
@@ -511,7 +501,7 @@ func (p *parser) content(o map[string]any, typ string, required bool) ([]any, er
 	v, ok := o["content"]
 	if !ok {
 		if required {
-			return nil, p.fail(MissingField, "a %s has no content", typ)
+			return nil, p.fail(MissingField, "the %s has no content", typ)
 		}
 		p.push("content")
 		return nil, nil
@@ -519,29 +509,29 @@ func (p *parser) content(o map[string]any, typ string, required bool) ([]any, er
 	p.push("content")
 	a, ok := v.([]any)
 	if !ok {
-		return nil, p.fail(WrongType, "a %s's content is not an array", typ)
+		return nil, p.fail(WrongType, "the %s's content is not an array", typ)
 	}
 	if required && len(a) == 0 {
-		return nil, p.fail(Content, "a %s holds nothing", typ)
+		return nil, p.fail(Content, "the %s holds nothing", typ)
 	}
 	return a, nil
 }
 
-// attrs returns the attributes object of node o, of type typ, or nil when it
-// has none and they are not required. It leaves "attrs" pushed when it
-// returns an object.
+// attrs returns the attributes object of node or mark o, of type typ, or nil
+// when it has none and they are not required. It leaves "attrs" pushed when
+// it returns an object.
 func (p *parser) attrs(o map[string]any, typ string, required bool) (map[string]any, error) {
 	v, ok := o["attrs"]
 	if !ok {
 		if required {
-			return nil, p.fail(MissingField, "a %s has no attrs", typ)
+			return nil, p.fail(MissingField, "the %s has no attrs", typ)
 		}
 		return nil, nil
 	}
 	p.push("attrs")
 	a, ok := v.(map[string]any)
 	if !ok {
-		return nil, p.fail(WrongType, "a %s's attrs is not an object", typ)
+		return nil, p.fail(WrongType, "the %s's attrs are not an object", typ)
 	}
 	return a, nil
 }
@@ -601,7 +591,7 @@ func (p *parser) block(v any, w where, depth int) (Block, error) {
 			return nil, err
 		}
 		if attrs != nil {
-			if err := p.attrsFields(attrs, "an orderedList's attrs", "start"); err != nil {
+			if err := p.fields(attrs, "the orderedList's attrs", "start"); err != nil {
 				return nil, err
 			}
 			if s, ok := attrs["start"]; ok {
@@ -637,7 +627,11 @@ func (p *parser) block(v any, w where, depth int) (Block, error) {
 	return l, nil
 }
 
-// integer reads integer v, what, which must be between lo and hi.
+// integer reads integer v, what, which must be between lo and hi. It reads a
+// number as JSON.parse does, as the double nearest to it, so 3.0 and 3e0 are
+// 3, as is a number written with more digits than a double holds that rounds
+// to 3, as 2.99999999999999999999; and one too large for a double, which
+// JSON.parse reads as Infinity, is out of range.
 func (p *parser) integer(v any, what string, lo, hi int) (int, error) {
 	n, ok := v.(json.Number)
 	if !ok {
@@ -782,7 +776,7 @@ func (p *parser) mention(o map[string]any) (*Mention, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := p.attrsFields(attrs, "a mention's attrs", "id"); err != nil {
+	if err := p.fields(attrs, "the mention's attrs", "id"); err != nil {
 		return nil, err
 	}
 	id, err := p.id(attrs, "id", "a mention", ids.Component)
@@ -798,7 +792,7 @@ func (p *parser) value(o map[string]any) (*Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := p.attrsFields(attrs, "a valueRef's attrs", "attribute", "decimals", "ref"); err != nil {
+	if err := p.fields(attrs, "the valueRef's attrs", "attribute", "decimals", "ref"); err != nil {
 		return nil, err
 	}
 	ref, err := p.id(attrs, "ref", "a value reference", ids.Variable, ids.Component)
@@ -889,11 +883,11 @@ func (p *parser) marks(o map[string]any) (Marks, error) {
 		if !slices.Contains(markOrder, typ) {
 			return m, p.fail(UnknownMark, "%.40q is not a mark of the schema", typ)
 		}
-		var allowed []string
+		allowed := []string{"type"}
 		if typ == markLink {
-			allowed = []string{"attrs"}
+			allowed = append(allowed, "attrs")
 		}
-		if err := p.fields(mo, "a "+typ+" mark", allowed); err != nil {
+		if err := p.fields(mo, "the "+typ+" mark", allowed...); err != nil {
 			return m, err
 		}
 		if m.has(typ) {
@@ -930,7 +924,7 @@ func (p *parser) link(mo map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := p.attrsFields(attrs, "a link's attrs", "href"); err != nil {
+	if err := p.fields(attrs, "the link's attrs", "href"); err != nil {
 		return "", err
 	}
 	v, ok := attrs["href"]
@@ -950,13 +944,19 @@ func (p *parser) link(mo map[string]any) (string, error) {
 	return href, nil
 }
 
-// CheckHref says what is wrong with the URL of a link, or returns "". A link
-// is an absolute http or https URL with a host, or a mailto URL with an
-// address, of at most MaxHrefChars characters, none of them white space, a
-// control character, or a format character (Unicode's Cf, as U+200B, U+202E,
-// or U+FEFF), which would hide or reorder what a reader sees of the URL (PRD
-// NFR-SEC-08), so that no link runs a script or reads a file when it is
-// followed.
+// CheckHref says what is wrong with the URL of a link, or returns "", so that
+// no link runs a script or reads a file when it is followed, or hides where it
+// leads (PRD NFR-SEC-08). A link has at most MaxHrefChars characters, none of
+// them white space, a control character, or a format character (Unicode's
+// Cf, as U+200B, U+202E, or U+FEFF), which would hide or reorder what a reader
+// sees of it, and each % in it starts an escape, % and two hexadecimal
+// digits. It is a mailto URL with an address, or an http or https URL whose
+// authority, after the //, has a host, as authorityProblem reads it. A scheme
+// is read regardless of ASCII case.
+//
+// CheckHref reads a link by these rules, which schema/rich-text/README.md
+// states, rather than as a URL parser does, so that the TypeScript client
+// checks a link as the server does: parsers differ on what is not a URL.
 func CheckHref(href string) string {
 	switch {
 	case href == "":
@@ -967,26 +967,118 @@ func CheckHref(href string) string {
 		return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
 	}) >= 0:
 		return "holds white space, a control character, or a format character"
+	case !escapesValid(href):
+		return "holds a % that starts no escape of two hexadecimal digits"
 	}
-	u, err := url.Parse(href)
-	if err != nil {
-		return "is not a URL"
-	}
-	switch u.Scheme {
+	scheme, rest, _ := strings.Cut(href, ":")
+	switch asciiLower(scheme) {
 	case "http", "https":
-		// A port is no host: https://:80/ has none.
-		if u.Hostname() == "" {
+		authority, ok := strings.CutPrefix(rest, "//")
+		if !ok {
 			return "has no host"
 		}
+		if i := strings.IndexAny(authority, "/?#"); i >= 0 {
+			authority = authority[:i]
+		}
+		return authorityProblem(authority)
 	case "mailto":
-		// The address is what is between the scheme and the query.
-		if u.Opaque == "" {
+		if i := strings.IndexAny(rest, "?#"); i >= 0 {
+			rest = rest[:i]
+		}
+		if rest == "" {
 			return "has no address"
 		}
-	default:
-		return "is not an http, https, or mailto URL"
+		return ""
+	}
+	return "is not an http, https, or mailto URL"
+}
+
+// authorityProblem says what is wrong with the authority of an http or https
+// link, what is between its // and the first /, ?, or # after it, or returns
+// "". It is a host, after the userinfo and the last @ when there is one, and
+// before a colon and a port when there is one. The host is not empty: a name
+// of the ASCII letters and digits, -._~!$&'()*+,;=, and any character beyond
+// ASCII, or an IPv6 address in brackets, of hexadecimal digits, colons, and
+// dots; the port is ASCII digits, or nothing; the userinfo is what a name
+// holds, and colons, @, and escapes. So a backslash, which a browser reads as
+// a slash, cannot hide another host in the authority.
+func authorityProblem(authority string) string {
+	hostport := authority
+	if at := strings.LastIndexByte(authority, '@'); at >= 0 {
+		if !onlyRunes(authority[:at], func(r rune) bool { return isNameRune(r) || r == ':' || r == '@' || r == '%' }) {
+			return "has userinfo with a character that it may not hold"
+		}
+		hostport = authority[at+1:]
+	}
+	host, port, bracketed := hostport, "", strings.HasPrefix(hostport, "[")
+	if bracketed {
+		end := strings.IndexByte(hostport, ']')
+		if end < 0 {
+			return "has an IPv6 address without its closing bracket"
+		}
+		host = hostport[1:end]
+		if after := hostport[end+1:]; after != "" {
+			var ok bool
+			if port, ok = strings.CutPrefix(after, ":"); !ok {
+				return "has a host followed by more than a port"
+			}
+		}
+	} else if colon := strings.LastIndexByte(hostport, ':'); colon >= 0 {
+		host, port = hostport[:colon], hostport[colon+1:]
+	}
+	switch {
+	case host == "":
+		return "has no host"
+	case bracketed && !onlyRunes(host, func(r rune) bool { return r == ':' || r == '.' || isHexDigit(r) }):
+		return "has an IPv6 address in brackets that holds what no address does"
+	case !bracketed && !onlyRunes(host, isNameRune):
+		return "has a host with a character that a host may not hold"
+	case !onlyRunes(port, func(r rune) bool { return '0' <= r && r <= '9' }):
+		return "has a port that is not a number"
 	}
 	return ""
+}
+
+// isNameRune reports whether a host's name may hold r: an ASCII letter or
+// digit, one of -._~!$&'()*+,;=, or any character beyond ASCII.
+func isNameRune(r rune) bool {
+	return r >= utf8.RuneSelf || 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' ||
+		strings.ContainsRune("-._~!$&'()*+,;=", r)
+}
+
+func isHexDigit(r rune) bool {
+	return '0' <= r && r <= '9' || 'a' <= r && r <= 'f' || 'A' <= r && r <= 'F'
+}
+
+// onlyRunes reports whether every character of s is one that ok takes.
+func onlyRunes(s string, ok func(rune) bool) bool {
+	return strings.IndexFunc(s, func(r rune) bool { return !ok(r) }) < 0
+}
+
+// escapesValid reports whether every % of s starts an escape: % and two
+// hexadecimal digits.
+func escapesValid(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' {
+			if i+2 >= len(s) || !isHexDigit(rune(s[i+1])) || !isHexDigit(rune(s[i+2])) {
+				return false
+			}
+			i += 2
+		}
+	}
+	return true
+}
+
+// asciiLower returns s with its ASCII uppercase letters lowercased, and no
+// other character changed, so that no character beyond ASCII, as the long s,
+// which Unicode folds to s, can stand in for a letter of a scheme.
+func asciiLower(s string) string {
+	return strings.Map(func(r rune) rune {
+		if 'A' <= r && r <= 'Z' {
+			return r + 'a' - 'A'
+		}
+		return r
+	}, s)
 }
 
 // MarshalJSON writes the document in its canonical form: its JSON as
@@ -998,11 +1090,26 @@ func CheckHref(href string) string {
 // escapes it, as json.Marshal does, escapes in what it writes too.
 //
 // A Doc without blocks, as the zero Doc, is the empty document, which it
-// writes as one empty paragraph. A Doc that a program builds must hold what
-// Parse returns: MarshalJSON refuses one with a nil block or inline node, a
-// list without items, an item that does not start with a paragraph, or an
-// empty text, rather than write what Parse would refuse.
+// writes as one empty paragraph. A Doc that a program builds, as an import
+// does, is checked as one that a client sends is: MarshalJSON reads what it
+// writes with Parse, and refuses a Doc that Parse would refuse, as one with a
+// javascript: link, rather than write it, and writes the canonical form of
+// one that Parse accepts, so that what is stored is always a document that
+// Parse returns.
 func (d Doc) MarshalJSON() ([]byte, error) {
+	data, err := d.wire()
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := Parse(data)
+	if err != nil {
+		return nil, fmt.Errorf("richtext: the document is not one that Parse accepts: %w", err)
+	}
+	return parsed.wire()
+}
+
+// wire writes the document as JSON, as it holds it.
+func (d Doc) wire() ([]byte, error) {
 	blocks := d.Blocks
 	if len(blocks) == 0 {
 		blocks = []Block{&Paragraph{}}
@@ -1058,6 +1165,9 @@ type wireValue struct {
 	Ref       string `json:"ref"`
 }
 
+// wireBlocks returns the nodes of blocks as JSON holds them. It refuses only
+// what JSON cannot hold, a nil node, and leaves the rest to Parse, which
+// MarshalJSON reads them with.
 func wireBlocks(blocks []Block) ([]wireNode, error) {
 	nodes := make([]wireNode, len(blocks))
 	for i, b := range blocks {
@@ -1072,8 +1182,8 @@ func wireBlocks(blocks []Block) ([]wireNode, error) {
 			}
 			nodes[i] = wireNode{Type: nodeParagraph, Content: inlines}
 		case *List:
-			if b == nil || len(b.Items) == 0 {
-				return nil, errors.New("richtext: a list has no items")
+			if b == nil {
+				return nil, errors.New("richtext: a list is nil")
 			}
 			n := wireNode{Type: nodeBulletList}
 			if b.Ordered {
@@ -1083,12 +1193,6 @@ func wireBlocks(blocks []Block) ([]wireNode, error) {
 				}
 			}
 			for _, item := range b.Items {
-				if len(item.Blocks) == 0 {
-					return nil, errors.New("richtext: a list item has no blocks")
-				}
-				if _, ok := item.Blocks[0].(*Paragraph); !ok {
-					return nil, errors.New("richtext: a list item does not start with a paragraph")
-				}
 				content, err := wireBlocks(item.Blocks)
 				if err != nil {
 					return nil, err
@@ -1108,8 +1212,8 @@ func wireInlines(inlines []Inline) ([]wireNode, error) {
 	for i, in := range inlines {
 		switch in := in.(type) {
 		case *Text:
-			if in == nil || in.Text == "" {
-				return nil, errors.New("richtext: a text is empty")
+			if in == nil {
+				return nil, errors.New("richtext: a text is nil")
 			}
 			nodes[i] = wireNode{Type: nodeText, Text: in.Text, Marks: wireMarks(in.Marks)}
 		case *Break:

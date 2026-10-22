@@ -232,28 +232,81 @@ func TestUnmarshalJSON(t *testing.T) {
 	wantError(t, err, WrongType, "")
 }
 
-// TestMarshalBuilt checks the canonical form of a Doc that a program builds:
-// the zero Doc is the empty document, and a Doc that Parse would never
-// return is refused rather than written as a document that Parse refuses.
+// TestMarshalBuilt checks the canonical form of a Doc that a program builds,
+// as an import does: the zero Doc is the empty document, a Doc that Parse
+// would refuse is refused rather than written, whatever Parse refuses in it,
+// and a Doc that Parse accepts is written in its canonical form.
+//
+// Verifies: NFR-SEC-08
 func TestMarshalBuilt(t *testing.T) {
 	if got := marshal(t, Doc{}); string(got) != `{"content":[{"type":"paragraph"}],"type":"doc"}` {
 		t.Errorf("the zero Doc: %s", got)
 	}
+	para := func(inlines ...Inline) Doc { return Doc{Blocks: []Block{&Paragraph{Inlines: inlines}}} }
+	item := func(blocks ...Block) Item { return Item{Blocks: blocks} }
+	nested := &List{Items: []Item{item(&Paragraph{})}}
+	for range MaxListDepth {
+		nested = &List{Items: []Item{item(&Paragraph{}, nested)}}
+	}
+	five := 5
+	nine := 9
 	var nilParagraph *Paragraph
 	for name, d := range map[string]Doc{
 		"a nil block":              {Blocks: []Block{nil}},
 		"a nil paragraph":          {Blocks: []Block{nilParagraph}},
+		"a nil list":               {Blocks: []Block{(*List)(nil)}},
 		"a list without items":     {Blocks: []Block{&List{}}},
 		"an item without blocks":   {Blocks: []Block{&List{Items: []Item{{}}}}},
-		"an item that is a list":   {Blocks: []Block{&List{Items: []Item{{Blocks: []Block{&List{}}}}}}},
-		"an empty text":            {Blocks: []Block{&Paragraph{Inlines: []Inline{&Text{}}}}},
-		"a nil inline":             {Blocks: []Block{&Paragraph{Inlines: []Inline{nil}}}},
-		"a nil text in a list":     {Blocks: []Block{&List{Items: []Item{{Blocks: []Block{&Paragraph{Inlines: []Inline{(*Text)(nil)}}}}}}}},
-		"a nil value in paragraph": {Blocks: []Block{&Paragraph{Inlines: []Inline{(*Value)(nil)}}}},
+		"an item that is a list":   {Blocks: []Block{&List{Items: []Item{item(&List{Items: []Item{item(&Paragraph{})}})}}}},
+		"an empty text":            para(&Text{}),
+		"a nil inline":             para(nil),
+		"a nil text in a list":     {Blocks: []Block{&List{Items: []Item{item(&Paragraph{Inlines: []Inline{(*Text)(nil)}})}}}},
+		"a nil value in paragraph": para((*Value)(nil)),
+		"lists nested too deep":    {Blocks: []Block{nested}},
+		"a line feed in text":      para(&Text{Text: "a\nb"}),
+		"too much text":            para(&Text{Text: strings.Repeat("a", MaxChars+1)}),
+		"a javascript: link":       para(&Text{Text: "a", Marks: Marks{Link: "javascript:alert(1)"}}),
+		"code with bold":           para(&Text{Text: "a", Marks: Marks{Code: true, Bold: true}}),
+		"a start below 0":          {Blocks: []Block{&List{Ordered: true, Start: -5, Items: []Item{item(&Paragraph{})}}}},
+		"a mention of no ID":       para(&Mention{Component: "nope"}),
+		"a mention of a variable":  para(&Mention{Component: "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"}),
+		"an attribute of a variable": para(&Value{Ref: "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+			Attribute: "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF"}),
+		"a component without its attribute": para(&Value{Ref: "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"}),
+		"too many decimals":                 para(&Value{Ref: "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA", Decimals: &nine}),
 	} {
 		if got, err := json.Marshal(d); err == nil {
 			t.Errorf("%s: %s", name, got)
 		}
+	}
+	got := marshal(t, Doc{Blocks: []Block{
+		&Paragraph{Inlines: []Inline{&Text{Text: "a"}, &Text{Text: "b"}, &Mention{Component: "CMP_01hq8z7kd3m9p2w5xrtvnq4bcf"},
+			&Value{Ref: "var_01hq8z5brt9c4f2m7xkdpv6nha", Decimals: &five}}},
+		&List{Ordered: true, Start: 1, Items: []Item{item(&Paragraph{})}},
+	}})
+	want := `{"content":[{"content":[{"text":"ab","type":"text"},{"attrs":{"id":"cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"},` +
+		`"type":"mention"},{"attrs":{"decimals":5,"ref":"var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"},"type":"valueRef"}],` +
+		`"type":"paragraph"},{"content":[{"content":[{"type":"paragraph"}],"type":"listItem"}],"type":"orderedList"}],"type":"doc"}`
+	if string(got) != want {
+		t.Errorf("a built Doc's canonical form\n%s\nwant\n%s", got, want)
+	}
+}
+
+// TestUnknownFieldOrder checks that of several fields that an object may not
+// have, the error names the first in sorted order, whether it is a type in
+// attributes, which have none, or another.
+func TestUnknownFieldOrder(t *testing.T) {
+	for doc, pointer := range map[string]string{
+		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"mention","attrs":` +
+			`{"type":"x","id":"cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF","aaa":1}}]}]}`: "/content/0/content/0/attrs/aaa",
+		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"mention","attrs":` +
+			`{"type":"x","id":"cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF","zzz":1}}]}]}`: "/content/0/content/0/attrs/type",
+		`{"type":"doc","content":[{"type":"orderedList","attrs":{"type":"x","start":2,"label":"a"},` +
+			`"content":[{"type":"listItem","content":[{"type":"paragraph"}]}]}]}`: "/content/0/attrs/label",
+		`{"type":"doc","content":[{"type":"paragraph","zzz":1,"attrs":{}}]}`: "/content/0/attrs",
+	} {
+		_, err := Parse([]byte(doc))
+		wantError(t, err, UnknownField, pointer)
 	}
 }
 
@@ -277,10 +330,19 @@ func TestCheckHref(t *testing.T) {
 		"http://example.com/a?b=c#d",
 		"HTTPS://EXAMPLE.COM/",
 		"https://user@example.com:8080/path",
+		"https://user:pass%40word@example.com/",
 		"https://[::1]/",
+		"https://[2001:db8::1]:8443/a",
+		"https://example.com:/",
 		"https://cs.wikipedia.org/wiki/Příliš",
+		"https://příliš.example/",
+		"https://example.com/a%C3%A9?q=%20#%2F",
+		// What a browser escapes in a path, a query, or a fragment.
+		"https://example.com/a|b?q={x}&r=\"<y>\"#^`",
+		"https://example.com/a\\b",
 		"mailto:keeper@example.com",
 		"MAILTO:keeper@example.com?subject=Light",
+		"mailto:/keeper",
 	} {
 		if problem := CheckHref(href); problem != "" {
 			t.Errorf("CheckHref(%q) = %q, want none", href, problem)
@@ -310,6 +372,29 @@ func TestCheckHref(t *testing.T) {
 		"http://[]/",
 		"mailto:",
 		"https://example.com:port",
+		"https://example.com:-1/",
+		"https://example.com:80:80/",
+		// A % that starts no escape, wherever it is.
+		"https://example.com/%zz",
+		"https://example.com/?q=100%",
+		"https://example.com/#%2",
+		"https://u%zz@example.com/",
+		"mailto:keeper%zz@example.com",
+		// A host or userinfo with what neither holds, as a backslash, which
+		// a browser reads as a slash, so that the host would be another.
+		"https://example.com\\@evil.example/",
+		"https://evil.example\\example.com/",
+		"https://exa<mple.com/",
+		"https://exa{mple.com/",
+		"https://exa%41mple.com/",
+		"https://exa[mple.com/",
+		"https://[example.com]/",
+		"https://[::1/",
+		"https://[::1]x/",
+		"https://[::1%25eth0]/",
+		// A scheme that only Unicode's case folding makes https: U+017F,
+		// the long s, folds to s.
+		"http" + string(rune(0x017F)) + "://example.com/",
 		// Format characters, which hide or reorder what a reader sees.
 		"https://exa" + string(rune(0x202E)) + "moc.elpm/",
 		"https://example.com/" + string(rune(0x200B)),

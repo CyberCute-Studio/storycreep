@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -93,7 +97,11 @@ func TestSchemaExamples(t *testing.T) {
 // Parse refuses, except those that the vectors mark schema_accepts, which it
 // accepts, because what is wrong with them is beyond what JSON Schema
 // expresses. The schema is validated with huma's validator, as Doc gives it
-// to huma, with which the API validates requests.
+// to huma, with which the API validates requests. huma passes over a null in
+// a property that a schema does not require, which JSON Schema refuses where
+// the property's schema does, so a vector whose document holds a null may
+// pass huma unless it is marked schema_accepts, as long as its null is all
+// that is wrong with it.
 func TestSchemaAgreesWithParse(t *testing.T) {
 	validate := humaValidator(t, publishedSchema(t))
 	v := readVectors(t)
@@ -110,15 +118,54 @@ func TestSchemaAgreesWithParse(t *testing.T) {
 			t.Errorf("%s: the canonical form does not validate against the schema: %v", vec.Note, problems)
 		}
 	}
+	nulls := 0
 	for _, vec := range v.Invalid {
 		problems := validate(vec.Doc)
 		switch {
 		case vec.SchemaAccepts && problems != nil:
 			t.Errorf("%s: marked schema_accepts, but the schema refuses it: %v", vec.Note, problems)
 		case !vec.SchemaAccepts && problems == nil:
-			t.Errorf("%s: the schema accepts it, but the vector is not marked schema_accepts", vec.Note)
+			at, ok := nullAt(t, vec.Doc)
+			if !ok || vec.Reason != WrongType || vec.Pointer != at {
+				t.Errorf("%s: the schema accepts it, but the vector is not marked schema_accepts", vec.Note)
+			}
+			nulls++
 		}
 	}
+	if nulls == 0 {
+		t.Error("no vector has a null in an optional field, which huma passes over")
+	}
+}
+
+// nullAt returns the pointer of the first null in the JSON document doc, in
+// the order of its keys, or ok false if it holds none.
+func nullAt(t *testing.T, doc []byte) (string, bool) {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal(doc, &v); err != nil {
+		return "", false
+	}
+	var walk func(v any, at string) (string, bool)
+	walk = func(v any, at string) (string, bool) {
+		switch v := v.(type) {
+		case nil:
+			return at, true
+		case []any:
+			for i, e := range v {
+				if p, ok := walk(e, at+"/"+strconv.Itoa(i)); ok {
+					return p, true
+				}
+			}
+		case map[string]any:
+			for _, k := range slices.Sorted(maps.Keys(v)) {
+				if p, ok := walk(v[k], at+"/"+strings.NewReplacer("~", "~0", "/", "~1").Replace(k)); ok {
+					return p, true
+				}
+			}
+		}
+		return "", false
+	}
+	return walk(v, "")
 }
 
 func init() {
@@ -130,7 +177,9 @@ func init() {
 // humaValidator returns a function that validates a JSON document with huma,
 // against the schema that Doc gives huma, and returns the problems that it
 // finds. That schema is converted from the definitions of Schema, which
-// TestSchemaFile holds the published schema s to.
+// TestSchemaFile holds the published schema s to. A document that
+// encoding/json cannot decode, as one with a number too large for a double,
+// is refused, as the API refuses a body before huma validates it.
 func humaValidator(t *testing.T, s map[string]any) func(doc []byte) []error {
 	t.Helper()
 	if !reflect.DeepEqual(s["$defs"], schemaDefinitions()) {
@@ -141,7 +190,7 @@ func humaValidator(t *testing.T, s map[string]any) func(doc []byte) []error {
 	return func(doc []byte) []error {
 		var v any
 		if err := json.Unmarshal(doc, &v); err != nil {
-			t.Fatal(err)
+			return []error{err}
 		}
 		res := &huma.ValidateResult{}
 		huma.Validate(reg, root, huma.NewPathBuffer([]byte{}, 0), huma.ModeWriteToServer, v, res)
@@ -149,18 +198,79 @@ func humaValidator(t *testing.T, s map[string]any) func(doc []byte) []error {
 	}
 }
 
+// TestSchemaValidationCost checks that huma validates a document against the
+// schema in time that grows with its size, whatever it holds, so that a body
+// of a few kilobytes cannot hold the server's CPU (NFR-SEC-07): lists nested
+// as deep as a body nests at most, nodes of no type of the schema nested as
+// deep, and a text with thousands of marks. A oneOf of two branches that both
+// read a list's content made the time double with each depth, and the marks'
+// uniqueItems grow with the square of their number.
+//
+// Verifies: NFR-SEC-07
+func TestSchemaValidationCost(t *testing.T) {
+	reg := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
+	root := huma.SchemaFromType(reg, reflect.TypeFor[Doc]())
+	// The API refuses a body nested more than 256 deep, and each list is
+	// four levels: the list, its content, an item, and the item's content.
+	const depth = 60
+	nested := func(open, close string) []byte {
+		return []byte(`{"type":"doc","content":[` + strings.Repeat(open, depth) + `{"type":"paragraph"}` +
+			strings.Repeat(close, depth) + `]}`)
+	}
+	marks := make([]string, 20_000)
+	for i := range marks {
+		marks[i] = fmt.Sprintf(`{"type":"bold","n":%d}`, i)
+	}
+	for name, doc := range map[string][]byte{
+		"lists":            nested(`{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph"},`, `]}]}`),
+		"nodes of no type": nested(`{"type":"x","content":[{"type":"x","content":[`, `]}]}`),
+		"inline nodes with content": []byte(`{"type":"doc","content":[` +
+			strings.Repeat(`{"type":"paragraph","content":[{"type":"text","text":"a","content":[`, depth) +
+			strings.Repeat(`]}]}`, depth) + `]}`),
+		"marks": []byte(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a","marks":[` +
+			strings.Join(marks, ",") + `]}]}]}`),
+	} {
+		var v any
+		if err := json.Unmarshal(doc, &v); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			huma.Validate(reg, root, huma.NewPathBuffer([]byte{}, 0), huma.ModeWriteToServer, v, &huma.ValidateResult{})
+		}()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			// The validation runs on until the test binary exits.
+			t.Errorf("%s: huma took more than 10 seconds to validate %d bytes", name, len(doc))
+		}
+	}
+}
+
 // TestDocField checks that a request's body or a command's payload can hold
 // a document in a field: huma validates the field against the document's
-// schema, which it names in its registry, and the field reads as Parse
+// schema, which its registry holds once, with each of the schema's
+// definitions, however many fields refer to it, and the field reads as Parse
 // reads it, with null leaving it as it is.
 func TestDocField(t *testing.T) {
 	type payload struct {
-		Text Doc `json:"text"`
+		Text  Doc  `json:"text"`
+		Label *Doc `json:"label,omitempty"`
 	}
 	reg := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
 	schema := huma.SchemaFromType(reg, reflect.TypeFor[payload]())
-	if _, ok := reg.Map()["RichTextBlock"]; !ok {
-		t.Errorf("the registry holds no RichTextBlock, but %v", reg.Map())
+	for _, field := range []string{"text", "label"} {
+		ref := schema.Properties[field]
+		if ref == nil || ref.Ref != "#/components/schemas/RichTextDoc" {
+			t.Errorf("the field %s's schema is %+v, not a reference to RichTextDoc", field, ref)
+		}
+	}
+	for name := range schemaDefinitions() {
+		key := "RichText" + strings.ToUpper(name[:1]) + name[1:]
+		if s, ok := reg.Map()[key]; !ok || s.Type == "" && s.OneOf == nil {
+			t.Errorf("the registry holds no schema of the definition %s as %s", name, key)
+		}
 	}
 	validate := func(body string) []error {
 		var v any
@@ -198,6 +308,18 @@ func TestDocField(t *testing.T) {
 	p = payload{Text: Doc{Blocks: []Block{&Paragraph{Inlines: []Inline{&Text{Text: "kept"}}}}}}
 	if err := json.Unmarshal([]byte(`{"text":null}`), &p); err != nil || len(p.Text.Blocks) != 1 {
 		t.Errorf("null: %v, %+v", err, p.Text)
+	}
+
+	// A registry whose namer names the document's schema otherwise, as the
+	// commands' pipeline's does, names the definitions after it.
+	reg = huma.NewMapRegistry("#/components/schemas/", func(t reflect.Type, hint string) string {
+		return "pkg_" + huma.DefaultSchemaNamer(t, hint)
+	})
+	if ref := huma.SchemaFromType(reg, reflect.TypeFor[Doc]()).Ref; ref != "#/components/schemas/pkg_RichTextDoc" {
+		t.Errorf("the document's schema is %s", ref)
+	}
+	if _, ok := reg.Map()["pkg_RichTextBlock"]; !ok {
+		t.Errorf("the registry holds no pkg_RichTextBlock, but %v", slices.Sorted(maps.Keys(reg.Map())))
 	}
 }
 

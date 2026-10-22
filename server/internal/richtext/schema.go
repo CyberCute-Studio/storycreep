@@ -9,6 +9,8 @@ import (
 	"sync"
 
 	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
 // SchemaID is the $id of version 1 of the rich-text JSON Schema: the URL at
@@ -27,6 +29,14 @@ const SchemaPath = "schema/rich-text/v1/rich-text.schema.json"
 // paragraph, a mark twice, the code mark with another, a link that CheckHref
 // refuses beyond the schema's pattern, and a string that escapes a lone
 // surrogate.
+//
+// A validator's work on the schema grows with a document's size, whatever
+// the document holds, as the API's validation of a request needs (PRD
+// NFR-SEC-07): of the branches of each oneOf, only one holds blocks, so that
+// a validator, which tries every branch, does not read a list's content once
+// for each kind of list, and twice as often at each depth; and no array is
+// uniqueItems, which huma checks in time that grows with the square of the
+// array's length.
 func Schema() []byte {
 	examples := make([]any, len(schemaExamples))
 	for i, ex := range schemaExamples {
@@ -45,13 +55,15 @@ func Schema() []byte {
 		"$defs":    definitions(defsPrefix),
 		"examples": examples,
 	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(s); err != nil {
+	compact, err := marshalNoEscape(s)
+	if err != nil {
 		panic("richtext: the schema is not JSON: " + err.Error())
 	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, compact, "", "  "); err != nil {
+		panic("richtext: the schema is not JSON: " + err.Error())
+	}
+	buf.WriteByte('\n')
 	return buf.Bytes()
 }
 
@@ -64,19 +76,32 @@ const defsPrefix = "#/$defs/"
 // validates a request's body, and the commands' pipeline a payload, whose
 // field holds a Doc against it before UnmarshalJSON reads the field, as it
 // validates the rest of the body, and so that the OpenAPI document describes
-// the field (huma.SchemaProvider). huma's registry holds the schema of a
-// block, which a list item's blocks refer to, as RichTextBlock.
+// the field (huma.SchemaProvider). The field refers to the document's schema,
+// which huma's registry holds as RichTextDoc, with each of the schema's
+// definitions beside it, as RichTextBlock, once however many fields refer to
+// it.
+//
+// huma passes over a null in a property that a schema does not require, as
+// it does in any body, where JSON Schema checks it against the property's
+// schema, so a null in an optional field of a document, as a valueRef's
+// decimals, reaches UnmarshalJSON, which refuses it with WrongType.
 func (Doc) Schema(r huma.Registry) *huma.Schema {
-	return humaSchema(r, schemaDefinitions()["doc"])
+	return r.Schema(reflect.TypeFor[richTextDoc](), true, "")
 }
 
-// richTextBlock stands for a block in huma's registry, which names it after
-// the type and gives it the schema of a block (huma.SchemaTransformer), so
-// that a list item's blocks can refer to the schema that holds them.
-type richTextBlock struct{}
+// richTextDoc stands for a document in huma's registry, which names it after
+// the type and gives it the schema of a document (huma.SchemaTransformer).
+type richTextDoc struct{}
 
-func (richTextBlock) TransformSchema(r huma.Registry, _ *huma.Schema) *huma.Schema {
-	return humaSchema(r, schemaDefinitions()["block"])
+// TransformSchema returns the schema of a document, and registers the
+// definitions that it refers to beside it, each under the document's name
+// with the definition's in place of Doc.
+func (richTextDoc) TransformSchema(r huma.Registry, _ *huma.Schema) *huma.Schema {
+	// huma has registered the type, so that this gives the reference to it.
+	ref := r.Schema(reflect.TypeFor[richTextDoc](), true, "").Ref
+	at := strings.LastIndexByte(ref, '/') + 1
+	c := humaConverter{r: r, prefix: ref[:at], base: strings.TrimSuffix(ref[at:], "Doc")}
+	return c.schema(schemaDefinitions()["doc"])
 }
 
 // schemaDefinitions returns the schema's definitions as JSON decodes them.
@@ -92,11 +117,36 @@ var schemaDefinitions = sync.OnceValue(func() map[string]any {
 	return defs
 })
 
-// humaSchema converts the schema v, as JSON decodes it, into huma's, which
-// holds each definition that v refers to, but a block's, which it refers to
-// in r. It panics on a keyword that it does not convert, so that a keyword
-// that huma would not check cannot pass unnoticed.
-func humaSchema(r huma.Registry, v any) *huma.Schema {
+// humaConverter converts the schema's definitions into huma's, in registry r,
+// in which a reference starts with prefix, and a definition's name with base.
+type humaConverter struct {
+	r            huma.Registry
+	prefix, base string
+}
+
+// ref returns a reference to the definition name, which it registers in the
+// registry, with the definitions that it refers to, unless the registry has
+// it.
+func (c humaConverter) ref(name string) *huma.Schema {
+	key := c.base + strings.ToUpper(name[:1]) + name[1:]
+	schemas := c.r.Map()
+	if _, ok := schemas[key]; !ok {
+		def, ok := schemaDefinitions()[name]
+		if !ok {
+			panic("richtext: the schema has no definition " + name)
+		}
+		// A definition that refers to itself, as a block does through a
+		// list, finds itself registered.
+		schemas[key] = &huma.Schema{}
+		schemas[key] = c.schema(def)
+	}
+	return &huma.Schema{Ref: c.prefix + key}
+}
+
+// schema converts the schema v, as JSON decodes it, into huma's. It panics
+// on a keyword that it does not convert, so that a keyword that huma would
+// not check cannot pass unnoticed.
+func (c humaConverter) schema(v any) *huma.Schema {
 	m, ok := v.(map[string]any)
 	if !ok {
 		panic(fmt.Sprintf("richtext: a schema is not an object: %v", v))
@@ -105,15 +155,7 @@ func humaSchema(r huma.Registry, v any) *huma.Schema {
 		if len(m) > 1 {
 			panic("richtext: a schema has a $ref and other keywords")
 		}
-		name := strings.TrimPrefix(ref, defsPrefix)
-		if name == "block" {
-			return r.Schema(reflect.TypeFor[richTextBlock](), true, "")
-		}
-		def, ok := schemaDefinitions()[name]
-		if !ok {
-			panic("richtext: the schema has no definition " + ref)
-		}
-		return humaSchema(r, def)
+		return c.ref(strings.TrimPrefix(ref, defsPrefix))
 	}
 	s := &huma.Schema{}
 	intOf := func(x any) *int { n := int(x.(float64)); return &n }
@@ -126,6 +168,8 @@ func humaSchema(r huma.Registry, v any) *huma.Schema {
 			s.Description = x.(string)
 		case "const":
 			s.Const = x
+		case "enum":
+			s.Enum = x.([]any)
 		case "pattern":
 			s.Pattern = x.(string)
 		case "minLength":
@@ -136,8 +180,6 @@ func humaSchema(r huma.Registry, v any) *huma.Schema {
 			s.MinItems = intOf(x)
 		case "maxItems":
 			s.MaxItems = intOf(x)
-		case "uniqueItems":
-			s.UniqueItems = x.(bool)
 		case "minimum":
 			s.Minimum = floatOf(x)
 		case "maximum":
@@ -149,18 +191,20 @@ func humaSchema(r huma.Registry, v any) *huma.Schema {
 				s.Required = append(s.Required, req.(string))
 			}
 		case "items":
-			s.Items = humaSchema(r, x)
+			s.Items = c.schema(x)
 		case "properties":
 			s.Properties = map[string]*huma.Schema{}
 			for name, p := range x.(map[string]any) {
-				s.Properties[name] = humaSchema(r, p)
+				s.Properties[name] = c.schema(p)
 			}
 		case "oneOf":
 			for _, o := range x.([]any) {
-				s.OneOf = append(s.OneOf, humaSchema(r, o))
+				s.OneOf = append(s.OneOf, c.schema(o))
 			}
+		case "not":
+			s.Not = c.schema(x)
 		default:
-			panic("richtext: the schema has the keyword " + k + ", which humaSchema does not convert")
+			panic("richtext: the schema has the keyword " + k + ", which the conversion to huma does not convert")
 		}
 	}
 	s.PrecomputeMessages()
@@ -195,20 +239,31 @@ func definitions(prefix string) obj {
 	mark := func(name, description string) obj {
 		return describe(object(obj{"type": typ(name)}, "type"), description)
 	}
+	list := object(obj{
+		"attrs": describe(object(obj{"start": describe(obj{"type": "integer", "minimum": 0, "maximum": MaxStart},
+			"The number of the first item, 1 when it is not given.")}), "An orderedList's attributes."),
+		"content": nodes(ref("listItem"), 1),
+		"type":    obj{"enum": []string{nodeBulletList, nodeOrderedList}},
+	}, "content", "type")
+	// The kind of a list decides only whether it may have attrs, which these
+	// branches check without its content, which the list's properties check
+	// once. A schema that nothing matches, {"not": {}}, is JSON Schema's
+	// false, which huma does not read. huma checks properties only where a
+	// schema says that it is of an object, which JSON Schema needs nowhere
+	// here.
+	list["oneOf"] = []obj{
+		describe(obj{"type": "object", "properties": obj{"attrs": obj{"not": obj{}}, "type": typ(nodeBulletList)}},
+			"A bulleted list, which has no attrs."),
+		describe(obj{"type": "object", "properties": obj{"type": typ(nodeOrderedList)}}, "A numbered list."),
+	}
 	return obj{
 		"doc": describe(object(obj{"content": nodes(ref("block"), 1), "type": typ(nodeDoc)}, "content", "type"),
 			"A document: its blocks, at least one. The editor's empty document is one empty paragraph."),
-		"block": obj{"oneOf": []obj{ref("paragraph"), ref("bulletList"), ref("orderedList")}},
+		"block": obj{"oneOf": []obj{ref("paragraph"), ref("list")}},
 		"paragraph": describe(object(obj{"content": nodes(ref("inline"), 0), "type": typ(nodeParagraph)}, "type"),
 			"A paragraph, which may be empty."),
-		"bulletList": describe(object(obj{"content": nodes(ref("listItem"), 1), "type": typ(nodeBulletList)}, "content", "type"),
-			"A bulleted list. Lists nest at most 5 deep."),
-		"orderedList": describe(object(obj{
-			"attrs": object(obj{"start": describe(obj{"type": "integer", "minimum": 0, "maximum": MaxStart},
-				"The number of the first item, 1 when it is not given.")}),
-			"content": nodes(ref("listItem"), 1),
-			"type":    typ(nodeOrderedList),
-		}, "content", "type"), "A numbered list. Lists nest at most 5 deep."),
+		"list": describe(list, "A list, bulleted (bulletList) or numbered (orderedList), of at least one item. "+
+			"Lists nest at most 5 deep."),
 		"listItem": describe(object(obj{
 			"content": nodes(ref("block"), 1),
 			"type":    typ(nodeListItem),
@@ -241,9 +296,10 @@ func definitions(prefix string) obj {
 			"The number of digits after the point that a number is shown with, rounded half away from zero. "+
 				"A value that is not a number is shown as it is."),
 		"marks": describe(obj{
-			"type": "array", "maxItems": len(markOrder), "uniqueItems": true,
+			"type": "array", "maxItems": len(markOrder),
 			"items": obj{"oneOf": []obj{ref(markBold), ref(markCode), ref(markItalic), ref(markLink), ref(markStrike)}},
-		}, "The marks of an inline node, each at most once. The code mark is not combined with another."),
+		}, "The marks of an inline node, each at most once, which the server checks beyond this schema. The code "+
+			"mark is not combined with another."),
 		markBold:   mark(markBold, "Bold."),
 		markCode:   mark(markCode, "Inline code."),
 		markItalic: mark(markItalic, "Italic."),
@@ -255,9 +311,9 @@ func definitions(prefix string) obj {
 			}}, "href"),
 			"type": typ(markLink),
 		}, "attrs", "type"), "A link to an absolute http or https URL with a host, or a mailto URL, without white space."),
-		"componentId": id("cmp", "A component's ID."),
-		"variableId":  id("var", "A variable's ID."),
-		"attributeId": id("atr", "A component type's attribute definition's ID."),
+		"componentId": id(ids.Component, "A component's ID."),
+		"variableId":  id(ids.Variable, "A variable's ID."),
+		"attributeId": id(ids.AttributeDef, "A component type's attribute definition's ID."),
 	}
 }
 
@@ -276,16 +332,10 @@ func describe(schema obj, description string) obj {
 	return schema
 }
 
-// id returns the schema of a public ID with the type prefix prefix, which is
-// read regardless of case, as package ids decodes it.
-func id(prefix, description string) obj {
-	var b strings.Builder
-	b.WriteByte('^')
-	for _, c := range prefix {
-		b.WriteString("[" + strings.ToUpper(string(c)) + string(c) + "]")
-	}
-	b.WriteString("_[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$")
-	return describe(obj{"type": "string", "pattern": b.String()}, description)
+// id returns the schema of a public ID of the entity type k, as package ids
+// decodes one.
+func id(k ids.Kind, description string) obj {
+	return describe(obj{"type": "string", "pattern": k.Pattern()}, description)
 }
 
 // schemaExamples are the schema's examples, in their canonical form.

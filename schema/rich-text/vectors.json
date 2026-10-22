@@ -23,12 +23,12 @@
     {
       "note": "the editor's empty document: one empty paragraph",
       "doc": {
-        "type": "doc",
         "content": [
           {
             "type": "paragraph"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [],
       "text": "",
@@ -39,18 +39,18 @@
     {
       "note": "the node of the PRD's example (section 6.5)",
       "doc": {
-        "type": "doc",
         "content": [
           {
-            "type": "paragraph",
             "content": [
               {
-                "type": "text",
-                "text": "Harbour's closed to strangers. State your business."
+                "text": "Harbour's closed to strangers. State your business.",
+                "type": "text"
               }
-            ]
+            ],
+            "type": "paragraph"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -67,76 +67,76 @@
     {
       "note": "marks and a link: each segment lists its marks in alphabetical order, and a linked one has its href",
       "doc": {
-        "type": "doc",
         "content": [
           {
-            "type": "paragraph",
             "content": [
               {
-                "type": "text",
-                "text": "Ask the "
+                "text": "Ask the ",
+                "type": "text"
               },
               {
-                "type": "text",
-                "text": "keeper",
                 "marks": [
                   {
                     "type": "bold"
                   }
-                ]
+                ],
+                "text": "keeper",
+                "type": "text"
               },
               {
-                "type": "text",
-                "text": " about the "
+                "text": " about the ",
+                "type": "text"
               },
               {
-                "type": "text",
-                "text": "old lighthouse",
                 "marks": [
                   {
                     "type": "italic"
                   },
                   {
-                    "type": "link",
                     "attrs": {
                       "href": "https://example.com/lighthouse"
-                    }
+                    },
+                    "type": "link"
                   }
-                ]
+                ],
+                "text": "old lighthouse",
+                "type": "text"
               },
               {
-                "type": "text",
-                "text": ", not the "
+                "text": ", not the ",
+                "type": "text"
               },
               {
-                "type": "text",
-                "text": "new",
                 "marks": [
                   {
                     "type": "strike"
                   }
-                ]
+                ],
+                "text": "new",
+                "type": "text"
               },
               {
-                "type": "text",
-                "text": " one: "
+                "text": " one: ",
+                "type": "text"
               },
               {
-                "type": "text",
-                "text": "LIGHT_ON",
                 "marks": [
                   {
                     "type": "code"
                   }
-                ]
+                ],
+                "text": "LIGHT_ON",
+                "type": "text"
               },
               {
-                "type": "text",
-                "text": "."
+                "text": ".",
+                "type": "text"
               }
-            ]
+            ],
+            "type": "paragraph"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -155,10 +155,10 @@
           "value": " about the "
         },
         {
+          "href": "https://example.com/lighthouse",
           "kind": "text",
           "marks": ["italic", "link"],
-          "value": "old lighthouse",
-          "href": "https://example.com/lighthouse"
+          "value": "old lighthouse"
         },
         {
           "kind": "text",
@@ -194,54 +194,54 @@
     {
       "note": "a mention shows the component's name, and a value its name in braces; a line break is a line feed",
       "doc": {
-        "type": "doc",
         "content": [
           {
-            "type": "paragraph",
             "content": [
               {
-                "type": "mention",
                 "attrs": {
                   "id": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
-                }
+                },
+                "type": "mention"
               },
               {
-                "type": "text",
-                "text": " has heard "
+                "text": " has heard ",
+                "type": "text"
               },
               {
-                "type": "valueRef",
                 "attrs": {
                   "ref": "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"
-                }
+                },
+                "type": "valueRef"
               },
               {
-                "type": "text",
-                "text": " rumours."
+                "text": " rumours.",
+                "type": "text"
               },
               {
                 "type": "hardBreak"
               },
               {
-                "type": "text",
-                "text": "Trust: "
+                "text": "Trust: ",
+                "type": "text"
               },
               {
-                "type": "valueRef",
                 "attrs": {
-                  "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
                   "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
-                  "decimals": 1
+                  "decimals": 1,
+                  "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
                 },
                 "marks": [
                   {
                     "type": "bold"
                   }
-                ]
+                ],
+                "type": "valueRef"
               }
-            ]
+            ],
+            "type": "paragraph"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -275,12 +275,12 @@
           "value": "Trust: "
         },
         {
+          "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
+          "decimals": 1,
           "kind": "value",
           "marks": ["bold"],
           "name": "elara.trust",
-          "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
-          "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
-          "decimals": 1
+          "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
         }
       ],
       "text": "Elara has heard {harbour_rumours} rumours.\nTrust: {elara.trust}",
@@ -291,96 +291,96 @@
     {
       "note": "lists: an item segment begins each item, and a paragraph segment the paragraph after the list",
       "doc": {
-        "type": "doc",
         "content": [
           {
-            "type": "paragraph",
             "content": [
               {
-                "type": "text",
-                "text": "Pack for the climb:"
+                "text": "Pack for the climb:",
+                "type": "text"
               }
-            ]
+            ],
+            "type": "paragraph"
           },
           {
-            "type": "bulletList",
             "content": [
               {
-                "type": "listItem",
                 "content": [
                   {
-                    "type": "paragraph",
                     "content": [
                       {
-                        "type": "text",
-                        "text": "Rope"
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "type": "listItem",
-                "content": [
-                  {
-                    "type": "paragraph",
-                    "content": [
-                      {
-                        "type": "text",
-                        "text": "Lamp"
-                      }
-                    ]
-                  },
-                  {
-                    "type": "orderedList",
-                    "content": [
-                      {
-                        "type": "listItem",
-                        "content": [
-                          {
-                            "type": "paragraph",
-                            "content": [
-                              {
-                                "type": "text",
-                                "text": "Oil"
-                              }
-                            ]
-                          }
-                        ]
-                      },
-                      {
-                        "type": "listItem",
-                        "content": [
-                          {
-                            "type": "paragraph",
-                            "content": [
-                              {
-                                "type": "text",
-                                "text": "Wick"
-                              }
-                            ]
-                          }
-                        ]
+                        "text": "Rope",
+                        "type": "text"
                       }
                     ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              },
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "Lamp",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  },
+                  {
                     "attrs": {
                       "start": 3
-                    }
+                    },
+                    "content": [
+                      {
+                        "content": [
+                          {
+                            "content": [
+                              {
+                                "text": "Oil",
+                                "type": "text"
+                              }
+                            ],
+                            "type": "paragraph"
+                          }
+                        ],
+                        "type": "listItem"
+                      },
+                      {
+                        "content": [
+                          {
+                            "content": [
+                              {
+                                "text": "Wick",
+                                "type": "text"
+                              }
+                            ],
+                            "type": "paragraph"
+                          }
+                        ],
+                        "type": "listItem"
+                      }
+                    ],
+                    "type": "orderedList"
                   }
-                ]
+                ],
+                "type": "listItem"
               }
-            ]
+            ],
+            "type": "bulletList"
           },
           {
-            "type": "paragraph",
             "content": [
               {
-                "type": "text",
-                "text": "Then go."
+                "text": "Then go.",
+                "type": "text"
               }
-            ]
+            ],
+            "type": "paragraph"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -520,57 +520,57 @@
         ]
       },
       "canonical": {
-        "type": "doc",
         "content": [
           {
-            "type": "paragraph",
             "content": [
               {
-                "type": "text",
-                "text": "Go "
+                "text": "Go ",
+                "type": "text"
               },
               {
-                "type": "text",
-                "text": "now!",
                 "marks": [
                   {
                     "type": "bold"
                   },
                   {
-                    "type": "link",
                     "attrs": {
                       "href": "https://example.com"
-                    }
+                    },
+                    "type": "link"
                   }
-                ]
+                ],
+                "text": "now!",
+                "type": "text"
               }
-            ]
+            ],
+            "type": "paragraph"
           },
           {
             "type": "paragraph"
           },
           {
-            "type": "orderedList",
             "content": [
               {
-                "type": "listItem",
                 "content": [
                   {
-                    "type": "paragraph",
                     "content": [
                       {
-                        "type": "mention",
                         "attrs": {
                           "id": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
-                        }
+                        },
+                        "type": "mention"
                       }
-                    ]
+                    ],
+                    "type": "paragraph"
                   }
-                ]
+                ],
+                "type": "listItem"
               }
-            ]
+            ],
+            "type": "orderedList"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -579,10 +579,10 @@
           "value": "Go "
         },
         {
+          "href": "https://example.com",
           "kind": "text",
           "marks": ["bold", "link"],
-          "value": "now!",
-          "href": "https://example.com"
+          "value": "now!"
         },
         {
           "kind": "paragraph"
@@ -608,44 +608,44 @@
     {
       "note": "a list item's later paragraph and its line breaks are indented two spaces for each depth, as far as a bulleted item's text",
       "doc": {
-        "type": "doc",
         "content": [
           {
-            "type": "bulletList",
             "content": [
               {
-                "type": "listItem",
                 "content": [
                   {
-                    "type": "paragraph",
                     "content": [
                       {
-                        "type": "text",
-                        "text": "First"
+                        "text": "First",
+                        "type": "text"
                       }
-                    ]
+                    ],
+                    "type": "paragraph"
                   },
                   {
-                    "type": "paragraph",
                     "content": [
                       {
-                        "type": "text",
-                        "text": "More"
+                        "text": "More",
+                        "type": "text"
                       },
                       {
                         "type": "hardBreak"
                       },
                       {
-                        "type": "text",
-                        "text": "lines"
+                        "text": "lines",
+                        "type": "text"
                       }
-                    ]
+                    ],
+                    "type": "paragraph"
                   }
-                ]
+                ],
+                "type": "listItem"
               }
-            ]
+            ],
+            "type": "bulletList"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -659,8 +659,8 @@
           "value": "First"
         },
         {
-          "kind": "paragraph",
-          "depth": 1
+          "depth": 1,
+          "kind": "paragraph"
         },
         {
           "kind": "text",
@@ -684,61 +684,61 @@
     {
       "note": "a numbered item's later lines are indented two spaces for each depth too, not as far as its text",
       "doc": {
-        "type": "doc",
         "content": [
           {
-            "type": "orderedList",
+            "attrs": {
+              "start": 9
+            },
             "content": [
               {
-                "type": "listItem",
                 "content": [
                   {
-                    "type": "paragraph",
                     "content": [
                       {
-                        "type": "text",
-                        "text": "a"
+                        "text": "a",
+                        "type": "text"
                       },
                       {
                         "type": "hardBreak"
                       },
                       {
-                        "type": "text",
-                        "text": "b"
+                        "text": "b",
+                        "type": "text"
                       }
-                    ]
+                    ],
+                    "type": "paragraph"
                   }
-                ]
+                ],
+                "type": "listItem"
               },
               {
-                "type": "listItem",
                 "content": [
                   {
-                    "type": "paragraph",
                     "content": [
                       {
-                        "type": "text",
-                        "text": "c"
+                        "text": "c",
+                        "type": "text"
                       }
-                    ]
+                    ],
+                    "type": "paragraph"
                   },
                   {
-                    "type": "paragraph",
                     "content": [
                       {
-                        "type": "text",
-                        "text": "d"
+                        "text": "d",
+                        "type": "text"
                       }
-                    ]
+                    ],
+                    "type": "paragraph"
                   }
-                ]
+                ],
+                "type": "listItem"
               }
             ],
-            "attrs": {
-              "start": 9
-            }
+            "type": "orderedList"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -772,8 +772,8 @@
           "value": "c"
         },
         {
-          "kind": "paragraph",
-          "depth": 1
+          "depth": 1,
+          "kind": "paragraph"
         },
         {
           "kind": "text",
@@ -789,21 +789,21 @@
     {
       "note": "a document whose first segment is a line break starts with a line feed",
       "doc": {
-        "type": "doc",
         "content": [
           {
-            "type": "paragraph",
             "content": [
               {
                 "type": "hardBreak"
               },
               {
-                "type": "text",
-                "text": "After"
+                "text": "After",
+                "type": "text"
               }
-            ]
+            ],
+            "type": "paragraph"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -823,31 +823,31 @@
     {
       "note": "a document's empty first paragraph has no segment, so a list after it starts the plain text",
       "doc": {
-        "type": "doc",
         "content": [
           {
             "type": "paragraph"
           },
           {
-            "type": "bulletList",
             "content": [
               {
-                "type": "listItem",
                 "content": [
                   {
-                    "type": "paragraph",
                     "content": [
                       {
-                        "type": "text",
-                        "text": "Rope"
+                        "text": "Rope",
+                        "type": "text"
                       }
-                    ]
+                    ],
+                    "type": "paragraph"
                   }
-                ]
+                ],
+                "type": "listItem"
               }
-            ]
+            ],
+            "type": "bulletList"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -869,104 +869,104 @@
     {
       "note": "lists nest 5 deep at most",
       "doc": {
-        "type": "doc",
         "content": [
           {
-            "type": "bulletList",
             "content": [
               {
-                "type": "listItem",
                 "content": [
                   {
-                    "type": "paragraph",
                     "content": [
                       {
-                        "type": "text",
-                        "text": "a"
+                        "text": "a",
+                        "type": "text"
                       }
-                    ]
+                    ],
+                    "type": "paragraph"
                   },
                   {
-                    "type": "bulletList",
                     "content": [
                       {
-                        "type": "listItem",
                         "content": [
                           {
-                            "type": "paragraph",
                             "content": [
                               {
-                                "type": "text",
-                                "text": "b"
+                                "text": "b",
+                                "type": "text"
                               }
-                            ]
+                            ],
+                            "type": "paragraph"
                           },
                           {
-                            "type": "bulletList",
                             "content": [
                               {
-                                "type": "listItem",
                                 "content": [
                                   {
-                                    "type": "paragraph",
                                     "content": [
                                       {
-                                        "type": "text",
-                                        "text": "c"
+                                        "text": "c",
+                                        "type": "text"
                                       }
-                                    ]
+                                    ],
+                                    "type": "paragraph"
                                   },
                                   {
-                                    "type": "bulletList",
                                     "content": [
                                       {
-                                        "type": "listItem",
                                         "content": [
                                           {
-                                            "type": "paragraph",
                                             "content": [
                                               {
-                                                "type": "text",
-                                                "text": "d"
+                                                "text": "d",
+                                                "type": "text"
                                               }
-                                            ]
+                                            ],
+                                            "type": "paragraph"
                                           },
                                           {
-                                            "type": "bulletList",
                                             "content": [
                                               {
-                                                "type": "listItem",
                                                 "content": [
                                                   {
-                                                    "type": "paragraph",
                                                     "content": [
                                                       {
-                                                        "type": "text",
-                                                        "text": "e"
+                                                        "text": "e",
+                                                        "type": "text"
                                                       }
-                                                    ]
+                                                    ],
+                                                    "type": "paragraph"
                                                   }
-                                                ]
+                                                ],
+                                                "type": "listItem"
                                               }
-                                            ]
+                                            ],
+                                            "type": "bulletList"
                                           }
-                                        ]
+                                        ],
+                                        "type": "listItem"
                                       }
-                                    ]
+                                    ],
+                                    "type": "bulletList"
                                   }
-                                ]
+                                ],
+                                "type": "listItem"
                               }
-                            ]
+                            ],
+                            "type": "bulletList"
                           }
-                        ]
+                        ],
+                        "type": "listItem"
                       }
-                    ]
+                    ],
+                    "type": "bulletList"
                   }
-                ]
+                ],
+                "type": "listItem"
               }
-            ]
+            ],
+            "type": "bulletList"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -1028,53 +1028,53 @@
     {
       "note": "an ordered list may start at 0; a line break's marks show in no segment; a linked value has its href",
       "doc": {
-        "type": "doc",
         "content": [
           {
-            "type": "orderedList",
+            "attrs": {
+              "start": 0
+            },
             "content": [
               {
-                "type": "listItem",
                 "content": [
                   {
-                    "type": "paragraph",
                     "content": [
                       {
-                        "type": "text",
-                        "text": "Zero"
+                        "text": "Zero",
+                        "type": "text"
                       },
                       {
-                        "type": "hardBreak",
                         "marks": [
                           {
                             "type": "italic"
                           }
-                        ]
+                        ],
+                        "type": "hardBreak"
                       },
                       {
-                        "type": "valueRef",
                         "attrs": {
                           "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
                         },
                         "marks": [
                           {
-                            "type": "link",
                             "attrs": {
                               "href": "https://example.com/met"
-                            }
+                            },
+                            "type": "link"
                           }
-                        ]
+                        ],
+                        "type": "valueRef"
                       }
-                    ]
+                    ],
+                    "type": "paragraph"
                   }
-                ]
+                ],
+                "type": "listItem"
               }
             ],
-            "attrs": {
-              "start": 0
-            }
+            "type": "orderedList"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -1092,11 +1092,11 @@
           "kind": "break"
         },
         {
+          "href": "https://example.com/met",
           "kind": "value",
           "marks": ["link"],
           "name": "met_elara",
-          "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
-          "href": "https://example.com/met"
+          "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
         }
       ],
       "text": "0. Zero\n  {met_elara}",
@@ -1107,33 +1107,33 @@
     {
       "note": "an empty paragraph between others is an empty line, and a document's empty first paragraph has no segment",
       "doc": {
-        "type": "doc",
         "content": [
           {
             "type": "paragraph"
           },
           {
-            "type": "paragraph",
             "content": [
               {
-                "type": "text",
-                "text": "After"
+                "text": "After",
+                "type": "text"
               }
-            ]
+            ],
+            "type": "paragraph"
           },
           {
             "type": "paragraph"
           },
           {
-            "type": "paragraph",
             "content": [
               {
-                "type": "text",
-                "text": "End"
+                "text": "End",
+                "type": "text"
               }
-            ]
+            ],
+            "type": "paragraph"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -1164,18 +1164,18 @@
     {
       "note": "a preview of a long text is cut at the last space within its first 100 characters, with an ellipsis",
       "doc": {
-        "type": "doc",
         "content": [
           {
-            "type": "paragraph",
             "content": [
               {
-                "type": "text",
-                "text": "The keeper climbed the spiral stairs of the old lighthouse, counting each of the hundred and twelve worn steps under her breath."
+                "text": "The keeper climbed the spiral stairs of the old lighthouse, counting each of the hundred and twelve worn steps under her breath.",
+                "type": "text"
               }
-            ]
+            ],
+            "type": "paragraph"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -1192,18 +1192,18 @@
     {
       "note": "text in any script, with an emoji and a no-break space",
       "doc": {
-        "type": "doc",
         "content": [
           {
-            "type": "paragraph",
             "content": [
               {
-                "type": "text",
-                "text": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy  — 東京タワー 3 km"
+                "text": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy  — 東京タワー 3 km",
+                "type": "text"
               }
-            ]
+            ],
+            "type": "paragraph"
           }
-        ]
+        ],
+        "type": "doc"
       },
       "segments": [
         {
@@ -1233,6 +1233,20 @@
           }
         ]
       },
+      "canonical": {
+        "content": [
+          {
+            "content": [
+              {
+                "text": "Go 🐴",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
       "segments": [
         {
           "kind": "text",
@@ -1244,6 +1258,263 @@
       "preview": "Go 🐴",
       "words": 1,
       "hash": "sha256:55066f4dafda1097717a8629b188846b9cf0f26bd7447cd20d20d19db7d93744"
+    },
+    {
+      "note": "HTML is not escaped: <, >, and & stay as they are, in a text and in a link",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "https://example.com/?a=1&b=<2>"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "Fish & chips <hot>",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "href": "https://example.com/?a=1&b=<2>",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "Fish & chips <hot>"
+        }
+      ],
+      "text": "Fish & chips <hot>",
+      "preview": "Fish & chips <hot>",
+      "words": 3,
+      "hash": "sha256:cbdc6be8042546270cfd3c3396e4a1ca932575821b75d46a6069d64a7f0020dd"
+    },
+    {
+      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, and escapes",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "https://[2001:db8::1]:8443/a"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "one",
+                "type": "text"
+              },
+              {
+                "text": " ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "https://example.com/a|b?q={x}#%C3%A9"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "two",
+                "type": "text"
+              },
+              {
+                "text": " ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?subject=Light%20on"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "three",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "href": "https://[2001:db8::1]:8443/a",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "one"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " "
+        },
+        {
+          "href": "https://example.com/a|b?q={x}#%C3%A9",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "two"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " "
+        },
+        {
+          "href": "mailto:keeper@example.com?subject=Light%20on",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "three"
+        }
+      ],
+      "text": "one two three",
+      "preview": "one two three",
+      "words": 3,
+      "hash": "sha256:6899ee404683a14e8c2a03149860df25d67d34d9cd4dae7350cbe91e4b3976be"
+    },
+    {
+      "note": "a number is read as JSON.parse reads it, as the nearest double: 3.0 is 3, and so is 2.99999999999999999999",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 3.0
+            }
+          },
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "b"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 2.99999999999999999999
+            }
+          }
+        ]
+      },
+      "canonical": {
+        "content": [
+          {
+            "attrs": {
+              "start": 3
+            },
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "a",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "orderedList"
+          },
+          {
+            "attrs": {
+              "start": 3
+            },
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "b",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "orderedList"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "ordered",
+          "number": 3
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "a"
+        },
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "ordered",
+          "number": 3
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "b"
+        }
+      ],
+      "text": "3. a\n3. b",
+      "preview": "3. a 3. b",
+      "words": 2,
+      "hash": "sha256:d94ddd1f631fa60f3c42b7326c58612f02183b09fb2dcc90283815b68eb0f409"
     }
   ],
   "invalid": [
@@ -1378,6 +1649,20 @@
       },
       "reason": "wrong_type",
       "pointer": "/content"
+    },
+    {
+      "note": "a paragraph whose content is null",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": null
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content"
     },
     {
       "note": "a node that is not an object",
@@ -1697,6 +1982,32 @@
       "pointer": "/content/0/attrs"
     },
     {
+      "note": "attrs on a bulleted list, which only an ordered list has",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 2
+            }
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/attrs"
+    },
+    {
       "note": "a field that no node has",
       "doc": {
         "type": "doc",
@@ -1766,6 +2077,56 @@
       },
       "reason": "wrong_type",
       "pointer": "/content/0/attrs"
+    },
+    {
+      "note": "an ordered list's attrs that are null",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": null
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/attrs"
+    },
+    {
+      "note": "an ordered list whose start is null",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": null
+            }
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/attrs/start"
     },
     {
       "note": "an ordered list starting below 0",
@@ -1869,6 +2230,32 @@
         ]
       },
       "reason": "wrong_type",
+      "pointer": "/content/0/attrs/start"
+    },
+    {
+      "note": "an ordered list starting at a number too large for a double, which JSON.parse reads as Infinity",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 1e400
+            }
+          }
+        ]
+      },
+      "reason": "out_of_range",
       "pointer": "/content/0/attrs/start"
     },
     {
@@ -2113,6 +2500,26 @@
       "pointer": "/content/0/content/0/marks"
     },
     {
+      "note": "marks that are null",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": null
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/marks"
+    },
+    {
       "note": "a mark that is not an object",
       "doc": {
         "type": "doc",
@@ -2274,7 +2681,8 @@
         ]
       },
       "reason": "duplicate_mark",
-      "pointer": "/content/0/content/0/marks/1"
+      "pointer": "/content/0/content/0/marks/1",
+      "schema_accepts": true
     },
     {
       "note": "two links",
@@ -2938,7 +3346,7 @@
       "pointer": "/content/0/content/0/marks/0/attrs/href"
     },
     {
-      "note": "a link that is not a URL",
+      "note": "a link with a port that is not a number",
       "doc": {
         "type": "doc",
         "content": [
@@ -2953,6 +3361,146 @@
                     "type": "link",
                     "attrs": {
                       "href": "https://example.com:port/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a % that starts no escape, in its query",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/?q=100%"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link with a % that starts no escape",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper%zz@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host holds what no host does",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://exa<mple.com/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a backslash in its authority, which a browser reads as a slash, so that it leads to another host than the one after the @",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com\\@evil.example/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with an IPv6 address in brackets that is not one",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://[example.com]/"
                     }
                   }
                 ]
@@ -3354,6 +3902,28 @@
                 "attrs": {
                   "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
                   "decimals": "2"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/attrs/decimals"
+    },
+    {
+      "note": "a value whose decimals are null, as ProseMirror writes an attribute that is not set",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "decimals": null
                 }
               }
             ]

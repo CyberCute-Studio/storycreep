@@ -4,7 +4,7 @@ The rich text of a project's content, node bodies, connection labels, and compon
 
 | File | Contents |
 | --- | --- |
-| [`v1/rich-text.schema.json`](v1/rich-text.schema.json) | The JSON Schema of a document, version 1, with examples. Its `$id` is the URL of the file on the main branch. `server/internal/richtext` generates it, and `go test ./...` fails when it is out of date; `go test ./internal/richtext -run TestSchemaFile -update`, in `server/`, rewrites it. |
+| [`v1/rich-text.schema.json`](v1/rich-text.schema.json) | The JSON Schema of a document, version 1, with examples. Its `$id` is the URL of the file on the main branch. `server/internal/richtext` generates it, and `go test ./...` fails when it is out of date; `go test ./internal/richtext -run TestSchemaFile -update`, in `server/`, rewrites it. It is shaped so that a validator's work grows with a document's size, whatever the document holds: of the branches of each `oneOf`, only one holds blocks, so both kinds of list are one definition, `list`, and no array is `uniqueItems`. |
 | [`vectors.json`](vectors.json) | The test vectors of the validation and of the derivations below. The Go package `server/internal/richtext` runs every vector, and so will the TypeScript client, the editor's validation (plan item 57) and the play mode's segments (item 71), so that the implementations cannot drift apart. |
 
 ## The document
@@ -21,9 +21,14 @@ The rich text of a project's content, node bodies, connection labels, and compon
 | `mention` | `attrs.id`; `marks`, optional | A component (`cmp_…`), which the text shows by its name (FR-TEXT-03). |
 | `valueRef` | `attrs.ref`, `attrs.attribute`, `attrs.decimals`; `marks`, optional | A value, which the text shows as the runtime renders it (FR-TEXT-02): a variable's (`ref` is a `var_…`, and there is no `attribute`), or a component's runtime attribute's (`ref` is a `cmp_…` and `attribute` the attribute definition's `atr_…`). `decimals`, from 0 to 6, shows a number with that many digits after the point, rounded half away from zero (PRD §5.8.9); a value that is not a number is shown as it is. |
 
-The marks are `bold`, `italic`, `strike`, `code`, and `link`, whose `attrs.href` is the URL. A node has each mark at most once, and the code mark with no other, as the editor's code mark excludes the others. Every node and mark is an object with a `type`, and has no field that the table does not give it, so `attrs` on a paragraph, or a link's `target`, is refused, and no field is `null`, which is refused with `wrong_type`. An ID is read regardless of case, as [`../ids/README.md`](../ids/README.md) says.
+The marks are `bold`, `italic`, `strike`, `code`, and `link`, whose `attrs.href` is the URL. A node has each mark at most once, and the code mark with no other, as the editor's code mark excludes the others. Every node and mark is an object with a `type`, and has no field that the table does not give it, so `attrs` on a paragraph or on a bulleted list, or a link's `target`, is refused, and no field is `null`, which is refused with `wrong_type`. An ID is read regardless of case, as [`../ids/README.md`](../ids/README.md) says. A number is read as `JSON.parse` reads it, as the nearest double: `3.0` and `3e0` are 3, and so is `2.99999999999999999999`, which has more digits than a double holds; a number too large for a double, as `1e400`, which `JSON.parse` reads as `Infinity`, is `out_of_range`.
 
-A link is an absolute `http` or `https` URL with a host, which a port alone is not (`https://:80/` has none), or a `mailto` URL with an address, of at most 2,048 characters, none of them white space (Unicode's `White_Space`), a control character (`Cc`), or a format character (`Cf`, as U+200B, U+202E, or U+FEFF), which would hide or reorder what a reader sees of it (PRD NFR-SEC-08). `javascript:`, `data:`, `file:`, and relative URLs are refused.
+A link has at most 2,048 characters, none of them white space (Unicode's `White_Space`), a control character (`Cc`), or a format character (`Cf`, as U+200B, U+202E, or U+FEFF), which would hide or reorder what a reader sees of it (PRD NFR-SEC-08), and each `%` in it starts an escape, `%` and two hexadecimal digits. Its scheme, which is read regardless of ASCII case and of no other, is one of these:
+
+- `mailto:`, followed by an address: what is before the first `?` or `#` is not empty.
+- `http://` or `https://`, followed by an authority, what is before the first `/`, `?`, or `#`. When the authority has an `@`, what is before the last one is a userinfo, and what is after it the host and port; otherwise the authority is the host and port. The host is not empty. It is an IPv6 address in brackets, of hexadecimal digits, `:`, and `.`, when the host and port start with `[`, and its `]` is followed by nothing or by `:` and the port; otherwise it is a name, of ASCII letters and digits, the characters ``-._~!$&'()*+,;=``, and any character beyond ASCII, which the last `:` of the host and port, when they have one, separates from the port. The port is ASCII digits, or nothing. The userinfo holds what a name holds, `:`, `@`, and escapes. So `https://:80/` has no host, and a backslash, which a browser reads as a slash, cannot hide another host in the authority, as in `https://example.com\@evil.example/`.
+
+What follows the authority, or the address, may hold any character but those above, as `|` and `{`, which a browser escapes. These are the rules, rather than what a URL parser takes, since parsers differ on what is not a URL. `javascript:`, `data:`, `file:`, and relative URLs are refused.
 
 ### Limits and what the server checks beyond the schema
 
@@ -33,7 +38,7 @@ Every document that the server accepts validates against the JSON Schema. The se
 - Lists nested more than 5 deep: a list in no list is at depth 1.
 - A list item that does not start with a paragraph.
 - A mark twice, as two links, or the code mark with another.
-- A link that is not a URL, as one with a `%` that starts no escape, or with white space beyond ASCII; one with a format character; and an `http` or `https` link with a port but no host.
+- A link that the rules above refuse beyond the schema's pattern, which checks its scheme and refuses ASCII white space and control characters: one with white space beyond ASCII or a format character, a `%` that starts no escape, an authority without a host or with a character that it may not hold, or a port that is not a number.
 - A string that escapes a lone surrogate, as `"a\ud800b"`, which is no character and which no UTF-8 holds. `JSON.parse` keeps it in the string, where Go would read U+FFFD, so the server refuses the document with `invalid_json`, and so does the client.
 
 The vectors mark each document of these that the schema accepts with `schema_accepts`.
@@ -112,7 +117,7 @@ The text export (FR-TEXT-05) and the writing statistics (FR-TEXT-06) read a docu
 | Key | Contents |
 | --- | --- |
 | `names` | The names that the derivations show: each component's in `components`, and each value's in `values`, a variable's by its `ref`, and an attribute's by its `ref` and `attribute`. |
-| `valid` | Documents that the server accepts, with their canonical form in `canonical` when it is not the document itself, their `segments`, and their plain `text`, `preview`, `words`, and `hash`. |
+| `valid` | Documents that the server accepts, with their canonical form in `canonical` when it is not the document itself, their `segments`, and their plain `text`, `preview`, `words`, and `hash`. A canonical form, a document that is its own, and the segments are written as the server writes them, with each object's keys sorted and HTML not escaped, so that an implementation compares the bytes that it writes with theirs, once the white space between their tokens is taken out. |
 | `invalid` | Documents that the server refuses, with the `reason` and the `pointer` of the error, and `schema_accepts` when the JSON Schema accepts them. Each has one thing wrong with it, so that every implementation reports the same one. |
 | `words` | Texts and their number of words. |
 | `previews` | Plain texts and their previews. |

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 )
 
@@ -88,22 +87,23 @@ func (v vectors) names() mapNames {
 func (n mapNames) Value(ref, attribute string) string { return n.values[[2]string{ref, attribute}] }
 func (n mapNames) Component(id string) string         { return n.components[id] }
 
-// sameJSON reports whether two JSON texts hold the same value.
-func sameJSON(t *testing.T, a, b []byte) bool {
+// compact returns the JSON text data without the white space between its
+// tokens, and with its keys and strings as data writes them.
+func compact(t *testing.T, data []byte) []byte {
 	t.Helper()
-	var va, vb any
-	if err := json.Unmarshal(a, &va); err != nil {
-		t.Fatalf("%s: %v", a, err)
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, data); err != nil {
+		t.Fatalf("%s: %v", data, err)
 	}
-	if err := json.Unmarshal(b, &vb); err != nil {
-		t.Fatalf("%s: %v", b, err)
-	}
-	return reflect.DeepEqual(va, vb)
+	return buf.Bytes()
 }
 
 // TestValidVectors checks that every valid document of the vectors is
 // accepted, written in its canonical form, and derives the segments, plain
-// text, preview, word count, and hash that the vectors give.
+// text, preview, word count, and hash that the vectors give. The canonical
+// form and the segments are compared byte for byte with the vectors', which
+// write them as the server does, with sorted keys and HTML not escaped, once
+// the white space between their tokens is taken out.
 func TestValidVectors(t *testing.T) {
 	v := readVectors(t)
 	names := v.names()
@@ -113,33 +113,26 @@ func TestValidVectors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Parse: %v", err)
 			}
-			got, err := json.Marshal(doc)
-			if err != nil {
-				t.Fatal(err)
-			}
+			got := marshal(t, doc)
 			want := vec.Canonical
 			if want == nil {
 				want = vec.Doc
 			}
-			if !sameJSON(t, got, want) {
-				t.Errorf("canonical form %s, want %s", got, want)
+			if want := compact(t, want); !bytes.Equal(got, want) {
+				t.Errorf("canonical form\n%s\nwant\n%s", got, want)
 			}
 			// The canonical form is a fixed point.
 			again, err := Parse(got)
 			if err != nil {
 				t.Fatalf("Parse of the canonical form: %v", err)
 			}
-			if gotAgain, _ := json.Marshal(again); !bytes.Equal(gotAgain, got) {
+			if gotAgain := marshal(t, again); !bytes.Equal(gotAgain, got) {
 				t.Errorf("canonical form of the canonical form %s, want %s", gotAgain, got)
 			}
 
 			d := doc.Derive(names)
-			segs, err := json.Marshal(d.Segments)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !sameJSON(t, segs, vec.Segments) {
-				t.Errorf("segments %s, want %s", segs, vec.Segments)
+			if segs, want := marshal(t, d.Segments), compact(t, vec.Segments); !bytes.Equal(segs, want) {
+				t.Errorf("segments\n%s\nwant\n%s", segs, want)
 			}
 			if d.Text != vec.Text {
 				t.Errorf("text %q, want %q", d.Text, vec.Text)

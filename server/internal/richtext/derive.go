@@ -93,6 +93,11 @@ type segmentJSON struct {
 // the fields of its kind, without escaping HTML (§6.2), which an encoder that
 // escapes it, as json.Marshal does, escapes in what it writes too.
 func (s Segment) MarshalJSON() ([]byte, error) {
+	return marshalNoEscape(s.wire())
+}
+
+// wire returns the segment as the published format holds it.
+func (s Segment) wire() segmentJSON {
 	w := segmentJSON{Kind: s.Kind}
 	inline := func() {
 		marks := s.Marks
@@ -120,13 +125,27 @@ func (s Segment) MarshalJSON() ([]byte, error) {
 			w.Number = &s.Number
 		}
 	}
+	return w
+}
+
+// Segments are the segments of a document, which the published format holds
+// as an array.
+type Segments []Segment
+
+// MarshalJSON writes the segments as the published format holds them, each
+// as Segment.MarshalJSON writes it, all with one encoder.
+func (segs Segments) MarshalJSON() ([]byte, error) {
+	w := make([]segmentJSON, len(segs))
+	for i, s := range segs {
+		w[i] = s.wire()
+	}
 	return marshalNoEscape(w)
 }
 
 // Derived is what is derived from a document.
 type Derived struct {
 	// Segments are its segments, for the published format.
-	Segments []Segment
+	Segments Segments
 	// Text is its plain text (PlainText).
 	Text string
 	// Preview is its preview (Preview).
@@ -139,7 +158,8 @@ type Derived struct {
 
 // Derive derives from the document what the published format, the text
 // export, and the writing statistics show of it, with the names of what it
-// refers to.
+// refers to. The document is one that Parse returned, as every stored one is,
+// since MarshalJSON stores no other: Derive does not check it again.
 func (d *Doc) Derive(names Names) Derived {
 	segs := d.Segments(names)
 	text := PlainText(segs)
@@ -147,9 +167,10 @@ func (d *Doc) Derive(names Names) Derived {
 }
 
 // Segments returns the document's segments, with the names of what it
-// refers to. A document whose only block is an empty paragraph has none.
-func (d *Doc) Segments(names Names) []Segment {
-	sg := segmenter{names: names, segs: []Segment{}}
+// refers to. A document whose only block is an empty paragraph has none. The
+// document is one that Parse returned, as for Derive.
+func (d *Doc) Segments(names Names) Segments {
+	sg := segmenter{names: names, segs: Segments{}}
 	for i, b := range d.Blocks {
 		switch b := b.(type) {
 		case *Paragraph:
@@ -166,7 +187,7 @@ func (d *Doc) Segments(names Names) []Segment {
 
 type segmenter struct {
 	names Names
-	segs  []Segment
+	segs  Segments
 }
 
 // list adds the segments of list l, whose items are at depth.
@@ -266,20 +287,23 @@ func indent(n int) string {
 // WordCount returns the number of words of a document's segments: the words
 // (CountWords) of its texts, mentions' names, and values' names in braces,
 // each paragraph, list item, and line break separating them, without the
-// bullets and numbers of its list items.
+// bullets and numbers of its list items. A word may run across segments, as
+// a word whose half is bold does.
 func WordCount(segs []Segment) int {
-	var b strings.Builder
+	var w words
 	for _, s := range segs {
 		switch s.Kind {
 		case SegmentText, SegmentMention:
-			b.WriteString(s.Value)
+			w.read(s.Value)
 		case SegmentValue:
-			b.WriteString("{" + s.Name + "}")
+			w.read("{")
+			w.read(s.Name)
+			w.read("}")
 		default:
-			b.WriteByte('\n')
+			w.inWord = false
 		}
 	}
-	return CountWords(b.String())
+	return w.n
 }
 
 // CountWords returns the number of words of s. A word is a run of characters
@@ -287,22 +311,35 @@ func WordCount(segs []Segment) int {
 // or number among them, so a dash between spaces is no word, and a run of
 // Chinese or Japanese without spaces is one.
 func CountWords(s string) int {
-	n := 0
-	inWord, counted := false, false
+	var w words
+	w.read(s)
+	return w.n
+}
+
+// words counts the words of the text that it reads, as CountWords does,
+// whether it reads the text whole or in parts.
+type words struct {
+	// n is the number of words so far.
+	n int
+	// inWord is whether the last character read is not white space, and
+	// counted whether the word that it is part of is counted already.
+	inWord, counted bool
+}
+
+func (w *words) read(s string) {
 	for _, r := range s {
 		if unicode.IsSpace(r) {
-			inWord = false
+			w.inWord = false
 			continue
 		}
-		if !inWord {
-			inWord, counted = true, false
+		if !w.inWord {
+			w.inWord, w.counted = true, false
 		}
-		if !counted && (unicode.IsLetter(r) || unicode.IsNumber(r)) {
-			n++
-			counted = true
+		if !w.counted && (unicode.IsLetter(r) || unicode.IsNumber(r)) {
+			w.n++
+			w.counted = true
 		}
 	}
-	return n
 }
 
 // PreviewChars is the most characters of a preview, before its ellipsis.
