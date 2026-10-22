@@ -43,6 +43,8 @@ func TestMatrix(t *testing.T) {
 		ManageProjectGrants: {y, y, n, n, n},
 		// Read project content, run play mode, view dependencies (P).
 		ReadProject: {y, y, y, y, y},
+		// Upload images (assets) (P).
+		UploadAssets: {y, y, y, n, n},
 		// Change project settings, including publish_min_role (P).
 		ChangeProjectSettings: {y, y, n, n, n},
 		// Manage own API tokens narrowed to this project (P).
@@ -52,7 +54,7 @@ func TestMatrix(t *testing.T) {
 		// Manage API tokens (others') (W).
 		ManageTokens: {y, y, n, n, n},
 	}
-	scopes := map[Operation]Scope{ReadProject: Project, ChangeProjectSettings: Project,
+	scopes := map[Operation]Scope{ReadProject: Project, UploadAssets: Project, ChangeProjectSettings: Project,
 		ManageOwnProjectTokens: Project}
 	for _, op := range Operations() {
 		row, ok := want[op]

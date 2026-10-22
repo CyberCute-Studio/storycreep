@@ -17,15 +17,19 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/blob/blobtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/logging"
 )
 
 // TestMain runs the tests with dbtest.Run, which keeps the libpq environment
-// variables out of them, and stops PostgreSQL when they are done.
+// variables out of them, and stops PostgreSQL when they are done, and MinIO,
+// if a test started it.
 func TestMain(m *testing.M) {
-	os.Exit(dbtest.Run(m))
+	code := dbtest.Run(m)
+	blobtest.Stop()
+	os.Exit(code)
 }
 
 const testMetricsToken = "test-metrics-token-0123456789"
@@ -41,16 +45,24 @@ const (
 	testSMTPFrom = "Storycreep <noreply@example.com>"
 )
 
+// testS3URL is a bucket that no test reaches, for the configurations of
+// hosted mode, which requires one.
+const testS3URL = "s3://test-key:test-secret@s3.example.com/storycreep"
+
 // loadConfig returns the configuration of env, with a public URL and a
-// database URL unless env sets them, and, in hosted mode, an SMTP server.
+// database URL unless env sets them, a directory of the test's own for the
+// assets' files unless env names a storage, as an empty value does to leave
+// it unset, and, in hosted mode, an SMTP server and a bucket.
 func loadConfig(t *testing.T, env map[string]string) *config.Config {
 	t.Helper()
 	vars := map[string]string{
-		"STORYCREEP_PUBLIC_URL":   "http://localhost:8080",
-		"STORYCREEP_DATABASE_URL": testDatabaseURL,
+		"STORYCREEP_PUBLIC_URL":    "http://localhost:8080",
+		"STORYCREEP_DATABASE_URL":  testDatabaseURL,
+		"STORYCREEP_ASSET_STORAGE": t.TempDir(),
 	}
 	if env["STORYCREEP_MODE"] == "hosted" {
 		vars["STORYCREEP_SMTP_URL"], vars["STORYCREEP_SMTP_FROM"] = testSMTPURL, testSMTPFrom
+		vars["STORYCREEP_ASSET_STORAGE"] = testS3URL
 	}
 	maps.Copy(vars, env)
 	cfg, err := config.Load(config.Options{Env: config.MapEnvironment(vars)})
@@ -150,7 +162,9 @@ func TestRoutesDeclareCapabilities(t *testing.T) {
 			"DELETE /api/v1/workspaces/{workspace_id}/members/{membership_id}",
 			"DELETE /api/v1/workspaces/{workspace_id}/tokens/{token_id}", "GET /", "GET /api/v1/auth/session",
 			"GET /api/v1/auth/sessions", "GET /api/v1/instance", "GET /api/v1/openapi.json",
-			"GET /api/v1/projects/{project_id}", "GET /api/v1/projects/{project_id}/grants",
+			"GET /api/v1/projects/{project_id}", "GET /api/v1/projects/{project_id}/assets/{asset_id}",
+			"GET /api/v1/projects/{project_id}/assets/{asset_id}/content",
+			"GET /api/v1/projects/{project_id}/assets/{asset_id}/thumbnail", "GET /api/v1/projects/{project_id}/grants",
 			"GET /api/v1/projects/{project_id}/tokens", "GET /api/v1/setup", "GET /api/v1/workspaces",
 			"GET /api/v1/workspaces/{workspace_id}", "GET /api/v1/workspaces/{workspace_id}/invites",
 			"GET /api/v1/workspaces/{workspace_id}/members",
@@ -164,7 +178,8 @@ func TestRoutesDeclareCapabilities(t *testing.T) {
 			"POST /api/v1/auth/logout", "POST /api/v1/auth/password", "POST /api/v1/auth/password-reset",
 			"POST /api/v1/auth/password-reset/confirm", "POST /api/v1/auth/register", "POST /api/v1/auth/verify-email",
 			"POST /api/v1/invites/accept", "POST /api/v1/invites/lookup", "POST /api/v1/invites/register",
-			"POST /api/v1/projects/{project_id}/archive", "POST /api/v1/projects/{project_id}/commands",
+			"POST /api/v1/projects/{project_id}/archive", "POST /api/v1/projects/{project_id}/assets",
+			"POST /api/v1/projects/{project_id}/commands",
 			"POST /api/v1/projects/{project_id}/restore",
 			"POST /api/v1/projects/{project_id}/tokens", "POST /api/v1/projects/{project_id}/unarchive",
 			"POST /api/v1/setup", "POST /api/v1/workspaces", "POST /api/v1/workspaces/{workspace_id}/invites",

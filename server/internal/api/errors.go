@@ -55,6 +55,7 @@ const (
 	CodeAlreadyMember         Code = "already_member"
 	CodeInviteExists          Code = "invite_exists"
 	CodeLimitExceeded         Code = "limit_exceeded"
+	CodeStorageLimitExceeded  Code = "storage_limit_exceeded"
 	CodeRevisionConflict      Code = "revision_conflict"
 	CodeProjectArchived       Code = "project_archived"
 	CodeIdempotencyMismatch   Code = "idempotency_mismatch"
@@ -67,6 +68,7 @@ const (
 	CodeUnsupportedMediaType  Code = "unsupported_media_type"
 	CodeValidationFailed      Code = "validation_failed"
 	CodeWeakPassword          Code = "weak_password"
+	CodeImageInvalid          Code = "image_invalid"
 	CodeSlugInvalid           Code = "slug_invalid"
 	CodeRateLimited           Code = "rate_limited"
 	CodeInternal              Code = "internal_error"
@@ -142,8 +144,9 @@ var codes = []codeSpec{
 	{CodeInsufficientScope, http.StatusForbidden, i18n.K("error.insufficient_scope"),
 		"The request was made with an API token that does not hold the scope that the route needs, nor a scope " +
 			"that implies it (PRD FR-AUTH-04 AC2): `snapshot:read` to list the token's workspace and its projects " +
-			"and to read a project, which every scope but `export:read` implies, and `project:write` to change a " +
-			"project's settings. `details.scope` names the scope that the route needs, and " +
+			"and to read a project, which every scope but `export:read` implies, `project:read` to read a " +
+			"project's assets, which `project:write` implies, and `project:write` to change a project's settings " +
+			"and to upload an asset. `details.scope` names the scope that the route needs, and " +
 			"so does the `WWW-Authenticate` header, with the `Bearer` scheme's `error=\"insufficient_scope\"` and " +
 			"`scope` (RFC 6750 §3.1). A token never does more than its owner's role allows either, which is " +
 			"answered with `insufficient_role` when the token holds the scope."},
@@ -178,7 +181,10 @@ var codes = []codeSpec{
 		"The instance's first-run setup has not completed, so `POST /api/v1/auth/register` creates no " +
 			"account, and nor does `POST /api/v1/invites/register`, whatever the signup policy and whatever the " +
 			"request holds, so that the first account is always the owner that setup creates (PRD FR-ADMIN-02 " +
-			"AC4). `POST /api/v1/setup` completes it."},
+			"AC4). An upload of an asset is refused too, unless `STORYCREEP_ASSET_STORAGE` names where the files " +
+			"are stored, as setup may yet choose a bucket for them (FR-ASSET-01), which an account that " +
+			"`storycreep create-user` made before setup would otherwise have stored files outside of. " +
+			"`POST /api/v1/setup` completes it."},
 	{CodeInvalidSetupCode, http.StatusForbidden, i18n.K("error.invalid_setup_code"),
 		"`POST /api/v1/setup` was given a setup code that is not the instance's, so setup stays pending. The " +
 			"server writes the code to its log while setup is pending (PRD FR-ADMIN-02)."},
@@ -242,10 +248,11 @@ var codes = []codeSpec{
 			"of its plan, or a cap that the instance puts on every workspace (`STORYCREEP_WORKSPACE_LIMITS`). " +
 			"`details.key` names the limit, as the plan file does, such as `members`, `projects`, or " +
 			"`storage_bytes`; `details.usage` is how much of it the workspace uses, and `details.limit` the most " +
-			"that it may use (FR-ENT-03 AC1). `details.upgrade_url` is the public site's page that offers the " +
-			"plans, `/pricing`, where the instance both bills for plans and serves the public site, as hosted mode " +
-			"does unless `STORYCREEP_PUBLIC_SITE` is `off`, the limit is the plan's rather than a cap of the " +
-			"instance, and another plan allows more. A self-hosted instance never sends it (FR-ENT-03 AC2). A " +
+			"that it may use (FR-ENT-03 AC1). The storage limit, `storage_bytes`, which an upload passes, is " +
+			"answered with `storage_limit_exceeded` instead. `details.upgrade_url` is the public site's page that " +
+			"offers the plans, `/pricing`, where the instance both bills for plans and serves the public site, as " +
+			"hosted mode does unless `STORYCREEP_PUBLIC_SITE` is `off`, the limit is the plan's rather than a cap " +
+			"of the instance, and another plan allows more. A self-hosted instance never sends it (FR-ENT-03 AC2). A " +
 			"workspace past a limit already, as after its plan changed, keeps what it has, but cannot add more."},
 	{CodeRevisionConflict, http.StatusConflict, i18n.K("error.revision_conflict"),
 		"Commands of the batch expect revisions of entities that the entities no longer have, because they changed " +
@@ -283,10 +290,24 @@ var codes = []codeSpec{
 		"The client did not send the whole request body within the route's time limit."},
 	{CodeRequestTooLarge, http.StatusRequestEntityTooLarge, i18n.K("error.request_too_large"),
 		"The request body is larger than the route accepts, 5 MB unless the route says otherwise " +
-			"(PRD NFR-SEC-07). `details.max_bytes` is the limit."},
+			"(PRD NFR-SEC-07), or, for an upload of an SVG image, the file that the server would store once it has " +
+			"removed what it does not allow is larger than the upload's limit (FR-ASSET-02). `details.max_bytes` is " +
+			"the limit."},
+	{CodeStorageLimitExceeded, http.StatusRequestEntityTooLarge, i18n.K("error.storage_limit_exceeded"),
+		"The upload would take the workspace past its storage limit, `storage_bytes`, so it stores nothing (PRD " +
+			"FR-ASSET-02 AC4, FR-ENT-03): its plan's, or the cap that the instance puts on every workspace " +
+			"(`STORYCREEP_WORKSPACE_LIMITS`). A file that the workspace stores already, in this project or another, " +
+			"takes up no more, and is never refused so. Uploads that run at once are each checked against the " +
+			"usage before any of them adds to it, so together they may take the workspace past its limit by as " +
+			"much as their own files (FR-ENT-02). `details` are those of `limit_exceeded`: `details.key` is " +
+			"`storage_bytes`, `details.usage` how many bytes the workspace's files take up, `details.limit` the " +
+			"most that they may, and `details.upgrade_url` the page that offers the plans, where " +
+			"`limit_exceeded` would have it."},
 	{CodeUnsupportedMediaType, http.StatusUnsupportedMediaType, i18n.K("error.unsupported_media_type"),
 		"The `Content-Type` of the request body is neither `application/json` nor a type ending in `+json`, " +
-			"such as `application/merge-patch+json`. A body sent without a `Content-Type` is read as JSON."},
+			"such as `application/merge-patch+json`, and the route takes JSON, as every route but an upload of an " +
+			"asset does, whose body is the file, whatever its `Content-Type` says. A body sent without a " +
+			"`Content-Type` is read as JSON."},
 	{CodeValidationFailed, http.StatusUnprocessableEntity, i18n.K("error.validation_failed"),
 		"A parameter or the body does not match the route's schema: a field that the schema does not have, " +
 			"which is never ignored (PRD FR-API-01 AC2), a missing field, a value of the wrong type, or one out of " +
@@ -304,6 +325,23 @@ var codes = []codeSpec{
 			"with fewer than 12 characters, counted as Unicode code points once the password is in NFKC, or " +
 			"`common`, one of the 10,000 most common passwords, compared without regard to case. " +
 			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeImageInvalid, http.StatusUnprocessableEntity, i18n.K("error.image_invalid"),
+		"The uploaded file is not an image that an upload takes (PRD FR-ASSET-02): a PNG, JPEG, GIF, WebP, or " +
+			"SVG image, which the server tells from the file's content, never from its name or the request's " +
+			"`Content-Type`. Nothing is stored. `details.reason` says why: `type`, for a file that is none of " +
+			"them, as text whose name ends in `.png` (FR-ASSET-02 AC1), or an SVG file whose root is not an `svg` " +
+			"element of SVG's namespace; `malformed`, for one that starts as an image does but whose header does " +
+			"not decode, or an SVG file that is not well-formed XML, as one of more than one document type, or " +
+			"one that names no encoding other than UTF-8 but whose bytes are not UTF-8; `unsupported`, for an " +
+			"SVG file that is well-formed, but that is in UTF-16, or declares an encoding other than UTF-8, " +
+			"whatever its bytes, or a version of XML other than 1.0, nests its elements more than 256 deep, has " +
+			"an element of more than 1,024 attributes, or elements that enclose one another and declare more " +
+			"than 1,024 namespaces in all, or whose document type declares an entity that is not text of at most " +
+			"1,024 bytes, more than 64 entities, or entities whose references expand to more than 4 MiB in all; " +
+			"or `dimensions`, for an image of more than 25,000,000 pixels, or of more than 16,384 on a side. " +
+			"`details.errors` names the body, with its `location` and a `message` that says what is wrong, as for " +
+			"`validation_failed`. An SVG file that holds a script or refers to something outside itself is not " +
+			"refused: the server stores it without them."},
 	{CodeSlugInvalid, http.StatusUnprocessableEntity, i18n.K("error.slug_invalid"),
 		"A slug is not one that the route takes (PRD FR-TEN-01 AC3). A workspace's slug is groups of lowercase " +
 			"ASCII letters and digits joined by single hyphens, as `harbour-team`, of at most 64 characters, and " +

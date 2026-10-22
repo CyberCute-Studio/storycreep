@@ -427,6 +427,16 @@ var permissionMatrix = []struct {
 			}}},
 	},
 	{
+		row:     "Upload images (assets)",
+		op:      authz.UploadAssets,
+		allowed: [5]bool{true, true, true, false, false},
+		ops: []matrixOp{{name: "upload an image", project: true, success: http.StatusCreated,
+			do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+				return call(f.s.main, http.MethodPost, assetPath(f.project(t, ""), ""), testPNG(t, 2, 2),
+					si.header(true))
+			}}},
+	},
+	{
 		row:     "Change project settings, including publish_min_role",
 		op:      authz.ChangeProjectSettings,
 		allowed: [5]bool{true, true, false, false, false},
@@ -702,15 +712,17 @@ func sampleValue(t *testing.T, registry huma.Registry, s *huma.Schema) any {
 // sampleBodies are the bodies of the routes whose schema sampleValue cannot
 // sample, each of which reaches the operation, as a sample does: the command
 // endpoint's, whose body is one of several schemas, of commands whose
-// payloads a sample of the schema would not make valid. Its sample is a batch
-// of a new command, which unarchives the project, so that it is answered the
-// same whether a route walked before it archived the project, and needs
-// owner or admin, as the project's settings do.
-var sampleBodies = map[api.Route]func() any{
-	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/commands"}: func() any {
-		return map[string]any{"commands": []any{map[string]any{"command_id": ids.New().String(),
-			"type": "project.unarchive", "payload": map[string]any{}}}}
+// payloads a sample of the schema would not make valid, and an upload's,
+// which is a file. The command endpoint's sample is a batch of a new
+// command, which unarchives the project, so that it is answered the same
+// whether a route walked before it archived the project, and needs owner or
+// admin, as the project's settings do. The upload's is a small PNG image.
+var sampleBodies = map[api.Route]func(t *testing.T) []byte{
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/commands"}: func(t *testing.T) []byte {
+		return jsonBody(t, map[string]any{"commands": []any{map[string]any{"command_id": ids.New().String(),
+			"type": "project.unarchive", "payload": map[string]any{}}}})
 	},
+	{Method: http.MethodPost, Pattern: assetsPath}: func(t *testing.T) []byte { return testPNG(t, 4, 3) },
 }
 
 // routeCall is a request of a route of a workspace or of a project, with a
@@ -748,12 +760,25 @@ func tokenRouteCalls(t *testing.T, f *rolesFixture, params map[string]string) []
 	return callsOf(t, f, params, slices.Collect(maps.Keys(f.s.main.TokenScopes())))
 }
 
-// callsOf returns a call of each of routes, in their order, with the values of
-// params for the parameters of their paths, as routeCalls describes.
+// callsOf returns a call of each of routes, in their order, but the routes
+// that archive the project last, with the values of params for the
+// parameters of their paths, as routeCalls describes.
 func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []api.Route) []routeCall {
 	t.Helper()
 	doc := f.s.main.OpenAPI()
-	slices.SortFunc(routes, func(a, b api.Route) int { return strings.Compare(a.String(), b.String()) })
+	// Archiving the project makes it read-only, so that every route walked
+	// after it that changes the project would refuse the change, as an
+	// upload does: it comes last.
+	archives := func(r api.Route) bool { return strings.HasSuffix(r.Pattern, "/archive") }
+	slices.SortFunc(routes, func(a, b api.Route) int {
+		if archives(a) != archives(b) {
+			if archives(a) {
+				return 1
+			}
+			return -1
+		}
+		return strings.Compare(a.String(), b.String())
+	})
 	var out []routeCall
 	for _, r := range routes {
 		item := doc.Paths[r.Pattern]
@@ -783,7 +808,7 @@ func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []a
 		}
 		var body []byte
 		if sample, ok := sampleBodies[r]; ok {
-			body = jsonBody(t, sample())
+			body = sample(t)
 		} else if op.RequestBody != nil {
 			mt := op.RequestBody.Content["application/json"]
 			if mt == nil || mt.Schema == nil {
@@ -799,8 +824,8 @@ func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []a
 
 // routeParams returns a value for each parameter of the paths of the
 // fixture's routes: its workspace, and a membership, an invitation, a
-// project, and the owner's API token narrowed to the project, of it, which
-// the fixture adds.
+// project, the owner's API token narrowed to the project, and an asset of
+// the project, which the owner uploads, of it, which the fixture adds.
 func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 	t.Helper()
 	p := f.project(t, "")
@@ -810,6 +835,7 @@ func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 		"invite_id":     f.invite(t, "editor"),
 		"project_id":    p,
 		"token_id":      f.token(t, "owner", p),
+		"asset_id":      upload(t, f.s.main, f.as["owner"], p, testPNG(t, 5, 5), http.StatusCreated).ID,
 	}
 }
 

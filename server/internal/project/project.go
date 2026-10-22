@@ -511,45 +511,64 @@ func (s *Service) actorWorkspace(ctx context.Context, actor commands.Actor, proj
 // as one of another workspace, or narrowed to another project, does not
 // (FR-AUTH-04 AC3). The token's scopes are the route's to check.
 func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID ids.UUID) (Visible, error) {
-	userID := actor.UserID
 	workspaceID, err := s.actorWorkspace(ctx, actor, projectID)
 	if err != nil {
 		return Visible{}, err
 	}
 	var out Visible
-	err = s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: userID}, func(tx pgx.Tx) error {
-		q := queries.New(tx)
-		if _, err := activeWorkspace(ctx, q, workspaceID); err != nil {
-			return err
-		}
-		row, err := q.Project(ctx, queries.ProjectParams{WorkspaceID: nullUUID(workspaceID), ID: nullUUID(projectID)})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("project: read the project: %w", err)
-		}
-		a, err := s.access(ctx, q, userID, workspaceID, false)
-		if err != nil {
-			return err
-		}
-		r, err := s.effective(ctx, q, a, workspaceID, projectID)
-		switch {
-		case err != nil:
-			return err
-		case r == role.None:
-			return ErrNotFound
-		}
-		if err := authz.Check(r, authz.ReadProject); err != nil {
-			return err
-		}
-		out = Visible{Project: stateOf(row.Project), Role: r}
-		return nil
+	err = s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
+		out, err = s.GetIn(ctx, tx, actor, workspaceID, projectID)
+		return err
 	})
 	if err != nil {
 		return Visible{}, err
 	}
 	return out, nil
+}
+
+// ActorWorkspace returns the workspace that the actor acts in on the project
+// projectID, in whose transactions a service reads the project
+// (GetIn): that of their API token, or else the project's, through the
+// context bootstrap (§5.4). It returns ErrNotFound if there is no such
+// project, its workspace's deletion is pending, or the actor's token is
+// narrowed to another project.
+func (s *Service) ActorWorkspace(ctx context.Context, actor commands.Actor, projectID ids.UUID) (ids.UUID, error) {
+	return s.actorWorkspace(ctx, actor, projectID)
+}
+
+// GetIn returns the project projectID as Get does, read in tx, a transaction
+// of its workspace workspaceID, which ActorWorkspace returns, for a service
+// that reads or changes what belongs to the project in the same
+// transaction, as package asset does its assets. It returns the errors of
+// Get. It locks nothing.
+func (s *Service) GetIn(ctx context.Context, tx pgx.Tx, actor commands.Actor, workspaceID, projectID ids.UUID) (
+	Visible, error) {
+	q := queries.New(tx)
+	if _, err := activeWorkspace(ctx, q, workspaceID); err != nil {
+		return Visible{}, err
+	}
+	row, err := q.Project(ctx, queries.ProjectParams{WorkspaceID: nullUUID(workspaceID), ID: nullUUID(projectID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Visible{}, ErrNotFound
+	}
+	if err != nil {
+		return Visible{}, fmt.Errorf("project: read the project: %w", err)
+	}
+	a, err := s.access(ctx, q, actor.UserID, workspaceID, false)
+	if err != nil {
+		return Visible{}, err
+	}
+	r, err := s.effective(ctx, q, a, workspaceID, projectID)
+	switch {
+	case err != nil:
+		return Visible{}, err
+	case r == role.None:
+		return Visible{}, ErrNotFound
+	}
+	if err := authz.Check(r, authz.ReadProject); err != nil {
+		return Visible{}, err
+	}
+	return Visible{Project: stateOf(row.Project), Role: r}, nil
 }
 
 // List returns at most limit of the projects of the workspace workspaceID

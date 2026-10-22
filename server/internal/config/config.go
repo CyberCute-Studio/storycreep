@@ -78,6 +78,15 @@ type Config struct {
 	// one that first-run setup chose, or nil if the configuration sets none
 	// (PRD FR-AUTH-03).
 	SMTP *SMTP
+	// AssetStorage is where the instance stores the files of its assets, from
+	// STORYCREEP_ASSET_STORAGE, which overrides the bucket that first-run
+	// setup chose, or nil if the configuration sets none: then the bucket
+	// that setup chose, or else the local driver's DefaultAssetDir, stores
+	// them (PRD FR-ASSET-01, FR-ADMIN-02).
+	AssetStorage *AssetStorage
+	// AssetMaxBytes is the largest file that an upload of an asset takes
+	// (PRD FR-ASSET-02).
+	AssetMaxBytes int64
 
 	mode     mode
 	file     string
@@ -102,6 +111,9 @@ type UnattendedSetup struct {
 	Signup SignupPolicy
 	// SMTP is the SMTP server that setup records, or nil for none.
 	SMTP *SMTP
+	// S3 is the bucket that setup records for the files of the assets, or
+	// nil for none, which leaves them to the local driver.
+	S3 *S3
 }
 
 // unattendedSetup returns c.Setup, which it creates first if it is nil.

@@ -146,6 +146,14 @@ var Tables = []Table{
 				"command_ids, response) VALUES ($1, $2, $3, $3, ARRAY[$3::uuid], '{}')", []any{w.ID, w.Rows["project"], id}},
 			nil
 	}},
+	{Name: "asset", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A project has one asset of a content, which a random hash makes new.
+		id, sum := ids.New(), make([]byte, 32)
+		_, _ = rand.Read(sum)
+		key := fmt.Sprintf("%s/%x.png", w.ID, sum)
+		return Statement{id, "INSERT INTO asset (id, workspace_id, project_id, sha256, mime, bytes, storage_key) " +
+			"VALUES ($1, $2, $3, $4, 'image/png', 1, $5)", []any{id, w.ID, w.Rows["project"], sum, key}}, nil
+	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
 		id := ids.New()

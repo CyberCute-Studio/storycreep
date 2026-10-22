@@ -83,6 +83,18 @@ export interface Operations {
       304: undefined;
     };
   };
+  /** Get a thing's picture */
+  getThingPicture: {
+    input: {
+      path: {
+        id: string;
+      };
+    };
+    responses: {
+      200: Blob;
+      302: undefined;
+    };
+  };
   /** List the things */
   listThings: {
     input: {
@@ -98,12 +110,26 @@ export interface Operations {
       200: ThingPage;
     };
   };
+  /** Replace a thing's picture */
+  putThingPicture: {
+    input: {
+      path: {
+        id: string;
+      };
+      body: Blob;
+    };
+    responses: {
+      204: undefined;
+    };
+  };
 }
 
-/** The method and path of each operation. */
+/** The method and path of each operation, and whether it answers with a file (blob). */
 export const routes = {
   createThing: { method: "POST", path: "/things" },
   deleteThing: { method: "DELETE", path: "/things/{id}" },
   getThing: { method: "GET", path: "/things/{id}" },
+  getThingPicture: { method: "GET", path: "/things/{id}/picture", blob: true },
   listThings: { method: "GET", path: "/things" },
-} as const satisfies Record<keyof Operations, { method: string; path: string }>;
+  putThingPicture: { method: "PUT", path: "/things/{id}/picture" },
+} as const satisfies Record<keyof Operations, { method: string; path: string; blob?: true }>;

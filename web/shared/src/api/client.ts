@@ -3,7 +3,9 @@
 // response by hand: a call names an operation of Operations, passes the
 // input that the operation takes, and gets the status and body of the
 // answer, typed by status. An error, which the server answers with the error
-// envelope, is thrown as an ApiError.
+// envelope, is thrown as an ApiError. A body that is a file, as an image that
+// is uploaded, is a Blob, which is sent as it is, and the answer of an
+// operation that answers with a file is read as a Blob.
 
 import type { ErrorBody } from "./v1.gen";
 
@@ -21,10 +23,14 @@ export interface OperationShape {
   responses: Record<number, unknown>;
 }
 
-/** The method and path of an operation, as the generated routes hold them. */
+/**
+ * The method and path of an operation, as the generated routes hold them, and
+ * whether it answers with a file, which the client reads as a Blob.
+ */
 export interface Route {
   readonly method: string;
   readonly path: string;
+  readonly blob?: boolean;
 }
 
 /**
@@ -110,14 +116,22 @@ export function createClient<Ops extends Record<keyof Ops, OperationShape>>(
       const route = routes[operation];
       const parts = (input ?? {}) as OperationShape["input"];
       const headers = new Headers(callOptions?.headers);
-      headers.set("Accept", "application/json");
+      if (!route.blob) {
+        headers.set("Accept", "application/json");
+      }
       for (const [name, value] of Object.entries(parts.headers ?? {})) {
         if (value !== undefined) {
           headers.set(name, String(value));
         }
       }
-      let body: string | undefined;
-      if (parts.body !== undefined) {
+      let body: string | Blob | undefined;
+      if (parts.body instanceof Blob) {
+        // A file is sent as it is, with its own type, which the server
+        // may ignore, as an upload does, which tells the type from the
+        // content.
+        body = parts.body;
+        headers.set("Content-Type", body.type || "application/octet-stream");
+      } else if (parts.body !== undefined) {
         body = JSON.stringify(parts.body);
         headers.set("Content-Type", "application/json");
       }
@@ -134,7 +148,7 @@ export function createClient<Ops extends Record<keyof Ops, OperationShape>>(
       }
       return {
         status: response.status,
-        body: await readBody(response),
+        body: route.blob ? await readFile(response) : await readBody(response),
         response,
       } as Answer<Ops[typeof operation]>;
     },
@@ -206,6 +220,26 @@ async function readBody(response: Response): Promise<unknown> {
     );
   }
   return JSON.parse(text);
+}
+
+/**
+ * Returns the body of an answer of an operation that answers with a file, as
+ * a Blob, or undefined if it has none, as a 304 has not. A body that is JSON
+ * is not the file, but the page of something in between, as a proxy, so it is
+ * refused, as readBody refuses one that is not JSON. An instance that keeps
+ * its files in an S3 bucket answers with a redirect to a URL of the bucket,
+ * which fetch follows to the bucket's origin, and reads only if the bucket's
+ * CORS rules allow the application's origin; a page that only shows a file
+ * points an img element at the operation's path instead, which needs no CORS.
+ */
+async function readFile(response: Response): Promise<Blob | undefined> {
+  if (isJSON(response)) {
+    throw new Error(
+      `The server answered with the status ${response.status} and a body that is JSON, not a file.`,
+    );
+  }
+  const file = await response.blob();
+  return file.size === 0 && response.status !== 200 ? undefined : file;
 }
 
 /**

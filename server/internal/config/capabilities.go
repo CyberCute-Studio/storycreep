@@ -20,7 +20,9 @@ type Capabilities struct {
 	// EmailRequired means outgoing email must be configured, so links are
 	// never shown as copyable text instead.
 	EmailRequired bool
-	// BlobDriver is where assets and archives are stored.
+	// BlobDriver is where assets and archives are stored
+	// (STORYCREEP_ASSET_STORAGE): a driver, or BlobSetup, the driver that
+	// first-run setup chose (PRD FR-ADMIN-02).
 	BlobDriver BlobDriver
 	// MetricsEndpoint is how /metrics is exposed.
 	MetricsEndpoint MetricsEndpoint
@@ -71,6 +73,11 @@ type BlobDriver string
 const (
 	BlobLocal BlobDriver = "local"
 	BlobS3    BlobDriver = "s3"
+	// BlobSetup is the BlobDriver capability of a self-hosted instance whose
+	// configuration sets no storage: the bucket that first-run setup chose,
+	// if it chose one, or else the local driver (PRD FR-ADMIN-02,
+	// FR-ASSET-01). It is not a driver itself.
+	BlobSetup BlobDriver = "setup"
 )
 
 // MetricsEndpoint is how /metrics is exposed.
@@ -125,7 +132,7 @@ func modeCapabilities(m mode) Capabilities {
 		EnforceEntitlements: false,
 		Billing:             false,
 		EmailRequired:       false,
-		BlobDriver:          BlobLocal,
+		BlobDriver:          BlobSetup,
 		MetricsEndpoint:     MetricsUnauthenticated,
 		InstanceAdminUI:     InstanceAdminOn,
 		InstanceAdminAccess: false,

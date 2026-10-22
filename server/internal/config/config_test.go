@@ -48,10 +48,12 @@ const (
 )
 
 // testSMTPURL and testSMTPFrom are a valid STORYCREEP_SMTP_URL and
-// STORYCREEP_SMTP_FROM, which hosted mode requires.
+// STORYCREEP_SMTP_FROM, and testS3URL a valid STORYCREEP_ASSET_STORAGE of a
+// bucket, which hosted mode requires.
 const (
 	testSMTPURL  = "smtp://storycreep:pw-s3cr3t@smtp.example.com:587"
 	testSMTPFrom = "Storycreep <noreply@example.com>"
+	testS3URL    = "s3://AKIAEXAMPLE:s3-s3cr3t@s3.example.com/storycreep"
 )
 
 // withRequired returns env with valid values for the required keys it does
@@ -60,6 +62,7 @@ func withRequired(env map[string]string) map[string]string {
 	out := map[string]string{"STORYCREEP_PUBLIC_URL": testURL, "STORYCREEP_DATABASE_URL": testDatabaseURL}
 	if env["STORYCREEP_MODE"] == "hosted" {
 		out["STORYCREEP_SMTP_URL"], out["STORYCREEP_SMTP_FROM"] = testSMTPURL, testSMTPFrom
+		out["STORYCREEP_ASSET_STORAGE"] = testS3URL
 	}
 	maps.Copy(out, env)
 	return out
@@ -131,6 +134,8 @@ func TestDefaults(t *testing.T) {
 		{"STORYCREEP_WORKSPACE_LIMITS", "", SourceUnset},
 		{"STORYCREEP_SMTP_URL", "", SourceUnset},
 		{"STORYCREEP_SMTP_FROM", "", SourceUnset},
+		{"STORYCREEP_ASSET_STORAGE", "", SourceUnset},
+		{"STORYCREEP_ASSET_MAX_BYTES", "10485760", SourceDefault},
 		{"STORYCREEP_SETUP_OWNER_EMAIL", "", SourceUnset},
 		{"STORYCREEP_SETUP_OWNER_NAME", "", SourceUnset},
 		{"STORYCREEP_SETUP_OWNER_PASSWORD", "", SourceUnset},
@@ -139,6 +144,7 @@ func TestDefaults(t *testing.T) {
 		{"STORYCREEP_SETUP_SIGNUP", "", SourceUnset},
 		{"STORYCREEP_SETUP_SMTP_URL", "", SourceUnset},
 		{"STORYCREEP_SETUP_SMTP_FROM", "", SourceUnset},
+		{"STORYCREEP_SETUP_ASSET_STORAGE", "", SourceUnset},
 		{"STORYCREEP_SESSION_IDLE_TIMEOUT", "720h", SourceDefault},
 		{"STORYCREEP_SESSION_LIFETIME", "2160h", SourceDefault},
 		{"STORYCREEP_DEFAULT_LOCALE", "en", SourceDefault},
@@ -180,7 +186,7 @@ func TestCapabilities(t *testing.T) {
 			env:  map[string]string{"STORYCREEP_MODE": "self-hosted"},
 			want: Capabilities{
 				PublicSite: false, Signup: SignupSetup, EnforceEntitlements: false, Billing: false,
-				EmailRequired: false, BlobDriver: BlobLocal, MetricsEndpoint: MetricsUnauthenticated,
+				EmailRequired: false, BlobDriver: BlobSetup, MetricsEndpoint: MetricsUnauthenticated,
 				InstanceAdminUI: InstanceAdminOn, InstanceAdminAccess: false, SSO: SSOOff,
 			},
 		},
@@ -238,6 +244,24 @@ func TestCapabilities(t *testing.T) {
 			name: "hosted with a metrics token",
 			env:  map[string]string{"STORYCREEP_MODE": "hosted", "STORYCREEP_METRICS_TOKEN": testMetricsToken},
 			want: modeCapabilities(modeHosted),
+		},
+		{
+			name: "self-hosted with a directory",
+			env:  map[string]string{"STORYCREEP_ASSET_STORAGE": testAssetDir},
+			want: func() Capabilities {
+				c := modeCapabilities(modeSelfHosted)
+				c.BlobDriver = BlobLocal
+				return c
+			}(),
+		},
+		{
+			name: "self-hosted with a bucket",
+			env:  map[string]string{"STORYCREEP_ASSET_STORAGE": testS3URL},
+			want: func() Capabilities {
+				c := modeCapabilities(modeSelfHosted)
+				c.BlobDriver = BlobS3
+				return c
+			}(),
 		},
 		{
 			name: "hosted without the public site",

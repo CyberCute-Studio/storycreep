@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -182,10 +183,11 @@ var keys = []key{
 			"fails, and registering with the link of a link invitation, which any address may register with; " +
 			"registering with the link of an invitation to an address adds the account, which accepts the " +
 			"invitation once a member has left. Inviting someone is not such a change, because it adds no member. " +
-			"`projects` and `storage_bytes` limit nothing yet: each applies once the change that adds to it checks " +
-			"it, creating a project and uploading a file. A workspace that is past a cap already, as after the cap " +
-			"is lowered, keeps what it has, but cannot add more. Hosted mode, where each workspace's plan sets its " +
-			"limits, refuses the key.",
+			"For `projects`, it is creating a project, and unarchiving or restoring one, which make it count again. " +
+			"For `storage_bytes`, it is uploading a file that the workspace does not store already, which is " +
+			"refused with 413 `storage_limit_exceeded` instead, with the same details. A workspace that is past a " +
+			"cap already, as after the cap is lowered, keeps what it has, but cannot add more. Hosted mode, where " +
+			"each workspace's plan sets its limits, refuses the key.",
 		valuesDoc: "Limits and whole numbers joined by `=`, separated by commas, such as `members=20, projects=50`",
 		parse: func(c *Config, v string) error {
 			if c.mode == modeHosted {
@@ -242,6 +244,79 @@ var keys = []key{
 				return errors.New(msg)
 			}
 			c.smtp().From = v
+			return nil
+		},
+	},
+	{
+		name: "STORYCREEP_ASSET_STORAGE",
+		doc: "Where the instance stores the files of its assets, the images that its users upload (PRD " +
+			"FR-ASSET-01): the absolute path of a directory, for the local driver, or an `s3://` URL of a bucket of " +
+			"an S3-compatible object storage, such as Amazon S3, MinIO, or Cloudflare R2, for the S3 driver. The " +
+			"URL is `s3://access_key_id:secret_access_key@host[:port]/bucket`, with the keys percent-encoded, as " +
+			"`%2F` for `/`, over HTTPS on port 443 unless it names another port, and takes two query parameters: " +
+			"`region`, the bucket's region, `" + DefaultS3Region + "` unless it names one, and `security=none` for " +
+			"plain HTTP, on port 80 unless it names another. The bucket must exist, and the keys must let the " +
+			"server read, write, list, and delete its objects; the server addresses it in the path of its URLs, " +
+			"as `https://host/bucket/key`. A file is stored under `{workspace}/{sha256}.{ext}`, the same key in " +
+			"either driver, so switching drivers needs only this key, once the files are copied to the new place " +
+			"with their keys: the server moves none. The local driver serves a file through the API, after it " +
+			"checks the user's access, and the S3 driver through a URL of this host that it signs for 5 minutes, " +
+			"after the same check, which the users' browsers then read the file from. So the host must be one " +
+			"that the browsers reach too, not only the server: a MinIO beside the server needs a host name that " +
+			"both resolve, behind a reverse proxy of its own. A URL of `security=none` is plain HTTP for the " +
+			"browsers too, whose images a page of the application over HTTPS does not load, so it suits only an " +
+			"instance that is itself served over plain HTTP, as on a local network. A client of the API that reads " +
+			"a file with fetch, rather than showing it as an image, needs the bucket's CORS rules to allow GET " +
+			"from `STORYCREEP_PUBLIC_URL`'s origin. Set, the key overrides the bucket that first-run setup chose " +
+			"(PRD FR-ADMIN-02) for as long as it is set; not set, self-hosted mode stores the files in the bucket " +
+			"that setup chose, or else in `" + DefaultAssetDir + "`, which the `BlobDriver` capability shows as " +
+			"`setup`. The directory is created if it does not exist. Hosted mode, which stores no file on the " +
+			"instance's disk, requires an `s3://` URL. The server deletes every file of its workspaces that its own " +
+			"database does not refer to, once the file is a day old, and writes the store's object " +
+			"`storycreep-owner`, which names its database, with a token that the database records, each hour, " +
+			"unless the object names another database that wrote it within the week, when it deletes nothing, so " +
+			"that an instance that runs on a copy of another's database restored from a dump, which names the " +
+			"bucket that setup chose, deletes none of the other's files. But the other deletes the copy's, and a " +
+			"copy of the database's files, as a snapshot, a point-in-time restore, or a branch of a managed " +
+			"database, is the same database until the two find each other's tokens, within the hour, after which " +
+			"neither deletes any file for a week, and before which neither finds the files that the other's users " +
+			"uploaded since the copy was made a day old, so two instances never share a bucket: such an instance " +
+			"sets this key to a bucket or a directory of its own. Where the URL is shown, its secret key is `" +
+			secret.Redacted + "`.",
+		valuesDoc:  "The absolute path of a directory, or an `s3://` URL",
+		example:    "s3://AKIAEXAMPLE:secret@s3.eu-central-1.amazonaws.com/storycreep?region=eu-central-1",
+		requiredIn: modeHosted,
+		parse: func(c *Config, v string) error {
+			st, err := ParseAssetStorage(v)
+			if err != nil {
+				return err
+			}
+			if c.mode == modeHosted && st.S3 == nil {
+				return hiddenValueError{errors.New("hosted mode stores no files on the instance's disk; set an " +
+					"s3:// URL of a bucket")}
+			}
+			c.AssetStorage = &st
+			c.Capabilities.BlobDriver = st.Driver()
+			return nil
+		},
+		effective:  func(c *Config) string { return c.AssetStorage.String() },
+		capability: "BlobDriver",
+	},
+	{
+		name: "STORYCREEP_ASSET_MAX_BYTES",
+		doc: "The largest file, in bytes, that an upload of an asset takes (PRD FR-ASSET-02): a larger one is " +
+			"refused with 413 `request_too_large`. It is at most 52428800 (50 MB), the most that the body of an " +
+			"upload may have (NFR-SEC-07). An SVG file is measured as it was uploaded, before the server removes " +
+			"what it does not allow from it, and then as the server would store it, which may take more bytes, as " +
+			"some of its characters are written as references: one that would then be larger is refused so too.",
+		valuesDoc: "A whole number from 1 to 52428800",
+		def:       constant(strconv.Itoa(DefaultAssetMaxBytes)),
+		parse: func(c *Config, v string) error {
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || n < 1 || n > MaxAssetMaxBytes {
+				return fmt.Errorf("must be a whole number from 1 to %d", MaxAssetMaxBytes)
+			}
+			c.AssetMaxBytes = n
 			return nil
 		},
 	},
@@ -374,6 +449,26 @@ var keys = []key{
 		},
 	},
 	{
+		name: "STORYCREEP_SETUP_ASSET_STORAGE",
+		doc: "The bucket that unattended first-run setup records for the files of the instance's assets, written " +
+			"as an `s3://` URL of `STORYCREEP_ASSET_STORAGE`, as the setup API's `storage` does. Setup records " +
+			"only a bucket: not set, it records none, and the files are stored in `" + DefaultAssetDir + "` unless " +
+			"`STORYCREEP_ASSET_STORAGE` is set, which overrides the recorded bucket for as long as it is set. The " +
+			"server reads it only while setup is pending, so remove it from the configuration once setup has " +
+			"completed. Where it is shown, its secret key is `" + secret.Redacted + "`.",
+		valuesDoc: "An `s3://` URL",
+		group:     setupGroup,
+		parse: func(c *Config, v string) error {
+			s, err := ParseS3URL(v)
+			if err != nil {
+				return err
+			}
+			c.unattendedSetup().S3 = &s
+			return nil
+		},
+		effective: func(c *Config) string { return c.Setup.S3.URL() },
+	},
+	{
 		name: "STORYCREEP_SESSION_IDLE_TIMEOUT",
 		doc: "How long a session lasts without being used before it ends, and its user must sign in again " +
 			"(PRD FR-AUTH-02). A request made with the session counts as using it, although the server records " +
@@ -457,7 +552,7 @@ var keys = []key{
 			"only to its own database: a shared login would reach all of them, and migrating one would change the " +
 			"password the others log in with. The pool parameters, such as `pool_max_conns`, configure the pool " +
 			"that serves requests. A server that runs the background jobs opens a second pool of the login for " +
-			"them, configured the same way but with at most 7 connections, whatever `pool_max_conns` says. Query " +
+			"them, configured the same way but with at most 8 connections, whatever `pool_max_conns` says. Query " +
 			"parameters, such as `sslmode`, are read as libpq reads them, " +
 			"with an `=` in a value percent-encoded as `%3D`, and the libpq environment variables, such as " +
 			"`PGSSLMODE`, fill in settings the URL leaves out. A space anywhere in the URL is written as `%20`. " +

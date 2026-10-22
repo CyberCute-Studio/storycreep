@@ -15,6 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/apitoken"
+	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
@@ -51,6 +52,8 @@ type server struct {
 	commands *commands.Pipeline
 	// projects keeps the projects.
 	projects *project.Service
+	// assets keeps the projects' assets, and their files.
+	assets *asset.Service
 	// tokens keeps the API tokens, and authenticates the requests made with
 	// them.
 	tokens *apitoken.Service
@@ -98,6 +101,14 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		Entitlements: s.entitlements,
 		Pipeline:     s.commands,
 	})
+	s.assets = asset.New(readyDB{s.ready}, asset.Options{
+		Projects:     s.projects,
+		Entitlements: s.entitlements,
+		Storage:      asset.NewStorage(readyDB{s.ready}, asset.StorageOptions{Configured: cfg.AssetStorage}),
+		Queue:        s.queue,
+		MaxBytes:     cfg.AssetMaxBytes,
+		Log:          log,
+	})
 	s.tokens = apitoken.New(readyDB{s.ready}, apitoken.Options{
 		Policy: role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
 	})
@@ -140,6 +151,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s.setups = setup.New(readyDB{s.ready}, setup.Options{
 		Signup:        cfg.Capabilities.Signup,
 		SMTPFixed:     s.email.Fixed(),
+		StorageFixed:  s.assets.Storage().Fixed(),
 		DefaultLocale: cfg.DefaultLocale,
 		Workspaces:    s.workspaces,
 		Hasher:        s.accounts.Hasher(),
@@ -169,6 +181,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerUsage(s.main, s.workspaces)
 	registerProjects(s.main, s.projects)
 	registerCommands(s.main, s.commands)
+	registerAssets(s.main, s.assets)
 	registerGrants(s.main, s.projects)
 	registerTokens(s.main, s.tokens)
 	registerInvites(s.main, s.workspaces, s.invites, s.accounts)

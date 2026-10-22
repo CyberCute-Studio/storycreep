@@ -21,11 +21,16 @@ import (
 // An operation's input has the parts it takes: path, query, and headers,
 // each an object of parameters, and body. Its responses map each status
 // that is not an error's to the type of its body, or undefined for none;
-// the client reports errors, which have the envelope, as exceptions.
+// the client reports errors, which have the envelope, as exceptions. A body
+// that is a file, in one or more media types that are all a binary string,
+// as an image is, is a Blob, which the client sends as it is, and an
+// operation that answers with one has blob set in routes, so that the
+// client reads it as one.
 //
 // It fails, rather than write a type that is wrong, on what the client
 // cannot express yet: a parameter that is not a string, number, or boolean,
-// or that is in a cookie; a body that is not application/json; a response
+// or that is in a cookie; a body that is neither application/json alone nor
+// a file; an operation that answers with JSON and a file; a response
 // to a range of statuses, such as 2XX; a schema whose name is not an
 // identifier, or that has properties and a schema of other properties too;
 // and a required property that is readOnly or writeOnly, which huma
@@ -410,14 +415,29 @@ func (g *tsGen) operations() error {
 	}
 	g.b.WriteString("}\n\n")
 
-	comment(&g.b, 0, "The method and path of each operation.", false)
+	comment(&g.b, 0, "The method and path of each operation, and whether it answers with a file (blob).", false)
 	g.b.WriteString("export const routes = {\n")
 	for _, l := range ops {
-		fmt.Fprintf(&g.b, "%s%s: { method: %s, path: %s },\n", indent(1), propertyName(l.op.OperationID),
-			jsString(l.method), jsString(l.path))
+		blob := ""
+		if answersFile(l.op) {
+			blob = ", blob: true"
+		}
+		fmt.Fprintf(&g.b, "%s%s: { method: %s, path: %s%s },\n", indent(1), propertyName(l.op.OperationID),
+			jsString(l.method), jsString(l.path), blob)
 	}
-	g.b.WriteString("} as const satisfies Record<keyof Operations, { method: string; path: string }>;\n")
+	g.b.WriteString("} as const satisfies Record<keyof Operations, { method: string; path: string; blob?: true }>;\n")
 	return nil
+}
+
+// answersFile reports whether op answers with a file (fileBody), whose type
+// responses checks.
+func answersFile(op *Operation) bool {
+	for status, r := range op.Responses {
+		if !isError(status) && isFile(r.Content) {
+			return true
+		}
+	}
+	return false
 }
 
 // input returns the type of an operation's input.
@@ -452,11 +472,7 @@ func (g *tsGen) input(op *Operation) (string, error) {
 		parts = append(parts, prop{name: part.name, optional: optional, typ: t})
 	}
 	if rb := op.RequestBody; rb != nil {
-		schema, err := jsonBody(rb.Content)
-		if err != nil {
-			return "", fmt.Errorf("the request body: %w", err)
-		}
-		t, err := g.typeOf(schema, 3)
+		t, err := g.bodyType(rb.Content)
 		if err != nil {
 			return "", fmt.Errorf("the request body: %w", err)
 		}
@@ -480,14 +496,33 @@ func (g *tsGen) parameterType(s *Schema) (string, error) {
 	return g.typeOf(s, 0)
 }
 
-// jsonBody returns the schema of a body that is application/json, and
-// fails if it may be anything else.
-func jsonBody(content map[string]*MediaType) (*Schema, error) {
+// bodyType returns the type of a body: Blob for a file (isFile), and else
+// the type of a body that is application/json, and fails if it may be
+// anything else.
+func (g *tsGen) bodyType(content map[string]*MediaType) (string, error) {
+	if isFile(content) {
+		return "Blob", nil
+	}
 	if len(content) != 1 || content["application/json"] == nil {
-		return nil, fmt.Errorf("the client handles only application/json, and the body may be %q",
+		return "", fmt.Errorf("the client handles only application/json and files, and the body may be %q",
 			slices.Sorted(maps.Keys(content)))
 	}
-	return content["application/json"].Schema, nil
+	return g.typeOf(content["application/json"].Schema, 3)
+}
+
+// isFile reports whether a body is a file: it has media types, none of them
+// JSON, and each a binary string, as huma documents a body of bytes.
+func isFile(content map[string]*MediaType) bool {
+	if len(content) == 0 {
+		return false
+	}
+	for mt, m := range content {
+		if mt == "application/json" || strings.HasSuffix(mt, "+json") || m == nil || m.Schema == nil ||
+			!slices.Equal(m.Schema.Type, Types{"string"}) || m.Schema.Format != "binary" {
+			return false
+		}
+	}
+	return true
 }
 
 // responses returns the type of an operation's responses that are not
@@ -513,12 +548,15 @@ func (g *tsGen) responses(op *Operation) (string, error) {
 		r := op.Responses[status]
 		t := "undefined"
 		if len(r.Content) > 0 {
-			schema, err := jsonBody(r.Content)
-			if err != nil {
+			var err error
+			if t, err = g.bodyType(r.Content); err != nil {
 				return "", fmt.Errorf("the response %s: %w", status, err)
 			}
-			if t, err = g.typeOf(schema, 3); err != nil {
-				return "", fmt.Errorf("the response %s: %w", status, err)
+			// The client reads the answers of an operation that answers with a
+			// file as files (routes' blob), so none of them may be JSON.
+			if t != "Blob" && answersFile(op) {
+				return "", fmt.Errorf("the response %s is JSON, and another is a file, which the client cannot "+
+					"tell apart", status)
 			}
 		}
 		members = append(members, prop{name: status, typ: t, numeric: true})

@@ -58,7 +58,11 @@ const (
 	// when it stops. It is shorter than the 30 seconds that Kubernetes waits
 	// by default before it kills a container. Docker and Docker Compose wait
 	// only 10 seconds by default, so a deployment with them sets a longer
-	// grace period, such as a compose file's stop_grace_period.
+	// grace period, such as a compose file's stop_grace_period. It is longer
+	// than the 15 seconds that the orphan reconciliation of the assets waits
+	// for a deletion that it sent (package asset), which sends none once the
+	// server stops (jobs.Stopping), so that those deletions end before the
+	// jobs are cancelled and the process exits.
 	shutdownTimeout = 20 * time.Second
 	// defaultPollInterval is how often a server without auto-migration
 	// checks whether the pending migrations have been applied.
@@ -100,8 +104,9 @@ type Options struct {
 	// rate limit cleanup (package ratelimit), the rollup and the
 	// reconciliation of usage (package usage), the purge of the projects in
 	// the trash (package project), and the pruning of the command batches'
-	// idempotency records (package commands). The plan items that add jobs
-	// register them in serverJobs.
+	// idempotency records (package commands), and the thumbnails of the
+	// assets and the reconciliation of their blobs (package asset). The plan
+	// items that add jobs register them in serverJobs.
 	Jobs *jobs.Registry
 }
 
@@ -123,6 +128,9 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 		return ErrNoAdminURL
 	}
 	s := newServer(cfg, log)
+	// The store of the assets' files is closed last, once the requests and
+	// the jobs that read it have stopped.
+	defer func() { _ = s.assets.Storage().Close() }()
 
 	ln, adminLn := opts.Listener, opts.AdminListener
 	if s.admin == nil && adminLn != nil {
@@ -393,6 +401,7 @@ func (s *server) serverJobs() *jobs.Registry {
 	usage.RegisterJobs(r)
 	project.RegisterJobs(r)
 	commands.RegisterJobs(r)
+	s.assets.RegisterJobs(r)
 	return r
 }
 

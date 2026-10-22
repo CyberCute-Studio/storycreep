@@ -42,7 +42,6 @@ package usage
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"slices"
 
 	"github.com/jackc/pgx/v5"
@@ -71,7 +70,9 @@ const (
 	// Members is how many memberships a workspace has, guests' included. It
 	// is counted exactly.
 	Members Key = "members"
-	// StorageBytes is how many bytes a workspace's stored files take up.
+	// StorageBytes is how many bytes a workspace's stored files take up:
+	// each blob of its assets once, however many assets share it, but not
+	// the thumbnails that the server derives (package asset).
 	StorageBytes Key = "storage_bytes"
 	// Snapshots is how many snapshots a workspace's projects have. It is
 	// counted exactly.
@@ -205,15 +206,11 @@ func (Meter) Usage(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, key ent
 }
 
 // lock takes the advisory lock of the workspace's key until the transaction
-// of q ends. Its second integer is a hash of the workspace and the key, so
-// two workspaces' keys may share one, which only makes their changes take
-// turns.
+// of q ends (database.UsageLock), whose second integer is the key's
+// (database.LockObject).
 func lock(ctx context.Context, q *queries.Queries, workspaceID ids.UUID, key Key) error {
-	h := fnv.New32a()
-	h.Write(workspaceID[:])
-	h.Write([]byte(key))
 	if err := q.LockUsage(ctx, queries.LockUsageParams{Class: database.UsageLock,
-		Object: int32(h.Sum32())}); err != nil {
+		Object: database.LockObject(workspaceID, []byte(key))}); err != nil {
 		return fmt.Errorf("usage: lock the usage of %s: %w", key, err)
 	}
 	return nil

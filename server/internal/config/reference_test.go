@@ -49,7 +49,7 @@ func TestReferenceContents(t *testing.T) {
 		"| `Signup` | `setup` | `open` | `STORYCREEP_SIGNUP` (self-hosted only) |",
 		"| `STORYCREEP_CONFIG_FILE` | A file path | Not set |",
 		"| `PublicSite` | `off` | `on` | `STORYCREEP_PUBLIC_SITE` |",
-		"| `BlobDriver` | `local` | `s3` | — |",
+		"| `BlobDriver` | `setup` | `s3` | `STORYCREEP_ASSET_STORAGE` |",
 	} {
 		if !strings.Contains(ref, want) {
 			t.Errorf("the reference does not contain %q", want)

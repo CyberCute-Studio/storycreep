@@ -59,6 +59,11 @@ const (
 	// operation of the permission matrix, which the command pipeline checks
 	// (package commands).
 	ApplyCommands Capability = "project.commands"
+	// UploadAssets is uploading an image to a project (PRD FR-ASSET-02),
+	// which needs owner, admin, or editor as the effective role on the project
+	// (§5.6 "Upload images (assets)"). Reading an asset is reading the
+	// project's content, ReadProject.
+	UploadAssets Capability = "project.assets.upload"
 	// ChangeProjectSettings is changing a project's name, description, and
 	// settings, and archiving and unarchiving it, which needs owner or admin
 	// as the effective role on the project (§5.6).
@@ -101,6 +106,7 @@ var capabilities = map[Capability]bool{
 	ManageProjectGrants:     true,
 	ReadProject:             true,
 	ApplyCommands:           true,
+	UploadAssets:            true,
 	ChangeProjectSettings:   true,
 	ManageWorkspaceTokens:   true,
 	ManageProjectTokens:     true,

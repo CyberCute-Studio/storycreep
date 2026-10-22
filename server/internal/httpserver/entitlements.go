@@ -48,14 +48,33 @@ func limitExceededError(err error) error {
 	if !errors.As(err, &limit) {
 		return err
 	}
-	details := map[string]any{"key": limit.Key, "usage": limit.Usage, "limit": limit.Limit}
-	if limit.UpgradeURL != "" {
-		details["upgrade_url"] = limit.UpgradeURL
-	}
 	return &api.Error{
 		Code: api.CodeLimitExceeded,
 		Message: i18n.Message{Key: i18n.K("error.limit_exceeded.key"),
 			Args: i18n.Args{"key": string(limit.Key), "limit": limit.Limit}},
-		Details: details,
+		Details: limitDetails(limit),
 	}
+}
+
+// storageLimitError returns the answer of an upload that the storage limit
+// refuses: 413 storage_limit_exceeded, with the details of limit_exceeded
+// (limitDetails).
+func storageLimitError(limit *entitlements.LimitError) error {
+	return &api.Error{
+		Code: api.CodeStorageLimitExceeded,
+		Message: i18n.Message{Key: i18n.K("error.storage_limit_exceeded.limit"),
+			Args: i18n.Args{"limit": limit.Limit}},
+		Details: limitDetails(limit),
+	}
+}
+
+// limitDetails returns the details of an answer of the limit that limit
+// refuses: the limit, as key, the workspace's usage and limit (FR-ENT-03
+// AC1), and the upgrade link, as upgrade_url, if the error has one.
+func limitDetails(limit *entitlements.LimitError) map[string]any {
+	details := map[string]any{"key": limit.Key, "usage": limit.Usage, "limit": limit.Limit}
+	if limit.UpgradeURL != "" {
+		details["upgrade_url"] = limit.UpgradeURL
+	}
+	return details
 }

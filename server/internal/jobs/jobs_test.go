@@ -43,6 +43,13 @@ type cancelArgs struct{}
 
 func (cancelArgs) Kind() string { return "test_cancel" }
 
+// serialArgs are the arguments of a test job of a serial kind (Serial).
+type serialArgs struct {
+	N int `json:"n"`
+}
+
+func (serialArgs) Kind() string { return "test_serial" }
+
 // testRetry is a retry policy whose waits are short enough for a test.
 var testRetry = backoff{first: 100 * time.Millisecond, max: time.Second}
 
@@ -428,6 +435,68 @@ func TestPeriodicJob(t *testing.T) {
 	}
 }
 
+// TestSerialJobs checks that the jobs of a serial kind run one at a time, on
+// a queue of their own, while a job of another kind runs beside them, rather
+// than waiting for a worker that they hold.
+func TestSerialJobs(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	reg := NewRegistry()
+	started := make(chan int, 10)
+	release := make(chan struct{})
+	var mu sync.Mutex
+	running, most := 0, 0
+	Register(reg, func(ctx context.Context, job *Job[serialArgs]) error {
+		mu.Lock()
+		running++
+		most = max(most, running)
+		mu.Unlock()
+		started <- job.Args.N
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		mu.Lock()
+		running--
+		mu.Unlock()
+		return nil
+	})
+	Serial(reg, serialArgs{})
+	ran := make(chan int, 10)
+	Register(reg, func(_ context.Context, job *Job[recordArgs]) error {
+		ran <- job.Args.N
+		return nil
+	})
+	q, db := open(t, d, reg, true)
+
+	var serial []int64
+	for i := range 3 {
+		serial = append(serial, enqueue(t, q, db, serialArgs{N: i}, nil).ID)
+	}
+	receive(t, started)
+	enqueue(t, q, db, recordArgs{N: 7}, nil)
+	if n := receive(t, ran); n != 7 {
+		t.Errorf("the job of another kind ran with %d, want 7", n)
+	}
+	select {
+	case n := <-started:
+		t.Errorf("the serial job %d started while another ran", n)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+	for _, id := range serial {
+		if job := waitForState(t, q, id, rivertype.JobStateCompleted); job.Queue != "test_serial" {
+			t.Errorf("the serial job %d ran on the queue %q, want test_serial", id, job.Queue)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if most != 1 {
+		t.Errorf("%d serial jobs ran at once, want 1", most)
+	}
+}
+
 func TestRegistryPanics(t *testing.T) {
 	t.Parallel()
 	for name, f := range map[string]func(){
@@ -442,6 +511,13 @@ func TestRegistryPanics(t *testing.T) {
 			Register(reg, func(context.Context, *Job[recordArgs]) error { return nil })
 			Periodic(reg, time.Minute, recordArgs{N: 1})
 			Periodic(reg, time.Hour, recordArgs{N: 2})
+		},
+		"serial without a worker": func() { Serial(NewRegistry(), recordArgs{}) },
+		"serial twice": func() {
+			reg := NewRegistry()
+			Register(reg, func(context.Context, *Job[recordArgs]) error { return nil })
+			Serial(reg, recordArgs{})
+			Serial(reg, recordArgs{})
 		},
 		"two workers of a kind": func() {
 			reg := NewRegistry()
@@ -532,6 +608,46 @@ func TestStopCancelsJobs(t *testing.T) {
 
 	if err := q.Start(context.Background()); err != nil || q.started {
 		t.Errorf("Start after Stop returned %v, and started the workers: %v; want nil, and not", err, q.started)
+	}
+}
+
+// TestStopping checks that a job's work learns that the queue stops as soon
+// as Stop is called, while its context still runs, so that it can stop
+// sending requests that it must wait for, and finish them, before Stop
+// cancels it, and that a context of no job never stops.
+func TestStopping(t *testing.T) {
+	t.Parallel()
+	if ch := Stopping(context.Background()); ch != nil {
+		t.Errorf("a context of no job stops on %v, want nil", ch)
+	}
+	d := dbtest.New(t)
+	started := make(chan int64, 1)
+	live := make(chan error, 1)
+	reg := NewRegistry()
+	Register(reg, func(ctx context.Context, job *Job[recordArgs]) error {
+		started <- job.ID
+		<-Stopping(ctx)
+		live <- ctx.Err()
+		return nil
+	})
+	q, db := open(t, d, reg, true)
+	e := enqueue(t, q, db, recordArgs{}, nil)
+	receive(t, started)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := q.Stop(ctx); err != nil {
+		t.Fatalf("Stop returned %v, want nil once the job finished", err)
+	}
+	if err := receive(t, live); err != nil {
+		t.Errorf("the job learnt that the queue stops once its context had ended: %v", err)
+	}
+	job, err := q.client.JobGet(context.Background(), e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.State != rivertype.JobStateCompleted {
+		t.Errorf("the job that finished while the queue stopped is %s, want completed", job.State)
 	}
 }
 
