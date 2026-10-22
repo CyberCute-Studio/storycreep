@@ -115,7 +115,8 @@ func TestReconcileGoesOn(t *testing.T) {
 // released, but waited for, and that none is sent once the context has less
 // than orphanDeleteTimeout left, which is left to the next run.
 func TestDeleteBlobsOutlastContext(t *testing.T) {
-	local, err := blob.OpenLocal(t.TempDir())
+	dir := t.TempDir()
+	local, err := blob.OpenLocal(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +127,7 @@ func TestDeleteBlobsOutlastContext(t *testing.T) {
 		if err := local.Put(context.Background(), key, []byte("x"), MimePNG); err != nil {
 			t.Fatal(err)
 		}
+		age(t, dir, key)
 		return key
 	}
 	stored := func(key string) bool {
@@ -147,6 +149,50 @@ func TestDeleteBlobsOutlastContext(t *testing.T) {
 	if n, err := deleteBlobs(short, local, []string{late}); n != 0 || err != nil || !stored(late) {
 		t.Errorf("a batch with less than orphanDeleteTimeout left deleted %d blobs: %v; want none, and no error", n,
 			err)
+	}
+}
+
+// TestDeleteOrphansAsksStore checks that a batch of orphans deletes a blob
+// only once the store says, just before the deletion, that it was stored
+// orphanAge ago, so that it keeps a blob that its listing found old, but that
+// an upload stored again since, as one of an instance on a copy of the
+// database, whose locks the batch's do not hold back, while it deletes the
+// old one beside it, and counts none that the store no longer has.
+func TestDeleteOrphansAsksStore(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	local, err := blob.OpenLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	workspaceID := ids.New()
+	var batch []orphan
+	for b := range byte(3) {
+		sum := make([]byte, 32)
+		sum[31] = b
+		batch = append(batch, orphan{key: blobKey(workspaceID, sum, "png"), sum: sum})
+	}
+	old, again, gone := batch[0].key, batch[1].key, batch[2].key
+	for _, key := range []string{old, again} {
+		if err := local.Put(ctx, key, []byte("x"), MimePNG); err != nil {
+			t.Fatal(err)
+		}
+		age(t, dir, key)
+	}
+	// The listing found both old; an upload then stored the second again.
+	if err := local.Put(ctx, again, []byte("x"), MimePNG); err != nil {
+		t.Fatal(err)
+	}
+	stored := func(key string) bool {
+		_, err := local.Stat(ctx, key)
+		return err == nil
+	}
+	s := &Service{db: dbtest.New(t).Open(t)}
+	if n, err := s.deleteOrphans(ctx, local, workspaceID, batch); n != 1 || err != nil || stored(old) ||
+		!stored(again) || stored(gone) {
+		t.Errorf("the batch deleted %d blobs: %v, kept the old one %t and the one stored again %t; want the old "+
+			"one deleted alone", n, err, stored(old), stored(again))
 	}
 }
 

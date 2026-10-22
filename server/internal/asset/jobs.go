@@ -275,7 +275,9 @@ const listBudget = sweep.Budget / 2
 // too, when it returns both, and the job is attempted again. It reads the
 // store's claim again before each batch of deletions, and deletes no more
 // once another has claimed the store since, as one that claimed it at the
-// same moment.
+// same moment, and asks the store how old each blob is again just before it
+// deletes it, as an upload of another instance, whose locks are another
+// database's, may have stored it again since the listing (deleteBlobs).
 //
 // It lists a workspace's blobs from a key picked at random, past the last to
 // the first, for listBudget at most, so that a run that cannot list all of a
@@ -673,12 +675,12 @@ const (
 )
 
 // orphanDeleteTimeout is how long the reconciliation waits for the store to
-// delete a blob of a batch, whatever is left of the job's time, before it
-// gives up on the deletion, and the batch's transaction ends, and with it
-// its locks: far longer than a store that answers at all takes, and short
-// enough that the job's time holds it after the run's budget, as no
-// deletion is sent once the job's time has less than this left
-// (deleteBlobs), so that the job ends in its time.
+// say how old a blob of a batch is and to delete it, whatever is left of the
+// job's time, before it gives up on the deletion, and the batch's
+// transaction ends, and with it its locks: far longer than a store that
+// answers at all takes, and short enough that the job's time holds it after
+// the run's budget, as no deletion is sent once the job's time has less than
+// this left (deleteBlobs), so that the job ends in its time.
 const orphanDeleteTimeout = 15 * time.Second
 
 // orphan is a blob of a workspace that no row referred to when the
@@ -705,9 +707,10 @@ const keepSessionIdle = 5 * time.Minute
 // (database.LockObject), in one statement, so that no other transaction
 // that takes several of them waits for one that this one holds while it
 // holds one that this one waits for, checks the blobs' rows again, in one
-// query, and deletes the blobs that no row refers to, orphanDeletes at once,
-// before the transaction ends, so that no upload or thumbnail job refers to
-// one of them in between. The locks hold only for as long as the session
+// query, and deletes the blobs that no row refers to, and that the store
+// still says are orphanAge old (deleteBlobs), orphanDeletes at once, before
+// the transaction ends, so that no upload or thumbnail job refers to one of
+// them in between. The locks hold only for as long as the session
 // does, so the transaction first switches off the timeout of a transaction
 // that runs for long, and makes that of one that waits idle keepSessionIdle
 // (queries.KeepSession), as an operator may set one that ends a transaction
@@ -750,9 +753,16 @@ func (s *Service) deleteOrphans(ctx context.Context, store blob.Store, workspace
 
 // deleteBlobs deletes the blobs of keys from store, orphanDeletes at once,
 // and returns how many it deleted, and the errors of those that it did not.
-// Once ctx ends, or has less than orphanDeleteTimeout left, it sends no more
-// deletions, and leaves the rest to the next run, and it waits for those
-// that it sent, each for orphanDeleteTimeout, however soon ctx ends.
+// It asks the store for each blob just before it deletes it, and leaves
+// alone one that the store says was stored less than orphanAge ago, or no
+// longer has: the locks that the batch holds are this database's, so they do
+// not hold back an upload of an instance on a copy of the database, which
+// stores again a blob that no row of its own refers to, and that is old
+// (refreshAge), and may have done so since the listing found the blob old,
+// and added the row that refers to it. Once ctx ends, or has less than
+// orphanDeleteTimeout left, it sends no more deletions, and leaves the rest
+// to the next run, and it waits for those that it sent, each for
+// orphanDeleteTimeout, however soon ctx ends.
 func deleteBlobs(ctx context.Context, store blob.Store, keys []string) (int, error) {
 	var (
 		wg      sync.WaitGroup
@@ -775,19 +785,38 @@ func deleteBlobs(ctx context.Context, store blob.Store, keys []string) (int, err
 		wg.Go(func() {
 			defer func() { <-sending }()
 			deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanDeleteTimeout)
-			err := store.Delete(deleteCtx, key)
+			gone, err := deleteOld(deleteCtx, store, key)
 			cancel()
 			mu.Lock()
 			defer mu.Unlock()
-			if err != nil {
-				errs = append(errs, fmt.Errorf("asset: %w", err))
-				return
+			switch {
+			case err != nil:
+				errs = append(errs, err)
+			case gone:
+				deleted++
 			}
-			deleted++
 		})
 	}
 	wg.Wait()
 	return deleted, errors.Join(errs...)
+}
+
+// deleteOld deletes the blob of key from store if the store says that it was
+// stored at least orphanAge ago, and reports whether it deleted it.
+func deleteOld(ctx context.Context, store blob.Store, key string) (bool, error) {
+	info, err := store.Stat(ctx, key)
+	switch {
+	case errors.Is(err, blob.ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("asset: %w", err)
+	case time.Since(info.Modified) < orphanAge:
+		return false, nil
+	}
+	if err := store.Delete(ctx, key); err != nil {
+		return false, fmt.Errorf("asset: %w", err)
+	}
+	return true, nil
 }
 
 // listing is what a run listed of a workspace's blobs: from after the key

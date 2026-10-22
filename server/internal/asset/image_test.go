@@ -1133,3 +1133,27 @@ func TestSanitizedSize(t *testing.T) {
 		t.Errorf("Sniff of an image that takes more than its limit once sanitized: %v, want ErrTooLarge", err)
 	}
 }
+
+// TestDisposition checks the Content-Disposition that an asset's file is
+// served with: inline for an image, which every type that an upload takes
+// is, and an attachment, which a browser saves rather than shows, for any
+// other type, with a file name made of the asset's ID and the extension of
+// its key, whether it is the file or its thumbnail.
+//
+// Verifies: FR-ASSET-02/AC3
+func TestDisposition(t *testing.T) {
+	for _, tt := range []struct {
+		contentType, key, want string
+	}{
+		{MimePNG, "w/abc.png", `inline; filename="asset_1.png"`},
+		{MimeSVG, "w/abc.svg", `inline; filename="asset_1.svg"`},
+		{MimePNG, "w/abc.thumb.png", `inline; filename="asset_1.png"`},
+		{"application/pdf", "w/abc.pdf", `attachment; filename="asset_1.pdf"`},
+		{"text/html", "w/abc.html", `attachment; filename="asset_1.html"`},
+	} {
+		loc := Located{Asset: Asset{ID: "asset_1"}, Key: tt.key, ContentType: tt.contentType}
+		if got := Disposition(loc); got != tt.want {
+			t.Errorf("the disposition of %s, %s: %s, want %s", tt.key, tt.contentType, got, tt.want)
+		}
+	}
+}

@@ -106,6 +106,24 @@ describe("the API client", () => {
     }
   });
 
+  it("answers a file's status without a body, as a redirect, with no body", async () => {
+    const { fetch } = fakeFetch(
+      () =>
+        new Response(null, {
+          status: 302,
+          headers: { Location: "https://bucket.example.com/t1.png" },
+        }),
+    );
+    const answer = await createClient<Operations>(routes, {
+      baseUrl,
+      fetch,
+    }).call("getThingPicture", { path: { id: "t1" } });
+    expect(answer.status).toBe(302);
+    if (answer.status === 302) {
+      expect(answer.body).toBeUndefined();
+    }
+  });
+
   it("refuses JSON where it expects a file", async () => {
     const { fetch } = fakeFetch(() => json(200, { not: "a file" }));
     const call = createClient<Operations>(routes, { baseUrl, fetch }).call(

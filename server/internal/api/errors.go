@@ -305,7 +305,9 @@ var codes = []codeSpec{
 			"`limit_exceeded` would have it."},
 	{CodeUnsupportedMediaType, http.StatusUnsupportedMediaType, i18n.K("error.unsupported_media_type"),
 		"The `Content-Type` of the request body is neither `application/json` nor a type ending in `+json`, " +
-			"such as `application/merge-patch+json`. A body sent without a `Content-Type` is read as JSON."},
+			"such as `application/merge-patch+json`, and the route takes JSON, as every route but an upload of an " +
+			"asset does, whose body is the file, whatever its `Content-Type` says. A body sent without a " +
+			"`Content-Type` is read as JSON."},
 	{CodeValidationFailed, http.StatusUnprocessableEntity, i18n.K("error.validation_failed"),
 		"A parameter or the body does not match the route's schema: a field that the schema does not have, " +
 			"which is never ignored (PRD FR-API-01 AC2), a missing field, a value of the wrong type, or one out of " +

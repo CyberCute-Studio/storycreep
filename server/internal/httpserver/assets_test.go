@@ -1017,7 +1017,7 @@ func TestUploadAgainMendsItsThumbnail(t *testing.T) {
 // checked the access, and the URL reads the file; another workspace's user
 // gets no URL.
 //
-// Verifies: FR-ASSET-01/AC1, FR-ASSET-01/AC2
+// Verifies: FR-ASSET-01/AC1, FR-ASSET-01/AC2, FR-ASSET-02/AC3
 func TestS3Assets(t *testing.T) {
 	t.Parallel()
 	bucket := blobtest.S3(t)
