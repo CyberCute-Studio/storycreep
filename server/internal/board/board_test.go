@@ -1,6 +1,7 @@
 package board_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -490,7 +491,8 @@ func TestFolderTree(t *testing.T) {
 // after its last that is not deleted once a deleted child's key has no key
 // after it, a move to a key places a child between two others, and a move
 // without one of the folder's last child that is not deleted into its folder
-// changes nothing.
+// changes nothing, the last by its key and then by its ID, among the
+// folder's children of either table, one with the moved child's UUID too.
 func TestOrder(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -552,6 +554,41 @@ func TestOrder(t *testing.T) {
 	f.must(t, cmd{board.Delete, map[string]any{"id": last.ID}})
 	if b := f.create(t, "After", map[string]any{"folder_id": folder}); b.Order != "Z" {
 		t.Errorf("a board added after a deleted child whose key has no key after it is at %q, want Z", b.Order)
+	}
+	// Children with the same key, as two clients may pick for two children
+	// dropped at one place, are ordered by their IDs: the one with the greater
+	// ID is the folder's last, which a move to the end leaves where it is, and
+	// the other, moved to the end, goes after it.
+	tied, low, high := folderID(), ids.New(), ids.New()
+	if bytes.Compare(low[:], high[:]) > 0 {
+		low, high = high, low
+	}
+	f.must(t, cmd{board.CreateFolder, map[string]any{"id": tied, "kind": "board", "name": "Act 2"}},
+		cmd{board.Create, map[string]any{"id": ids.Encode(ids.Board, low), "name": "Tied", "folder_id": tied,
+			"order": "k"}},
+		cmd{board.Create, map[string]any{"id": ids.Encode(ids.Board, high), "name": "Tied", "folder_id": tied,
+			"order": "k"}})
+	if res := f.must(t, cmd{board.Move, map[string]any{"id": ids.Encode(ids.Board, high), "folder_id": tied}}); len(
+		res.Revisions) != 0 {
+		t.Errorf("moving the last of two children with the same key to the end changed %v", res.Revisions)
+	}
+	f.must(t, cmd{board.Move, map[string]any{"id": ids.Encode(ids.Board, low), "folder_id": tied}})
+	if got := f.get(t, ids.Encode(ids.Board, low)); got.Order != "l" {
+		t.Errorf("the first of two children with the same key, moved to the end, is at %q, want l", got.Order)
+	}
+	// A folder and a board that a client gave the same UUID are each other's
+	// siblings all the same: the board, moved to the end, goes after the
+	// folder.
+	twin, shared := folderID(), ids.New()
+	f.must(t, cmd{board.CreateFolder, map[string]any{"id": twin, "kind": "board", "name": "Act 3"}},
+		cmd{board.CreateFolder, map[string]any{"id": ids.Encode(ids.Folder, shared), "kind": "board",
+			"name": "Scenes", "parent_id": twin, "order": "a"}},
+		cmd{board.Create, map[string]any{"id": ids.Encode(ids.Board, shared), "name": "Twin", "folder_id": twin,
+			"order": "Z"}})
+	f.must(t, cmd{board.Move, map[string]any{"id": ids.Encode(ids.Board, shared), "folder_id": twin}})
+	if got := f.get(t, ids.Encode(ids.Board, shared)); got.Order != "b" {
+		t.Errorf("a board moved to the end after a folder with its UUID is at %q, want b, after the folder's a",
+			got.Order)
 	}
 }
 
@@ -672,9 +709,10 @@ func TestUndo(t *testing.T) {
 
 // TestBoardUsage checks that creating, deleting, and restoring a board add to
 // the workspace's boards and take from them, and deleting and restoring its
-// project too, so that its usage is a recount of its boards that are in no
-// trash, to which reconciliation corrects it once it is corrupted, and which
-// the purge of a project in the trash leaves as it is.
+// project too, whatever the order of the commands of a batch, so that its
+// usage is a recount of its boards that are in no trash (PRD FR-ENT-02 AC4),
+// to which reconciliation corrects it once it is corrupted, and which the
+// purge of a project in the trash leaves as it is.
 func TestBoardUsage(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -716,6 +754,21 @@ func TestBoardUsage(t *testing.T) {
 	f.must(t, cmd{project.Restore, map[string]any{}})
 	if used := read(); used != 2 {
 		t.Errorf("with the project restored, the workspace uses %d boards, want 2", used)
+	}
+	// The project's boards are counted once its deletion's batch has
+	// applied, so that a board that a later command of the batch creates, or
+	// takes out of the project's trash, counts for nothing either while the
+	// project is in the workspace's trash, and with the others once it is
+	// restored.
+	f.must(t, cmd{project.Delete, map[string]any{}}, cmd{board.Create, map[string]any{"id": boardID(), "name": "D"}},
+		cmd{board.Restore, map[string]any{"id": a.ID}})
+	if used := read(); used != 0 {
+		t.Errorf("with the project in the trash since the batch that added boards to it, the workspace uses %d "+
+			"boards, want 0", used)
+	}
+	f.must(t, cmd{project.Restore, map[string]any{}})
+	if used := read(); used != 4 {
+		t.Errorf("with the project restored, the workspace uses %d boards, want 4", used)
 	}
 	f.must(t, cmd{project.Delete, map[string]any{}})
 	admin := f.d.Admin(t)

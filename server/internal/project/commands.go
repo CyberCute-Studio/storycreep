@@ -350,18 +350,26 @@ func lifecycle(update func(ctx context.Context, q *queries.Queries, by queries.A
 		// so that its purge, whose cascade records no delta, leaves the
 		// workspace's boards as they are: deleting the project takes its
 		// boards that are not in its own trash from them, and restoring it
-		// adds them back. The batch holds the project's lock, under which its
-		// boards change, so they are as counted until it commits.
+		// adds them back. They are counted once every command of the batch
+		// has applied, so that a board that a later command of the batch
+		// creates, deletes, or restores, whose own delta counts it as a board
+		// of a project that is not in the trash, is counted with the others,
+		// and the batch adds the same to the boards whatever the order of its
+		// commands. The batch holds the project's lock, under which its boards
+		// change, so they are as counted until it commits.
 		if before.DeletedAt.Valid != after.DeletedAt.Valid {
-			boards, err := q.ProjectBoardCount(ctx, queries.ProjectBoardCountParams{
-				WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID())})
-			if err != nil {
-				return fmt.Errorf("project: count the project's boards: %w", err)
-			}
+			sign := int64(1)
 			if after.DeletedAt.Valid {
-				boards = -boards
+				sign = -1
 			}
-			if err := tx.AddUsage(usage.Boards, boards); err != nil {
+			if err := tx.AddUsageOnceApplied(usage.Boards, func(ctx context.Context) (int64, error) {
+				boards, err := q.ProjectBoardCount(ctx, queries.ProjectBoardCountParams{
+					WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID())})
+				if err != nil {
+					return 0, fmt.Errorf("project: count the project's boards: %w", err)
+				}
+				return sign * boards, nil
+			}); err != nil {
 				return err
 			}
 		}

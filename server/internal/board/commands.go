@@ -1,6 +1,7 @@
 package board
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -229,7 +230,7 @@ func registerBoards(r *commands.Registry) {
 				return err
 			}
 			order, err := sortKey(ctx, q, b.WorkspaceID, b.ProjectID, KindBoard, folder, p.Order,
-				&child{id: b.ID, parent: b.FolderID, key: b.Order})
+				&child{id: b.ID, parent: b.FolderID, key: b.Order, board: true})
 			if err != nil {
 				return err
 			}
@@ -414,10 +415,12 @@ func liveFolder(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID
 }
 
 // child is a child of a folder, or of the top, that moves: its ID, its
-// parent, null for the top, and its key.
+// parent, null for the top, its key, and whether it is a board, or else a
+// folder.
 type child struct {
 	id, parent pgtype.UUID
 	key        string
+	board      bool
 }
 
 // sortKey returns the key that a child of the kind that goes into the folder
@@ -430,23 +433,29 @@ type child struct {
 // that key has none after it either. moving is the child that moves there,
 // or nil for a new one: it is none of the children that it goes after, and
 // it keeps its key if it is in parent already, after every other child that
-// is not deleted, so that moving the last child to the end changes nothing,
-// as it shows nothing, even while a deleted child comes after it, which,
-// restored, then comes after it again, where it was.
+// is not deleted, by its key, or by its ID after another child's with the
+// same key, as the children are ordered, so that moving the last child to
+// the end changes nothing, as it shows nothing, even while a deleted child
+// comes after it, which, restored, then comes after it again, where it was.
 func sortKey(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, kind string, parent pgtype.UUID,
 	given string, moving *child) (string, error) {
 	if given != "" {
 		return given, nil
 	}
 	params := queries.LastSortKeysParams{WorkspaceID: ws, ProjectID: project, Kind: kind, ParentID: parent}
-	if moving != nil {
-		params.Moved = moving.id
+	switch {
+	case moving == nil:
+	case moving.board:
+		params.MovedBoard = moving.id
+	default:
+		params.MovedFolder = moving.id
 	}
 	last, err := q.LastSortKeys(ctx, params)
 	if err != nil {
 		return "", fmt.Errorf("board: read the folder's last keys: %w", err)
 	}
-	if moving != nil && sameUUID(moving.parent, parent) && moving.key > last.LastLive {
+	if moving != nil && sameUUID(moving.parent, parent) && (moving.key > last.LastLive ||
+		moving.key == last.LastLive && bytes.Compare(moving.id.Bytes[:], last.LastLiveID.Bytes[:]) > 0) {
 		return moving.key, nil
 	}
 	for _, k := range []string{last.Last, last.LastLive} {

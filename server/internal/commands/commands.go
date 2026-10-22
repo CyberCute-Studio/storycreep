@@ -582,6 +582,9 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 			return Result{}, fmt.Errorf("commands: command %d (%s): %w", i, c.spec.typ, err)
 		}
 	}
+	if err := t.addCounts(ctx); err != nil {
+		return Result{}, err
+	}
 	if err := t.recordUsage(ctx); err != nil {
 		return Result{}, err
 	}

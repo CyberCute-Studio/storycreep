@@ -1120,12 +1120,13 @@ func meter(t *testing.T, key usage.Key, delta int64) Command {
 	return command(t, noteMeter, meterPayload{Key: string(key), Delta: delta}, nil)
 }
 
-// TestUsage checks that what a batch's commands add to the workspace's usage
-// is recorded with the batch, as one delta of each key that it changes, and
-// not at all for a batch that does not apply, and that a command may add to
-// no limit of the plans that it does not declare, nor outside its Apply, and
-// a batch no more to a limit than its commands declared, which is all that
-// the limit was checked for (FR-ENT-02).
+// TestUsage checks that what a batch's commands add to the workspace's usage,
+// then or once every command of the batch has applied, is recorded with the
+// batch, as one delta of each key that it changes, and not at all for a
+// batch that does not apply, and that a command may add to no limit of the
+// plans that it does not declare, nor outside its Apply, and a batch no more
+// to a limit than its commands declared, which is all that the limit was
+// checked for (FR-ENT-02).
 func TestUsage(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -1135,6 +1136,11 @@ func TestUsage(t *testing.T) {
 	// nothing to the projects limit.
 	undeclared := func(key usage.Key, delta int64) Command {
 		return command(t, noteMeter, meterPayload{Key: string(key), Delta: delta, Undeclared: true}, nil)
+	}
+	// later adds delta to the usage of key once every command of the batch
+	// has applied.
+	later := func(key usage.Key, delta int64) Command {
+		return command(t, noteMeter, meterPayload{Key: string(key), Delta: delta, Later: true}, nil)
 	}
 	for _, b := range []struct {
 		name  string
@@ -1154,17 +1160,26 @@ func TestUsage(t *testing.T) {
 			"the batch adds 2 to projects, but its commands declared 1"},
 		{"to a limit, what the batch takes away", []Command{meter(t, usage.Projects, -1),
 			undeclared(usage.Projects, 1)}, ""},
+		{"once the batch has applied", []Command{later(usage.Boards, 2), meter(t, usage.Boards, 3)}, ""},
+		{"once the batch has applied, to a limit that the command does not declare",
+			[]Command{later(usage.StorageBytes, 1)}, "does not declare"},
 	} {
 		_, err := p.Apply(ctx, w.as(editorUser), w.project, b.batch)
 		if b.fails == "" && err != nil || b.fails != "" && (err == nil || !strings.Contains(err.Error(), b.fails)) {
 			t.Errorf("%s: %v, want %q", b.name, err, b.fails)
 		}
 	}
-	if got, want := w.deltas(t), []string{"nodes 5", "projects 1", "storage_bytes -5"}; !slices.Equal(got, want) {
+	if got, want := w.deltas(t), []string{"boards 5", "nodes 5", "projects 1", "storage_bytes -5"}; !slices.Equal(got,
+		want) {
 		t.Errorf("the batches recorded the deltas %q, want %q", got, want)
 	}
 	if err := (&Tx{}).AddUsage(usage.Nodes, 1); err == nil {
 		t.Error("AddUsage outside a command's Apply succeeded")
+	}
+	if err := (&Tx{}).AddUsageOnceApplied(usage.Nodes, func(context.Context) (int64, error) {
+		return 1, nil
+	}); err == nil {
+		t.Error("AddUsageOnceApplied outside a command's Apply succeeded")
 	}
 }
 

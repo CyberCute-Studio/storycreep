@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -211,6 +212,28 @@ func TestBoardRefusals(t *testing.T) {
 			t.Errorf("a project's slug %q: %d %s", slug, res.status, res.body)
 		}
 	}
+	// A slug is answered alike, for each reason, on every route that takes
+	// one, a workspace's as a board's.
+	for slug, reason := range map[string]string{"con": "reserved", "Docks.json": "format"} {
+		var messages []string
+		for _, res := range []response{
+			call(s.main, http.MethodPost, commandsPath(p.ID), commandBatch(t, boardCommand("board.create",
+				map[string]string{"id": newBoardID(), "name": "Docks", "slug": slug})), owner.header(true)),
+			call(s.main, http.MethodPatch, workspacesPath+"/"+ws, jsonBody(t, map[string]string{"slug": slug}),
+				owner.header(true)),
+		} {
+			_, _, details := problemsOf(t, res)
+			if problems, _ := details["errors"].([]any); len(problems) == 1 && details["reason"] == reason {
+				problem, _ := problems[0].(map[string]any)
+				message, _ := problem["message"].(string)
+				messages = append(messages, message)
+			}
+		}
+		if len(messages) != 2 || messages[0] == "" || messages[0] != messages[1] {
+			t.Errorf("the slug %q is answered with the messages %q by a board's command and a workspace's route, "+
+				"want one message", slug, messages)
+		}
+	}
 	got := projectFrom(t, call(s.main, http.MethodPatch, projectPath(p.ID), jsonBody(t, map[string]string{
 		"slug": "harbour-tales", "name": "Lighthouse"}), owner.header(true)), http.StatusOK)
 	if got.Slug != "harbour-tales" || got.Name != "Lighthouse" {
@@ -221,5 +244,18 @@ func TestBoardRefusals(t *testing.T) {
 	if res := call(s.main, http.MethodGet, boardPath(p.ID, taken), nil, owner.header(false)); res.status !=
 		http.StatusOK || json.Unmarshal(res.body, &b) != nil || b.Name != "Pier" || b.Rev != 1 {
 		t.Errorf("after the refusals, the board is %d %s", res.status, res.body)
+	}
+}
+
+// TestFolderKinds checks that the kind by which GET
+// /api/v1/projects/{project_id}/folders filters takes the kinds of folder
+// that package board lists, which its commands' payloads and its answers take
+// too (board's TestSchemaEnums), so that a kind added to the list and not to
+// the route's enum, or to the enum and not to the list, fails.
+func TestFolderKinds(t *testing.T) {
+	t.Parallel()
+	f, ok := reflect.TypeFor[foldersInput]().FieldByName("Kind")
+	if got, want := f.Tag.Get("enum"), strings.Join(board.Kinds, ","); !ok || got != want {
+		t.Errorf("the route's kind takes %q, want %q", got, want)
 	}
 }

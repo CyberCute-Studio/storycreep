@@ -75,24 +75,41 @@ SELECT (
 -- name: LastSortKeys :one
 -- LastSortKeys returns the greatest order of the project's children of the
 -- folder parent_id of the kind kind, or of those at the top if parent_id is
--- null, but for the child moved, if it is not null, which moves there: its
--- folders, and, for a folder of boards, its boards, deleted ones included, so
--- that one restored later keeps its place, as last, and the greatest of
--- those that are not deleted as last_live, each an empty string if there is
--- none.
-SELECT coalesce(max(c.sort_key), '')::text AS last,
-    coalesce(max(c.sort_key) FILTER (WHERE NOT c.deleted), '')::text AS last_live
-FROM (
-    SELECT f."order" AS sort_key, f.deleted_at IS NOT NULL AS deleted FROM folder f
+-- null, but for the folder moved_folder, or the board moved_board, if it is
+-- not null, which moves there: its folders, and, for a folder of boards, its
+-- boards, deleted ones included, so that one restored later keeps its place,
+-- as last, or an empty string if there is none, and the last of those that
+-- are not deleted, in the order of the children, by their orders and then
+-- their IDs, as last_live, with its ID as last_live_id, or an empty string
+-- and null if there is none. The child moved is left out of its own table
+-- alone, so that a child of the other table with the same UUID, which a
+-- client may give it, still counts. Each table is read by a branch for the
+-- children of a folder and one for those at the top, so that the index of
+-- the children's parent finds them in a plan made for any parent_id, which a
+-- condition that takes either kind of parent keeps it from.
+WITH c (id, sort_key, deleted) AS (
+    SELECT f.id, f."order", f.deleted_at IS NOT NULL FROM folder f
     WHERE f.workspace_id = @workspace_id AND f.project_id = @project_id AND f.kind = @kind
-        AND (f.parent_id = sqlc.narg(parent_id)::uuid OR sqlc.narg(parent_id)::uuid IS NULL AND f.parent_id IS NULL)
-        AND f.id IS DISTINCT FROM sqlc.narg(moved)::uuid
+        AND f.parent_id = sqlc.narg(parent_id)::uuid AND f.id IS DISTINCT FROM sqlc.narg(moved_folder)::uuid
     UNION ALL
-    SELECT b."order", b.deleted_at IS NOT NULL FROM board b
+    SELECT f.id, f."order", f.deleted_at IS NOT NULL FROM folder f
+    WHERE sqlc.narg(parent_id)::uuid IS NULL AND f.workspace_id = @workspace_id AND f.project_id = @project_id
+        AND f.kind = @kind AND f.parent_id IS NULL AND f.id IS DISTINCT FROM sqlc.narg(moved_folder)::uuid
+    UNION ALL
+    SELECT b.id, b."order", b.deleted_at IS NOT NULL FROM board b
     WHERE @kind::text = 'board' AND b.workspace_id = @workspace_id AND b.project_id = @project_id
-        AND (b.folder_id = sqlc.narg(parent_id)::uuid OR sqlc.narg(parent_id)::uuid IS NULL AND b.folder_id IS NULL)
-        AND b.id IS DISTINCT FROM sqlc.narg(moved)::uuid
-) c;
+        AND b.folder_id = sqlc.narg(parent_id)::uuid AND b.id IS DISTINCT FROM sqlc.narg(moved_board)::uuid
+    UNION ALL
+    SELECT b.id, b."order", b.deleted_at IS NOT NULL FROM board b
+    WHERE @kind::text = 'board' AND sqlc.narg(parent_id)::uuid IS NULL AND b.workspace_id = @workspace_id
+        AND b.project_id = @project_id AND b.folder_id IS NULL
+        AND b.id IS DISTINCT FROM sqlc.narg(moved_board)::uuid
+), live AS (
+    SELECT c.id, c.sort_key FROM c WHERE NOT c.deleted ORDER BY c.sort_key DESC, c.id DESC LIMIT 1
+)
+SELECT coalesce((SELECT max(c.sort_key) FROM c), '')::text AS last,
+    coalesce((SELECT live.sort_key FROM live), '')::text AS last_live,
+    (SELECT live.id FROM live)::uuid AS last_live_id;
 
 -- name: UpdateFolderName :one
 -- UpdateFolderName renames the folder, unless it has the name already, and
