@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"runtime"
 	"slices"
 	"strconv"
@@ -66,6 +67,20 @@ func wantError(t *testing.T, err error, reason Reason, pointer string) {
 	}
 }
 
+// sized returns a document in its canonical form of n bytes, of empty
+// paragraphs and a last paragraph of text.
+func sized(n int) []byte {
+	const (
+		head, tail = `{"content":[`, `],"type":"doc"}`
+		empty      = `{"type":"paragraph"},`
+		textHead   = `{"content":[{"text":"`
+		textTail   = `","type":"text"}],"type":"paragraph"}`
+	)
+	rest := n - len(head) - len(tail) - len(textHead) - len(textTail)
+	m := (rest - 1) / len(empty)
+	return []byte(head + strings.Repeat(empty, m) + textHead + strings.Repeat("x", rest-m*len(empty)) + textTail + tail)
+}
+
 // TestLimits checks the limits of a document, at and over each: its bytes,
 // the characters of its text, how deeply its lists nest, and how long a link
 // is.
@@ -73,13 +88,55 @@ func wantError(t *testing.T, err error, reason Reason, pointer string) {
 // Verifies: NFR-SEC-07
 func TestLimits(t *testing.T) {
 	t.Run("bytes", func(t *testing.T) {
-		doc := paragraphs("x")
-		padded := append(doc, bytes.Repeat([]byte(" "), MaxBytes-len(doc))...)
-		if _, err := Parse(padded); err != nil {
-			t.Errorf("a document of %d bytes: %v", MaxBytes, err)
+		doc := sized(MaxBytes)
+		if len(doc) != MaxBytes {
+			t.Fatalf("sized wrote %d bytes", len(doc))
 		}
-		_, err := Parse(append(padded, ' '))
+		parsed, err := Parse(doc)
+		if err != nil {
+			t.Fatalf("a document of %d bytes: %v", MaxBytes, err)
+		}
+		if got := marshal(t, parsed); !bytes.Equal(got, doc) {
+			t.Error("a document of MaxBytes in its canonical form is written otherwise")
+		}
+		_, err = Parse(sized(MaxBytes + 1))
 		wantError(t, err, TooLarge, "")
+
+		// The white space between tokens is not counted, so that the same
+		// document is within the limit however it is laid out, as jsonb
+		// writes it, with a space after each colon and comma, or indented.
+		spaced := strings.NewReplacer(`:`, `: `, `,`, `, `).Replace(string(doc))
+		var indented bytes.Buffer
+		if err := json.Indent(&indented, doc, "", "\t"); err != nil {
+			t.Fatal(err)
+		}
+		for name, in := range map[string][]byte{"jsonb's": []byte(spaced), "indented": indented.Bytes()} {
+			if len(in) <= MaxBytes {
+				t.Fatalf("%s layout adds no bytes", name)
+			}
+			if _, err := Parse(in); err != nil {
+				t.Errorf("a document of %d bytes, as %s layout writes it: %v", MaxBytes, name, err)
+			}
+		}
+
+		// A canonical form longer than the JSON that Parse read, as an
+		// ordered list's start of 9e5, which is 900000, is within the limit
+		// too, so that every document that Parse returns can be written and
+		// read again.
+		list := func(start string) []byte {
+			const item = `,{"attrs":{"start":%s},"content":[{"content":[{"type":"paragraph"}],"type":"listItem"}],"type":"orderedList"}`
+			n := (MaxBytes - len(`{"content":[{"type":"paragraph"}],"type":"doc"}`)) / len(fmt.Sprintf(item, start))
+			return []byte(`{"content":[{"type":"paragraph"}` + strings.Repeat(fmt.Sprintf(item, start), n) + `],"type":"doc"}`)
+		}
+		_, err = Parse(list("9e5"))
+		wantError(t, err, TooLarge, "")
+		parsed, err = Parse(list("900000"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := json.Marshal(parsed); err != nil {
+			t.Errorf("a document that Parse returned does not marshal: %v", err)
+		}
 	})
 	t.Run("characters", func(t *testing.T) {
 		// Characters are code points, of all the texts together.
@@ -289,6 +346,39 @@ func TestMarshalBuilt(t *testing.T) {
 		`"type":"paragraph"},{"content":[{"content":[{"type":"paragraph"}],"type":"listItem"}],"type":"orderedList"}],"type":"doc"}`
 	if string(got) != want {
 		t.Errorf("a built Doc's canonical form\n%s\nwant\n%s", got, want)
+	}
+}
+
+// TestMarshalParsed checks that a Doc that Parse returned is written in its
+// canonical form, and that one whose nodes a program changes afterwards is
+// checked and written as a built one is, though MarshalJSON writes a parsed
+// Doc without reading it again.
+//
+// Verifies: NFR-SEC-08
+func TestMarshalParsed(t *testing.T) {
+	const canonical = `{"content":[{"content":[{"text":"a","type":"text"}],"type":"paragraph"}],"type":"doc"}`
+	doc, err := Parse([]byte(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a","marks":[]}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := marshal(t, doc); string(got) != canonical {
+		t.Errorf("a parsed Doc: %s", got)
+	}
+	para := doc.Blocks[0].(*Paragraph)
+	text := para.Inlines[0].(*Text)
+	text.Marks.Link = "javascript:alert(1)"
+	if got, err := json.Marshal(doc); err == nil {
+		t.Errorf("a parsed Doc given a javascript: link: %s", got)
+	}
+	text.Marks.Link = ""
+	text.Text = "a\nb"
+	if got, err := json.Marshal(doc); err == nil {
+		t.Errorf("a parsed Doc given a line feed in its text: %s", got)
+	}
+	text.Text = "a"
+	para.Inlines = append(para.Inlines, &Text{Text: "b"})
+	if got := marshal(t, doc); string(got) != strings.Replace(canonical, `"a"`, `"ab"`, 1) {
+		t.Errorf("a parsed Doc given a text: %s", got)
 	}
 }
 

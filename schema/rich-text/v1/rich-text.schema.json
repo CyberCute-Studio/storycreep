@@ -149,34 +149,11 @@
     },
     "list": {
       "additionalProperties": false,
-      "description": "A list, bulleted (bulletList) or numbered (orderedList), of at least one item. Lists nest at most 5 deep.",
-      "oneOf": [
-        {
-          "description": "A bulleted list, which has no attrs.",
-          "properties": {
-            "attrs": {
-              "not": {}
-            },
-            "type": {
-              "const": "bulletList"
-            }
-          },
-          "type": "object"
-        },
-        {
-          "description": "A numbered list.",
-          "properties": {
-            "type": {
-              "const": "orderedList"
-            }
-          },
-          "type": "object"
-        }
-      ],
+      "description": "A list, bulleted (bulletList) or numbered (orderedList), of at least one item. Lists nest at most 5 deep, which the server checks beyond this schema.",
       "properties": {
         "attrs": {
           "additionalProperties": false,
-          "description": "An orderedList's attributes.",
+          "description": "An orderedList's attributes. A bulletList has none, which the server checks beyond this schema.",
           "properties": {
             "start": {
               "description": "The number of the first item, 1 when it is not given.",

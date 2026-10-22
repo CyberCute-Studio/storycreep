@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -28,7 +29,8 @@ const SchemaPath = "schema/rich-text/v1/rich-text.schema.json"
 // over MaxBytes or MaxChars, a list item that does not start with a
 // paragraph, a mark twice, the code mark with another, a link that CheckHref
 // refuses beyond the schema's pattern, and a string that escapes a lone
-// surrogate.
+// surrogate; and what the schema could say only in keywords that the API's
+// tooling does not read, attrs on a bulletList.
 //
 // A validator's work on the schema grows with a document's size, whatever
 // the document holds, as the API's validation of a request needs (PRD
@@ -36,7 +38,9 @@ const SchemaPath = "schema/rich-text/v1/rich-text.schema.json"
 // a validator, which tries every branch, does not read a list's content once
 // for each kind of list, and twice as often at each depth; and no array is
 // uniqueItems, which huma checks in time that grows with the square of the
-// array's length.
+// array's length. The schema has only the keywords that package apicontract
+// reads, so that the API's OpenAPI document, which holds it for a Doc field,
+// loads and generates the TypeScript client's types.
 func Schema() []byte {
 	examples := make([]any, len(schemaExamples))
 	for i, ex := range schemaExamples {
@@ -145,7 +149,8 @@ func (c humaConverter) ref(name string) *huma.Schema {
 
 // schema converts the schema v, as JSON decodes it, into huma's. It panics
 // on a keyword that it does not convert, so that a keyword that huma would
-// not check cannot pass unnoticed.
+// not check, or that package apicontract would not read in the API's OpenAPI
+// document, as "not", cannot pass unnoticed.
 func (c humaConverter) schema(v any) *huma.Schema {
 	m, ok := v.(map[string]any)
 	if !ok {
@@ -201,8 +206,6 @@ func (c humaConverter) schema(v any) *huma.Schema {
 			for _, o := range x.([]any) {
 				s.OneOf = append(s.OneOf, c.schema(o))
 			}
-		case "not":
-			s.Not = c.schema(x)
 		default:
 			panic("richtext: the schema has the keyword " + k + ", which the conversion to huma does not convert")
 		}
@@ -239,23 +242,18 @@ func definitions(prefix string) obj {
 	mark := func(name, description string) obj {
 		return describe(object(obj{"type": typ(name)}, "type"), description)
 	}
+	// Both kinds of list are one definition, whose content is read once. That
+	// a bulletList has no attrs is the server's to check: a schema that says
+	// so needs a oneOf beside the list's properties and a "not", which
+	// package apicontract, which reads the API's OpenAPI document that holds
+	// this schema for a Doc field, does not read.
 	list := object(obj{
 		"attrs": describe(object(obj{"start": describe(obj{"type": "integer", "minimum": 0, "maximum": MaxStart},
-			"The number of the first item, 1 when it is not given.")}), "An orderedList's attributes."),
+			"The number of the first item, 1 when it is not given.")}),
+			"An orderedList's attributes. A bulletList has none, which the server checks beyond this schema."),
 		"content": nodes(ref("listItem"), 1),
 		"type":    obj{"enum": []string{nodeBulletList, nodeOrderedList}},
 	}, "content", "type")
-	// The kind of a list decides only whether it may have attrs, which these
-	// branches check without its content, which the list's properties check
-	// once. A schema that nothing matches, {"not": {}}, is JSON Schema's
-	// false, which huma does not read. huma checks properties only where a
-	// schema says that it is of an object, which JSON Schema needs nowhere
-	// here.
-	list["oneOf"] = []obj{
-		describe(obj{"type": "object", "properties": obj{"attrs": obj{"not": obj{}}, "type": typ(nodeBulletList)}},
-			"A bulleted list, which has no attrs."),
-		describe(obj{"type": "object", "properties": obj{"type": typ(nodeOrderedList)}}, "A numbered list."),
-	}
 	return obj{
 		"doc": describe(object(obj{"content": nodes(ref("block"), 1), "type": typ(nodeDoc)}, "content", "type"),
 			"A document: its blocks, at least one. The editor's empty document is one empty paragraph."),
@@ -263,7 +261,7 @@ func definitions(prefix string) obj {
 		"paragraph": describe(object(obj{"content": nodes(ref("inline"), 0), "type": typ(nodeParagraph)}, "type"),
 			"A paragraph, which may be empty."),
 		"list": describe(list, "A list, bulleted (bulletList) or numbered (orderedList), of at least one item. "+
-			"Lists nest at most 5 deep."),
+			fmt.Sprintf("Lists nest at most %d deep, which the server checks beyond this schema.", MaxListDepth)),
 		"listItem": describe(object(obj{
 			"content": nodes(ref("block"), 1),
 			"type":    typ(nodeListItem),
@@ -275,7 +273,8 @@ func definitions(prefix string) obj {
 			"text":  obj{"type": "string", "minLength": 1, "pattern": textPattern},
 			"type":  typ(nodeText),
 		}, "text", "type"), "Text, without control characters or line and paragraph separators: a line break is a "+
-			"hardBreak, and a paragraph a paragraph. A document's texts hold at most 100,000 characters together."),
+			"hardBreak, and a paragraph a paragraph. "+
+			fmt.Sprintf("A document's texts hold at most %s characters together.", thousands(MaxChars))),
 		"hardBreak": describe(object(obj{"marks": ref("marks"), "type": typ(nodeHardBreak)}, "type"),
 			"A line break within a paragraph."),
 		"mention": describe(object(obj{
@@ -330,6 +329,16 @@ func object(properties obj, required ...string) obj {
 func describe(schema obj, description string) obj {
 	schema["description"] = description
 	return schema
+}
+
+// thousands writes n, which is not negative, with a comma between each group
+// of three digits, as 100,000.
+func thousands(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }
 
 // id returns the schema of a public ID of the entity type k, as package ids

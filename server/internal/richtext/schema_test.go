@@ -2,10 +2,12 @@ package richtext
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,6 +18,9 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/humatest"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/apicontract"
 )
 
 var update = flag.Bool("update", false, "rewrite the published rich-text JSON Schema from Schema")
@@ -320,6 +325,46 @@ func TestDocField(t *testing.T) {
 	}
 	if _, ok := reg.Map()["pkg_RichTextBlock"]; !ok {
 		t.Errorf("the registry holds no pkg_RichTextBlock, but %v", slices.Sorted(maps.Keys(reg.Map())))
+	}
+}
+
+// TestDocFieldOpenAPI checks that the API's OpenAPI document, once a
+// request's body holds a Doc field, is one that package apicontract reads,
+// compares, and generates the TypeScript client's types from, as the API's
+// tests and its compatibility check do (PRD FR-API-02): the document's schema
+// has only the keywords that apicontract reads.
+//
+// Verifies: FR-API-02/AC1, FR-API-02/AC2
+func TestDocFieldOpenAPI(t *testing.T) {
+	_, api := humatest.New(t)
+	type input struct {
+		Body struct {
+			Text  Doc  `json:"text"`
+			Label *Doc `json:"label,omitempty"`
+		}
+	}
+	huma.Register(api, huma.Operation{OperationID: "put-text", Method: http.MethodPost, Path: "/text"},
+		func(context.Context, *input) (*struct{}, error) { return nil, nil })
+	data, err := json.Marshal(api.OpenAPI())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := apicontract.Load(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changes := apicontract.Breaking(d, d); len(changes) > 0 {
+		t.Errorf("the document breaks itself: %v", changes)
+	}
+	ts, err := apicontract.TypeScript(d, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"export interface RichTextDoc ", "export type RichTextBlock = RichTextParagraph | RichTextList;",
+		"text: RichTextDoc;", "label?: RichTextDoc;"} {
+		if !strings.Contains(string(ts), want) {
+			t.Errorf("the TypeScript types have no %q", want)
+		}
 	}
 }
 

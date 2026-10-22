@@ -33,7 +33,13 @@ import (
 // The limits of a document (PRD NFR-SEC-07). The JSON Schema states those
 // that it can express.
 const (
-	// MaxBytes is the most bytes of JSON that Parse reads as one document.
+	// MaxBytes is the most bytes of a document's JSON, counted without the
+	// white space between its tokens, so that however the JSON is laid out,
+	// as PostgreSQL's jsonb writes it, with a space after each colon and
+	// comma, the same document is within the limit; and the most bytes of
+	// its canonical form, which can be longer than the JSON that Parse
+	// read, as 9e5 is 900000, so that every document that Parse returns can
+	// be written and read again.
 	MaxBytes = 1 << 20
 	// MaxChars is the most characters, counted as code points, that the
 	// text nodes of a document hold together.
@@ -55,6 +61,10 @@ const (
 // blocks, as the zero Doc, which MarshalJSON writes as one.
 type Doc struct {
 	Blocks []Block
+	// canonical is the canonical form that Parse wrote of the document,
+	// which MarshalJSON writes without reading it again as long as the
+	// document's nodes still write as it.
+	canonical []byte
 }
 
 // Block is a block of a document or of a list item: a *Paragraph or a *List.
@@ -69,8 +79,11 @@ type Paragraph struct {
 // item.
 type List struct {
 	Ordered bool
-	// Start is the number of an ordered list's first item, which is 1 unless
-	// the list says otherwise. A bulleted list's is 1.
+	// Start is the number of an ordered list's first item, from 0 to
+	// MaxStart, which Parse sets to 1 when the document gives none, and to
+	// 1 for a bulleted list. A program that builds an ordered List sets it
+	// too: its zero value is a start of 0, which a document may have, so a
+	// List left without one is numbered from 0.
 	Start int
 	Items []Item
 }
@@ -86,7 +99,11 @@ func (*List) block()      {}
 
 // Inline is the content of a paragraph: a *Text, a *Break, a *Mention, or a
 // *Value.
-type Inline interface{ inline() }
+type Inline interface {
+	// marked returns the node's marks, which every inline node has, for the
+	// parser to set.
+	marked() *Marks
+}
 
 // Text is text, at least one character of it, with its marks. A paragraph
 // never holds two texts with the same marks side by side, which its canonical
@@ -127,10 +144,10 @@ type Value struct {
 	Marks    Marks
 }
 
-func (*Text) inline()    {}
-func (*Break) inline()   {}
-func (*Mention) inline() {}
-func (*Value) inline()   {}
+func (t *Text) marked() *Marks    { return &t.Marks }
+func (b *Break) marked() *Marks   { return &b.Marks }
+func (m *Mention) marked() *Marks { return &m.Marks }
+func (v *Value) marked() *Marks   { return &v.Marks }
 
 // Marks are the marks of an inline node: its formatting, and the link that it
 // is part of. Code is never combined with another mark, as the editor's code
@@ -250,7 +267,8 @@ const (
 	OutOfRange Reason = "out_of_range"
 	// TooDeep is a list nested deeper than MaxListDepth.
 	TooDeep Reason = "too_deep"
-	// TooLarge is a document of more than MaxBytes, or whose text has more
+	// TooLarge is a document of more than MaxBytes, without the white space
+	// between its tokens or in its canonical form, or whose text has more
 	// than MaxChars characters.
 	TooLarge Reason = "too_large"
 )
@@ -282,8 +300,35 @@ func (e *Error) Error() string {
 // the same one; the API refuses such a body before it reads a document in it
 // (FR-API-01 AC2).
 func Parse(data []byte) (*Doc, error) {
-	if len(data) > MaxBytes {
-		return nil, &Error{Reason: TooLarge, Message: fmt.Sprintf("the document is longer than %d bytes", MaxBytes)}
+	doc, _, err := parse(data)
+	return doc, err
+}
+
+// parse reads a document as Parse does, and returns its canonical form too,
+// which it writes to check its length.
+func parse(data []byte) (*Doc, []byte, error) {
+	doc, err := parseDoc(data)
+	if err != nil {
+		return nil, nil, err
+	}
+	canonical, err := doc.wire()
+	if err != nil {
+		// A document that Parse read holds no nil node, which is all that
+		// wire refuses.
+		panic("richtext: a parsed document does not encode: " + err.Error())
+	}
+	if len(canonical) > MaxBytes {
+		return nil, nil, &Error{Reason: TooLarge,
+			Message: fmt.Sprintf("the document's canonical form is longer than %d bytes", MaxBytes)}
+	}
+	doc.canonical = canonical
+	return doc, canonical, nil
+}
+
+func parseDoc(data []byte) (*Doc, error) {
+	if compactLength(data) > MaxBytes {
+		return nil, &Error{Reason: TooLarge,
+			Message: fmt.Sprintf("the document is longer than %d bytes without the white space between its tokens", MaxBytes)}
 	}
 	if !utf8.Valid(data) {
 		return nil, &Error{Reason: InvalidJSON, Message: "the document is not UTF-8"}
@@ -305,6 +350,34 @@ func Parse(data []byte) (*Doc, error) {
 	}
 	var p parser
 	return p.doc(v)
+}
+
+// compactLength returns the length of data without the white space that JSON
+// allows between its tokens, outside its strings: the length of the JSON as
+// it is written without that white space, however it is laid out.
+func compactLength(data []byte) int {
+	n, inString := 0, false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		switch {
+		case inString:
+			n++
+			switch c {
+			case '\\':
+				if i+1 < len(data) {
+					i++
+					n++
+				}
+			case '"':
+				inString = false
+			}
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+		default:
+			n++
+			inString = c == '"'
+		}
+	}
+	return n
 }
 
 // loneSurrogate reports whether a string of data, which is one JSON value,
@@ -386,19 +459,32 @@ type parser struct {
 	// path holds the reference tokens of the pointer to the value being
 	// read. Reading stops at the first error, so a function that fails
 	// leaves the tokens it pushed for the error to name.
-	path []string
+	path []token
 	// chars counts the code points of the text nodes read so far.
 	chars int
 }
 
-func (p *parser) push(token string) { p.path = append(p.path, token) }
-func (p *parser) pop()              { p.path = p.path[:len(p.path)-1] }
+// token is a reference token of a pointer: an object's key, or an array's
+// index, which is written only when an error names it.
+type token struct {
+	key string
+	// index is the array's index, or -1 for an object's key.
+	index int
+}
+
+func (p *parser) push(key string) { p.path = append(p.path, token{key: key, index: -1}) }
+func (p *parser) pushIndex(i int) { p.path = append(p.path, token{index: i}) }
+func (p *parser) pop()            { p.path = p.path[:len(p.path)-1] }
 
 func (p *parser) fail(reason Reason, format string, args ...any) *Error {
 	var b strings.Builder
 	for _, t := range p.path {
 		b.WriteByte('/')
-		b.WriteString(strings.ReplaceAll(strings.ReplaceAll(t, "~", "~0"), "/", "~1"))
+		if t.index >= 0 {
+			b.WriteString(strconv.Itoa(t.index))
+		} else {
+			b.WriteString(strings.ReplaceAll(strings.ReplaceAll(t.key, "~", "~0"), "/", "~1"))
+		}
 	}
 	return &Error{Pointer: b.String(), Reason: reason, Message: fmt.Sprintf(format, args...)}
 }
@@ -561,7 +647,7 @@ func (p *parser) blocks(o map[string]any, typ string, first where, depth int) ([
 		if i > 0 && first == inItemFirst {
 			w = inItem
 		}
-		p.push(strconv.Itoa(i))
+		p.pushIndex(i)
 		b, err := p.block(v, w, depth)
 		if err != nil {
 			return nil, err
@@ -611,7 +697,7 @@ func (p *parser) block(v any, w where, depth int) (Block, error) {
 		return nil, err
 	}
 	for i, v := range content {
-		p.push(strconv.Itoa(i))
+		p.pushIndex(i)
 		item, _, err := p.node(v, inList)
 		if err != nil {
 			return nil, err
@@ -654,7 +740,7 @@ func (p *parser) paragraph(o map[string]any) (*Paragraph, error) {
 	}
 	inlines := make([]Inline, 0, len(content))
 	for i, v := range content {
-		p.push(strconv.Itoa(i))
+		p.pushIndex(i)
 		in, err := p.inline(v)
 		if err != nil {
 			return nil, err
@@ -722,16 +808,7 @@ func (p *parser) inline(v any) (Inline, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch in := in.(type) {
-	case *Text:
-		in.Marks = marks
-	case *Break:
-		in.Marks = marks
-	case *Mention:
-		in.Marks = marks
-	case *Value:
-		in.Marks = marks
-	}
+	*in.marked() = marks
 	return in, nil
 }
 
@@ -866,7 +943,7 @@ func (p *parser) marks(o map[string]any) (Marks, error) {
 		return m, p.fail(WrongType, "marks is not an array")
 	}
 	for i, v := range a {
-		p.push(strconv.Itoa(i))
+		p.pushIndex(i)
 		mo, ok := v.(map[string]any)
 		if !ok {
 			return m, p.fail(WrongType, "a mark is not an object")
@@ -909,7 +986,7 @@ func (p *parser) marks(o map[string]any) (Marks, error) {
 			}
 			m.Link = href
 		}
-		if m.Code && len(m.names()) > 1 {
+		if m.Code && (m.Bold || m.Italic || m.Strike || m.Link != "") {
 			return m, p.fail(ExcludedMark, "the code mark is not combined with other marks")
 		}
 		p.pop()
@@ -1094,18 +1171,24 @@ func asciiLower(s string) string {
 // does, is checked as one that a client sends is: MarshalJSON reads what it
 // writes with Parse, and refuses a Doc that Parse would refuse, as one with a
 // javascript: link, rather than write it, and writes the canonical form of
-// one that Parse accepts, so that what is stored is always a document that
-// Parse returns.
+// one that Parse accepts, which Parse writes as it checks its length, so
+// that what is stored is always a document that Parse returns. A Doc that
+// Parse returned is not read again while its nodes write the canonical form
+// that Parse wrote: one whose nodes a program has changed since is read
+// again, as a built one is.
 func (d Doc) MarshalJSON() ([]byte, error) {
 	data, err := d.wire()
 	if err != nil {
 		return nil, err
 	}
-	parsed, err := Parse(data)
+	if d.canonical != nil && bytes.Equal(data, d.canonical) {
+		return data, nil
+	}
+	_, canonical, err := parse(data)
 	if err != nil {
 		return nil, fmt.Errorf("richtext: the document is not one that Parse accepts: %w", err)
 	}
-	return parsed.wire()
+	return canonical, nil
 }
 
 // wire writes the document as JSON, as it holds it.

@@ -4,7 +4,7 @@ The rich text of a project's content, node bodies, connection labels, and compon
 
 | File | Contents |
 | --- | --- |
-| [`v1/rich-text.schema.json`](v1/rich-text.schema.json) | The JSON Schema of a document, version 1, with examples. Its `$id` is the URL of the file on the main branch. `server/internal/richtext` generates it, and `go test ./...` fails when it is out of date; `go test ./internal/richtext -run TestSchemaFile -update`, in `server/`, rewrites it. It is shaped so that a validator's work grows with a document's size, whatever the document holds: of the branches of each `oneOf`, only one holds blocks, so both kinds of list are one definition, `list`, and no array is `uniqueItems`. |
+| [`v1/rich-text.schema.json`](v1/rich-text.schema.json) | The JSON Schema of a document, version 1, with examples. Its `$id` is the URL of the file on the main branch. `server/internal/richtext` generates it, and `go test ./...` fails when it is out of date; `go test ./internal/richtext -run TestSchemaFile -update`, in `server/`, rewrites it. It is shaped so that a validator's work grows with a document's size, whatever the document holds: of the branches of each `oneOf`, only one holds blocks, so both kinds of list are one definition, `list`, and no array is `uniqueItems`. It has only the keywords that the API's OpenAPI tooling reads, since the API's document holds it for a field of rich text, so it has no `not`, and no `oneOf` beside an object's properties, which a bulleted list's lack of `attrs` would need. |
 | [`vectors.json`](vectors.json) | The test vectors of the validation and of the derivations below. The Go package `server/internal/richtext` runs every vector, and so will the TypeScript client, the editor's validation (plan item 57) and the play mode's segments (item 71), so that the implementations cannot drift apart. |
 
 ## The document
@@ -32,10 +32,12 @@ What follows the authority, or the address, may hold any character but those abo
 
 ### Limits and what the server checks beyond the schema
 
-Every document that the server accepts validates against the JSON Schema. The server also refuses what JSON Schema does not express (PRD NFR-SEC-07):
+Every document that the server accepts validates against the JSON Schema. The server also refuses what JSON Schema does not express, and what the schema leaves out so that the API's tooling reads it (PRD NFR-SEC-07):
 
-- A document of more than 1 MiB of JSON, or whose texts hold more than 100,000 characters together, counted as code points.
+- A document of more than 1 MiB (1,048,576 bytes of UTF-8) of JSON, counted without the white space between its tokens, so that whether a document is within the limit does not depend on how it is laid out, as PostgreSQL's `jsonb` lays it out, with a space after each `:` and `,`; or whose canonical form, below, is longer than 1 MiB, which it can be when the JSON writes a number shorter, as `9e5` for 900000, so that every document that the server accepts can be written and read again.
+- A document whose texts hold more than 100,000 characters together, counted as code points.
 - Lists nested more than 5 deep: a list in no list is at depth 1.
+- `attrs` on a `bulletList`.
 - A list item that does not start with a paragraph.
 - A mark twice, as two links, or the code mark with another.
 - A link that the rules above refuse beyond the schema's pattern, which checks its scheme and refuses ASCII white space and control characters: one with white space beyond ASCII or a format character, a `%` that starts no escape, an authority without a host or with a character that it may not hold, or a port that is not a number.
@@ -74,7 +76,7 @@ The server refuses a document with a reason and a JSON Pointer (RFC 6901) to the
 | `reference` | An ID is not one, or of another type than it must be, or a value names an attribute of a variable, or none of a component. |
 | `out_of_range` | An integer is outside its range. |
 | `too_deep` | Lists nest more than 5 deep. |
-| `too_large` | The document has more than 1 MiB of JSON or 100,000 characters of text. |
+| `too_large` | The document has more than 1 MiB of JSON, without the white space between its tokens or in its canonical form, or 100,000 characters of text. |
 
 ## Segments
 
