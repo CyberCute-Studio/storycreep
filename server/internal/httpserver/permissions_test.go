@@ -439,6 +439,10 @@ var permissionMatrix = []struct {
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, foldersPath(f.project(t, "")), nil, si.header(false))
 				}},
+			{name: "list a project's trash", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, projectTrashPath(f.project(t, "")), nil, si.header(false))
+				}},
 		},
 	},
 	{

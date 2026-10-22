@@ -47,6 +47,8 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/boards"}:            scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/boards/{board_id}"}: scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/folders"}:           scope.ProjectRead,
+	// So is its trash, from which its commands restore what it holds.
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/trash"}: scope.ProjectRead,
 }
 
 // operationOf returns the operation of the route r in the OpenAPI document,

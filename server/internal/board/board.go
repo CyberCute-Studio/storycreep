@@ -26,9 +26,11 @@
 //
 // A deleted board goes to the project's trash, from which restoring it
 // brings it back where it was, with the folders above it that were deleted
-// since (plan item 31 adds the trash's list and its purge). A folder is
-// deleted only once it holds nothing but what is in the trash, and stays,
-// deleted, so that the boards in the trash still name it.
+// since (package trash lists the trash, and purges what has been in it for
+// 30 days). A folder is deleted only once it holds nothing but what is in the
+// trash, and stays, deleted, so that the boards in the trash still name it.
+// The reads of what is not in the trash read the live views of the boards
+// and the folders, live_board and live_folder, which leave the trash out.
 //
 // Every command needs project:write of an API token (FR-AUTH-04), and of the
 // actor's role on the project (§5.6) "Create/rename/archive boards" for a
@@ -238,7 +240,7 @@ func (s *Service) List(ctx context.Context, actor commands.Actor, projectID, aft
 			return fmt.Errorf("board: list the boards: %w", err)
 		}
 		for _, row := range rows {
-			out = append(out, boardOf(row.Board))
+			out = append(out, boardOf(queries.Board(row.LiveBoard)))
 		}
 		return nil
 	})
@@ -259,7 +261,7 @@ func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID, boar
 		case err != nil:
 			return fmt.Errorf("board: read the board: %w", err)
 		}
-		out = boardOf(row.Board)
+		out = boardOf(queries.Board(row.LiveBoard))
 		return nil
 	})
 	return out, err
@@ -280,7 +282,7 @@ func (s *Service) Folders(ctx context.Context, actor commands.Actor, projectID i
 			return fmt.Errorf("board: list the folders: %w", err)
 		}
 		for _, row := range rows {
-			out = append(out, folderOf(row.Folder))
+			out = append(out, folderOf(queries.Folder(row.LiveFolder)))
 		}
 		return nil
 	})
