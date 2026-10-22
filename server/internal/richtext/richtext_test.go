@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // paragraphs returns a document of a paragraph of each text.
@@ -385,8 +386,33 @@ func TestDeriveBuilt(t *testing.T) {
 		t.Errorf("the stored Doc's text is %q", want.Text)
 	}
 	// Deriving leaves the built Doc as it was.
-	if len(built.Blocks[0].(*Paragraph).Inlines) != 11 {
+	inlines := built.Blocks[0].(*Paragraph).Inlines
+	if len(inlines) != 11 || inlines[0].(*Text).Text != "a" || inlines[1].(*Text).Text != "b" ||
+		inlines[4].(*Mention).Component != "cmp_01hq8z7kd3m9p2w5xrtvnq4bcf" ||
+		inlines[6].(*Value).Ref != "CMP_01HQ8Z7KD3M9P2W5XRTVNQ4BCF" || inlines[6].(*Value).Attribute != "atr_01hq8z8m4k7r2w9xtvnpq5dcbf" {
 		t.Error("Derive changed the built Doc")
+	}
+}
+
+// TestDeriveNilNodes checks that Derive gives a nil node of a Doc that a
+// program built, which MarshalJSON refuses, no segment, rather than panic or
+// derive a segment of no kind.
+func TestDeriveNilNodes(t *testing.T) {
+	names := readVectors(t).names()
+	a, b := &Text{Text: "a"}, &Text{Text: "b", Marks: Marks{Bold: true}}
+	plain := Doc{Blocks: []Block{&Paragraph{Inlines: []Inline{a, b}},
+		&List{Items: []Item{{Blocks: []Block{&Paragraph{Inlines: []Inline{b}}}}}}}}
+	want := marshal(t, plain.Segments(names))
+	for name, d := range map[string]Doc{
+		"untyped": {Blocks: []Block{&Paragraph{Inlines: []Inline{a, nil, b}}, nil,
+			&List{Items: []Item{{Blocks: []Block{&Paragraph{Inlines: []Inline{nil, b}}, nil}}}}}},
+		"typed": {Blocks: []Block{&Paragraph{Inlines: []Inline{a, (*Text)(nil), (*Break)(nil), (*Mention)(nil), (*Value)(nil), b}},
+			(*Paragraph)(nil), (*List)(nil),
+			&List{Items: []Item{{Blocks: []Block{&Paragraph{Inlines: []Inline{(*Text)(nil), b}}, (*List)(nil), (*Paragraph)(nil)}}}}}},
+	} {
+		if got := marshal(t, d.Derive(names).Segments); !bytes.Equal(got, want) {
+			t.Errorf("%s nil nodes: %s, want %s", name, got, want)
+		}
 	}
 }
 
@@ -466,10 +492,11 @@ func TestPlainTextBuilt(t *testing.T) {
 	}
 }
 
-// TestCheckHref checks the links' allowlist: http and https URLs with a host
-// and no userinfo, which could show another host, and mailto URLs that set no
-// field but to, cc, bcc, subject, and body, and nothing that could run a
-// script or read a file.
+// TestCheckHref checks the links' allowlist: http and https URLs with a host,
+// of no character beyond ASCII but letters, marks, and numbers, a port of at
+// most 65535, and no userinfo, which could show another host, and mailto URLs
+// without a # that set no field but to, cc, bcc, subject, and body, and
+// nothing that could run a script or read a file.
 //
 // Verifies: NFR-SEC-08
 func TestCheckHref(t *testing.T) {
@@ -484,6 +511,13 @@ func TestCheckHref(t *testing.T) {
 		"https://example.com:/",
 		"https://cs.wikipedia.org/wiki/Příliš",
 		"https://příliš.example/",
+		// Letters, marks, and numbers beyond ASCII: a combining acute accent,
+		// and an Arabic-Indic digit three.
+		"https://cafe" + string(rune(0x0301)) + "-" + string(rune(0x0663)) + ".example/",
+		"https://example.com:65535/",
+		"https://example.com:000080/",
+		// What follows the authority may hold what a host may not.
+		"https://example.com/a" + string(rune(0x2215)) + "b",
 		"https://example.com/a%C3%A9?q=%20#%2F",
 		// What a browser escapes in a path, a query, or a fragment.
 		"https://example.com/a|b?q={x}&r=\"<y>\"#^`",
@@ -494,8 +528,7 @@ func TestCheckHref(t *testing.T) {
 		// The fields that say what a message is sent to and what it says, in
 		// any ASCII case, and empty ones.
 		"mailto:keeper@example.com?to=mira@example.com&CC=a@example.com&Bcc=b@example.com&subject=a%26b&body=x=y",
-		"mailto:keeper@example.com?&subject=&&body=a?b#attach=x",
-		"mailto:keeper@example.com#x",
+		"mailto:keeper@example.com?&subject=&&body=a?b%23c",
 	} {
 		if problem := CheckHref(href); problem != "" {
 			t.Errorf("CheckHref(%q) = %q, want none", href, problem)
@@ -550,6 +583,29 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com?subject=a&body=b&x-attach=c",
 		"mailto:?to=keeper@example.com",
 		"mailto:#a",
+		// A #, after which a mail client that reads the fields between the
+		// first ? and the &s, without cutting a fragment off, reads one.
+		"mailto:keeper@example.com#x",
+		"mailto:keeper@example.com#?attach=/home/keeper/.ssh/id_rsa",
+		"mailto:keeper@example.com?to=x#&attach=/etc/passwd",
+		"mailto:keeper@example.com?&subject=&&body=a?b#attach=x",
+		// A port that no browser takes.
+		"https://example.com:65536/",
+		"https://example.com:99999999999999999999/",
+		// Bytes that are not UTF-8, which would be read as U+FFFD.
+		"https://\xffevil.example/",
+		"https://exa\xc0\xafmple/",
+		"https://example.com/\xff",
+		// A character beyond ASCII in a host that is no letter, mark, or
+		// number, and that could look like a delimiter: IDNA keeps U+2215
+		// DIVISION SLASH and U+2044 FRACTION SLASH in the host, which is then
+		// a host of evil.example, and reads U+3002 as a dot.
+		"https://bank.example" + string(rune(0x2215)) + "login.evil.example/",
+		"https://bank.example" + string(rune(0x2044)) + "login.evil.example/",
+		"https://bank.example" + string(rune(0xFF0F)) + "login.evil.example/",
+		"https://bank.example" + string(rune(0x3002)) + "evil.example/",
+		"https://bank.example" + string(rune(0xFF20)) + "evil.example/",
+		"https://bank" + string(rune(0x2024)) + "example/",
 		// A host with what it does not hold, as a backslash, which a browser
 		// reads as a slash, so that the host would be another.
 		"https://example.com\\@evil.example/",
@@ -620,6 +676,17 @@ func TestErrorString(t *testing.T) {
 	if got := e.Error(); got != "rich text: the document: the document is longer than 1048576 bytes" {
 		t.Errorf("Error() = %s", got)
 	}
+
+	// A field's name that a client chose is cut in Error to its first 40
+	// characters, in the pointer as in the message, but kept whole in the
+	// pointer, which names what the document holds.
+	long := strings.Repeat("ž", 500_000)
+	_, err := Parse([]byte(`{"type":"doc","content":[{"type":"paragraph","` + long + `":1}]}`))
+	wantError(t, err, UnknownField, "/content/0/"+long)
+	cut := strings.Repeat("ž", 40)
+	if got := err.Error(); got != `rich text: /content/0/`+cut+`…: the paragraph has no field "`+cut+`"` {
+		t.Errorf("Error() = %.200s, %d bytes", got, len(got))
+	}
 }
 
 // TestPointerEscapes checks that a field's name is escaped in the pointer
@@ -660,8 +727,10 @@ func resolve(v any, pointer string) (any, bool) {
 }
 
 // FuzzParse checks that Parse never panics, that its canonical form is a
-// fixed point that the schema accepts and that derives without panicking, and
-// that every error has a known reason and points at a value of the input.
+// fixed point that the schema accepts and that derives without panicking,
+// that a Doc that a program builds of the same document out of its canonical
+// form is written as it and derives what it derives, and that every error has
+// a known reason and points at a value of the input.
 func FuzzParse(f *testing.F) {
 	v := readVectors(f)
 	for _, vec := range v.Valid {
@@ -707,5 +776,59 @@ func FuzzParse(f *testing.F) {
 		if d.Text != PlainText(d.Segments) || d.Hash != Hash(d.Text) {
 			t.Fatal("Derive disagrees with PlainText and Hash")
 		}
+		// A program's Doc of the same document, out of its canonical form,
+		// is written as the canonical form and derives what it does.
+		if len(canonical) > MaxBytes/4 {
+			return
+		}
+		built := Doc{Blocks: uncanonical(doc.Blocks)}
+		if b, err := marshalNoEscape(built); err != nil || !bytes.Equal(b, marshal(t, doc)) {
+			t.Fatalf("a built Doc of %s is written as %s (%v)", canonical, b, err)
+		}
+		bd := built.Derive(names)
+		if !bytes.Equal(marshal(t, bd.Segments), marshal(t, d.Segments)) || bd.Text != d.Text || bd.Words != d.Words {
+			t.Fatalf("a built Doc of %s derives\n%s\nand the parsed one\n%s", canonical, marshal(t, bd.Segments),
+				marshal(t, d.Segments))
+		}
 	})
+}
+
+// uncanonical returns a copy of blocks out of their canonical form, as a
+// program could build them: each text of more than one character split after
+// its first, and each ID spelt in lowercase.
+func uncanonical(blocks []Block) []Block {
+	out := make([]Block, len(blocks))
+	for i, b := range blocks {
+		switch b := b.(type) {
+		case *Paragraph:
+			var inlines []Inline
+			for _, in := range b.Inlines {
+				switch in := in.(type) {
+				case *Text:
+					if _, size := utf8.DecodeRuneInString(in.Text); size < len(in.Text) {
+						inlines = append(inlines, &Text{Text: in.Text[:size], Marks: in.Marks},
+							&Text{Text: in.Text[size:], Marks: in.Marks})
+						continue
+					}
+					inlines = append(inlines, &Text{Text: in.Text, Marks: in.Marks})
+				case *Mention:
+					inlines = append(inlines, &Mention{Component: strings.ToLower(in.Component), Marks: in.Marks})
+				case *Value:
+					v := *in
+					v.Ref, v.Attribute = strings.ToLower(v.Ref), strings.ToLower(v.Attribute)
+					inlines = append(inlines, &v)
+				default:
+					inlines = append(inlines, in)
+				}
+			}
+			out[i] = &Paragraph{Inlines: inlines}
+		case *List:
+			l := &List{Ordered: b.Ordered, Start: b.Start}
+			for _, item := range b.Items {
+				l.Items = append(l.Items, Item{Blocks: uncanonical(item.Blocks)})
+			}
+			out[i] = l
+		}
+	}
+	return out
 }

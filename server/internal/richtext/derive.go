@@ -7,8 +7,6 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
 // Names gives the names that a document's derivations show for what it
@@ -163,9 +161,11 @@ type Derived struct {
 // refers to, which names gives and which must not be nil. The document is one
 // that Parse returned, as every stored one is, since MarshalJSON stores no
 // other, or one that a program built and that MarshalJSON writes, which
-// derives what it derives once it is stored: its neighbouring texts with the
-// same marks are one text segment, and its IDs are in their canonical
-// spelling, as Parse writes them. Derive does not check the document.
+// derives what it derives once it is stored, as each paragraph is read in
+// its canonical form, by the rules that Parse reads it by: its neighbouring
+// texts with the same marks are one text segment, and its IDs are in their
+// canonical spelling. Derive does not check the document: a nil node, which
+// MarshalJSON refuses, has no segment.
 func (d *Doc) Derive(names Names) Derived {
 	segs := d.Segments(names)
 	text := PlainText(segs)
@@ -186,12 +186,17 @@ func (d *Doc) Segments(names Names) Segments {
 	for i, b := range d.Blocks {
 		switch b := b.(type) {
 		case *Paragraph:
+			if b == nil {
+				continue
+			}
 			if i > 0 {
 				sg.segs = append(sg.segs, Segment{Kind: SegmentParagraph})
 			}
 			sg.inlines(b.Inlines)
 		case *List:
-			sg.list(b, 1)
+			if b != nil {
+				sg.list(b, 1)
+			}
 		}
 	}
 	return sg.segs
@@ -213,67 +218,61 @@ func (sg *segmenter) list(l *List, depth int) {
 		for j, b := range item.Blocks {
 			switch b := b.(type) {
 			case *Paragraph:
+				if b == nil {
+					continue
+				}
 				if j > 0 {
 					sg.segs = append(sg.segs, Segment{Kind: SegmentParagraph, Depth: depth})
 				}
 				sg.inlines(b.Inlines)
 			case *List:
-				sg.list(b, depth+1)
+				if b != nil {
+					sg.list(b, depth+1)
+				}
 			}
 		}
 	}
 }
 
-// inlines adds the segments of a paragraph's inline nodes. It writes them as
-// they are once stored, so that a paragraph that a program built derives what
-// its canonical form does: it joins neighbouring texts with the same marks,
-// which a parsed paragraph never has, and spells IDs canonically.
+// inlines adds the segments of a paragraph's inline nodes, one for each node
+// of the paragraph's canonical form (canonicalInlines), so that a paragraph
+// that a program built derives what it derives once stored, and none for a
+// nil node.
 func (sg *segmenter) inlines(inlines []Inline) {
-	for i := 0; i < len(inlines); i++ {
+	for _, in := range canonicalInlines(inlines) {
 		var s Segment
-		switch in := inlines[i].(type) {
+		switch in := in.(type) {
 		case *Text:
-			j := i + 1
-			for ; j < len(inlines); j++ {
-				if next, ok := inlines[j].(*Text); !ok || next.Marks != in.Marks {
-					break
-				}
+			if in == nil {
+				continue
 			}
-			text := in.Text
-			if j > i+1 {
-				var b strings.Builder
-				for _, run := range inlines[i:j] {
-					b.WriteString(run.(*Text).Text)
-				}
-				text, i = b.String(), j-1
-			}
-			s = Segment{Kind: SegmentText, Marks: in.Marks.names(), Href: in.Marks.Link, Value: text}
+			s = Segment{Kind: SegmentText, Marks: in.Marks.names(), Href: in.Marks.Link, Value: in.Text}
 		case *Break:
+			if in == nil {
+				continue
+			}
 			s = Segment{Kind: SegmentBreak}
 		case *Mention:
-			ref := canonicalID(in.Component)
+			if in == nil {
+				continue
+			}
 			s = Segment{Kind: SegmentMention, Marks: in.Marks.names(), Href: in.Marks.Link,
-				Ref: ref, Value: sg.names.Component(ref)}
+				Ref: in.Component, Value: sg.names.Component(in.Component)}
 		case *Value:
-			ref, attribute := canonicalID(in.Ref), canonicalID(in.Attribute)
+			if in == nil {
+				continue
+			}
 			s = Segment{Kind: SegmentValue, Marks: in.Marks.names(), Href: in.Marks.Link,
-				Ref: ref, Attribute: attribute, Name: sg.names.Value(ref, attribute)}
+				Ref: in.Ref, Attribute: in.Attribute, Name: sg.names.Value(in.Ref, in.Attribute)}
 			if in.Decimals != nil {
 				d := *in.Decimals
 				s.Decimals = &d
 			}
+		default:
+			continue
 		}
 		sg.segs = append(sg.segs, s)
 	}
-}
-
-// canonicalID returns id in its canonical spelling, as Parse writes it, or id
-// as it is when it is not an ID, as "" is not.
-func canonicalID(id string) string {
-	if kind, u, err := ids.DecodeAny(id); err == nil {
-		return ids.Encode(kind, u)
-	}
-	return id
 }
 
 // PlainText returns the plain text of a document's segments, as the text

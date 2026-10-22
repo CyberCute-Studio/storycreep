@@ -16,6 +16,7 @@ package richtext
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -59,12 +60,19 @@ const (
 // Doc is a document: its blocks, of which Parse returns at least one. The
 // editor's empty document is one empty paragraph, and so is a Doc without
 // blocks, as the zero Doc, which MarshalJSON writes as one.
+//
+// A Doc that Parse returned also holds the hash of its canonical form, which
+// one that a program builds does not, so compare two Docs by what MarshalJSON
+// writes of them, not with reflect.DeepEqual.
 type Doc struct {
 	Blocks []Block
-	// canonical is the canonical form that Parse wrote of the document,
-	// which MarshalJSON writes without reading it again as long as the
-	// document's nodes still write as it.
-	canonical []byte
+	// parsed is set on a Doc that Parse returned, and sum is then the
+	// SHA-256 of the canonical form that Parse wrote of it: MarshalJSON
+	// writes what the document's nodes write without reading it again as
+	// long as it has that hash. A hash, rather than the form, so that a
+	// parsed Doc does not hold its document twice.
+	parsed bool
+	sum    [sha256.Size]byte
 }
 
 // Block is a block of a document or of a list item: a *Paragraph or a *List.
@@ -277,18 +285,42 @@ const (
 type Error struct {
 	// Pointer is the JSON Pointer (RFC 6901) of the value that is wrong,
 	// within the document: "" for the document itself, or for a limit of
-	// the whole document.
+	// the whole document. It names a field that a node may not have as the
+	// document does, however long the name is.
 	Pointer string
 	// Reason says what is wrong.
 	Reason Reason
-	// Message says it in English, for programs and logs.
+	// Message says it in English, for programs and logs. It cuts a name
+	// that the document gives, as a field's, to its first 40 characters.
 	Message string
 }
 
+// maxTokenChars is the most characters of a name that Error and a message
+// write: a field's name comes from a client, and may be most of a megabyte.
+const maxTokenChars = 40
+
+// Error writes the pointer and the message, with each reference token of the
+// pointer that is longer than maxTokenChars characters cut to its first ones
+// and an ellipsis, as the message cuts a name, so that an error, which the API
+// answers with and which a log may hold, does not repeat a name that is most
+// of a megabyte long.
 func (e *Error) Error() string {
 	at := e.Pointer
 	if at == "" {
 		at = "the document"
+	} else {
+		tokens := strings.Split(at, "/")
+		for i, t := range tokens {
+			if utf8.RuneCountInString(t) > maxTokenChars {
+				cut := 0
+				for range maxTokenChars {
+					_, size := utf8.DecodeRuneInString(t[cut:])
+					cut += size
+				}
+				tokens[i] = t[:cut] + "…"
+			}
+		}
+		at = strings.Join(tokens, "/")
 	}
 	return "rich text: " + at + ": " + e.Message
 }
@@ -300,12 +332,18 @@ func (e *Error) Error() string {
 // the same one; the API refuses such a body before it reads a document in it
 // (FR-API-01 AC2).
 func Parse(data []byte) (*Doc, error) {
+	doc, _, err := parse(data)
+	return doc, err
+}
+
+// parse is Parse, and also returns the document's canonical form.
+func parse(data []byte) (*Doc, []byte, error) {
 	doc, err := parseDoc(data)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	// The canonical form is written to check its length, and kept for
-	// MarshalJSON.
+	// The canonical form is written to check its length, and its hash kept
+	// for MarshalJSON.
 	canonical, err := doc.wire()
 	if err != nil {
 		// A document that Parse read holds no nil node and no string that is
@@ -313,11 +351,11 @@ func Parse(data []byte) (*Doc, error) {
 		panic("richtext: a parsed document does not encode: " + err.Error())
 	}
 	if len(canonical) > MaxBytes {
-		return nil, &Error{Reason: TooLarge,
+		return nil, nil, &Error{Reason: TooLarge,
 			Message: fmt.Sprintf("the document's canonical form is longer than %d bytes", MaxBytes)}
 	}
-	doc.canonical = canonical
-	return doc, nil
+	doc.parsed, doc.sum = true, sha256.Sum256(canonical)
+	return doc, canonical, nil
 }
 
 func parseDoc(data []byte) (*Doc, error) {
@@ -546,7 +584,7 @@ func (p *parser) node(v any, w where) (map[string]any, string, error) {
 		return nil, "", p.fail(WrongType, "the node's type is not a string")
 	}
 	if _, known := nodeFields[typ]; !known {
-		return nil, "", p.fail(UnknownNode, "%.40q is not a node of the schema", typ)
+		return nil, "", p.fail(UnknownNode, "%.*q is not a node of the schema", maxTokenChars, typ)
 	}
 	if !w.holds(typ) {
 		return nil, "", p.fail(Content, "%s, not a %s", w.holdsWhat(), typ)
@@ -570,7 +608,7 @@ func (p *parser) fields(o map[string]any, what string, allowed ...string) error 
 	}
 	if found {
 		p.push(unknown)
-		return p.fail(UnknownField, "%s has no field %.40q", what, unknown)
+		return p.fail(UnknownField, "%s has no field %.*q", what, maxTokenChars, unknown)
 	}
 	return nil
 }
@@ -744,40 +782,84 @@ func (p *parser) paragraph(o map[string]any) (*Paragraph, error) {
 		inlines = append(inlines, in)
 	}
 	p.pop()
-	return &Paragraph{Inlines: joinTexts(inlines)}, nil
+	return &Paragraph{Inlines: canonicalInlines(inlines)}, nil
 }
 
-// joinTexts joins each run of neighbouring texts with the same marks into
-// one, as the canonical form does and as ProseMirror does, and returns the
-// inlines, which it reuses. It writes each run's text once, so that a
-// paragraph of many short texts costs no more than their length.
-func joinTexts(inlines []Inline) []Inline {
-	out := inlines[:0]
+// canonicalInlines returns a paragraph's inline nodes as its canonical form
+// holds them: each run of neighbouring texts with the same marks joined into
+// one text, as ProseMirror joins them, and each ID in its canonical spelling.
+// Parse reads a paragraph through it, and so do a document's segments, so
+// that a Doc that a program builds derives what it derives once it is
+// stored, by the same rules. It changes neither inlines nor their nodes: it
+// returns inlines when they are canonical already, and otherwise a new slice,
+// with a new node in place of each that differs. It writes each run's text
+// once, so that a paragraph of many short texts costs no more than their
+// length. A nil node, which MarshalJSON refuses, is kept, and ends a run.
+func canonicalInlines(inlines []Inline) []Inline {
+	// out is nil as long as the inlines are canonical so far.
+	var out []Inline
 	for i := 0; i < len(inlines); {
-		in := inlines[i]
-		j := i + 1
-		if t, ok := in.(*Text); ok {
-			n := len(t.Text)
+		in, j := inlines[i], i+1
+		switch n := in.(type) {
+		case *Text:
+			if n == nil {
+				break
+			}
+			size := len(n.Text)
 			for ; j < len(inlines); j++ {
 				next, ok := inlines[j].(*Text)
-				if !ok || next.Marks != t.Marks {
+				if !ok || next == nil || next.Marks != n.Marks {
 					break
 				}
-				n += len(next.Text)
+				size += len(next.Text)
 			}
 			if j > i+1 {
 				var b strings.Builder
-				b.Grow(n)
+				b.Grow(size)
 				for _, run := range inlines[i:j] {
 					b.WriteString(run.(*Text).Text)
 				}
-				t.Text = b.String()
+				in = &Text{Text: b.String(), Marks: n.Marks}
+			}
+		case *Mention:
+			if n != nil {
+				if id := canonicalID(n.Component); id != n.Component {
+					m := *n
+					m.Component = id
+					in = &m
+				}
+			}
+		case *Value:
+			if n != nil {
+				ref, attribute := canonicalID(n.Ref), canonicalID(n.Attribute)
+				if ref != n.Ref || attribute != n.Attribute {
+					v := *n
+					v.Ref, v.Attribute = ref, attribute
+					in = &v
+				}
 			}
 		}
-		out = append(out, in)
+		if out == nil && in != inlines[i] {
+			out = append(make([]Inline, 0, len(inlines)), inlines[:i]...)
+		}
+		if out != nil {
+			out = append(out, in)
+		}
 		i = j
 	}
+	if out == nil {
+		return inlines
+	}
 	return out
+}
+
+// canonicalID returns id in its canonical spelling, or id as it is when it is
+// not an ID, as "" is not.
+func canonicalID(id string) string {
+	if kind, u, err := ids.DecodeAny(id); err == nil {
+		return ids.Encode(kind, u)
+	}
+	return id
 }
 
 func (p *parser) inline(v any) (Inline, error) {
@@ -903,8 +985,8 @@ func (p *parser) value(o map[string]any) (*Value, error) {
 }
 
 // id reads the ID in field key of attrs, of what, which must be the ID of an
-// entity of one of the kinds, and returns its kind and the ID in its
-// canonical spelling.
+// entity of one of the kinds, and returns its kind and the ID as it is
+// written, which canonicalInlines spells canonically.
 func (p *parser) id(attrs map[string]any, key, what string, kinds ...ids.Kind) (ids.Kind, string, error) {
 	v, ok := attrs[key]
 	if !ok {
@@ -915,7 +997,7 @@ func (p *parser) id(attrs map[string]any, key, what string, kinds ...ids.Kind) (
 	if !ok {
 		return 0, "", p.fail(WrongType, "%s's %s is not a string", what, key)
 	}
-	kind, u, err := ids.DecodeAny(s)
+	kind, _, err := ids.DecodeAny(s)
 	if err != nil || !slices.Contains(kinds, kind) {
 		names := make([]string, len(kinds))
 		for i, k := range kinds {
@@ -924,7 +1006,7 @@ func (p *parser) id(attrs map[string]any, key, what string, kinds ...ids.Kind) (
 		return 0, "", p.fail(Reference, "%s's %s is not the ID of a %s", what, key, strings.Join(names, " or a "))
 	}
 	p.pop()
-	return kind, ids.Encode(kind, u), nil
+	return kind, s, nil
 }
 
 func (p *parser) marks(o map[string]any) (Marks, error) {
@@ -954,7 +1036,7 @@ func (p *parser) marks(o map[string]any) (Marks, error) {
 			return m, p.fail(WrongType, "the mark's type is not a string")
 		}
 		if !slices.Contains(markOrder, typ) {
-			return m, p.fail(UnknownMark, "%.40q is not a mark of the schema", typ)
+			return m, p.fail(UnknownMark, "%.*q is not a mark of the schema", maxTokenChars, typ)
 		}
 		allowed := []string{"type"}
 		if typ == markLink {
@@ -1019,8 +1101,9 @@ func (p *parser) link(mo map[string]any) (string, error) {
 
 // CheckHref says what is wrong with the URL of a link, or returns "", so that
 // no link runs a script or reads a file when it is followed, or hides where it
-// leads (PRD NFR-SEC-08). A link has at most MaxHrefChars characters, counted
-// as code points, none of them white space, a control character, or a format
+// leads (PRD NFR-SEC-08). A link is UTF-8, as every string of a document that
+// Parse reads is, and has at most MaxHrefChars characters, counted as code
+// points, none of them white space, a control character, or a format
 // character (Unicode's Cf, as U+200B, U+202E, or U+FEFF), which would hide or
 // reorder what a reader sees of it, and each % in it starts an escape, % and
 // two hexadecimal digits. It is a mailto URL with an address and only the
@@ -1035,6 +1118,10 @@ func CheckHref(href string) string {
 	switch {
 	case href == "":
 		return "is empty"
+	case !utf8.ValidString(href):
+		// Bytes that are not UTF-8 would be read as U+FFFD, which a host
+		// may hold, and encoding/json would write them as it.
+		return "is not UTF-8"
 	case utf8.RuneCountInString(href) > MaxHrefChars:
 		return fmt.Sprintf("is longer than %d characters", MaxHrefChars)
 	case strings.IndexFunc(href, func(r rune) bool {
@@ -1067,13 +1154,16 @@ func CheckHref(href string) string {
 var mailtoFields = []string{"bcc", "body", "cc", "subject", "to"}
 
 // mailtoProblem says what is wrong with what follows the colon of a mailto
-// link, or returns "". Its address, what is before the first ? or #, is not
-// empty, and each of the fields that & separates in its query, what follows
-// that ? before a #, is empty or a name of mailtoFields, read regardless of
-// ASCII case, followed by =.
+// link, or returns "". It has no #: RFC 6068 gives a mailto URL no fragment,
+// and a mail client that reads its fields after the first ? and between the
+// &s, without cutting a fragment off, would read a field after a #, as attach
+// in mailto:keeper@example.com#?attach=/etc/passwd. Its address, what is
+// before the first ?, is not empty, and each of the fields that & separates
+// in its query, what follows that ?, is empty or a name of mailtoFields, read
+// regardless of ASCII case, followed by =.
 func mailtoProblem(rest string) string {
-	if i := strings.IndexByte(rest, '#'); i >= 0 {
-		rest = rest[:i]
+	if strings.Contains(rest, "#") {
+		return "has a #, which a mailto URL has no use for, and after which a mail client could read a field"
 	}
 	address, query, _ := strings.Cut(rest, "?")
 	if address == "" {
@@ -1088,17 +1178,21 @@ func mailtoProblem(rest string) string {
 	return ""
 }
 
+// maxPort is the highest port, which a browser's URL parser takes.
+const maxPort = 65535
+
 // authorityProblem says what is wrong with the authority of an http or https
 // link, what is between its // and the first /, ?, or # after it, or returns
 // "". It is a host, then a colon and a port when it has one. The host is not
 // empty: an IPv6 address in brackets, of hexadecimal digits, colons, and
 // dots, followed by nothing or by the colon and the port; or a name of the
-// ASCII letters and digits, -._~!$&'()*+,;=, and any character beyond ASCII,
-// which the authority's last colon separates from the port. The port is ASCII
-// digits, or nothing. So an authority has no @, and a link no userinfo, as
+// ASCII letters and digits, -._~!$&'()*+,;=, and the letters, marks, and
+// numbers beyond ASCII (isNameRune), which the authority's last colon
+// separates from the port. The port is ASCII digits whose value is at most
+// maxPort, or nothing. So an authority has no @, and a link no userinfo, as
 // https://example.com@evil.example/ has, whose host is evil.example, and a
-// backslash, which a browser reads as a slash, cannot hide another host in
-// it.
+// backslash, which a browser reads as a slash, or a character that looks
+// like a slash or a dot, cannot hide another host in it.
 func authorityProblem(authority string) string {
 	if strings.Contains(authority, "@") {
 		return "has a userinfo, before an @, which could show another host than the one that it leads to"
@@ -1129,13 +1223,28 @@ func authorityProblem(authority string) string {
 	case !onlyRunes(port, func(r rune) bool { return '0' <= r && r <= '9' }):
 		return "has a port that is not a number"
 	}
+	n := 0
+	for _, c := range port {
+		if n = n*10 + int(c-'0'); n > maxPort {
+			return fmt.Sprintf("has a port above %d", maxPort)
+		}
+	}
 	return ""
 }
 
 // isNameRune reports whether a host's name may hold r: an ASCII letter or
-// digit, one of -._~!$&'()*+,;=, or any character beyond ASCII.
+// digit, one of -._~!$&'()*+,;=, or a letter, a mark, or a number beyond
+// ASCII (Unicode's L, M, and N), of which a host in any script is written.
+// Not another character beyond ASCII, which could look like a delimiter that
+// it is not: IDNA keeps U+2215 DIVISION SLASH in a host, so that
+// https://bank.example∕login.evil.example/, which reads as a path of
+// bank.example, leads to a host of evil.example, and it reads U+3002
+// IDEOGRAPHIC FULL STOP as a dot.
 func isNameRune(r rune) bool {
-	return r >= utf8.RuneSelf || 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' ||
+	if r >= utf8.RuneSelf {
+		return unicode.In(r, unicode.L, unicode.M, unicode.N)
+	}
+	return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' ||
 		strings.ContainsRune("-._~!$&'()*+,;=", r)
 }
 
@@ -1191,21 +1300,21 @@ func asciiLower(s string) string {
 // one that Parse accepts, which Parse writes as it checks its length, so
 // that what is stored is always a document that Parse returns. A Doc that
 // Parse returned is not read again while its nodes write the canonical form
-// that Parse wrote: one whose nodes a program has changed since is read
-// again, as a built one is.
+// that Parse wrote, as the form's hash tells: one whose nodes a program has
+// changed since is read again, as a built one is.
 func (d Doc) MarshalJSON() ([]byte, error) {
 	data, err := d.wire()
 	if err != nil {
 		return nil, err
 	}
-	if d.canonical != nil && bytes.Equal(data, d.canonical) {
+	if d.parsed && sha256.Sum256(data) == d.sum {
 		return data, nil
 	}
-	parsed, err := Parse(data)
+	_, canonical, err := parse(data)
 	if err != nil {
 		return nil, fmt.Errorf("richtext: the document is not one that Parse accepts: %w", err)
 	}
-	return parsed.canonical, nil
+	return canonical, nil
 }
 
 // wire writes the document as JSON, as it holds it.
