@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -113,7 +114,8 @@ func TestReconcileGoesOn(t *testing.T) {
 // that was sent before the job's context ended is not given up on when it
 // ends, as the store might carry it out after the batch's locks are
 // released, but waited for, and that none is sent once the context has less
-// than orphanDeleteTimeout left, which is left to the next run.
+// than orphanStatTimeout and orphanDeleteTimeout left, which is left to the
+// next run.
 func TestDeleteBlobsOutlastContext(t *testing.T) {
 	dir := t.TempDir()
 	local, err := blob.OpenLocal(dir)
@@ -144,11 +146,88 @@ func TestDeleteBlobsOutlastContext(t *testing.T) {
 			stored(slow))
 	}
 	late := put(2)
-	short, cancelShort := context.WithTimeout(context.Background(), orphanDeleteTimeout/2)
+	short, cancelShort := context.WithTimeout(context.Background(), orphanDeleteTimeout+orphanStatTimeout/2)
 	defer cancelShort()
 	if n, err := deleteBlobs(short, local, []string{late}); n != 0 || err != nil || !stored(late) {
-		t.Errorf("a batch with less than orphanDeleteTimeout left deleted %d blobs: %v; want none, and no error", n,
-			err)
+		t.Errorf("a batch with less than orphanStatTimeout and orphanDeleteTimeout left deleted %d blobs: %v; want "+
+			"none, and no error", n, err)
+	}
+}
+
+// slowStatStore is a store that takes statDelay to say how old a blob is,
+// or, if stall is set, says nothing until the context ends, and records how
+// long each deletion's context gave it.
+type slowStatStore struct {
+	blob.Store
+	statDelay time.Duration
+	stall     bool
+	mu        sync.Mutex
+	deletes   []time.Duration
+}
+
+func (s *slowStatStore) Stat(ctx context.Context, key string) (blob.Info, error) {
+	var wait <-chan time.Time
+	if !s.stall {
+		wait = time.After(s.statDelay)
+	}
+	select {
+	case <-wait:
+	case <-ctx.Done():
+		return blob.Info{}, ctx.Err()
+	}
+	return s.Store.Stat(ctx, key)
+}
+
+func (s *slowStatStore) Delete(ctx context.Context, key string) error {
+	end, _ := ctx.Deadline()
+	s.mu.Lock()
+	s.deletes = append(s.deletes, time.Until(end))
+	s.mu.Unlock()
+	return s.Store.Delete(ctx, key)
+}
+
+// TestDeleteOldTimeouts checks that the time that the store takes to say how
+// old an orphan is leaves its deletion the whole of orphanDeleteTimeout from
+// when it is sent, so that a store slow to answer does not shorten the wait
+// that keeps the batch's locks until the deletion ends, and that a question
+// that the job's context cuts short sends no deletion.
+func TestDeleteOldTimeouts(t *testing.T) {
+	dir := t.TempDir()
+	local, err := blob.OpenLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	workspaceID := ids.New()
+	put := func(b byte) string {
+		key := blobKey(workspaceID, []byte{b}, "png")
+		if err := local.Put(context.Background(), key, []byte("x"), MimePNG); err != nil {
+			t.Fatal(err)
+		}
+		age(t, dir, key)
+		return key
+	}
+	stored := func(key string) bool {
+		_, err := local.Stat(context.Background(), key)
+		return err == nil
+	}
+	const delay = 300 * time.Millisecond
+	slow := &slowStatStore{Store: local, statDelay: delay}
+	key := put(1)
+	if n, err := deleteBlobs(context.Background(), slow, []string{key}); n != 1 || err != nil || stored(key) ||
+		len(slow.deletes) != 1 || slow.deletes[0] < orphanDeleteTimeout-delay/3 {
+		t.Errorf("a deletion after a slow question deleted %d blobs: %v, stored %t, with %v left; want 1, with "+
+			"orphanDeleteTimeout left", n, err, stored(key), slow.deletes)
+	}
+	stalled := &slowStatStore{Store: local, stall: true}
+	key = put(2)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(100*time.Millisecond, cancel)
+	if n, err := deleteBlobs(ctx, stalled, []string{key}); n != 0 || !errors.Is(err, context.Canceled) ||
+		!stored(key) || len(stalled.deletes) != 0 {
+		t.Errorf("a question cut short deleted %d blobs: %v, stored %t, and sent %d deletions; want none, and the "+
+			"context's error", n, err, stored(key), len(stalled.deletes))
 	}
 }
 

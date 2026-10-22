@@ -99,8 +99,10 @@ func (l *Local) Put(ctx context.Context, key string, data []byte, _ string) (err
 	if err = l.root.Rename(tmp, key); err != nil {
 		return fmt.Errorf("blob: store %s: %w", key, err)
 	}
-	// The directory holds the file's new name, and its parent the
-	// directory's, if MkdirAll created it.
+	// The directory holds the file's new name, and each of its parents the
+	// name of the one below, which MkdirAll may have created, here or in a
+	// Put into the same directory at the same moment, which has not yet
+	// synced it, so every one of them is synced, up to the store's own.
 	for d := dir; ; d = path.Dir(d) {
 		if err = syncDir(l.root, d); err != nil {
 			return fmt.Errorf("blob: store %s: sync its directory: %w", key, err)
