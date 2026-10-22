@@ -42,6 +42,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -67,10 +68,16 @@ const (
 // ColorNone is the colour of a board without one.
 const ColorNone = "none"
 
-// Colors are the colours of a board: none, or a name of a fixed palette,
+// colors are the colours of a board: none, or a name of a fixed palette,
 // which the web app maps to an accessible colour in its light and dark
 // themes alike.
-var Colors = []string{ColorNone, "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink", "gray"}
+var colors = []string{ColorNone, "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink", "gray"}
+
+// Colors returns the colours of a board, in the order of the database's
+// check and of the schemas' enums, as a copy that the caller may change.
+func Colors() []string {
+	return slices.Clone(colors)
+}
 
 // The kinds of folder: what a folder holds, a tree of its own.
 const (
@@ -79,8 +86,14 @@ const (
 	KindComponent = "component"
 )
 
-// Kinds are the kinds of folder.
-var Kinds = []string{KindBoard, KindVariable, KindComponent}
+// kinds are the kinds of folder.
+var kinds = []string{KindBoard, KindVariable, KindComponent}
+
+// Kinds returns the kinds of folder, in the order of the database's check
+// and of the schemas' enums, as a copy that the caller may change.
+func Kinds() []string {
+	return slices.Clone(kinds)
+}
 
 var (
 	// ErrNotFound is returned for a board that the project does not have, or
@@ -102,7 +115,7 @@ type Board struct {
 	ID        string `json:"id" doc:"The board's ID"`
 	ProjectID string `json:"project_id" doc:"The ID of the board's project"`
 	FolderID  string `json:"folder_id,omitempty" doc:"The ID of the folder of boards that the board is in, if it is in one, or none for a board at the top"`
-	Order     string `json:"order" doc:"The board's place among the folders and boards of its folder, or of the top: they are ordered by their order, compared by its bytes, then by their IDs (package orderkey)"`
+	Order     string `json:"order" doc:"The board's place among the folders and boards of its folder, or of the top: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, bd_ or fld_, compared by their bytes too (package orderkey)"`
 	Name      string `json:"name" doc:"The board's name"`
 	Slug      string `json:"slug" doc:"The board's slug, unique within the project, which names its file in the game project (PRD §6.3). It changes only when it is changed itself, never when the board is renamed (PRD FR-PROJ-02 AC1)."`
 	// Description may be empty.
@@ -124,7 +137,7 @@ type Folder struct {
 	Kind      string `json:"kind" enum:"board,variable,component" doc:"What the folder holds: boards, variables, or components, each in a tree of folders of its own"`
 	ParentID  string `json:"parent_id,omitempty" doc:"The ID of the folder that the folder is in, of the same kind, if it is in one, or none for a folder at the top"`
 	Name      string `json:"name" doc:"The folder's name"`
-	Order     string `json:"order" doc:"The folder's place among the folders, and for a folder of boards the boards, of its parent, or of the top: they are ordered by their order, compared by its bytes, then by their IDs (package orderkey)"`
+	Order     string `json:"order" doc:"The folder's place among the folders, and for a folder of boards the boards, of its parent, or of the top: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, bd_ or fld_, compared by their bytes too (package orderkey)"`
 	Rev       int64  `json:"rev" doc:"The folder's revision, which every change of it increments, and which a change expects with expected_rev"`
 	// DeletedAt is set for a deleted folder.
 	DeletedAt *time.Time `json:"deleted_at,omitempty" doc:"When the folder was deleted, if it is"`

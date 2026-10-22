@@ -36,6 +36,11 @@ const (
 // Error is a slug that is not valid.
 type Error struct {
 	Reason Reason
+	// device is set for a slug that is reserved because it is a name that
+	// Windows reserves for a device (Check), rather than a word that the
+	// caller keeps for itself, as a workspace's reserved words, which an
+	// Error of Reserved without it is.
+	device bool
 }
 
 func (e *Error) Error() string {
@@ -47,10 +52,16 @@ func (e *Error) Error() string {
 }
 
 // Problem says what is wrong with the slug, in English, for programs and
-// logs, as the message of a field's problem.
+// logs, as the message of a field's problem: for a reserved slug, that it is
+// a name that Windows reserves for a device if Check found it one, and that
+// it is a reserved word otherwise, so that a workspace's slug that is one of
+// the product's own words is not said to be a device's name.
 func (e *Error) Problem() string {
-	if e.Reason == Reserved {
-		return "is a reserved word, such as a name that Windows reserves for a device"
+	switch {
+	case e.Reason == Reserved && e.device:
+		return "is a name that Windows reserves for a device, which no file may have"
+	case e.Reason == Reserved:
+		return "is a reserved word"
 	}
 	return fmt.Sprintf("is not groups of lowercase letters and digits joined by single hyphens, of at most %d "+
 		"characters", MaxLength)
@@ -85,7 +96,7 @@ func Check(s string) error {
 		return &Error{Reason: Format}
 	}
 	if Device(s) {
-		return &Error{Reason: Reserved}
+		return &Error{Reason: Reserved, device: true}
 	}
 	return nil
 }

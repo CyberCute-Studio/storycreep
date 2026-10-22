@@ -61,7 +61,7 @@ export interface Board {
   id: string;
   /** The board's name */
   name: string;
-  /** The board's place among the folders and boards of its folder, or of the top: they are ordered by their order, compared by its bytes, then by their IDs (package orderkey) */
+  /** The board's place among the folders and boards of its folder, or of the top: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, bd_ or fld_, compared by their bytes too (package orderkey) */
   order: string;
   /** The ID of the board's project */
   project_id: string;
@@ -96,7 +96,7 @@ export interface BoardCreatePayload {
   id: string;
   /** The board's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them */
   name: string;
-  /** The board's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child. */
+  /** The board's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, bd_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child. */
   order?: string;
   /** The board's slug, which names its file in the game project: groups of lowercase ASCII letters and digits joined by single hyphens, as harbour-intro, of at most 64 characters, that no other board of the project has, in its trash or not, and that is not a name that Windows reserves for a device, such as con or com1. A slug that is not one is answered with 422 slug_invalid, and one that another board has with 409 slug_taken. Without it, the server derives one from the name: its letters and digits in lowercase ASCII, without their accents, each run of other characters a hyphen, or board if that leaves nothing, with -board after a name that Windows reserves for a device, as con-board, and then with -2, -3, and so on, the first that no board of the project has (PRD FR-PROJ-02 AC1, AC4). */
   slug?: string;
@@ -155,7 +155,7 @@ export interface BoardMovePayload {
   folder_id?: string;
   /** The board's ID */
   id: string;
-  /** The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted. */
+  /** The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, bd_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted. */
   order?: string;
 }
 
@@ -390,7 +390,7 @@ export interface Folder {
   kind: "board" | "variable" | "component";
   /** The folder's name */
   name: string;
-  /** The folder's place among the folders, and for a folder of boards the boards, of its parent, or of the top: they are ordered by their order, compared by its bytes, then by their IDs (package orderkey) */
+  /** The folder's place among the folders, and for a folder of boards the boards, of its parent, or of the top: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, bd_ or fld_, compared by their bytes too (package orderkey) */
   order: string;
   /** The ID of the folder that the folder is in, of the same kind, if it is in one, or none for a folder at the top */
   parent_id?: string;
@@ -421,7 +421,7 @@ export interface FolderCreatePayload {
   kind: "board" | "variable" | "component";
   /** The folder's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them */
   name: string;
-  /** The folder's place among the children of its parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child. */
+  /** The folder's place among the children of its parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, bd_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child. */
   order?: string;
   /** The ID of the folder of the same kind that the folder goes into, which is not deleted. Without it, the folder goes at the top. */
   parent_id?: string;
@@ -459,7 +459,7 @@ export interface FolderMoveCommand {
 export interface FolderMovePayload {
   /** The folder's ID */
   id: string;
-  /** The folder's place among the children of its new parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child, or stays where it is if it is the last child of its parent already that is not deleted. */
+  /** The folder's place among the children of its new parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, bd_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child, or stays where it is if it is the last child of its parent already that is not deleted. */
   order?: string;
   /** The ID of the folder of the same kind that the folder goes into, which is not deleted, and neither the folder itself nor a folder inside it. Without it, the folder goes to the top. */
   parent_id?: string;
@@ -1062,7 +1062,7 @@ export interface UpdateWorkspaceBody {
 export interface UsageBody {
   /** The requests that the workspace's API tokens have made: each that a token was accepted for, whatever its answer then; a request that a token is refused for, as one without the route's scope, is not counted */
   api_requests: MeteredUsageBody;
-  /** The boards of the workspace's projects */
+  /** The boards of the workspace's projects that are in no trash: neither in their project's nor, with their project, in the workspace's */
   boards: MeteredUsageBody;
   /** The workspace's members, guests included */
   members: LimitUsageBody;

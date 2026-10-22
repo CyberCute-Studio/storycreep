@@ -12,7 +12,9 @@
 // that there is always a key between two others, and before and after any.
 // Keys compare as their bytes do, and children with the same key, as two
 // clients may pick for two children dropped at one place, are ordered by
-// their IDs.
+// their IDs: by their UUIDs, which the characters of their IDs after the
+// prefix, bd_ or fld_, order alike, so that a client orders a board and a
+// folder with the same key as the server does, without their prefixes.
 package orderkey
 
 import (

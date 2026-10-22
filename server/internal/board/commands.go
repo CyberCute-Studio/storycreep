@@ -54,7 +54,7 @@ type createPayload struct {
 	Description string `json:"description,omitempty" maxLength:"2000" doc:"The board's description, of at most 2000 characters, without white space around it, and without control characters but line feeds and tabs. Without it, the board has none."`
 	Color       string `json:"color,omitempty" enum:"none,red,orange,yellow,green,teal,blue,purple,pink,gray" doc:"The board's colour, none or a name of the palette. Without it, none."`
 	FolderID    string `json:"folder_id,omitempty" doc:"The ID of the folder of boards that the board goes into, which is not deleted. Without it, the board goes at the top."`
-	Order       string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The board's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child."`
+	Order       string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The board's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, bd_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child."`
 }
 
 // renamePayload is Rename's payload.
@@ -85,7 +85,7 @@ type slugPayload struct {
 type movePayload struct {
 	ID       string `json:"id" doc:"The board's ID"`
 	FolderID string `json:"folder_id,omitempty" doc:"The ID of the folder of boards that the board goes into, which is not deleted. Without it, the board goes to the top."`
-	Order    string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted."`
+	Order    string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, bd_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted."`
 }
 
 // idPayload is the payload of a command that needs nothing but its board's
@@ -300,8 +300,16 @@ func registerBoards(r *commands.Registry) {
 			if err := restoreAncestors(ctx, tx, q, b.WorkspaceID, b.ProjectID, b.FolderID); err != nil {
 				return err
 			}
-			if err := changed(tx, ids.Board, b.ID)(q.RestoreBoard(ctx, queries.RestoreBoardParams{UpdatedBy: by(tx),
-				WorkspaceID: b.WorkspaceID, ProjectID: b.ProjectID, ID: b.ID})); err != nil {
+			// The board is in the trash, as read above under the project's
+			// lock, so the restore finds it there; a restore that found it
+			// out of the trash all the same would add nothing to the boards,
+			// as a deletion of a board in the trash takes nothing from them.
+			rev, err := q.RestoreBoard(ctx, queries.RestoreBoardParams{UpdatedBy: by(tx), WorkspaceID: b.WorkspaceID,
+				ProjectID: b.ProjectID, ID: b.ID})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			if err := changed(tx, ids.Board, b.ID)(rev, err); err != nil {
 				return err
 			}
 			return tx.AddUsage(usage.Boards, 1)

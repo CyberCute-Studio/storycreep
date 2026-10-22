@@ -175,7 +175,7 @@
             "type": "string"
           },
           "order": {
-            "description": "The board's place among the folders and boards of its folder, or of the top: they are ordered by their order, compared by its bytes, then by their IDs (package orderkey)",
+            "description": "The board's place among the folders and boards of its folder, or of the top: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, bd_ or fld_, compared by their bytes too (package orderkey)",
             "type": "string"
           },
           "project_id": {
@@ -286,7 +286,7 @@
             "type": "string"
           },
           "order": {
-            "description": "The board's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child.",
+            "description": "The board's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, bd_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child.",
             "maxLength": 128,
             "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
             "type": "string"
@@ -457,7 +457,7 @@
             "type": "string"
           },
           "order": {
-            "description": "The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted.",
+            "description": "The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, bd_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted.",
             "maxLength": 128,
             "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
             "type": "string"
@@ -1236,7 +1236,7 @@
             "type": "string"
           },
           "order": {
-            "description": "The folder's place among the folders, and for a folder of boards the boards, of its parent, or of the top: they are ordered by their order, compared by its bytes, then by their IDs (package orderkey)",
+            "description": "The folder's place among the folders, and for a folder of boards the boards, of its parent, or of the top: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, bd_ or fld_, compared by their bytes too (package orderkey)",
             "type": "string"
           },
           "parent_id": {
@@ -1329,7 +1329,7 @@
             "type": "string"
           },
           "order": {
-            "description": "The folder's place among the children of its parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child.",
+            "description": "The folder's place among the children of its parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, bd_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child.",
             "maxLength": 128,
             "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
             "type": "string"
@@ -1441,7 +1441,7 @@
             "type": "string"
           },
           "order": {
-            "description": "The folder's place among the children of its new parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and then by their IDs: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child, or stays where it is if it is the last child of its parent already that is not deleted.",
+            "description": "The folder's place among the children of its new parent, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, bd_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the folder goes after the last child, or stays where it is if it is the last child of its parent already that is not deleted.",
             "maxLength": 128,
             "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
             "type": "string"
@@ -3249,7 +3249,7 @@
           },
           "boards": {
             "$ref": "#/components/schemas/MeteredUsageBody",
-            "description": "The boards of the workspace's projects"
+            "description": "The boards of the workspace's projects that are in no trash: neither in their project's nor, with their project, in the workspace's"
           },
           "members": {
             "$ref": "#/components/schemas/LimitUsageBody",

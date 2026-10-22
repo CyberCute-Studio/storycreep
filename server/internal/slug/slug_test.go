@@ -36,6 +36,23 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// TestProblem checks that the problem of a reserved slug names a device's
+// name only for a slug that Check found one, and not for a word that its
+// caller reserves, as a workspace's admin, which is a reserved word.
+func TestProblem(t *testing.T) {
+	t.Parallel()
+	var device *Error
+	if !errors.As(Check("con"), &device) {
+		t.Fatal("con is not refused")
+	}
+	if got := device.Problem(); !strings.Contains(got, "Windows reserves for a device") {
+		t.Errorf("the problem of con is %q", got)
+	}
+	if got := (&Error{Reason: Reserved}).Problem(); got != "is a reserved word" {
+		t.Errorf("the problem of a word that the caller reserves is %q", got)
+	}
+}
+
 // TestDerive checks the slug derived from a name: its letters and digits in
 // lowercase ASCII, without their accents, each run of other characters a
 // hyphen, cut to 64 characters, the kind for a name without any, and the

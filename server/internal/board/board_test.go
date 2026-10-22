@@ -225,17 +225,29 @@ func refused(t *testing.T, err error) *commands.RefusedError {
 
 // TestDerivedSlugs checks that boards created without a slug get their
 // names' slugs, the first that no board of the project has, in its trash or
-// not, as name, name-2, and so on, the same in every project, and that a
-// slug changes neither when its board is renamed nor when it is deleted and
-// restored.
+// not, as name, name-2, and so on, the same in every project, as in two
+// projects of one workspace, whose boards take none of each other's slugs,
+// and that a slug changes neither when its board is renamed nor when it is
+// deleted and restored.
 //
 // Verifies: FR-PROJ-02/AC1
 func TestDerivedSlugs(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
+	f := newFixture(t)
 	var first []string
-	for range 2 {
-		f := newFixture(t)
+	for i := range 2 {
+		if i > 0 {
+			// Another project of the workspace, whose boards' slugs are its
+			// own, whatever the first project's boards have.
+			p, err := f.projects.Create(ctx, f.owner, f.ws, project.Settings{Name: "Lighthouse"}, audit.Client{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if f.project, err = ids.Decode(ids.Project, p.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
 		var got []string
 		var made []board.Board
 		for range 3 {
@@ -491,8 +503,9 @@ func TestFolderTree(t *testing.T) {
 // after its last that is not deleted once a deleted child's key has no key
 // after it, a move to a key places a child between two others, and a move
 // without one of the folder's last child that is not deleted into its folder
-// changes nothing, the last by its key and then by its ID, among the
-// folder's children of either table, one with the moved child's UUID too.
+// changes nothing, the last by its key and then by its ID without its
+// prefix, among the folder's children of either table, one with the moved
+// child's UUID too.
 func TestOrder(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -590,6 +603,29 @@ func TestOrder(t *testing.T) {
 		t.Errorf("a board moved to the end after a folder with its UUID is at %q, want b, after the folder's a",
 			got.Order)
 	}
+	// A folder and a board with the same key are ordered by their IDs without
+	// the prefix, as the API documents, which order them as their UUIDs do:
+	// the board whose ID's rest is the greater is the last, which a move to
+	// the end leaves where it is, although its whole ID, of bd_, sorts before
+	// the folder's, of fld_.
+	mixed, under, over := folderID(), ids.New(), ids.New()
+	if bytes.Compare(under[:], over[:]) > 0 {
+		under, over = over, under
+	}
+	inner, outer := ids.Encode(ids.Folder, under), ids.Encode(ids.Board, over)
+	if strings.TrimPrefix(outer, "bd_") <= strings.TrimPrefix(inner, "fld_") || outer >= inner {
+		t.Fatalf("the board's ID %s and the folder's %s are not ordered otherwise without their prefixes", outer,
+			inner)
+	}
+	f.must(t, cmd{board.CreateFolder, map[string]any{"id": mixed, "kind": "board", "name": "Act 4"}},
+		cmd{board.CreateFolder, map[string]any{"id": inner, "kind": "board", "name": "Scenes", "parent_id": mixed,
+			"order": "k"}},
+		cmd{board.Create, map[string]any{"id": outer, "name": "Mixed", "folder_id": mixed, "order": "k"}})
+	if res := f.must(t, cmd{board.Move, map[string]any{"id": outer, "folder_id": mixed}}); len(
+		res.Revisions) != 0 {
+		t.Errorf("moving a board after a folder with its key, by the rest of their IDs, to the end changed %v",
+			res.Revisions)
+	}
 }
 
 // TestFolderChildren checks that the tables whose rows go into a folder, by a
@@ -626,12 +662,12 @@ func TestEnumerations(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
-	for _, c := range board.Colors {
+	for _, c := range board.Colors() {
 		if b := f.create(t, "Pier", map[string]any{"color": c}); b.Color != c {
 			t.Errorf("a board created %s is %s", c, b.Color)
 		}
 	}
-	for _, k := range board.Kinds {
+	for _, k := range board.Kinds() {
 		f.must(t, cmd{board.CreateFolder, map[string]any{"id": folderID(), "kind": k, "name": "Act 1"}})
 	}
 	b, err := ids.Decode(ids.Board, f.create(t, "Harbour", nil).ID)
@@ -712,7 +748,8 @@ func TestUndo(t *testing.T) {
 // project too, whatever the order of the commands of a batch, so that its
 // usage is a recount of its boards that are in no trash (PRD FR-ENT-02 AC4),
 // to which reconciliation corrects it once it is corrupted, and which the
-// purge of a project in the trash leaves as it is.
+// purge of a project in the trash leaves as it is, as it deletes the
+// project's boards and folders, nested ones among them.
 func TestBoardUsage(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -770,6 +807,23 @@ func TestBoardUsage(t *testing.T) {
 	if used := read(); used != 4 {
 		t.Errorf("with the project restored, the workspace uses %d boards, want 4", used)
 	}
+	// The purge deletes the project's folders with its boards, by the cascade
+	// of their foreign keys to the project, alongside those of a folder to its
+	// parent and of a board to its folder, which set their columns to null as
+	// the cascade deletes the folders: a folder in another, a folder that
+	// holds a board, one that holds a board in the trash, and a folder of
+	// components.
+	act, scenes, cast := folderID(), folderID(), folderID()
+	trashed := boardID()
+	f.must(t, cmd{board.CreateFolder, map[string]any{"id": act, "kind": "board", "name": "Act 1"}},
+		cmd{board.CreateFolder, map[string]any{"id": scenes, "kind": "board", "name": "Scenes", "parent_id": act}},
+		cmd{board.CreateFolder, map[string]any{"id": cast, "kind": "component", "name": "Cast"}},
+		cmd{board.Create, map[string]any{"id": boardID(), "name": "E", "folder_id": scenes}},
+		cmd{board.Create, map[string]any{"id": trashed, "name": "F", "folder_id": act}},
+		cmd{board.Delete, map[string]any{"id": trashed}})
+	if used := read(); used != 5 {
+		t.Errorf("with a board added in a folder, the workspace uses %d boards, want 5", used)
+	}
 	f.must(t, cmd{project.Delete, map[string]any{}})
 	admin := f.d.Admin(t)
 	if _, err := admin.Exec(ctx, "UPDATE project SET hard_delete_after = now() - interval '1 second' WHERE id = $1",
@@ -779,12 +833,14 @@ func TestBoardUsage(t *testing.T) {
 	if n, err := project.Purge(ctx, f.db); err != nil || n != 1 {
 		t.Fatalf("the purge deleted %d projects, %v; want 1", n, err)
 	}
-	var left int
-	if err := admin.QueryRow(ctx, "SELECT count(*) FROM board WHERE workspace_id = $1", f.ws).Scan(&left); err != nil {
+	var boards, folders int
+	if err := admin.QueryRow(ctx, `SELECT (SELECT count(*) FROM board WHERE workspace_id = $1),
+		(SELECT count(*) FROM folder WHERE workspace_id = $1)`, f.ws).Scan(&boards, &folders); err != nil {
 		t.Fatal(err)
 	}
-	if used := read(); used != 0 || left != 0 {
-		t.Errorf("after the purge, the workspace uses %d boards and has %d, want none of either", used, left)
+	if used := read(); used != 0 || boards != 0 || folders != 0 {
+		t.Errorf("after the purge, the workspace uses %d boards, and has %d boards and %d folders; want none",
+			used, boards, folders)
 	}
 }
 

@@ -212,8 +212,9 @@ func TestBoardRefusals(t *testing.T) {
 			t.Errorf("a project's slug %q: %d %s", slug, res.status, res.body)
 		}
 	}
-	// A slug is answered alike, for each reason, on every route that takes
-	// one, a workspace's as a board's.
+	// A slug that neither a board nor a workspace may have is answered alike,
+	// for each reason, on every route that takes one, a workspace's as a
+	// board's.
 	for slug, reason := range map[string]string{"con": "reserved", "Docks.json": "format"} {
 		var messages []string
 		for _, res := range []response{
@@ -233,6 +234,19 @@ func TestBoardRefusals(t *testing.T) {
 			t.Errorf("the slug %q is answered with the messages %q by a board's command and a workspace's route, "+
 				"want one message", slug, messages)
 		}
+	}
+	// A word that only a workspace's slug may not be is a reserved word, not
+	// a name that Windows reserves for a device, which con is.
+	res := call(s.main, http.MethodPatch, workspacesPath+"/"+ws, jsonBody(t, map[string]string{"slug": "admin"}),
+		owner.header(true))
+	_, _, details := problemsOf(t, res)
+	var message any
+	if problems, _ := details["errors"].([]any); len(problems) == 1 {
+		problem, _ := problems[0].(map[string]any)
+		message = problem["message"]
+	}
+	if details["reason"] != "reserved" || message != "is a reserved word" {
+		t.Errorf("the workspace's slug admin is answered with %s", res.body)
 	}
 	got := projectFrom(t, call(s.main, http.MethodPatch, projectPath(p.ID), jsonBody(t, map[string]string{
 		"slug": "harbour-tales", "name": "Lighthouse"}), owner.header(true)), http.StatusOK)
@@ -255,7 +269,7 @@ func TestBoardRefusals(t *testing.T) {
 func TestFolderKinds(t *testing.T) {
 	t.Parallel()
 	f, ok := reflect.TypeFor[foldersInput]().FieldByName("Kind")
-	if got, want := f.Tag.Get("enum"), strings.Join(board.Kinds, ","); !ok || got != want {
+	if got, want := f.Tag.Get("enum"), strings.Join(board.Kinds(), ","); !ok || got != want {
 		t.Errorf("the route's kind takes %q, want %q", got, want)
 	}
 }
