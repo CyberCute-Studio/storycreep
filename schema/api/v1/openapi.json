@@ -5482,7 +5482,7 @@
             "headers": {
               "Cache-Control": {
                 "schema": {
-                  "description": "private, max-age=300, or private, max-age=30 while the thumbnail is not made yet",
+                  "description": "private, max-age=300, or private, max-age=30 while the thumbnail is not made yet, or while the local driver's directory lacks it",
                   "type": "string"
                 }
               },
@@ -5576,7 +5576,7 @@
             "headers": {
               "Cache-Control": {
                 "schema": {
-                  "description": "private, max-age=300: the client keeps its copy for 5 minutes again, or private, max-age=30 while the thumbnail is not made yet",
+                  "description": "private, max-age=300: the client keeps its copy for 5 minutes again, or private, max-age=30 while the thumbnail is not made yet, or while the local driver's directory lacks it",
                   "type": "string"
                 }
               },

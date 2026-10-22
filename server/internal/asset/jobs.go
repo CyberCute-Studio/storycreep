@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	crand "crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -62,10 +63,12 @@ const reconciliationInterval = time.Hour
 // stored for the orphan reconciliation to delete it, as the store says: long
 // enough that an instance on a copy of another's database, which takes the
 // store for its own until the other claims it again, within the hour
-// (claimStore), finds none of the files that the other stored since the copy
-// was made old enough by then, while the files of a purged project, which
-// were uploaded before it was, go at once, and those of an upload that
-// failed a day later, which take up no storage_bytes meanwhile.
+// (claimStore), finds none of the files that the other's users uploaded
+// since the copy was made old enough by then, which the other stored, or,
+// if it found them stored already, as no row referred to them, and old,
+// stored again (refreshAge), while the files of a purged project, which were
+// uploaded before it was, go at once, and those of an upload that failed a
+// day later, which take up no storage_bytes meanwhile.
 const orphanAge = 24 * time.Hour
 
 // orphans is the job that deletes the blobs that no asset refers to (ADR-009).
@@ -320,9 +323,11 @@ func (s *Service) Reconcile(ctx context.Context) (int, error) {
 		return deleted, err
 	}
 	// The operator who reads why the job failed, or the log, learns why it
-	// deletes nothing, whatever else failed.
-	s.log.WarnContext(ctx, "the orphan reconciliation deletes no file of the assets, because another database "+
-		"owns their store, or a copy of this one writes it too", "error", cl.refused)
+	// deletes nothing, whatever else failed: the error says whether another
+	// database claimed the store, or a copy of this one, or the claim was
+	// deleted while the run went on.
+	s.log.WarnContext(ctx, "the orphan reconciliation deletes no more files of the assets, because this "+
+		"database does not hold the claim of their store", "error", cl.refused)
 	if err != nil {
 		return deleted, errors.Join(cl.refused, err)
 	}
@@ -352,8 +357,8 @@ const ownerTakeover = 7 * 24 * time.Hour
 // (claimStore).
 type OwnerError struct {
 	// Owner is the identity of the database that the owner blob names
-	// (queries.DatabaseIdentity), or "" if the blob was deleted while the
-	// run went on, and Self this database's.
+	// (queries.DatabaseIdentity), or "" if the blob was deleted, or emptied,
+	// while the run went on, and Self this database's.
 	Owner, Self string
 	// Since is when the owner blob was last written, or, if Copy is set,
 	// when a run last found the copy's claim of the store.
@@ -367,8 +372,8 @@ func (e *OwnerError) Error() string {
 	since := e.Since.UTC().Format(time.RFC3339)
 	switch {
 	case e.Owner == "":
-		return fmt.Sprintf("asset: the blob %s, which claims the store, was deleted while the orphan "+
-			"reconciliation ran, so it deleted no more blobs; the next run claims the store again", OwnerKey)
+		return fmt.Sprintf("asset: the blob %s, which claims the store, was deleted, or emptied, while the "+
+			"orphan reconciliation ran, so it deleted no more blobs; the next run claims the store again", OwnerKey)
 	case e.Copy:
 		return fmt.Sprintf("asset: another instance runs on a copy of this database's files, %q, as one "+
 			"restored from a snapshot of its disk or of a managed database, a point-in-time restore, or a branch of "+
@@ -425,11 +430,14 @@ type claim struct {
 // yet for another run of this database at the same time, it writes the last
 // again, and records nothing, so that the store holds one of the two tokens
 // recorded however many writes in a row fail. It reads the blob, and records
-// the token, in a transaction that locks the instance's row, so that of two
-// runs of this database at once, the second finds what the first recorded,
-// and asks the store for lockedStoreTimeout at most meanwhile. It writes the
+// the token, in a transaction that holds the claim's advisory lock
+// (database.StoreClaimLock), so that of two runs of this database at once,
+// the second finds what the first recorded, and asks the store for
+// lockedStoreTimeout at most meanwhile, which keeps no other writer of the
+// instance's row, as first-run setup, waiting for the store. It writes the
 // blob once the transaction has committed, so that a token that it writes is
-// always recorded.
+// always recorded. An owner blob that names no database, as one emptied
+// rather than deleted, claims the store for none, as no blob does.
 func (s *Service) claimStore(ctx context.Context, store blob.Store) (*claim, error) {
 	var cl *claim
 	var conflict pgtype.Timestamptz
@@ -442,7 +450,10 @@ func (s *Service) claimStore(ctx context.Context, store blob.Store) (*claim, err
 				"pg_control_system(), which PostgreSQL lets every login call unless its administrator revoked it: "+
 				"%w", err)
 		}
-		last, err := q.LockStoreClaim(ctx)
+		if err := q.LockStoreClaim(ctx, database.StoreClaimLock); err != nil {
+			return fmt.Errorf("asset: lock the claim of the store: %w", err)
+		}
+		last, err := q.StoreClaim(ctx)
 		if err != nil {
 			return fmt.Errorf("asset: read the claim of the store: %w", err)
 		}
@@ -454,10 +465,12 @@ func (s *Service) claimStore(ctx context.Context, store blob.Store) (*claim, err
 		}
 		fresh := owner.found && time.Since(owner.written) < ownerTakeover
 		conflict = last.AssetStoreConflictAt
-		token = fmt.Sprintf("%016x%016x", rand.Uint64(), rand.Uint64())
+		token = crand.Text()
 		record := true
 		switch {
-		case !owner.found, owner.identity != self && !fresh:
+		// An owner blob that names no database, as one that an operator
+		// emptied rather than deleted, claims the store for none.
+		case !owner.found, owner.identity == "", owner.identity != self && !fresh:
 			conflict = pgtype.Timestamptz{}
 		case owner.identity != self:
 			cl = &claim{self: self, refused: &OwnerError{Owner: owner.identity, Self: self, Since: owner.written}}

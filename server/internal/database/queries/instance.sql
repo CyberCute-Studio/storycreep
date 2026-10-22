@@ -59,11 +59,14 @@ WHERE d.datname = current_database();
 -- write, as a copy of its cluster's files writes, or null.
 SELECT asset_store_claim, asset_store_claim_previous, asset_store_conflict_at FROM instance;
 
--- name: LockStoreClaim :one
--- LockStoreClaim is StoreClaim, and locks the row until the transaction
--- ends, so that of two runs of the reconciliation that claim the store at
--- once, the second reads the claim that the first recorded.
-SELECT asset_store_claim, asset_store_claim_previous, asset_store_conflict_at FROM instance FOR UPDATE;
+-- name: LockStoreClaim :exec
+-- LockStoreClaim takes the transaction-scoped advisory lock of the claim of
+-- the store (database.StoreClaimLock) until the transaction ends, so that
+-- of two runs of the reconciliation that claim the store at once, the
+-- second reads the claim that the first recorded (StoreClaim) once the
+-- first has ended, while it asks the store for its owner blob, rather than
+-- a lock of the instance's row, which first-run setup would wait for.
+SELECT pg_advisory_xact_lock(@class::integer, 0);
 
 -- name: SetStoreClaim :exec
 -- SetStoreClaim records the token that the orphan reconciliation writes to

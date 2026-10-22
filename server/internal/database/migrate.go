@@ -72,6 +72,14 @@ const UsageLock int32 = 0x75736167
 // to. It spells "blob".
 const BlobLock int32 = 0x626c6f62
 
+// StoreClaimLock is the class of the transaction-scoped advisory lock that
+// package asset's orphan reconciliation takes, with 0 as its second
+// integer, while it reads the store's owner blob and records its claim of
+// the store in the instance's row, so that two runs of it at once take
+// turns, without locking that row, which first-run setup locks too, for as
+// long as the store takes to answer. It spells "ownr".
+const StoreClaimLock int32 = 0x6f776e72
+
 // LockObject returns the second integer of the key of a lock of the class
 // UsageLock or BlobLock: a hash of the workspace and of name, the key that
 // it counts, or the hash of the blob's content, so that the locks of two

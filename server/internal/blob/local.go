@@ -58,7 +58,10 @@ func (l *Local) Close() error {
 // either file whole, and then syncs the file's directory, and each directory
 // above it, so that once Put returns, the file survives a crash of the host
 // under its key, as the row of an asset that a transaction commits next
-// expects.
+// expects. A Put whose context ends before the file is renamed, as an
+// upload's whose client went away, stores nothing, as a request of the S3
+// driver that is cut short stores nothing, rather than leave a blob that its
+// caller will not refer to.
 func (l *Local) Put(ctx context.Context, key string, data []byte, _ string) (err error) {
 	if err := CheckKey(key); err != nil {
 		return err
@@ -89,6 +92,9 @@ func (l *Local) Put(ctx context.Context, key string, data []byte, _ string) (err
 	}
 	if err = f.Close(); err != nil {
 		return fmt.Errorf("blob: write %s: %w", key, err)
+	}
+	if err = ctx.Err(); err != nil {
+		return err
 	}
 	if err = l.root.Rename(tmp, key); err != nil {
 		return fmt.Errorf("blob: store %s: %w", key, err)

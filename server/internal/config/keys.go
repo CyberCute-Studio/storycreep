@@ -279,10 +279,10 @@ var keys = []key{
 			"bucket that setup chose, deletes none of the other's files. But the other deletes the copy's, and a " +
 			"copy of the database's files, as a snapshot, a point-in-time restore, or a branch of a managed " +
 			"database, is the same database until the two find each other's tokens, within the hour, after which " +
-			"neither deletes any file for a week, and before which neither finds the files that the other stored " +
-			"since the copy was made a day old, so two instances never share a bucket: such an instance sets this " +
-			"key to a bucket or a directory of its own. Where the URL is shown, its secret key " +
-			"is `" + secret.Redacted + "`.",
+			"neither deletes any file for a week, and before which neither finds the files that the other's users " +
+			"uploaded since the copy was made a day old, so two instances never share a bucket: such an instance " +
+			"sets this key to a bucket or a directory of its own. Where the URL is shown, its secret key is `" +
+			secret.Redacted + "`.",
 		valuesDoc:  "The absolute path of a directory, or an `s3://` URL",
 		example:    "s3://AKIAEXAMPLE:secret@s3.eu-central-1.amazonaws.com/storycreep?region=eu-central-1",
 		requiredIn: modeHosted,

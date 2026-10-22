@@ -3,6 +3,7 @@ package asset
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
 	"maps"
@@ -200,6 +201,106 @@ func TestReconcileKeepsYoungBlobs(t *testing.T) {
 	if n, err := s.reconcileWorkspace(ctx, local, workspaceID, claimed(t, local, "a"), always); n != 1 || err != nil ||
 		stored(young) {
 		t.Errorf("once the young blob is old, the run deleted %d blobs: %v; want it deleted", n, err)
+	}
+}
+
+// TestEnsureBlobRefreshes checks that an upload that finds its blob stored
+// already stores it again if no row of the workspace refers to it, and the
+// store says that it is older than refreshAge, as one of a project purged
+// an hour before, so that an instance on a copy of the database made before
+// the upload, whose rows do not refer to it either, does not find it old
+// enough to delete, but not if a row refers to it, or it is younger.
+func TestEnsureBlobRefreshes(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	local, err := blob.OpenLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	key := blobKey(ids.New(), make([]byte, 32), "png")
+	img := Image{Mime: MimePNG, Ext: "png", Data: []byte("x")}
+	if err := ensureBlob(ctx, local, key, img, true); err != nil {
+		t.Fatal(err)
+	}
+	modified := func() time.Time {
+		t.Helper()
+		info, err := local.Stat(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.Modified
+	}
+	for _, tt := range []struct {
+		name              string
+		old, unreferenced bool
+		wantStoredAgain   bool
+	}{
+		{"a young blob that no row refers to", false, true, false},
+		{"an old blob that a row refers to", true, false, false},
+		{"an old blob that no row refers to", true, true, true},
+	} {
+		if tt.old {
+			age(t, dir, key)
+		}
+		before := modified()
+		if err := ensureBlob(ctx, local, key, img, tt.unreferenced); err != nil {
+			t.Fatal(err)
+		}
+		if again := modified().After(before); again != tt.wantStoredAgain {
+			t.Errorf("%s: stored again %t, want %t", tt.name, again, tt.wantStoredAgain)
+		}
+	}
+}
+
+// slowOwner is a store whose owner blob is read only once release is
+// closed, after entered is.
+type slowOwner struct {
+	blob.Store
+	entered, release chan struct{}
+}
+
+func (s slowOwner) Open(ctx context.Context, key string) (io.ReadCloser, blob.Info, error) {
+	if key == OwnerKey {
+		close(s.entered)
+		<-s.release
+	}
+	return s.Store.Open(ctx, key)
+}
+
+// TestClaimLeavesInstanceRow checks that the claim of the store, which reads
+// the store's owner blob under a lock that two runs of it take turns for,
+// does not lock the instance's row while the store answers, which first-run
+// setup locks too, so that setup does not wait for a store that is slow.
+func TestClaimLeavesInstanceRow(t *testing.T) {
+	ctx := context.Background()
+	local, err := blob.OpenLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = local.Close() })
+	d := dbtest.New(t)
+	s := &Service{db: d.Open(t)}
+	store := slowOwner{Store: local, entered: make(chan struct{}), release: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.claimStore(ctx, store)
+		done <- err
+	}()
+	<-store.entered
+	admin := d.Admin(t)
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tx.Exec(ctx, "SELECT FROM instance FOR UPDATE NOWAIT")
+	_ = tx.Rollback(ctx)
+	close(store.release)
+	if err != nil {
+		t.Errorf("the instance's row while the claim reads the store's owner blob: %v; want it unlocked", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -587,6 +688,15 @@ func TestReconcileOwner(t *testing.T) {
 	if n, err := first.Reconcile(ctx); n != 1 || err != nil || stored(orphan) {
 		t.Errorf("after two claims in a row whose writes the store refused, the reconciliation deleted %d blobs: "+
 			"%v; want 1", n, err)
+	}
+	// An owner blob that names no database, as one that an operator emptied
+	// rather than deleted, claims the store for none.
+	write("")
+	orphan = put(7)
+	if n, err := first.Reconcile(ctx); n != 1 || err != nil || stored(orphan) || !strings.HasPrefix(owner(),
+		self+" ") {
+		t.Errorf("once the owner blob was emptied, the reconciliation deleted %d blobs, and claimed the store "+
+			"%t: %v; want 1, and the store claimed", n, strings.HasPrefix(owner(), self+" "), err)
 	}
 	claimed := owner()
 

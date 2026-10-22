@@ -188,24 +188,19 @@ func (q *Queries) LockInstanceSetup(ctx context.Context) (LockInstanceSetupRow, 
 	return i, err
 }
 
-const lockStoreClaim = `-- name: LockStoreClaim :one
-SELECT asset_store_claim, asset_store_claim_previous, asset_store_conflict_at FROM instance FOR UPDATE
+const lockStoreClaim = `-- name: LockStoreClaim :exec
+SELECT pg_advisory_xact_lock($1::integer, 0)
 `
 
-type LockStoreClaimRow struct {
-	AssetStoreClaim         pgtype.Text
-	AssetStoreClaimPrevious pgtype.Text
-	AssetStoreConflictAt    pgtype.Timestamptz
-}
-
-// LockStoreClaim is StoreClaim, and locks the row until the transaction
-// ends, so that of two runs of the reconciliation that claim the store at
-// once, the second reads the claim that the first recorded.
-func (q *Queries) LockStoreClaim(ctx context.Context) (LockStoreClaimRow, error) {
-	row := q.db.QueryRow(ctx, lockStoreClaim)
-	var i LockStoreClaimRow
-	err := row.Scan(&i.AssetStoreClaim, &i.AssetStoreClaimPrevious, &i.AssetStoreConflictAt)
-	return i, err
+// LockStoreClaim takes the transaction-scoped advisory lock of the claim of
+// the store (database.StoreClaimLock) until the transaction ends, so that
+// of two runs of the reconciliation that claim the store at once, the
+// second reads the claim that the first recorded (StoreClaim) once the
+// first has ended, while it asks the store for its owner blob, rather than
+// a lock of the instance's row, which first-run setup would wait for.
+func (q *Queries) LockStoreClaim(ctx context.Context, class int32) error {
+	_, err := q.db.Exec(ctx, lockStoreClaim, class)
+	return err
 }
 
 const setStoreClaim = `-- name: SetStoreClaim :exec

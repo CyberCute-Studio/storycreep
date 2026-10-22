@@ -245,11 +245,15 @@ func uploadable(p project.Visible) error {
 // actor's role, the project's state, and the storage, and stores the blob
 // again in the rare case that the orphan reconciliation deleted it in
 // between, before the lock was taken, waiting for the store under the lock
-// for lockedStoreTimeout at most. An upload of a file that the project
-// has already stores its blob again too if the store lost it, and enqueues
-// the job of its thumbnail again if it needs one and has none, as when the
-// job ran out of attempts while the store did not answer, or found no file,
-// so that uploading the file again mends its asset.
+// for lockedStoreTimeout at most. A blob that the store has already, but
+// that no row of the workspace refers to, is stored again if the store says
+// that it is older than refreshAge, so that an instance on a copy of the
+// database made before the upload, whose rows do not refer to the blob
+// either, does not find it old enough to delete. An upload of a file that
+// the project has already stores its blob again too if the store lost it,
+// and enqueues the job of its thumbnail again if it needs one and has none,
+// as when the job ran out of attempts while the store did not answer, or
+// found no file, so that uploading the file again mends its asset.
 func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID ids.UUID, data []byte) (Asset, bool,
 	error) {
 	workspaceID, err := s.projects.ActorWorkspace(ctx, actor, projectID)
@@ -287,7 +291,7 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 	}
 	// The blob is stored outside any transaction. An asset that the project
 	// has already refers to it, so the reconciliation keeps it.
-	if err := ensureBlob(ctx, store, key, img); err != nil {
+	if err := ensureBlob(ctx, store, key, img, !st.referenced); err != nil {
 		return Asset{}, false, err
 	}
 	if st.found {
@@ -323,9 +327,11 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		// The reconciliation deletes a blob that no row refers to under its
 		// lock, which it may have done after the blob was stored, before this
 		// transaction took the lock, and cannot do now until the asset is
-		// added.
+		// added. A blob that a row of the workspace referred to at the first
+		// check, which has gone since, was not stored again, however old the
+		// store says that it is, and is now if it is old (refreshAge).
 		storeCtx, cancel := context.WithTimeout(ctx, lockedStoreTimeout)
-		err = ensureBlob(storeCtx, store, key, img)
+		err = ensureBlob(storeCtx, store, key, img, !again.referenced)
 		cancel()
 		if err != nil {
 			return err
@@ -471,14 +477,31 @@ func (s *Service) checkStorage(ctx context.Context, tx pgx.Tx, workspaceID, proj
 	return stored{referenced: referenced}, nil
 }
 
+// refreshAge is how long ago the store may say that a blob was stored, which
+// an upload finds, and which no row of its workspace refers to, before the
+// upload stores it again, so that the store's time of a blob is when a row
+// last came to refer to it, within refreshAge: the orphan reconciliation
+// deletes a blob that no row refers to once the store says that it is
+// orphanAge old, so an instance on a copy of another's database, which
+// takes the store for its own until the other claims it again, within the
+// hour, would otherwise delete a file that the other's users uploaded since
+// the copy was made, which the other found stored already, as one of a
+// project purged an hour before, and no row of the copy refers to. Half of
+// orphanAge leaves such a blob younger than orphanAge for half a day after
+// the upload, while an upload sent again soon after it failed, whose blob is
+// younger, does not store it twice.
+const refreshAge = orphanAge / 2
+
 // ensureBlob stores img under key, unless the store has the blob already,
-// which, its key being the hash of its content, is the same file.
-func ensureBlob(ctx context.Context, store blob.Store, key string, img Image) error {
-	_, err := store.Stat(ctx, key)
+// which, its key being the hash of its content, is the same file, and, if
+// unreferenced is set, as no row of the workspace refers to the blob, says
+// that it was stored less than refreshAge ago.
+func ensureBlob(ctx context.Context, store blob.Store, key string, img Image, unreferenced bool) error {
+	info, err := store.Stat(ctx, key)
 	switch {
-	case err == nil:
+	case err == nil && (!unreferenced || time.Since(info.Modified) < refreshAge):
 		return nil
-	case !errors.Is(err, blob.ErrNotFound):
+	case err != nil && !errors.Is(err, blob.ErrNotFound):
 		return fmt.Errorf("asset: %w", err)
 	}
 	if err := store.Put(ctx, key, img.Data, img.Mime); err != nil {
@@ -514,6 +537,16 @@ type Located struct {
 	// Thumbnail is set if Key is a thumbnail that the job made, rather than
 	// the asset's file.
 	Thumbnail bool
+	// fileKey is the key of the asset's file (File).
+	fileKey string
+}
+
+// File returns the asset's file of loc, which the thumbnail route serves in
+// place of a thumbnail that the store lost, as one that was not copied with
+// the files, until the orphan reconciliation makes it again, once Locate has
+// checked the actor's access to the asset.
+func (loc Located) File() Located {
+	return Located{Asset: loc.Asset, Key: loc.fileKey, ContentType: loc.Asset.ContentType, fileKey: loc.fileKey}
 }
 
 // Locate returns the file of the asset assetID of the project projectID, or
@@ -541,7 +574,7 @@ func (s *Service) Locate(ctx context.Context, actor commands.Actor, projectID, a
 			return fmt.Errorf("asset: read the asset: %w", err)
 		}
 		out = Located{Asset: assetOf(a), Key: a.StorageKey, ContentType: a.Mime,
-			Pending: thumbnail && !a.ThumbnailKey.Valid}
+			Pending: thumbnail && !a.ThumbnailKey.Valid, fileKey: a.StorageKey}
 		if thumbnail && a.ThumbnailKey.Valid && a.ThumbnailKey.String != a.StorageKey {
 			out.Key, out.ContentType, out.Thumbnail = a.ThumbnailKey.String, MimePNG, true
 		}

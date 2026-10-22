@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,11 @@ import (
 // assetsPath is the path of a project's assets, whose {project_id} is the
 // project's.
 const assetsPath = "/api/v1/projects/{project_id}/assets"
+
+// assetURL returns the path of the asset a, under assetsPath.
+func assetURL(a asset.Asset) string {
+	return strings.Replace(assetsPath, "{project_id}", a.ProjectID, 1) + "/" + a.ID
+}
 
 // uploadReadTimeout is how long an upload's file may take to arrive: long
 // enough for the largest file that an instance may take, 50 MB, on a
@@ -323,7 +329,7 @@ func registerAssets(m *api.Mux, assets *asset.Service) {
 		out := &uploadedAssetOutput{Status: http.StatusOK, Body: a}
 		if created {
 			out.Status = http.StatusCreated
-			out.Location = "/api/v1/projects/" + a.ProjectID + "/assets/" + a.ID
+			out.Location = assetURL(a)
 		}
 		return out, nil
 	}, api.TokenScope(scope.ProjectWrite),
@@ -392,11 +398,14 @@ func fileResponses(thumbnail bool) map[string]*huma.Response {
 		return &huma.Header{Schema: &huma.Schema{Type: huma.TypeString, Description: doc}}
 	}
 	// pending is what the thumbnail route says of the Cache-Control of its
-	// answers while the thumbnail is not made yet, and pendingFound of where
-	// its redirect goes then.
-	pending, pendingFound := "", ""
+	// redirect while the thumbnail is not made yet, pendingFile of that of
+	// the local driver's file, which it serves then too in place of a
+	// thumbnail that the driver's directory lost (serveAsset), and
+	// pendingFound of where its redirect goes then.
+	pending, pendingFile, pendingFound := "", "", ""
 	if thumbnail {
 		pending = ", or " + pendingCache + " while the thumbnail is not made yet"
+		pendingFile = pending + ", or while the local driver's directory lacks it"
 		pendingFound = ", or, while the thumbnail is not made yet, the path of the file's own route, /content"
 	}
 	ok := &huma.Response{
@@ -406,7 +415,7 @@ func fileResponses(thumbnail bool) map[string]*huma.Response {
 			"X-Content-Type-Options":  header("nosniff"),
 			"Content-Disposition":     header("inline for an image, and attachment for any other type, with the file's name"),
 			"ETag":                    header("The file's entity tag, which If-None-Match revalidates"),
-			"Cache-Control":           header(fileCache + pending),
+			"Cache-Control":           header(fileCache + pendingFile),
 		},
 		Content: map[string]*huma.MediaType{},
 	}
@@ -423,7 +432,7 @@ func fileResponses(thumbnail bool) map[string]*huma.Response {
 				"Cache-Control": header(redirectCache + ": a minute less than the URL works" + pending),
 			},
 		},
-		"304": api.NotModifiedResponseWith(fileCache + ": the client keeps its copy for 5 minutes again" + pending),
+		"304": api.NotModifiedResponseWith(fileCache + ": the client keeps its copy for 5 minutes again" + pendingFile),
 	}
 }
 
@@ -463,7 +472,7 @@ func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, 
 		return nil, assetError(err)
 	case signed:
 		if loc.Pending {
-			url = "/api/v1/projects/" + loc.Asset.ProjectID + "/assets/" + loc.Asset.ID + "/content"
+			url = assetURL(loc.Asset) + "/content"
 		}
 		return &huma.StreamResponse{Body: func(hc huma.Context) {
 			hc.SetHeader("Content-Security-Policy", sandboxCSP)
@@ -478,10 +487,9 @@ func serveAsset(ctx context.Context, assets *asset.Service, in *assetFileInput, 
 	if errors.Is(err, asset.ErrNotFound) && loc.Thumbnail {
 		// The store lost the thumbnail, as one that was not copied with the
 		// files, which the orphan reconciliation makes again: the file is
-		// served meanwhile, as before the thumbnail was made.
-		if loc, err = assets.Locate(ctx, actor, pid, aid, false); err != nil {
-			return nil, assetError(err)
-		}
+		// served meanwhile, as before the thumbnail was made, which Locate
+		// checked the access to with the thumbnail.
+		loc = loc.File()
 		etag, cache = api.ETag([]byte(loc.Key)), pendingCache
 		if api.IfNoneMatch(in.IfNoneMatch, etag) {
 			return nil, api.NotModifiedWith(etag, cache)
