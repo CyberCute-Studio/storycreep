@@ -51,6 +51,8 @@ func TestMatrix(t *testing.T) {
 		ManageBoards: {y, y, y, n, n},
 		// Create, rename, move, and delete folders (P).
 		ManageFolders: {y, y, y, n, n},
+		// Manage variables, components, component types (P).
+		ManageVariablesAndComponents: {y, y, y, n, n},
 		// Manage own API tokens narrowed to this project (P).
 		ManageOwnProjectTokens: {y, y, y, n, n},
 		// Manage own workspace-wide API tokens (W).
@@ -59,7 +61,8 @@ func TestMatrix(t *testing.T) {
 		ManageTokens: {y, y, n, n, n},
 	}
 	scopes := map[Operation]Scope{ReadProject: Project, UploadAssets: Project, ChangeProjectSettings: Project,
-		ManageBoards: Project, ManageFolders: Project, ManageOwnProjectTokens: Project}
+		ManageBoards: Project, ManageFolders: Project, ManageVariablesAndComponents: Project,
+		ManageOwnProjectTokens: Project}
 	for _, op := range Operations() {
 		row, ok := want[op]
 		if !ok {

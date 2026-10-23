@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -65,7 +66,7 @@ type folderIDPayload struct {
 
 // deleteFolderPayload is DeleteFolder's payload.
 type deleteFolderPayload struct {
-	ID string `json:"id" doc:"The ID of the folder to delete, which holds no folder and no board that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, and stays in the folder, which restoring it restores too."`
+	ID string `json:"id" doc:"The ID of the folder to delete, which holds no folder, no board, and no variable that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, a variable of a board in the trash among it, and stays in the folder, which restoring it restores too."`
 }
 
 // Register registers in r the folder and the board as entities of the
@@ -188,8 +189,8 @@ func registerFolders(r *commands.Registry) {
 			case err != nil:
 				return fmt.Errorf("board: read what the folder holds: %w", err)
 			case holds:
-				return commands.Refuse("id", "is a folder that holds folders or boards that are not deleted, which "+
-					"must be moved out of it or deleted first", ErrFolderNotEmpty)
+				return commands.Refuse("id", "is a folder that holds folders, boards, or variables that are not "+
+					"deleted, which must be moved out of it or deleted first", ErrFolderNotEmpty)
 			}
 			return changed(tx, ids.Folder, f.ID)(q.TrashFolder(ctx, queries.TrashFolderParams{UpdatedBy: by(tx),
 				WorkspaceID: f.WorkspaceID, ProjectID: f.ProjectID, ID: f.ID}))
@@ -207,23 +208,18 @@ func registerFolders(r *commands.Registry) {
 			if err != nil || !f.DeletedAt.Valid {
 				return []commands.Step{}, err
 			}
-			deleted, err := deletedAncestors(ctx, queries.New(tx), f.WorkspaceID, f.ProjectID, f.ID)
+			deleted, err := DeletedFolders(ctx, queries.New(tx), f.WorkspaceID, f.ProjectID, f.ID)
 			if err != nil {
 				return nil, err
 			}
-			steps := make([]commands.Step, len(deleted))
-			for i, d := range deleted {
-				steps[i] = commands.Step{Type: DeleteFolder, Payload: deleteFolderPayload{
-					ID: ids.Encode(ids.Folder, d.Bytes)}}
-			}
-			return steps, nil
+			return DeleteFolderSteps(deleted), nil
 		},
 		Apply: func(ctx context.Context, tx *commands.Tx, p folderIDPayload) error {
 			f, err := anyFolder(ctx, tx, p.ID)
 			if err != nil || !f.DeletedAt.Valid {
 				return err
 			}
-			return restoreAncestors(ctx, tx, queries.New(tx), f.WorkspaceID, f.ProjectID, f.ID)
+			return RestoreFolders(ctx, tx, queries.New(tx), f.WorkspaceID, f.ProjectID, f.ID)
 		},
 	})
 }
@@ -240,11 +236,11 @@ func applyCreateFolder(ctx context.Context, tx *commands.Tx, p createFolderPaylo
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("board: read the folder: %w", err)
 	}
-	parent, err := liveFolder(ctx, q, ws, project, p.Kind, "parent_id", p.ParentID)
+	parent, err := LiveFolder(ctx, q, ws, project, p.Kind, "parent_id", p.ParentID)
 	if err != nil {
 		return err
 	}
-	order, err := sortKey(ctx, q, ws, project, p.Kind, parent, p.Order, nil)
+	order, err := SortKey(ctx, q, ws, project, p.Kind, parent, p.Order, nil)
 	if err != nil {
 		return err
 	}
@@ -266,7 +262,7 @@ func applyMoveFolder(ctx context.Context, tx *commands.Tx, p moveFolderPayload) 
 		return err
 	}
 	q := queries.New(tx)
-	parent, err := liveFolder(ctx, q, f.WorkspaceID, f.ProjectID, f.Kind, "parent_id", p.ParentID)
+	parent, err := LiveFolder(ctx, q, f.WorkspaceID, f.ProjectID, f.Kind, "parent_id", p.ParentID)
 	if err != nil {
 		return err
 	}
@@ -284,8 +280,8 @@ func applyMoveFolder(ctx context.Context, tx *commands.Tx, p moveFolderPayload) 
 			}
 		}
 	}
-	order, err := sortKey(ctx, q, f.WorkspaceID, f.ProjectID, f.Kind, parent, p.Order,
-		&child{id: f.ID, parent: f.ParentID, key: f.Order})
+	order, err := SortKey(ctx, q, f.WorkspaceID, f.ProjectID, f.Kind, parent, p.Order,
+		&Child{ID: f.ID, Parent: f.ParentID, Key: f.Order, Kind: ids.Folder})
 	if err != nil {
 		return err
 	}
@@ -319,9 +315,11 @@ func liveFolderOf(ctx context.Context, tx *commands.Tx, id string) (queries.Fold
 	return f, err
 }
 
-// deletedAncestors returns the folder folder of the project, and the folders
-// above it, that are deleted, from the nearest, or none if folder is null.
-func deletedAncestors(ctx context.Context, q *queries.Queries, ws, project, folder pgtype.UUID) ([]pgtype.UUID,
+// DeletedFolders returns the folder folder of the project, and the folders
+// above it, that are deleted, from the nearest, or none if folder is null:
+// those that restoring what goes into folder restores (RestoreFolders), and
+// whose deletion, in that order, undoes it (DeleteFolderSteps).
+func DeletedFolders(ctx context.Context, q *queries.Queries, ws, project, folder pgtype.UUID) ([]pgtype.UUID,
 	error) {
 	if !folder.Valid {
 		return nil, nil
@@ -340,12 +338,12 @@ func deletedAncestors(ctx context.Context, q *queries.Queries, ws, project, fold
 	return deleted, nil
 }
 
-// restoreAncestors restores the folder folder of the project, and the folders
+// RestoreFolders restores the folder folder of the project, and the folders
 // above it, that are deleted, so that what is restored into folder is in the
 // tree again, and reports each change.
-func restoreAncestors(ctx context.Context, tx *commands.Tx, q *queries.Queries, ws, project,
+func RestoreFolders(ctx context.Context, tx *commands.Tx, q *queries.Queries, ws, project,
 	folder pgtype.UUID) error {
-	deleted, err := deletedAncestors(ctx, q, ws, project, folder)
+	deleted, err := DeletedFolders(ctx, q, ws, project, folder)
 	if err != nil {
 		return err
 	}
@@ -356,6 +354,57 @@ func restoreAncestors(ctx context.Context, tx *commands.Tx, q *queries.Queries, 
 		}
 	}
 	return nil
+}
+
+// DeleteFolderSteps returns the commands that delete the folders, in their
+// order, as the undo of a restore that restored them (DeletedFolders).
+func DeleteFolderSteps(folders []pgtype.UUID) []commands.Step {
+	steps := make([]commands.Step, len(folders))
+	for i, f := range folders {
+		steps[i] = commands.Step{Type: DeleteFolder, Payload: deleteFolderPayload{ID: ids.Encode(ids.Folder, f.Bytes)}}
+	}
+	return steps
+}
+
+// variableFolders returns the folders that are deleted of the variables of
+// the board b that are not deleted themselves, which are in the trash with b
+// while it is there, and which restoring it brings back into those folders,
+// which it restores, with the deleted folders above them. A folder that is not
+// deleted has none deleted above it, so it needs nothing restored.
+func variableFolders(ctx context.Context, q *queries.Queries, b queries.Board) ([]pgtype.UUID, error) {
+	folders, err := q.BoardVariableFolders(ctx, queries.BoardVariableFoldersParams{WorkspaceID: b.WorkspaceID,
+		ProjectID: b.ProjectID, BoardID: b.ID})
+	if err != nil {
+		return nil, fmt.Errorf("board: read the folders of the board's variables: %w", err)
+	}
+	return folders, nil
+}
+
+// deletedFoldersAbove returns the folders among folders of the project, and
+// the folders above them, that are deleted, each once, those nearest the
+// bottom of their tree first, so that deleting them in that order, as the
+// undo of a restore that restored them does, deletes each only once those
+// below it are deleted.
+func deletedFoldersAbove(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID,
+	folders []pgtype.UUID) ([]pgtype.UUID, error) {
+	// depth is each folder's distance from the top of its tree, which is the
+	// same from whichever folder below it the walk reaches it.
+	depth := map[ids.UUID]int{}
+	var out []pgtype.UUID
+	for _, f := range folders {
+		rows, err := q.FolderAncestors(ctx, queries.FolderAncestorsParams{WorkspaceID: ws, ProjectID: project, ID: f})
+		if err != nil {
+			return nil, fmt.Errorf("board: read the folders above: %w", err)
+		}
+		for i, row := range rows {
+			if _, seen := depth[row.ID.Bytes]; row.Deleted && !seen {
+				out = append(out, row.ID)
+			}
+			depth[row.ID.Bytes] = len(rows) - 1 - i
+		}
+	}
+	slices.SortStableFunc(out, func(a, b pgtype.UUID) int { return depth[b.Bytes] - depth[a.Bytes] })
+	return out, nil
 }
 
 // byID returns a function that returns the rows that a query returned, with

@@ -40,6 +40,8 @@ SELECT p.id FROM project p
 WHERE p.workspace_id = $1 AND (
     EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = p.workspace_id AND b.project_id = p.id
         AND b.deleted_at <= now() - $2::interval)
+    OR EXISTS (SELECT 1 FROM variable v WHERE v.workspace_id = p.workspace_id AND v.project_id = p.id
+        AND v.deleted_at <= now() - $2::interval)
     OR EXISTS (SELECT 1 FROM folder f WHERE f.workspace_id = p.workspace_id AND f.project_id = p.id
         AND f.deleted_at <= now() - $2::interval))
 ORDER BY p.id
@@ -118,6 +120,8 @@ WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
             AND c.parent_id = f.id)
         AND NOT EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = $1 AND b.project_id = $2
             AND b.folder_id = f.id)
+        AND NOT EXISTS (SELECT 1 FROM variable v WHERE v.workspace_id = $1
+            AND v.project_id = $2 AND v.folder_id = f.id)
     ORDER BY f.deleted_at, f.id
     LIMIT $4
 )
@@ -131,15 +135,50 @@ type PurgeFoldersParams struct {
 }
 
 // PurgeFolders deletes at most max_rows of the project's folders that have
-// been deleted for retention and hold nothing, neither a folder nor a board,
-// in the trash or not, those deleted longest ago first, and returns how many
-// it deleted. A folder deleted later than what it holds holds it no longer
-// once the purge has deleted that, which the folder's own purge then waits
-// for: a later statement deletes it. A later table whose rows go into a
-// folder, as the variables' (plan item 33), adds its rows here, as it does
-// to FolderHolds, which TestFolderChildren holds it to.
+// been deleted for retention and hold nothing, neither a folder, nor a
+// board, nor a variable, in the trash or not, those deleted longest ago
+// first, and returns how many it deleted. A folder deleted later than what it
+// holds holds it no longer once the purge has deleted that, which the
+// folder's own purge then waits for: a later statement deletes it. A later
+// table whose rows go into a folder, as the components' (plan item 34), adds
+// its rows here, as it does to FolderHolds, which TestFolderChildren holds it
+// to.
 func (q *Queries) PurgeFolders(ctx context.Context, arg PurgeFoldersParams) (int64, error) {
 	result, err := q.db.Exec(ctx, purgeFolders,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Retention,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeVariables = `-- name: PurgeVariables :execrows
+DELETE FROM variable d
+WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
+    SELECT v.id FROM variable v
+    WHERE v.workspace_id = $1 AND v.project_id = $2
+        AND v.deleted_at <= now() - $3::interval
+    ORDER BY v.deleted_at, v.id
+    LIMIT $4
+)
+`
+
+type PurgeVariablesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Retention   pgtype.Interval
+	MaxRows     int32
+}
+
+// PurgeVariables deletes at most max_rows of the project's variables that
+// have been in its trash for retention, those that have been there longest
+// first, and returns how many it deleted.
+func (q *Queries) PurgeVariables(ctx context.Context, arg PurgeVariablesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeVariables,
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.Retention,
@@ -157,6 +196,9 @@ SELECT t.kind::text AS kind, t.id::uuid AS id, t.name::text AS name, t.deleted_a
 FROM (
     SELECT 'board' AS kind, b.id, b.name, b.deleted_at FROM board b
     WHERE b.workspace_id = $1 AND b.project_id = $2 AND b.deleted_at IS NOT NULL
+    UNION ALL
+    SELECT 'variable' AS kind, v.id, v.key::text, v.deleted_at FROM variable v
+    WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.deleted_at IS NOT NULL
 ) t
 WHERE t.deleted_at <= coalesce($3::timestamptz, 'infinity'::timestamptz)
     AND ($3::timestamptz IS NULL
@@ -184,18 +226,22 @@ type TrashItemsRow struct {
 
 // A project's trash (package trash, PRD FR-PROJ-06): the rows of its content
 // with deleted_at, which the live views leave out (migration 00019). The
-// tables whose rows the trash lists are its boards', and, as they are added,
-// its nodes', variables', and components'; its folders' rows go to the trash
-// too, but are not listed. Each such table has a branch here, in the list
-// and in the purge, which package trash's tests hold it to.
+// tables whose rows the trash lists are its boards' and its variables', and,
+// as they are added, its nodes' and components'; its folders' rows go to the
+// trash too, but are not listed. Each such table has a branch here, in the
+// list and in the purge, which package trash's tests hold it to. A row that
+// belongs to a board, as a board's variable, is in the trash with its board
+// too, which lists the board alone, and is purged with it, by the cascade of
+// its foreign key to the board, even one deleted on its own, before its
+// board, which the list holds, and whose own time in the trash ends first.
 // TrashItems returns the entities in the project's trash that it lists, the
 // most recently deleted first, then by their kinds and their IDs, after the
 // entity whose deletion, kind, and ID are after_deleted_at, after_kind, and
 // after_id, or from the first if after_deleted_at is null, each with its
-// kind, its ID, its name, and when it was deleted. The bound on deleted_at
-// alone, which the infinite time leaves open for the first page, lets the
-// index of each table's trash start where the page does, rather than read
-// every row that the pages before it held.
+// kind, its ID, its name, a variable's key, and when it was deleted. The
+// bound on deleted_at alone, which the infinite time leaves open for the
+// first page, lets the index of each table's trash start where the page
+// does, rather than read every row that the pages before it held.
 func (q *Queries) TrashItems(ctx context.Context, arg TrashItemsParams) ([]TrashItemsRow, error) {
 	rows, err := q.db.Query(ctx, trashItems,
 		arg.WorkspaceID,

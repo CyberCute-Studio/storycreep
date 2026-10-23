@@ -95,6 +95,28 @@ type LiveFolder struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type LiveVariable struct {
+	ID           pgtype.UUID
+	WorkspaceID  pgtype.UUID
+	ProjectID    pgtype.UUID
+	Scope        string
+	BoardID      pgtype.UUID
+	FolderID     pgtype.UUID
+	FolderKind   string
+	Order        string
+	Key          string
+	Type         string
+	DefaultValue []byte
+	Description  string
+	ResetOnEnter bool
+	Rev          int64
+	DeletedAt    pgtype.Timestamptz
+	CreatedBy    pgtype.UUID
+	UpdatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type Project struct {
 	ID              pgtype.UUID
 	WorkspaceID     pgtype.UUID
@@ -119,6 +141,28 @@ type ProjectGrant struct {
 	MembershipID pgtype.UUID
 	ProjectID    pgtype.UUID
 	Role         string
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type Variable struct {
+	ID           pgtype.UUID
+	WorkspaceID  pgtype.UUID
+	ProjectID    pgtype.UUID
+	Scope        string
+	BoardID      pgtype.UUID
+	FolderID     pgtype.UUID
+	FolderKind   string
+	Order        string
+	Key          string
+	Type         string
+	DefaultValue []byte
+	Description  string
+	ResetOnEnter bool
+	Rev          int64
+	DeletedAt    pgtype.Timestamptz
+	CreatedBy    pgtype.UUID
+	UpdatedBy    pgtype.UUID
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
 }

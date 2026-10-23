@@ -17,18 +17,22 @@
 //
 // The children of a folder, or those at the top, are ordered among
 // themselves by keys of package orderkey, which the client picks, so that
-// moving one changes it alone, and the boards of a folder of boards share
-// that order with its folders. A command that leaves the key out puts the
-// child after the folder's last, the deleted ones included, or after its last
-// that is not deleted once no key comes after that, and a move that leaves it
-// out keeps the key of a child that is the folder's last that is not deleted
-// already.
+// moving one changes it alone, and the boards of a folder of boards, and the
+// variables of a folder of variables (package variable, which places them
+// with LiveFolder and SortKey), share that order with its folders. A command
+// that leaves the key out puts the child after the folder's last, the deleted
+// ones included, or after its last that is not deleted once no key comes
+// after that, and a move that leaves it out keeps the key of a child that is
+// the folder's last that is not deleted already, a variable in the trash
+// with its board counting as a deleted one.
 //
 // A deleted board goes to the project's trash, from which restoring it
 // brings it back where it was, with the folders above it that were deleted
 // since (package trash lists the trash, and purges what has been in it for
-// 30 days). A folder is deleted only once it holds nothing but what is in the
-// trash, and stays, deleted, so that the boards in the trash still name it.
+// 30 days). Its variables are in the trash with it, and come back with it,
+// with the deleted folders above them too. A folder is deleted only once it
+// holds nothing but what is in the trash, and stays, deleted, so that what is
+// in the trash still names it.
 // The reads of what is not in the trash read the live views of the boards
 // and the folders, live_board and live_folder, which leave the trash out.
 //
@@ -106,9 +110,9 @@ var (
 	// (commands.RefusedError), which the API answers with slug_taken.
 	ErrSlugTaken = errors.New("board: another board of the project has the slug")
 	// ErrFolderNotEmpty is the reason of a command's refusal to delete a
-	// folder that holds a folder or a board that is not deleted, which the
-	// API answers with folder_not_empty.
-	ErrFolderNotEmpty = errors.New("board: the folder holds folders or boards that are not deleted")
+	// folder that holds a folder, a board, or a variable that is not in the
+	// trash, which the API answers with folder_not_empty.
+	ErrFolderNotEmpty = errors.New("board: the folder holds folders, boards, or variables that are not deleted")
 )
 
 // Board is a board as the API shows it, and as an answer of revision_conflict

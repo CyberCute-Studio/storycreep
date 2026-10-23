@@ -225,12 +225,12 @@ func registerBoards(r *commands.Registry) {
 				return err
 			}
 			q := queries.New(tx)
-			folder, err := liveFolder(ctx, q, b.WorkspaceID, b.ProjectID, KindBoard, "folder_id", p.FolderID)
+			folder, err := LiveFolder(ctx, q, b.WorkspaceID, b.ProjectID, KindBoard, "folder_id", p.FolderID)
 			if err != nil {
 				return err
 			}
-			order, err := sortKey(ctx, q, b.WorkspaceID, b.ProjectID, KindBoard, folder, p.Order,
-				&child{id: b.ID, parent: b.FolderID, key: b.Order, board: true})
+			order, err := SortKey(ctx, q, b.WorkspaceID, b.ProjectID, KindBoard, folder, p.Order,
+				&Child{ID: b.ID, Parent: b.FolderID, Key: b.Order, Kind: ids.Board})
 			if err != nil {
 				return err
 			}
@@ -274,22 +274,29 @@ func registerBoards(r *commands.Registry) {
 		// Restoring a board that is not in the trash does nothing, and its
 		// undo nothing either. The undo of a restore deletes the board, and
 		// then the folders that the restore restored above it, from the
-		// nearest, each of which then holds nothing that is not deleted.
+		// nearest, and above its variables, from those nearest the bottom of
+		// their tree, each of which then holds nothing that is not deleted,
+		// once the board's variables are in the trash with it again.
 		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
 			b, err := anyBoard(ctx, tx, p.ID)
 			if err != nil || !b.DeletedAt.Valid {
 				return []commands.Step{}, err
 			}
-			steps := []commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}}
-			deleted, err := deletedAncestors(ctx, queries.New(tx), b.WorkspaceID, b.ProjectID, b.FolderID)
+			q := queries.New(tx)
+			deleted, err := DeletedFolders(ctx, q, b.WorkspaceID, b.ProjectID, b.FolderID)
 			if err != nil {
 				return nil, err
 			}
-			for _, f := range deleted {
-				steps = append(steps, commands.Step{Type: DeleteFolder, Payload: deleteFolderPayload{
-					ID: ids.Encode(ids.Folder, f.Bytes)}})
+			held, err := variableFolders(ctx, q, b)
+			if err != nil {
+				return nil, err
 			}
-			return steps, nil
+			above, err := deletedFoldersAbove(ctx, q, b.WorkspaceID, b.ProjectID, held)
+			if err != nil {
+				return nil, err
+			}
+			steps := []commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}}
+			return append(append(steps, DeleteFolderSteps(deleted)...), DeleteFolderSteps(above)...), nil
 		},
 		Apply: func(ctx context.Context, tx *commands.Tx, p idPayload) error {
 			b, err := anyBoard(ctx, tx, p.ID)
@@ -297,8 +304,19 @@ func registerBoards(r *commands.Registry) {
 				return err
 			}
 			q := queries.New(tx)
-			if err := restoreAncestors(ctx, tx, q, b.WorkspaceID, b.ProjectID, b.FolderID); err != nil {
+			if err := RestoreFolders(ctx, tx, q, b.WorkspaceID, b.ProjectID, b.FolderID); err != nil {
 				return err
+			}
+			// The board's variables come back with it, into their folders,
+			// which come back with them if they are deleted.
+			held, err := variableFolders(ctx, q, b)
+			if err != nil {
+				return err
+			}
+			for _, f := range held {
+				if err := RestoreFolders(ctx, tx, q, b.WorkspaceID, b.ProjectID, f); err != nil {
+					return err
+				}
 			}
 			// The board is in the trash, as read above under the project's
 			// lock, so the restore finds it there; a restore that found it
@@ -333,11 +351,11 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("board: read the board: %w", err)
 	}
-	folder, err := liveFolder(ctx, q, ws, project, KindBoard, "folder_id", p.FolderID)
+	folder, err := LiveFolder(ctx, q, ws, project, KindBoard, "folder_id", p.FolderID)
 	if err != nil {
 		return err
 	}
-	order, err := sortKey(ctx, q, ws, project, KindBoard, folder, p.Order, nil)
+	order, err := SortKey(ctx, q, ws, project, KindBoard, folder, p.Order, nil)
 	if err != nil {
 		return err
 	}
@@ -396,12 +414,12 @@ func liveBoard(ctx context.Context, tx *commands.Tx, id string) (queries.Board, 
 	return b, err
 }
 
-// liveFolder returns the UUID of the folder whose ID is id, a folder's ID that
+// LiveFolder returns the UUID of the folder whose ID is id, a folder's ID that
 // a payload's Check checked, as the column of a child that goes into it, or
 // a null column if id is "", for a child at the top, once it has checked that
 // the folder is one of the project's of the kind, which is not deleted. It
 // refuses the batch otherwise, for the payload's field.
-func liveFolder(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, kind, field, id string) (
+func LiveFolder(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, kind, field, id string) (
 	pgtype.UUID, error) {
 	if id == "" {
 		return pgtype.UUID{}, nil
@@ -422,16 +440,16 @@ func liveFolder(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID
 	return row.Folder.ID, nil
 }
 
-// child is a child of a folder, or of the top, that moves: its ID, its
-// parent, null for the top, its key, and whether it is a board, or else a
-// folder.
-type child struct {
-	id, parent pgtype.UUID
-	key        string
-	board      bool
+// Child is a child of a folder, or of the top, that moves: its ID, its
+// parent, null for the top, its key, and the kind of entity that it is: a
+// folder, or what a folder of its kind holds, a board or a variable.
+type Child struct {
+	ID, Parent pgtype.UUID
+	Key        string
+	Kind       ids.Kind
 }
 
-// sortKey returns the key that a child of the kind that goes into the folder
+// SortKey returns the key that a child of the kind that goes into the folder
 // parent, or to the top if it is null, is placed at: the key given, if it is
 // not "", or else one after the parent's last child's (orderkey.After), the
 // deleted ones included, so that one restored later keeps its place, or, if
@@ -445,26 +463,31 @@ type child struct {
 // same key, as the children are ordered, so that moving the last child to
 // the end changes nothing, as it shows nothing, even while a deleted child
 // comes after it, which, restored, then comes after it again, where it was.
-func sortKey(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, kind string, parent pgtype.UUID,
-	given string, moving *child) (string, error) {
+func SortKey(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, kind string, parent pgtype.UUID,
+	given string, moving *Child) (string, error) {
 	if given != "" {
 		return given, nil
 	}
 	params := queries.LastSortKeysParams{WorkspaceID: ws, ProjectID: project, Kind: kind, ParentID: parent}
-	switch {
-	case moving == nil:
-	case moving.board:
-		params.MovedBoard = moving.id
-	default:
-		params.MovedFolder = moving.id
+	if moving != nil {
+		switch moving.Kind {
+		case ids.Folder:
+			params.MovedFolder = moving.ID
+		case ids.Board:
+			params.MovedBoard = moving.ID
+		case ids.Variable:
+			params.MovedVariable = moving.ID
+		default:
+			return "", fmt.Errorf("board: a %s is no child of a folder", moving.Kind)
+		}
 	}
 	last, err := q.LastSortKeys(ctx, params)
 	if err != nil {
 		return "", fmt.Errorf("board: read the folder's last keys: %w", err)
 	}
-	if moving != nil && sameUUID(moving.parent, parent) && (moving.key > last.LastLive ||
-		moving.key == last.LastLive && bytes.Compare(moving.id.Bytes[:], last.LastLiveID.Bytes[:]) > 0) {
-		return moving.key, nil
+	if moving != nil && sameUUID(moving.Parent, parent) && (moving.Key > last.LastLive ||
+		moving.Key == last.LastLive && bytes.Compare(moving.ID.Bytes[:], last.LastLiveID.Bytes[:]) > 0) {
+		return moving.Key, nil
 	}
 	for _, k := range []string{last.Last, last.LastLive} {
 		if after, ok := orderkey.After(k); ok {

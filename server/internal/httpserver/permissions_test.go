@@ -443,6 +443,15 @@ var permissionMatrix = []struct {
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, projectTrashPath(f.project(t, "")), nil, si.header(false))
 				}},
+			{name: "list a project's variables", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, variablesPath(f.project(t, "")), nil, si.header(false))
+				}},
+			{name: "read a variable", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, variablePath(p, f.variable(t, p)), nil, si.header(false))
+				}},
 		},
 	},
 	{
@@ -488,6 +497,33 @@ var permissionMatrix = []struct {
 					p := f.project(t, "")
 					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
 						Type: "folder.delete", Payload: map[string]string{"id": f.folder(t, p)}}), si.header(true))
+				}},
+		},
+	},
+	{
+		row:     "Manage variables, components, component types",
+		op:      authz.ManageVariablesAndComponents,
+		allowed: [5]bool{true, true, true, false, false},
+		ops: []matrixOp{
+			{name: "create a variable", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, commandsPath(f.project(t, "")), commandBatch(t,
+						wireCommand{Type: "variable.create", Payload: map[string]string{
+							"id": newVariableID(), "key": "met_elara", "type": "bool", "scope": "global"}}),
+						si.header(true))
+				}},
+			{name: "retype a variable", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "variable.retype", Payload: map[string]string{"id": f.variable(t, p), "type": "string"}}),
+						si.header(true))
+				}},
+			{name: "delete a variable", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "variable.delete", Payload: map[string]string{"id": f.variable(t, p)}}), si.header(true))
 				}},
 		},
 	},
@@ -890,8 +926,8 @@ func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []a
 // routeParams returns a value for each parameter of the paths of the
 // fixture's routes: its workspace, and a membership, an invitation, a
 // project, the owner's API token narrowed to the project, an asset of the
-// project, which the owner uploads, and a board of the project, of it, which
-// the fixture adds.
+// project, which the owner uploads, and a board and a variable of the
+// project, of it, which the fixture adds.
 func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 	t.Helper()
 	p := f.project(t, "")
@@ -903,6 +939,7 @@ func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 		"token_id":      f.token(t, "owner", p),
 		"asset_id":      upload(t, f.s.main, f.as["owner"], p, testPNG(t, 5, 5), http.StatusCreated).ID,
 		"board_id":      f.board(t, p),
+		"variable_id":   f.variable(t, p),
 	}
 }
 

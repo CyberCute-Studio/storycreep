@@ -251,7 +251,7 @@ export interface CommandBatchesBody {
 }
 
 /** A command of the batch: its ID, its type, its payload, as the type's schema says, and the revisions that it expects (PRD FR-API-03). */
-export type CommandBody = BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetSlugCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand;
+export type CommandBody = BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetSlugCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
 
 export interface CommandOutcomeBody {
   /** Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it */
@@ -440,7 +440,7 @@ export interface FolderDeleteCommand {
 
 /** The payload of a command of the type folder.delete. */
 export interface FolderDeletePayload {
-  /** The ID of the folder to delete, which holds no folder and no board that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, and stays in the folder, which restoring it restores too. */
+  /** The ID of the folder to delete, which holds no folder, no board, and no variable that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, a variable of a board in the trash among it, and stays in the folder, which restoring it restores too. */
   id: string;
 }
 
@@ -691,6 +691,12 @@ export interface PageSessionBody {
 
 export interface PageTrashItemBody {
   items: Array<TrashItemBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
+export interface PageVariable {
+  items: Array<Variable>;
   /** The cursor of the next page, or null if this is the last page */
   next_cursor: string | null;
 }
@@ -1044,9 +1050,9 @@ export interface TrashItemBody {
   deleted_at: string;
   /** The entity's ID */
   id: string;
-  /** What the entity is: a board, and, once they exist, a node, a variable, or a component (PRD FR-PROJ-06). The command of its kind, as board.restore, restores it with its ID as id. */
+  /** What the entity is: a board or a variable, and, once they exist, a node or a component (PRD FR-PROJ-06). The command of its kind, as board.restore, restores it with its ID as id. */
   kind: "board" | "node" | "variable" | "component";
-  /** The entity's name */
+  /** The entity's name, or a variable's key */
   name: string;
   /** When the entity's time in the trash ends. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored. */
   purge_after: string;
@@ -1093,6 +1099,247 @@ export interface UsageBody {
   snapshots: MeteredUsageBody;
   /** The bytes that the workspace's stored files take up. Uploads that run at once may take it past its limit by what they add together. */
   storage_bytes: LimitUsageBody;
+}
+
+export interface Variable {
+  /** The ID of the variable's board, for a variable of a board, or none for a global */
+  board_id?: string;
+  /** When the variable was created */
+  created_at: string;
+  /** The variable's default, a value of its type: true or false for bool, an integer for int, a number for float, which is written without a decimal point when it is integral, as 2, and a string for string. A client reads a number by the variable's type, never by how it is written (PRD §5.8.9). */
+  default: boolean | number | string;
+  /** When the variable went to the project's trash, if it is there: when it was deleted, or, if it was not, but its board is in the trash, with which it is in the trash too, and comes back, when the board was deleted */
+  deleted_at?: string;
+  /** The variable's description, which may be empty */
+  description: string;
+  /** The ID of the folder of variables that the variable is in, if it is in one, or none for a variable at the top */
+  folder_id?: string;
+  /** The variable's ID */
+  id: string;
+  /** The variable's key, by which expressions name it: an identifier of the expression language (PRD §5.8.1), unique among the project's global variables, or among its board's, that are not in the trash */
+  key: string;
+  /** The variable's place among the folders and variables of its folder, or of the top: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, var_ or fld_, compared by their bytes too (package orderkey) */
+  order: string;
+  /** The ID of the variable's project */
+  project_id: string;
+  /** Whether the variable is reset to its default each time the flow enters its board (PRD FR-VAR-02), which only a board's variable may be */
+  reset_on_enter: boolean;
+  /** The variable's revision, which every change of it increments, and which a change expects with expected_rev */
+  rev: number;
+  /** Who reads the variable: every board's expressions, for global, or only its board's, for board (PRD FR-VAR-02). A board's variable keeps its value across the board's entries, as a global does, unless reset_on_enter is set. */
+  scope: "global" | "board";
+  /** The variable's type */
+  type: "bool" | "int" | "float" | "string";
+  /** When the variable last changed */
+  updated_at: string;
+}
+
+/** A command of the type variable.create. */
+export interface VariableCreateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: VariableCreatePayload;
+  /** The command's type. */
+  type: "variable.create";
+}
+
+/** The payload of a command of the type variable.create. */
+export interface VariableCreatePayload {
+  /** The ID of the variable's board, which is not in the project's trash, if scope is board. A global variable has none. */
+  board_id?: string;
+  /** The variable's default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number written with more than 327 characters, or with an exponent beyond ±999, as 0e1000, is answered with 422 validation_failed, whatever it reads as: no int or float needs more, the longest, -5e-324 written without an exponent, as the server may write a number back, having 327. A number beyond a double's range, as 1e400 or 1e1000, is answered with 400 invalid_request as the API reads the body, unless it is written with more than 327 characters, which the API's reader may take for a number within the range, and which is then answered with 422 validation_failed. Without it, the type's zero value: false, 0, 0.0, or the empty string. */
+  default?: boolean | number | string;
+  /** The variable's description, of at most 2000 characters, without white space around it, and without control characters but line feeds and tabs. Without it, the variable has none. */
+  description?: string;
+  /** The ID of the folder of variables that the variable goes into, which is not deleted. Without it, the variable goes at the top. */
+  folder_id?: string;
+  /** The new variable's ID, a var_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  id: string;
+  /** The variable's key, by which expressions name it: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as met_elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other variable of its scope has, of those that are not in the project's trash, the project's global variables for a global, and its board's for a board's, which is answered with 409 key_taken. */
+  key: string;
+  /** The variable's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, var_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the variable goes after the last child. */
+  order?: string;
+  /** Whether the variable is reset to its default each time the flow enters its board (PRD FR-VAR-02, §5.8.5), which only a board's variable may be. Without it, false. */
+  reset_on_enter?: boolean;
+  /** Who reads the variable: every board's expressions, for global, or only its board's, for board (PRD FR-VAR-02). A board's variable keeps its value across the board's entries, as a global does, unless reset_on_enter is set. */
+  scope: "global" | "board";
+  /** The variable's type */
+  type: "bool" | "int" | "float" | "string";
+}
+
+/** A command of the type variable.delete. */
+export interface VariableDeleteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: VariableDeletePayload;
+  /** The command's type. */
+  type: "variable.delete";
+}
+
+/** The payload of a command of the type variable.delete. */
+export interface VariableDeletePayload {
+  /** The variable's ID */
+  id: string;
+}
+
+/** A command of the type variable.describe. */
+export interface VariableDescribeCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: VariableDescribePayload;
+  /** The command's type. */
+  type: "variable.describe";
+}
+
+/** The payload of a command of the type variable.describe. */
+export interface VariableDescribePayload {
+  /** The variable's new description, of at most 2000 characters, which may be empty, without white space around it, and without control characters but line feeds and tabs */
+  description: string;
+  /** The variable's ID */
+  id: string;
+}
+
+/** A command of the type variable.move. */
+export interface VariableMoveCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: VariableMovePayload;
+  /** The command's type. */
+  type: "variable.move";
+}
+
+/** The payload of a command of the type variable.move. */
+export interface VariableMovePayload {
+  /** The ID of the folder of variables that the variable goes into, which is not deleted. Without it, the variable goes to the top. */
+  folder_id?: string;
+  /** The variable's ID */
+  id: string;
+  /** The variable's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, var_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the variable goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted, a variable of a board in the project's trash counting as a deleted one. */
+  order?: string;
+}
+
+/** A command of the type variable.rename. */
+export interface VariableRenameCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: VariableRenamePayload;
+  /** The command's type. */
+  type: "variable.rename";
+}
+
+/** The payload of a command of the type variable.rename. */
+export interface VariableRenamePayload {
+  /** The variable's ID */
+  id: string;
+  /** The variable's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as met_elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other variable of its scope has, of those that are not in the project's trash, the project's global variables for a global, and its board's for a board's, which is answered with 409 key_taken. The variable keeps its ID, by which expressions refer to it. */
+  key: string;
+}
+
+/** A command of the type variable.restore. */
+export interface VariableRestoreCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: VariableRestorePayload;
+  /** The command's type. */
+  type: "variable.restore";
+}
+
+/** The payload of a command of the type variable.restore. */
+export interface VariableRestorePayload {
+  /** The variable's ID */
+  id: string;
+}
+
+/** A command of the type variable.retype. */
+export interface VariableRetypeCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: VariableRetypePayload;
+  /** The command's type. */
+  type: "variable.retype";
+}
+
+/** The payload of a command of the type variable.retype. */
+export interface VariableRetypePayload {
+  /** The variable's default of its new type, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number written with more than 327 characters, or with an exponent beyond ±999, as 0e1000, is answered with 422 validation_failed, whatever it reads as: no int or float needs more, the longest, -5e-324 written without an exponent, as the server may write a number back, having 327. A number beyond a double's range, as 1e400 or 1e1000, is answered with 400 invalid_request as the API reads the body, unless it is written with more than 327 characters, which the API's reader may take for a number within the range, and which is then answered with 422 validation_failed. Without it, the type's zero value: false, 0, 0.0, or the empty string. */
+  default?: boolean | number | string;
+  /** The variable's ID */
+  id: string;
+  /** The variable's new type */
+  type: "bool" | "int" | "float" | "string";
+}
+
+/** A command of the type variable.set_default. */
+export interface VariableSetDefaultCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: VariableSetDefaultPayload;
+  /** The command's type. */
+  type: "variable.set_default";
+}
+
+/** The payload of a command of the type variable.set_default. */
+export interface VariableSetDefaultPayload {
+  /** The variable's new default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number written with more than 327 characters, or with an exponent beyond ±999, as 0e1000, is answered with 422 validation_failed, whatever it reads as: no int or float needs more, the longest, -5e-324 written without an exponent, as the server may write a number back, having 327. A number beyond a double's range, as 1e400 or 1e1000, is answered with 400 invalid_request as the API reads the body, unless it is written with more than 327 characters, which the API's reader may take for a number within the range, and which is then answered with 422 validation_failed. */
+  default: boolean | number | string;
+  /** The variable's ID */
+  id: string;
+}
+
+/** A command of the type variable.set_reset_on_enter. */
+export interface VariableSetResetOnEnterCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: VariableSetResetOnEnterPayload;
+  /** The command's type. */
+  type: "variable.set_reset_on_enter";
+}
+
+/** The payload of a command of the type variable.set_reset_on_enter. */
+export interface VariableSetResetOnEnterPayload {
+  /** The variable's ID */
+  id: string;
+  /** Whether the variable is reset to its default each time the flow enters its board (PRD FR-VAR-02, §5.8.5), which only a board's variable may be. */
+  reset_on_enter: boolean;
+}
+
+/** A command of the type variable.set_scope. */
+export interface VariableSetScopeCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: VariableSetScopePayload;
+  /** The command's type. */
+  type: "variable.set_scope";
+}
+
+/** The payload of a command of the type variable.set_scope. */
+export interface VariableSetScopePayload {
+  /** The ID of the variable's board, which is not in the project's trash, if scope is board. A global variable has none. */
+  board_id?: string;
+  /** The variable's ID */
+  id: string;
+  /** The variable's new scope. Who reads the variable: every board's expressions, for global, or only its board's, for board (PRD FR-VAR-02). A board's variable keeps its value across the board's entries, as a global does, unless reset_on_enter is set. A global variable's reset_on_enter is unset, so unset it first, and no other variable of the new scope, of those that are not in the project's trash, may have the variable's key, which is answered with 409 key_taken. */
+  scope: "global" | "board";
 }
 
 export interface VerifyEmailBody {
@@ -1165,7 +1412,7 @@ export interface Operations {
   /**
    * Apply batches of commands to a project
    *
-   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo. Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, or 409 folder_not_empty for a folder to delete that holds folders or boards.
+   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo. Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, or variables, 422 key_invalid for a variable's key that is not an identifier, or 409 key_taken for a key that another variable of its scope has.
    *
    * A command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.
    *
@@ -1549,6 +1796,24 @@ export interface Operations {
       200: SetupBody;
     };
   };
+  /**
+   * Get a variable
+   *
+   * Returns a variable of the project. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type variable.* create, rename, describe, retype, rescope, move, delete, and restore them, and change their defaults and reset_on_enter. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A variable that the project does not have, or that is in its trash, as one of a board in the trash is, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getVariable: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+        /** The variable's ID */
+        variable_id: string;
+      };
+    };
+    responses: {
+      200: Variable;
+    };
+  };
   /** Describe the server's build */
   getVersion: {
     input: Record<string, never>;
@@ -1823,7 +2088,7 @@ export interface Operations {
   /**
    * List a project's trash
    *
-   * Lists what is in the project's trash, the most recently deleted first: its boards, and, once they exist, its nodes, variables, and components, each with its kind. Each stays in the trash for 30 days from its deletion, until its purge_after, when a purge that runs every hour deletes it for good; until then, the command of its kind restores it where it was, as board.restore with its ID, through POST /api/v1/projects/{project_id}/commands. A deleted folder is not listed: restoring a board restores the deleted folders above it, and the purge deletes a deleted folder once its 30 days have passed and it holds nothing. Nothing in the trash is in the project's other reads. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   * Lists what is in the project's trash, the most recently deleted first: its boards and variables, and, once they exist, its nodes and components, each with its kind. Each stays in the trash for 30 days from its deletion, until its purge_after, when a purge that runs every hour deletes it for good; until then, the command of its kind restores it where it was, as board.restore with its ID, through POST /api/v1/projects/{project_id}/commands. A board's variables are in the trash with it, unlisted, come back with it, and are purged with it, a variable of the board deleted on its own among them, which is listed, and restored only once its board is. A deleted folder is not listed: restoring a board restores the deleted folders above it, and the purge deletes a deleted folder once its 30 days have passed and it holds nothing. Nothing in the trash is in the project's other reads. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
    */
   listTrash: {
     input: {
@@ -1862,6 +2127,28 @@ export interface Operations {
     };
     responses: {
       200: PageProject;
+    };
+  };
+  /**
+   * List a project's variables
+   *
+   * Lists the project's variables that are not in its trash, global ones and those of its boards, but not those of a board in the trash, which are in the trash with it, in the order of their IDs, oldest first. Each names its folder and its place among the folder's children, from which a client builds the tree of folders of variables (GET /api/v1/projects/{project_id}/folders?kind=variable). They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type variable.* create, rename, describe, retype, rescope, move, delete, and restore them, and change their defaults and reset_on_enter. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listVariables: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageVariable;
     };
   };
   /**
@@ -2350,6 +2637,7 @@ export const routes = {
   getReadiness: { method: "GET", path: "/readyz" },
   getSession: { method: "GET", path: "/api/v1/auth/session" },
   getSetup: { method: "GET", path: "/api/v1/setup" },
+  getVariable: { method: "GET", path: "/api/v1/projects/{project_id}/variables/{variable_id}" },
   getVersion: { method: "GET", path: "/version" },
   getWorkspace: { method: "GET", path: "/api/v1/workspaces/{workspace_id}" },
   getWorkspaceUsage: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/usage" },
@@ -2366,6 +2654,7 @@ export const routes = {
   listSessions: { method: "GET", path: "/api/v1/auth/sessions" },
   listTrash: { method: "GET", path: "/api/v1/projects/{project_id}/trash" },
   listTrashedProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/trash/projects" },
+  listVariables: { method: "GET", path: "/api/v1/projects/{project_id}/variables" },
   listWorkspaceTokens: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/tokens" },
   listWorkspaces: { method: "GET", path: "/api/v1/workspaces" },
   login: { method: "POST", path: "/api/v1/auth/login" },

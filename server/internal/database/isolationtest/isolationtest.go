@@ -167,6 +167,15 @@ var Tables = []Table{
 		return Statement{id, `INSERT INTO board (id, workspace_id, project_id, folder_id, "order", name, slug) ` +
 			"VALUES ($1, $2, $3, $4, 'V', 'Harbour', $5)", args}, nil
 	}},
+	{Name: "variable", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A global variable's key is unique within its project, which its ID
+		// makes. It belongs to no board, so that the trash's tests delete it
+		// on its own, whatever becomes of the workspace's board.
+		id := ids.New()
+		args := []any{id, w.ID, w.Rows["project"], "met_" + strings.ReplaceAll(id.String(), "-", "")}
+		return Statement{id, `INSERT INTO variable (id, workspace_id, project_id, scope, "order", key, type, ` +
+			"default_value) VALUES ($1, $2, $3, 'global', 'V', $4, 'bool', 'false')", args}, nil
+	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
 		id := ids.New()
