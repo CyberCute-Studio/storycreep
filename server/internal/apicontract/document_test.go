@@ -65,6 +65,14 @@ func TestLoadRefuses(t *testing.T) {
 			`"required": ["name", "colour"]`, "schema ThingInput: it requires the property colour, which it does not name"},
 		{"references in a cycle", `"schemas": {`, `"schemas": {"A": {"$ref": "#/components/schemas/B"}, ` +
 			`"B": {"$ref": "#/components/schemas/A"},`, "schema A: its references go round in a cycle"},
+		// huma's validator costs memory that grows with the square of the
+		// objects that lack a discriminator's property.
+		{"a discriminator", `"$ref": "#/components/schemas/Thing"`,
+			`"oneOf": [{"$ref": "#/components/schemas/Thing"}, {"$ref": "#/components/schemas/ThingInput"}], ` +
+				`"discriminator": {"propertyName": "kind", "mapping": {"note": "#/components/schemas/Thing"}}`,
+			"it has a discriminator, with which huma's validator"},
+		{"a null discriminator", `"maxLength": 1024`, `"maxLength": 1024, "discriminator": null`,
+			"it has a discriminator"},
 	}
 	for _, tt := range tests {
 		if !strings.Contains(string(base), tt.old) {

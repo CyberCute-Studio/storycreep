@@ -1,0 +1,619 @@
+{
+  "$defs": {
+    "attributeId": {
+      "description": "A component type's attribute definition's ID.",
+      "pattern": "^[Aa][Tt][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+      "type": "string"
+    },
+    "block": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/paragraph"
+        },
+        {
+          "$ref": "#/$defs/list"
+        }
+      ]
+    },
+    "bold": {
+      "additionalProperties": false,
+      "description": "Bold.",
+      "properties": {
+        "type": {
+          "const": "bold"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "code": {
+      "additionalProperties": false,
+      "description": "Inline code.",
+      "properties": {
+        "type": {
+          "const": "code"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "componentId": {
+      "description": "A component's ID.",
+      "pattern": "^[Cc][Mm][Pp]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+      "type": "string"
+    },
+    "decimals": {
+      "description": "The number of digits after the point that a number is shown with, rounded half away from zero. A value that is not a number is shown as it is.",
+      "maximum": 6,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "doc": {
+      "additionalProperties": false,
+      "description": "A document: its blocks, at least one. The editor's empty document is one empty paragraph.",
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/block"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "type": {
+          "const": "doc"
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    },
+    "hardBreak": {
+      "additionalProperties": false,
+      "description": "A line break within a paragraph.",
+      "properties": {
+        "marks": {
+          "$ref": "#/$defs/marks"
+        },
+        "type": {
+          "const": "hardBreak"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "inline": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/text"
+        },
+        {
+          "$ref": "#/$defs/hardBreak"
+        },
+        {
+          "$ref": "#/$defs/mention"
+        },
+        {
+          "$ref": "#/$defs/valueRef"
+        }
+      ]
+    },
+    "italic": {
+      "additionalProperties": false,
+      "description": "Italic.",
+      "properties": {
+        "type": {
+          "const": "italic"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "link": {
+      "additionalProperties": false,
+      "description": "A link to an absolute http or https URL with a host, without white space, or a mailto URL of one address and nothing else.",
+      "properties": {
+        "attrs": {
+          "additionalProperties": false,
+          "properties": {
+            "href": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss]?://[^\\x00-\\x20\\x7f-\\x9f/?#][^\\x00-\\x20\\x7f-\\x9f]*|[Mm][Aa][Ii][Ll][Tt][Oo]:[A-Za-z0-9_+-]+(?:\\.[A-Za-z0-9_+-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)*(?:[0-9]*[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?|[0-9]+-[A-Za-z0-9-]*[A-Za-z0-9]))$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "href"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "link"
+        }
+      },
+      "required": [
+        "attrs",
+        "type"
+      ],
+      "type": "object"
+    },
+    "list": {
+      "additionalProperties": false,
+      "description": "A list, bulleted (bulletList) or numbered (orderedList), of at least one item. Lists nest at most 5 deep, which the server checks beyond this schema.",
+      "properties": {
+        "attrs": {
+          "additionalProperties": false,
+          "description": "An orderedList's attributes. A bulletList has none, which the server checks beyond this schema.",
+          "properties": {
+            "start": {
+              "description": "The number of the first item, 1 when it is not given.",
+              "maximum": 999999,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "content": {
+          "items": {
+            "$ref": "#/$defs/listItem"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "bulletList",
+            "orderedList"
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    },
+    "listItem": {
+      "additionalProperties": false,
+      "description": "A list item: a paragraph, then any paragraphs and lists. That it starts with a paragraph is checked by the server, beyond this schema.",
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/block"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "type": {
+          "const": "listItem"
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    },
+    "marks": {
+      "description": "The marks of an inline node, each at most once, which the server checks beyond this schema. The code mark is not combined with another.",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/bold"
+          },
+          {
+            "$ref": "#/$defs/code"
+          },
+          {
+            "$ref": "#/$defs/italic"
+          },
+          {
+            "$ref": "#/$defs/link"
+          },
+          {
+            "$ref": "#/$defs/strike"
+          }
+        ]
+      },
+      "maxItems": 5,
+      "type": "array"
+    },
+    "mention": {
+      "additionalProperties": false,
+      "description": "A mention of a component, which the text shows by the component's name.",
+      "properties": {
+        "attrs": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/componentId"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "marks": {
+          "$ref": "#/$defs/marks"
+        },
+        "type": {
+          "const": "mention"
+        }
+      },
+      "required": [
+        "attrs",
+        "type"
+      ],
+      "type": "object"
+    },
+    "paragraph": {
+      "additionalProperties": false,
+      "description": "A paragraph, which may be empty.",
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/inline"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "paragraph"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "strike": {
+      "additionalProperties": false,
+      "description": "Strikethrough.",
+      "properties": {
+        "type": {
+          "const": "strike"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "text": {
+      "additionalProperties": false,
+      "description": "Text, without control characters but tabs, or line and paragraph separators: a line break is a hardBreak, and a paragraph a paragraph. Nor does it hold bidirectional controls, as U+202E, which the server checks beyond this schema. A document's texts hold at most 100,000 characters together.",
+      "properties": {
+        "marks": {
+          "$ref": "#/$defs/marks"
+        },
+        "text": {
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x08\\x0a-\\x1f\\x7f-\\x9f\u2028\u2029]+$",
+          "type": "string"
+        },
+        "type": {
+          "const": "text"
+        }
+      },
+      "required": [
+        "text",
+        "type"
+      ],
+      "type": "object"
+    },
+    "valueRef": {
+      "additionalProperties": false,
+      "description": "A reference to a value, which the text shows as the runtime renders it: a variable's, or a runtime attribute's of a component.",
+      "properties": {
+        "attrs": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "decimals": {
+                  "$ref": "#/$defs/decimals"
+                },
+                "ref": {
+                  "$ref": "#/$defs/variableId"
+                }
+              },
+              "required": [
+                "ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "attribute": {
+                  "$ref": "#/$defs/attributeId"
+                },
+                "decimals": {
+                  "$ref": "#/$defs/decimals"
+                },
+                "ref": {
+                  "$ref": "#/$defs/componentId"
+                }
+              },
+              "required": [
+                "attribute",
+                "ref"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "marks": {
+          "$ref": "#/$defs/marks"
+        },
+        "type": {
+          "const": "valueRef"
+        }
+      },
+      "required": [
+        "attrs",
+        "type"
+      ],
+      "type": "object"
+    },
+    "variableId": {
+      "description": "A variable's ID.",
+      "pattern": "^[Vv][Aa][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+      "type": "string"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/rich-text/v1/rich-text.schema.json",
+  "$ref": "#/$defs/doc",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A rich-text document of Storycreep, version 1: a ProseMirror document of a constrained schema, which node bodies, connection labels, and component descriptions hold. schema/rich-text/README.md in the repository describes it, the limits that the server checks beyond this schema, and what is derived from it.",
+  "examples": [
+    {
+      "content": [
+        {
+          "type": "paragraph"
+        }
+      ],
+      "type": "doc"
+    },
+    {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "Harbour's closed to strangers. State your business.",
+              "type": "text"
+            }
+          ],
+          "type": "paragraph"
+        }
+      ],
+      "type": "doc"
+    },
+    {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "Ask the ",
+              "type": "text"
+            },
+            {
+              "marks": [
+                {
+                  "type": "bold"
+                }
+              ],
+              "text": "keeper",
+              "type": "text"
+            },
+            {
+              "text": " about the ",
+              "type": "text"
+            },
+            {
+              "marks": [
+                {
+                  "type": "italic"
+                },
+                {
+                  "attrs": {
+                    "href": "https://example.com/lighthouse"
+                  },
+                  "type": "link"
+                }
+              ],
+              "text": "old lighthouse",
+              "type": "text"
+            },
+            {
+              "text": ", not the ",
+              "type": "text"
+            },
+            {
+              "marks": [
+                {
+                  "type": "strike"
+                }
+              ],
+              "text": "new",
+              "type": "text"
+            },
+            {
+              "text": " one: ",
+              "type": "text"
+            },
+            {
+              "marks": [
+                {
+                  "type": "code"
+                }
+              ],
+              "text": "LIGHT_ON",
+              "type": "text"
+            },
+            {
+              "text": ".",
+              "type": "text"
+            }
+          ],
+          "type": "paragraph"
+        }
+      ],
+      "type": "doc"
+    },
+    {
+      "content": [
+        {
+          "content": [
+            {
+              "attrs": {
+                "id": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+              },
+              "type": "mention"
+            },
+            {
+              "text": " has heard ",
+              "type": "text"
+            },
+            {
+              "attrs": {
+                "ref": "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"
+              },
+              "type": "valueRef"
+            },
+            {
+              "text": " rumours.",
+              "type": "text"
+            },
+            {
+              "type": "hardBreak"
+            },
+            {
+              "text": "Trust: ",
+              "type": "text"
+            },
+            {
+              "attrs": {
+                "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
+                "decimals": 1,
+                "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+              },
+              "marks": [
+                {
+                  "type": "bold"
+                }
+              ],
+              "type": "valueRef"
+            }
+          ],
+          "type": "paragraph"
+        }
+      ],
+      "type": "doc"
+    },
+    {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "Pack for the climb:",
+              "type": "text"
+            }
+          ],
+          "type": "paragraph"
+        },
+        {
+          "content": [
+            {
+              "content": [
+                {
+                  "content": [
+                    {
+                      "text": "Rope",
+                      "type": "text"
+                    }
+                  ],
+                  "type": "paragraph"
+                }
+              ],
+              "type": "listItem"
+            },
+            {
+              "content": [
+                {
+                  "content": [
+                    {
+                      "text": "Lamp",
+                      "type": "text"
+                    }
+                  ],
+                  "type": "paragraph"
+                },
+                {
+                  "attrs": {
+                    "start": 3
+                  },
+                  "content": [
+                    {
+                      "content": [
+                        {
+                          "content": [
+                            {
+                              "text": "Oil",
+                              "type": "text"
+                            }
+                          ],
+                          "type": "paragraph"
+                        }
+                      ],
+                      "type": "listItem"
+                    },
+                    {
+                      "content": [
+                        {
+                          "content": [
+                            {
+                              "text": "Wick",
+                              "type": "text"
+                            }
+                          ],
+                          "type": "paragraph"
+                        }
+                      ],
+                      "type": "listItem"
+                    }
+                  ],
+                  "type": "orderedList"
+                }
+              ],
+              "type": "listItem"
+            }
+          ],
+          "type": "bulletList"
+        },
+        {
+          "content": [
+            {
+              "text": "Then go.",
+              "type": "text"
+            }
+          ],
+          "type": "paragraph"
+        }
+      ],
+      "type": "doc"
+    }
+  ],
+  "title": "Storycreep rich text"
+}

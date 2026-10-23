@@ -7,7 +7,12 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!**/*.gen.ts", "!schema/api/v1/openapi.json"]
+    "includes": [
+      "**",
+      "!**/*.gen.ts",
+      "!schema/api/v1/openapi.json",
+      "!schema/**/*.schema.json"
+    ]
   },
   "formatter": {
     "enabled": true,

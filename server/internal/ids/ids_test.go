@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -292,6 +293,39 @@ func TestDecodeErrorMessage(t *testing.T) {
 	_, _, err = DecodeAny("01HQ8Z3XK4F7NAWR5TCQ9M2BVD")
 	if want := "ids: invalid identifier: it has no type prefix"; err == nil || err.Error() != want {
 		t.Errorf("error = %v, want %q", err, want)
+	}
+}
+
+// TestPattern checks that each entity type's pattern matches exactly the
+// identifiers that Decode accepts for the type: those of every vector, and
+// identifiers of the type in either case, with each character of the body.
+func TestPattern(t *testing.T) {
+	v := readVectors(t)
+	for _, k := range Kinds() {
+		re := regexp.MustCompile(k.Pattern())
+		check := func(k Kind, id string) {
+			t.Helper()
+			_, err := Decode(k, id)
+			if matched := re.MatchString(id); matched != (err == nil) {
+				t.Errorf("%v's pattern %s matches %q: %v, but Decode says %v", k, k.Pattern(), id, matched, err)
+			}
+		}
+		for _, tc := range v.Encode {
+			check(k, tc.ID)
+		}
+		for _, tc := range v.Decode {
+			check(k, tc.ID)
+		}
+		for _, tc := range v.DecodeErrors {
+			check(k, tc.ID)
+		}
+		id := Encode(k, New())
+		check(k, strings.ToUpper(id))
+		for c := range 128 {
+			for _, at := range []int{len(k.Prefix()) + 1, len(id) - 1} {
+				check(k, id[:at]+string(rune(c))+id[at+1:])
+			}
+		}
 	}
 }
 

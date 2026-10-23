@@ -138,6 +138,36 @@ const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 // bits in front.
 const BodyLength = 26
 
+// Pattern returns the regular expression of the identifiers of the entity
+// type that Decode accepts, as a JSON schema writes one, which Go's regular
+// expressions and ECMAScript's read alike: the prefix and the body in either
+// case, and a first character of the body that keeps the value within 128
+// bits. It panics if k is not an entity type.
+func (k Kind) Pattern() string {
+	var b strings.Builder
+	b.WriteByte('^')
+	for _, c := range k.Prefix() {
+		b.WriteString("[" + strings.ToUpper(string(c)) + string(c) + "]")
+	}
+	b.WriteString("_")
+	class := func(chars string) string {
+		var c strings.Builder
+		c.WriteByte('[')
+		for _, r := range chars {
+			c.WriteRune(r)
+			if 'A' <= r && r <= 'Z' {
+				c.WriteRune(r + 'a' - 'A')
+			}
+		}
+		c.WriteByte(']')
+		return c.String()
+	}
+	// The body holds 130 bits, of which the two highest are zero, so its
+	// first character is one of the first eight of the alphabet.
+	fmt.Fprintf(&b, "%s%s{%d}$", class(alphabet[:8]), class(alphabet), BodyLength-1)
+	return b.String()
+}
+
 // decodeTable maps an ASCII byte to its value in the alphabet, accepting
 // lowercase letters, or to invalid.
 var decodeTable = func() (t [256]byte) {

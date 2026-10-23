@@ -180,6 +180,8 @@ type Schema struct {
 	OneOf                []*Schema          `json:"oneOf"`
 	AnyOf                []*Schema          `json:"anyOf"`
 	AllOf                []*Schema          `json:"allOf"`
+	// Discriminator is read only so that checkSchema refuses it, with why.
+	Discriminator json.RawMessage `json:"discriminator"`
 }
 
 // Types is the type keyword, which is one type name or a list of them, such
@@ -477,11 +479,24 @@ func (d *Document) checkMediaType(m *MediaType) error {
 var typeNames = []string{"string", "integer", "number", "boolean", "array", "object", "null"}
 
 // checkSchema checks that every type in s is one of JSON Schema's, every
-// property that s requires is one that it names, and every reference names a
-// schema that exists and has beside it only the keywords that annotate it.
+// property that s requires is one that it names, every reference names a
+// schema that exists and has beside it only the keywords that annotate it,
+// and s has no discriminator.
 func (d *Document) checkSchema(s *Schema) error {
 	if s == nil {
 		return nil
+	}
+	if s.Discriminator != nil {
+		// huma's validator (v2.39.1) pushes the discriminator's property onto
+		// its path at an object without it, or whose property is neither a
+		// string nor null, and does not pop it (validateDiscriminator), so
+		// that the location of every later problem of the body has a segment
+		// more for each such object: a body of many of them costs memory that
+		// grows with the square of their number, and a body of 5 MiB of {} in
+		// an array of a oneOf with a discriminator runs the server out of
+		// memory. Allow one again only once huma pops what it pushes.
+		return errors.New("it has a discriminator, with which huma's validator (v2.39.1) costs memory that grows " +
+			"with the square of the number of objects in a body that lack its property")
 	}
 	for _, t := range s.Type {
 		if !slices.Contains(typeNames, t) {

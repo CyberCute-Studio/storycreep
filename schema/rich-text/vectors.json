@@ -1,0 +1,6130 @@
+{
+  "names": {
+    "components": {
+      "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF": "Elara"
+    },
+    "values": [
+      {
+        "name": "met_elara",
+        "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
+      },
+      {
+        "name": "harbour_rumours",
+        "ref": "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"
+      },
+      {
+        "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
+        "name": "elara.trust",
+        "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+      }
+    ]
+  },
+  "valid": [
+    {
+      "note": "the editor's empty document: one empty paragraph",
+      "doc": {
+        "content": [
+          {
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [],
+      "text": "",
+      "preview": "",
+      "words": 0,
+      "hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "note": "the node of the PRD's example (section 6.5)",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "text": "Harbour's closed to strangers. State your business.",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Harbour's closed to strangers. State your business."
+        }
+      ],
+      "text": "Harbour's closed to strangers. State your business.",
+      "preview": "Harbour's closed to strangers. State your business.",
+      "words": 7,
+      "hash": "sha256:c837445da5f4925edceb14ff23a89dd81158e985f16b5d160c522201241629a4"
+    },
+    {
+      "note": "marks and a link: each segment lists its marks in alphabetical order, and a linked one has its href",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "text": "Ask the ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "type": "bold"
+                  }
+                ],
+                "text": "keeper",
+                "type": "text"
+              },
+              {
+                "text": " about the ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "type": "italic"
+                  },
+                  {
+                    "attrs": {
+                      "href": "https://example.com/lighthouse"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "old lighthouse",
+                "type": "text"
+              },
+              {
+                "text": ", not the ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "type": "strike"
+                  }
+                ],
+                "text": "new",
+                "type": "text"
+              },
+              {
+                "text": " one: ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "type": "code"
+                  }
+                ],
+                "text": "LIGHT_ON",
+                "type": "text"
+              },
+              {
+                "text": ".",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Ask the "
+        },
+        {
+          "kind": "text",
+          "marks": ["bold"],
+          "value": "keeper"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " about the "
+        },
+        {
+          "href": "https://example.com/lighthouse",
+          "kind": "text",
+          "marks": ["italic", "link"],
+          "value": "old lighthouse"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": ", not the "
+        },
+        {
+          "kind": "text",
+          "marks": ["strike"],
+          "value": "new"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " one: "
+        },
+        {
+          "kind": "text",
+          "marks": ["code"],
+          "value": "LIGHT_ON"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "."
+        }
+      ],
+      "text": "Ask the keeper about the old lighthouse, not the new one: LIGHT_ON.",
+      "preview": "Ask the keeper about the old lighthouse, not the new one: LIGHT_ON.",
+      "words": 12,
+      "hash": "sha256:38482a363c9b444dc6c51c0d74f0cdc4258281108cfcffe99cf3cf5333e7f057"
+    },
+    {
+      "note": "a mention shows the component's name, and a value its name in braces; a line break is a line feed",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "attrs": {
+                  "id": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                },
+                "type": "mention"
+              },
+              {
+                "text": " has heard ",
+                "type": "text"
+              },
+              {
+                "attrs": {
+                  "ref": "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"
+                },
+                "type": "valueRef"
+              },
+              {
+                "text": " rumours.",
+                "type": "text"
+              },
+              {
+                "type": "hardBreak"
+              },
+              {
+                "text": "Trust: ",
+                "type": "text"
+              },
+              {
+                "attrs": {
+                  "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
+                  "decimals": 1,
+                  "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                },
+                "marks": [
+                  {
+                    "type": "bold"
+                  }
+                ],
+                "type": "valueRef"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "mention",
+          "marks": [],
+          "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+          "value": "Elara"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " has heard "
+        },
+        {
+          "kind": "value",
+          "marks": [],
+          "name": "harbour_rumours",
+          "ref": "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " rumours."
+        },
+        {
+          "kind": "break"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Trust: "
+        },
+        {
+          "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
+          "decimals": 1,
+          "kind": "value",
+          "marks": ["bold"],
+          "name": "elara.trust",
+          "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+        }
+      ],
+      "text": "Elara has heard {harbour_rumours} rumours.\nTrust: {elara.trust}",
+      "preview": "Elara has heard {harbour_rumours} rumours. Trust: {elara.trust}",
+      "words": 7,
+      "hash": "sha256:a893a22a46af838ba40fa316d53642a4a1aff5f8f5fb9243c0e8c1bafc16f087"
+    },
+    {
+      "note": "lists: an item segment begins each item, and a paragraph segment the paragraph after the list",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "text": "Pack for the climb:",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          },
+          {
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "Rope",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              },
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "Lamp",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  },
+                  {
+                    "attrs": {
+                      "start": 3
+                    },
+                    "content": [
+                      {
+                        "content": [
+                          {
+                            "content": [
+                              {
+                                "text": "Oil",
+                                "type": "text"
+                              }
+                            ],
+                            "type": "paragraph"
+                          }
+                        ],
+                        "type": "listItem"
+                      },
+                      {
+                        "content": [
+                          {
+                            "content": [
+                              {
+                                "text": "Wick",
+                                "type": "text"
+                              }
+                            ],
+                            "type": "paragraph"
+                          }
+                        ],
+                        "type": "listItem"
+                      }
+                    ],
+                    "type": "orderedList"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "bulletList"
+          },
+          {
+            "content": [
+              {
+                "text": "Then go.",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Pack for the climb:"
+        },
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Rope"
+        },
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Lamp"
+        },
+        {
+          "depth": 2,
+          "kind": "item",
+          "list": "ordered",
+          "number": 3
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Oil"
+        },
+        {
+          "depth": 2,
+          "kind": "item",
+          "list": "ordered",
+          "number": 4
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Wick"
+        },
+        {
+          "kind": "paragraph"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Then go."
+        }
+      ],
+      "text": "Pack for the climb:\n• Rope\n• Lamp\n  3. Oil\n  4. Wick\nThen go.",
+      "preview": "Pack for the climb: • Rope • Lamp 3. Oil 4. Wick Then go.",
+      "words": 10,
+      "hash": "sha256:e8da259d791343d935cfd1cc81bb8e5fc35a5f3c88806f63a6a58504d512e6f6"
+    },
+    {
+      "note": "a paragraph after a list that is the document's first block has a paragraph segment: only the first block of the document, or of a list item, has none",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "Rope",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "bulletList"
+          },
+          {
+            "content": [
+              {
+                "text": "Then go.",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Rope"
+        },
+        {
+          "kind": "paragraph"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Then go."
+        }
+      ],
+      "text": "• Rope\nThen go.",
+      "preview": "• Rope Then go.",
+      "words": 3,
+      "hash": "sha256:bc527b3a9e8c8b6a750b3e56e550d507a4cc03e33a4a1df3b2226158f67774c8"
+    },
+    {
+      "note": "the canonical form: marks in alphabetical order, neighbouring texts with the same marks joined, an ID in its canonical spelling, and no field that holds its default",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Go "
+              },
+              {
+                "type": "text",
+                "text": "now",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com"
+                    }
+                  },
+                  {
+                    "type": "bold"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "text": "!",
+                "marks": [
+                  {
+                    "type": "bold"
+                  },
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": []
+          },
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "mention",
+                        "attrs": {
+                          "id": "CMP_01hq8z7kd3m9p2w5xrtvnq4bcf"
+                        },
+                        "marks": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 1
+            }
+          }
+        ]
+      },
+      "canonical": {
+        "content": [
+          {
+            "content": [
+              {
+                "text": "Go ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "type": "bold"
+                  },
+                  {
+                    "attrs": {
+                      "href": "https://example.com"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "now!",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          },
+          {
+            "type": "paragraph"
+          },
+          {
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "attrs": {
+                          "id": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                        },
+                        "type": "mention"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "orderedList"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Go "
+        },
+        {
+          "href": "https://example.com",
+          "kind": "text",
+          "marks": ["bold", "link"],
+          "value": "now!"
+        },
+        {
+          "kind": "paragraph"
+        },
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "ordered",
+          "number": 1
+        },
+        {
+          "kind": "mention",
+          "marks": [],
+          "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+          "value": "Elara"
+        }
+      ],
+      "text": "Go now!\n\n1. Elara",
+      "preview": "Go now! 1. Elara",
+      "words": 3,
+      "hash": "sha256:c1a239168a8ef85348410a1b4bfb565cd9152aee49bd3d54da3ac1692e5e609a"
+    },
+    {
+      "note": "a list item's later paragraph and its line breaks are indented two spaces for each depth, as far as a bulleted item's text",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "First",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  },
+                  {
+                    "content": [
+                      {
+                        "text": "More",
+                        "type": "text"
+                      },
+                      {
+                        "type": "hardBreak"
+                      },
+                      {
+                        "text": "lines",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "bulletList"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "First"
+        },
+        {
+          "depth": 1,
+          "kind": "paragraph"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "More"
+        },
+        {
+          "kind": "break"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "lines"
+        }
+      ],
+      "text": "• First\n  More\n  lines",
+      "preview": "• First More lines",
+      "words": 3,
+      "hash": "sha256:db06d859d22f7495f064c577b9af3ee6e6715a1b0ce3a471c9cb9f0ad5479b53"
+    },
+    {
+      "note": "a numbered item's later lines are indented two spaces for each depth too, not as far as its text",
+      "doc": {
+        "content": [
+          {
+            "attrs": {
+              "start": 9
+            },
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "a",
+                        "type": "text"
+                      },
+                      {
+                        "type": "hardBreak"
+                      },
+                      {
+                        "text": "b",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              },
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "c",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  },
+                  {
+                    "content": [
+                      {
+                        "text": "d",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "orderedList"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "ordered",
+          "number": 9
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "a"
+        },
+        {
+          "kind": "break"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "b"
+        },
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "ordered",
+          "number": 10
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "c"
+        },
+        {
+          "depth": 1,
+          "kind": "paragraph"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "d"
+        }
+      ],
+      "text": "9. a\n  b\n10. c\n  d",
+      "preview": "9. a b 10. c d",
+      "words": 4,
+      "hash": "sha256:74b9f76675296b127720452770c4e2d96437c380be2cc55bc4ff36dc7b5ac8f2"
+    },
+    {
+      "note": "a document whose first segment is a line break starts with a line feed",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "type": "hardBreak"
+              },
+              {
+                "text": "After",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "break"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "After"
+        }
+      ],
+      "text": "\nAfter",
+      "preview": "After",
+      "words": 1,
+      "hash": "sha256:7ade159e33ad72af11ed911edb6ba8b5624c695e1aa5852484b0bb5747c56f3c"
+    },
+    {
+      "note": "a document's empty first paragraph has no segment, so a list after it starts the plain text",
+      "doc": {
+        "content": [
+          {
+            "type": "paragraph"
+          },
+          {
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "Rope",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "bulletList"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Rope"
+        }
+      ],
+      "text": "• Rope",
+      "preview": "• Rope",
+      "words": 1,
+      "hash": "sha256:8a17ea5a75d9acb8e85ce428871bca41ebd0e7bdeac4d96cf0a9f6b103da4b9e"
+    },
+    {
+      "note": "lists nest 5 deep at most",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "a",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  },
+                  {
+                    "content": [
+                      {
+                        "content": [
+                          {
+                            "content": [
+                              {
+                                "text": "b",
+                                "type": "text"
+                              }
+                            ],
+                            "type": "paragraph"
+                          },
+                          {
+                            "content": [
+                              {
+                                "content": [
+                                  {
+                                    "content": [
+                                      {
+                                        "text": "c",
+                                        "type": "text"
+                                      }
+                                    ],
+                                    "type": "paragraph"
+                                  },
+                                  {
+                                    "content": [
+                                      {
+                                        "content": [
+                                          {
+                                            "content": [
+                                              {
+                                                "text": "d",
+                                                "type": "text"
+                                              }
+                                            ],
+                                            "type": "paragraph"
+                                          },
+                                          {
+                                            "content": [
+                                              {
+                                                "content": [
+                                                  {
+                                                    "content": [
+                                                      {
+                                                        "text": "e",
+                                                        "type": "text"
+                                                      }
+                                                    ],
+                                                    "type": "paragraph"
+                                                  }
+                                                ],
+                                                "type": "listItem"
+                                              }
+                                            ],
+                                            "type": "bulletList"
+                                          }
+                                        ],
+                                        "type": "listItem"
+                                      }
+                                    ],
+                                    "type": "bulletList"
+                                  }
+                                ],
+                                "type": "listItem"
+                              }
+                            ],
+                            "type": "bulletList"
+                          }
+                        ],
+                        "type": "listItem"
+                      }
+                    ],
+                    "type": "bulletList"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "bulletList"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "a"
+        },
+        {
+          "depth": 2,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "b"
+        },
+        {
+          "depth": 3,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "c"
+        },
+        {
+          "depth": 4,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "d"
+        },
+        {
+          "depth": 5,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "e"
+        }
+      ],
+      "text": "• a\n  • b\n    • c\n      • d\n        • e",
+      "preview": "• a • b • c • d • e",
+      "words": 5,
+      "hash": "sha256:6fe101a3ea01e1a4773d9acdb197846c3bcc313c3e21b010a023d9a85ce8bf4f"
+    },
+    {
+      "note": "an ordered list may start at 0; a line break's marks show in no segment; a linked value has its href",
+      "doc": {
+        "content": [
+          {
+            "attrs": {
+              "start": 0
+            },
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "Zero",
+                        "type": "text"
+                      },
+                      {
+                        "marks": [
+                          {
+                            "type": "italic"
+                          }
+                        ],
+                        "type": "hardBreak"
+                      },
+                      {
+                        "attrs": {
+                          "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
+                        },
+                        "marks": [
+                          {
+                            "attrs": {
+                              "href": "https://example.com/met"
+                            },
+                            "type": "link"
+                          }
+                        ],
+                        "type": "valueRef"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "orderedList"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "ordered",
+          "number": 0
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Zero"
+        },
+        {
+          "kind": "break"
+        },
+        {
+          "href": "https://example.com/met",
+          "kind": "value",
+          "marks": ["link"],
+          "name": "met_elara",
+          "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
+        }
+      ],
+      "text": "0. Zero\n  {met_elara}",
+      "preview": "0. Zero {met_elara}",
+      "words": 2,
+      "hash": "sha256:243d09d592f0b41f33aeea7e6bde7296f9c9ca2e184331a2b95d81c758078698"
+    },
+    {
+      "note": "an empty paragraph between others is an empty line, and a document's empty first paragraph has no segment",
+      "doc": {
+        "content": [
+          {
+            "type": "paragraph"
+          },
+          {
+            "content": [
+              {
+                "text": "After",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          },
+          {
+            "type": "paragraph"
+          },
+          {
+            "content": [
+              {
+                "text": "End",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "paragraph"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "After"
+        },
+        {
+          "kind": "paragraph"
+        },
+        {
+          "kind": "paragraph"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "End"
+        }
+      ],
+      "text": "\nAfter\n\nEnd",
+      "preview": "After End",
+      "words": 2,
+      "hash": "sha256:30e3b27c2f59d6b100bc6789d2955ce36e588251dd38c1d9a7cc7c9b471ccc3c"
+    },
+    {
+      "note": "a preview of a long text is cut at the last space within its first 100 characters, with an ellipsis",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "text": "The keeper climbed the spiral stairs of the old lighthouse, counting each of the hundred and twelve worn steps under her breath.",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "The keeper climbed the spiral stairs of the old lighthouse, counting each of the hundred and twelve worn steps under her breath."
+        }
+      ],
+      "text": "The keeper climbed the spiral stairs of the old lighthouse, counting each of the hundred and twelve worn steps under her breath.",
+      "preview": "The keeper climbed the spiral stairs of the old lighthouse, counting each of the hundred and twelve…",
+      "words": 22,
+      "hash": "sha256:e1a459cab5130ee07c2bbcaeed2b3cb1b2bd61e145902f96c6164aafccfddecd"
+    },
+    {
+      "note": "text in any script, with an emoji and a no-break space",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "text": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy  — 東京タワー 3 km",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy  — 東京タワー 3 km"
+        }
+      ],
+      "text": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy  — 東京タワー 3 km",
+      "preview": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy — 東京タワー 3 km",
+      "words": 9,
+      "hash": "sha256:f40ad5ba8fb127eeb990de1536ba5af0a6c62bdba97795c5f7cd0f26cfb467ce"
+    },
+    {
+      "note": "an escaped surrogate pair is the character it stands for",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Go \ud83d\udc34"
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": {
+        "content": [
+          {
+            "content": [
+              {
+                "text": "Go 🐴",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Go 🐴"
+        }
+      ],
+      "text": "Go 🐴",
+      "preview": "Go 🐴",
+      "words": 1,
+      "hash": "sha256:55066f4dafda1097717a8629b188846b9cf0f26bd7447cd20d20d19db7d93744"
+    },
+    {
+      "note": "a tab in text is kept, as ProseMirror keeps it in text pasted as plain text: it is white space, which separates words, and which the preview writes as a space",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "text": "Rope\t2\tcoils",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Rope\t2\tcoils"
+        }
+      ],
+      "text": "Rope\t2\tcoils",
+      "preview": "Rope 2 coils",
+      "words": 3,
+      "hash": "sha256:ff341395678defff332797ae7e9b971dc6f6ed154b36e1dcdb2d8d1c1325cb08"
+    },
+    {
+      "note": "HTML is not escaped: <, >, and & stay as they are, in a text and in a link",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "https://example.com/?a=1&b=<2>"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "Fish & chips <hot>",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "href": "https://example.com/?a=1&b=<2>",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "Fish & chips <hot>"
+        }
+      ],
+      "text": "Fish & chips <hot>",
+      "preview": "Fish & chips <hot>",
+      "words": 3,
+      "hash": "sha256:cbdc6be8042546270cfd3c3396e4a1ca932575821b75d46a6069d64a7f0020dd"
+    },
+    {
+      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link of one address, whose local part has a _, a dot, a -, a digit, and a +, and whose internationalized domain is written as IDNA writes it in ASCII",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "https://[2001:db8::1]:8443/a@b"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "one",
+                "type": "text"
+              },
+              {
+                "text": " ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "https://example.com/a|b?q={x}#%C3%A9"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "two",
+                "type": "text"
+              },
+              {
+                "text": " ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "mailto:o_brien.lamp-2+harbour@xn--caf-dma.example"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "three",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "href": "https://[2001:db8::1]:8443/a@b",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "one"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " "
+        },
+        {
+          "href": "https://example.com/a|b?q={x}#%C3%A9",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "two"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " "
+        },
+        {
+          "href": "mailto:o_brien.lamp-2+harbour@xn--caf-dma.example",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "three"
+        }
+      ],
+      "text": "one two three",
+      "preview": "one two three",
+      "words": 3,
+      "hash": "sha256:6899ee404683a14e8c2a03149860df25d67d34d9cd4dae7350cbe91e4b3976be"
+    },
+    {
+      "note": "a mailto link of one address and nothing else",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "mailto:keeper@example.com"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "Write",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "href": "mailto:keeper@example.com",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "Write"
+        }
+      ],
+      "text": "Write",
+      "preview": "Write",
+      "words": 1,
+      "hash": "sha256:3f00927a719345edd4a8316599d3b328857987547f8884306861161ffa09647e"
+    },
+    {
+      "note": "a link of 2,048 characters, counted as code points, though it has more UTF-16 code units",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "https://example.com/🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "x",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "href": "https://example.com/🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "x"
+        }
+      ],
+      "text": "x",
+      "preview": "x",
+      "words": 1,
+      "hash": "sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+    },
+    {
+      "note": "hosts that the server takes: an internationalized one, written as IDNA writes it in ASCII, with the highest port, 65,535, written with a leading zero; an IPv4 address; an IPv6 address that ends with an IPv4 one; and a name that ends with a dot",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "https://xn--caf-dma.example:065535/"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "one",
+                "type": "text"
+              },
+              {
+                "text": " ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "http://192.0.2.1/"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "two",
+                "type": "text"
+              },
+              {
+                "text": " ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "https://[::ffff:192.0.2.1]/"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "three",
+                "type": "text"
+              },
+              {
+                "text": " ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "https://example.com./"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "four",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "href": "https://xn--caf-dma.example:065535/",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "one"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " "
+        },
+        {
+          "href": "http://192.0.2.1/",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "two"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " "
+        },
+        {
+          "href": "https://[::ffff:192.0.2.1]/",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "three"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " "
+        },
+        {
+          "href": "https://example.com./",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "four"
+        }
+      ],
+      "text": "one two three four",
+      "preview": "one two three four",
+      "words": 4,
+      "hash": "sha256:113f69ccf08f80a63beba2f49218eaa72a183f374065e6cb56ebe9bd68eb79cc"
+    },
+    {
+      "note": "a number is read as JSON.parse reads it, as the nearest double: 3.0 is 3, and so is 2.99999999999999999999",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 3.0
+            }
+          },
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "b"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 2.99999999999999999999
+            }
+          }
+        ]
+      },
+      "canonical": {
+        "content": [
+          {
+            "attrs": {
+              "start": 3
+            },
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "a",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "orderedList"
+          },
+          {
+            "attrs": {
+              "start": 3
+            },
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "b",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "orderedList"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "ordered",
+          "number": 3
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "a"
+        },
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "ordered",
+          "number": 3
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "b"
+        }
+      ],
+      "text": "3. a\n3. b",
+      "preview": "3. a 3. b",
+      "words": 2,
+      "hash": "sha256:d94ddd1f631fa60f3c42b7326c58612f02183b09fb2dcc90283815b68eb0f409"
+    }
+  ],
+  "invalid": [
+    {
+      "note": "a text that escapes a lone surrogate, which no UTF-8 holds, though JSON.parse keeps it",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "a\ud800b"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "invalid_json",
+      "pointer": "",
+      "schema_accepts": true
+    },
+    {
+      "note": "a document that is not an object",
+      "doc": "Harbour",
+      "reason": "wrong_type",
+      "pointer": ""
+    },
+    {
+      "note": "a document that is an array",
+      "doc": [],
+      "reason": "wrong_type",
+      "pointer": ""
+    },
+    {
+      "note": "a document without a type",
+      "doc": {
+        "content": [
+          {
+            "type": "paragraph"
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": ""
+    },
+    {
+      "note": "a type spelt in another case, which is a field that no node has, not the node's type",
+      "doc": {
+        "type": "doc",
+        "Type": "doc",
+        "content": [
+          {
+            "type": "paragraph"
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/Type"
+    },
+    {
+      "note": "a type that is not a string",
+      "doc": {
+        "type": 1,
+        "content": [
+          {
+            "type": "paragraph"
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/type"
+    },
+    {
+      "note": "a document that is not a doc node",
+      "doc": {
+        "type": "paragraph",
+        "content": [
+          {
+            "type": "text",
+            "text": "x"
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": ""
+    },
+    {
+      "note": "a document of an unknown type",
+      "doc": {
+        "type": "document",
+        "content": [
+          {
+            "type": "paragraph"
+          }
+        ]
+      },
+      "reason": "unknown_node",
+      "pointer": ""
+    },
+    {
+      "note": "a document without content",
+      "doc": {
+        "type": "doc"
+      },
+      "reason": "missing_field",
+      "pointer": ""
+    },
+    {
+      "note": "a document with no block",
+      "doc": {
+        "type": "doc",
+        "content": []
+      },
+      "reason": "content",
+      "pointer": "/content"
+    },
+    {
+      "note": "content that is not an array",
+      "doc": {
+        "type": "doc",
+        "content": {}
+      },
+      "reason": "wrong_type",
+      "pointer": "/content"
+    },
+    {
+      "note": "content that is null",
+      "doc": {
+        "type": "doc",
+        "content": null
+      },
+      "reason": "wrong_type",
+      "pointer": "/content"
+    },
+    {
+      "note": "a paragraph whose content is null",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": null
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content"
+    },
+    {
+      "note": "a node that is not an object",
+      "doc": {
+        "type": "doc",
+        "content": ["paragraph"]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "a node whose type is not a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": 1
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/type"
+    },
+    {
+      "note": "a heading",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "heading",
+            "attrs": {
+              "level": 1
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_node",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "a blockquote",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "blockquote",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "x"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_node",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "a code block",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "codeBlock",
+            "content": [
+              {
+                "type": "text",
+                "text": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_node",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "an image",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "image",
+                "attrs": {
+                  "src": "https://example.com/a.png"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_node",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a node type in another case",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "Paragraph"
+          }
+        ]
+      },
+      "reason": "unknown_node",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "text directly in a document",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "text",
+            "text": "x"
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "a list item directly in a document",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "listItem",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "x"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "a paragraph in a paragraph",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "x"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a doc in a paragraph",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "doc",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a paragraph directly in a list",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "x"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a list item that starts with a list",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "x"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0/content/0/content/0",
+      "schema_accepts": true
+    },
+    {
+      "note": "a list without items",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": []
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0/content"
+    },
+    {
+      "note": "a list without content",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList"
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0"
+    },
+    {
+      "note": "a list item that holds nothing",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": []
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "content",
+      "pointer": "/content/0/content/0/content"
+    },
+    {
+      "note": "attrs on a paragraph",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "attrs": {}
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/attrs"
+    },
+    {
+      "note": "attrs on a bulleted list, which only an ordered list has",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 2
+            }
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/attrs",
+      "schema_accepts": true
+    },
+    {
+      "note": "a field that no node has",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "id": "a"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/content/0/id"
+    },
+    {
+      "note": "an attribute that an ordered list does not have",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 2,
+              "type": "a"
+            }
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/attrs/type"
+    },
+    {
+      "note": "an ordered list's attrs that are not an object",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": [2]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/attrs"
+    },
+    {
+      "note": "an ordered list's attrs that are null",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": null
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/attrs"
+    },
+    {
+      "note": "an ordered list whose start is null",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": null
+            }
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/attrs/start"
+    },
+    {
+      "note": "an ordered list starting below 0",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": -1
+            }
+          }
+        ]
+      },
+      "reason": "out_of_range",
+      "pointer": "/content/0/attrs/start"
+    },
+    {
+      "note": "an ordered list starting above 999,999",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 1000000
+            }
+          }
+        ]
+      },
+      "reason": "out_of_range",
+      "pointer": "/content/0/attrs/start"
+    },
+    {
+      "note": "an ordered list starting at a fraction",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 2.5
+            }
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/attrs/start"
+    },
+    {
+      "note": "an ordered list starting at a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": "3"
+            }
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/attrs/start"
+    },
+    {
+      "note": "an ordered list starting at a number too large for a double, which JSON.parse reads as Infinity",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ],
+            "attrs": {
+              "start": 1e400
+            }
+          }
+        ]
+      },
+      "reason": "out_of_range",
+      "pointer": "/content/0/attrs/start"
+    },
+    {
+      "note": "lists nested 6 deep",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph"
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph"
+                          },
+                          {
+                            "type": "bulletList",
+                            "content": [
+                              {
+                                "type": "listItem",
+                                "content": [
+                                  {
+                                    "type": "paragraph"
+                                  },
+                                  {
+                                    "type": "bulletList",
+                                    "content": [
+                                      {
+                                        "type": "listItem",
+                                        "content": [
+                                          {
+                                            "type": "paragraph"
+                                          },
+                                          {
+                                            "type": "bulletList",
+                                            "content": [
+                                              {
+                                                "type": "listItem",
+                                                "content": [
+                                                  {
+                                                    "type": "paragraph"
+                                                  },
+                                                  {
+                                                    "type": "bulletList",
+                                                    "content": [
+                                                      {
+                                                        "type": "listItem",
+                                                        "content": [
+                                                          {
+                                                            "type": "paragraph"
+                                                          }
+                                                        ]
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "too_deep",
+      "pointer": "/content/0/content/0/content/1/content/0/content/1/content/0/content/1/content/0/content/1/content/0/content/1",
+      "schema_accepts": true
+    },
+    {
+      "note": "a text without text",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "an empty text",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": ""
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "empty_text",
+      "pointer": "/content/0/content/0/text"
+    },
+    {
+      "note": "a text that is not a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": ["x"]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/text"
+    },
+    {
+      "note": "a line feed in text, which a hardBreak stands for",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "a\nb"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text"
+    },
+    {
+      "note": "a C1 control in text",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "ab"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text"
+    },
+    {
+      "note": "a line separator in text",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "a b"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text"
+    },
+    {
+      "note": "a right-to-left override in text, a bidirectional control, which reverses the text after it, as the other texts that people enter may not hold one",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Pay 10\u202e00 gold"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text",
+      "schema_accepts": true
+    },
+    {
+      "note": "a first strong isolate in text, a bidirectional control",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "a\u2068b"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text",
+      "schema_accepts": true
+    },
+    {
+      "note": "a right-to-left mark in text, a bidirectional control",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "a\u200fb"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text",
+      "schema_accepts": true
+    },
+    {
+      "note": "marks that are not an array",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": "bold"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/marks"
+    },
+    {
+      "note": "marks that are null",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": null
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/marks"
+    },
+    {
+      "note": "a mark that is not an object",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": ["bold"]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "a mark whose type is not a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/marks/0/type"
+    },
+    {
+      "note": "a mark without a type",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [{}]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "an underline mark",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "underline"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_mark",
+      "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "a highlight mark",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "highlight"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_mark",
+      "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "a node type as a mark",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "paragraph"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_mark",
+      "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "attrs on a bold mark",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "bold",
+                    "attrs": {}
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/content/0/marks/0/attrs"
+    },
+    {
+      "note": "a mark twice",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "bold"
+                  },
+                  {
+                    "type": "bold"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "duplicate_mark",
+      "pointer": "/content/0/content/0/marks/1",
+      "schema_accepts": true
+    },
+    {
+      "note": "two links",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/a"
+                    }
+                  },
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/b"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "duplicate_mark",
+      "pointer": "/content/0/content/0/marks/1",
+      "schema_accepts": true
+    },
+    {
+      "note": "code with another mark",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "code"
+                  },
+                  {
+                    "type": "bold"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "excluded_mark",
+      "pointer": "/content/0/content/0/marks/1",
+      "schema_accepts": true
+    },
+    {
+      "note": "another mark with code",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com"
+                    }
+                  },
+                  {
+                    "type": "code"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "excluded_mark",
+      "pointer": "/content/0/content/0/marks/1",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link without attrs",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "a link without an href",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {}
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0/marks/0/attrs"
+    },
+    {
+      "note": "a link with a target",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com",
+                      "target": "_blank"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/content/0/marks/0/attrs/target"
+    },
+    {
+      "note": "an href that is not a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": 1
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a javascript: link",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "javascript:alert(1)"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a data: link",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "data:text/html,<script>alert(1)</script>"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a file: link",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "file:///etc/passwd"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "an ftp: link",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "ftp://example.com/a"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a relative link",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "/boards/harbour"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a link without a scheme",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "an empty link",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": ""
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "an https link without a host",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https:///path"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "an https link with a port and no host",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://:80/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a right-to-left override, which reorders what a reader sees",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://exa\u202emoc.elpm/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a zero-width space",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/a​b"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with U+3164 HANGUL FILLER, a letter that a renderer shows nothing of (Default_Ignorable_Code_Point)",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/aㅤb"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a variation selector, which a renderer shows nothing of (Default_Ignorable_Code_Point)",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/❤️"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "an http link that is not hierarchical",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "http:example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link without an address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose address has no @, and so no domain",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link without a local part before its @",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link without a domain after its @",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a query that attaches a file, as some mail clients did: a mailto link has no query",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?attach=file:///etc/passwd"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a query that sets a subject, which a link does not prefill",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?subject=Light"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a query that sets a body, which a link does not prefill",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?body=Come"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with an empty query, a ? after its address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a fragment, which RFC 6068 gives a mailto URL no use for, and after which a mail client that does not cut a fragment off could read a field",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com#x"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with two addresses, which a comma separates: a mailto link names one",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com,mira@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with an & after its address, after which a mail client that reads a field wherever an & is reads attach",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com&attach=/etc/passwd"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has an =, which a local part does not hold",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper=x@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part is quoted, as RFC 5322 has some, which a mailto link's is not",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:\"keeper\"@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a display name, which a mail client shows, as Support, in place of the address that the message goes to",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:Support<x@evil.example>"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose address has a comment, which a mail client may show in place of the address that the message goes to",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:x@evil.example(support)"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a % that starts no escape",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper%zz@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link that escapes a line break, which a mail client could write into a header: a mailto link holds no escape",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com%0D%0A"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part escapes U+202E RIGHT-TO-LEFT OVERRIDE, a format character, so that a mail client would show it as elpmaxe.live@example.com",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:%E2%80%AEmoc.elpmaxe@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part escapes U+3164 HANGUL FILLER, which a renderer shows nothing of",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper%E3%85%A4@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part escapes a byte that is not UTF-8, which Latin-1 reads as a soft hyphen",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper%AD@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part escapes an underscore, which a local part holds as it is",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support%5Fdesk@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part escapes a % (%25), so that a mail client that reads escapes twice would read a display name, support@paypal.com, and an address, x@evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:%2522support%2540paypal.com%2522%253Cx@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain escapes a /, so that a mail client would show support@paypal.com/.evil.example, which reads as an address at paypal.com",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@paypal.com%2F.evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain escapes a % (%25), which a mail client that reads escapes twice would read as an @",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:x@paypal.com%2540evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain escapes a dot, so that the link reads as an address at paypal.com, as a browser's status bar may show it, and the message goes to paypal.com.evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@paypal.com%2Eevil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain escapes a character beyond ASCII",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@p%D0%B0ypal.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain has a character beyond ASCII, the Cyrillic a, U+0430, in place of the first Latin a of paypal.com, which it looks like, so that a mail client shows a domain that the message does not go to",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@pаypal.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has an e acute, a letter beyond ASCII, as an internationalized address's may: an address is ASCII, as no property of Unicode's tells such a letter from those that look like a delimiter of an address or show as a blank",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:élodie@xn--caf-dma.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has Chinese letters, as an internationalized address's may",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:用户@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has U+FF02 FULLWIDTH QUOTATION MARK, U+FF20 FULLWIDTH COMMERCIAL AT, and U+FF1C FULLWIDTH LESS-THAN SIGN, characters beyond ASCII, which look like a quote, an @, and a <, so that the address reads as a display name, support@paypal.com, and an address, x@evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:＂support＠paypal.com＂＜x@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has U+02BA MODIFIER LETTER DOUBLE PRIME and U+1438 CANADIAN SYLLABICS PA, letters beyond ASCII that look like a quote and a <, so that the address reads as a display name and an address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:ʺsupportʺᐸx@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has a run of U+2800 BRAILLE PATTERN BLANK, which shows as wide as a letter does, and would push the domain after it out of what a mail client shows of the address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support＠paypal.com⠀⠀⠀@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has a run of U+13441 EGYPTIAN HIEROGLYPH FULL BLANK, a letter that shows as a blank as wide as a letter does, which would push the domain after it out of what a mail client shows",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support.paypal.com𓑁𓑁𓑁@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part starts with a dot",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:.keeper@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part ends with a dot",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper.@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has two dots in a row",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:kee..per@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain has a label that starts with a hyphen, as RFC 5321's sub-domain does not",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@-example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain has a label that ends with a hyphen, as RFC 5321's sub-domain does not",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example-.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain's last label is digits, which no top-level domain is, as in an IP address, which a mailto link does not name",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@192.0.2.1"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain is an address literal of an IPv4 address, which a mailto link does not name",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@[192.0.2.1]"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain is an address literal of an IPv6 address, as RFC 5321 writes one, which a mailto link does not name",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@[IPv6:2001:db8::1]"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain is an IPv6 address in brackets",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@[2001:db8::1]"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain is a name in brackets",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@[paypal.com]"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a link with a space",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/a b"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a link with a no-break space",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/a b"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link longer than 2,048 characters",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a link with a port that is not a number",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com:port/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a % that starts no escape, in its query",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/?q=100%"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host holds what no host does",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://exa<mple.com/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a backslash in its authority, which a browser reads as a slash, so that it leads to another host than the one after the @",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com\\@evil.example/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with an IPv6 address in brackets that is not one",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://[example.com]/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a userinfo, which shows a host that the link does not lead to: its host is evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://www.example.com@evil.example/login"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose userinfo looks like a host and a port",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com:443@evil.example/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host has a division slash, which reads as a slash but which IDNA keeps in the host: its host is of evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://bank.example∕login.evil.example/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host has an ideographic full stop, which IDNA reads as a dot",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://bank.example。evil.example/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host has a letter that looks like a slash, U+30CE KATAKANA LETTER NO, which IDNA keeps in the host: its host is of evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://bank.exampleノlogin.evil.example/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host has a digit that looks like a dot, U+0660 ARABIC-INDIC DIGIT ZERO, which IDNA keeps in the host",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://bank٠example.evil.example/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose internationalized host is not written as IDNA writes it in ASCII, as xn--caf-dma.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://café.example/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host has an empty label",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example..com/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host is a dot",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://./"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host a browser reads as an IPv4 address, which is not one, with a number above 255",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://192.0.2.256/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host a browser reads as an IPv4 address, as its last label is a number, which is not four numbers",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.123/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host a browser reads as an IPv4 address, as its last label is a hexadecimal number",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.0x1f/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host a browser reads as an IPv4 address, as its last label is 0x without digits, which a browser reads as the number 0",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.0x/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host is an IPv4 address of fewer than four numbers, which the server does not take",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://127.1/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose brackets hold no IPv6 address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://[1]/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose brackets hold an IPv6 address with two ::",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://[1::2::3]/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a port above 65,535",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com:65536/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link longer than 2,048 characters, counted as code points",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mention without attrs",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a mention without an id",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {}
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0/attrs"
+    },
+    {
+      "note": "a mention with a label",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {
+                  "id": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+                  "label": "Elara"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/content/0/attrs/label"
+    },
+    {
+      "note": "a mention of a variable",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {
+                  "id": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/id"
+    },
+    {
+      "note": "a mention whose id is not an ID",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {
+                  "id": "cmp_123"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/id"
+    },
+    {
+      "note": "a mention whose id overflows 128 bits",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {
+                  "id": "cmp_81HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/id"
+    },
+    {
+      "note": "a mention whose id is not a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {
+                  "id": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/attrs/id"
+    },
+    {
+      "note": "a value without attrs",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a value without a ref",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {}
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0/attrs"
+    },
+    {
+      "note": "a value of a board",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "bd_01HQ8ZAX6P3R9T1K7MWVND2CQJ"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/ref"
+    },
+    {
+      "note": "a value of a variable's attribute",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/attribute"
+    },
+    {
+      "note": "a value of a component without its attribute",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs"
+    },
+    {
+      "note": "a value whose attribute is a component",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+                  "attribute": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/attribute"
+    },
+    {
+      "note": "a value of a component whose attribute is null, which is refused wherever it is",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+                  "attribute": null
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/attrs/attribute"
+    },
+    {
+      "note": "a value with a format other than decimals",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "format": "int"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/content/0/attrs/format"
+    },
+    {
+      "note": "a value with 7 decimals",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "decimals": 7
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "out_of_range",
+      "pointer": "/content/0/content/0/attrs/decimals"
+    },
+    {
+      "note": "a value with fewer than 0 decimals",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "decimals": -1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "out_of_range",
+      "pointer": "/content/0/content/0/attrs/decimals"
+    },
+    {
+      "note": "a value with a fraction of decimals",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "decimals": 1.5
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/attrs/decimals"
+    },
+    {
+      "note": "a value with decimals as a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "decimals": "2"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/attrs/decimals"
+    },
+    {
+      "note": "a value whose decimals are null, as ProseMirror writes an attribute that is not set",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "valueRef",
+                "attrs": {
+                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "decimals": null
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/attrs/decimals"
+    }
+  ],
+  "words": [
+    {
+      "note": "nothing",
+      "text": "",
+      "words": 0
+    },
+    {
+      "note": "white space alone",
+      "text": " \t\n ",
+      "words": 0
+    },
+    {
+      "note": "an apostrophe and punctuation stay in a word",
+      "text": "Don't stop, go!",
+      "words": 3
+    },
+    {
+      "note": "a dash between spaces is no word",
+      "text": "Wait — listen",
+      "words": 2
+    },
+    {
+      "note": "a hyphen joins a word",
+      "text": "well-known keeper",
+      "words": 2
+    },
+    {
+      "note": "a number is a word",
+      "text": "3 ships, 12 crew",
+      "words": 4
+    },
+    {
+      "note": "a no-break space separates words",
+      "text": "ten kilometres",
+      "words": 2
+    },
+    {
+      "note": "an ideographic space separates words",
+      "text": "東京　タワー",
+      "words": 2
+    },
+    {
+      "note": "a run of Japanese without spaces is one word",
+      "text": "東京タワーへ行く",
+      "words": 1
+    },
+    {
+      "note": "an emoji alone is no word",
+      "text": "Go 🐴",
+      "words": 1
+    },
+    {
+      "note": "a letter with a combining mark",
+      "text": "Café noir",
+      "words": 2
+    },
+    {
+      "note": "a zero-width space is not white space",
+      "text": "a​b",
+      "words": 1
+    },
+    {
+      "note": "a zero-width no-break space, U+FEFF, is not white space, though JavaScript's \\s matches it",
+      "text": "a\ufeffb \ufeffc",
+      "words": 2
+    },
+    {
+      "note": "a Mongolian vowel separator, U+180E, is not white space",
+      "text": "a᠎b",
+      "words": 1
+    }
+  ],
+  "previews": [
+    {
+      "note": "short text is kept",
+      "text": "Harbour's closed.",
+      "preview": "Harbour's closed."
+    },
+    {
+      "note": "white space is collapsed and trimmed",
+      "text": "  a\n\n\tb  ",
+      "preview": "a b"
+    },
+    {
+      "note": "exactly 100 characters are kept",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "note": "a word longer than the preview is cut",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut at a space keeps the whole last word",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab c",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab…"
+    },
+    {
+      "note": "a cut after a space drops the space",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cd",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut within a word goes back to the last space, when at least 50 characters come before it",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut goes back to a space with exactly 50 characters before it",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut within a word whose last space has fewer than 50 characters before it stays at 100 characters, as within a long URL",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb…"
+    },
+    {
+      "note": "a cut within a word stays at 100 characters when the text has only an early space, as Japanese, which separates no words with spaces, may",
+      "text": "エララ: 港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。",
+      "preview": "エララ: 港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え…"
+    },
+    {
+      "note": "characters are code points",
+      "text": "🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴",
+      "preview": "🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴…"
+    },
+    {
+      "note": "a cut stays out of a letter and its combining accent",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaéx",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut stays out of an emoji and its variation selector",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa❤️b",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut stays out of an emoji and its skin tone, an emoji modifier",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa👋🏽b",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut stays out of the emoji that zero width joiners join, as a family's",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa👨‍👩‍👧b",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut stays out of a flag, a pair of regional indicators, but falls between two flags",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa🇨🇿🇩🇪b",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa🇨🇿…"
+    },
+    {
+      "note": "a cut within a character that is all of the first 100 code points stays at 100, so that the preview is not empty",
+      "text": "é́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́",
+      "preview": "é́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́…"
+    },
+    {
+      "note": "a zero-width no-break space, U+FEFF, is not white space, though JavaScript's \\s and trim take it for some, so it is kept",
+      "text": "\ufeff a\ufeff \ufeffb \ufeff",
+      "preview": "\ufeff a\ufeff \ufeffb \ufeff"
+    }
+  ],
+  "lengths": [
+    {
+      "note": "a document in its canonical form",
+      "json": "{\"content\":[{\"content\":[{\"marks\":[{\"type\":\"bold\"}],\"text\":\"Fish & chips <hot>, café 🐴\",\"type\":\"text\"},{\"marks\":[{\"attrs\":{\"href\":\"https://example.com/?a=1&b=2\"},\"type\":\"link\"}],\"text\":\" \\\"quoted\\\" \\\\ a/b\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"doc\"}",
+      "length": 256
+    },
+    {
+      "note": "the same document as PostgreSQL's jsonb writes it, with a space after each colon and comma",
+      "json": "{\"content\": [{\"content\": [{\"marks\": [{\"type\": \"bold\"}], \"text\": \"Fish & chips <hot>, café 🐴\", \"type\": \"text\"}, {\"marks\": [{\"attrs\": {\"href\": \"https://example.com/?a=1&b=2\"}, \"type\": \"link\"}], \"text\": \" \\\"quoted\\\" \\\\ a/b\", \"type\": \"text\"}], \"type\": \"paragraph\"}], \"type\": \"doc\"}",
+      "length": 256
+    },
+    {
+      "note": "the same document indented, with line feeds, carriage returns, and tabs",
+      "json": "{\r\n\t\"type\": \"doc\",\r\n\t\"content\": [\r\n\t\t{\r\n\t\t\t\"type\": \"paragraph\",\r\n\t\t\t\"content\": [\r\n\t\t\t\t{\r\n\t\t\t\t\t\"type\": \"text\",\r\n\t\t\t\t\t\"text\": \"Fish & chips <hot>, café 🐴\",\r\n\t\t\t\t\t\"marks\": [\r\n\t\t\t\t\t\t{\r\n\t\t\t\t\t\t\t\"type\": \"bold\"\r\n\t\t\t\t\t\t}\r\n\t\t\t\t\t]\r\n\t\t\t\t},\r\n\t\t\t\t{\r\n\t\t\t\t\t\"type\": \"text\",\r\n\t\t\t\t\t\"text\": \" \\\"quoted\\\" \\\\ a/b\",\r\n\t\t\t\t\t\"marks\": [\r\n\t\t\t\t\t\t{\r\n\t\t\t\t\t\t\t\"type\": \"link\",\r\n\t\t\t\t\t\t\t\"attrs\": {\r\n\t\t\t\t\t\t\t\t\"href\": \"https://example.com/?a=1&b=2\"\r\n\t\t\t\t\t\t\t}\r\n\t\t\t\t\t\t}\r\n\t\t\t\t\t]\r\n\t\t\t\t}\r\n\t\t\t]\r\n\t\t}\r\n\t]\r\n}",
+      "length": 256
+    },
+    {
+      "note": "the same document as Python's json.dumps writes it, with each character beyond ASCII escaped, an emoji as a surrogate pair",
+      "json": "{\"type\": \"doc\", \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"Fish & chips <hot>, caf\\u00e9 \\ud83d\\udc34\", \"marks\": [{\"type\": \"bold\"}]}, {\"type\": \"text\", \"text\": \" \\\"quoted\\\" \\\\ a/b\", \"marks\": [{\"type\": \"link\", \"attrs\": {\"href\": \"https://example.com/?a=1&b=2\"}}]}]}]}",
+      "length": 256
+    },
+    {
+      "note": "the same document as Go's json.Marshal writes it, with <, >, and & escaped",
+      "json": "{\"content\":[{\"content\":[{\"marks\":[{\"type\":\"bold\"}],\"text\":\"Fish \\u0026 chips \\u003chot\\u003e, café 🐴\",\"type\":\"text\"},{\"marks\":[{\"attrs\":{\"href\":\"https://example.com/?a=1\\u0026b=2\"},\"type\":\"link\"}],\"text\":\" \\\"quoted\\\" \\\\ a/b\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"doc\"}",
+      "length": 256
+    },
+    {
+      "note": "the same document with its slashes and some letters escaped, with hexadecimal digits in either case",
+      "json": "{\"content\":[{\"content\":[{\"marks\":[{\"\\u0074ype\":\"bold\"}],\"\\u0074\\u0065xt\":\"Fish & chips <hot>, caf\\u00E9 🐴\",\"\\u0074ype\":\"\\u0074\\u0065xt\"},{\"marks\":[{\"attrs\":{\"href\":\"https:\\/\\/example.com\\/?a=1&b=2\"},\"\\u0074ype\":\"link\"}],\"\\u0074\\u0065xt\":\" \\\"quoted\\\" \\\\ a\\/b\",\"\\u0074ype\":\"\\u0074\\u0065xt\"}],\"\\u0074ype\":\"paragraph\"}],\"\\u0074ype\":\"doc\"}",
+      "length": 256
+    }
+  ]
+}
