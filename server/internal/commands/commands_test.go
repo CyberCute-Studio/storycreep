@@ -1019,9 +1019,10 @@ func TestBatchAdds(t *testing.T) {
 
 // TestUndo checks that a batch with a command that cannot be undone has no
 // inverse, for which none of its commands' inverses is computed, and that a
-// command whose inverse could not be applied refuses a batch that can be
-// undone, with an error that does not pass for a problem of the batch's
-// payloads, which are valid.
+// command whose inverse could not be applied, with a step of a type that is
+// not registered, or whose payload its schema or its Check refuses, refuses a
+// batch that can be undone, with an error that does not pass for a problem of
+// the batch's payloads, which are valid.
 func TestUndo(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -1037,7 +1038,7 @@ func TestUndo(t *testing.T) {
 		t.Errorf("a batch that cannot be undone has the inverse %s", o.inverse)
 	}
 	before := w.written(t)
-	for _, step := range []Type{"note.unknown", noteCreate} {
+	for _, step := range []Type{"note.unknown", noteCreate, noteUpdate} {
 		_, err := p.Apply(ctx, w.as(ownerUser), w.project,
 			[]Command{command(t, noteBadInverse, badInversePayload{ID: xID, Step: step}, map[Ref]int64{noteRef(x): 2})})
 		var fields input.FieldErrors

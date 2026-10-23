@@ -103,11 +103,13 @@ type Spec[P any] struct {
 	// step of an inverse writes back may break, as the text rules of package
 	// input, which a change of input.IsControl or of Go's Unicode tables
 	// tightens, or which a row that the pipeline did not write may break. The
-	// pipeline asks it of every command of a batch, once Check, and lists its
-	// problems after Check's, but not of a step, so that a stored value that
-	// breaks it does not fail every change of it with its inverse: the undo
-	// that sends the step back is refused for it then, as any batch is. It
-	// reads nothing but p.
+	// pipeline asks it of every command of a batch, after Check, whatever
+	// Check finds, and lists its problems after Check's, but not of a step, so
+	// that a stored value that breaks it does not fail every change of it with
+	// its inverse: the undo that sends the step back is refused for it then,
+	// as any batch is. A step's payload still meets its schema, so a stored
+	// value that a schema bounds, as by maxLength, is held to it by the
+	// database too. It reads nothing but p.
 	CheckNew func(p P) input.FieldErrors
 	// Inverse returns the commands that undo the command, in the order to
 	// apply them (§10.4). The pipeline calls it in the batch's transaction
@@ -424,10 +426,10 @@ type Problem struct {
 // InvalidError is a batch that the pipeline refuses before it reads the
 // database, because it is not one that it can apply: it has no commands, or
 // a command whose ID is missing or used twice, whose type is not registered,
-// whose payload does not match its type's schema or Check, or holds a NUL
-// character, which no text may hold, or whose ExpectedRev names an entity of
-// a kind that the command does not touch, or a revision that no entity has.
-// The API answers it with validation_failed.
+// whose payload does not match its type's schema, Check, or CheckNew, or
+// holds a NUL character, which no text may hold, or whose ExpectedRev names
+// an entity of a kind that the command does not touch, or a revision that no
+// entity has. The API answers it with validation_failed.
 type InvalidError struct {
 	Problems []Problem
 }

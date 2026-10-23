@@ -137,9 +137,10 @@ var blank = &unicode.RangeTable{
 // folders, and a variable's string default and its description, are checked
 // with it too, as a command sets them, and as the undo of a change of one
 // sets it back, though neither as they are read nor as the pipeline takes
-// the undo's step (commands.Spec.CheckNew), so such a change leaves a stored
-// one that holds them readable, and changeable, but not set back: migrate
-// those too.
+// the undo's step, whose commands check them in CheckNew (commands.Spec) or,
+// for a default, whose type the variable's row has, in Apply, so such a
+// change leaves a stored one that holds them readable, and changeable, but
+// not set back: migrate those too.
 func IsControl(r rune) bool {
 	return unicode.IsControl(r) || unicode.In(r, unicode.Bidi_Control, unicode.Zl, unicode.Zp)
 }

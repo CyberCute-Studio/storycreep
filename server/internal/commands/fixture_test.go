@@ -114,7 +114,8 @@ type misreportPayload struct {
 type badInversePayload struct {
 	ID string `json:"id"`
 	// Step is the type of its inverse's step, whose payload is an empty
-	// object.
+	// object, or, for noteUpdate, one that its schema allows but its Check
+	// refuses.
 	Step Type `json:"step"`
 	// Changes makes the inverse report a change of the note instead, which
 	// only Apply may, and then be the note's deletion, which an undo could
@@ -327,6 +328,9 @@ func noteRegistry() *Registry {
 					return nil, err
 				}
 				return []Step{{Type: noteDelete, Payload: noteIDPayload{ID: p.ID}}}, nil
+			}
+			if p.Step == noteUpdate {
+				return []Step{{Type: noteUpdate, Payload: notePayload{ID: "nd_nope", Body: "x"}}}, nil
 			}
 			return []Step{{Type: p.Step, Payload: struct{}{}}}, nil
 		},
