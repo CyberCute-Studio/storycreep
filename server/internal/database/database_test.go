@@ -416,6 +416,68 @@ func TestInTxRowLevelSecurity(t *testing.T) {
 	}
 }
 
+// TestInSnapshot checks the transaction that reads as of one moment: its
+// scope is visible inside it, and is what row-level security holds it to, as
+// InTx's is, it does not read a row that another transaction commits once it
+// has started, and it writes nothing.
+func TestInSnapshot(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	a, b := ids.New(), ids.New()
+	if _, err := d.Admin(t).Exec(ctx, `CREATE TABLE items (workspace_id uuid NOT NULL, name text NOT NULL);
+		ALTER TABLE items ENABLE ROW LEVEL SECURITY;
+		ALTER TABLE items FORCE ROW LEVEL SECURITY;
+		CREATE POLICY items_workspace ON items
+			USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);
+		GRANT SELECT, INSERT ON items TO storycreep_app;
+		INSERT INTO items VALUES ('`+a.String()+`', 'a1'), ('`+b.String()+`', 'b1')`); err != nil {
+		t.Fatal(err)
+	}
+	db := d.Open(t)
+	scope := database.Scope{WorkspaceID: a, UserID: ids.New()}
+	err := db.InSnapshot(ctx, scope, func(tx pgx.Tx) error {
+		var w, u string
+		if err := tx.QueryRow(ctx, `SELECT coalesce(current_setting('app.workspace_id', true), ''),
+			coalesce(current_setting('app.user_id', true), '')`).Scan(&w, &u); err != nil {
+			return err
+		}
+		if w != a.String() || u != scope.UserID.String() {
+			t.Errorf("inside the snapshot: workspace %q, user %q; want %s and %s", w, u, a, scope.UserID)
+		}
+		// Another transaction commits a row of the workspace meanwhile.
+		if err := db.InTx(ctx, database.Scope{WorkspaceID: a}, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, "INSERT INTO items VALUES ($1::uuid, 'a2')", a.String())
+			return err
+		}); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, "SELECT name FROM items ORDER BY name")
+		if err != nil {
+			return err
+		}
+		got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(got, []string{"a1"}) {
+			t.Errorf("the snapshot read the rows %v, want only its workspace's that were there as it started", got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.InSnapshot(ctx, scope, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, "INSERT INTO items VALUES ($1::uuid, 'a3')", a.String())
+		return err
+	})
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "25006" {
+		t.Errorf("a write in the snapshot returned %v, want the refusal of a read-only transaction", err)
+	}
+}
+
 func TestStart(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

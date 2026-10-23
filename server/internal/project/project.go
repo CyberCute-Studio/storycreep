@@ -193,6 +193,11 @@ type Options struct {
 	// Pipeline applies the commands that change the projects. Its registry
 	// holds them (Register). It is required.
 	Pipeline *commands.Pipeline
+	// Seed adds what a project is created with, the default component types
+	// (component.Seed), in tx, the transaction that creates the project
+	// projectID of the workspace workspaceID, which the user userID creates,
+	// whose default locale, a BCP 47 tag, is locale, or nothing if it is nil.
+	Seed func(ctx context.Context, tx pgx.Tx, workspaceID, projectID, userID ids.UUID, locale string) error
 }
 
 // Service keeps the projects.
@@ -201,6 +206,7 @@ type Service struct {
 	policy   role.Policy
 	ent      *entitlements.Service
 	pipeline *commands.Pipeline
+	seed     func(ctx context.Context, tx pgx.Tx, workspaceID, projectID, userID ids.UUID, locale string) error
 }
 
 // New returns a Service that keeps the projects in db, with opts. It panics
@@ -212,7 +218,7 @@ func New(db DB, opts Options) *Service {
 	case opts.Pipeline == nil:
 		panic("project: a Service needs the pipeline that applies its commands")
 	}
-	return &Service{db: db, policy: opts.Policy, ent: opts.Entitlements, pipeline: opts.Pipeline}
+	return &Service{db: db, policy: opts.Policy, ent: opts.Entitlements, pipeline: opts.Pipeline, seed: opts.Seed}
 }
 
 // Settings are what a project is created with.
@@ -234,7 +240,8 @@ type Settings struct {
 // lose the white space around them, and the description's line breaks are
 // written as line feeds (input.LineFeeds). The project's slug is derived
 // from its name, as a board's is, or is project for a name without one
-// (slug.Derive).
+// (slug.Derive). The project is created with what Options.Seed adds, the
+// default component types, in the same transaction.
 func (s *Service) Create(ctx context.Context, userID, workspaceID ids.UUID, in Settings, client audit.Client) (
 	Visible, error) {
 	in.Description = input.LineFeeds(in.Description)
@@ -275,6 +282,11 @@ func (s *Service) Create(ctx context.Context, userID, workspaceID ids.UUID, in S
 			CreatedBy: nullUUID(userID)})
 		if err != nil {
 			return fmt.Errorf("project: add the project: %w", err)
+		}
+		if s.seed != nil {
+			if err := s.seed(ctx, tx, workspaceID, id, userID, set.DefaultLocale); err != nil {
+				return err
+			}
 		}
 		if err := usage.Record(ctx, tx, workspaceID, usage.Projects, 1); err != nil {
 			return err

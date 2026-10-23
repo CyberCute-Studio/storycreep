@@ -20,13 +20,17 @@ import (
 // within this long once its time in the trash has passed.
 const purgeInterval = time.Hour
 
-// purgeRows is how many boards, variables, and folders the purge deletes in
-// a transaction at most, so that a transaction, which holds its project's
-// lock, keeps the project's batches waiting for about as long however much of
-// its trash expires at once. The rows that refer to a board, as its
-// variables, go with it by the cascade of their foreign keys, uncounted, so
-// that a board is purged whole, in one transaction, and a restoration between
-// two of the purge's transactions never brings it back without some of them.
+// purgeRows is how many boards, variables, components, attribute
+// definitions, component types, and folders the purge deletes in a
+// transaction at most, so that a transaction, which holds its project's lock,
+// keeps the project's batches waiting for about as long however much of its
+// trash expires at once. The rows that refer to one of them, as a board's
+// variables, a component's values, or a definition's values, one for each
+// component of its type, go with it by the cascade of their foreign keys,
+// uncounted, so that it is purged whole, in one transaction, and a
+// restoration between two of the purge's transactions never brings it back
+// without some of them, as a definition whose restore would give its default
+// to each component that it found without a value.
 const purgeRows = 1000
 
 // purge is the job that purges the projects' trash (FR-JOBS-01, FR-PROJ-06).
@@ -45,20 +49,22 @@ func RegisterJobs(r *jobs.Registry) {
 
 // Purge deletes for good what has been in its project's trash for Retention:
 // the boards, with every row that refers to them, which the cascade of their
-// foreign keys deletes, as their variables, then the variables, and then the
-// deleted folders that hold nothing, in the trash or not, once those that
-// they held are purged. It returns how many boards, variables, and folders it
-// deleted, but for those that a board's cascade deleted. It works on each
+// foreign keys deletes, as their variables, then the variables, the
+// components, with their values, and the attribute definitions, with theirs,
+// then the component types that hold no component, in the trash or not, with
+// their definitions, and then the deleted folders that hold nothing, in the
+// trash or not, once those that they held are purged. It returns how many of
+// them it deleted, but for those that a cascade deleted. It works on each
 // workspace in transactions of the workspace (§5.4), as package sweep runs
 // them, each of one project, which it locks as a batch of the project's
 // commands does, so that the batches see none of its deletions while they
-// apply (plan note N30), and which deletes purgeRows boards, variables, and
-// folders at most. It skips a project whose lock a transaction holds, as a
-// batch does, which its next run purges, goes on past a project whose purge
-// fails, so that a project whose purge keeps failing keeps no other's trash
-// from its purge, and returns the errors of all of them, and stops once it
-// has run for sweep.Budget, which leaves the projects that it does not reach
-// for its next run. So it is safe to repeat. It records no operation: an undo
+// apply (plan note N30), and which deletes purgeRows of them at most. It
+// skips a project whose lock a transaction holds, as a batch does, which its
+// next run purges, goes on past a project whose purge fails, so that a
+// project whose purge keeps failing keeps no other's trash from its purge,
+// and returns the errors of all of them, and stops once it has run for
+// sweep.Budget, which leaves the projects that it does not reach for its next
+// run. So it is safe to repeat. It records no operation: an undo
 // that would restore a purged entity finds that it no longer exists (§5.7).
 func Purge(ctx context.Context, db sweep.DB) (int64, error) {
 	more := sweep.Within(sweep.Budget)
@@ -114,10 +120,12 @@ func purgeWorkspace(ctx context.Context, db sweep.DB, more func() bool, workspac
 }
 
 // purgeProject deletes, in a transaction of the workspace, at most purgeRows
-// of the boards, the variables, and the folders of the project that have been
-// in its trash for retention, the boards and the variables first, which may
-// leave a folder empty for the purge of the folders that follows, and returns
-// how many it deleted, or none if a transaction holds the project's lock.
+// of the boards, the variables, the components, the attribute definitions,
+// the folders, and the component types of the project that have been in its
+// trash for retention, the boards, the variables, and the components first,
+// which may leave a folder or a type empty for the purge of the folders and
+// of the types that follows, and returns how many it deleted, or none if a
+// transaction holds the project's lock.
 func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, project pgtype.UUID,
 	retention pgtype.Interval) (int64, error) {
 	var n int64
@@ -142,6 +150,24 @@ func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, projec
 			return fmt.Errorf("purge the variables: %w", err)
 		}
 		n += variables
+		components, err := q.PurgeComponents(ctx, queries.PurgeComponentsParams{WorkspaceID: ws,
+			ProjectID: project, Retention: retention, MaxRows: int32(purgeRows - n)})
+		if err != nil {
+			return fmt.Errorf("purge the components: %w", err)
+		}
+		n += components
+		attributes, err := q.PurgeAttributeDefs(ctx, queries.PurgeAttributeDefsParams{WorkspaceID: ws,
+			ProjectID: project, Retention: retention, MaxRows: int32(purgeRows - n)})
+		if err != nil {
+			return fmt.Errorf("purge the attribute definitions: %w", err)
+		}
+		n += attributes
+		types, err := q.PurgeComponentTypes(ctx, queries.PurgeComponentTypesParams{WorkspaceID: ws,
+			ProjectID: project, Retention: retention, MaxRows: int32(purgeRows - n)})
+		if err != nil {
+			return fmt.Errorf("purge the component types: %w", err)
+		}
+		n += types
 		// Each statement deletes the folders that hold nothing as it starts,
 		// so a folder whose last child it deletes is deleted by the next.
 		for n < purgeRows {

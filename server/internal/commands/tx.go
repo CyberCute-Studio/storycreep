@@ -42,6 +42,11 @@ type Tx struct {
 	changed []Revision
 	at      map[Ref]int
 	revs    map[Ref]int64
+	// undoBytes is how many bytes the payloads of the steps of the inverses
+	// that the pipeline has computed of the batch's commands take, as JSON
+	// encodes them for the operation log, which the pipeline refuses a
+	// command for once it is more than maxUndo (UndoRoom).
+	undoBytes, maxUndo int
 	// usage is what the batch's commands add to each key of the workspace's
 	// usage, and usageKeys the keys in the order of their first report.
 	// checked is what the batch's commands declared that they add to each
@@ -94,6 +99,18 @@ func (t *Tx) ProjectID() ids.UUID {
 // transaction is scoped to (database.Scope).
 func (t *Tx) WorkspaceID() ids.UUID {
 	return t.workspace
+}
+
+// UndoRoom returns how many bytes the payloads of the steps of the inverse
+// that the pipeline computes may take, as JSON encodes them for the operation
+// log, before they take the batch's undo, with the inverses of its commands
+// before, past the pipeline's bound (Options.MaxUndoBytes), which the
+// pipeline refuses the command for once the inverse returns. An Inverse whose
+// steps hold a part of the project that grows with it, as the values that an
+// attribute's retype loses, reads it to stop with ErrUndoTooLarge once what
+// it holds takes more, rather than hold all of it only to be refused.
+func (t *Tx) UndoRoom() int {
+	return t.maxUndo - t.undoBytes
 }
 
 // Changed reports that the command changed the entity of the kind with the

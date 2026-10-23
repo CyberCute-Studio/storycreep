@@ -338,6 +338,30 @@ func TestCommandEndpointMismatch(t *testing.T) {
 	}
 }
 
+// TestUndoFitsARequest checks that the batch that undoes another, which a
+// client sends as the operation's inverse (plan item 37), fits in the
+// endpoint's body however much the inverse holds within the pipeline's
+// bound, which counts its steps' payloads: what the bound leaves of the body
+// takes the batch's most commands, each with its ID and type, and the
+// expected revisions of ten thousand entities.
+func TestUndoFitsARequest(t *testing.T) {
+	t.Parallel()
+	step, err := json.Marshal(wireCommand{ID: ids.New().String(), Type: "attribute.set_options",
+		Payload: json.RawMessage("{}")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev, err := json.Marshal(map[string]int64{ids.Encode(ids.Component, ids.New()): 1 << 40})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rest := len(`{"commands":[]}`) + maxBatchCommands*(len(step)+len(`,`)) + 10_000*len(rev)
+	if commands.DefaultMaxUndoBytes+rest > api.DefaultMaxBodyBytes {
+		t.Errorf("an undo of %d bytes of payloads, with %d bytes of the rest of its commands, would not fit in a "+
+			"body of %d bytes", commands.DefaultMaxUndoBytes, rest, api.DefaultMaxBodyBytes)
+	}
+}
+
 // TestCommandEndpointBody checks that a body that is neither form, or that
 // holds more batches or commands than the endpoint takes, is answered with
 // 422 validation_failed, and that every problem of a batch's commands is

@@ -64,10 +64,10 @@ SELECT up.id, up.deleted::boolean AS deleted FROM up WHERE NOT up.is_cycle ORDER
 
 -- name: FolderHolds :one
 -- FolderHolds returns whether the folder id of the project holds a folder, a
--- board, or a variable that is not in the trash, a variable of a board in
--- the trash being in the trash with it. A later table whose rows go into a
--- folder, as the components (plan item 34), adds its rows here, and to
--- PurgeFolders, which TestFolderChildren holds it to.
+-- board, a variable, or a component that is not in the trash, a variable of
+-- a board in the trash being in the trash with it. A later table whose rows
+-- go into a folder adds its rows here, and to PurgeFolders, which
+-- TestFolderChildren holds it to.
 SELECT (
     EXISTS (SELECT 1 FROM live_folder f WHERE f.workspace_id = @workspace_id AND f.project_id = @project_id
         AND f.parent_id = @id)
@@ -75,15 +75,18 @@ SELECT (
         AND b.folder_id = @id)
     OR EXISTS (SELECT 1 FROM live_variable v WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id
         AND v.folder_id = @id)
+    OR EXISTS (SELECT 1 FROM live_component c WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id
+        AND c.folder_id = @id)
 )::boolean AS holds;
 
 -- name: LastSortKeys :one
 -- LastSortKeys returns the greatest order of the project's children of the
 -- folder parent_id of the kind kind, or of those at the top if parent_id is
--- null, but for the folder moved_folder, the board moved_board, or the
--- variable moved_variable, if it is not null, which moves there: its
--- folders, and, for a folder of boards, its boards, and for a folder of
--- variables, its variables, deleted ones included, so that one restored
+-- null, but for the folder moved_folder, the board moved_board, the variable
+-- moved_variable, or the component moved_component, if it is not null, which
+-- moves there: its folders, and, for a folder of boards, its boards, for a
+-- folder of variables, its variables, and for a folder of components, its
+-- components, deleted ones included, so that one restored
 -- later keeps its place, as last, or an empty string if there is none, and
 -- the last of those that are not deleted, in the order of the children, by
 -- their orders and then their IDs, as last_live, with its ID as last_live_id,
@@ -125,6 +128,15 @@ WITH c (id, sort_key, deleted) AS (
     WHERE @kind::text = 'variable' AND sqlc.narg(parent_id)::uuid IS NULL AND v.workspace_id = @workspace_id
         AND v.project_id = @project_id AND v.folder_id IS NULL
         AND v.id IS DISTINCT FROM sqlc.narg(moved_variable)::uuid
+    UNION ALL
+    SELECT c.id, c."order", c.deleted_at IS NOT NULL FROM component c
+    WHERE @kind::text = 'component' AND c.workspace_id = @workspace_id AND c.project_id = @project_id
+        AND c.folder_id = sqlc.narg(parent_id)::uuid AND c.id IS DISTINCT FROM sqlc.narg(moved_component)::uuid
+    UNION ALL
+    SELECT c.id, c."order", c.deleted_at IS NOT NULL FROM component c
+    WHERE @kind::text = 'component' AND sqlc.narg(parent_id)::uuid IS NULL AND c.workspace_id = @workspace_id
+        AND c.project_id = @project_id AND c.folder_id IS NULL
+        AND c.id IS DISTINCT FROM sqlc.narg(moved_component)::uuid
 ), live AS (
     SELECT c.id, c.sort_key FROM c WHERE NOT c.deleted ORDER BY c.sort_key DESC, c.id DESC LIMIT 1
 )

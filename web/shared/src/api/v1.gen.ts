@@ -44,6 +44,247 @@ export interface Asset {
   width?: number;
 }
 
+export interface Attribute {
+  /** The ID of the definition's component type */
+  component_type_id: string;
+  /** When the definition was created */
+  created_at: string;
+  /** The definition's default, a value of its type, which a component of its type that is created without a value of it holds, and which each of the type's components is given when the definition is added: true or false for bool, an integer for int, a number for float, which is written without a decimal point when it is integral, as 2, a string for string and for text, and one of its options for enum. A client reads a number by the definition's type, never by how it is written (PRD §5.8.9). */
+  default: boolean | number | string;
+  /** When the definition went to the project's trash, if it is there: when it was deleted, or, if it was not, but its type is in the trash, with which it is in the trash too, when the type was deleted */
+  deleted_at?: string;
+  /** The attribute definition's ID, by which saved games record its values (PRD FR-COMP-03 AC3) */
+  id: string;
+  /** The definition's key, by which expressions name its values, as trust in elara.trust: an identifier of the expression language (PRD §5.8.1), unique among its type's definitions that are not in the project's trash */
+  key: string;
+  /** The definition's name, as Trust */
+  name: string;
+  /** An enum's options, which its values are one of, in their order; another type has none */
+  options?: Array<string> | null;
+  /** The definition's place among its type's: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, atr_, compared by their bytes too (package orderkey) */
+  order: string;
+  /** The definition's revision, which every change of it increments, and which a change expects with expected_rev */
+  rev: number;
+  /** Whether the definition's values are part of the game's state, which expressions read and write as component_key.attribute_key, and which saved games record (PRD FR-COMP-03). A text never is. */
+  runtime: boolean;
+  /** The definition's type: bool, int, float, string, of at most 4096 characters, text, a string of several lines of at most 100000 characters, or enum, one of its options */
+  type: "bool" | "int" | "float" | "string" | "text" | "enum";
+  /** When the definition last changed */
+  updated_at: string;
+}
+
+/** A command of the type attribute.create. */
+export interface AttributeCreateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: AttributeCreatePayload;
+  /** The command's type. */
+  type: "attribute.create";
+}
+
+/** The payload of a command of the type attribute.create. */
+export interface AttributeCreatePayload {
+  /** The ID of the component type that the definition is added to, which is not in the project's trash, and which has fewer than 100 definitions that are not */
+  component_type_id: string;
+  /** The definition's default, which each component of its type is given: a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. Without it, the type's zero value: false, 0, 0.0, the empty string, or an enum's first option. */
+  default?: boolean | number | string;
+  /** The new attribute definition's ID, an atr_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  id: string;
+  /** The definition's key, by which expressions name its values, as trust in elara.trust: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as trust, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other attribute definition of its type has, of those that are not in the project's trash, which is answered with 409 key_taken. Without it, the key is derived from the name, as a component type's is, or is attribute for a name without letters or digits. */
+  key?: string;
+  /** The definition's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them */
+  name: string;
+  /** An enum's options, which its values are one of: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. Another type has none. */
+  options?: Array<string> | null;
+  /** The definition's place among its type's. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the definitions by its bytes, and those with the same key by their IDs without the prefix, atr_, compared by their bytes too: pick one between the keys of the definitions that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the definition goes after the type's last. */
+  order?: string;
+  /** Whether the definition's values are part of the game's state, which expressions read and write, and which saved games record (PRD FR-COMP-03). A text may not be. Without it, false. */
+  runtime?: boolean;
+  /** The definition's type: bool, int, float, string, of at most 4096 characters, text, a string of several lines of at most 100000 characters, or enum, one of its options */
+  type: "bool" | "int" | "float" | "string" | "text" | "enum";
+}
+
+/** A command of the type attribute.delete. */
+export interface AttributeDeleteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: AttributeDeletePayload;
+  /** The command's type. */
+  type: "attribute.delete";
+}
+
+/** The payload of a command of the type attribute.delete. */
+export interface AttributeDeletePayload {
+  /** The attribute definition's ID */
+  id: string;
+}
+
+/** A command of the type attribute.move. */
+export interface AttributeMoveCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: AttributeMovePayload;
+  /** The command's type. */
+  type: "attribute.move";
+}
+
+/** The payload of a command of the type attribute.move. */
+export interface AttributeMovePayload {
+  /** The attribute definition's ID */
+  id: string;
+  /** The definition's place among its type's. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the definitions by its bytes, and those with the same key by their IDs without the prefix, atr_, compared by their bytes too: pick one between the keys of the definitions that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the definition goes after the type's last, or stays where it is if it is the last already that is not deleted. */
+  order?: string;
+}
+
+/** A command of the type attribute.rename. */
+export interface AttributeRenameCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: AttributeRenamePayload;
+  /** The command's type. */
+  type: "attribute.rename";
+}
+
+/** The payload of a command of the type attribute.rename. */
+export interface AttributeRenamePayload {
+  /** The attribute definition's ID */
+  id: string;
+  /** The definition's new name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them. Its key stays as it is. */
+  name: string;
+}
+
+/** A command of the type attribute.restore. */
+export interface AttributeRestoreCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: AttributeRestorePayload;
+  /** The command's type. */
+  type: "attribute.restore";
+}
+
+/** The payload of a command of the type attribute.restore. */
+export interface AttributeRestorePayload {
+  /** The attribute definition's ID */
+  id: string;
+}
+
+/** A command of the type attribute.retype. */
+export interface AttributeRetypeCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: AttributeRetypePayload;
+  /** The command's type. */
+  type: "attribute.retype";
+}
+
+/** The payload of a command of the type attribute.retype. */
+export interface AttributeRetypePayload {
+  /** What becomes of the values that the type's components hold, those in the project's trash included (PRD FR-COMP-01 AC2): convert converts each to the new type, as the expression language's to_int, to_float, and to_string do (PRD §5.8.4, §5.8.9), a bool as 0 or 1 and an int or a float that is 0 or 1 as a bool, and a string that is true or false as a bool, and gives the new default to each that does not convert, which GET /api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/conversion lists beforehand; reset gives every value the new default. */
+  conversion: "convert" | "reset";
+  /** The definition's default of its new type: a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. Without it, the type's zero value: false, 0, 0.0, the empty string, or an enum's first option. */
+  default?: boolean | number | string;
+  /** The attribute definition's ID */
+  id: string;
+  /** The options of an enum, which the new type then is: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. Another type has none. */
+  options?: Array<string> | null;
+  /** The definition's new type, which is not its type already: an enum's options change with attribute.set_options. A runtime definition may not become a text: unset runtime first. */
+  type: "bool" | "int" | "float" | "string" | "text" | "enum";
+  /** The values of the new type that components of the definition's type are given, by their IDs, in place of what the conversion makes of what they hold. A component of another type is refused, and one that the project no longer has, as one that the purge has deleted, is passed over. */
+  values?: Record<string, boolean | number | string>;
+}
+
+/** A command of the type attribute.set_default. */
+export interface AttributeSetDefaultCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: AttributeSetDefaultPayload;
+  /** The command's type. */
+  type: "attribute.set_default";
+}
+
+/** The payload of a command of the type attribute.set_default. */
+export interface AttributeSetDefaultPayload {
+  /** The definition's new default, which a component of its type that is created later is given: a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. The values that the type's components hold stay as they are. */
+  default: boolean | number | string;
+  /** The attribute definition's ID */
+  id: string;
+}
+
+/** A command of the type attribute.set_key. */
+export interface AttributeSetKeyCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: AttributeSetKeyPayload;
+  /** The command's type. */
+  type: "attribute.set_key";
+}
+
+/** The payload of a command of the type attribute.set_key. */
+export interface AttributeSetKeyPayload {
+  /** The attribute definition's ID */
+  id: string;
+  /** The definition's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as trust, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other attribute definition of its type has, of those that are not in the project's trash, which is answered with 409 key_taken. The definition keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3). */
+  key: string;
+}
+
+/** A command of the type attribute.set_options. */
+export interface AttributeSetOptionsCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: AttributeSetOptionsPayload;
+  /** The command's type. */
+  type: "attribute.set_options";
+}
+
+/** The payload of a command of the type attribute.set_options. */
+export interface AttributeSetOptionsPayload {
+  /** The enum's new default, one of its new options. Without it, the default stays as it is, which must then be one of them. */
+  default?: boolean | number | string;
+  /** The ID of the attribute definition, an enum */
+  id: string;
+  /** The enum's new options, in their order: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. A value that a component holds that is none of them is given the default, unless values gives it another. */
+  options: Array<string> | null;
+  /** The values, each one of the new options, that components of the definition's type are given, by their IDs, in place of what they hold: a component that holds a value that is none of the new options, and is not given one here, is given the default. A component of another type is refused, and one that the project no longer has, as one that the purge has deleted, is passed over. */
+  values?: Record<string, boolean | number | string>;
+}
+
+/** A command of the type attribute.set_runtime. */
+export interface AttributeSetRuntimeCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: AttributeSetRuntimePayload;
+  /** The command's type. */
+  type: "attribute.set_runtime";
+}
+
+/** The payload of a command of the type attribute.set_runtime. */
+export interface AttributeSetRuntimePayload {
+  /** The attribute definition's ID */
+  id: string;
+  /** Whether the definition's values are part of the game's state, which expressions read and write, and which saved games record (PRD FR-COMP-03). A text may not be. */
+  runtime: boolean;
+}
+
 export interface Board {
   /** The board's colour, none or a name of the palette */
   color: "none" | "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink" | "gray";
@@ -251,7 +492,7 @@ export interface CommandBatchesBody {
 }
 
 /** A command of the batch: its ID, its type, its payload, as the type's schema says, and the revisions that it expects (PRD FR-API-03). */
-export type CommandBody = BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetSlugCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
+export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetSlugCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
 
 export interface CommandOutcomeBody {
   /** Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it */
@@ -298,6 +539,359 @@ export interface CompletedSetupBody {
   owner_id: string;
   /** The first workspace */
   workspace: WorkspaceFields;
+}
+
+export interface Component {
+  /** The values that the component holds of its type's attribute definitions that are not in the project's trash, by the definitions' IDs: each a value of its definition's type, as the definition's default is written */
+  attributes: Record<string, boolean | number | string>;
+  /** The ID of the component's type, which is fixed once it is created */
+  component_type_id: string;
+  /** When the component was created */
+  created_at: string;
+  /** When the component went to the project's trash, if it is there */
+  deleted_at?: string;
+  /** The component's description, a rich-text document (PRD FR-TEXT-01) */
+  description: RichTextDoc;
+  /** The ID of the folder of components that the component is in, if it is in one, or none for a component at the top */
+  folder_id?: string;
+  /** The component's ID */
+  id: string;
+  /** The ID of the component's image, an asset of the project, or none */
+  image_asset_id?: string;
+  /** The component's key, by which expressions name it, as elara in elara.trust: an identifier of the expression language (PRD §5.8.1), unique among the project's components that are not in its trash. A change of the component's name leaves it as it is (PRD FR-COMP-02 AC2). */
+  key: string;
+  /** The component's name, as Elara */
+  name: string;
+  /** The component's place among the folders and components of its folder, or of the top: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, cmp_ or fld_, compared by their bytes too (package orderkey) */
+  order: string;
+  /** The ID of the component's project */
+  project_id: string;
+  /** The component's revision, which every change of it increments, a change of one of its values or of the attribute definitions whose values it holds among them, and which a change expects with expected_rev */
+  rev: number;
+  /** When the component last changed */
+  updated_at: string;
+}
+
+/** A command of the type component.create. */
+export interface ComponentCreateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentCreatePayload;
+  /** The command's type. */
+  type: "component.create";
+}
+
+/** The payload of a command of the type component.create. */
+export interface ComponentCreatePayload {
+  /** The values that the component holds of its type's attribute definitions that are not in the project's trash, by the definitions' IDs, each a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. A definition that this leaves out gives the component its default. */
+  attributes?: Record<string, boolean | number | string>;
+  /** The ID of the component's type, which is not in the project's trash, and which is fixed once the component is created */
+  component_type_id: string;
+  /** The component's description, a rich-text document (PRD FR-TEXT-01). Without it, an empty paragraph. */
+  description?: RichTextDoc;
+  /** The ID of the folder of components that the component goes into, which is not deleted. Without it, the component goes at the top. */
+  folder_id?: string;
+  /** The new component's ID, a cmp_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  id: string;
+  /** The ID of the component's image, an asset of the project. Without it, none. */
+  image_asset_id?: string;
+  /** The component's key, by which expressions name it, as elara in elara.trust: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. Without it, the key is derived from the name (PRD FR-COMP-02): its letters and digits in lowercase ASCII, without their accents, each run of other characters an underscore, with an underscore before it if it starts with a digit, or component for a name without them, and with _2, _3, and so on after it if another component of the project that is not in its trash has it, or it is a reserved word. */
+  key?: string;
+  /** The component's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them */
+  name: string;
+  /** The component's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, cmp_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the component goes after the last child. */
+  order?: string;
+}
+
+/** A command of the type component.delete. */
+export interface ComponentDeleteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentDeletePayload;
+  /** The command's type. */
+  type: "component.delete";
+}
+
+/** The payload of a command of the type component.delete. */
+export interface ComponentDeletePayload {
+  /** The component's ID */
+  id: string;
+}
+
+/** A command of the type component.describe. */
+export interface ComponentDescribeCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentDescribePayload;
+  /** The command's type. */
+  type: "component.describe";
+}
+
+/** The payload of a command of the type component.describe. */
+export interface ComponentDescribePayload {
+  /** The component's new description, a rich-text document (PRD FR-TEXT-01), which may be an empty paragraph */
+  description: RichTextDoc;
+  /** The component's ID */
+  id: string;
+}
+
+/** A command of the type component.move. */
+export interface ComponentMoveCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentMovePayload;
+  /** The command's type. */
+  type: "component.move";
+}
+
+/** The payload of a command of the type component.move. */
+export interface ComponentMovePayload {
+  /** The ID of the folder of components that the component goes into, which is not deleted. Without it, the component goes to the top. */
+  folder_id?: string;
+  /** The component's ID */
+  id: string;
+  /** The component's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, cmp_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the component goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted. */
+  order?: string;
+}
+
+/** A command of the type component.rename. */
+export interface ComponentRenameCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentRenamePayload;
+  /** The command's type. */
+  type: "component.rename";
+}
+
+/** The payload of a command of the type component.rename. */
+export interface ComponentRenamePayload {
+  /** The component's ID */
+  id: string;
+  /** The component's new name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them. Its key stays as it is (PRD FR-COMP-02 AC2). */
+  name: string;
+}
+
+/** A command of the type component.restore. */
+export interface ComponentRestoreCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentRestorePayload;
+  /** The command's type. */
+  type: "component.restore";
+}
+
+/** The payload of a command of the type component.restore. */
+export interface ComponentRestorePayload {
+  /** The component's ID */
+  id: string;
+}
+
+/** A command of the type component.set_attribute. */
+export interface ComponentSetAttributeCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentSetAttributePayload;
+  /** The command's type. */
+  type: "component.set_attribute";
+}
+
+/** The payload of a command of the type component.set_attribute. */
+export interface ComponentSetAttributePayload {
+  /** The ID of the attribute definition, one of the component's type's that is not in the project's trash */
+  attribute_id: string;
+  /** The component's ID */
+  id: string;
+  /** The component's new value of the definition, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. */
+  value: boolean | number | string;
+}
+
+/** A command of the type component.set_image. */
+export interface ComponentSetImageCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentSetImagePayload;
+  /** The command's type. */
+  type: "component.set_image";
+}
+
+/** The payload of a command of the type component.set_image. */
+export interface ComponentSetImagePayload {
+  /** The component's ID */
+  id: string;
+  /** The ID of the component's new image, an asset of the project. Without it, the component has none. */
+  image_asset_id?: string;
+}
+
+/** A command of the type component.set_key. */
+export interface ComponentSetKeyCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentSetKeyPayload;
+  /** The command's type. */
+  type: "component.set_key";
+}
+
+/** The payload of a command of the type component.set_key. */
+export interface ComponentSetKeyPayload {
+  /** The component's ID */
+  id: string;
+  /** The component's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. The component keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3). */
+  key: string;
+}
+
+export interface ComponentType {
+  /** The type's attribute definitions that are not in the project's trash, in their order: by their order, compared by its bytes, then by their IDs without the prefix, atr_, compared by their bytes too (package orderkey) */
+  attributes: Array<Attribute>;
+  /** When the type was created */
+  created_at: string;
+  /** When the type went to the project's trash, if it is there */
+  deleted_at?: string;
+  /** The type's icon, a name that the web app shows a glyph for, or none */
+  icon: "none" | "person" | "group" | "item" | "location" | "event" | "book" | "star" | "heart" | "key" | "gem" | "shield" | "flag" | "tag";
+  /** The component type's ID */
+  id: string;
+  /** The type's key: an identifier of the expression language (PRD §5.8.1), unique among the project's types that are not in its trash */
+  key: string;
+  /** The type's name, as Character */
+  name: string;
+  /** The ID of the type's project */
+  project_id: string;
+  /** The type's revision, which every change of it increments, and which a change expects with expected_rev. A change of one of its attribute definitions changes the definition's revision, not the type's. */
+  rev: number;
+  /** When the type last changed */
+  updated_at: string;
+}
+
+/** A command of the type component_type.create. */
+export interface ComponentTypeCreateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentTypeCreatePayload;
+  /** The command's type. */
+  type: "component_type.create";
+}
+
+/** The payload of a command of the type component_type.create. */
+export interface ComponentTypeCreatePayload {
+  /** The type's icon, which the web app shows a glyph for. Without it, none. */
+  icon?: "none" | "person" | "group" | "item" | "location" | "event" | "book" | "star" | "heart" | "key" | "gem" | "shield" | "flag" | "tag";
+  /** The new type's ID, a ct_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  id: string;
+  /** The type's key, by which an export names it: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as character, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other type of the project has, of those that are not in its trash, which is answered with 409 key_taken. Without it, the key is derived from the name: its letters and digits in lowercase ASCII, without their accents, each run of other characters an underscore, with an underscore before it if it starts with a digit, or type for a name without them, and with _2, _3, and so on after it if another type of the project that is not in its trash has it, or it is a reserved word. */
+  key?: string;
+  /** The type's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them */
+  name: string;
+}
+
+/** A command of the type component_type.delete. */
+export interface ComponentTypeDeleteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentTypeDeletePayload;
+  /** The command's type. */
+  type: "component_type.delete";
+}
+
+/** The payload of a command of the type component_type.delete. */
+export interface ComponentTypeDeletePayload {
+  /** The ID of the type to delete, each of whose components is in the project's trash, or the command is answered with 409 component_type_in_use. Its attribute definitions go to the trash with it, and restoring it, or one of its components, brings them back. */
+  id: string;
+}
+
+/** A command of the type component_type.rename. */
+export interface ComponentTypeRenameCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentTypeRenamePayload;
+  /** The command's type. */
+  type: "component_type.rename";
+}
+
+/** The payload of a command of the type component_type.rename. */
+export interface ComponentTypeRenamePayload {
+  /** The type's ID */
+  id: string;
+  /** The type's new name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them. Its key stays as it is. */
+  name: string;
+}
+
+/** A command of the type component_type.restore. */
+export interface ComponentTypeRestoreCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentTypeRestorePayload;
+  /** The command's type. */
+  type: "component_type.restore";
+}
+
+/** The payload of a command of the type component_type.restore. */
+export interface ComponentTypeRestorePayload {
+  /** The type's ID */
+  id: string;
+}
+
+/** A command of the type component_type.set_icon. */
+export interface ComponentTypeSetIconCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentTypeSetIconPayload;
+  /** The command's type. */
+  type: "component_type.set_icon";
+}
+
+/** The payload of a command of the type component_type.set_icon. */
+export interface ComponentTypeSetIconPayload {
+  /** The type's new icon, which the web app shows a glyph for, or none */
+  icon: "none" | "person" | "group" | "item" | "location" | "event" | "book" | "star" | "heart" | "key" | "gem" | "shield" | "flag" | "tag";
+  /** The type's ID */
+  id: string;
+}
+
+/** A command of the type component_type.set_key. */
+export interface ComponentTypeSetKeyCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ComponentTypeSetKeyPayload;
+  /** The command's type. */
+  type: "component_type.set_key";
+}
+
+/** The payload of a command of the type component_type.set_key. */
+export interface ComponentTypeSetKeyPayload {
+  /** The type's ID */
+  id: string;
+  /** The type's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as character, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other type of the project has, of those that are not in its trash, which is answered with 409 key_taken. */
+  key: string;
 }
 
 export interface CreateInviteBody {
@@ -440,7 +1034,7 @@ export interface FolderDeleteCommand {
 
 /** The payload of a command of the type folder.delete. */
 export interface FolderDeletePayload {
-  /** The ID of the folder to delete, which holds no folder, no board, and no variable that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, a variable of a board in the trash among it, and stays in the folder, which restoring it restores too. */
+  /** The ID of the folder to delete, which holds no folder, no board, no variable, and no component that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, a variable of a board in the trash among it, and stays in the folder, which restoring it restores too. */
   id: string;
 }
 
@@ -641,6 +1235,12 @@ export interface PageBoard {
   next_cursor: string | null;
 }
 
+export interface PageComponentType {
+  items: Array<ComponentType>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PageFolder {
   items: Array<Folder>;
   /** The cursor of the next page, or null if this is the last page */
@@ -689,8 +1289,20 @@ export interface PageSessionBody {
   next_cursor: string | null;
 }
 
+export interface PageSummary {
+  items: Array<Summary>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PageTrashItemBody {
   items: Array<TrashItemBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
+export interface PageUnconvertible {
+  items: Array<Unconvertible>;
   /** The cursor of the next page, or null if this is the last page */
   next_cursor: string | null;
 }
@@ -948,6 +1560,118 @@ export interface RevokedBody {
   revoked: number;
 }
 
+/** A component type's attribute definition's ID. */
+export type RichTextAttributeId = string;
+
+export type RichTextBlock = RichTextParagraph | RichTextList;
+
+/** Bold. */
+export interface RichTextBold {
+  type: "bold";
+}
+
+/** Inline code. */
+export interface RichTextCode {
+  type: "code";
+}
+
+/** A component's ID. */
+export type RichTextComponentId = string;
+
+/** The number of digits after the point that a number is shown with, rounded half away from zero. A value that is not a number is shown as it is. */
+export type RichTextDecimals = number;
+
+/** A document: its blocks, at least one. The editor's empty document is one empty paragraph. */
+export interface RichTextDoc {
+  content: Array<RichTextBlock>;
+  type: "doc";
+}
+
+/** A line break within a paragraph. */
+export interface RichTextHardBreak {
+  marks?: RichTextMarks;
+  type: "hardBreak";
+}
+
+export type RichTextInline = RichTextText | RichTextHardBreak | RichTextMention | RichTextValueRef;
+
+/** Italic. */
+export interface RichTextItalic {
+  type: "italic";
+}
+
+/** A link to an absolute http or https URL with a host, without white space, or a mailto URL of one address and nothing else. */
+export interface RichTextLink {
+  attrs: {
+    href: string;
+  };
+  type: "link";
+}
+
+/** A list, bulleted (bulletList) or numbered (orderedList), of at least one item. Lists nest at most 5 deep, which the server checks beyond this schema. */
+export interface RichTextList {
+  /** An orderedList's attributes. A bulletList has none, which the server checks beyond this schema. */
+  attrs?: {
+    /** The number of the first item, 1 when it is not given. */
+    start?: number;
+  };
+  content: Array<RichTextListItem>;
+  type: "bulletList" | "orderedList";
+}
+
+/** A list item: a paragraph, then any paragraphs and lists. That it starts with a paragraph is checked by the server, beyond this schema. */
+export interface RichTextListItem {
+  content: Array<RichTextBlock>;
+  type: "listItem";
+}
+
+/** The marks of an inline node, each at most once, which the server checks beyond this schema. The code mark is not combined with another. */
+export type RichTextMarks = Array<RichTextBold | RichTextCode | RichTextItalic | RichTextLink | RichTextStrike>;
+
+/** A mention of a component, which the text shows by the component's name. */
+export interface RichTextMention {
+  attrs: {
+    id: RichTextComponentId;
+  };
+  marks?: RichTextMarks;
+  type: "mention";
+}
+
+/** A paragraph, which may be empty. */
+export interface RichTextParagraph {
+  content?: Array<RichTextInline>;
+  type: "paragraph";
+}
+
+/** Strikethrough. */
+export interface RichTextStrike {
+  type: "strike";
+}
+
+/** Text, without control characters but tabs, or line and paragraph separators: a line break is a hardBreak, and a paragraph a paragraph. Nor does it hold bidirectional controls, as U+202E, which the server checks beyond this schema. A document's texts hold at most 100,000 characters together. */
+export interface RichTextText {
+  marks?: RichTextMarks;
+  text: string;
+  type: "text";
+}
+
+/** A reference to a value, which the text shows as the runtime renders it: a variable's, or a runtime attribute's of a component. */
+export interface RichTextValueRef {
+  attrs: {
+    decimals?: RichTextDecimals;
+    ref: RichTextVariableId;
+  } | {
+    attribute: RichTextAttributeId;
+    decimals?: RichTextDecimals;
+    ref: RichTextComponentId;
+  };
+  marks?: RichTextMarks;
+  type: "valueRef";
+}
+
+/** A variable's ID. */
+export type RichTextVariableId = string;
+
 export interface SessionBody {
   /** When its user signed in */
   created_at: string;
@@ -1045,17 +1769,55 @@ export interface StatusBody {
   status: "ok" | "ready";
 }
 
+export interface Summary {
+  /** The ID of the component's type, which is fixed once it is created */
+  component_type_id: string;
+  /** When the component was created */
+  created_at: string;
+  /** When the component went to the project's trash, if it is there */
+  deleted_at?: string;
+  /** The ID of the folder of components that the component is in, if it is in one, or none for a component at the top */
+  folder_id?: string;
+  /** The component's ID */
+  id: string;
+  /** The ID of the component's image, an asset of the project, or none */
+  image_asset_id?: string;
+  /** The component's key, by which expressions name it, as elara in elara.trust: an identifier of the expression language (PRD §5.8.1), unique among the project's components that are not in its trash. A change of the component's name leaves it as it is (PRD FR-COMP-02 AC2). */
+  key: string;
+  /** The component's name, as Elara */
+  name: string;
+  /** The component's place among the folders and components of its folder, or of the top: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, cmp_ or fld_, compared by their bytes too (package orderkey) */
+  order: string;
+  /** The ID of the component's project */
+  project_id: string;
+  /** The component's revision, which every change of it increments, a change of one of its values or of the attribute definitions whose values it holds among them, and which a change expects with expected_rev */
+  rev: number;
+  /** When the component last changed */
+  updated_at: string;
+}
+
 export interface TrashItemBody {
   /** When the entity was deleted to the trash */
   deleted_at: string;
   /** The entity's ID */
   id: string;
-  /** What the entity is: a board or a variable, and, once they exist, a node or a component (PRD FR-PROJ-06). The command of its kind, as board.restore, restores it with its ID as id. */
+  /** What the entity is: a board, a variable, or a component, and, once they exist, a node (PRD FR-PROJ-06). The command of its kind, as board.restore, restores it with its ID as id. */
   kind: "board" | "node" | "variable" | "component";
   /** The entity's name, or a variable's key */
   name: string;
   /** When the entity's time in the trash ends. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored. */
   purge_after: string;
+}
+
+export interface Unconvertible {
+  /** The component's ID */
+  component_id: string;
+  /** When the component went to the project's trash, if it is there: a retype converts the values of the components in the trash too */
+  deleted_at?: string;
+  /** The component's key */
+  key: string;
+  /** The component's name */
+  name: string;
 }
 
 export interface UpdateProjectBody {
@@ -1412,7 +2174,7 @@ export interface Operations {
   /**
    * Apply batches of commands to a project
    *
-   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo. Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, or variables, 422 key_invalid for a variable's key that is not an identifier, or 409 key_taken for a key that another variable of its scope has.
+   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo. Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, or 409 component_type_in_use for a component type to delete of which a component that is not in the trash is. A batch whose undo, the inverses of its commands as the operation log keeps them, would take more than 4 MiB, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches.
    *
    * A command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.
    *
@@ -1712,6 +2474,42 @@ export interface Operations {
       200: Board;
     };
   };
+  /**
+   * Get a component
+   *
+   * Returns a component of the project, with its description and the values that it holds of its type's attribute definitions that are not in the project's trash. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types component_type.*, attribute.*, and component.* create, rename, rekey, retype, move, delete, and restore them, and change their values. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A component that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getComponent: {
+    input: {
+      path: {
+        /** The component's ID */
+        component_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: Component;
+    };
+  };
+  /**
+   * Get a component type
+   *
+   * Returns a component type of the project, with its attribute definitions that are not in the project's trash. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types component_type.*, attribute.*, and component.* create, rename, rekey, retype, move, delete, and restore them, and change their values. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A type that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getComponentType: {
+    input: {
+      path: {
+        /** The component type's ID */
+        component_type_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: ComponentType;
+    };
+  };
   /** Report that the process is alive */
   getHealth: {
     input: Record<string, never>;
@@ -1910,6 +2708,54 @@ export interface Operations {
     };
   };
   /**
+   * List a project's component types
+   *
+   * Lists the project's component types that are not in its trash, each with its attribute definitions that are not, in the order of their IDs, oldest first. A project is created with the types Character, Item, Location, Faction, and Custom, without attribute definitions, named in its default locale. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types component_type.*, attribute.*, and component.* create, rename, rekey, retype, move, delete, and restore them, and change their values. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listComponentTypes: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageComponentType;
+    };
+  };
+  /**
+   * List a project's components
+   *
+   * Lists the project's components that are not in its trash, of a type, or whose names or keys hold a text, if the query says so, in the order of their IDs, oldest first (PRD FR-COMP-02 AC3). Each names its type, its folder, and its place among the folder's children, from which a client builds the tree of folders of components (GET /api/v1/projects/{project_id}/folders?kind=component), but not its description or its values, which the component's own read returns. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types component_type.*, attribute.*, and component.* create, rename, rekey, retype, move, delete, and restore them, and change their values. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listComponents: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The ID of a component type: only the components of that type are listed (PRD FR-COMP-02 AC3). Without it, those of every type. */
+        component_type_id?: string;
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+        /** What the components' names or keys hold, compared without regard to case, of at most 100 characters, without control characters: only those are listed (PRD FR-COMP-02 AC3). Without it, every component. */
+        query?: string;
+      };
+    };
+    responses: {
+      200: PageSummary;
+    };
+  };
+  /**
    * List a project's folders
    *
    * Lists the project's folders that are not deleted, of boards, variables, and components, or of the kind that kind names, in the order of their IDs, oldest first. Each names its parent and its place among the parent's children, from which a client builds each kind's tree. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types board.* and folder.* create, rename, move, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
@@ -2088,7 +2934,7 @@ export interface Operations {
   /**
    * List a project's trash
    *
-   * Lists what is in the project's trash, the most recently deleted first: its boards and variables, and, once they exist, its nodes and components, each with its kind. Each stays in the trash for 30 days from its deletion, until its purge_after, when a purge that runs every hour deletes it for good; until then, the command of its kind restores it where it was, as board.restore with its ID, through POST /api/v1/projects/{project_id}/commands. A board's variables are in the trash with it, unlisted, come back with it, and are purged with it, a variable of the board deleted on its own among them, which is listed, and restored only once its board is. A deleted folder is not listed: restoring a board restores the deleted folders above it, and the purge deletes a deleted folder once its 30 days have passed and it holds nothing. Nothing in the trash is in the project's other reads. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   * Lists what is in the project's trash, the most recently deleted first: its boards, variables, and components, and, once they exist, its nodes, each with its kind. Each stays in the trash for 30 days from its deletion, until its purge_after, when a purge that runs every hour deletes it for good; until then, the command of its kind restores it where it was, as board.restore with its ID, through POST /api/v1/projects/{project_id}/commands. A board's variables are in the trash with it, unlisted, come back with it, and are purged with it, a variable of the board deleted on its own among them, which is listed, and restored only once its board is. A deleted folder is not listed: restoring a board restores the deleted folders above it, and the purge deletes a deleted folder once its 30 days have passed and it holds nothing. Neither is a deleted component type or attribute definition: a type's definitions are in the trash with it, restoring a component restores its type, and the purge deletes a type once its 30 days have passed and it holds no component. Nothing in the trash is in the project's other reads. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
    */
   listTrash: {
     input: {
@@ -2127,6 +2973,36 @@ export interface Operations {
     };
     responses: {
       200: PageProject;
+    };
+  };
+  /**
+   * List the values that a retype would not convert
+   *
+   * Lists the components of the type, those in the project's trash included, whose values of the attribute definition do not convert to the type that the query names, in the order of their IDs, oldest first: those that the command attribute.retype with the conversion convert gives the new default, which a client shows before it applies one (PRD FR-COMP-01 AC2). A value converts as the expression language's to_int, to_float, and to_string convert it (PRD §5.8.4, §5.8.9), a bool as 0 or 1, an int or a float that is 0 or 1 as a bool, a string that is true or false as a bool, and a value whose string is one of an enum's options as that option. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A type that the project does not have, or a definition that the type does not have, or either in the project's trash, is answered with 404 not_found, and a type of the query that the retype refuses, the definition's own, or text for a runtime definition, or options that are not an enum's, with 422 validation_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listUnconvertibleValues: {
+    input: {
+      path: {
+        /** The ID of the attribute definition, one of the type's */
+        attribute_id: string;
+        /** The component type's ID */
+        component_type_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+      query: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+        /** The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line separators, and U+FFFD, the replacement character, among them, no two alike. Another type has none. */
+        options?: string;
+        /** The type that the definition would be given, which is not its type already, nor text for a runtime definition */
+        type: "bool" | "int" | "float" | "string" | "text" | "enum";
+      };
+    };
+    responses: {
+      200: PageUnconvertible;
     };
   };
   /**
@@ -2630,6 +3506,8 @@ export const routes = {
   getAssetContent: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}/content", blob: true },
   getAssetThumbnail: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}/thumbnail", blob: true },
   getBoard: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}" },
+  getComponent: { method: "GET", path: "/api/v1/projects/{project_id}/components/{component_id}" },
+  getComponentType: { method: "GET", path: "/api/v1/projects/{project_id}/component-types/{component_type_id}" },
   getHealth: { method: "GET", path: "/healthz" },
   getInstance: { method: "GET", path: "/api/v1/instance" },
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
@@ -2644,6 +3522,8 @@ export const routes = {
   issuePasswordResetLink: { method: "POST", path: "/api/v1/admin/password-reset-links" },
   issueVerificationLink: { method: "POST", path: "/api/v1/admin/verification-links" },
   listBoards: { method: "GET", path: "/api/v1/projects/{project_id}/boards" },
+  listComponentTypes: { method: "GET", path: "/api/v1/projects/{project_id}/component-types" },
+  listComponents: { method: "GET", path: "/api/v1/projects/{project_id}/components" },
   listFolders: { method: "GET", path: "/api/v1/projects/{project_id}/folders" },
   listInvites: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/invites" },
   listMemberGrants: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}/grants" },
@@ -2654,6 +3534,7 @@ export const routes = {
   listSessions: { method: "GET", path: "/api/v1/auth/sessions" },
   listTrash: { method: "GET", path: "/api/v1/projects/{project_id}/trash" },
   listTrashedProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/trash/projects" },
+  listUnconvertibleValues: { method: "GET", path: "/api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/conversion" },
   listVariables: { method: "GET", path: "/api/v1/projects/{project_id}/variables" },
   listWorkspaceTokens: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/tokens" },
   listWorkspaces: { method: "GET", path: "/api/v1/workspaces" },

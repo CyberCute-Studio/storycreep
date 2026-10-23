@@ -18,6 +18,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
 
@@ -116,9 +117,20 @@ type Spec[P any] struct {
 	// once it has checked the command's revisions, right before Apply, so
 	// that it reads the state that Apply changes, unless a command of the
 	// batch is NonUndoable, which leaves the batch without an inverse. It
-	// only reads, so it reports no change (Tx.Changed). Exactly one of
-	// Inverse and NonUndoable is set.
+	// only reads, so it reports no change (Tx.Changed). The pipeline refuses
+	// the command, at UndoField, once its steps would take the batch's undo
+	// past the pipeline's bound (Options.MaxUndoBytes), which an Inverse
+	// whose steps grow with the project stops before (Tx.UndoRoom,
+	// ErrUndoTooLarge). Exactly one of Inverse and NonUndoable is set.
 	Inverse func(ctx context.Context, tx *Tx, p P) ([]Step, error)
+	// UndoField is the field of the payload, named as in its JSON, at which
+	// the pipeline refuses the command when its inverse would take the
+	// batch's undo past the pipeline's bound (Options.MaxUndoBytes): the
+	// field whose change makes the inverse hold a part of the project that
+	// grows with it, as an attribute's retype's type, whose inverse holds the
+	// values that the retype loses, or "" for the payload itself, as for any
+	// other command.
+	UndoField string
 	// NonUndoable marks a command without a meaningful inverse, whose batch
 	// cannot be undone.
 	NonUndoable bool
@@ -252,8 +264,9 @@ type spec struct {
 	// adds return how much the command adds to each of limits, or nil for 1.
 	adds []func(ctx context.Context, tx *Tx, payload any) (int64, error)
 	// archived, trashed, and sessionOnly are Spec.Archived, Spec.Trashed, and
-	// Spec.SessionOnly.
+	// Spec.SessionOnly, and undoField is Spec.UndoField.
 	archived, trashed, sessionOnly bool
+	undoField                      string
 	// decode decodes a payload that its schema allows, checks it, and
 	// returns it: with Check, and with CheckNew too unless it is a step's.
 	decode func(raw []byte, step bool) (payload any, problems input.FieldErrors)
@@ -267,9 +280,11 @@ type spec struct {
 // that is registered already, a Capability that is not an operation of the
 // permission matrix, a Scope that is not a scope, no Touches, a touched kind
 // that is not registered or twice, a limit that the plan file does not check
-// or twice, both Inverse and NonUndoable or neither, Trashed without
-// Archived, no Apply, or a payload that is not a struct, or that has a field
-// with a default or a type that resolves itself.
+// or twice, both Inverse and NonUndoable or neither, an UndoField without
+// Inverse or that is no field of the payload's, Trashed without Archived, no
+// Apply, or a payload that is not a struct, or that has a field with a
+// default or a type that resolves itself, or that holds a rich-text document
+// other than as a field of its own.
 func Register[P any](r *Registry, s Spec[P]) {
 	fail := func(format string, args ...any) {
 		panic(fmt.Sprintf("commands: %s: ", s.Type) + fmt.Sprintf(format, args...))
@@ -301,6 +316,16 @@ func Register[P any](r *Registry, s Spec[P]) {
 	if problem := unapplied(pt); problem != "" {
 		fail("%s", problem)
 	}
+	switch {
+	case s.UndoField != "" && s.Inverse == nil:
+		fail("a command without an inverse has no UndoField")
+	case s.UndoField != "" && !slices.Contains(jsonFields(pt), s.UndoField):
+		fail("the UndoField %q is not a field of the payload", s.UndoField)
+	}
+	if at := nestedDoc(pt); at != "" {
+		fail("the payload's %s holds a rich-text document, which a payload holds only as a field of its own, a "+
+			"richtext.Doc or a pointer to one, so that a document that Parse refuses is answered at its field", at)
+	}
 	for i, k := range s.Touches {
 		if _, ok := r.entities[k]; !ok {
 			fail("the entity %s is not registered", k)
@@ -322,7 +347,7 @@ func Register[P any](r *Registry, s Spec[P]) {
 	sp := &spec{typ: s.Type, capability: s.Capability, scope: s.Scope, touches: slices.Clone(s.Touches),
 		payload: pt, schema: r.schemas.Schema(pt, true, ""), limits: keys,
 		adds: make([]func(context.Context, *Tx, any) (int64, error), len(s.Limits)), archived: s.Archived,
-		trashed: s.Trashed, sessionOnly: s.SessionOnly}
+		trashed: s.Trashed, sessionOnly: s.SessionOnly, undoField: s.UndoField}
 	for i, l := range s.Limits {
 		if l.Adds != nil {
 			sp.adds[i] = func(ctx context.Context, tx *Tx, payload any) (int64, error) {
@@ -330,11 +355,20 @@ func Register[P any](r *Registry, s Spec[P]) {
 			}
 		}
 	}
+	docs := docFields(pt)
 	sp.decode = func(raw []byte, step bool) (any, input.FieldErrors) {
 		var p P
 		d := json.NewDecoder(bytes.NewReader(raw))
 		d.DisallowUnknownFields()
 		if err := d.Decode(&p); err != nil {
+			// A rich-text document that its schema allows but Parse refuses,
+			// as one with lists nested too deep, is answered at its field,
+			// joined with where in it the value that is wrong is (plan note
+			// N40), with the error's message, which holds its pointer.
+			var doc *richtext.Error
+			if errors.As(err, &doc) {
+				return nil, input.FieldErrors{{Field: docField(raw, docs, doc), Message: err.Error()}}
+			}
 			// The schema allows the payload, so this is only a value that
 			// the schema cannot describe, such as an integer out of its
 			// type's range.
@@ -359,6 +393,113 @@ func Register[P any](r *Registry, s Spec[P]) {
 	}
 	sp.apply = func(ctx context.Context, tx *Tx, payload any) error { return s.Apply(ctx, tx, payload.(P)) }
 	r.specs[s.Type] = sp
+}
+
+// docFields returns the names, in a payload's JSON, of the fields of the
+// payload's type t that hold a rich-text document, a richtext.Doc or a
+// pointer to one, in their order.
+func docFields(t reflect.Type) []string {
+	var out []string
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if f.Type == reflect.TypeFor[richtext.Doc]() || f.Type == reflect.TypeFor[*richtext.Doc]() {
+			out = append(out, jsonName(f))
+		}
+	}
+	return out
+}
+
+// jsonFields returns the names, in a payload's JSON, of the exported fields
+// of the payload's type t that encoding/json encodes, in their order.
+func jsonFields(t reflect.Type) []string {
+	var out []string
+	for i := range t.NumField() {
+		if f := t.Field(i); f.IsExported() && f.Tag.Get("json") != "-" {
+			out = append(out, jsonName(f))
+		}
+	}
+	return out
+}
+
+// jsonName returns the name of the field f in its struct's JSON.
+func jsonName(f reflect.StructField) string {
+	if name, _, _ := strings.Cut(f.Tag.Get("json"), ","); name != "" {
+		return name
+	}
+	return f.Name
+}
+
+// docField returns the location within the payload raw of the value that err
+// says is wrong in one of its documents, the fields named docs: the first of
+// them that Parse refuses, in the order of the payload's fields, in which the
+// decoder decodes them, and stops at the first that fails, an occurrence of a
+// field that the payload holds twice among them, joined with where in it the
+// value is, or "" for the payload itself if none of them is, as when the
+// payload is not an object. Only a refused payload is read again, so a
+// payload that applies is parsed once.
+func docField(raw []byte, docs []string, err *richtext.Error) string {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	if t, e := d.Token(); e != nil || t != json.Delim('{') {
+		return ""
+	}
+	for d.More() {
+		t, e := d.Token()
+		if e != nil {
+			return ""
+		}
+		var doc json.RawMessage
+		if d.Decode(&doc) != nil {
+			return ""
+		}
+		if name, _ := t.(string); slices.Contains(docs, name) && string(doc) != "null" {
+			if _, parseErr := richtext.Parse(doc); parseErr != nil {
+				return name + err.Location()
+			}
+		}
+	}
+	return ""
+}
+
+// nestedDoc returns where the payload's type t holds a rich-text document
+// other than as a field of its own, a richtext.Doc or a pointer to one, as in
+// a slice, a map, or a struct that a field holds, or "" if it holds none
+// there: docField finds a document that Parse refuses only among t's own
+// fields. It walks the types as unapplied does.
+func nestedDoc(t reflect.Type) string {
+	doc := reflect.TypeFor[richtext.Doc]()
+	seen := map[reflect.Type]bool{}
+	var walk func(t reflect.Type, at string) string
+	walk = func(t reflect.Type, at string) string {
+		for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array ||
+			t.Kind() == reflect.Map {
+			t = t.Elem()
+		}
+		switch {
+		case t == doc:
+			return at
+		case seen[t] || t.Kind() != reflect.Struct:
+			return ""
+		}
+		seen[t] = true
+		for i := range t.NumField() {
+			if f := t.Field(i); f.IsExported() {
+				if found := walk(f.Type, at+"."+f.Name); found != "" {
+					return found
+				}
+			}
+		}
+		return ""
+	}
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if !f.IsExported() || f.Type == doc || f.Type == reflect.PointerTo(doc) {
+			continue
+		}
+		if at := walk(f.Type, t.Name()+"."+f.Name); at != "" {
+			return at
+		}
+	}
+	return ""
 }
 
 // resolvers are the interfaces of a type that resolves itself, whose method

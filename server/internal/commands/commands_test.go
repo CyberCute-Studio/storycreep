@@ -1067,6 +1067,82 @@ func TestUndo(t *testing.T) {
 	}
 }
 
+// TestUndoBound checks that the pipeline refuses a command whose inverse
+// would take its batch's undo past the pipeline's bound, the payloads of its
+// commands' inverses' steps as JSON encodes them for the operation log,
+// escapes and all, at the field that its type's UndoField names, or at the
+// payload, though the command's own inverse fits, and that it refuses one
+// whose Inverse stops with ErrUndoTooLarge alike, once Tx.UndoRoom tells it
+// the room that the inverses of the commands before it leave, that a batch
+// whose undo takes the bound exactly applies, and that the batch that undoes
+// another is bounded alike, by its own inverse.
+func TestUndoBound(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	_, xID := newNote()
+	_, yID := newNote()
+	// The log escapes <, as \u003c, which then takes six bytes.
+	body := strings.Repeat("<", 50)
+	if _, err := w.pipeline(t, nil).Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, noteCreate, notePayload{ID: xID, Body: body}, nil),
+		command(t, noteCreate, notePayload{ID: yID, Body: body}, nil),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bounded := func(n int) *Pipeline { return w.pipeline(t, func(o *Options) { o.MaxUndoBytes = n }) }
+	update := func(id string) Command { return command(t, noteUpdate, notePayload{ID: id, Body: "y"}, nil) }
+	undo, err := json.Marshal(notePayload{ID: xID, Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := len(undo)
+	before := w.written(t)
+	var r *RefusedError
+	if _, err := bounded(2*one-1).Apply(ctx, w.as(ownerUser), w.project, []Command{update(xID),
+		update(yID)}); !errors.As(err, &r) || r.Command != 1 || r.Field != "body" || r.Reason != nil {
+		t.Errorf("a batch whose undo would take the bound by a byte: %v, want a refusal of command 1 at body", err)
+	}
+	room := func(n int) Command {
+		return command(t, noteBadInverse, badInversePayload{ID: xID, Step: noteDelete, Room: n}, nil)
+	}
+	deletion, err := json.Marshal(noteIDPayload{ID: xID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bounded(one+len(deletion)).Apply(ctx, w.as(ownerUser), w.project, []Command{update(xID),
+		room(len(deletion) + 1)}); !errors.As(err, &r) || r.Command != 1 || r.Field != "" {
+		t.Errorf("a batch whose second command's inverse stops for want of room: %v, want a refusal of command 1 "+
+			"at the payload", err)
+	}
+	if after := w.written(t); after != before {
+		t.Errorf("the refused batches wrote %+v, where there was %+v", after, before)
+	}
+	res, err := bounded(one+len(deletion)).Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{update(xID), room(len(deletion))})
+	if err != nil {
+		t.Fatalf("a batch whose undo takes the bound exactly: %v", err)
+	}
+	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, `[{"type": "note.delete", "payload": {"id": "`+xID+
+		`"}}, {"type": "note.update", "payload": {"id": "`+xID+`", "body": "`+body+`"}}]`) {
+		t.Errorf("the batch's inverse is %s", o.inverse)
+	}
+
+	// The batch that undoes another is bounded alike, by its own inverse,
+	// which writes again what the other wrote: a change whose payload passes
+	// the bound, over a small value, applies, but its undo is refused.
+	if _, err := w.pipeline(t, nil).Apply(ctx, w.as(ownerUser), w.project, []Command{update(yID)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bounded(one-1).Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, noteUpdate, notePayload{ID: yID, Body: body}, nil)}); err != nil {
+		t.Fatalf("a change whose undo is small: %v", err)
+	}
+	if _, err := bounded(one-1).Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{update(yID)}); !errors.As(err, &r) || r.Command != 0 || r.Field != "body" {
+		t.Errorf("the undo of a change whose payload passes the bound: %v, want a refusal of command 0 at body", err)
+	}
+}
+
 // TestUndoOfAStoredValue checks that the pipeline asks a type's CheckNew of
 // every command of a batch, which lists its problems after Check's, with the
 // batch's others, but not of the step of an inverse, which writes back a

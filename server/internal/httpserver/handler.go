@@ -18,6 +18,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/component"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
@@ -61,6 +62,9 @@ type server struct {
 	// variables reads the projects' variables, which their commands change
 	// (package variable).
 	variables *variable.Service
+	// components reads the projects' component types and components, which
+	// their commands change (package component).
+	components *component.Service
 	// trash lists the projects' trash, from which their commands restore
 	// what it holds (package trash).
 	trash *trash.Service
@@ -102,6 +106,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	project.Register(registry)
 	board.Register(registry)
 	variable.Register(registry)
+	component.Register(registry)
 	s.queue = &queueRef{}
 	s.commands = commands.New(readyDB{s.ready}, commands.Options{
 		Registry:     registry,
@@ -114,9 +119,11 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		Policy:       role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
 		Entitlements: s.entitlements,
 		Pipeline:     s.commands,
+		Seed:         component.Seed,
 	})
 	s.boards = board.New(readyDB{s.ready}, board.Options{Projects: s.projects})
 	s.variables = variable.New(readyDB{s.ready}, variable.Options{Projects: s.projects})
+	s.components = component.New(readyDB{s.ready}, component.Options{Projects: s.projects})
 	s.trash = trash.New(readyDB{s.ready}, trash.Options{Projects: s.projects})
 	s.assets = asset.New(readyDB{s.ready}, asset.Options{
 		Projects:     s.projects,
@@ -200,6 +207,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerCommands(s.main, s.commands)
 	registerBoards(s.main, s.boards)
 	registerVariables(s.main, s.variables)
+	registerComponents(s.main, s.components)
 	registerTrash(s.main, s.trash)
 	registerAssets(s.main, s.assets)
 	registerGrants(s.main, s.projects)

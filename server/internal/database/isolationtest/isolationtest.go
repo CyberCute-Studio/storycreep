@@ -176,6 +176,48 @@ var Tables = []Table{
 		return Statement{id, `INSERT INTO variable (id, workspace_id, project_id, scope, "order", key, type, ` +
 			"default_value) VALUES ($1, $2, $3, 'global', 'V', $4, 'bool', 'false')", args}, nil
 	}},
+	{Name: "component_type", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A type's key is unique within its project, which its ID makes.
+		id := ids.New()
+		return Statement{id, "INSERT INTO component_type (id, workspace_id, project_id, key, name) " +
+			"VALUES ($1, $2, $3, $4, 'Character')", []any{id, w.ID, w.Rows["project"], key("character", id)}}, nil
+	}},
+	{Name: "attribute_def", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// An attribute definition's key is unique within its type, which its
+		// ID makes.
+		id := ids.New()
+		return Statement{id, `INSERT INTO attribute_def (id, workspace_id, project_id, component_type_id, "order", ` +
+			"key, name, type, default_value) VALUES ($1, $2, $3, $4, 'V', $5, 'Trust', 'int', '0')",
+			[]any{id, w.ID, w.Rows["project"], w.Rows["component_type"], key("trust", id)}}, nil
+	}},
+	{Name: "component", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A component's key is unique within its project, which its ID makes.
+		// It is at the top, so that the trash's tests delete it on its own,
+		// whatever becomes of the workspace's folder.
+		id := ids.New()
+		return Statement{id, `INSERT INTO component (id, workspace_id, project_id, component_type_id, "order", key, ` +
+			"name) VALUES ($1, $2, $3, $4, 'V', $5, 'Elara')", []any{id, w.ID, w.Rows["project"],
+			w.Rows["component_type"], key("elara", id)}}, nil
+	}},
+	{Name: "attribute_value", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A component holds one value of a definition. The workspace's first
+		// value is its component's, so that the trash's tests find the
+		// workspace's one component, and each one after it, as the harness
+		// tries to add, is a new component's, which it adds.
+		component := w.Rows["component"]
+		if _, seeded := w.Rows["attribute_value"]; seeded {
+			component = ids.New()
+			if _, err := admin.Exec(ctx, `INSERT INTO component (id, workspace_id, project_id, component_type_id, `+
+				`"order", key, name) VALUES ($1, $2, $3, $4, 'V', $5, 'Mira')`, component, w.ID, w.Rows["project"],
+				w.Rows["component_type"], key("mira", component)); err != nil {
+				return Statement{}, fmt.Errorf("add a component: %w", err)
+			}
+		}
+		id := ids.New()
+		return Statement{id, "INSERT INTO attribute_value (id, workspace_id, project_id, component_id, " +
+			"attribute_def_id, value) VALUES ($1, $2, $3, $4, $5, '3')", []any{id, w.ID, w.Rows["project"], component,
+			w.Rows["attribute_def"]}}, nil
+	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
 		id := ids.New()
@@ -189,6 +231,12 @@ var Tables = []Table{
 		return Statement{id, "INSERT INTO usage_delta (id, workspace_id, key, delta) VALUES ($1, $2, 'members', 2)",
 			[]any{id, w.ID}}, nil
 	}},
+}
+
+// key returns a key of an identifier's form, unique by the ID id: the word
+// prefix, an underscore, and id's hexadecimal digits.
+func key(prefix string, id ids.UUID) string {
+	return prefix + "_" + strings.ReplaceAll(id.String(), "-", "")
 }
 
 // usageKey returns a random key of usage, of lowercase letters as the keys

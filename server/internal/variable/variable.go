@@ -39,7 +39,6 @@ package variable
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -51,8 +50,10 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
+	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
 // MaxDescriptionLength is the most characters that a variable's description
@@ -80,8 +81,9 @@ var (
 	ErrNotFound = errors.New("variable: no such variable")
 	// ErrKeyTaken is the reason of a command's refusal of a key that another
 	// variable of the scope has, of those that are not in the trash
-	// (commands.RefusedError), which the API answers with key_taken.
-	ErrKeyTaken = errors.New("variable: another variable of the scope has the key")
+	// (commands.RefusedError), which the API answers with key_taken: the
+	// reason of every entity's key that another has (ident.ErrTaken).
+	ErrKeyTaken = ident.ErrTaken
 )
 
 // Variable is a variable as the API shows it, and as an answer of
@@ -130,7 +132,7 @@ func variableOf(v queries.Variable) (Variable, error) {
 // error if it is not a value of its type, which the database's check keeps
 // from it.
 func stored(v queries.Variable) (Value, error) {
-	def, problem := Value{raw: json.RawMessage(v.DefaultValue)}.of(v.Type, checks{})
+	def, problem := of(value.FromJSON(v.DefaultValue), v.Type, value.Checks{})
 	if problem != "" {
 		return Value{}, fmt.Errorf("variable: the default of the variable %s %s", ids.Encode(ids.Variable,
 			v.ID.Bytes), problem)

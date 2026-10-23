@@ -15,6 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
 
@@ -188,6 +189,10 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 		{"neither inverse nor non-undoable", func(s *Spec[notePayload]) { s.Inverse = nil }},
 		{"in the trash but not archived", func(s *Spec[notePayload]) { s.Trashed = true }},
 		{"no apply", func(s *Spec[notePayload]) { s.Apply = nil }},
+		{"an undo field without an inverse", func(s *Spec[notePayload]) {
+			s.Inverse, s.NonUndoable, s.UndoField = nil, true, "body"
+		}},
+		{"an undo field that is no field", func(s *Spec[notePayload]) { s.UndoField = "Body" }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := good()
@@ -199,6 +204,13 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 	}
 	if panics(func() { Register(noteRegistry(), good()) }) {
 		t.Error("Register refuses a good declaration")
+	}
+	if panics(func() {
+		s := good()
+		s.UndoField = "body"
+		Register(noteRegistry(), s)
+	}) {
+		t.Error("Register refuses an undo field of the payload's")
 	}
 	if !panics(func() {
 		Register(noteRegistry(), Spec[string]{Type: "note.text", Capability: authz.ListMembers,
@@ -217,6 +229,14 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 	}
 	if !panics(func() { registerPayload[heldResolverPayload](t) }) {
 		t.Error("Register accepts a payload that holds a type that resolves itself")
+	}
+	// A document that Parse refuses is answered at its field, which only a
+	// payload's own fields are.
+	if !panics(func() { registerPayload[heldDocPayload](t) }) {
+		t.Error("Register accepts a payload that holds a rich-text document in a field's slice")
+	}
+	if panics(func() { registerPayload[docsPayload](t) }) {
+		t.Error("Register refuses a payload whose fields are rich-text documents")
 	}
 
 	states := func(context.Context, *Tx, []ids.UUID) (map[ids.UUID]any, error) { return nil, nil }
@@ -256,6 +276,43 @@ func (*resolving) Resolve(huma.Context) []error { return nil }
 // heldResolverPayload is a payload that holds a type that resolves itself.
 type heldResolverPayload struct {
 	ByName map[string]resolving `json:"by_name"`
+}
+
+// heldDocPayload is a payload that holds rich-text documents in a slice.
+type heldDocPayload struct {
+	Pages []richtext.Doc `json:"pages"`
+}
+
+// docsPayload is a payload with two rich-text documents of its own.
+type docsPayload struct {
+	Summary richtext.Doc  `json:"summary"`
+	Body    *richtext.Doc `json:"body,omitempty"`
+}
+
+// TestDocumentLocation checks that a payload's document that Parse refuses
+// is answered at its field, joined with where in it the value that is wrong
+// is (plan note N40): the field that the decoder refused, the first of the
+// payload's that Parse refuses in the order that the payload holds them, the
+// first occurrence of a field that it holds twice among them.
+func TestDocumentLocation(t *testing.T) {
+	r := noteRegistry()
+	Register(r, Spec[docsPayload]{Type: "note.docs", Capability: authz.ListMembers, Scope: scope.ProjectWrite,
+		Touches: []ids.Kind{ids.Node}, NonUndoable: true,
+		Apply: func(context.Context, *Tx, docsPayload) error { return nil }})
+	good := `{"type": "doc", "content": [{"type": "paragraph"}]}`
+	first := `{"type": "doc", "content": [{"type": "heading"}]}`
+	second := `{"type": "doc", "content": [{"type": "paragraph"}, {"type": "heading"}]}`
+	for raw, want := range map[string]string{
+		`{"summary": ` + good + `, "body": ` + second + `}`:    "body.content[1]",
+		`{"body": ` + second + `, "summary": ` + first + `}`:   "body.content[1]",
+		`{"summary": ` + second + `, "body": ` + first + `}`:   "summary.content[1]",
+		`{"summary": ` + second + `, "summary": ` + good + `}`: "summary.content[1]",
+	} {
+		_, problems := r.specs["note.docs"].decode([]byte(raw), false)
+		if len(problems) != 1 || problems[0].Field != want {
+			t.Errorf("%s is answered with %v, want a problem at %s", raw, problems, want)
+		}
+	}
 }
 
 // registerPayload registers a type of command whose payload is a P.

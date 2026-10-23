@@ -31,6 +31,14 @@ func (d readyDB) InTx(ctx context.Context, scope database.Scope, fn func(pgx.Tx)
 	return db.InTx(ctx, scope, fn)
 }
 
+func (d readyDB) InSnapshot(ctx context.Context, scope database.Scope, fn func(pgx.Tx) error) error {
+	db := d.ready.db.Load()
+	if db == nil {
+		return errors.New("the database step of startup has not finished")
+	}
+	return db.InSnapshot(ctx, scope, fn)
+}
+
 // registerBody is the body of POST /api/v1/auth/register.
 type registerBody struct {
 	// The format is idn-email, because JSON Schema's email is an address in

@@ -452,6 +452,33 @@ var permissionMatrix = []struct {
 					p := f.project(t, "")
 					return call(f.s.main, http.MethodGet, variablePath(p, f.variable(t, p)), nil, si.header(false))
 				}},
+			{name: "list a project's component types", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, componentTypesPath(f.project(t, "")), nil, si.header(false))
+				}},
+			{name: "read a component type", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, componentTypePath(p, f.componentType(t, p)), nil,
+						si.header(false))
+				}},
+			{name: "list the values that a retype would not convert", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					ct := f.componentType(t, p)
+					return call(f.s.main, http.MethodGet, conversionPath(p, ct, f.attribute(t, p, ct))+"?type=bool", nil,
+						si.header(false))
+				}},
+			{name: "list a project's components", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, componentsPath(f.project(t, "")), nil, si.header(false))
+				}},
+			{name: "read a component", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, componentPath(p, f.component(t, p, f.componentType(t, p))), nil,
+						si.header(false))
+				}},
 		},
 	},
 	{
@@ -524,6 +551,42 @@ var permissionMatrix = []struct {
 					p := f.project(t, "")
 					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
 						Type: "variable.delete", Payload: map[string]string{"id": f.variable(t, p)}}), si.header(true))
+				}},
+			{name: "create a component type", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, commandsPath(f.project(t, "")), commandBatch(t,
+						wireCommand{Type: "component_type.create", Payload: map[string]string{
+							"id": newComponentTypeID(), "name": "Ship"}}), si.header(true))
+				}},
+			{name: "add an attribute definition", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "attribute.create", Payload: map[string]string{"id": newAttributeID(),
+							"component_type_id": f.componentType(t, p), "name": "Mood", "type": "string"}}),
+						si.header(true))
+				}},
+			{name: "retype an attribute definition", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "attribute.retype", Payload: map[string]string{
+							"id": f.attribute(t, p, f.componentType(t, p)), "type": "float", "conversion": "convert"}}),
+						si.header(true))
+				}},
+			{name: "create a component", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "component.create", Payload: map[string]string{"id": newComponentID(),
+							"component_type_id": f.componentType(t, p), "name": "Elara"}}), si.header(true))
+				}},
+			{name: "delete a component", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type:    "component.delete",
+						Payload: map[string]string{"id": f.component(t, p, f.componentType(t, p))}}), si.header(true))
 				}},
 		},
 	},
@@ -926,20 +989,25 @@ func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []a
 // routeParams returns a value for each parameter of the paths of the
 // fixture's routes: its workspace, and a membership, an invitation, a
 // project, the owner's API token narrowed to the project, an asset of the
-// project, which the owner uploads, and a board and a variable of the
-// project, of it, which the fixture adds.
+// project, which the owner uploads, and a board, a variable, a component
+// type with an int attribute definition, and a component of it, of the
+// project, which the fixture adds.
 func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 	t.Helper()
 	p := f.project(t, "")
+	ct := f.componentType(t, p)
 	return map[string]string{
-		"workspace_id":  f.ws,
-		"membership_id": f.member(t, "editor"),
-		"invite_id":     f.invite(t, "editor"),
-		"project_id":    p,
-		"token_id":      f.token(t, "owner", p),
-		"asset_id":      upload(t, f.s.main, f.as["owner"], p, testPNG(t, 5, 5), http.StatusCreated).ID,
-		"board_id":      f.board(t, p),
-		"variable_id":   f.variable(t, p),
+		"workspace_id":      f.ws,
+		"membership_id":     f.member(t, "editor"),
+		"invite_id":         f.invite(t, "editor"),
+		"project_id":        p,
+		"token_id":          f.token(t, "owner", p),
+		"asset_id":          upload(t, f.s.main, f.as["owner"], p, testPNG(t, 5, 5), http.StatusCreated).ID,
+		"board_id":          f.board(t, p),
+		"variable_id":       f.variable(t, p),
+		"component_type_id": ct,
+		"attribute_id":      f.attribute(t, p, ct),
+		"component_id":      f.component(t, p, ct),
 	}
 }
 

@@ -66,7 +66,7 @@ type folderIDPayload struct {
 
 // deleteFolderPayload is DeleteFolder's payload.
 type deleteFolderPayload struct {
-	ID string `json:"id" doc:"The ID of the folder to delete, which holds no folder, no board, and no variable that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, a variable of a board in the trash among it, and stays in the folder, which restoring it restores too."`
+	ID string `json:"id" doc:"The ID of the folder to delete, which holds no folder, no board, no variable, and no component that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, a variable of a board in the trash among it, and stays in the folder, which restoring it restores too."`
 }
 
 // Register registers in r the folder and the board as entities of the
@@ -190,8 +190,8 @@ func registerFolders(r *commands.Registry) {
 			case err != nil:
 				return fmt.Errorf("board: read what the folder holds: %w", err)
 			case holds:
-				return commands.Refuse("id", "is a folder that holds folders, boards, or variables that are not "+
-					"deleted, which must be moved out of it or deleted first", ErrFolderNotEmpty)
+				return commands.Refuse("id", "is a folder that holds folders, boards, variables, or components "+
+					"that are not deleted, which must be moved out of it or deleted first", ErrFolderNotEmpty)
 			}
 			return changed(tx, ids.Folder, f.ID)(q.TrashFolder(ctx, queries.TrashFolderParams{UpdatedBy: by(tx),
 				WorkspaceID: f.WorkspaceID, ProjectID: f.ProjectID, ID: f.ID}))

@@ -125,6 +125,812 @@
         ],
         "type": "object"
       },
+      "Attribute": {
+        "additionalProperties": false,
+        "properties": {
+          "component_type_id": {
+            "description": "The ID of the definition's component type",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the definition was created",
+            "format": "date-time",
+            "type": "string"
+          },
+          "default": {
+            "description": "The definition's default, a value of its type, which a component of its type that is created without a value of it holds, and which each of the type's components is given when the definition is added: true or false for bool, an integer for int, a number for float, which is written without a decimal point when it is integral, as 2, a string for string and for text, and one of its options for enum. A client reads a number by the definition's type, never by how it is written (PRD §5.8.9).",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "deleted_at": {
+            "description": "When the definition went to the project's trash, if it is there: when it was deleted, or, if it was not, but its type is in the trash, with which it is in the trash too, when the type was deleted",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "The attribute definition's ID, by which saved games record its values (PRD FR-COMP-03 AC3)",
+            "type": "string"
+          },
+          "key": {
+            "description": "The definition's key, by which expressions name its values, as trust in elara.trust: an identifier of the expression language (PRD §5.8.1), unique among its type's definitions that are not in the project's trash",
+            "type": "string"
+          },
+          "name": {
+            "description": "The definition's name, as Trust",
+            "type": "string"
+          },
+          "options": {
+            "description": "An enum's options, which its values are one of, in their order; another type has none",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "order": {
+            "description": "The definition's place among its type's: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, atr_, compared by their bytes too (package orderkey)",
+            "type": "string"
+          },
+          "rev": {
+            "description": "The definition's revision, which every change of it increments, and which a change expects with expected_rev",
+            "format": "int64",
+            "type": "integer"
+          },
+          "runtime": {
+            "description": "Whether the definition's values are part of the game's state, which expressions read and write as component_key.attribute_key, and which saved games record (PRD FR-COMP-03). A text never is.",
+            "type": "boolean"
+          },
+          "type": {
+            "description": "The definition's type: bool, int, float, string, of at most 4096 characters, text, a string of several lines of at most 100000 characters, or enum, one of its options",
+            "enum": [
+              "bool",
+              "int",
+              "float",
+              "string",
+              "text",
+              "enum"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "When the definition last changed",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "component_type_id",
+          "order",
+          "key",
+          "name",
+          "type",
+          "default",
+          "runtime",
+          "rev",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "AttributeCreateCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type attribute.create.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/AttributeCreatePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "attribute.create"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "AttributeCreatePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type attribute.create.",
+        "properties": {
+          "component_type_id": {
+            "description": "The ID of the component type that the definition is added to, which is not in the project's trash, and which has fewer than 100 definitions that are not",
+            "type": "string"
+          },
+          "default": {
+            "description": "The definition's default, which each component of its type is given: a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. Without it, the type's zero value: false, 0, 0.0, the empty string, or an enum's first option.",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "id": {
+            "description": "The new attribute definition's ID, an atr_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "type": "string"
+          },
+          "key": {
+            "description": "The definition's key, by which expressions name its values, as trust in elara.trust: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as trust, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other attribute definition of its type has, of those that are not in the project's trash, which is answered with 409 key_taken. Without it, the key is derived from the name, as a component type's is, or is attribute for a name without letters or digits.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The definition's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "options": {
+            "description": "An enum's options, which its values are one of: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. Another type has none.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "order": {
+            "description": "The definition's place among its type's. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the definitions by its bytes, and those with the same key by their IDs without the prefix, atr_, compared by their bytes too: pick one between the keys of the definitions that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the definition goes after the type's last.",
+            "maxLength": 128,
+            "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
+            "type": "string"
+          },
+          "runtime": {
+            "description": "Whether the definition's values are part of the game's state, which expressions read and write, and which saved games record (PRD FR-COMP-03). A text may not be. Without it, false.",
+            "type": "boolean"
+          },
+          "type": {
+            "description": "The definition's type: bool, int, float, string, of at most 4096 characters, text, a string of several lines of at most 100000 characters, or enum, one of its options",
+            "enum": [
+              "bool",
+              "int",
+              "float",
+              "string",
+              "text",
+              "enum"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "component_type_id",
+          "name",
+          "type"
+        ],
+        "type": "object"
+      },
+      "AttributeDeleteCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type attribute.delete.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/AttributeDeletePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "attribute.delete"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "AttributeDeletePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type attribute.delete.",
+        "properties": {
+          "id": {
+            "description": "The attribute definition's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "AttributeMoveCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type attribute.move.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/AttributeMovePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "attribute.move"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "AttributeMovePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type attribute.move.",
+        "properties": {
+          "id": {
+            "description": "The attribute definition's ID",
+            "type": "string"
+          },
+          "order": {
+            "description": "The definition's place among its type's. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the definitions by its bytes, and those with the same key by their IDs without the prefix, atr_, compared by their bytes too: pick one between the keys of the definitions that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the definition goes after the type's last, or stays where it is if it is the last already that is not deleted.",
+            "maxLength": 128,
+            "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "AttributeRenameCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type attribute.rename.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/AttributeRenamePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "attribute.rename"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "AttributeRenamePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type attribute.rename.",
+        "properties": {
+          "id": {
+            "description": "The attribute definition's ID",
+            "type": "string"
+          },
+          "name": {
+            "description": "The definition's new name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them. Its key stays as it is.",
+            "maxLength": 100,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "AttributeRestoreCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type attribute.restore.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/AttributeRestorePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "attribute.restore"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "AttributeRestorePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type attribute.restore.",
+        "properties": {
+          "id": {
+            "description": "The attribute definition's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "AttributeRetypeCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type attribute.retype.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/AttributeRetypePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "attribute.retype"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "AttributeRetypePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type attribute.retype.",
+        "properties": {
+          "conversion": {
+            "description": "What becomes of the values that the type's components hold, those in the project's trash included (PRD FR-COMP-01 AC2): convert converts each to the new type, as the expression language's to_int, to_float, and to_string do (PRD §5.8.4, §5.8.9), a bool as 0 or 1 and an int or a float that is 0 or 1 as a bool, and a string that is true or false as a bool, and gives the new default to each that does not convert, which GET /api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/conversion lists beforehand; reset gives every value the new default.",
+            "enum": [
+              "convert",
+              "reset"
+            ],
+            "type": "string"
+          },
+          "default": {
+            "description": "The definition's default of its new type: a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. Without it, the type's zero value: false, 0, 0.0, the empty string, or an enum's first option.",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "id": {
+            "description": "The attribute definition's ID",
+            "type": "string"
+          },
+          "options": {
+            "description": "The options of an enum, which the new type then is: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. Another type has none.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "type": {
+            "description": "The definition's new type, which is not its type already: an enum's options change with attribute.set_options. A runtime definition may not become a text: unset runtime first.",
+            "enum": [
+              "bool",
+              "int",
+              "float",
+              "string",
+              "text",
+              "enum"
+            ],
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "The values of the new type that components of the definition's type are given, by their IDs, in place of what the conversion makes of what they hold. A component of another type is refused, and one that the project no longer has, as one that the purge has deleted, is passed over.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "conversion"
+        ],
+        "type": "object"
+      },
+      "AttributeSetDefaultCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type attribute.set_default.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/AttributeSetDefaultPayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "attribute.set_default"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "AttributeSetDefaultPayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type attribute.set_default.",
+        "properties": {
+          "default": {
+            "description": "The definition's new default, which a component of its type that is created later is given: a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. The values that the type's components hold stay as they are.",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "id": {
+            "description": "The attribute definition's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "default"
+        ],
+        "type": "object"
+      },
+      "AttributeSetKeyCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type attribute.set_key.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/AttributeSetKeyPayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "attribute.set_key"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "AttributeSetKeyPayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type attribute.set_key.",
+        "properties": {
+          "id": {
+            "description": "The attribute definition's ID",
+            "type": "string"
+          },
+          "key": {
+            "description": "The definition's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as trust, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other attribute definition of its type has, of those that are not in the project's trash, which is answered with 409 key_taken. The definition keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key"
+        ],
+        "type": "object"
+      },
+      "AttributeSetOptionsCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type attribute.set_options.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/AttributeSetOptionsPayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "attribute.set_options"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "AttributeSetOptionsPayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type attribute.set_options.",
+        "properties": {
+          "default": {
+            "description": "The enum's new default, one of its new options. Without it, the default stays as it is, which must then be one of them.",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "id": {
+            "description": "The ID of the attribute definition, an enum",
+            "type": "string"
+          },
+          "options": {
+            "description": "The enum's new options, in their order: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. A value that a component holds that is none of them is given the default, unless values gives it another.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "values": {
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "The values, each one of the new options, that components of the definition's type are given, by their IDs, in place of what they hold: a component that holds a value that is none of the new options, and is not given one here, is given the default. A component of another type is refused, and one that the project no longer has, as one that the purge has deleted, is passed over.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "options"
+        ],
+        "type": "object"
+      },
+      "AttributeSetRuntimeCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type attribute.set_runtime.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/AttributeSetRuntimePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "attribute.set_runtime"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "AttributeSetRuntimePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type attribute.set_runtime.",
+        "properties": {
+          "id": {
+            "description": "The attribute definition's ID",
+            "type": "string"
+          },
+          "runtime": {
+            "description": "Whether the definition's values are part of the game's state, which expressions read and write, and which saved games record (PRD FR-COMP-03). A text may not be.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "runtime"
+        ],
+        "type": "object"
+      },
       "Board": {
         "additionalProperties": false,
         "properties": {
@@ -759,6 +1565,36 @@
         "description": "A command of the batch: its ID, its type, its payload, as the type's schema says, and the revisions that it expects (PRD FR-API-03).",
         "oneOf": [
           {
+            "$ref": "#/components/schemas/AttributeCreateCommand"
+          },
+          {
+            "$ref": "#/components/schemas/AttributeDeleteCommand"
+          },
+          {
+            "$ref": "#/components/schemas/AttributeMoveCommand"
+          },
+          {
+            "$ref": "#/components/schemas/AttributeRenameCommand"
+          },
+          {
+            "$ref": "#/components/schemas/AttributeRestoreCommand"
+          },
+          {
+            "$ref": "#/components/schemas/AttributeRetypeCommand"
+          },
+          {
+            "$ref": "#/components/schemas/AttributeSetDefaultCommand"
+          },
+          {
+            "$ref": "#/components/schemas/AttributeSetKeyCommand"
+          },
+          {
+            "$ref": "#/components/schemas/AttributeSetOptionsCommand"
+          },
+          {
+            "$ref": "#/components/schemas/AttributeSetRuntimeCommand"
+          },
+          {
             "$ref": "#/components/schemas/BoardCreateCommand"
           },
           {
@@ -781,6 +1617,51 @@
           },
           {
             "$ref": "#/components/schemas/BoardSetSlugCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentCreateCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentDeleteCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentDescribeCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentMoveCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentRenameCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentRestoreCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentSetAttributeCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentSetImageCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentSetKeyCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentTypeCreateCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentTypeDeleteCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentTypeRenameCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentTypeRestoreCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentTypeSetIconCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ComponentTypeSetKeyCommand"
           },
           {
             "$ref": "#/components/schemas/FolderCreateCommand"
@@ -996,6 +1877,1090 @@
         "required": [
           "owner_id",
           "workspace"
+        ],
+        "type": "object"
+      },
+      "Component": {
+        "additionalProperties": false,
+        "properties": {
+          "attributes": {
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "The values that the component holds of its type's attribute definitions that are not in the project's trash, by the definitions' IDs: each a value of its definition's type, as the definition's default is written",
+            "type": "object"
+          },
+          "component_type_id": {
+            "description": "The ID of the component's type, which is fixed once it is created",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the component was created",
+            "format": "date-time",
+            "type": "string"
+          },
+          "deleted_at": {
+            "description": "When the component went to the project's trash, if it is there",
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "$ref": "#/components/schemas/RichTextDoc",
+            "description": "The component's description, a rich-text document (PRD FR-TEXT-01)"
+          },
+          "folder_id": {
+            "description": "The ID of the folder of components that the component is in, if it is in one, or none for a component at the top",
+            "type": "string"
+          },
+          "id": {
+            "description": "The component's ID",
+            "type": "string"
+          },
+          "image_asset_id": {
+            "description": "The ID of the component's image, an asset of the project, or none",
+            "type": "string"
+          },
+          "key": {
+            "description": "The component's key, by which expressions name it, as elara in elara.trust: an identifier of the expression language (PRD §5.8.1), unique among the project's components that are not in its trash. A change of the component's name leaves it as it is (PRD FR-COMP-02 AC2).",
+            "type": "string"
+          },
+          "name": {
+            "description": "The component's name, as Elara",
+            "type": "string"
+          },
+          "order": {
+            "description": "The component's place among the folders and components of its folder, or of the top: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, cmp_ or fld_, compared by their bytes too (package orderkey)",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "The ID of the component's project",
+            "type": "string"
+          },
+          "rev": {
+            "description": "The component's revision, which every change of it increments, a change of one of its values or of the attribute definitions whose values it holds among them, and which a change expects with expected_rev",
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "description": "When the component last changed",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "attributes",
+          "id",
+          "project_id",
+          "component_type_id",
+          "order",
+          "key",
+          "name",
+          "rev",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ComponentCreateCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component.create.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentCreatePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component.create"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentCreatePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component.create.",
+        "properties": {
+          "attributes": {
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "The values that the component holds of its type's attribute definitions that are not in the project's trash, by the definitions' IDs, each a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. A definition that this leaves out gives the component its default.",
+            "type": "object"
+          },
+          "component_type_id": {
+            "description": "The ID of the component's type, which is not in the project's trash, and which is fixed once the component is created",
+            "type": "string"
+          },
+          "description": {
+            "$ref": "#/components/schemas/RichTextDoc",
+            "description": "The component's description, a rich-text document (PRD FR-TEXT-01). Without it, an empty paragraph."
+          },
+          "folder_id": {
+            "description": "The ID of the folder of components that the component goes into, which is not deleted. Without it, the component goes at the top.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The new component's ID, a cmp_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "type": "string"
+          },
+          "image_asset_id": {
+            "description": "The ID of the component's image, an asset of the project. Without it, none.",
+            "type": "string"
+          },
+          "key": {
+            "description": "The component's key, by which expressions name it, as elara in elara.trust: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. Without it, the key is derived from the name (PRD FR-COMP-02): its letters and digits in lowercase ASCII, without their accents, each run of other characters an underscore, with an underscore before it if it starts with a digit, or component for a name without them, and with _2, _3, and so on after it if another component of the project that is not in its trash has it, or it is a reserved word.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The component's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "order": {
+            "description": "The component's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, cmp_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the component goes after the last child.",
+            "maxLength": 128,
+            "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "component_type_id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "ComponentDeleteCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component.delete.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentDeletePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component.delete"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentDeletePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component.delete.",
+        "properties": {
+          "id": {
+            "description": "The component's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ComponentDescribeCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component.describe.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentDescribePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component.describe"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentDescribePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component.describe.",
+        "properties": {
+          "description": {
+            "$ref": "#/components/schemas/RichTextDoc",
+            "description": "The component's new description, a rich-text document (PRD FR-TEXT-01), which may be an empty paragraph"
+          },
+          "id": {
+            "description": "The component's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "description"
+        ],
+        "type": "object"
+      },
+      "ComponentMoveCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component.move.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentMovePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component.move"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentMovePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component.move.",
+        "properties": {
+          "folder_id": {
+            "description": "The ID of the folder of components that the component goes into, which is not deleted. Without it, the component goes to the top.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The component's ID",
+            "type": "string"
+          },
+          "order": {
+            "description": "The component's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, cmp_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the component goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted.",
+            "maxLength": 128,
+            "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ComponentRenameCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component.rename.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentRenamePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component.rename"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentRenamePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component.rename.",
+        "properties": {
+          "id": {
+            "description": "The component's ID",
+            "type": "string"
+          },
+          "name": {
+            "description": "The component's new name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them. Its key stays as it is (PRD FR-COMP-02 AC2).",
+            "maxLength": 100,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "ComponentRestoreCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component.restore.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentRestorePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component.restore"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentRestorePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component.restore.",
+        "properties": {
+          "id": {
+            "description": "The component's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ComponentSetAttributeCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component.set_attribute.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentSetAttributePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component.set_attribute"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentSetAttributePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component.set_attribute.",
+        "properties": {
+          "attribute_id": {
+            "description": "The ID of the attribute definition, one of the component's type's that is not in the project's trash",
+            "type": "string"
+          },
+          "id": {
+            "description": "The component's ID",
+            "type": "string"
+          },
+          "value": {
+            "description": "The component's new value of the definition, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is.",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "attribute_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "ComponentSetImageCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component.set_image.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentSetImagePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component.set_image"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentSetImagePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component.set_image.",
+        "properties": {
+          "id": {
+            "description": "The component's ID",
+            "type": "string"
+          },
+          "image_asset_id": {
+            "description": "The ID of the component's new image, an asset of the project. Without it, the component has none.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ComponentSetKeyCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component.set_key.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentSetKeyPayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component.set_key"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentSetKeyPayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component.set_key.",
+        "properties": {
+          "id": {
+            "description": "The component's ID",
+            "type": "string"
+          },
+          "key": {
+            "description": "The component's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. The component keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key"
+        ],
+        "type": "object"
+      },
+      "ComponentType": {
+        "additionalProperties": false,
+        "properties": {
+          "attributes": {
+            "description": "The type's attribute definitions that are not in the project's trash, in their order: by their order, compared by its bytes, then by their IDs without the prefix, atr_, compared by their bytes too (package orderkey)",
+            "items": {
+              "$ref": "#/components/schemas/Attribute"
+            },
+            "type": "array"
+          },
+          "created_at": {
+            "description": "When the type was created",
+            "format": "date-time",
+            "type": "string"
+          },
+          "deleted_at": {
+            "description": "When the type went to the project's trash, if it is there",
+            "format": "date-time",
+            "type": "string"
+          },
+          "icon": {
+            "description": "The type's icon, a name that the web app shows a glyph for, or none",
+            "enum": [
+              "none",
+              "person",
+              "group",
+              "item",
+              "location",
+              "event",
+              "book",
+              "star",
+              "heart",
+              "key",
+              "gem",
+              "shield",
+              "flag",
+              "tag"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "description": "The component type's ID",
+            "type": "string"
+          },
+          "key": {
+            "description": "The type's key: an identifier of the expression language (PRD §5.8.1), unique among the project's types that are not in its trash",
+            "type": "string"
+          },
+          "name": {
+            "description": "The type's name, as Character",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "The ID of the type's project",
+            "type": "string"
+          },
+          "rev": {
+            "description": "The type's revision, which every change of it increments, and which a change expects with expected_rev. A change of one of its attribute definitions changes the definition's revision, not the type's.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "description": "When the type last changed",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "key",
+          "name",
+          "icon",
+          "attributes",
+          "rev",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ComponentTypeCreateCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component_type.create.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentTypeCreatePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component_type.create"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentTypeCreatePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component_type.create.",
+        "properties": {
+          "icon": {
+            "description": "The type's icon, which the web app shows a glyph for. Without it, none.",
+            "enum": [
+              "none",
+              "person",
+              "group",
+              "item",
+              "location",
+              "event",
+              "book",
+              "star",
+              "heart",
+              "key",
+              "gem",
+              "shield",
+              "flag",
+              "tag"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "description": "The new type's ID, a ct_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "type": "string"
+          },
+          "key": {
+            "description": "The type's key, by which an export names it: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as character, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other type of the project has, of those that are not in its trash, which is answered with 409 key_taken. Without it, the key is derived from the name: its letters and digits in lowercase ASCII, without their accents, each run of other characters an underscore, with an underscore before it if it starts with a digit, or type for a name without them, and with _2, _3, and so on after it if another type of the project that is not in its trash has it, or it is a reserved word.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The type's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them",
+            "maxLength": 100,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "ComponentTypeDeleteCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component_type.delete.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentTypeDeletePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component_type.delete"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentTypeDeletePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component_type.delete.",
+        "properties": {
+          "id": {
+            "description": "The ID of the type to delete, each of whose components is in the project's trash, or the command is answered with 409 component_type_in_use. Its attribute definitions go to the trash with it, and restoring it, or one of its components, brings them back.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ComponentTypeRenameCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component_type.rename.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentTypeRenamePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component_type.rename"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentTypeRenamePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component_type.rename.",
+        "properties": {
+          "id": {
+            "description": "The type's ID",
+            "type": "string"
+          },
+          "name": {
+            "description": "The type's new name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them. Its key stays as it is.",
+            "maxLength": 100,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "ComponentTypeRestoreCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component_type.restore.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentTypeRestorePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component_type.restore"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentTypeRestorePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component_type.restore.",
+        "properties": {
+          "id": {
+            "description": "The type's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ComponentTypeSetIconCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component_type.set_icon.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentTypeSetIconPayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component_type.set_icon"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentTypeSetIconPayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component_type.set_icon.",
+        "properties": {
+          "icon": {
+            "description": "The type's new icon, which the web app shows a glyph for, or none",
+            "enum": [
+              "none",
+              "person",
+              "group",
+              "item",
+              "location",
+              "event",
+              "book",
+              "star",
+              "heart",
+              "key",
+              "gem",
+              "shield",
+              "flag",
+              "tag"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "description": "The type's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "icon"
+        ],
+        "type": "object"
+      },
+      "ComponentTypeSetKeyCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type component_type.set_key.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ComponentTypeSetKeyPayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "component_type.set_key"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ComponentTypeSetKeyPayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type component_type.set_key.",
+        "properties": {
+          "id": {
+            "description": "The type's ID",
+            "type": "string"
+          },
+          "key": {
+            "description": "The type's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as character, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other type of the project has, of those that are not in its trash, which is answered with 409 key_taken.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key"
         ],
         "type": "object"
       },
@@ -1417,7 +3382,7 @@
         "description": "The payload of a command of the type folder.delete.",
         "properties": {
           "id": {
-            "description": "The ID of the folder to delete, which holds no folder, no board, and no variable that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, a variable of a board in the trash among it, and stays in the folder, which restoring it restores too.",
+            "description": "The ID of the folder to delete, which holds no folder, no board, no variable, and no component that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, a variable of a board in the trash among it, and stays in the folder, which restoring it restores too.",
             "type": "string"
           }
         },
@@ -2024,6 +3989,29 @@
         ],
         "type": "object"
       },
+      "PageComponentType": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ComponentType"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "PageFolder": {
         "additionalProperties": false,
         "properties": {
@@ -2208,12 +4196,58 @@
         ],
         "type": "object"
       },
+      "PageSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Summary"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "PageTrashItemBody": {
         "additionalProperties": false,
         "properties": {
           "items": {
             "items": {
               "$ref": "#/components/schemas/TrashItemBody"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "PageUnconvertible": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Unconvertible"
             },
             "type": "array"
           },
@@ -2965,6 +4999,378 @@
         ],
         "type": "object"
       },
+      "RichTextAttributeId": {
+        "description": "A component type's attribute definition's ID.",
+        "pattern": "^[Aa][Tt][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+        "type": "string"
+      },
+      "RichTextBlock": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/RichTextParagraph"
+          },
+          {
+            "$ref": "#/components/schemas/RichTextList"
+          }
+        ]
+      },
+      "RichTextBold": {
+        "additionalProperties": false,
+        "description": "Bold.",
+        "properties": {
+          "type": {
+            "const": "bold"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextCode": {
+        "additionalProperties": false,
+        "description": "Inline code.",
+        "properties": {
+          "type": {
+            "const": "code"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextComponentId": {
+        "description": "A component's ID.",
+        "pattern": "^[Cc][Mm][Pp]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+        "type": "string"
+      },
+      "RichTextDecimals": {
+        "description": "The number of digits after the point that a number is shown with, rounded half away from zero. A value that is not a number is shown as it is.",
+        "maximum": 6,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "RichTextDoc": {
+        "additionalProperties": false,
+        "description": "A document: its blocks, at least one. The editor's empty document is one empty paragraph.",
+        "properties": {
+          "content": {
+            "items": {
+              "$ref": "#/components/schemas/RichTextBlock"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "type": {
+            "const": "doc"
+          }
+        },
+        "required": [
+          "content",
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextHardBreak": {
+        "additionalProperties": false,
+        "description": "A line break within a paragraph.",
+        "properties": {
+          "marks": {
+            "$ref": "#/components/schemas/RichTextMarks"
+          },
+          "type": {
+            "const": "hardBreak"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextInline": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/RichTextText"
+          },
+          {
+            "$ref": "#/components/schemas/RichTextHardBreak"
+          },
+          {
+            "$ref": "#/components/schemas/RichTextMention"
+          },
+          {
+            "$ref": "#/components/schemas/RichTextValueRef"
+          }
+        ]
+      },
+      "RichTextItalic": {
+        "additionalProperties": false,
+        "description": "Italic.",
+        "properties": {
+          "type": {
+            "const": "italic"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextLink": {
+        "additionalProperties": false,
+        "description": "A link to an absolute http or https URL with a host, without white space, or a mailto URL of one address and nothing else.",
+        "properties": {
+          "attrs": {
+            "additionalProperties": false,
+            "properties": {
+              "href": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss]?://[^\\x00-\\x20\\x7f-\\x9f/?#][^\\x00-\\x20\\x7f-\\x9f]*|[Mm][Aa][Ii][Ll][Tt][Oo]:[A-Za-z0-9_+-]+(?:\\.[A-Za-z0-9_+-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)*(?:[0-9]*[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?|[0-9]+-[A-Za-z0-9-]*[A-Za-z0-9]))$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "href"
+            ],
+            "type": "object"
+          },
+          "type": {
+            "const": "link"
+          }
+        },
+        "required": [
+          "attrs",
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextList": {
+        "additionalProperties": false,
+        "description": "A list, bulleted (bulletList) or numbered (orderedList), of at least one item. Lists nest at most 5 deep, which the server checks beyond this schema.",
+        "properties": {
+          "attrs": {
+            "additionalProperties": false,
+            "description": "An orderedList's attributes. A bulletList has none, which the server checks beyond this schema.",
+            "properties": {
+              "start": {
+                "description": "The number of the first item, 1 when it is not given.",
+                "maximum": 999999,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "content": {
+            "items": {
+              "$ref": "#/components/schemas/RichTextListItem"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "type": {
+            "enum": [
+              "bulletList",
+              "orderedList"
+            ]
+          }
+        },
+        "required": [
+          "content",
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextListItem": {
+        "additionalProperties": false,
+        "description": "A list item: a paragraph, then any paragraphs and lists. That it starts with a paragraph is checked by the server, beyond this schema.",
+        "properties": {
+          "content": {
+            "items": {
+              "$ref": "#/components/schemas/RichTextBlock"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "type": {
+            "const": "listItem"
+          }
+        },
+        "required": [
+          "content",
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextMarks": {
+        "description": "The marks of an inline node, each at most once, which the server checks beyond this schema. The code mark is not combined with another.",
+        "items": {
+          "oneOf": [
+            {
+              "$ref": "#/components/schemas/RichTextBold"
+            },
+            {
+              "$ref": "#/components/schemas/RichTextCode"
+            },
+            {
+              "$ref": "#/components/schemas/RichTextItalic"
+            },
+            {
+              "$ref": "#/components/schemas/RichTextLink"
+            },
+            {
+              "$ref": "#/components/schemas/RichTextStrike"
+            }
+          ]
+        },
+        "maxItems": 5,
+        "type": "array"
+      },
+      "RichTextMention": {
+        "additionalProperties": false,
+        "description": "A mention of a component, which the text shows by the component's name.",
+        "properties": {
+          "attrs": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/RichTextComponentId"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "type": "object"
+          },
+          "marks": {
+            "$ref": "#/components/schemas/RichTextMarks"
+          },
+          "type": {
+            "const": "mention"
+          }
+        },
+        "required": [
+          "attrs",
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextParagraph": {
+        "additionalProperties": false,
+        "description": "A paragraph, which may be empty.",
+        "properties": {
+          "content": {
+            "items": {
+              "$ref": "#/components/schemas/RichTextInline"
+            },
+            "type": "array"
+          },
+          "type": {
+            "const": "paragraph"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextStrike": {
+        "additionalProperties": false,
+        "description": "Strikethrough.",
+        "properties": {
+          "type": {
+            "const": "strike"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextText": {
+        "additionalProperties": false,
+        "description": "Text, without control characters but tabs, or line and paragraph separators: a line break is a hardBreak, and a paragraph a paragraph. Nor does it hold bidirectional controls, as U+202E, which the server checks beyond this schema. A document's texts hold at most 100,000 characters together.",
+        "properties": {
+          "marks": {
+            "$ref": "#/components/schemas/RichTextMarks"
+          },
+          "text": {
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x08\\x0a-\\x1f\\x7f-\\x9f\u2028\u2029]+$",
+            "type": "string"
+          },
+          "type": {
+            "const": "text"
+          }
+        },
+        "required": [
+          "text",
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextValueRef": {
+        "additionalProperties": false,
+        "description": "A reference to a value, which the text shows as the runtime renders it: a variable's, or a runtime attribute's of a component.",
+        "properties": {
+          "attrs": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "decimals": {
+                    "$ref": "#/components/schemas/RichTextDecimals"
+                  },
+                  "ref": {
+                    "$ref": "#/components/schemas/RichTextVariableId"
+                  }
+                },
+                "required": [
+                  "ref"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "attribute": {
+                    "$ref": "#/components/schemas/RichTextAttributeId"
+                  },
+                  "decimals": {
+                    "$ref": "#/components/schemas/RichTextDecimals"
+                  },
+                  "ref": {
+                    "$ref": "#/components/schemas/RichTextComponentId"
+                  }
+                },
+                "required": [
+                  "attribute",
+                  "ref"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "marks": {
+            "$ref": "#/components/schemas/RichTextMarks"
+          },
+          "type": {
+            "const": "valueRef"
+          }
+        },
+        "required": [
+          "attrs",
+          "type"
+        ],
+        "type": "object"
+      },
+      "RichTextVariableId": {
+        "description": "A variable's ID.",
+        "pattern": "^[Vv][Aa][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+        "type": "string"
+      },
       "SessionBody": {
         "additionalProperties": false,
         "properties": {
@@ -3253,6 +5659,75 @@
         ],
         "type": "object"
       },
+      "Summary": {
+        "additionalProperties": false,
+        "properties": {
+          "component_type_id": {
+            "description": "The ID of the component's type, which is fixed once it is created",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the component was created",
+            "format": "date-time",
+            "type": "string"
+          },
+          "deleted_at": {
+            "description": "When the component went to the project's trash, if it is there",
+            "format": "date-time",
+            "type": "string"
+          },
+          "folder_id": {
+            "description": "The ID of the folder of components that the component is in, if it is in one, or none for a component at the top",
+            "type": "string"
+          },
+          "id": {
+            "description": "The component's ID",
+            "type": "string"
+          },
+          "image_asset_id": {
+            "description": "The ID of the component's image, an asset of the project, or none",
+            "type": "string"
+          },
+          "key": {
+            "description": "The component's key, by which expressions name it, as elara in elara.trust: an identifier of the expression language (PRD §5.8.1), unique among the project's components that are not in its trash. A change of the component's name leaves it as it is (PRD FR-COMP-02 AC2).",
+            "type": "string"
+          },
+          "name": {
+            "description": "The component's name, as Elara",
+            "type": "string"
+          },
+          "order": {
+            "description": "The component's place among the folders and components of its folder, or of the top: they are ordered by their order, compared by its bytes, then by their IDs without the prefix, cmp_ or fld_, compared by their bytes too (package orderkey)",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "The ID of the component's project",
+            "type": "string"
+          },
+          "rev": {
+            "description": "The component's revision, which every change of it increments, a change of one of its values or of the attribute definitions whose values it holds among them, and which a change expects with expected_rev",
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "description": "When the component last changed",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "component_type_id",
+          "order",
+          "key",
+          "name",
+          "rev",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "TrashItemBody": {
         "additionalProperties": false,
         "properties": {
@@ -3266,7 +5741,7 @@
             "type": "string"
           },
           "kind": {
-            "description": "What the entity is: a board or a variable, and, once they exist, a node or a component (PRD FR-PROJ-06). The command of its kind, as board.restore, restores it with its ID as id.",
+            "description": "What the entity is: a board, a variable, or a component, and, once they exist, a node (PRD FR-PROJ-06). The command of its kind, as board.restore, restores it with its ID as id.",
             "enum": [
               "board",
               "node",
@@ -3291,6 +5766,34 @@
           "name",
           "deleted_at",
           "purge_after"
+        ],
+        "type": "object"
+      },
+      "Unconvertible": {
+        "additionalProperties": false,
+        "properties": {
+          "component_id": {
+            "description": "The component's ID",
+            "type": "string"
+          },
+          "deleted_at": {
+            "description": "When the component went to the project's trash, if it is there: a retype converts the values of the components in the trash too",
+            "format": "date-time",
+            "type": "string"
+          },
+          "key": {
+            "description": "The component's key",
+            "type": "string"
+          },
+          "name": {
+            "description": "The component's name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "component_id",
+          "key",
+          "name"
         ],
         "type": "object"
       },
@@ -7853,7 +10356,7 @@
     },
     "/api/v1/projects/{project_id}/commands": {
       "post": {
-        "description": "Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {\"commands\": [...]}, or a list of batches, {\"batches\": [{\"commands\": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo. Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, or variables, 422 key_invalid for a variable's key that is not an identifier, or 409 key_taken for a key that another variable of its scope has.\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.\n\nA request of a list of batches applies each, in its own transaction, in the order of the list, and is answered with 200 and a result of each, applied or rejected with its error, so that a rejected batch, of any of the refusals above, never keeps the later ones from applying. A body that is neither form, or has more than 100 batches, is answered with 422 validation_failed, and a batch of more than 1000 commands is rejected so. A body that is not one strict JSON value, as one with a key twice in an object, anywhere in it, is answered with 400 invalid_request, as on every route. The body is at most 5 MB, as every route's, and a larger one is answered with 413 request_too_large, so that a request of many large batches may need to be split. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
+        "description": "Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {\"commands\": [...]}, or a list of batches, {\"batches\": [{\"commands\": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo. Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, or 409 component_type_in_use for a component type to delete of which a component that is not in the trash is. A batch whose undo, the inverses of its commands as the operation log keeps them, would take more than 4 MiB, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches.\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.\n\nA request of a list of batches applies each, in its own transaction, in the order of the list, and is answered with 200 and a result of each, applied or rejected with its error, so that a rejected batch, of any of the refusals above, never keeps the later ones from applying. A body that is neither form, or has more than 100 batches, is answered with 422 validation_failed, and a batch of more than 1000 commands is rejected so. A body that is not one strict JSON value, as one with a key twice in an object, anywhere in it, is answered with 400 invalid_request, as on every route. The body is at most 5 MB, as every route's, and a larger one is answered with 413 request_too_large, so that a request of many large batches may need to be split. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
         "operationId": "applyCommands",
         "parameters": [
           {
@@ -7998,6 +10501,697 @@
         "summary": "Apply batches of commands to a project",
         "tags": [
           "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/component-types": {
+      "get": {
+        "description": "Lists the project's component types that are not in its trash, each with its attribute definitions that are not, in the order of their IDs, oldest first. A project is created with the types Character, Item, Location, Faction, and Custom, without attribute definitions, named in its default locale. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types component_type.*, attribute.*, and component.* create, rename, rekey, retype, move, delete, and restore them, and change their values. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listComponentTypes",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageComponentType"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List a project's component types",
+        "tags": [
+          "Components"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/component-types/{component_type_id}": {
+      "get": {
+        "description": "Returns a component type of the project, with its attribute definitions that are not in the project's trash. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types component_type.*, attribute.*, and component.* create, rename, rekey, retype, move, delete, and restore them, and change their values. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A type that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "getComponentType",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The component type's ID",
+            "in": "path",
+            "name": "component_type_id",
+            "required": true,
+            "schema": {
+              "description": "The component type's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComponentType"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get a component type",
+        "tags": [
+          "Components"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/conversion": {
+      "get": {
+        "description": "Lists the components of the type, those in the project's trash included, whose values of the attribute definition do not convert to the type that the query names, in the order of their IDs, oldest first: those that the command attribute.retype with the conversion convert gives the new default, which a client shows before it applies one (PRD FR-COMP-01 AC2). A value converts as the expression language's to_int, to_float, and to_string convert it (PRD §5.8.4, §5.8.9), a bool as 0 or 1, an int or a float that is 0 or 1 as a bool, a string that is true or false as a bool, and a value whose string is one of an enum's options as that option. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A type that the project does not have, or a definition that the type does not have, or either in the project's trash, is answered with 404 not_found, and a type of the query that the retype refuses, the definition's own, or text for a runtime definition, or options that are not an enum's, with 422 validation_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listUnconvertibleValues",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The component type's ID",
+            "in": "path",
+            "name": "component_type_id",
+            "required": true,
+            "schema": {
+              "description": "The component type's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ID of the attribute definition, one of the type's",
+            "in": "path",
+            "name": "attribute_id",
+            "required": true,
+            "schema": {
+              "description": "The ID of the attribute definition, one of the type's",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The type that the definition would be given, which is not its type already, nor text for a runtime definition",
+            "explode": false,
+            "in": "query",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "description": "The type that the definition would be given, which is not its type already, nor text for a runtime definition",
+              "enum": [
+                "bool",
+                "int",
+                "float",
+                "string",
+                "text",
+                "enum"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line separators, and U+FFFD, the replacement character, among them, no two alike. Another type has none.",
+            "explode": false,
+            "in": "query",
+            "name": "options",
+            "schema": {
+              "description": "The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line separators, and U+FFFD, the replacement character, among them, no two alike. Another type has none.",
+              "maxLength": 10099,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageUnconvertible"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List the values that a retype would not convert",
+        "tags": [
+          "Components"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/components": {
+      "get": {
+        "description": "Lists the project's components that are not in its trash, of a type, or whose names or keys hold a text, if the query says so, in the order of their IDs, oldest first (PRD FR-COMP-02 AC3). Each names its type, its folder, and its place among the folder's children, from which a client builds the tree of folders of components (GET /api/v1/projects/{project_id}/folders?kind=component), but not its description or its values, which the component's own read returns. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types component_type.*, attribute.*, and component.* create, rename, rekey, retype, move, delete, and restore them, and change their values. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listComponents",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ID of a component type: only the components of that type are listed (PRD FR-COMP-02 AC3). Without it, those of every type.",
+            "explode": false,
+            "in": "query",
+            "name": "component_type_id",
+            "schema": {
+              "description": "The ID of a component type: only the components of that type are listed (PRD FR-COMP-02 AC3). Without it, those of every type.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "What the components' names or keys hold, compared without regard to case, of at most 100 characters, without control characters: only those are listed (PRD FR-COMP-02 AC3). Without it, every component.",
+            "explode": false,
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "description": "What the components' names or keys hold, compared without regard to case, of at most 100 characters, without control characters: only those are listed (PRD FR-COMP-02 AC3). Without it, every component.",
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageSummary"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List a project's components",
+        "tags": [
+          "Components"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/components/{component_id}": {
+      "get": {
+        "description": "Returns a component of the project, with its description and the values that it holds of its type's attribute definitions that are not in the project's trash. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types component_type.*, attribute.*, and component.* create, rename, rekey, retype, move, delete, and restore them, and change their values. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A component that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "getComponent",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The component's ID",
+            "in": "path",
+            "name": "component_id",
+            "required": true,
+            "schema": {
+              "description": "The component's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Component"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get a component",
+        "tags": [
+          "Components"
         ]
       }
     },
@@ -9015,7 +12209,7 @@
     },
     "/api/v1/projects/{project_id}/trash": {
       "get": {
-        "description": "Lists what is in the project's trash, the most recently deleted first: its boards and variables, and, once they exist, its nodes and components, each with its kind. Each stays in the trash for 30 days from its deletion, until its purge_after, when a purge that runs every hour deletes it for good; until then, the command of its kind restores it where it was, as board.restore with its ID, through POST /api/v1/projects/{project_id}/commands. A board's variables are in the trash with it, unlisted, come back with it, and are purged with it, a variable of the board deleted on its own among them, which is listed, and restored only once its board is. A deleted folder is not listed: restoring a board restores the deleted folders above it, and the purge deletes a deleted folder once its 30 days have passed and it holds nothing. Nothing in the trash is in the project's other reads. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "description": "Lists what is in the project's trash, the most recently deleted first: its boards, variables, and components, and, once they exist, its nodes, each with its kind. Each stays in the trash for 30 days from its deletion, until its purge_after, when a purge that runs every hour deletes it for good; until then, the command of its kind restores it where it was, as board.restore with its ID, through POST /api/v1/projects/{project_id}/commands. A board's variables are in the trash with it, unlisted, come back with it, and are purged with it, a variable of the board deleted on its own among them, which is listed, and restored only once its board is. A deleted folder is not listed: restoring a board restores the deleted folders above it, and the purge deletes a deleted folder once its 30 days have passed and it holds nothing. Neither is a deleted component type or attribute definition: a type's definitions are in the trash with it, restoring a component restores its type, and the purge deletes a type once its 30 days have passed and it holds no component. Nothing in the trash is in the project's other reads. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
         "operationId": "listTrash",
         "parameters": [
           {

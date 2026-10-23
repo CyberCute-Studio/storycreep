@@ -444,7 +444,8 @@ func LiveFolder(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID
 
 // Child is a child of a folder, or of the top, that moves: its ID, its
 // parent, null for the top, its key, and the kind of entity that it is: a
-// folder, or what a folder of its kind holds, a board or a variable.
+// folder, or what a folder of its kind holds, a board, a variable, or a
+// component.
 type Child struct {
 	ID, Parent pgtype.UUID
 	Key        string
@@ -479,6 +480,8 @@ func SortKey(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, k
 			params.MovedBoard = moving.ID
 		case ids.Variable:
 			params.MovedVariable = moving.ID
+		case ids.Component:
+			params.MovedComponent = moving.ID
 		default:
 			return "", fmt.Errorf("board: a %s is no child of a folder", moving.Kind)
 		}
@@ -487,17 +490,42 @@ func SortKey(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, k
 	if err != nil {
 		return "", fmt.Errorf("board: read the folder's last keys: %w", err)
 	}
-	if moving != nil && sameUUID(moving.Parent, parent) && (moving.Key > last.LastLive ||
-		moving.Key == last.LastLive && bytes.Compare(moving.ID.Bytes[:], last.LastLiveID.Bytes[:]) > 0) {
-		return moving.Key, nil
+	var stays *Child
+	if moving != nil && sameUUID(moving.Parent, parent) {
+		stays = moving
 	}
-	for _, k := range []string{last.Last, last.LastLive} {
+	return Place(Last{Key: last.Last, Live: last.LastLive, LiveID: last.LastLiveID}, stays,
+		"the folder's last child")
+}
+
+// Last are the keys of the last of the children of a parent, the deleted
+// ones included, and of the last of those that are not deleted, with its ID,
+// in the order of the children, or "" and a null ID where there are none.
+type Last struct {
+	Key, Live string
+	LiveID    pgtype.UUID
+}
+
+// Place returns the key that a child is placed at without a key given, after
+// the children whose last keys are last, as SortKey does: one after the last
+// child's key, the deleted ones included, or, if that has no key after it,
+// one after the last child's that is not deleted, or it refuses the batch, at
+// order, if that has none after it either, naming the child as what. stays is
+// the child that moves among the children, if it is one of them already, or
+// nil: it keeps its key if it comes after every other child that is not
+// deleted.
+func Place(last Last, stays *Child, what string) (string, error) {
+	if stays != nil && (stays.Key > last.Live ||
+		stays.Key == last.Live && bytes.Compare(stays.ID.Bytes[:], last.LiveID.Bytes[:]) > 0) {
+		return stays.Key, nil
+	}
+	for _, k := range []string{last.Key, last.Live} {
 		if after, ok := orderkey.After(k); ok {
 			return after, nil
 		}
 	}
-	return "", commands.Refuse("order", fmt.Sprintf("is needed, because the key of the folder's last child that is "+
-		"not deleted has no key after it of at most %d digits", orderkey.MaxLength), nil)
+	return "", commands.Refuse("order", fmt.Sprintf("is needed, because the key of %s that is not deleted has no "+
+		"key after it of at most %d digits", what, orderkey.MaxLength), nil)
 }
 
 // sameUUID reports whether the columns a and b are the same: both null, or
