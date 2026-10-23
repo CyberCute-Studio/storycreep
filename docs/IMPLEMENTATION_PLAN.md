@@ -418,7 +418,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-COMP-01 AC1–AC3 and FR-COMP-02 AC1 and AC3 pass.
 
 ### 35. Nodes: elements and jumpers
-**Status:** todo · **Depends on:** 32, 34
+**Status:** done ([#40](https://github.com/CyberCute-Studio/storycreep/pull/40)) · **Depends on:** 32, 34
 **PRD:** FR-EDIT-02 (server: AC1, AC2, AC4), FR-EDIT-05 (server), FR-EDIT-06 (server), FR-PROJ-02 (AC2, warning half), FR-ENT-02 (AC3), FR-PROJ-06 (trash registration)
 - `node` of type `element`, `branch`, or `jumper` (branch outputs arrive in item 43). Fields: kind, title, rich text, speaker, cover asset, palette colour, tags (with project-scoped autocomplete, compared without regard to case), position as `numeric(12,2)`, size (or none), `is_ending` (N43).
 - Commands: `node.create`, `node.update` (the fields that it names), `node.move` (a selection, one command), `node.duplicate`, `node.delete`, and `node.restore`. Multi-select operations are sent as batch commands. Routes read a board's nodes, a node, and the tags that the project suggests (N43).
