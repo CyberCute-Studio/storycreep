@@ -641,10 +641,10 @@ func TestStoredNumbers(t *testing.T) {
 // TestDescriptions checks that a variable's description is a text of at most
 // MaxDescriptionLength characters, without white space around it, and without
 // control characters but line feeds and tabs, which a create and a change of
-// the description check, at the payload's description, and that a stored
-// description that the check refuses, as a row that the pipeline did not
-// write, or a later change of the check, leaves, can be changed, though not
-// set back.
+// the description check, as a problem of the batch at the payload's
+// description, and that a stored description that the check refuses, as a row
+// that the pipeline did not write, or a later change of the check, leaves,
+// can be changed, though not set back.
 func TestDescriptions(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -653,9 +653,7 @@ func TestDescriptions(t *testing.T) {
 	v := f.create(t, "rumours", map[string]any{"description": "What the harbour knows"})
 	for _, d := range []string{" padded", "padded\n", "bell\a"} {
 		_, err := f.apply(t, cmd{variable.Describe, map[string]any{"id": v.ID, "description": d}})
-		if r := refused(t, err); r.Field != "description" || r.Reason != nil {
-			t.Errorf("the description %q was refused for %v at %q", d, r.Reason, r.Field)
-		}
+		invalidAt(t, err, "payload.description")
 	}
 	_, err = f.apply(t, cmd{variable.Describe, map[string]any{"id": v.ID,
 		"description": strings.Repeat("d", variable.MaxDescriptionLength+1)}})
@@ -673,10 +671,7 @@ func TestDescriptions(t *testing.T) {
 		t.Errorf("the description that replaced a stored one with a control character is %q", got)
 	}
 	_, err = f.pipeline.Apply(context.Background(), f.actor(), f.project, f.inverse(t, res.Seq))
-	if r := refused(t, err); r.Field != "description" {
-		t.Errorf("the undo of the change of a stored description with a control character was refused at %q",
-			r.Field)
-	}
+	invalidAt(t, err, "payload.description")
 }
 
 // must returns b, or panics with err.

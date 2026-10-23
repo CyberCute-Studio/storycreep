@@ -122,9 +122,9 @@ func (f *fixture) must(t *testing.T, cmds ...cmd) commands.Result {
 	return res
 }
 
-// undo applies the inverse of the batch whose seq is seq, which the
-// operation log keeps.
-func (f *fixture) undo(t *testing.T, seq int64) {
+// inverse returns the inverse of the batch whose seq is seq, which the
+// operation log keeps, as a batch of commands.
+func (f *fixture) inverse(t *testing.T, seq int64) []commands.Command {
 	t.Helper()
 	var steps []struct {
 		Type    commands.Type   `json:"type"`
@@ -140,11 +140,19 @@ func (f *fixture) undo(t *testing.T, seq int64) {
 	for i, st := range steps {
 		batch[i] = commands.Command{ID: ids.New(), Type: st.Type, Payload: st.Payload}
 	}
+	return batch
+}
+
+// undo applies the inverse of the batch whose seq is seq, which the
+// operation log keeps.
+func (f *fixture) undo(t *testing.T, seq int64) {
+	t.Helper()
+	batch := f.inverse(t, seq)
 	if len(batch) == 0 {
 		return
 	}
 	if _, err := f.pipeline.Apply(context.Background(), f.actor(), f.project, batch); err != nil {
-		t.Fatalf("undo %d (%s): %v", seq, inverse, err)
+		t.Fatalf("undo %d: %v", seq, err)
 	}
 }
 
@@ -221,6 +229,18 @@ func refused(t *testing.T, err error) *commands.RefusedError {
 		t.Fatalf("the batch was not refused by a command: %v", err)
 	}
 	return r
+}
+
+// invalidAt fails the test unless err is a batch that is not valid, with a
+// problem of its first command at the field.
+func invalidAt(t *testing.T, err error, field string) {
+	t.Helper()
+	var invalid *commands.InvalidError
+	if !errors.As(err, &invalid) || !slices.ContainsFunc(invalid.Problems, func(p commands.Problem) bool {
+		return p.Command == 0 && p.Field == field
+	}) {
+		t.Errorf("the batch was not refused as invalid at %s: %v", field, err)
+	}
 }
 
 // TestDerivedSlugs checks that boards created without a slug get their
@@ -744,6 +764,116 @@ func TestUndo(t *testing.T) {
 			t.Errorf("%s changed %v", c.typ, res.Revisions)
 		}
 	}
+}
+
+// TestStoredText checks that a board's name or description, or a folder's
+// name, that is stored but that the rules of a new one refuse, as a row that
+// the pipeline did not write may hold, or one that a later change of
+// input.IsControl or of Go's Unicode tables leaves, is changed as any other
+// is, rather than fail every change of it with the step of its inverse that
+// sets it back; that the undo of the change, which sends that step, is refused
+// for it, as a batch that is not valid; and that what a command may write is
+// as it was, so that a name or a description that the rules refuse is a
+// problem of its batch, listed with the others.
+func TestStoredText(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	act := folderID()
+	f.must(t, cmd{board.CreateFolder, map[string]any{"id": act, "kind": "board", "name": "Act 1"}})
+	b := f.create(t, "Pier", map[string]any{"description": "Where Elara waits"})
+	_, err := f.apply(t, cmd{board.Rename, map[string]any{"id": b.ID, "name": "Docks\a"}},
+		cmd{board.Describe, map[string]any{"id": "bd_nope", "description": " padded"}},
+		cmd{board.RenameFolder, map[string]any{"id": act, "name": "‮Act 1"}})
+	var invalid *commands.InvalidError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("a batch of a name and a description that the rules refuse: %v", err)
+	}
+	var got []string
+	for _, p := range invalid.Problems {
+		got = append(got, fmt.Sprintf("%d %s", p.Command, p.Field))
+	}
+	if want := []string{"0 payload.name", "1 payload.id", "1 payload.description", "2 payload.name"}; !slices.Equal(
+		got, want) {
+		t.Errorf("the batch's problems are at %q, want %q", got, want)
+	}
+
+	// A control character, a bidirectional control, and white space around a
+	// name, none of which a command may write.
+	admin := f.d.Admin(t)
+	if _, err := admin.Exec(ctx, `UPDATE board SET name = 'Pier' || chr(7),
+		description = 'Where Elara' || chr(8238) || ' waits' WHERE id = $1`, decodeID(t, ids.Board, b.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE folder SET name = ' Act 1' WHERE id = $1`,
+		decodeID(t, ids.Folder, act)); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		c     cmd
+		field string
+	}{
+		{cmd{board.Rename, map[string]any{"id": b.ID, "name": "Docks"}}, "payload.name"},
+		{cmd{board.Describe, map[string]any{"id": b.ID, "description": "Where Elara waited"}}, "payload.description"},
+		{cmd{board.RenameFolder, map[string]any{"id": act, "name": "Act One"}}, "payload.name"},
+	} {
+		res, err := f.apply(t, c.c)
+		if err != nil {
+			t.Errorf("%s of a stored text that the rules refuse: %v", c.c.typ, err)
+			continue
+		}
+		_, err = f.pipeline.Apply(ctx, f.actor(), f.project, f.inverse(t, res.Seq))
+		invalidAt(t, err, c.field)
+	}
+	if got := f.get(t, b.ID); got.Name != "Docks" || got.Description != "Where Elara waited" {
+		t.Errorf("the board is %+v", got)
+	}
+	var name string
+	if err := admin.QueryRow(ctx, "SELECT name FROM folder WHERE id = $1", decodeID(t, ids.Folder, act)).Scan(
+		&name); err != nil || name != "Act One" {
+		t.Errorf("the folder's name is %q, %v", name, err)
+	}
+
+	// The database holds a name and a description to the characters that the
+	// payload's schema takes, which it checks of the step too, so that no
+	// stored one is longer.
+	for _, c := range []struct {
+		sql        string
+		id         ids.UUID
+		constraint string
+	}{
+		{`UPDATE board SET name = repeat('ř', 101) WHERE id = $1`, decodeID(t, ids.Board, b.ID), "board_name_length"},
+		{`UPDATE board SET description = repeat('ř', 2001) WHERE id = $1`, decodeID(t, ids.Board, b.ID),
+			"board_description_length"},
+		{`UPDATE folder SET name = repeat('ř', 101) WHERE id = $1`, decodeID(t, ids.Folder, act),
+			"folder_name_length"},
+	} {
+		var pg *pgconn.PgError
+		if _, err := admin.Exec(ctx, c.sql, c.id); !errors.As(err, &pg) || pg.Code != "23514" ||
+			pg.ConstraintName != c.constraint {
+			t.Errorf("%s was not refused by %s: %v", c.sql, c.constraint, err)
+		}
+	}
+	if _, err := admin.Exec(ctx, `UPDATE board SET name = repeat('ř', 100), description = repeat('ř', 2000)
+		WHERE id = $1`, decodeID(t, ids.Board, b.ID)); err != nil {
+		t.Fatalf("a name and a description of the most characters: %v", err)
+	}
+	res := f.must(t, cmd{board.Rename, map[string]any{"id": b.ID, "name": "Pier"}},
+		cmd{board.Describe, map[string]any{"id": b.ID, "description": "Where Elara waits"}})
+	f.undo(t, res.Seq)
+	if got := f.get(t, b.ID); got.Name != strings.Repeat("ř", 100) || got.Description != strings.Repeat("ř", 2000) {
+		t.Errorf("the undo of a change of a name and a description of the most characters left %+v", got)
+	}
+}
+
+// decodeID returns the UUID of an ID of the kind, or fails the test.
+func decodeID(t *testing.T, kind ids.Kind, id string) ids.UUID {
+	t.Helper()
+	u, err := ids.Decode(kind, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }
 
 // TestBoardUsage checks that creating, deleting, and restoring a board add to

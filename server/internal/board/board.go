@@ -61,7 +61,10 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 )
 
-// Limits of a board's and a folder's fields.
+// Limits of a board's and a folder's fields, which the database holds the
+// names and the description to as well (migration 00021), so that the undo of
+// a change of one, which sets the stored one back, holds none that the
+// payload's schema refuses: change both at once.
 const (
 	// MaxNameLength is the most characters that a board's or a folder's name
 	// may have.

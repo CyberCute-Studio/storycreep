@@ -118,9 +118,10 @@ func registerBoards(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[renamePayload]{
 		Type: Rename, Capability: authz.ManageBoards, Scope: scope.ProjectWrite, Touches: board,
-		Check: func(p renamePayload) input.FieldErrors {
-			return append(entityID(ids.Board, "id", p.ID), field("name", checkName(p.Name))...)
-		},
+		Check: func(p renamePayload) input.FieldErrors { return entityID(ids.Board, "id", p.ID) },
+		// The step of the inverse writes back the stored name, which the text
+		// rules may refuse (commands.Spec.CheckNew).
+		CheckNew: func(p renamePayload) input.FieldErrors { return field("name", checkName(p.Name)) },
 		Inverse: func(ctx context.Context, tx *commands.Tx, p renamePayload) ([]commands.Step, error) {
 			b, err := liveBoard(ctx, tx, p.ID)
 			if err != nil {
@@ -140,8 +141,9 @@ func registerBoards(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[describePayload]{
 		Type: Describe, Capability: authz.ManageBoards, Scope: scope.ProjectWrite, Touches: board,
-		Check: func(p describePayload) input.FieldErrors {
-			return append(entityID(ids.Board, "id", p.ID), field("description", checkDescription(p.Description))...)
+		Check: func(p describePayload) input.FieldErrors { return entityID(ids.Board, "id", p.ID) },
+		CheckNew: func(p describePayload) input.FieldErrors {
+			return field("description", checkDescription(p.Description))
 		},
 		Inverse: func(ctx context.Context, tx *commands.Tx, p describePayload) ([]commands.Step, error) {
 			b, err := liveBoard(ctx, tx, p.ID)

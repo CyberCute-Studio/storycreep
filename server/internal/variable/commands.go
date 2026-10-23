@@ -205,15 +205,15 @@ func Register(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[describePayload]{
 		Type: Describe, Capability: op, Scope: sc, Touches: variable,
-		// Apply checks the description, rather than Check, which the pipeline
-		// runs on the step of the inverse too, so that the pipeline takes the
-		// inverse of a change of a stored description that input.CheckTrimmedText
-		// refuses, as a row that the pipeline did not write or a later change of
-		// input.IsControl leaves, which Apply then refuses as an undo applies it,
-		// rather than fail every change of the description, as SetDefault and
-		// Retype take a stored default. The database holds a description to the
-		// length that the payload's schema allows.
 		Check: func(p describePayload) input.FieldErrors { return entityID(ids.Variable, "id", p.ID) },
+		// The step of the inverse writes back the stored description, which
+		// the text rules may refuse (commands.Spec.CheckNew), as those of
+		// SetDefault and Retype write back a stored default, which their Apply
+		// checks. The database holds a description to the length that the
+		// payload's schema allows.
+		CheckNew: func(p describePayload) input.FieldErrors {
+			return field("description", checkDescription(p.Description))
+		},
 		Inverse: func(ctx context.Context, tx *commands.Tx, p describePayload) ([]commands.Step, error) {
 			v, err := liveVariable(ctx, tx, p.ID)
 			if err != nil {
@@ -226,9 +226,6 @@ func Register(r *commands.Registry) {
 			v, err := liveVariable(ctx, tx, p.ID)
 			if err != nil {
 				return err
-			}
-			if problem := checkDescription(p.Description); problem != "" {
-				return commands.Refuse("description", problem, nil)
 			}
 			return changed(tx, v.ID)(queries.New(tx).UpdateVariableDescription(ctx,
 				queries.UpdateVariableDescriptionParams{Description: p.Description, UpdatedBy: by(tx),

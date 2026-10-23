@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -60,7 +61,8 @@ const (
 	// job, and counts against the workspace's projects, as though a note
 	// were one. Deleting the note undoes it.
 	noteCreate Type = "note.create"
-	// noteUpdate replaces a note's body, which replacing it back undoes.
+	// noteUpdate replaces a note's body, which replacing it back undoes. A
+	// new body has no control character (Spec.CheckNew), as a stored one may.
 	noteUpdate Type = "note.update"
 	// noteDelete deletes a note to the trash, and cannot be undone. It needs
 	// owner or admin.
@@ -112,7 +114,8 @@ type misreportPayload struct {
 type badInversePayload struct {
 	ID string `json:"id"`
 	// Step is the type of its inverse's step, whose payload is an empty
-	// object.
+	// object, or, for noteUpdate, one that its schema allows but its Check
+	// refuses.
 	Step Type `json:"step"`
 	// Changes makes the inverse report a change of the note instead, which
 	// only Apply may, and then be the note's deletion, which an undo could
@@ -262,6 +265,12 @@ func noteRegistry() *Registry {
 	Register(r, Spec[notePayload]{
 		Type: noteUpdate, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
 		Check: func(p notePayload) input.FieldErrors { return checkNoteID(p.ID) },
+		CheckNew: func(p notePayload) input.FieldErrors {
+			if strings.IndexFunc(p.Body, input.IsControl) >= 0 {
+				return input.FieldErrors{{Field: "body", Message: "contains a control character"}}
+			}
+			return nil
+		},
 		Inverse: func(ctx context.Context, tx *Tx, p notePayload) ([]Step, error) {
 			s, err := readNote(ctx, tx, noteUUID(p.ID))
 			if err != nil {
@@ -319,6 +328,9 @@ func noteRegistry() *Registry {
 					return nil, err
 				}
 				return []Step{{Type: noteDelete, Payload: noteIDPayload{ID: p.ID}}}, nil
+			}
+			if p.Step == noteUpdate {
+				return []Step{{Type: noteUpdate, Payload: notePayload{ID: "nd_nope", Body: "x"}}}, nil
 			}
 			return []Step{{Type: p.Step, Payload: struct{}{}}}, nil
 		},

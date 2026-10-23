@@ -125,7 +125,9 @@ func Register(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[renamePayload]{
 		Type: Rename, Capability: patchOperation, Scope: patchScope, Touches: touches,
-		Check: func(p renamePayload) input.FieldErrors { return field("name", checkName(p.Name)) },
+		// The step of the inverse writes back the stored name, which the text
+		// rules may refuse (commands.Spec.CheckNew).
+		CheckNew: func(p renamePayload) input.FieldErrors { return field("name", checkName(p.Name)) },
 		Inverse: func(ctx context.Context, tx *commands.Tx, _ renamePayload) ([]commands.Step, error) {
 			p, err := read(ctx, tx)
 			if err != nil {
@@ -162,7 +164,7 @@ func Register(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[describePayload]{
 		Type: Describe, Capability: patchOperation, Scope: patchScope, Touches: touches,
-		Check: func(p describePayload) input.FieldErrors {
+		CheckNew: func(p describePayload) input.FieldErrors {
 			return field("description", checkDescription(p.Description))
 		},
 		Inverse: func(ctx context.Context, tx *commands.Tx, _ describePayload) ([]commands.Step, error) {
@@ -182,6 +184,10 @@ func Register(r *commands.Registry) {
 	commands.Register(r, commands.Spec[settingsPayload]{
 		Type: UpdateSettings, Capability: patchOperation, Scope: patchScope, Touches: touches,
 		Check: checkSettings,
+		// The step of the inverse writes back the stored default locale, which
+		// a later version of golang.org/x/text/language may write otherwise
+		// in its canonical form (commands.Spec.CheckNew).
+		CheckNew: checkNewSettings,
 		Inverse: func(ctx context.Context, tx *commands.Tx, p settingsPayload) ([]commands.Step, error) {
 			cur, err := read(ctx, tx)
 			if err != nil {
@@ -381,22 +387,30 @@ func lifecycle(update func(ctx context.Context, q *queries.Queries, by queries.A
 }
 
 // checkSettings returns what is wrong with UpdateSettings's payload p that its
-// schema cannot say.
+// schema cannot say, but for its default locale (checkNewSettings).
 func checkSettings(p settingsPayload) input.FieldErrors {
-	var errs input.FieldErrors
-	if p.DefaultLocale != nil {
-		if locale, msg := canonicalLocale(*p.DefaultLocale); msg != "" {
-			errs = append(errs, field("default_locale", msg)...)
-		} else if locale != *p.DefaultLocale {
-			errs = append(errs, field("default_locale", "is not in its canonical form, "+locale)...)
-		}
-	}
 	if p.Entry != nil {
 		if f, msg := checkEntry(*p.Entry); msg != "" {
-			errs = append(errs, field("entry."+f, msg)...)
+			return field("entry."+f, msg)
 		}
 	}
-	return errs
+	return nil
+}
+
+// checkNewSettings returns what is wrong with the default locale of
+// UpdateSettings's payload p: a BCP 47 tag of a language, in its canonical
+// form.
+func checkNewSettings(p settingsPayload) input.FieldErrors {
+	if p.DefaultLocale == nil {
+		return nil
+	}
+	switch locale, msg := canonicalLocale(*p.DefaultLocale); {
+	case msg != "":
+		return field("default_locale", msg)
+	case locale != *p.DefaultLocale:
+		return field("default_locale", "is not in its canonical form, "+locale)
+	}
+	return nil
 }
 
 // applySettings is UpdateSettings's Apply: it changes the settings that p
