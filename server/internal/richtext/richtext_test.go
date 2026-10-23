@@ -617,8 +617,10 @@ func TestPlainTextBuilt(t *testing.T) {
 // 65535, and no userinfo, which could show another host, and mailto URLs
 // without a # or a ;, with a ?, an &, and an = only where they delimit, that
 // set no field but to, cc, bcc, subject, and body, that escape UTF-8 alone
-// but in a body, no hidden character in an address or a to, cc, or bcc, whose
-// domains are ASCII, and no control character or line or paragraph separator
+// but in a body, no hidden character in an address or a to, cc, or bcc, which
+// are addresses as RFC 6068 has them, without a display name, a comment, or
+// quotes, whose domains are ASCII, and no control character or line or
+// paragraph separator
 // in a subject, and nothing that could run a script or read a file; and no
 // link that holds a hidden character, as one that a renderer shows nothing
 // of.
@@ -665,15 +667,24 @@ func TestCheckHref(t *testing.T) {
 		"https://example.com/a\\b",
 		"mailto:keeper@example.com",
 		"MAILTO:keeper@example.com?subject=Light",
-		"mailto:/keeper",
+		"mailto:/keeper@example.com",
 		// The fields that say what a message is sent to and what it says, in
 		// any ASCII case, and empty ones, with the delimiters escaped in a
 		// value, and an address that holds what an address may, as a , between
-		// two of them, a / or a :.
+		// two of them, or a / or an escaped & or = in a local part, and a body
+		// that holds a :.
 		"mailto:keeper@example.com?to=mira@example.com&CC=a@example.com&Bcc=b@example.com&subject=a%26b&body=x%3Dy",
 		"mailto:keeper@example.com?&subject=&&body=a%3Fb%23c%3Bd",
 		"mailto:keeper@example.com,mira@example.com?body=https://example.com/a:b@c",
-		"mailto:a%26b%3Dc%3Bd@example.com",
+		"mailto:a%26b%3Dc%3Fd@example.com",
+		// Every character of RFC 5322's atext, in atoms that dots separate, in a
+		// local part and in a domain, an empty to, cc, and bcc, and address
+		// literals of IP addresses.
+		"mailto:o'brien.a!%23$%25%26*+/%3D%3F^_`{|}~@a-b.c_d.example",
+		"mailto:keeper@a!%23$%25%26'*+/%3D%3F^_`{|}~.example",
+		"mailto:keeper@example.com?to=&cc=&bcc=",
+		"mailto:a@[192.0.2.1]",
+		"mailto:a@[IPv6:2001:db8::1]",
 		// A body's line breaks, as RFC 6068 writes them, and a tab, in any
 		// case of the field's name and of the escape's digits.
 		"mailto:keeper@example.com?subject=Light%20on&body=Come%0D%0Aup%09now&BODY=%0d%0a%7f",
@@ -692,7 +703,7 @@ func TestCheckHref(t *testing.T) {
 		"mailto:élodie@xn--caf-dma.example",
 		"mailto:%C3%A9lodie@XN--CAF-DMA.example?to=" + string(rune(0x0430)) + "@example.com," +
 			string(rune(0x0431)) + "@example.com",
-		"mailto:ü@a.example%2Cö@b.example?cc=x@a.example,,ü&bcc=ü",
+		"mailto:ü@a.example%2Cö@b.example?cc=x@a.example,ü@c.example&bcc=ü@d.example",
 		"mailto:a@[2001:db8::1]",
 	} {
 		if problem := CheckHref(href); problem != "" {
@@ -825,6 +836,43 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com?CC=x@example.com,support@xn--pypal-4ve.com" + string(rune(0x0430)),
 		"mailto:keeper@example.com?bcc=support@p%D0%B0ypal.com",
 		"mailto:keeper@caf%C3%A9.example",
+		// An address with a display name, a comment, a group, or quotes,
+		// which a mail client shows in place of the address that the message
+		// goes to, as support@paypal.com for x@evil.example, raw or escaped,
+		// wherever an address is.
+		"mailto:%22support@paypal.com%22%3Cx@evil.example%3E",
+		"mailto:support@paypal.com%3Cx@evil.example%3E",
+		"mailto:Support%3Cx@evil.example%3E",
+		"mailto:x@evil.example(support@paypal.com)",
+		"mailto:x@evil.example%28support@paypal.com%29",
+		"mailto:(support@paypal.com)x@evil.example",
+		"mailto:paypal%3Ax@evil.example%3B",
+		"mailto:%22support@paypal.com%22@evil.example",
+		"mailto:%22support%22@evil.example",
+		"mailto:keeper@example.com?to=%22support@paypal.com%22%3Cy@evil.example%3E",
+		"mailto:keeper@example.com?CC=y@evil.example(support@paypal.com)",
+		"mailto:keeper@example.com?bcc=Support%3Cy@evil.example%3E",
+		"mailto:keeper@example.com,%22support@paypal.com%22%3Cy@evil.example%3E",
+		// Or that is not a local part, an @, and a domain, each atoms of atext
+		// that single dots separate, or the domain an address literal.
+		"mailto:keeper",
+		"mailto:keeper@",
+		"mailto:@example.com",
+		"mailto:.keeper@example.com",
+		"mailto:keeper.@example.com",
+		"mailto:kee..per@example.com",
+		"mailto:keeper@.example.com",
+		"mailto:keeper@example..com",
+		"mailto:keeper@example.com.",
+		"mailto:a\\b@example.com",
+		"mailto:keeper@exa[mple.com",
+		"mailto:keeper@[]",
+		"mailto:keeper@[192.0.2.1",
+		"mailto:keeper@[x%3Cy@evil.example]",
+		"mailto:keeper@[2001:db8::1]x",
+		"mailto:keeper@example.com?to=,",
+		"mailto:keeper@example.com?cc=a@example.com,,b@example.com",
+		"mailto:keeper@example.com?to=mira",
 		// A port that no browser takes.
 		"https://example.com:65536/",
 		"https://example.com:99999999999999999999/",

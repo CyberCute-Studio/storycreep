@@ -6,7 +6,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode"
 )
 
 // vectors is schema/rich-text/vectors.json, which the TypeScript client runs
@@ -181,6 +183,30 @@ func TestWordVectors(t *testing.T) {
 		if got := CountWords(vec.Text); got != vec.Words {
 			t.Errorf("%s: CountWords(%q) = %d, want %d", vec.Note, vec.Text, got, vec.Words)
 		}
+	}
+}
+
+// TestWordsUnicodeVersion checks that the README states the version of
+// Unicode whose letters and numbers make a word on the server, that of
+// package unicode's tables, so that a client whose tables are another
+// version, as a JavaScript engine's are, knows where its word counts differ
+// from the server's: U+2EBF0, a CJK ideograph that Unicode 15.1 assigned, is
+// no letter in Unicode 15.0's. A Go whose tables are another version changes
+// the server's word counts of text with the letters and numbers that Unicode
+// assigned between the two, which the README, N40, and the exports' word
+// counts (FR-TEXT-05) are then to be read again for.
+func TestWordsUnicodeVersion(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join("..", "..", "..", "schema", "rich-text", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	major, rest, _ := strings.Cut(unicode.Version, ".")
+	minor, _, _ := strings.Cut(rest, ".")
+	if want := "as Unicode " + major + "." + minor + " has them"; !bytes.Contains(readme, []byte(want)) {
+		t.Errorf("the README's words do not say %q: package unicode's tables are Unicode %s", want, unicode.Version)
+	}
+	if got := CountWords(string(rune(0x2EBF0))); unicode.Version == "15.0.0" && got != 0 {
+		t.Errorf("CountWords(U+2EBF0) = %d in Unicode 15.0, which has not assigned it", got)
 	}
 }
 

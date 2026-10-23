@@ -1177,7 +1177,11 @@ func CheckHref(href string) string {
 		return fmt.Sprintf("is longer than %d characters", MaxHrefChars)
 	case strings.IndexFunc(href, hidden) >= 0:
 		return "holds white space, a control character, a format character, or another character that is not shown"
-	case !escapesValid(href):
+	}
+	// url.PathUnescape checks only that each % starts an escape. A mailto
+	// link's address and values are read again, each apart, by unescape: an
+	// escaped delimiter, as %26, is in a value, not between two.
+	if _, err := url.PathUnescape(href); err != nil {
 		return "holds a % that starts no escape of two hexadecimal digits"
 	}
 	scheme, rest, _ := strings.Cut(href, ":")
@@ -1229,10 +1233,11 @@ var mailtoFields = []string{"bcc", "body", "cc", "subject", "to"}
 // bytes that are not UTF-8 as it chooses, as Latin-1, in which %85 is NEL and
 // %AD a soft hyphen. The address, and the value of to, cc, or bcc, which name
 // addresses too, are as addressesProblem has them: they escape no hidden
-// character, and their domains are ASCII. A subject escapes no character that
-// text may not hold (isControl), a control character or a line or paragraph
-// separator, which a mail client could write into a header, as a line break
-// that starts another header in
+// character, and are addresses as RFC 6068 has them, without a display name,
+// a comment, or quotes, whose domains are ASCII. A subject escapes no
+// character that text may not hold (isControl), a control character or a line
+// or paragraph separator, which a mail client could write into a header, as a
+// line break that starts another header in
 // mailto:keeper@example.com?subject=a%0D%0ABcc:evil@example.com, or that a
 // reader of lines may take for one, as Python's str.splitlines takes NEL,
 // %C2%85, and LINE SEPARATOR, %E2%80%A8. A subject may escape white space and
@@ -1292,14 +1297,22 @@ func mailtoProblem(rest string) string {
 // (unescape), of which none is hidden, which would hide or reorder the
 // address that a mail client shows, as %E2%80%AE, U+202E RIGHT-TO-LEFT
 // OVERRIDE, would, or start another header, as %0D%0A would. Once its escapes
-// are read, it is addresses that commas separate, of each of which what
-// follows its first @, the domain, whichever @ a mail client reads as the
-// address's, is ASCII, as an http link's host is (nameProblem), since a
-// character beyond ASCII may look like another, as the Cyrillic а of
-// mailto:support@pаypal.com looks like a Latin a, so that a mail client shows
-// a domain that the message does not go to: an internationalized domain is
-// written as IDNA writes it in ASCII, as élodie@xn--caf-dma.example. A local
-// part, before the @, may hold any character that a link may.
+// are read, it is empty, which only a to, cc, or bcc can be, or addresses
+// that commas separate, each an addr-spec as RFC 6068 has it, without a
+// quoted local part: a local part, an @, and a domain, each atoms that single
+// dots separate (RFC 5322's dot-atom-text, isAtext), or a domain that is an
+// address literal in brackets (addressLiteral). So an address has no display
+// name, comment, group, or quotes, which a mail client shows in place of the
+// address that the message goes to, as it shows
+// mailto:%22support@paypal.com%22%3Cx@evil.example%3E, which goes to
+// x@evil.example, as support@paypal.com. A local part may also hold any
+// character beyond ASCII that a link may, as an internationalized address's
+// does (RFC 6532), and a domain is ASCII, as an http link's host is
+// (nameProblem), since a character beyond ASCII may look like another, as
+// the Cyrillic а of mailto:support@pаypal.com looks like a Latin a, so that a
+// mail client shows a domain that the message does not go to: an
+// internationalized domain is written as IDNA writes it in ASCII, as
+// élodie@xn--caf-dma.example.
 func addressesProblem(s string) string {
 	decoded, ok := unescape(s)
 	switch {
@@ -1311,14 +1324,65 @@ func addressesProblem(s string) string {
 		// before, so an escape stands for it.
 		return "escapes white space, a control character, a format character, or another character that is not " +
 			"shown, which would hide or reorder the address that a mail client shows, or start another header"
+	case decoded == "":
+		return ""
 	}
 	for address := range strings.SplitSeq(decoded, ",") {
-		if _, domain, ok := strings.Cut(address, "@"); ok && !onlyRunes(domain, isASCII) {
+		local, domain, ok := strings.Cut(address, "@")
+		switch {
+		case ok && !onlyRunes(domain, isASCII):
 			return "has a domain, after an @, with a character beyond ASCII, which may look like another: an " +
 				"internationalized domain is written as IDNA writes it in ASCII (xn--)"
+		case !ok || !dotAtom(local, isLocalRune) || !dotAtom(domain, isAtext) && !addressLiteral(domain):
+			return "is not addresses that commas separate, each a local part, an @, and a domain, of letters, " +
+				"digits, and !#$%&'*+-/=?^_`{|}~ in atoms that single dots separate, without a display name, a " +
+				"comment, or quotes, which a mail client could show in place of the address that the message " +
+				"goes to"
 		}
 	}
 	return ""
+}
+
+// isAtext reports whether r may be in an atom of an address, as RFC 5322's
+// atext has it: an ASCII letter or digit, or one of !#$%&'*+-/=?^_`{|}~. So
+// none of the characters that delimit what a mail client shows of an address
+// otherwise than the address, as a display name's quotes and the angle
+// brackets after it, a comment's parentheses, a group's colon and semicolon,
+// or a comma, is in one.
+func isAtext(r rune) bool {
+	return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || isDigit(r) || strings.ContainsRune("!#$%&'*+-/=?^_`{|}~", r)
+}
+
+// isLocalRune reports whether an atom of an address's local part may hold r:
+// what isAtext takes, or a character beyond ASCII, as RFC 6532 has an
+// internationalized address's.
+func isLocalRune(r rune) bool { return isAtext(r) || !isASCII(r) }
+
+// dotAtom reports whether s is one or more atoms, each one or more characters
+// that ok takes, which single dots separate, as RFC 5322's dot-atom-text.
+func dotAtom(s string, ok func(rune) bool) bool {
+	for atom := range strings.SplitSeq(s, ".") {
+		if atom == "" || !onlyRunes(atom, ok) {
+			return false
+		}
+	}
+	return true
+}
+
+// addressLiteral reports whether a domain is an address literal: brackets
+// around one or more ASCII letters, digits, colons, and dots, as
+// [192.0.2.1], [2001:db8::1], or [IPv6:2001:db8::1] (RFC 5321), which RFC
+// 6068 takes in a mailto link, without the other characters that its
+// domain-literal may hold, which a mail client could read otherwise.
+func addressLiteral(domain string) bool {
+	inner, opened := strings.CutPrefix(domain, "[")
+	inner, closed := strings.CutSuffix(inner, "]")
+	if !opened || !closed || inner == "" {
+		return false
+	}
+	return onlyRunes(inner, func(r rune) bool {
+		return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || isDigit(r) || r == ':' || r == '.'
+	})
 }
 
 // hidden reports whether r is a character that a link may not hold, which
@@ -1501,13 +1565,6 @@ func isHexDigit(r rune) bool {
 // onlyRunes reports whether every character of s is one that ok takes.
 func onlyRunes(s string, ok func(rune) bool) bool {
 	return strings.IndexFunc(s, func(r rune) bool { return !ok(r) }) < 0
-}
-
-// escapesValid reports whether every % of s starts an escape: % and two
-// hexadecimal digits, which is all that url.PathUnescape checks.
-func escapesValid(s string) bool {
-	_, err := url.PathUnescape(s)
-	return err == nil
 }
 
 // asciiLower returns s with its ASCII uppercase letters lowercased, and no

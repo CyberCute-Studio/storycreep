@@ -339,7 +339,12 @@ func WordCount(segs []Segment) int {
 // CountWords returns the number of words of s. A word is a run of characters
 // that are not white space (Unicode's White_Space) with at least one letter
 // or number among them, so a dash between spaces is no word, and a run of
-// Chinese or Japanese without spaces is one.
+// Chinese or Japanese without spaces is one. The letters and numbers are
+// those of package unicode's tables, of the version that unicode.Version
+// names and schema/rich-text/README.md states (TestWordsUnicodeVersion), since
+// a client whose tables are newer, as a JavaScript engine's are, takes the
+// letters and numbers that Unicode has assigned since as letters and numbers
+// too, and counts a word where the server counts none in a run of them.
 func CountWords(s string) int {
 	var w words
 	w.read(s)

@@ -1297,7 +1297,7 @@
       "hash": "sha256:cbdc6be8042546270cfd3c3396e4a1ca932575821b75d46a6069d64a7f0020dd"
     },
     {
-      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one, with an e acute and a zero width space, a format character, escaped in the subject, an internationalized address in the cc, whose domain is written as IDNA writes it in ASCII, and a line break, a line separator, NEL, ?, =, ;, and a byte that is not UTF-8 escaped in the body",
+      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one, with an e acute and a zero width space, a format character, escaped in the subject, an internationalized address in the cc, whose domain is written as IDNA writes it in ASCII, a line break, a line separator, NEL, ?, =, ;, and a byte that is not UTF-8 escaped in the body, and an address in the bcc whose local part has an apostrophe and a dot, and whose domain is an address literal",
       "doc": {
         "content": [
           {
@@ -1338,7 +1338,7 @@
                 "marks": [
                   {
                     "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,élodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&"
+                      "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,élodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&bcc=o'brien.lamp@[192.0.2.1]&"
                     },
                     "type": "link"
                   }
@@ -1376,7 +1376,7 @@
           "value": " "
         },
         {
-          "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,élodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&",
+          "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,élodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&bcc=o'brien.lamp@[192.0.2.1]&",
           "kind": "text",
           "marks": ["link"],
           "value": "three"
@@ -4786,6 +4786,146 @@
                     "type": "link",
                     "attrs": {
                       "href": "mailto:keeper@example.com?cc=mira@example.com,support@p%D0%B0ypal.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose address has a display name, which a mail client shows, as support@paypal.com, in place of the address that the message goes to, x@evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:%22support@paypal.com%22%3Cx@evil.example%3E"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose to has a comment, which a mail client may show in place of the address that the message goes to",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?to=x@evil.example(support@paypal.com)"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose address has no @, and so no domain",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose address's local part has two dots in a row",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:kee..per@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose cc has an empty address between two commas",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?cc=a@example.com,,b@example.com"
                     }
                   }
                 ]
