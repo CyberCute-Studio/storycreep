@@ -658,6 +658,111 @@ func TestOptions(t *testing.T) {
 	}
 }
 
+// TestAttributeChecks checks that a definition's create is answered with one
+// problem for each field that is wrong, none derived from another, and that
+// an enum's option that encoding/json reads otherwise than the client wrote
+// it, an escape of a lone surrogate, is refused, so that the server never
+// holds another option than the client sent.
+func TestAttributeChecks(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ship := f.newType(t, "Ship", nil)
+	for _, c := range []struct {
+		payload map[string]any
+		field   string
+	}{
+		{map[string]any{"default": "x"}, "payload.default"},
+		{map[string]any{"type": value.Enum, "options": []string{}}, "payload.options"},
+		{map[string]any{"type": value.Enum, "options": []string{"calm", "calm"}, "default": "sad"}, "payload.options"},
+	} {
+		add, _ := newAttribute(ship, "Trust", value.Int, c.payload)
+		_, err := f.apply(t, add)
+		var invalid *commands.InvalidError
+		if !errors.As(err, &invalid) || len(invalid.Problems) != 1 || invalid.Problems[0].Field != c.field {
+			t.Errorf("%v was answered with %v, want one problem at %s", c.payload, err, c.field)
+		}
+	}
+	raw := json.RawMessage(`{"id": "` + attributeID() + `", "component_type_id": "` + ship + `", "name": "Mood", ` +
+		`"type": "enum", "options": ["calm", "\ud800"]}`)
+	invalidAt(t, func() error { _, err := f.apply(t, cmd{component.CreateAttribute, raw}); return err }(),
+		"payload.options")
+}
+
+// TestUndoLimit checks that a change of an enum's options or of a
+// definition's type whose undo would hold more of the values that it loses
+// than the operation log keeps is refused at the field that it changes.
+func TestUndoLimit(t *testing.T) {
+	// Not parallel: it lowers the limit, which the parallel tests' changes
+	// read once it is set back.
+	defer component.SetMaxUndoValues(len(`"angry"`) + 1)()
+	f := newFixture(t)
+	ship := f.newType(t, "Ship", nil)
+	add, mood := newAttribute(ship, "Mood", value.Enum, map[string]any{"options": []string{"calm", "angry"}})
+	elara, _ := newComponent(ship, "Elara", map[string]any{"attributes": map[string]any{mood: "angry"}})
+	mira, _ := newComponent(ship, "Mira", map[string]any{"attributes": map[string]any{mood: "angry"}})
+	f.must(t, add, elara, mira)
+	for _, c := range []struct {
+		cmd   cmd
+		field string
+	}{
+		{cmd{component.SetAttributeOptions, map[string]any{"id": mood, "options": []string{"calm"}}}, "options"},
+		{cmd{component.RetypeAttribute, map[string]any{"id": mood, "type": "int", "conversion": "reset"}}, "type"},
+	} {
+		if r := refused(t, func() error { _, err := f.apply(t, c.cmd); return err }()); r.Field != c.field {
+			t.Errorf("%v, whose undo would hold too much, was refused at %s, want %s", c.cmd, r.Field, c.field)
+		}
+	}
+}
+
+// TestStoredValues checks that a retype converts a value that the text rules
+// that a command checks refuse, which a stored value may hold once the rules
+// are tightened, with its characters as they are, which the list of what
+// would not convert agrees with, and that the list and the retype alike fail
+// on a value that is not one of its definition's type, which only a row that
+// the pipeline did not write holds.
+func TestStoredValues(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ctx := context.Background()
+	ship := f.newType(t, "Ship", nil)
+	add, notes := newAttribute(ship, "Notes", value.String, nil)
+	elara, elaraID := newComponent(ship, "Elara", nil)
+	f.must(t, add, elara)
+	set := func(raw string) {
+		t.Helper()
+		if _, err := f.d.Admin(t).Exec(ctx, `UPDATE attribute_value SET value = $1::jsonb WHERE component_id = $2
+			AND attribute_def_id = $3`, raw, decodeID(t, ids.Component, elaraID), decodeID(t, ids.AttributeDef,
+			notes)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	legacy, err := json.Marshal("a" + string(rune(0x2028)) + "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	set(string(legacy))
+	unconvertible := func(to string) ([]component.Unconvertible, error) {
+		return f.components.Unconvertible(ctx, f.actor(), f.project, decodeID(t, ids.ComponentType, ship),
+			decodeID(t, ids.AttributeDef, notes), component.Target{Type: to}, ids.UUID{}, 10)
+	}
+	if list, err := unconvertible(value.Text); err != nil || len(list) != 0 {
+		t.Errorf("the values that a retype to a text would not convert are %v, %v, want none", list, err)
+	}
+	f.must(t, cmd{component.RetypeAttribute, map[string]any{"id": notes, "type": "text", "conversion": "convert"}})
+	if got := f.valueOf(t, elaraID, notes); got != string(legacy) {
+		t.Errorf("after the retype, the component holds %s, want %s", got, legacy)
+	}
+	set("5")
+	if _, err := unconvertible(value.String); err == nil {
+		t.Errorf("a value of another type was listed")
+	}
+	var r *commands.RefusedError
+	if _, err := f.apply(t, cmd{component.RetypeAttribute, map[string]any{"id": notes, "type": "string",
+		"conversion": "convert"}}); err == nil || errors.As(err, &r) {
+		t.Errorf("the retype of a value of another type was answered with %v", err)
+	}
+}
+
 // TestTypeTrash checks the trash of component types and attribute
 // definitions: a type is deleted only once each of its components is in the
 // trash, its definitions go with it, restoring a component restores its

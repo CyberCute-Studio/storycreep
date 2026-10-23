@@ -251,6 +251,9 @@ func TestConversion(t *testing.T) {
 		"type=enum":               "query.options",
 		"type=enum&options=a%0Aa": "query.options",
 		"type=int&options=a":      "query.options",
+		// U+FFFD, which an escape of a lone surrogate in a command's options
+		// is read as.
+		"type=enum&options=a%EF%BF%BD": "query.options",
 	} {
 		res := call(s.main, http.MethodGet, conversionPath(p.ID, ct, mood)+"?"+query, nil, owner.header(false))
 		if code, locs, _ := problemsOf(t, res); res.status != http.StatusUnprocessableEntity ||
@@ -260,6 +263,11 @@ func TestConversion(t *testing.T) {
 	}
 	wantCode(t, "a definition of another type", call(s.main, http.MethodGet, conversionPath(p.ID, newComponentTypeID(),
 		mood)+"?type=int", nil, owner.header(false)), http.StatusNotFound, api.CodeNotFound)
+	// A user who may not read the project is answered as for a project that
+	// does not exist, before the query is checked.
+	outsider := newNamedAccount(t, s.main, "out@example.com", "Out")
+	wantCode(t, "an outsider's query that is not valid", call(s.main, http.MethodGet, conversionPath(p.ID, ct,
+		mood)+"?type=enum", nil, outsider.header(false)), http.StatusNotFound, api.CodeNotFound)
 
 	// The retype converts what converts, and gives the default to what does
 	// not, the value of the component in the trash among them.

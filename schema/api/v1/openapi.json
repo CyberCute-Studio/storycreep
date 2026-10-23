@@ -296,7 +296,7 @@
             "type": "string"
           },
           "options": {
-            "description": "An enum's options, which its values are one of: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, and line separators among them, no two alike, compared by their characters, as they are. Another type has none.",
+            "description": "An enum's options, which its values are one of: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. Another type has none.",
             "items": {
               "type": "string"
             },
@@ -616,7 +616,7 @@
             "type": "string"
           },
           "options": {
-            "description": "The options of an enum, which the new type then is: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, and line separators among them, no two alike, compared by their characters, as they are. Another type has none.",
+            "description": "The options of an enum, which the new type then is: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. Another type has none.",
             "items": {
               "type": "string"
             },
@@ -842,7 +842,7 @@
             "type": "string"
           },
           "options": {
-            "description": "The enum's new options, in their order: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, and line separators among them, no two alike, compared by their characters, as they are. A value that a component holds that is none of them is given the default, unless values gives it another.",
+            "description": "The enum's new options, in their order: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. A value that a component holds that is none of them is given the default, unless values gives it another.",
             "items": {
               "type": "string"
             },
@@ -10804,12 +10804,12 @@
             }
           },
           {
-            "description": "The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them, no two alike. Another type has none.",
+            "description": "The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line separators, and U+FFFD, the replacement character, among them, no two alike. Another type has none.",
             "explode": false,
             "in": "query",
             "name": "options",
             "schema": {
-              "description": "The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them, no two alike. Another type has none.",
+              "description": "The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line separators, and U+FFFD, the replacement character, among them, no two alike. Another type has none.",
               "maxLength": 10099,
               "type": "string"
             }

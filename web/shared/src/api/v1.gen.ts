@@ -96,7 +96,7 @@ export interface AttributeCreatePayload {
   key?: string;
   /** The definition's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them */
   name: string;
-  /** An enum's options, which its values are one of: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, and line separators among them, no two alike, compared by their characters, as they are. Another type has none. */
+  /** An enum's options, which its values are one of: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. Another type has none. */
   options?: Array<string> | null;
   /** The definition's place among its type's. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the definitions by its bytes, and those with the same key by their IDs without the prefix, atr_, compared by their bytes too: pick one between the keys of the definitions that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the definition goes after the type's last. */
   order?: string;
@@ -197,7 +197,7 @@ export interface AttributeRetypePayload {
   default?: boolean | number | string;
   /** The attribute definition's ID */
   id: string;
-  /** The options of an enum, which the new type then is: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, and line separators among them, no two alike, compared by their characters, as they are. Another type has none. */
+  /** The options of an enum, which the new type then is: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. Another type has none. */
   options?: Array<string> | null;
   /** The definition's new type, which is not its type already: an enum's options change with attribute.set_options. A runtime definition may not become a text: unset runtime first. */
   type: "bool" | "int" | "float" | "string" | "text" | "enum";
@@ -260,7 +260,7 @@ export interface AttributeSetOptionsPayload {
   default?: boolean | number | string;
   /** The ID of the attribute definition, an enum */
   id: string;
-  /** The enum's new options, in their order: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, and line separators among them, no two alike, compared by their characters, as they are. A value that a component holds that is none of them is given the default, unless values gives it another. */
+  /** The enum's new options, in their order: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. A value that a component holds that is none of them is given the default, unless values gives it another. */
   options: Array<string> | null;
   /** The values, each one of the new options, that components of the definition's type are given, by their IDs, in place of what they hold: a component that holds a value that is none of the new options, and is not given one here, is given the default */
   values?: Record<string, boolean | number | string>;
@@ -2995,7 +2995,7 @@ export interface Operations {
         cursor?: string;
         /** How many items the page holds at most */
         limit?: number;
-        /** The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them, no two alike. Another type has none. */
+        /** The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line separators, and U+FFFD, the replacement character, among them, no two alike. Another type has none. */
         options?: string;
         /** The type that the definition would be given, which is not its type already */
         type: "bool" | "int" | "float" | "string" | "text" | "enum";

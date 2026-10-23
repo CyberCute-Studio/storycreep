@@ -770,6 +770,33 @@ func (q *Queries) ComponentTypesByID(ctx context.Context, arg ComponentTypesByID
 	return items, nil
 }
 
+const componentValue = `-- name: ComponentValue :one
+SELECT value FROM attribute_value
+WHERE workspace_id = $1 AND project_id = $2 AND component_id = $3
+    AND attribute_def_id = $4
+`
+
+type ComponentValueParams struct {
+	WorkspaceID    pgtype.UUID
+	ProjectID      pgtype.UUID
+	ComponentID    pgtype.UUID
+	AttributeDefID pgtype.UUID
+}
+
+// ComponentValue returns the value that the component component_id holds of
+// the attribute definition attribute_def_id.
+func (q *Queries) ComponentValue(ctx context.Context, arg ComponentValueParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, componentValue,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.ComponentID,
+		arg.AttributeDefID,
+	)
+	var value []byte
+	err := row.Scan(&value)
+	return value, err
+}
+
 const componentValues = `-- name: ComponentValues :many
 SELECT v.component_id, v.attribute_def_id, v.value, a.type, a.enum_options FROM attribute_value v
 JOIN live_attribute_def a ON a.workspace_id = v.workspace_id AND a.project_id = v.project_id
@@ -971,12 +998,11 @@ func (q *Queries) ComponentsByID(ctx context.Context, arg ComponentsByIDParams) 
 	return items, nil
 }
 
-const fillAttributeValues = `-- name: FillAttributeValues :many
+const fillAttributeValues = `-- name: FillAttributeValues :exec
 INSERT INTO attribute_value (workspace_id, project_id, component_id, attribute_def_id, value)
 SELECT c.workspace_id, c.project_id, c.id, $1, $2 FROM component c
 WHERE c.workspace_id = $3 AND c.project_id = $4 AND c.component_type_id = $5
 ON CONFLICT DO NOTHING
-RETURNING component_id
 `
 
 type FillAttributeValuesParams struct {
@@ -989,31 +1015,16 @@ type FillAttributeValuesParams struct {
 
 // FillAttributeValues gives each component of the type component_type_id,
 // those in the trash included, that holds no value of the attribute
-// definition attribute_def_id the value value, and returns their IDs.
-func (q *Queries) FillAttributeValues(ctx context.Context, arg FillAttributeValuesParams) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, fillAttributeValues,
+// definition attribute_def_id the value value.
+func (q *Queries) FillAttributeValues(ctx context.Context, arg FillAttributeValuesParams) error {
+	_, err := q.db.Exec(ctx, fillAttributeValues,
 		arg.AttributeDefID,
 		arg.Value,
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.ComponentTypeID,
 	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []pgtype.UUID
-	for rows.Next() {
-		var component_id pgtype.UUID
-		if err := rows.Scan(&component_id); err != nil {
-			return nil, err
-		}
-		items = append(items, component_id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return err
 }
 
 const insertAttributeDef = `-- name: InsertAttributeDef :exec

@@ -19,7 +19,6 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/slug"
-	"github.com/CyberCute-Studio/storycreep/server/internal/variable"
 )
 
 // conflictBody is an entity of the details of an answer of
@@ -466,12 +465,12 @@ func pipelineError(err error) error {
 // a folder to delete that holds something, 422 key_invalid, with the rule
 // that the key breaks as details.reason, for a key of a variable, a component
 // type, an attribute definition, or a component that is not an identifier,
-// 409 key_taken for a key that another entity of its scope has, 409
-// component_type_in_use for a component type to delete of which a component
-// that is not in the trash is, and 422 validation_failed for any other value
-// that the project's
-// state does not take, as an ID of a board that the project does not have,
-// each with the field's problem in details.errors.
+// 409 key_taken for a key that another entity of its scope has
+// (ident.ErrTaken), 409 component_type_in_use for a component type to delete
+// of which a component that is not in the trash is, and 422 validation_failed
+// for any other value that the project's state does not take, as an ID of a
+// board that the project does not have, each with the field's problem in
+// details.errors.
 func refusalError(r *commands.RefusedError, loc string) *api.Error {
 	problems := []api.Problem{{Location: loc, Message: r.Message}}
 	var invalid *slug.Error
@@ -487,7 +486,7 @@ func refusalError(r *commands.RefusedError, loc string) *api.Error {
 	case errors.As(r.Reason, &key):
 		return &api.Error{Code: api.CodeKeyInvalid, Details: map[string]any{"reason": key.Reason,
 			"errors": problems}}
-	case errors.Is(r.Reason, variable.ErrKeyTaken), errors.Is(r.Reason, component.ErrKeyTaken):
+	case errors.Is(r.Reason, ident.ErrTaken):
 		return &api.Error{Code: api.CodeKeyTaken, Details: map[string]any{"errors": problems}}
 	case errors.Is(r.Reason, component.ErrTypeInUse):
 		return &api.Error{Code: api.CodeComponentTypeInUse, Details: map[string]any{"errors": problems}}

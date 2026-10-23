@@ -9,6 +9,7 @@
 package ident
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 )
@@ -28,6 +29,14 @@ const (
 	// (ReservedWords).
 	Reserved Reason = "reserved"
 )
+
+// ErrTaken is the reason of a command's refusal of a key, an identifier, that
+// another entity of its scope has, of those that are not in the project's
+// trash (commands.RefusedError): a variable's among its scope's, a component
+// type's or a component's among the project's, or an attribute definition's
+// among its type's. Each package of such an entity refuses with it, so that
+// the API answers each with key_taken alike.
+var ErrTaken = errors.New("ident: another entity of the scope has the key")
 
 // Error is an identifier that is not valid.
 type Error struct {

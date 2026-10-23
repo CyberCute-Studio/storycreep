@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -126,7 +128,7 @@ func registerComponents(r *commands.Registry) {
 			errs = append(errs, entityID(ids.ComponentType, "component_type_id", p.ComponentTypeID)...)
 			errs = append(errs, optionalID(ids.Asset, "image_asset_id", p.ImageAssetID)...)
 			errs = append(errs, optionalID(ids.Folder, "folder_id", p.FolderID)...)
-			for _, k := range sortedKeys(p.Attributes) {
+			for _, k := range slices.Sorted(maps.Keys(p.Attributes)) {
 				errs = append(errs, entityID(ids.AttributeDef, "attributes."+k, k)...)
 			}
 			return errs
@@ -499,7 +501,7 @@ type keyed struct {
 // either case.
 func keyedByUUID(kind ids.Kind, name string, m map[string]value.Value) (map[ids.UUID]keyed, error) {
 	out := make(map[ids.UUID]keyed, len(m))
-	for _, k := range sortedKeys(m) {
+	for _, k := range slices.Sorted(maps.Keys(m)) {
 		u, _ := ids.Decode(kind, k)
 		at := name + "." + k
 		if _, dup := out[u]; dup {
@@ -604,23 +606,20 @@ func componentAttribute(ctx context.Context, tx *commands.Tx, p attributePayload
 // does.
 func currentValue(ctx context.Context, q *queries.Queries, c queries.Component, a queries.AttributeDef) (
 	value.Value, error) {
-	rows, err := q.ComponentValues(ctx, queries.ComponentValuesParams{WorkspaceID: c.WorkspaceID,
-		ProjectID: c.ProjectID, Ids: []pgtype.UUID{c.ID}})
-	if err != nil {
-		return value.Value{}, fmt.Errorf("component: read the component's values: %w", err)
+	raw, err := q.ComponentValue(ctx, queries.ComponentValueParams{WorkspaceID: c.WorkspaceID,
+		ProjectID: c.ProjectID, ComponentID: c.ID, AttributeDefID: a.ID})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return storedDefault(a)
+	case err != nil:
+		return value.Value{}, fmt.Errorf("component: read the component's value: %w", err)
 	}
-	for _, row := range rows {
-		if row.AttributeDefID == a.ID {
-			v, problem := value.FromJSON(row.Value).Read(a.Type, value.Checks{}, a.EnumOptions...)
-			if problem != "" {
-				return value.Value{}, fmt.Errorf("component: the value of the attribute definition %s that the "+
-					"component %s holds %s", ids.Encode(ids.AttributeDef, a.ID.Bytes), ids.Encode(ids.Component,
-					c.ID.Bytes), problem)
-			}
-			return v, nil
-		}
+	v, problem := value.FromJSON(raw).Read(a.Type, value.Checks{}, a.EnumOptions...)
+	if problem != "" {
+		return value.Value{}, fmt.Errorf("component: the value of the attribute definition %s that the component %s "+
+			"holds %s", ids.Encode(ids.AttributeDef, a.ID.Bytes), ids.Encode(ids.Component, c.ID.Bytes), problem)
 	}
-	return storedDefault(a)
+	return v, nil
 }
 
 // componentKeyOwner returns the owner of a key among the project's

@@ -59,6 +59,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
@@ -123,8 +124,9 @@ var (
 	// ErrKeyTaken is the reason of a command's refusal of a key that another
 	// type of the project, another attribute definition of the type, or
 	// another component of the project has, of those that are not in the
-	// trash (commands.RefusedError), which the API answers with key_taken.
-	ErrKeyTaken = errors.New("component: another entity has the key")
+	// trash (commands.RefusedError), which the API answers with key_taken: the
+	// reason of every entity's key that another has (ident.ErrTaken).
+	ErrKeyTaken = ident.ErrTaken
 	// ErrTypeInUse is the reason of the refusal of the deletion of a type of
 	// which a component that is not in the trash is, which the API answers
 	// with component_type_in_use.
@@ -539,22 +541,23 @@ type Target struct {
 // in the trash included, which a retype converts too, in the order of their
 // IDs: the first, if after is zero, or else those after the component after,
 // so that a client can show what a retype with the conversion convert would
-// give the new default to before it applies one (FR-COMP-01 AC2). It returns
-// input.FieldErrors at type for a target of no type, or of the definition's
-// own type, and at options for an enum's options that are not valid, or
+// give the new default to before it applies one (FR-COMP-01 AC2), as the
+// retype reads and converts them. It returns the errors of
+// project.Service.Get first, then input.FieldErrors at type for a target of
+// no type, and at options for an enum's options that are not valid, or
 // options of another type, ErrTypeNotFound or ErrAttributeNotFound if the
 // project has no such type, or the type no such definition, that is not in
-// the trash, and the errors of project.Service.Get first.
+// the trash, and input.FieldErrors at type for a target of the definition's
+// own type.
 func (s *Service) Unconvertible(ctx context.Context, actor commands.Actor, projectID, typeID, attributeID ids.UUID,
 	to Target, after ids.UUID, limit int) ([]Unconvertible, error) {
-	if errs := checkTarget(to); len(errs) > 0 {
-		return nil, errs
-	}
 	var out []Unconvertible
 	err := s.read(ctx, actor, projectID, func(q *queries.Queries, workspaceID pgtype.UUID) error {
-		project := nullUUID(projectID)
+		if errs := checkTarget(to); len(errs) > 0 {
+			return errs
+		}
 		row, err := q.AttributeDefAny(ctx, queries.AttributeDefAnyParams{WorkspaceID: workspaceID,
-			ProjectID: project, ID: nullUUID(attributeID)})
+			ProjectID: nullUUID(projectID), ID: nullUUID(attributeID)})
 		switch {
 		case errors.Is(err, pgx.ErrNoRows) || err == nil && row.AttributeDef.ComponentTypeID.Bytes != typeID:
 			return ErrAttributeNotFound
@@ -569,32 +572,20 @@ func (s *Service) Unconvertible(ctx context.Context, actor commands.Actor, proje
 		}
 		a := row.AttributeDef
 		out = []Unconvertible{}
-		// The values are read a page at a time, of which only those that do
-		// not convert are kept, until limit of them are found.
-		cursor := nullUUID(after)
-		for len(out) < limit {
-			values, err := q.AttributeValues(ctx, queries.AttributeValuesParams{WorkspaceID: workspaceID,
-				ProjectID: project, AttributeDefID: a.ID, After: cursor, MaxRows: valuesPage})
-			if err != nil {
-				return fmt.Errorf("component: read the attribute definition's values: %w", err)
-			}
-			for _, v := range values {
-				if _, ok := value.Convert(value.FromJSON(v.Value), a.Type, a.EnumOptions, to.Type,
-					to.Options); ok {
-					continue
-				}
-				out = append(out, Unconvertible{ComponentID: ids.Encode(ids.Component, v.ComponentID.Bytes),
-					Key: v.Key, Name: v.Name, DeletedAt: timeOf(v.DeletedAt)})
-				if len(out) == limit {
-					break
-				}
-			}
-			if len(values) < valuesPage {
-				break
-			}
-			cursor = values[len(values)-1].ComponentID
+		if limit <= 0 {
+			return nil
 		}
-		return nil
+		// The values are read as a retype reads them (eachValue), a page at a
+		// time, of which only those that do not convert are kept, until limit
+		// of them are found.
+		return eachValue(ctx, q, a, nullUUID(after), func(c queries.AttributeValuesRow, v value.Value) (bool,
+			error) {
+			if _, ok := value.Convert(v, a.Type, a.EnumOptions, to.Type, to.Options); !ok {
+				out = append(out, Unconvertible{ComponentID: ids.Encode(ids.Component, c.ComponentID.Bytes),
+					Key: c.Key, Name: c.Name, DeletedAt: timeOf(c.DeletedAt)})
+			}
+			return len(out) < limit, nil
+		})
 	})
 	return out, err
 }
@@ -604,23 +595,16 @@ func (s *Service) Unconvertible(ctx context.Context, actor commands.Actor, proje
 const valuesPage = 1000
 
 // checkTarget returns the problems of to as the target of a retype: a type,
-// with an enum's options, which are valid (value.CheckOptions,
+// with an enum's options, which are valid as a retype's are (checkOptions,
 // value.CheckOptionNames), and none for another type.
 func checkTarget(to Target) input.FieldErrors {
-	switch {
-	case !slices.Contains(value.Types(), to.Type):
-		return input.FieldErrors{{Field: "type", Message: "is not a type of an attribute definition"}}
-	case to.Type != value.Enum && len(to.Options) > 0:
-		return input.FieldErrors{{Field: "options", Message: "is set for a type other than enum, which has none"}}
-	case to.Type == value.Enum:
-		if problem := value.CheckOptions(to.Options); problem != "" {
-			return input.FieldErrors{{Field: "options", Message: problem}}
-		}
-		if problem := value.CheckOptionNames(to.Options); problem != "" {
-			return input.FieldErrors{{Field: "options", Message: problem}}
-		}
+	if !slices.Contains(value.Types(), to.Type) {
+		return field("type", "is not a type of an attribute definition")
 	}
-	return nil
+	if errs := checkOptions(to.Type, to.Options); len(errs) > 0 {
+		return errs
+	}
+	return field("options", value.CheckOptionNames(to.Options))
 }
 
 // nullUUID returns id as a uuid column, null if id is zero.

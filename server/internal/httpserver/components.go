@@ -38,7 +38,7 @@ type conversionInput struct {
 	ComponentTypeID string `path:"component_type_id" doc:"The component type's ID"`
 	AttributeID     string `path:"attribute_id" doc:"The ID of the attribute definition, one of the type's"`
 	Type            string `query:"type" required:"true" enum:"bool,int,float,string,text,enum" doc:"The type that the definition would be given, which is not its type already"`
-	Options         string `query:"options" maxLength:"10099" doc:"The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them, no two alike. Another type has none."`
+	Options         string `query:"options" maxLength:"10099" doc:"The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line separators, and U+FFFD, the replacement character, among them, no two alike. Another type has none."`
 	api.PageParams
 }
 

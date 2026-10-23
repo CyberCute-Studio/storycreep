@@ -151,20 +151,22 @@ func (v Value) Equal(w Value) bool {
 
 // Zero returns the zero value of the type typ: false, 0, 0.0, which is
 // written as 0, the empty string for a string or a text, or the first of
-// options for an enum, or none for an enum without options.
+// options for an enum, or none for an enum without options, or for what is no
+// type.
 func Zero(typ string, options ...string) Value {
 	switch typ {
 	case Bool:
 		return Value{raw: json.RawMessage("false")}
+	case Int, Float:
+		return Value{raw: json.RawMessage("0")}
 	case String, Text:
 		return Value{raw: json.RawMessage(`""`)}
 	case Enum:
-		if len(options) == 0 {
-			return Value{}
+		if len(options) > 0 {
+			return stringValue(options[0])
 		}
-		return stringValue(options[0])
 	}
-	return Value{raw: json.RawMessage("0")}
+	return Value{}
 }
 
 // Checks are what Read checks of a value beyond what its type takes, which a
@@ -216,6 +218,10 @@ func (v Value) Of(typ string, options ...string) (Value, string) {
 // the undo of a change of one among them, checks it whole as it applies
 // (Of).
 func (v Value) Read(typ string, c Checks, options ...string) (Value, string) {
+	if !slices.Contains(types, typ) {
+		// Neither a value nor none is one of what is no type.
+		return Value{}, fmt.Sprintf("is a value of the type %q, which is no type", typ)
+	}
 	if v.raw == nil {
 		z := Zero(typ, options...)
 		if z.raw == nil {
@@ -240,8 +246,6 @@ func (v Value) Read(typ string, c Checks, options ...string) (Value, string) {
 		return text(v.raw, c.Text, MaxTextLength)
 	case typ == Enum && kind == "string":
 		return option(v.raw, options)
-	case !slices.Contains(types, typ):
-		return Value{}, fmt.Sprintf("is a value of the type %q, which is no type", typ)
 	}
 	return Value{}, fmt.Sprintf("is a %s, not a value of the type %s", kind, typ)
 }
@@ -486,11 +490,19 @@ func CheckOptions(options []string) string {
 // CheckOptionNames says what is wrong with an enum's options as names that
 // people are shown, sent without the white space around them
 // (input.CheckTrimmedName), or returns "". An option holds no line feed, so
-// that options can be written one to a line.
+// that options can be written one to a line, and no U+FFFD REPLACEMENT
+// CHARACTER, which encoding/json reads an escape of a lone surrogate as,
+// where JSON.parse keeps it, so that the server never holds another option
+// than the client sent: a value that is the option as the client holds it
+// would be refused for its lone surrogate (Of), and could never be set.
 func CheckOptionNames(options []string) string {
 	for i, o := range options {
 		if problem := input.CheckTrimmedName(o, MaxOptionLength); problem != "" {
 			return fmt.Sprintf("has an option, the %s, that %s", ordinal(i), problem)
+		}
+		if strings.ContainsRune(o, utf8.RuneError) {
+			return fmt.Sprintf("has an option, the %s, that holds U+FFFD, the replacement character, which an "+
+				"escape of a lone surrogate is read as", ordinal(i))
 		}
 	}
 	return ""
@@ -534,12 +546,16 @@ var (
 //     or a string, a text, or an option of the form [+-]?[0-9]+ within
 //     ±MaxInt;
 //   - to float, a bool as 0 or 1, an int widened, or a string, a text, or an
-//     option of the form [+-]?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)? that is a
-//     finite double, read as the nearest one, written within the bounds of a
-//     value's number;
+//     option of the form [+-]?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?, read as the
+//     double nearest it, however many digits it is written with, and however
+//     large its exponent, as to_float reads it, 0 for one too small for a
+//     double, unless it is beyond a double's range;
 //   - to string or text, a bool as true or false, an int as a decimal, a float
 //     as to_string writes it (FormatFloat), or a string, a text, or an option
-//     as it is, each within the type's length;
+//     as it is, each within the type's length, with its characters as they
+//     are, which the text rules checked as the value was set, so that a
+//     stored value that today's rules refuse (input.CheckText) converts as it
+//     is read (Read);
 //   - to enum, a value whose string, as above, is one of toOptions.
 //
 // A value of another type than from, or of no type, does not convert.
@@ -630,13 +646,86 @@ func fromString(s, to string, options []string) (Value, bool) {
 		if !floatForm.MatchString(s) {
 			return Value{}, false
 		}
-		out, problem := number(Float, strings.TrimPrefix(s, "+"), true)
-		return out, problem == ""
-	case String, Text, Enum:
-		out, problem := stringValue(s).Of(to, options...)
+		f, ok := decimal(s)
+		if !ok {
+			return Value{}, false
+		}
+		return floatValue(f), true
+	case String:
+		return stringOf(s, MaxStringLength)
+	case Text:
+		return stringOf(s, MaxTextLength)
+	case Enum:
+		out, problem := option(stringValue(s).raw, options)
 		return out, problem == ""
 	}
 	return Value{}, false
+}
+
+// stringOf returns s as a value of a string or a text, of at most maxChars
+// characters, with its characters as they are, and whether it is within the
+// length.
+func stringOf(s string, maxChars int) (Value, bool) {
+	if utf8.RuneCountInString(s) > maxChars {
+		return Value{}, false
+	}
+	return stringValue(s), true
+}
+
+// hugeExponent stands for an exponent of more than 9 digits, either way, as a
+// string that converts to a float may have, which no digits that a text holds
+// (MaxTextLength) bring back within a double's range.
+const hugeExponent = 1_000_000_000
+
+// decimal returns s, a string of floatForm, as the double nearest it, as
+// to_float reads it (§5.8.9), 0 for one too small for a double, and whether
+// it is within a double's range, however many digits s has, and however
+// large its exponent, which the bounds of a payload's number (formProblem)
+// would refuse, and which ParseFloat misreads past 800 digits before a point
+// or 5 digits of exponent. It writes s's digits without the zeros around them
+// as 0.ddd, with the exponent that gives s's value, which ParseFloat reads
+// exactly however many digits follow the point, once it has told that
+// exponent from one beyond a double's range, either way.
+func decimal(s string) (float64, bool) {
+	negative := strings.HasPrefix(s, "-")
+	mantissa, exponent, _ := strings.Cut(strings.ToLower(strings.TrimLeft(s, "+-")), "e")
+	whole, fraction, _ := strings.Cut(mantissa, ".")
+	digits := strings.TrimLeft(whole+fraction, "0")
+	significant := strings.TrimRight(digits, "0")
+	if significant == "" {
+		return 0, true
+	}
+	e := int64(0)
+	if exponent != "" {
+		magnitude := strings.TrimLeft(strings.TrimLeft(exponent, "+-"), "0")
+		if len(magnitude) > 9 {
+			e = hugeExponent
+		} else if magnitude != "" {
+			n, _ := strconv.ParseInt(magnitude, 10, 64)
+			e = n
+		}
+		if strings.HasPrefix(exponent, "-") {
+			e = -e
+		}
+	}
+	// The value is 0.significant times ten to the power of point: at least
+	// 1e310, past a double's range, if point is more than 310, and less than
+	// 1e-400, which rounds to 0, if it is less than -400.
+	point := int64(len(digits)) - int64(len(fraction)) + e
+	switch {
+	case point > 310:
+		return 0, false
+	case point < -400:
+		return 0, true
+	}
+	f, err := strconv.ParseFloat("0."+significant+"e"+strconv.FormatInt(point, 10), 64)
+	if err != nil || math.IsInf(f, 0) {
+		return 0, false
+	}
+	if negative {
+		f = -f
+	}
+	return f, true
 }
 
 // FormatFloat returns f, a finite double, as the expression language's

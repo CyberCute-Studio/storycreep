@@ -3,6 +3,8 @@ package value
 import (
 	"encoding/json"
 	"math"
+	"math/big"
+	"math/rand/v2"
 	"strconv"
 	"strings"
 	"testing"
@@ -44,6 +46,16 @@ func TestTextAndEnum(t *testing.T) {
 	if _, problem := (Value{}).Of(Enum); problem == "" {
 		t.Errorf("an enum without options has a zero value")
 	}
+	// What is no type has no zero value, and no value, not even none, is one
+	// of it.
+	if z := Zero("bigint"); !z.IsZero() {
+		t.Errorf("the zero value of no type is %s", z.JSON())
+	}
+	for _, in := range []Value{{}, FromJSON([]byte("3"))} {
+		if got, problem := in.Read("bigint", Checks{}); problem == "" {
+			t.Errorf("%s was read as a value of no type, as %s", in.JSON(), got.JSON())
+		}
+	}
 }
 
 // TestCheckOptions checks the options of an enum: 1 to MaxOptions, each of 1
@@ -81,6 +93,8 @@ func TestCheckOptions(t *testing.T) {
 		{[]string{" calm"}, false},
 		{[]string{"ca\nlm"}, false},
 		{[]string{"   "}, false},
+		// What encoding/json reads an escape of a lone surrogate as.
+		{[]string{"calm", "an\uFFFDgry"}, false},
 	} {
 		if got := CheckOptionNames(c.options); (got == "") != c.ok {
 			t.Errorf("the option names %q: %q, want them taken: %t", c.options, got, c.ok)
@@ -148,6 +162,26 @@ func TestConvert(t *testing.T) {
 		{Enum, `"true"`, Bool, "true"},
 		{Enum, `"calm"`, String, `"calm"`},
 		{Int, "3", Int, "3"},
+		// A string converts to a float as to_float reads it, however many
+		// digits it has and however large its exponent, which a payload's
+		// number may not be written with: one too small for a double as 0.
+		{String, `"1e-1000"`, Float, "0"},
+		{String, `"-1e-99999999999"`, Float, "0"},
+		{String, `"0e99999999999"`, Float, "0"},
+		{String, `"1e99999999999"`, Float, ""},
+		{String, `"0.` + strings.Repeat("0", 400) + `15e400"`, Float, "0.15"},
+		{String, `"0.` + strings.Repeat("0", 300) + `15"`, Float, "1.5e-301"},
+		{Text, `"1` + strings.Repeat("0", 400) + `"`, Float, ""},
+		{Text, `"1` + strings.Repeat("0", 400) + `e-400"`, Float, "1"},
+		// The halfway point between 1 and the double after it rounds to the
+		// even one, 1, and what is past it, however far, to the double after.
+		{Text, `"1.00000000000000011102230246251565404236316680908203125"`, Float, "1"},
+		{Text, `"1.00000000000000011102230246251565404236316680908203125` + strings.Repeat("0", 900) + `1"`, Float,
+			"1.0000000000000002"},
+		// A string converts with its characters as they are, which a stored
+		// value that today's text rules refuse may hold.
+		{String, "\"a\u2028b\"", Text, `"a\u2028b"`},
+		{Text, "\"a\u2028b\"", String, `"a\u2028b"`},
 	} {
 		got, ok := Convert(FromJSON([]byte(c.in)), c.from, options, c.to, options)
 		if c.want == "" && ok || c.want != "" && (!ok || string(got.JSON()) != c.want) {
@@ -157,6 +191,57 @@ func TestConvert(t *testing.T) {
 	// A value that is not of its type does not convert.
 	if _, ok := Convert(FromJSON([]byte(`"3"`)), Int, nil, Float, nil); ok {
 		t.Errorf("a string read as an int converted")
+	}
+	// The line separator that converted above is one that a command no longer
+	// sets.
+	if _, problem := FromJSON([]byte("\"a\u2028b\"")).Of(Text); problem == "" {
+		t.Errorf("a text with a line separator was taken")
+	}
+}
+
+// TestConvertFloat checks that a string converts to the double nearest it,
+// as to_float reads it (§5.8.9), against an exact reading of it as a
+// fraction (big.Rat), for strings of many digits, on either side of the
+// point, and with exponents far beyond a double's range.
+//
+// Verifies: FR-COMP-01/AC2
+func TestConvertFloat(t *testing.T) {
+	t.Parallel()
+	rng := rand.New(rand.NewPCG(34, 2))
+	digits := func(n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = byte('0' + rng.IntN(10))
+		}
+		return string(b)
+	}
+	for range 2000 {
+		s := digits(1 + rng.IntN(1200))
+		if rng.IntN(2) == 0 {
+			s += "." + digits(1+rng.IntN(1200))
+		}
+		if rng.IntN(2) == 0 {
+			s += "e" + strconv.Itoa(rng.IntN(2401)-1200)
+		}
+		if rng.IntN(2) == 0 {
+			s = "-" + s
+		}
+		r, ok := new(big.Rat).SetString(s)
+		if !ok {
+			t.Fatalf("big.Rat does not read %s", s)
+		}
+		want, _ := r.Float64()
+		raw, _ := json.Marshal(s)
+		got, converted := Convert(FromJSON(raw), String, nil, Float, nil)
+		if math.IsInf(want, 0) {
+			if converted {
+				t.Errorf("%s, beyond a double's range, converted to %s", s, got.JSON())
+			}
+			continue
+		}
+		if !converted || string(got.JSON()) != string(floatValue(want).JSON()) {
+			t.Errorf("%s converted to %s, %t; want %s", s, got.JSON(), converted, floatValue(want).JSON())
+		}
 	}
 }
 

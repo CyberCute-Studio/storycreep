@@ -388,6 +388,13 @@ JOIN live_attribute_def a ON a.workspace_id = v.workspace_id AND a.project_id = 
 WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.component_id = ANY(@ids::uuid[])
 ORDER BY v.component_id, v.attribute_def_id;
 
+-- name: ComponentValue :one
+-- ComponentValue returns the value that the component component_id holds of
+-- the attribute definition attribute_def_id.
+SELECT value FROM attribute_value
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND component_id = @component_id
+    AND attribute_def_id = @attribute_def_id;
+
 -- name: AttributeValues :many
 -- AttributeValues returns the values that the project's components hold of
 -- the attribute definition attribute_def_id, those of the components in the
@@ -401,15 +408,14 @@ WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.attrib
 ORDER BY v.component_id
 LIMIT @max_rows;
 
--- name: FillAttributeValues :many
+-- name: FillAttributeValues :exec
 -- FillAttributeValues gives each component of the type component_type_id,
 -- those in the trash included, that holds no value of the attribute
--- definition attribute_def_id the value value, and returns their IDs.
+-- definition attribute_def_id the value value.
 INSERT INTO attribute_value (workspace_id, project_id, component_id, attribute_def_id, value)
 SELECT c.workspace_id, c.project_id, c.id, @attribute_def_id, @value FROM component c
 WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id AND c.component_type_id = @component_type_id
-ON CONFLICT DO NOTHING
-RETURNING component_id;
+ON CONFLICT DO NOTHING;
 
 -- name: InsertComponentValues :exec
 -- InsertComponentValues gives the component component_id the values of the
