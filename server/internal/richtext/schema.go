@@ -41,8 +41,7 @@ const SchemaPath = "schema/rich-text/v1/rich-text.schema.json"
 // uniqueItems, which huma checks in time that grows with the square of the
 // array's length. The schema has only the keywords that package apicontract
 // reads, so that the API's OpenAPI document, which holds it for a Doc field,
-// loads and generates the TypeScript client's types; the document also holds
-// the discriminators that Doc.Schema gives huma, which apicontract reads too.
+// loads and generates the TypeScript client's types.
 func Schema() []byte {
 	examples := make([]any, len(schemaExamples))
 	for i, ex := range schemaExamples {
@@ -87,20 +86,30 @@ const defsPrefix = "#/$defs/"
 // definitions beside it, as RichTextBlock, once however many fields refer to
 // it.
 //
-// Each oneOf of a block, an inline node, or a mark has a discriminator in
-// huma's registry, which the published schema, a JSON Schema, has no keyword
-// for: huma validates a node against the definition of its type alone, and
-// refuses a document at the value that is wrong, with what is wrong with it,
-// but for the problems after a node or a mark without a type, or whose type
-// is neither a string nor null, whose locations have a segment too many
-// (discriminator).
+// huma validates a node or a mark against every member of the oneOf of
+// blocks, inline nodes, or marks, as JSON Schema does, and keeps none of
+// their problems, so it refuses a document with a node or a mark that the
+// schema does not take, or that holds a value that it does not take, at the
+// outermost block that holds it, with "expected value to match exactly one
+// schema but matched none". Its work still grows with the document's size:
+// a body of 5 MiB of marked text, each of whose marks it validates against
+// each kind of mark once for each kind of inline node, costs it about as
+// much as a body of 5 MiB of objects that are no node, about 0.9 s.
+//
+// The oneOfs have no discriminator on type, the OpenAPI keyword with which
+// huma would validate a node against its type's definition alone, for a
+// fifth of that and with each problem at its place: huma (v2.39.1) pushes
+// type onto its path at an object without a type, or whose type is neither a
+// string nor null, and does not pop it (validateDiscriminator), so that every
+// later problem's location has a segment more for each such object, and a
+// body of many of them costs memory that grows with the square of their
+// number: a body of 5 MiB of {} runs the server out of memory. Package
+// apicontract refuses a discriminator in the API's OpenAPI document for that.
 //
 // huma passes over a null in a property that a schema does not require, as
 // it does in any body, where JSON Schema checks it against the property's
 // schema, so a null in an optional field of a document, as a valueRef's
-// decimals, reaches UnmarshalJSON, which refuses it with WrongType; and so do
-// a node or a mark that is not an object, or whose type is not a string,
-// which a discriminator does not read.
+// decimals, reaches UnmarshalJSON, which refuses it with WrongType.
 func (Doc) Schema(r huma.Registry) *huma.Schema {
 	return r.Schema(reflect.TypeFor[richTextDoc](), true, "")
 }
@@ -228,84 +237,16 @@ func (c humaConverter) schema(v any) *huma.Schema {
 				s.Properties[name] = c.schema(p)
 			}
 		case "oneOf":
+			// Without a discriminator, which huma mishandles (see Doc.Schema).
 			for _, o := range x.([]any) {
 				s.OneOf = append(s.OneOf, c.schema(o))
 			}
-			s.Discriminator = discriminator(x.([]any), s.OneOf)
 		default:
 			panic("richtext: the schema has the keyword " + k + ", which the conversion to huma does not convert")
 		}
 	}
 	s.PrecomputeMessages()
 	return s
-}
-
-// discriminator returns the discriminator of a oneOf whose members, as the
-// schema writes them, each refer to a definition, as a block's, an inline
-// node's, and a mark's do, or nil for a oneOf whose members are schemas of
-// their own, as a valueRef's attrs. It maps each type to its member as
-// converted, a reference in huma's registry. Each definition that a member
-// refers to is of objects that require a type of their own, a const or an
-// enum of strings, which no other member's has: it panics at a oneOf of
-// references that is not, so that a definition changed otherwise cannot
-// leave huma to validate a node against every member, unnoticed.
-//
-// With it, huma validates a node against the definition of its type alone,
-// rather than against every member of the oneOf, of which it keeps no error
-// but "expected value to match exactly one schema but matched none" at the
-// oneOf: so a request with an unknown mark or a javascript: link deep in a
-// list is refused at the mark or the link, with what is wrong with it, rather
-// than at the list's block, and a node's marks are validated once rather than
-// once for each kind of inline node, and each mark once rather than once for
-// each kind of mark, which made a body of 5 MiB of marked text cost huma
-// about 0.9 s, against 65 ms. huma lets through a value that is not an object
-// or whose type is not a string, which Parse then refuses, and validates one
-// whose type no member has against every member, as a oneOf.
-//
-// huma (v2.39.1) pushes type onto the path of the value that it validates when
-// an object has no type, or one that is neither a string nor null, and does
-// not pop it (validateDiscriminator), so that it reports every later problem
-// of the same body at a location with a segment too many for each such
-// object, as at text.content[0][1] for text.content[1], or at text.title for
-// title, though it reports those before at their places. That costs less than
-// oneOfs without discriminators, which report every problem of a document at
-// its outermost block, and only huma can fix it: TestDocField holds the
-// README to it, and fails once huma pops what it pushed.
-func discriminator(members []any, converted []*huma.Schema) *huma.Discriminator {
-	refs := 0
-	for _, m := range members {
-		if _, ok := m.(map[string]any)["$ref"]; ok {
-			refs++
-		}
-	}
-	if refs == 0 {
-		return nil
-	}
-	mapping := map[string]string{}
-	for i, m := range members {
-		ref, _ := m.(map[string]any)["$ref"].(string)
-		def, _ := schemaDefinitions()[strings.TrimPrefix(ref, defsPrefix)].(map[string]any)
-		required, _ := def["required"].([]any)
-		properties, _ := def["properties"].(map[string]any)
-		typ, _ := properties["type"].(map[string]any)
-		values, _ := typ["enum"].([]any)
-		if v, ok := typ["const"]; ok {
-			values = []any{v}
-		}
-		if ref == "" || !slices.Contains(required, any("type")) || len(values) == 0 {
-			panic(fmt.Sprintf("richtext: the member %v of a oneOf of references is not a reference to a "+
-				"definition that requires a type of a const or an enum", m))
-		}
-		for _, v := range values {
-			name, ok := v.(string)
-			if _, taken := mapping[name]; !ok || taken {
-				panic(fmt.Sprintf("richtext: the type %v of the member %s of a oneOf is not a string, or is "+
-					"another member's too", v, ref))
-			}
-			mapping[name] = converted[i].Ref
-		}
-	}
-	return &huma.Discriminator{PropertyName: "type", Mapping: mapping}
 }
 
 // The patterns of the schema, which Go's regular expressions and

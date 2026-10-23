@@ -180,21 +180,8 @@ type Schema struct {
 	OneOf                []*Schema          `json:"oneOf"`
 	AnyOf                []*Schema          `json:"anyOf"`
 	AllOf                []*Schema          `json:"allOf"`
-	// Discriminator, beside a oneOf, names the property whose value chooses
-	// the member that huma's validator validates a value against.
-	Discriminator *Discriminator `json:"discriminator"`
-}
-
-// Discriminator is the discriminator of a oneOf, as huma writes it: the
-// property whose value, a string, chooses the member that huma's validator
-// validates an object against, by Mapping, the reference to the member for
-// each value. huma validates an object whose value the mapping lacks against
-// the oneOf, refuses one without the property, and lets through a value that
-// is not an object or whose property is not a string, without reading any
-// member.
-type Discriminator struct {
-	PropertyName string            `json:"propertyName"`
-	Mapping      map[string]string `json:"mapping"`
+	// Discriminator is read only so that checkSchema refuses it, with why.
+	Discriminator json.RawMessage `json:"discriminator"`
 }
 
 // Types is the type keyword, which is one type name or a list of them, such
@@ -494,32 +481,22 @@ var typeNames = []string{"string", "integer", "number", "boolean", "array", "obj
 // checkSchema checks that every type in s is one of JSON Schema's, every
 // property that s requires is one that it names, every reference names a
 // schema that exists and has beside it only the keywords that annotate it,
-// and a discriminator is beside a oneOf, names a property, and maps each
-// value to a member of the oneOf that refers to a schema, which huma's
-// validator resolves by the reference that the mapping holds.
+// and s has no discriminator.
 func (d *Document) checkSchema(s *Schema) error {
 	if s == nil {
 		return nil
 	}
-	if disc := s.Discriminator; disc != nil {
-		// huma's validator reads a discriminator only beside a oneOf.
-		if len(s.OneOf) == 0 {
-			return errors.New("it has a discriminator without a oneOf")
-		}
-		if disc.PropertyName == "" {
-			return errors.New("its discriminator names no property")
-		}
-		for _, value := range slices.Sorted(maps.Keys(disc.Mapping)) {
-			// A member's reference names a schema of the document, which the
-			// check of the member below makes sure of.
-			ref := disc.Mapping[value]
-			switch {
-			case ref == "":
-				return fmt.Errorf("its discriminator maps %q to no reference", value)
-			case !slices.ContainsFunc(s.OneOf, func(m *Schema) bool { return m != nil && m.Ref == ref }):
-				return fmt.Errorf("its discriminator maps %q to %s, which is no member of its oneOf", value, ref)
-			}
-		}
+	if s.Discriminator != nil {
+		// huma's validator (v2.39.1) pushes the discriminator's property onto
+		// its path at an object without it, or whose property is neither a
+		// string nor null, and does not pop it (validateDiscriminator), so
+		// that the location of every later problem of the body has a segment
+		// more for each such object: a body of many of them costs memory that
+		// grows with the square of their number, and a body of 5 MiB of {} in
+		// an array of a oneOf with a discriminator runs the server out of
+		// memory. Allow one again only once huma pops what it pushes.
+		return errors.New("it has a discriminator, with which huma's validator (v2.39.1) costs memory that grows " +
+			"with the square of the number of objects in a body that lack its property")
 	}
 	for _, t := range s.Type {
 		if !slices.Contains(typeNames, t) {

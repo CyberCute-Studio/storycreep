@@ -428,10 +428,12 @@ func parseDoc(data []byte) (*Doc, error) {
 // json.dumps every character beyond ASCII, which would otherwise make the
 // same document up to six times as long. It reads what is not JSON without
 // failing, which the decoder then refuses, before Parse reports a lone
-// surrogate.
+// surrogate. It stops once the length is more than MaxBytes, which Parse
+// refuses whatever follows, so that a field of 5 MiB, which the API takes, is
+// read only as far as its first MiB.
 func scan(data []byte) (length int, lone bool) {
 	n, inString := 0, false
-	for i := 0; i < len(data); i++ {
+	for i := 0; i < len(data) && n <= MaxBytes; i++ {
 		c := data[i]
 		switch {
 		case !inString:

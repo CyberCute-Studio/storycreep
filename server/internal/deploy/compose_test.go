@@ -302,16 +302,34 @@ func TestDevComposeFile(t *testing.T) {
 }
 
 // TestCIGoVersion checks that every job of CI sets up the Go that the
-// Dockerfile builds the server with, its version without a patch, as
-// golang:1.26-alpine's 1.26: a newer Go's Unicode tables may be of another
+// Dockerfile builds the server with, its version as the image's tag writes
+// it, as golang:1.26-alpine's 1.26 or golang:1.26.5@sha256:…'s 1.26.5, and
+// its newest patch (check-latest), as the image has it, rather than one that
+// the runner has cached: a newer Go's Unicode tables may be of another
 // version, which the rich text's word counts and link rules read, so that CI
 // would test tables that the server does not have, and TestUnicodeTables
-// would fail on a pull request that changes neither.
+// would fail on a pull request that changes neither; and an older patch's
+// standard library may have vulnerabilities that govulncheck reports and the
+// image has not.
 func TestCIGoVersion(t *testing.T) {
+	version := regexp.MustCompile(`^golang:(\d+\.\d+(?:\.\d+)?)(?:[-@]|$)`)
+	for image, want := range map[string]string{
+		"golang:1.26-alpine": "1.26", "golang:1.26": "1.26", "golang:1.26.5-alpine3.22": "1.26.5",
+		"golang:1.26@sha256:" + strings.Repeat("0", 64): "1.26", "golang:1.26.5-alpine@sha256:" + strings.Repeat("0", 64): "1.26.5",
+		"golang:1.2x-alpine": "", "golang:latest": "", "golang:1-alpine": "",
+	} {
+		got := ""
+		if m := version.FindStringSubmatch(image); m != nil {
+			got = m[1]
+		}
+		if got != want {
+			t.Errorf("the image %s names Go %q, want %q", image, got, want)
+		}
+	}
 	goImage := goImageOfDockerfile(t)
-	m := regexp.MustCompile(`^golang:(\d+\.\d+)(?:-|$)`).FindStringSubmatch(goImage)
+	m := version.FindStringSubmatch(goImage)
 	if m == nil {
-		t.Fatalf("the Dockerfile builds with %q, which names no minor version of Go", goImage)
+		t.Fatalf("the Dockerfile builds with %q, whose tag starts with no version of Go, as 1.26 or 1.26.5", goImage)
 	}
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
 	if err != nil {
@@ -338,6 +356,9 @@ func TestCIGoVersion(t *testing.T) {
 			if got, ok := step.With["go-version"].(string); !ok || got != m[1] {
 				t.Errorf("CI's job %s sets up Go %v, and the Dockerfile builds the server with %s: want %q",
 					name, step.With["go-version"], goImage, m[1])
+			}
+			if latest, _ := step.With["check-latest"].(bool); !latest {
+				t.Errorf("CI's job %s sets up the patch of Go that the runner has cached: want check-latest: true", name)
 			}
 		}
 	}

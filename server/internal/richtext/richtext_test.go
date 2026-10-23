@@ -276,6 +276,14 @@ func TestJSONLength(t *testing.T) {
 			t.Errorf("scan(%s) finds a lone surrogate: %v, want %v", in, got, want)
 		}
 	}
+	// scan stops once the length is more than MaxBytes, which Parse refuses,
+	// so it reads neither the rest of the length nor a lone surrogate there.
+	long := []byte(`"` + strings.Repeat("a", 4*MaxBytes) + `\ud800"`)
+	if got, lone := scan(long); got != MaxBytes+1 || lone {
+		t.Errorf("scan of %d bytes = %d, %v, want %d, false", len(long), got, lone, MaxBytes+1)
+	}
+	_, err := Parse(long)
+	wantError(t, err, TooLarge, "")
 }
 
 // TestParseJSON checks that Parse refuses input that is not one JSON value
@@ -1182,12 +1190,12 @@ func resolve(v any, pointer string) (any, bool) {
 }
 
 // FuzzParse checks that Parse never panics, that a document that it accepts,
-// and its canonical form, validate against the schema, as JSON Schema reads
-// it and as the API's huma validates it, that the canonical form is a fixed
-// point that derives without panicking, that a Doc that a program builds of
-// the same document out of its canonical form is written as it and derives
-// what it derives, and that every error has a known reason and points at a
-// value of the input.
+// and its canonical form, validate against the schema, as the API's huma
+// validates it, that the canonical form is a fixed point that derives
+// without panicking, that a Doc that a program builds of the same document
+// out of its canonical form is written as it and derives what it derives,
+// and that every error has a known reason and points at a value of the
+// input.
 func FuzzParse(f *testing.F) {
 	v := readVectors(f)
 	for _, vec := range v.Valid {
@@ -1197,8 +1205,7 @@ func FuzzParse(f *testing.F) {
 		f.Add([]byte(vec.Doc))
 	}
 	names := v.names()
-	s := publishedSchema(f)
-	validators := map[string]func([]byte) []error{"the schema": humaValidator(f, s, true), "huma": humaValidator(f, s, false)}
+	validate := humaValidator(f, publishedSchema(f))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		doc, err := Parse(data)
 		if err != nil {
@@ -1224,13 +1231,11 @@ func FuzzParse(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for name, validate := range validators {
-			if problems := validate(data); problems != nil {
-				t.Fatalf("%s refuses a document that Parse accepts: %v", name, problems)
-			}
-			if problems := validate(canonical); problems != nil {
-				t.Fatalf("%s refuses the canonical form %s: %v", name, canonical, problems)
-			}
+		if problems := validate(data); problems != nil {
+			t.Fatalf("the schema refuses a document that Parse accepts: %v", problems)
+		}
+		if problems := validate(canonical); problems != nil {
+			t.Fatalf("the schema refuses the canonical form %s: %v", canonical, problems)
 		}
 		again, err := Parse(canonical)
 		if err != nil {

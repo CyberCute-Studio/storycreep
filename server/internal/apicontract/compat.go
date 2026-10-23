@@ -71,29 +71,6 @@ func (c Change) String() string {
 //     allow. A required property is required as huma reads it: not in a
 //     request if it is readOnly, and not in a response if it is writeOnly.
 //
-// A oneOf's discriminator is what huma's validator reads to choose the
-// member that it validates an object against, by the value of a property,
-// and to let through a value that is not an object, or whose property is not
-// a string. A request's may map values that base's did not, and a request's
-// oneOf may gain one, as long as no member of base's oneOf but the one that
-// such a value is mapped to takes an object with that value, as each needs
-// the property, with a schema that does not take the value, and, for a oneOf
-// that gains one, every member of base's needs the property: then the
-// discriminator leads every object that base took to the member that took it,
-// as when a request's union of nodes gains a type of node and maps it to the
-// member that it gains. A response's oneOf may gain a discriminator, and a
-// response's discriminator may map values that base's did not, since huma
-// does not validate a response, so its discriminator changes nothing that a
-// client receives, and a client of base's reads it, if at all, only as far
-// as base's mapped, to the same members; a member that the oneOf gains is
-// compared as a member is. A response's discriminator may also no longer map
-// a value whose member the oneOf loses, as a response's may, when no member
-// is named as the value, so that head sends no object with it. Any other
-// change to a discriminator breaks a client: one that maps a value to another
-// member, or no longer maps it, or reads another property, and one that a
-// oneOf loses, which, in a request, then validates an object whose property
-// is not a string against every member.
-//
 // Schemas combined with oneOf, anyOf, or allOf are compared member by
 // member. If the members of a oneOf or an anyOf all refer to named schemas,
 // as those of the command endpoint's union of the types of command do, they
@@ -429,148 +406,11 @@ func (c *comparer) compare(loc string, b, h *Schema, dir direction, headNull boo
 	if dir == request && b.Default != nil && !sameJSON(b.Default, h.Default) {
 		c.report("%s: the default changed from %s to %s", loc, jsonOrNone(b.Default), jsonOrNone(h.Default))
 	}
-	c.discriminator(loc, b, h, dir)
 	c.composition(loc, b, h, dir, headNull)
 	c.object(loc, b, h, dir)
 	if b.Items != nil || h.Items != nil {
 		c.schema(loc+"[]", b.Items, h.Items, dir)
 	}
-}
-
-// discriminator reports a change from base's discriminator of the oneOf at loc
-// to head's that breaks a client: in a response, any change but one that
-// keeps what base's mapped of the members that head's oneOf has, and in a
-// request any change but one that widens judges compatible.
-func (c *comparer) discriminator(loc string, b, h *Schema, dir direction) {
-	was, is := describeDiscriminator(b.Discriminator), describeDiscriminator(h.Discriminator)
-	if was == is || dir == request && c.widens(b, h) ||
-		dir == response && keeps(b.Discriminator, h.Discriminator, lost(h.OneOf)) {
-		return
-	}
-	c.report("%s: the discriminator changed from %s to %s", loc, was, is)
-}
-
-// keeps reports whether head's discriminator hd reads the property that
-// base's, bd, read, and maps each value that bd mapped to the same member,
-// but for a value that gone takes, which hd may no longer map, or whether bd
-// is nil and hd is not: whether hd keeps what bd said of the objects of the
-// oneOf. gone is nil, or takes a value that bd mapped, and the reference that
-// bd mapped it to.
-func keeps(bd, hd *Discriminator, gone func(value, to string) bool) bool {
-	if hd == nil || bd != nil && bd.PropertyName != hd.PropertyName {
-		return false
-	}
-	if bd == nil {
-		return true
-	}
-	for value, to := range bd.Mapping {
-		got, ok := hd.Mapping[value]
-		switch {
-		case ok && refName(got) == refName(to):
-		case !ok && gone != nil && gone(value, to):
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// lost returns, for keeps, whether a response's oneOf, whose members in head
-// are members, lost the member that base's discriminator mapped a value to,
-// as a response's oneOf may lose members (union), and has no member named as
-// the value, which a discriminator reads a value that its mapping lacks as:
-// then head sends no object with the value, which base's discriminator could
-// read otherwise than head's. It returns nil, so that every value stays
-// mapped, unless every member refers to a named schema, as the members of a
-// oneOf that union compares do.
-func lost(members []*Schema) func(value, to string) bool {
-	names := memberNames(members)
-	if names == nil {
-		return nil
-	}
-	return func(value, to string) bool {
-		return !slices.Contains(names, refName(to)) && !slices.Contains(names, value)
-	}
-}
-
-// widens reports whether, in a request, head's oneOf, with its discriminator,
-// takes every object that base's took, with base's discriminator or without
-// one, as far as the discriminators decide it. huma's validator validates an
-// object whose property is a string that the mapping maps against that
-// member alone, and an object whose property is another string against every
-// member, as a oneOf without a discriminator does; it refuses an object
-// without the property, and lets through a value that is not an object, or
-// whose property is not a string. So head's discriminator reads the property
-// that base's read, and maps each value that base's mapped to the same
-// member; and no member of base's oneOf but the one that head's maps a value
-// to, that base's did not, takes an object with that value, as each needs the
-// property, with a schema that does not take the value, so that such an
-// object that base took, it took by that member, which composition compares.
-// When base's oneOf had no discriminator, each of its members also needs the
-// property, so that base refused an object without it too.
-//
-// A discriminator that a request's oneOf loses breaks a client, since the
-// oneOf then validates an object whose property is not a string against
-// every member, which base let through.
-func (c *comparer) widens(b, h *Schema) bool {
-	bd, hd := b.Discriminator, h.Discriminator
-	if !keeps(bd, hd, nil) {
-		return false
-	}
-	property := hd.PropertyName
-	var mapped map[string]string
-	if bd != nil {
-		mapped = bd.Mapping
-	}
-	// needs reports whether base's member m needs the property in a request,
-	// and returns the property's schema, or nil when it has none.
-	needs := func(m *Schema) (*Schema, bool) {
-		s, _ := c.base.resolve(m)
-		if s == nil || !needed(s, request)[property] {
-			return nil, false
-		}
-		p, _ := c.base.resolve(s.Properties[property])
-		return p, true
-	}
-	for _, value := range slices.Sorted(maps.Keys(hd.Mapping)) {
-		if _, ok := mapped[value]; ok {
-			continue
-		}
-		// The value as JSON writes it, which strconv.Quote does not for a
-		// control character or DEL; a string always encodes.
-		quoted, _ := json.Marshal(value)
-		taken := &Schema{Const: quoted}
-		for _, m := range b.OneOf {
-			if m != nil && m.Ref != "" && refName(m.Ref) == refName(hd.Mapping[value]) {
-				continue
-			}
-			if p, ok := needs(m); !ok || p == nil || !exclusive(p, taken) {
-				return false
-			}
-		}
-	}
-	if bd == nil {
-		for _, m := range b.OneOf {
-			if _, ok := needs(m); !ok {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// describeDiscriminator writes a oneOf's discriminator d as a change names
-// it: its property, and the name of the schema that it maps each value to, in
-// the order of the values, or "none".
-func describeDiscriminator(d *Discriminator) string {
-	if d == nil {
-		return "none"
-	}
-	var mapping []string
-	for _, value := range slices.Sorted(maps.Keys(d.Mapping)) {
-		mapping = append(mapping, strconv.Quote(value)+": "+refName(d.Mapping[value]))
-	}
-	return fmt.Sprintf("%s {%s}", strconv.Quote(d.PropertyName), strings.Join(mapping, ", "))
 }
 
 // typeSet returns the types that s allows, apart from null, whether it
