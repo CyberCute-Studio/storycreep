@@ -60,6 +60,58 @@ func (q *Queries) AttributeDefAny(ctx context.Context, arg AttributeDefAnyParams
 	return i, err
 }
 
+const attributeDefAnyForShare = `-- name: AttributeDefAnyForShare :one
+SELECT attribute_def.id, attribute_def.workspace_id, attribute_def.project_id, attribute_def.component_type_id, attribute_def."order", attribute_def.key, attribute_def.name, attribute_def.type, attribute_def.enum_options, attribute_def.default_value, attribute_def.is_runtime, attribute_def.rev, attribute_def.deleted_at, attribute_def.created_by, attribute_def.updated_by, attribute_def.created_at, attribute_def.updated_at, (t.deleted_at IS NOT NULL)::boolean AS type_deleted
+FROM attribute_def
+JOIN component_type t ON t.workspace_id = attribute_def.workspace_id AND t.project_id = attribute_def.project_id
+    AND t.id = attribute_def.component_type_id
+WHERE attribute_def.workspace_id = $1 AND attribute_def.project_id = $2
+    AND attribute_def.id = $3
+FOR SHARE OF attribute_def
+`
+
+type AttributeDefAnyForShareParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	ID          pgtype.UUID
+}
+
+type AttributeDefAnyForShareRow struct {
+	AttributeDef AttributeDef
+	TypeDeleted  bool
+}
+
+// AttributeDefAnyForShare is AttributeDefAny, and locks the definition's row
+// FOR SHARE until the transaction ends, so that no change of the definition,
+// which updates its row, commits until then: for the list of what a retype
+// would not convert, which holds no lock but once changes of the definition
+// have committed while it read the values, each time that it read them.
+func (q *Queries) AttributeDefAnyForShare(ctx context.Context, arg AttributeDefAnyForShareParams) (AttributeDefAnyForShareRow, error) {
+	row := q.db.QueryRow(ctx, attributeDefAnyForShare, arg.WorkspaceID, arg.ProjectID, arg.ID)
+	var i AttributeDefAnyForShareRow
+	err := row.Scan(
+		&i.AttributeDef.ID,
+		&i.AttributeDef.WorkspaceID,
+		&i.AttributeDef.ProjectID,
+		&i.AttributeDef.ComponentTypeID,
+		&i.AttributeDef.Order,
+		&i.AttributeDef.Key,
+		&i.AttributeDef.Name,
+		&i.AttributeDef.Type,
+		&i.AttributeDef.EnumOptions,
+		&i.AttributeDef.DefaultValue,
+		&i.AttributeDef.IsRuntime,
+		&i.AttributeDef.Rev,
+		&i.AttributeDef.DeletedAt,
+		&i.AttributeDef.CreatedBy,
+		&i.AttributeDef.UpdatedBy,
+		&i.AttributeDef.CreatedAt,
+		&i.AttributeDef.UpdatedAt,
+		&i.TypeDeleted,
+	)
+	return i, err
+}
+
 const attributeDefCount = `-- name: AttributeDefCount :one
 SELECT count(*) FROM attribute_def
 WHERE workspace_id = $1 AND project_id = $2 AND component_type_id = $3

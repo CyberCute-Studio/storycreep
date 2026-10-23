@@ -563,6 +563,9 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 			if err == nil {
 				inverses[i], err = p.registry.checkSteps(steps)
 			}
+			for _, st := range inverses[i] {
+				t.undoBytes += len(st.Payload)
+			}
 			if refused, ok := refusedBy(err, i, c); ok {
 				return Result{}, refused
 			}

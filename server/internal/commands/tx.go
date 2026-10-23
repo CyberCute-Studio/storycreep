@@ -42,6 +42,10 @@ type Tx struct {
 	changed []Revision
 	at      map[Ref]int
 	revs    map[Ref]int64
+	// undoBytes is how many bytes the payloads of the steps of the inverses
+	// that the pipeline has computed of the batch's commands take, as the
+	// operation log keeps them (UndoBytes).
+	undoBytes int
 	// usage is what the batch's commands add to each key of the workspace's
 	// usage, and usageKeys the keys in the order of their first report.
 	// checked is what the batch's commands declared that they add to each
@@ -94,6 +98,17 @@ func (t *Tx) ProjectID() ids.UUID {
 // transaction is scoped to (database.Scope).
 func (t *Tx) WorkspaceID() ids.UUID {
 	return t.workspace
+}
+
+// UndoBytes returns how many bytes the payloads of the steps of the inverses
+// of the batch's commands before the current one take, as the operation log
+// keeps them, in the operation's one inverse: what an Inverse that holds a
+// part of the project that grows with it, as the values that a change of an
+// attribute definition loses, adds its own payload to, so that it can keep
+// the batch's inverse within a bound, rather than only its own, which a batch
+// of many such commands would pass.
+func (t *Tx) UndoBytes() int {
+	return t.undoBytes
 }
 
 // Changed reports that the command changed the entity of the kind with the

@@ -58,11 +58,12 @@ const (
 	RestoreAttribute commands.Type = "attribute.restore"
 )
 
-// maxUndoValues is the most bytes that the values that the undo of a change of
-// an attribute definition's options or type holds, those that the change
-// loses, take in its payload, which the operation log keeps, each with its
-// component's ID: 16 MiB, which only a test that is not parallel lowers
-// (SetMaxUndoValues).
+// maxUndoValues is the most bytes that the undo of a batch, which the
+// operation log keeps, may take once a change of an attribute definition's
+// options or type in it adds the values that it loses, each with its
+// component's ID, to its own undo's payload: 16 MiB, which only a test that is
+// not parallel lowers (SetMaxUndoValues), and which Go runs while every
+// parallel test of the package waits.
 var maxUndoValues = 16 << 20
 
 // createAttributePayload is CreateAttribute's payload.
@@ -298,14 +299,15 @@ func registerAttributes(r *commands.Registry) {
 			}
 			// The undo gives a value that is none of the old options the old
 			// default, so it holds every value that the change changes.
-			lost, err := plan.lost(ctx, tx, "options", func(value.Value) (value.Value, bool) {
+			undo := attributeOptionsPayload{ID: p.ID, Options: plan.a.EnumOptions, Default: plan.oldDefault}
+			lost, err := plan.lost(ctx, tx, "options", undo, func(value.Value) (value.Value, bool) {
 				return value.Value{}, false
 			})
 			if err != nil {
 				return nil, err
 			}
-			return []commands.Step{{Type: SetAttributeOptions, Payload: attributeOptionsPayload{ID: p.ID,
-				Options: plan.a.EnumOptions, Default: plan.oldDefault, Values: lost}}}, nil
+			undo.Values = lost
+			return []commands.Step{{Type: SetAttributeOptions, Payload: undo}}, nil
 		},
 		Apply: func(ctx context.Context, tx *commands.Tx, p attributeOptionsPayload) error {
 			plan, err := planOptions(ctx, tx, p)
@@ -335,21 +337,23 @@ func registerAttributes(r *commands.Registry) {
 				return nil, err
 			}
 			a := plan.a
+			var options []string
+			if a.Type == value.Enum {
+				options = a.EnumOptions
+			}
+			undo := retypeAttributePayload{ID: p.ID, Type: a.Type, Conversion: ConversionConvert, Options: options,
+				Default: plan.oldDefault}
 			// A value that the conversion back makes of the new one is the value
 			// that the definition's components held, but for those that the
 			// undo then gives back.
-			lost, err := plan.lost(ctx, tx, "type", func(v value.Value) (value.Value, bool) {
+			lost, err := plan.lost(ctx, tx, "type", undo, func(v value.Value) (value.Value, bool) {
 				return value.Convert(v, p.Type, p.Options, a.Type, a.EnumOptions)
 			})
 			if err != nil {
 				return nil, err
 			}
-			var options []string
-			if a.Type == value.Enum {
-				options = a.EnumOptions
-			}
-			return []commands.Step{{Type: RetypeAttribute, Payload: retypeAttributePayload{ID: p.ID, Type: a.Type,
-				Conversion: ConversionConvert, Options: options, Default: plan.oldDefault, Values: lost}}}, nil
+			undo.Values = lost
+			return []commands.Step{{Type: RetypeAttribute, Payload: undo}}, nil
 		},
 		Apply: func(ctx context.Context, tx *commands.Tx, p retypeAttributePayload) error {
 			plan, err := planRetype(ctx, tx, p)
@@ -740,24 +744,34 @@ func (plan *valuesPlan) each(ctx context.Context, tx *commands.Tx, fn func(u ids
 }
 
 // lost returns the values that the plan's change loses, by their components'
-// IDs, which its undo gives back: those that what back makes of the new value
-// is not, as none that back does not convert, or refuses the batch, at the
-// payload's field at, the field that the change changes, once they come to
-// more than maxUndoValues bytes of the undo's payload, as the operation log
-// keeps it: each value with its component's ID, quoted, a colon, and a comma.
-func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, at string,
+// IDs, which its undo, undo, a payload without them, gives back: those that
+// what back makes of the new value is not, as none that back does not
+// convert. It refuses the batch, at the payload's field at, the field that
+// the change changes, once they would take the batch's undo, as the operation
+// log keeps it, past maxUndoValues bytes: the payloads of the undos of the
+// batch's commands before this one (commands.Tx.UndoBytes), undo's as it
+// encodes, its old default and options among it, with the field, values,
+// that holds them, and each value with its component's ID, quoted, a colon,
+// and a comma, so that neither the change nor a batch of many takes an
+// operation past it.
+func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, at string, undo any,
 	back func(value.Value) (value.Value, bool)) (map[string]value.Value, error) {
+	base, err := json.Marshal(undo)
+	if err != nil {
+		return nil, fmt.Errorf("component: encode the undo: %w", err)
+	}
 	out := map[string]value.Value{}
-	size := 0
-	err := plan.each(ctx, tx, func(u ids.UUID, old, to value.Value) error {
+	size := tx.UndoBytes() + len(base) + len(`,"values":{}`)
+	err = plan.each(ctx, tx, func(u ids.UUID, old, to value.Value) error {
 		if again, ok := back(to); ok && again.Equal(old) {
 			return nil
 		}
 		id := ids.Encode(ids.Component, u)
 		size += len(id) + len(`"":,`) + len(old.JSON())
 		if size > maxUndoValues {
-			return commands.Refuse(at, fmt.Sprintf("would change values of more than %d MiB that the change's undo "+
-				"would have to hold: delete the attribute definition and add another instead", maxUndoValues>>20), nil)
+			return commands.Refuse(at, fmt.Sprintf("would change values that the batch's undo would have to hold, "+
+				"which would take it past %d MiB: delete the attribute definition and add another instead, or make "+
+				"the change in a batch of its own", maxUndoValues>>20), nil)
 		}
 		out[id] = old
 		return nil
@@ -855,8 +869,8 @@ func eachValue(ctx context.Context, q *queries.Queries, a queries.AttributeDef, 
 // errDefinitionChanged is eachValue's error for an attribute definition that
 // a change committed to since it was read, which a page of its values reads
 // at a revision of its own. Only a read that holds no lock sees it, as
-// Unconvertible: a command holds its project's lock, which every change of
-// the definition takes.
+// Unconvertible's but for its last, which locks the definition: a command
+// holds its project's lock, which every change of the definition takes.
 var errDefinitionChanged = errors.New("component: the attribute definition changed while its values were read")
 
 // setDefinition changes the definition a's type to typ, its options to

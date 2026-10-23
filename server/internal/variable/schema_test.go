@@ -4,7 +4,32 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
+
+// TestAttributeTypes checks that a variable's default of a type that only an
+// attribute has, text or enum, which package value reads, is refused as no
+// variable's type, however it is read, so that a payload that its schema did
+// not hold to a variable's types is refused at its default rather than by the
+// database's check.
+func TestAttributeTypes(t *testing.T) {
+	t.Parallel()
+	for _, typ := range []string{value.Text, value.Enum} {
+		for _, c := range []value.Checks{value.All, {Length: true}, {}} {
+			if _, problem := of(value.FromJSON([]byte(`"calm"`)), typ, c); !strings.Contains(problem,
+				"no variable's type") {
+				t.Errorf("a default of the type %s, read with %+v, was answered with %q", typ, c, problem)
+			}
+		}
+		if errs := checkDefault(typ, Value{}); len(errs) != 1 || errs[0].Field != "default" {
+			t.Errorf("a variable's create of the type %s without a default was answered with %v", typ, errs)
+		}
+	}
+	if def, problem := of(Value{}, TypeString, value.All); problem != "" || string(def.JSON()) != `""` {
+		t.Errorf("a string's zero value is %s, %q", def.JSON(), problem)
+	}
+}
 
 // TestSchemaEnums checks that the types and the scopes of a variable that the
 // package lists are those that the schemas of the commands' payloads and of

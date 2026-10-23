@@ -255,7 +255,7 @@ func Register(r *commands.Registry) {
 			}
 			// The default's type is the variable's, which the payload does not
 			// say.
-			def, problem := p.Default.Of(v.Type)
+			def, problem := of(p.Default, v.Type, value.All)
 			if problem != "" {
 				return commands.Refuse("default", problem, nil)
 			}
@@ -271,7 +271,7 @@ func Register(r *commands.Registry) {
 		// characters that input.CheckText refuses (stored), which Apply then
 		// refuses as an undo applies it, rather than fail the retype.
 		Check: func(p retypePayload) input.FieldErrors {
-			_, problem := p.Default.Read(p.Type, value.Checks{Length: true})
+			_, problem := of(p.Default, p.Type, value.Checks{Length: true})
 			return append(entityID(ids.Variable, "id", p.ID), field("default", problem)...)
 		},
 		Inverse: func(ctx context.Context, tx *commands.Tx, p retypePayload) ([]commands.Step, error) {
@@ -290,7 +290,7 @@ func Register(r *commands.Registry) {
 			if err != nil {
 				return err
 			}
-			def, problem := p.Default.Of(p.Type)
+			def, problem := of(p.Default, p.Type, value.All)
 			if problem != "" {
 				return commands.Refuse("default", problem, nil)
 			}
@@ -467,7 +467,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 		return err
 	}
 	// Check checked the default against the type.
-	def, _ := p.Default.Of(p.Type)
+	def, _ := of(p.Default, p.Type, value.All)
 	err = q.InsertVariable(ctx, queries.InsertVariableParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		Scope: p.Scope, BoardID: boardID, FolderID: folder, SortKey: order, Key: p.Key, Type: p.Type,
 		DefaultValue: def.JSON(), Description: p.Description, ResetOnEnter: p.ResetOnEnter, CreatedBy: by(tx)})
@@ -687,7 +687,7 @@ func refuse(errs input.FieldErrors) error {
 // checkDefault returns the problem of def as a default of the type typ, which
 // none, for the type's zero value, has not.
 func checkDefault(typ string, def Value) input.FieldErrors {
-	_, problem := def.Of(typ)
+	_, problem := of(def, typ, value.All)
 	return field("default", problem)
 }
 

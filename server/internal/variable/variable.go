@@ -132,7 +132,7 @@ func variableOf(v queries.Variable) (Variable, error) {
 // error if it is not a value of its type, which the database's check keeps
 // from it.
 func stored(v queries.Variable) (Value, error) {
-	def, problem := value.FromJSON(v.DefaultValue).Read(v.Type, value.Checks{})
+	def, problem := of(value.FromJSON(v.DefaultValue), v.Type, value.Checks{})
 	if problem != "" {
 		return Value{}, fmt.Errorf("variable: the default of the variable %s %s", ids.Encode(ids.Variable,
 			v.ID.Bytes), problem)

@@ -729,33 +729,71 @@ func TestAttributeChecks(t *testing.T) {
 
 // TestUndoLimit checks that a change of an enum's options or of a
 // definition's type whose undo would hold more of the values that it loses
-// than the operation log keeps is refused at the field that it changes.
+// than the operation log keeps is refused at the field that it changes, its
+// undo's old default and options counted, and so is one that would take the
+// undo of its batch past it, with the undos of the batch's commands before
+// it, though its own fits.
 func TestUndoLimit(t *testing.T) {
 	// Not parallel: it lowers the limit, which the parallel tests' changes
-	// read once it is set back. One lost value fits, with its component's ID,
-	// as the undo's payload holds it, but two do not.
-	defer component.SetMaxUndoValues(len(`"`+componentID()+`":"angry",`) + 1)()
+	// read once it is set back.
 	f := newFixture(t)
 	ship := f.newType(t, "Ship", nil)
-	add, mood := newAttribute(ship, "Mood", value.Enum, map[string]any{"options": []string{"calm", "angry"}})
-	elara, _ := newComponent(ship, "Elara", map[string]any{"attributes": map[string]any{mood: "angry"}})
+	options := []string{"calm", "angry"}
+	add, mood := newAttribute(ship, "Mood", value.Enum, map[string]any{"options": options})
+	addTone, tone := newAttribute(ship, "Tone", value.Enum, map[string]any{"options": options})
+	elara, elaraID := newComponent(ship, "Elara", map[string]any{"attributes": map[string]any{mood: "angry",
+		tone: "angry"}})
 	mira, miraID := newComponent(ship, "Mira", map[string]any{"attributes": map[string]any{mood: "angry"}})
-	f.must(t, add, elara, mira)
+	f.must(t, add, addTone, elara, mira)
+	// one is what the limit counts of an undo that gives one value back: its
+	// payload without the values, as the operation log keeps it, the field
+	// that holds them, and the value with its component's ID.
+	one := func(undo map[string]any) int {
+		t.Helper()
+		raw, err := json.Marshal(undo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(raw) + len(`,"values":{}`) + len(`"`+elaraID+`":"angry",`)
+	}
+	optionsUndo := func(id string) map[string]any {
+		return map[string]any{"id": id, "options": options, "default": "calm"}
+	}
+	// Each change loses both components' values, and its undo would hold one
+	// of them, but not two.
 	for _, c := range []struct {
 		cmd   cmd
+		undo  map[string]any
 		field string
 	}{
-		{cmd{component.SetAttributeOptions, map[string]any{"id": mood, "options": []string{"calm"}}}, "options"},
-		{cmd{component.RetypeAttribute, map[string]any{"id": mood, "type": "int", "conversion": "reset"}}, "type"},
+		{cmd{component.SetAttributeOptions, map[string]any{"id": mood, "options": []string{"calm"}}},
+			optionsUndo(mood), "options"},
+		{cmd{component.RetypeAttribute, map[string]any{"id": mood, "type": "int", "conversion": "reset"}},
+			map[string]any{"id": mood, "type": "enum", "conversion": "convert", "options": options, "default": "calm"},
+			"type"},
 	} {
-		if r := refused(t, func() error { _, err := f.apply(t, c.cmd); return err }()); r.Field != c.field {
+		restore := component.SetMaxUndoValues(one(c.undo))
+		_, err := f.apply(t, c.cmd)
+		restore()
+		if r := refused(t, err); r.Field != c.field {
 			t.Errorf("%v, whose undo would hold too much, was refused at %s, want %s", c.cmd, r.Field, c.field)
 		}
 	}
+	// Each change then loses Elara's value alone, whose undo fits, but not
+	// both in one batch.
 	f.must(t, cmd{component.SetAttribute, map[string]any{"id": miraID, "attribute_id": mood, "value": "calm"}})
-	if _, err := f.apply(t, cmd{component.SetAttributeOptions, map[string]any{"id": mood,
-		"options": []string{"calm"}}}); err != nil {
-		t.Errorf("a change whose undo holds one value: %v", err)
+	defer component.SetMaxUndoValues(one(optionsUndo(mood)))()
+	moodOptions := cmd{component.SetAttributeOptions, map[string]any{"id": mood, "options": []string{"calm"}}}
+	toneOptions := cmd{component.SetAttributeOptions, map[string]any{"id": tone, "options": []string{"calm"}}}
+	if r := refused(t, func() error { _, err := f.apply(t, moodOptions, toneOptions); return err }()); r.Command != 1 ||
+		r.Field != "options" {
+		t.Errorf("a batch whose undo would hold too much was refused by command %d at %s, want 1 at options",
+			r.Command, r.Field)
+	}
+	for _, c := range []cmd{moodOptions, toneOptions} {
+		if _, err := f.apply(t, c); err != nil {
+			t.Errorf("a change whose undo holds one value: %v", err)
+		}
 	}
 }
 
@@ -809,15 +847,16 @@ func TestStoredValues(t *testing.T) {
 }
 
 // TestUnconvertibleWhileChanged checks that the list of the values that a
-// retype would not convert reads them as of one moment: a change of the
-// definition that commits once the list has read the definition, before it
-// reads the values, starts the read again from the definition as the change
-// left it, rather than failing on values of another type.
+// retype would not convert reads them against one revision of the
+// definition: a change of the definition that commits once the list has read
+// the definition, before it reads the values, starts the read again from the
+// definition as the change left it, rather than failing on values of another
+// type, and once three have, the list reads them with the definition locked,
+// rather than failing for the changes.
 //
 // Verifies: FR-COMP-01/AC2
 func TestUnconvertibleWhileChanged(t *testing.T) {
-	// Not parallel: it sets what every list calls once it has read the
-	// definition.
+	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 	ship := f.newType(t, "Ship", nil)
@@ -825,20 +864,39 @@ func TestUnconvertibleWhileChanged(t *testing.T) {
 	elara, _ := newComponent(ship, "Elara", map[string]any{"attributes": map[string]any{mood: "12"}})
 	mira, _ := newComponent(ship, "Mira", map[string]any{"attributes": map[string]any{mood: "calm"}})
 	f.must(t, add, elara, mira)
-	reads := 0
-	defer component.SetDefinitionRead(func() {
-		if reads++; reads == 1 {
+	var reads []bool
+	component.SetDefinitionRead(f.components, func(locked bool) {
+		switch reads = append(reads, locked); len(reads) {
+		case 1:
 			// Both values become 1, which converts to a bool, where neither
 			// string does.
 			f.must(t, cmd{component.RetypeAttribute, map[string]any{"id": mood, "type": "float",
 				"conversion": "reset", "default": 1}})
+		case 2, 3:
+			// A change that leaves the values as they are starts the read again
+			// too.
+			f.must(t, cmd{component.RenameAttribute, map[string]any{"id": mood,
+				"name": strings.Repeat("Mood", len(reads))}})
+		default:
+			// The definition is locked, so no change commits to it until the
+			// read ends.
+			_, err := f.d.Admin(t).Exec(ctx, "SELECT 1 FROM attribute_def WHERE id = $1 FOR UPDATE NOWAIT",
+				decodeID(t, ids.AttributeDef, mood))
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+				t.Errorf("a lock of the definition that the list's last read holds was answered with %v", err)
+			}
 		}
-	})()
+	})
 	list, err := f.components.Unconvertible(ctx, f.actor(), f.project, decodeID(t, ids.ComponentType, ship),
 		decodeID(t, ids.AttributeDef, mood), component.Target{Type: value.Bool}, ids.UUID{}, 10)
-	if err != nil || len(list) != 0 || reads != 2 {
+	if want := []bool{false, false, false, true}; err != nil || len(list) != 0 || !slices.Equal(reads, want) {
 		t.Errorf("the values that a retype to a bool would not convert, read while the definition changed, are %v, "+
-			"%v, after %d reads of the definition, want none after 2", list, err, reads)
+			"%v, after reads of the definition locked as %v, want none after reads locked as %v", list, err, reads,
+			want)
+	}
+	if _, err := f.apply(t, cmd{component.RenameAttribute, map[string]any{"id": mood, "name": "Mood"}}); err != nil {
+		t.Errorf("a change of the definition once the list has read it: %v", err)
 	}
 }
 
@@ -1265,6 +1323,13 @@ func TestComponentIsolation(t *testing.T) {
 		{Name: "an attribute definition", Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) (
 			[]ids.UUID, error) {
 			row, err := queries.New(tx).AttributeDefAny(ctx, queries.AttributeDefAnyParams{
+				WorkspaceID: uuid(target.ID), ProjectID: uuid(target.Rows["project"]),
+				ID: uuid(target.Rows["attribute_def"])})
+			return one(row.AttributeDef.ID, err)
+		}},
+		{Name: "lock an attribute definition", Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			row, err := queries.New(tx).AttributeDefAnyForShare(ctx, queries.AttributeDefAnyForShareParams{
 				WorkspaceID: uuid(target.ID), ProjectID: uuid(target.Rows["project"]),
 				ID: uuid(target.Rows["attribute_def"])})
 			return one(row.AttributeDef.ID, err)

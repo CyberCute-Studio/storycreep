@@ -123,6 +123,20 @@ JOIN component_type t ON t.workspace_id = attribute_def.workspace_id AND t.proje
 WHERE attribute_def.workspace_id = @workspace_id AND attribute_def.project_id = @project_id
     AND attribute_def.id = @id;
 
+-- name: AttributeDefAnyForShare :one
+-- AttributeDefAnyForShare is AttributeDefAny, and locks the definition's row
+-- FOR SHARE until the transaction ends, so that no change of the definition,
+-- which updates its row, commits until then: for the list of what a retype
+-- would not convert, which holds no lock but once changes of the definition
+-- have committed while it read the values, each time that it read them.
+SELECT sqlc.embed(attribute_def), (t.deleted_at IS NOT NULL)::boolean AS type_deleted
+FROM attribute_def
+JOIN component_type t ON t.workspace_id = attribute_def.workspace_id AND t.project_id = attribute_def.project_id
+    AND t.id = attribute_def.component_type_id
+WHERE attribute_def.workspace_id = @workspace_id AND attribute_def.project_id = @project_id
+    AND attribute_def.id = @id
+FOR SHARE OF attribute_def;
+
 -- name: AttributeDefsByID :many
 -- AttributeDefsByID returns the attribute definitions of the project whose
 -- IDs are among ids, whether or not they are in the trash, each with when its
