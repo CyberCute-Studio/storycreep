@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -40,13 +41,15 @@ func TestMain(m *testing.M) {
 // fixture is a database of the test's own with a workspace whose owner is
 // owner, a project of it, created with the default types, and the pipeline
 // of the projects', the boards', the variables', and the components'
-// commands.
+// commands, of the registry reg, with the entitlements ent.
 type fixture struct {
 	d          *dbtest.Database
 	db         *database.DB
 	ws         ids.UUID
 	owner      ids.UUID
 	project    ids.UUID
+	reg        *commands.Registry
+	ent        *entitlements.Service
 	pipeline   *commands.Pipeline
 	projects   *project.Service
 	components *component.Service
@@ -70,14 +73,14 @@ func newFixture(t *testing.T) *fixture {
 		'owner')`, ids.New(), f.ws, f.owner); err != nil {
 		t.Fatal(err)
 	}
-	reg := commands.NewRegistry()
-	project.Register(reg)
-	board.Register(reg)
-	variable.Register(reg)
-	component.Register(reg)
-	ent := entitlements.New(entitlements.Options{Meter: usage.Meter{}})
-	f.pipeline = commands.New(f.db, commands.Options{Registry: reg, Entitlements: ent})
-	f.projects = project.New(f.db, project.Options{Entitlements: ent, Pipeline: f.pipeline, Seed: component.Seed})
+	f.reg = commands.NewRegistry()
+	project.Register(f.reg)
+	board.Register(f.reg)
+	variable.Register(f.reg)
+	component.Register(f.reg)
+	f.ent = entitlements.New(entitlements.Options{Meter: usage.Meter{}})
+	f.pipeline = commands.New(f.db, commands.Options{Registry: f.reg, Entitlements: f.ent})
+	f.projects = project.New(f.db, project.Options{Entitlements: f.ent, Pipeline: f.pipeline, Seed: component.Seed})
 	f.components = component.New(f.db, component.Options{Projects: f.projects})
 	p, err := f.projects.Create(ctx, f.owner, f.ws, project.Settings{Name: "Harbour"}, audit.Client{})
 	if err != nil {
@@ -87,6 +90,12 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	return f
+}
+
+// maxUndo has the fixture apply its batches with a pipeline whose bound of a
+// batch's undo is n bytes (commands.Options.MaxUndoBytes).
+func (f *fixture) maxUndo(n int) {
+	f.pipeline = commands.New(f.db, commands.Options{Registry: f.reg, Entitlements: f.ent, MaxUndoBytes: n})
 }
 
 // actor is the owner, as the actor of a batch.
@@ -728,33 +737,48 @@ func TestAttributeChecks(t *testing.T) {
 }
 
 // TestUndoLimit checks that a change of an enum's options or of a
-// definition's type whose undo would hold more of the values that it loses
-// than the operation log keeps is refused at the field that it changes, its
-// undo's old default and options counted, and so is one that would take the
-// undo of its batch past it, with the undos of the batch's commands before
-// it, though its own fits.
+// definition's type whose undo would take its batch's undo past the
+// pipeline's bound is refused at the field that it changes, its undo counted
+// as JSON encodes it for the operation log, escapes and all: one whose undo
+// would hold more of the values that it loses than the bound leaves, one that
+// loses no value but whose undo's old default takes it past, and one whose
+// undo fits but would take its batch's past it, with the undos of the
+// batch's commands before it; and that a command of another type whose undo
+// would, as a description's, is refused at its payload.
 func TestUndoLimit(t *testing.T) {
-	// Not parallel: it lowers the limit, which the parallel tests' changes
-	// read once it is set back.
+	t.Parallel()
 	f := newFixture(t)
 	ship := f.newType(t, "Ship", nil)
 	options := []string{"calm", "angry"}
 	add, mood := newAttribute(ship, "Mood", value.Enum, map[string]any{"options": options})
 	addTone, tone := newAttribute(ship, "Tone", value.Enum, map[string]any{"options": options})
+	// The log escapes <, as \u003c, which then takes six bytes.
+	marks := strings.Repeat("<", 20)
+	addNotes, notes := newAttribute(ship, "Notes", value.Text, map[string]any{"default": marks})
 	elara, elaraID := newComponent(ship, "Elara", map[string]any{"attributes": map[string]any{mood: "angry",
 		tone: "angry"}})
 	mira, miraID := newComponent(ship, "Mira", map[string]any{"attributes": map[string]any{mood: "angry"}})
-	f.must(t, add, addTone, elara, mira)
-	// one is what the limit counts of an undo that gives one value back: its
-	// payload without the values, as the operation log keeps it, the field
-	// that holds them, and the value with its component's ID.
-	one := func(undo map[string]any) int {
+	f.must(t, add, addTone, addNotes, elara, mira)
+	// size is how many bytes the payload of the undo undo takes, with the
+	// values that it gives back, as the operation log keeps it.
+	size := func(undo, values map[string]any) int {
 		t.Helper()
-		raw, err := json.Marshal(undo)
+		p := maps.Clone(undo)
+		if len(values) > 0 {
+			p["values"] = values
+		}
+		raw, err := json.Marshal(p)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return len(raw) + len(`,"values":{}`) + len(`"`+elaraID+`":"angry",`)
+		return len(raw)
+	}
+	try := func(bound int, c cmd) error {
+		t.Helper()
+		f.maxUndo(bound)
+		defer f.maxUndo(0)
+		_, err := f.apply(t, c)
+		return err
 	}
 	optionsUndo := func(id string) map[string]any {
 		return map[string]any{"id": id, "options": options, "default": "calm"}
@@ -772,19 +796,38 @@ func TestUndoLimit(t *testing.T) {
 			map[string]any{"id": mood, "type": "enum", "conversion": "convert", "options": options, "default": "calm"},
 			"type"},
 	} {
-		restore := component.SetMaxUndoValues(one(c.undo))
-		_, err := f.apply(t, c.cmd)
-		restore()
-		if r := refused(t, err); r.Field != c.field {
+		if r := refused(t, try(size(c.undo, map[string]any{elaraID: "angry"}), c.cmd)); r.Field != c.field {
 			t.Errorf("%v, whose undo would hold too much, was refused at %s, want %s", c.cmd, r.Field, c.field)
 		}
 	}
+	// A retype of the text to a string loses none of its values, which hold
+	// its default, but its undo holds the default.
+	toString := cmd{component.RetypeAttribute, map[string]any{"id": notes, "type": "string", "conversion": "convert"}}
+	stringUndo := map[string]any{"id": notes, "type": "text", "conversion": "convert", "default": marks}
+	if r := refused(t, try(size(stringUndo, nil)-1, toString)); r.Field != "type" {
+		t.Errorf("a retype whose undo's default takes it past the bound was refused at %s, want type", r.Field)
+	}
+	if err := try(size(stringUndo, nil), toString); err != nil {
+		t.Fatalf("a retype whose undo takes the bound exactly: %v", err)
+	}
+	// A reset of the string loses both values, which its undo gives back,
+	// escaped as the log keeps them.
+	reset := cmd{component.RetypeAttribute, map[string]any{"id": notes, "type": "int", "conversion": "reset"}}
+	resetUndo := map[string]any{"id": notes, "type": "string", "conversion": "convert", "default": ""}
+	both := map[string]any{elaraID: marks, miraID: marks}
+	if r := refused(t, try(size(resetUndo, both)-1, reset)); r.Field != "type" {
+		t.Errorf("a reset whose undo's values take it past the bound was refused at %s, want type", r.Field)
+	}
+	if err := try(size(resetUndo, both), reset); err != nil {
+		t.Errorf("a reset whose undo's values take the bound exactly: %v", err)
+	}
+
 	// Each change then loses Elara's value alone, whose undo fits, but not
 	// both in one batch.
 	f.must(t, cmd{component.SetAttribute, map[string]any{"id": miraID, "attribute_id": mood, "value": "calm"}})
-	defer component.SetMaxUndoValues(one(optionsUndo(mood)))()
 	moodOptions := cmd{component.SetAttributeOptions, map[string]any{"id": mood, "options": []string{"calm"}}}
 	toneOptions := cmd{component.SetAttributeOptions, map[string]any{"id": tone, "options": []string{"calm"}}}
+	f.maxUndo(size(optionsUndo(mood), map[string]any{elaraID: "angry"}))
 	if r := refused(t, func() error { _, err := f.apply(t, moodOptions, toneOptions); return err }()); r.Command != 1 ||
 		r.Field != "options" {
 		t.Errorf("a batch whose undo would hold too much was refused by command %d at %s, want 1 at options",
@@ -794,6 +837,34 @@ func TestUndoLimit(t *testing.T) {
 		if _, err := f.apply(t, c); err != nil {
 			t.Errorf("a change whose undo holds one value: %v", err)
 		}
+	}
+
+	// The undo of a description holds the one that it replaces, which the
+	// bound counts as it counts any other command's.
+	f.maxUndo(0)
+	text := strings.Repeat("Keeper of the light. ", 10)
+	doc := func(text string) json.RawMessage {
+		raw, err := json.Marshal(map[string]any{"type": "doc", "content": []any{map[string]any{"type": "paragraph",
+			"content": []any{map[string]any{"type": "text", "text": text}}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	describe := func(id, text string) cmd {
+		return cmd{component.Describe, map[string]any{"id": id, "description": doc(text)}}
+	}
+	f.must(t, describe(elaraID, text), describe(miraID, text))
+	f.maxUndo(len(doc(text)) + 100)
+	if r := refused(t, func() error {
+		_, err := f.apply(t, describe(elaraID, "Keeper"), describe(miraID, "Keeper"))
+		return err
+	}()); r.Command != 1 || r.Field != "" {
+		t.Errorf("a batch of descriptions whose undo would hold too much was refused by command %d at %q, want 1 "+
+			"at the payload", r.Command, r.Field)
+	}
+	if _, err := f.apply(t, describe(elaraID, "Keeper")); err != nil {
+		t.Errorf("a description whose undo fits: %v", err)
 	}
 }
 
@@ -847,12 +918,11 @@ func TestStoredValues(t *testing.T) {
 }
 
 // TestUnconvertibleWhileChanged checks that the list of the values that a
-// retype would not convert reads them against one revision of the
-// definition: a change of the definition that commits once the list has read
-// the definition, before it reads the values, starts the read again from the
-// definition as the change left it, rather than failing on values of another
-// type, and once three have, the list reads them with the definition locked,
-// rather than failing for the changes.
+// retype would not convert reads the definition and its values as of one
+// moment: a change of the definition, and one of a value, that commit once
+// the list has read the definition, before it reads the values, are not
+// read, rather than failing on values of another type, and the read locks
+// nothing that keeps them from committing meanwhile.
 //
 // Verifies: FR-COMP-01/AC2
 func TestUnconvertibleWhileChanged(t *testing.T) {
@@ -861,42 +931,29 @@ func TestUnconvertibleWhileChanged(t *testing.T) {
 	f := newFixture(t)
 	ship := f.newType(t, "Ship", nil)
 	add, mood := newAttribute(ship, "Mood", value.String, nil)
-	elara, _ := newComponent(ship, "Elara", map[string]any{"attributes": map[string]any{mood: "12"}})
-	mira, _ := newComponent(ship, "Mira", map[string]any{"attributes": map[string]any{mood: "calm"}})
+	elara, elaraID := newComponent(ship, "Elara", map[string]any{"attributes": map[string]any{mood: "12"}})
+	mira, miraID := newComponent(ship, "Mira", map[string]any{"attributes": map[string]any{mood: "calm"}})
 	f.must(t, add, elara, mira)
-	var reads []bool
-	component.SetDefinitionRead(f.components, func(locked bool) {
-		switch reads = append(reads, locked); len(reads) {
-		case 1:
-			// Both values become 1, which converts to a bool, where neither
-			// string does.
-			f.must(t, cmd{component.RetypeAttribute, map[string]any{"id": mood, "type": "float",
-				"conversion": "reset", "default": 1}})
-		case 2, 3:
-			// A change that leaves the values as they are starts the read again
-			// too.
-			f.must(t, cmd{component.RenameAttribute, map[string]any{"id": mood,
-				"name": strings.Repeat("Mood", len(reads))}})
-		default:
-			// The definition is locked, so no change commits to it until the
-			// read ends.
-			_, err := f.d.Admin(t).Exec(ctx, "SELECT 1 FROM attribute_def WHERE id = $1 FOR UPDATE NOWAIT",
-				decodeID(t, ids.AttributeDef, mood))
-			var pgErr *pgconn.PgError
-			if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
-				t.Errorf("a lock of the definition that the list's last read holds was answered with %v", err)
-			}
-		}
+	reads := 0
+	component.SetDefinitionRead(f.components, func() {
+		reads++
+		// Both values become 1, which converts to a bool, where neither
+		// string does, and then Elara's 0, which does too.
+		f.must(t, cmd{component.RetypeAttribute, map[string]any{"id": mood, "type": "float",
+			"conversion": "reset", "default": 1}})
+		f.must(t, cmd{component.SetAttribute, map[string]any{"id": elaraID, "attribute_id": mood, "value": 0}})
 	})
 	list, err := f.components.Unconvertible(ctx, f.actor(), f.project, decodeID(t, ids.ComponentType, ship),
 		decodeID(t, ids.AttributeDef, mood), component.Target{Type: value.Bool}, ids.UUID{}, 10)
-	if want := []bool{false, false, false, true}; err != nil || len(list) != 0 || !slices.Equal(reads, want) {
-		t.Errorf("the values that a retype to a bool would not convert, read while the definition changed, are %v, "+
-			"%v, after reads of the definition locked as %v, want none after reads locked as %v", list, err, reads,
-			want)
+	var got []string
+	for _, u := range list {
+		got = append(got, u.ComponentID)
 	}
-	if _, err := f.apply(t, cmd{component.RenameAttribute, map[string]any{"id": mood, "name": "Mood"}}); err != nil {
-		t.Errorf("a change of the definition once the list has read it: %v", err)
+	want := []string{elaraID, miraID}
+	slices.Sort(want)
+	if err != nil || !slices.Equal(got, want) || reads != 1 {
+		t.Errorf("the values that a retype to a bool would not convert, read while the definition and a value "+
+			"changed, are %v, %v, after %d reads of the definition, want %v after one", got, err, reads, want)
 	}
 }
 
@@ -1327,12 +1384,27 @@ func TestComponentIsolation(t *testing.T) {
 				ID: uuid(target.Rows["attribute_def"])})
 			return one(row.AttributeDef.ID, err)
 		}},
-		{Name: "lock an attribute definition", Run: func(ctx context.Context, tx pgx.Tx,
+		{Name: "a definition's values", Run: func(ctx context.Context, tx pgx.Tx,
 			target *isolationtest.Workspace) ([]ids.UUID, error) {
-			row, err := queries.New(tx).AttributeDefAnyForShare(ctx, queries.AttributeDefAnyForShareParams{
+			rows, err := queries.New(tx).AttributeValues(ctx, queries.AttributeValuesParams{
 				WorkspaceID: uuid(target.ID), ProjectID: uuid(target.Rows["project"]),
-				ID: uuid(target.Rows["attribute_def"])})
-			return one(row.AttributeDef.ID, err)
+				AttributeDefID: uuid(target.Rows["attribute_def"]), MaxRows: 10})
+			var out []ids.UUID
+			for _, r := range rows {
+				out = append(out, r.ComponentID.Bytes)
+			}
+			return out, err
+		}},
+		{Name: "a definition's values with their components", Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			rows, err := queries.New(tx).AttributeValueComponents(ctx, queries.AttributeValueComponentsParams{
+				WorkspaceID: uuid(target.ID), ProjectID: uuid(target.Rows["project"]),
+				AttributeDefID: uuid(target.Rows["attribute_def"]), MaxRows: 10})
+			var out []ids.UUID
+			for _, r := range rows {
+				out = append(out, r.ComponentID.Bytes)
+			}
+			return out, err
 		}},
 		{Name: "a component's values", Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) (
 			[]ids.UUID, error) {

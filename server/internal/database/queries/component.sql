@@ -123,20 +123,6 @@ JOIN component_type t ON t.workspace_id = attribute_def.workspace_id AND t.proje
 WHERE attribute_def.workspace_id = @workspace_id AND attribute_def.project_id = @project_id
     AND attribute_def.id = @id;
 
--- name: AttributeDefAnyForShare :one
--- AttributeDefAnyForShare is AttributeDefAny, and locks the definition's row
--- FOR SHARE until the transaction ends, so that no change of the definition,
--- which updates its row, commits until then: for the list of what a retype
--- would not convert, which holds no lock but once changes of the definition
--- have committed while it read the values, each time that it read them.
-SELECT sqlc.embed(attribute_def), (t.deleted_at IS NOT NULL)::boolean AS type_deleted
-FROM attribute_def
-JOIN component_type t ON t.workspace_id = attribute_def.workspace_id AND t.project_id = attribute_def.project_id
-    AND t.id = attribute_def.component_type_id
-WHERE attribute_def.workspace_id = @workspace_id AND attribute_def.project_id = @project_id
-    AND attribute_def.id = @id
-FOR SHARE OF attribute_def;
-
 -- name: AttributeDefsByID :many
 -- AttributeDefsByID returns the attribute definitions of the project whose
 -- IDs are among ids, whether or not they are in the trash, each with when its
@@ -412,17 +398,21 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND component_id
 -- name: AttributeValues :many
 -- AttributeValues returns the values that the project's components hold of
 -- the attribute definition attribute_def_id, those of the components in the
--- trash included, in the order of the components' IDs, after the component
--- after, or from the first if after is null, each with its component's key,
--- name, and when it was deleted, if it is in the trash, and with the
--- definition's revision as the statement reads it, so that a read of them a
--- page at a time that holds no lock, as the list of what a retype would not
--- convert, sees a change of the definition that commits between two of its
--- statements.
-SELECT v.component_id, v.value, c.key, c.name, c.deleted_at, a.rev AS attribute_def_rev FROM attribute_value v
+-- trash included, by their components' IDs, in their order, after the
+-- component after, or from the first if after is null: what a change of the
+-- definition reads of them, a page at a time.
+SELECT v.component_id, v.value FROM attribute_value v
+WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.attribute_def_id = @attribute_def_id
+    AND (sqlc.narg(after)::uuid IS NULL OR v.component_id > sqlc.narg(after)::uuid)
+ORDER BY v.component_id
+LIMIT @max_rows;
+
+-- name: AttributeValueComponents :many
+-- AttributeValueComponents returns the values as AttributeValues does, each
+-- with its component's key, name, and when it was deleted, if it is in the
+-- trash: for the list of what a retype would not convert.
+SELECT v.component_id, v.value, c.key, c.name, c.deleted_at FROM attribute_value v
 JOIN component c ON c.workspace_id = v.workspace_id AND c.project_id = v.project_id AND c.id = v.component_id
-JOIN attribute_def a ON a.workspace_id = v.workspace_id AND a.project_id = v.project_id
-    AND a.id = v.attribute_def_id
 WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.attribute_def_id = @attribute_def_id
     AND (sqlc.narg(after)::uuid IS NULL OR v.component_id > sqlc.narg(after)::uuid)
 ORDER BY v.component_id

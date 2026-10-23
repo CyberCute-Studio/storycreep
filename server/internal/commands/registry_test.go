@@ -189,6 +189,10 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 		{"neither inverse nor non-undoable", func(s *Spec[notePayload]) { s.Inverse = nil }},
 		{"in the trash but not archived", func(s *Spec[notePayload]) { s.Trashed = true }},
 		{"no apply", func(s *Spec[notePayload]) { s.Apply = nil }},
+		{"an undo field without an inverse", func(s *Spec[notePayload]) {
+			s.Inverse, s.NonUndoable, s.UndoField = nil, true, "body"
+		}},
+		{"an undo field that is no field", func(s *Spec[notePayload]) { s.UndoField = "Body" }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := good()
@@ -200,6 +204,13 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 	}
 	if panics(func() { Register(noteRegistry(), good()) }) {
 		t.Error("Register refuses a good declaration")
+	}
+	if panics(func() {
+		s := good()
+		s.UndoField = "body"
+		Register(noteRegistry(), s)
+	}) {
+		t.Error("Register refuses an undo field of the payload's")
 	}
 	if !panics(func() {
 		Register(noteRegistry(), Spec[string]{Type: "note.text", Capability: authz.ListMembers,

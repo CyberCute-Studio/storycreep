@@ -249,6 +249,12 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			"definition, or a component that is not an identifier, 409 key_taken for a key that another entity of " +
 			"its scope has, or 409 component_type_in_use for a component type to delete of which a component that " +
 			"is not in the trash is." +
+			fmt.Sprintf(" A batch whose undo, the inverses of its commands as the operation log keeps them, "+
+				"would take more than %d MiB, so that the batch that undoes it would not fit in a request, is "+
+				"refused with 422 validation_failed at the command that takes it past: at its payload, as "+
+				"body.commands[3].payload, or at the field whose change the undo holds the values of, as "+
+				"body.commands[3].payload.type for an attribute.retype that would lose too much.",
+				commands.DefaultMaxUndoBytes>>20) +
 			"\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch " +
 			"sent again, as when its answer was lost, is answered as it was the first time and applies nothing " +
 			"again, before the project's state and the workspace's limits are checked: the same batch, with the " +

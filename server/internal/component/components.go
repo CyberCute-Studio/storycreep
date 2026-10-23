@@ -602,12 +602,7 @@ func currentValue(ctx context.Context, q *queries.Queries, c queries.Component, 
 	case err != nil:
 		return value.Value{}, fmt.Errorf("component: read the component's value: %w", err)
 	}
-	v, problem := value.FromJSON(raw).Read(a.Type, value.Checks{}, a.EnumOptions...)
-	if problem != "" {
-		return value.Value{}, fmt.Errorf("component: the value of the attribute definition %s that the component %s "+
-			"holds %s", ids.Encode(ids.AttributeDef, a.ID.Bytes), ids.Encode(ids.Component, c.ID.Bytes), problem)
-	}
-	return v, nil
+	return storedValue(a, c.ID, raw)
 }
 
 // componentKeyOwner returns the owner of a key among the project's

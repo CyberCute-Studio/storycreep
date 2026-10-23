@@ -80,3 +80,18 @@ func refusedBy(err error, i int, c decoded) (*RefusedError, bool) {
 	return &RefusedError{Command: i, CommandID: c.ID, Type: c.spec.typ, Field: r.field, Message: r.message,
 		Reason: r.reason}, true
 }
+
+// undoRefusal returns the refusal of the command c, the batch's command i,
+// whose inverse would take the batch's undo past maxUndo bytes, which the
+// pipeline answers at the payload's field that its Spec.UndoField names, as
+// a value that the project's state does not take.
+func undoRefusal(i int, c decoded, maxUndo int) *RefusedError {
+	size := fmt.Sprintf("%d bytes", maxUndo)
+	if maxUndo%(1<<20) == 0 {
+		size = fmt.Sprintf("%d MiB", maxUndo>>20)
+	}
+	return &RefusedError{Command: i, CommandID: c.ID, Type: c.spec.typ, Field: c.spec.undoField,
+		Message: "would take the batch's undo, the inverses of its commands as the operation log keeps them, past " +
+			size + ", which a batch that undoes it could not send: send the commands in smaller batches, or make a " +
+			"change whose undo holds less"}
+}

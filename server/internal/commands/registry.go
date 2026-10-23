@@ -117,9 +117,20 @@ type Spec[P any] struct {
 	// once it has checked the command's revisions, right before Apply, so
 	// that it reads the state that Apply changes, unless a command of the
 	// batch is NonUndoable, which leaves the batch without an inverse. It
-	// only reads, so it reports no change (Tx.Changed). Exactly one of
-	// Inverse and NonUndoable is set.
+	// only reads, so it reports no change (Tx.Changed). The pipeline refuses
+	// the command, at UndoField, once its steps would take the batch's undo
+	// past the pipeline's bound (Options.MaxUndoBytes), which an Inverse
+	// whose steps grow with the project stops before (Tx.UndoRoom,
+	// ErrUndoTooLarge). Exactly one of Inverse and NonUndoable is set.
 	Inverse func(ctx context.Context, tx *Tx, p P) ([]Step, error)
+	// UndoField is the field of the payload, named as in its JSON, at which
+	// the pipeline refuses the command when its inverse would take the
+	// batch's undo past the pipeline's bound (Options.MaxUndoBytes): the
+	// field whose change makes the inverse hold a part of the project that
+	// grows with it, as an attribute's retype's type, whose inverse holds the
+	// values that the retype loses, or "" for the payload itself, as for any
+	// other command.
+	UndoField string
 	// NonUndoable marks a command without a meaningful inverse, whose batch
 	// cannot be undone.
 	NonUndoable bool
@@ -253,8 +264,9 @@ type spec struct {
 	// adds return how much the command adds to each of limits, or nil for 1.
 	adds []func(ctx context.Context, tx *Tx, payload any) (int64, error)
 	// archived, trashed, and sessionOnly are Spec.Archived, Spec.Trashed, and
-	// Spec.SessionOnly.
+	// Spec.SessionOnly, and undoField is Spec.UndoField.
 	archived, trashed, sessionOnly bool
+	undoField                      string
 	// decode decodes a payload that its schema allows, checks it, and
 	// returns it: with Check, and with CheckNew too unless it is a step's.
 	decode func(raw []byte, step bool) (payload any, problems input.FieldErrors)
@@ -268,10 +280,11 @@ type spec struct {
 // that is registered already, a Capability that is not an operation of the
 // permission matrix, a Scope that is not a scope, no Touches, a touched kind
 // that is not registered or twice, a limit that the plan file does not check
-// or twice, both Inverse and NonUndoable or neither, Trashed without
-// Archived, no Apply, or a payload that is not a struct, or that has a field
-// with a default or a type that resolves itself, or that holds a rich-text
-// document other than as a field of its own.
+// or twice, both Inverse and NonUndoable or neither, an UndoField without
+// Inverse or that is no field of the payload's, Trashed without Archived, no
+// Apply, or a payload that is not a struct, or that has a field with a
+// default or a type that resolves itself, or that holds a rich-text document
+// other than as a field of its own.
 func Register[P any](r *Registry, s Spec[P]) {
 	fail := func(format string, args ...any) {
 		panic(fmt.Sprintf("commands: %s: ", s.Type) + fmt.Sprintf(format, args...))
@@ -303,6 +316,12 @@ func Register[P any](r *Registry, s Spec[P]) {
 	if problem := unapplied(pt); problem != "" {
 		fail("%s", problem)
 	}
+	switch {
+	case s.UndoField != "" && s.Inverse == nil:
+		fail("a command without an inverse has no UndoField")
+	case s.UndoField != "" && !slices.Contains(jsonFields(pt), s.UndoField):
+		fail("the UndoField %q is not a field of the payload", s.UndoField)
+	}
 	if at := nestedDoc(pt); at != "" {
 		fail("the payload's %s holds a rich-text document, which a payload holds only as a field of its own, a "+
 			"richtext.Doc or a pointer to one, so that a document that Parse refuses is answered at its field", at)
@@ -328,7 +347,7 @@ func Register[P any](r *Registry, s Spec[P]) {
 	sp := &spec{typ: s.Type, capability: s.Capability, scope: s.Scope, touches: slices.Clone(s.Touches),
 		payload: pt, schema: r.schemas.Schema(pt, true, ""), limits: keys,
 		adds: make([]func(context.Context, *Tx, any) (int64, error), len(s.Limits)), archived: s.Archived,
-		trashed: s.Trashed, sessionOnly: s.SessionOnly}
+		trashed: s.Trashed, sessionOnly: s.SessionOnly, undoField: s.UndoField}
 	for i, l := range s.Limits {
 		if l.Adds != nil {
 			sp.adds[i] = func(ctx context.Context, tx *Tx, payload any) (int64, error) {
@@ -383,16 +402,31 @@ func docFields(t reflect.Type) []string {
 	var out []string
 	for i := range t.NumField() {
 		f := t.Field(i)
-		if f.Type != reflect.TypeFor[richtext.Doc]() && f.Type != reflect.TypeFor[*richtext.Doc]() {
-			continue
+		if f.Type == reflect.TypeFor[richtext.Doc]() || f.Type == reflect.TypeFor[*richtext.Doc]() {
+			out = append(out, jsonName(f))
 		}
-		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
-		if name == "" {
-			name = f.Name
-		}
-		out = append(out, name)
 	}
 	return out
+}
+
+// jsonFields returns the names, in a payload's JSON, of the exported fields
+// of the payload's type t that encoding/json encodes, in their order.
+func jsonFields(t reflect.Type) []string {
+	var out []string
+	for i := range t.NumField() {
+		if f := t.Field(i); f.IsExported() && f.Tag.Get("json") != "-" {
+			out = append(out, jsonName(f))
+		}
+	}
+	return out
+}
+
+// jsonName returns the name of the field f in its struct's JSON.
+func jsonName(f reflect.StructField) string {
+	if name, _, _ := strings.Cut(f.Tag.Get("json"), ","); name != "" {
+		return name
+	}
+	return f.Name
 }
 
 // docField returns the location within the payload raw of the value that err

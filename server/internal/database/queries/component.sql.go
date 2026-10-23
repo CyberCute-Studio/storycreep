@@ -60,58 +60,6 @@ func (q *Queries) AttributeDefAny(ctx context.Context, arg AttributeDefAnyParams
 	return i, err
 }
 
-const attributeDefAnyForShare = `-- name: AttributeDefAnyForShare :one
-SELECT attribute_def.id, attribute_def.workspace_id, attribute_def.project_id, attribute_def.component_type_id, attribute_def."order", attribute_def.key, attribute_def.name, attribute_def.type, attribute_def.enum_options, attribute_def.default_value, attribute_def.is_runtime, attribute_def.rev, attribute_def.deleted_at, attribute_def.created_by, attribute_def.updated_by, attribute_def.created_at, attribute_def.updated_at, (t.deleted_at IS NOT NULL)::boolean AS type_deleted
-FROM attribute_def
-JOIN component_type t ON t.workspace_id = attribute_def.workspace_id AND t.project_id = attribute_def.project_id
-    AND t.id = attribute_def.component_type_id
-WHERE attribute_def.workspace_id = $1 AND attribute_def.project_id = $2
-    AND attribute_def.id = $3
-FOR SHARE OF attribute_def
-`
-
-type AttributeDefAnyForShareParams struct {
-	WorkspaceID pgtype.UUID
-	ProjectID   pgtype.UUID
-	ID          pgtype.UUID
-}
-
-type AttributeDefAnyForShareRow struct {
-	AttributeDef AttributeDef
-	TypeDeleted  bool
-}
-
-// AttributeDefAnyForShare is AttributeDefAny, and locks the definition's row
-// FOR SHARE until the transaction ends, so that no change of the definition,
-// which updates its row, commits until then: for the list of what a retype
-// would not convert, which holds no lock but once changes of the definition
-// have committed while it read the values, each time that it read them.
-func (q *Queries) AttributeDefAnyForShare(ctx context.Context, arg AttributeDefAnyForShareParams) (AttributeDefAnyForShareRow, error) {
-	row := q.db.QueryRow(ctx, attributeDefAnyForShare, arg.WorkspaceID, arg.ProjectID, arg.ID)
-	var i AttributeDefAnyForShareRow
-	err := row.Scan(
-		&i.AttributeDef.ID,
-		&i.AttributeDef.WorkspaceID,
-		&i.AttributeDef.ProjectID,
-		&i.AttributeDef.ComponentTypeID,
-		&i.AttributeDef.Order,
-		&i.AttributeDef.Key,
-		&i.AttributeDef.Name,
-		&i.AttributeDef.Type,
-		&i.AttributeDef.EnumOptions,
-		&i.AttributeDef.DefaultValue,
-		&i.AttributeDef.IsRuntime,
-		&i.AttributeDef.Rev,
-		&i.AttributeDef.DeletedAt,
-		&i.AttributeDef.CreatedBy,
-		&i.AttributeDef.UpdatedBy,
-		&i.AttributeDef.CreatedAt,
-		&i.AttributeDef.UpdatedAt,
-		&i.TypeDeleted,
-	)
-	return i, err
-}
-
 const attributeDefCount = `-- name: AttributeDefCount :one
 SELECT count(*) FROM attribute_def
 WHERE workspace_id = $1 AND project_id = $2 AND component_type_id = $3
@@ -303,11 +251,68 @@ func (q *Queries) AttributeKeysFrom(ctx context.Context, arg AttributeKeysFromPa
 	return items, nil
 }
 
-const attributeValues = `-- name: AttributeValues :many
-SELECT v.component_id, v.value, c.key, c.name, c.deleted_at, a.rev AS attribute_def_rev FROM attribute_value v
+const attributeValueComponents = `-- name: AttributeValueComponents :many
+SELECT v.component_id, v.value, c.key, c.name, c.deleted_at FROM attribute_value v
 JOIN component c ON c.workspace_id = v.workspace_id AND c.project_id = v.project_id AND c.id = v.component_id
-JOIN attribute_def a ON a.workspace_id = v.workspace_id AND a.project_id = v.project_id
-    AND a.id = v.attribute_def_id
+WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.attribute_def_id = $3
+    AND ($4::uuid IS NULL OR v.component_id > $4::uuid)
+ORDER BY v.component_id
+LIMIT $5
+`
+
+type AttributeValueComponentsParams struct {
+	WorkspaceID    pgtype.UUID
+	ProjectID      pgtype.UUID
+	AttributeDefID pgtype.UUID
+	After          pgtype.UUID
+	MaxRows        int32
+}
+
+type AttributeValueComponentsRow struct {
+	ComponentID pgtype.UUID
+	Value       []byte
+	Key         string
+	Name        string
+	DeletedAt   pgtype.Timestamptz
+}
+
+// AttributeValueComponents returns the values as AttributeValues does, each
+// with its component's key, name, and when it was deleted, if it is in the
+// trash: for the list of what a retype would not convert.
+func (q *Queries) AttributeValueComponents(ctx context.Context, arg AttributeValueComponentsParams) ([]AttributeValueComponentsRow, error) {
+	rows, err := q.db.Query(ctx, attributeValueComponents,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.AttributeDefID,
+		arg.After,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AttributeValueComponentsRow
+	for rows.Next() {
+		var i AttributeValueComponentsRow
+		if err := rows.Scan(
+			&i.ComponentID,
+			&i.Value,
+			&i.Key,
+			&i.Name,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const attributeValues = `-- name: AttributeValues :many
+SELECT v.component_id, v.value FROM attribute_value v
 WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.attribute_def_id = $3
     AND ($4::uuid IS NULL OR v.component_id > $4::uuid)
 ORDER BY v.component_id
@@ -323,23 +328,15 @@ type AttributeValuesParams struct {
 }
 
 type AttributeValuesRow struct {
-	ComponentID     pgtype.UUID
-	Value           []byte
-	Key             string
-	Name            string
-	DeletedAt       pgtype.Timestamptz
-	AttributeDefRev int64
+	ComponentID pgtype.UUID
+	Value       []byte
 }
 
 // AttributeValues returns the values that the project's components hold of
 // the attribute definition attribute_def_id, those of the components in the
-// trash included, in the order of the components' IDs, after the component
-// after, or from the first if after is null, each with its component's key,
-// name, and when it was deleted, if it is in the trash, and with the
-// definition's revision as the statement reads it, so that a read of them a
-// page at a time that holds no lock, as the list of what a retype would not
-// convert, sees a change of the definition that commits between two of its
-// statements.
+// trash included, by their components' IDs, in their order, after the
+// component after, or from the first if after is null: what a change of the
+// definition reads of them, a page at a time.
 func (q *Queries) AttributeValues(ctx context.Context, arg AttributeValuesParams) ([]AttributeValuesRow, error) {
 	rows, err := q.db.Query(ctx, attributeValues,
 		arg.WorkspaceID,
@@ -355,14 +352,7 @@ func (q *Queries) AttributeValues(ctx context.Context, arg AttributeValuesParams
 	var items []AttributeValuesRow
 	for rows.Next() {
 		var i AttributeValuesRow
-		if err := rows.Scan(
-			&i.ComponentID,
-			&i.Value,
-			&i.Key,
-			&i.Name,
-			&i.DeletedAt,
-			&i.AttributeDefRev,
-		); err != nil {
+		if err := rows.Scan(&i.ComponentID, &i.Value); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

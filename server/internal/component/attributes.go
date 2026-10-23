@@ -58,14 +58,6 @@ const (
 	RestoreAttribute commands.Type = "attribute.restore"
 )
 
-// maxUndoValues is the most bytes that the undo of a batch, which the
-// operation log keeps, may take once a change of an attribute definition's
-// options or type in it adds the values that it loses, each with its
-// component's ID, to its own undo's payload: 16 MiB, which only a test that is
-// not parallel lowers (SetMaxUndoValues), and which Go runs while every
-// parallel test of the package waits.
-var maxUndoValues = 16 << 20
-
 // createAttributePayload is CreateAttribute's payload.
 type createAttributePayload struct {
 	ID              string      `json:"id" doc:"The new attribute definition's ID, an atr_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
@@ -278,6 +270,9 @@ func registerAttributes(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[attributeOptionsPayload]{
 		Type: SetAttributeOptions, Capability: op, Scope: sc, Touches: values,
+		// The undo holds the values that the change loses, which grow with the
+		// type's components.
+		UndoField: "options",
 		Check: func(p attributeOptionsPayload) input.FieldErrors {
 			errs := entityID(ids.AttributeDef, "id", p.ID)
 			if problem := value.CheckOptions(p.Options); problem != "" {
@@ -300,7 +295,7 @@ func registerAttributes(r *commands.Registry) {
 			// The undo gives a value that is none of the old options the old
 			// default, so it holds every value that the change changes.
 			undo := attributeOptionsPayload{ID: p.ID, Options: plan.a.EnumOptions, Default: plan.oldDefault}
-			lost, err := plan.lost(ctx, tx, "options", undo, func(value.Value) (value.Value, bool) {
+			lost, err := plan.lost(ctx, tx, undo, func(value.Value) (value.Value, bool) {
 				return value.Value{}, false
 			})
 			if err != nil {
@@ -320,6 +315,8 @@ func registerAttributes(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[retypeAttributePayload]{
 		Type: RetypeAttribute, Capability: op, Scope: sc, Touches: values,
+		// As set_options's, the undo holds the values that the change loses.
+		UndoField: "type",
 		Check: func(p retypeAttributePayload) input.FieldErrors {
 			errs := append(entityID(ids.AttributeDef, "id", p.ID), checkOptions(p.Type, p.Options)...)
 			if len(errs) > 0 {
@@ -346,7 +343,7 @@ func registerAttributes(r *commands.Registry) {
 			// A value that the conversion back makes of the new one is the value
 			// that the definition's components held, but for those that the
 			// undo then gives back.
-			lost, err := plan.lost(ctx, tx, "type", undo, func(v value.Value) (value.Value, bool) {
+			lost, err := plan.lost(ctx, tx, undo, func(v value.Value) (value.Value, bool) {
 				return value.Convert(v, p.Type, p.Options, a.Type, a.EnumOptions)
 			})
 			if err != nil {
@@ -695,9 +692,8 @@ func (plan *valuesPlan) give(given map[string]value.Value) error {
 func (plan *valuesPlan) each(ctx context.Context, tx *commands.Tx, fn func(u ids.UUID, old, to value.Value) error) error {
 	found := make(map[ids.UUID]bool, len(plan.given))
 	q := queries.New(tx)
-	if err := eachValue(ctx, q, plan.a, pgtype.UUID{}, func(row queries.AttributeValuesRow,
-		old value.Value) (bool, error) {
-		u := ids.UUID(row.ComponentID.Bytes)
+	if err := eachValue(ctx, q, plan.a, func(component pgtype.UUID, old value.Value) error {
+		u := ids.UUID(component.Bytes)
 		var to value.Value
 		ok := false
 		if g, given := plan.given[u]; given {
@@ -710,9 +706,9 @@ func (plan *valuesPlan) each(ctx context.Context, tx *commands.Tx, fn func(u ids
 			to = plan.newDefault
 		}
 		if to.Equal(old) {
-			return true, nil
+			return nil
 		}
-		return true, fn(u, old, to)
+		return fn(u, old, to)
 	}); err != nil {
 		return err
 	}
@@ -744,34 +740,46 @@ func (plan *valuesPlan) each(ctx context.Context, tx *commands.Tx, fn func(u ids
 }
 
 // lost returns the values that the plan's change loses, by their components'
-// IDs, which its undo, undo, a payload without them, gives back: those that
-// what back makes of the new value is not, as none that back does not
-// convert. It refuses the batch, at the payload's field at, the field that
-// the change changes, once they would take the batch's undo, as the operation
-// log keeps it, past maxUndoValues bytes: the payloads of the undos of the
-// batch's commands before this one (commands.Tx.UndoBytes), undo's as it
-// encodes, its old default and options among it, with the field, values,
-// that holds them, and each value with its component's ID, quoted, a colon,
-// and a comma, so that neither the change nor a batch of many takes an
-// operation past it.
-func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, at string, undo any,
+// IDs, which its undo, undo, a payload whose values field, its last, holds
+// none of them, gives back: those that what back makes of the new value is
+// not, as none that back does not convert. It stops with
+// commands.ErrUndoTooLarge, which the pipeline refuses the change for, at
+// the field that it changes (commands.Spec.UndoField), as soon as undo with
+// them would take more bytes, as JSON encodes it for the operation log, than
+// the batch's undo has room for (commands.Tx.UndoRoom): undo as it encodes,
+// its old default and options among it, and then the field that holds them,
+// and each value, as JSON encodes it, with its component's ID, quoted, and a
+// colon, and a comma between two, so that it never holds more of them than
+// the pipeline would keep, whatever the definition's components hold.
+func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, undo any,
 	back func(value.Value) (value.Value, bool)) (map[string]value.Value, error) {
 	base, err := json.Marshal(undo)
 	if err != nil {
 		return nil, fmt.Errorf("component: encode the undo: %w", err)
 	}
+	room, size := tx.UndoRoom(), len(base)
+	if size > room {
+		return nil, commands.ErrUndoTooLarge
+	}
 	out := map[string]value.Value{}
-	size := tx.UndoBytes() + len(base) + len(`,"values":{}`)
 	err = plan.each(ctx, tx, func(u ids.UUID, old, to value.Value) error {
 		if again, ok := back(to); ok && again.Equal(old) {
 			return nil
 		}
+		// json.Marshal escapes what a value's JSON may hold unescaped, as <,
+		// which then takes six bytes.
+		enc, err := json.Marshal(old)
+		if err != nil {
+			return fmt.Errorf("component: encode the value: %w", err)
+		}
 		id := ids.Encode(ids.Component, u)
-		size += len(id) + len(`"":,`) + len(old.JSON())
-		if size > maxUndoValues {
-			return commands.Refuse(at, fmt.Sprintf("would change values that the batch's undo would have to hold, "+
-				"which would take it past %d MiB: delete the attribute definition and add another instead, or make "+
-				"the change in a batch of its own", maxUndoValues>>20), nil)
+		if len(out) == 0 {
+			size += len(`,"values":{}`)
+		} else {
+			size += len(`,`)
+		}
+		if size += len(`"":`) + len(id) + len(enc); size > room {
+			return commands.ErrUndoTooLarge
 		}
 		out[id] = old
 		return nil
@@ -829,17 +837,14 @@ func (plan *valuesPlan) apply(ctx context.Context, tx *commands.Tx) error {
 }
 
 // eachValue calls fn with each value that the components hold of the
-// attribute definition a, those in the trash included, in the order of the
-// components' IDs, after the component after, or from the first if after is
-// null, read a page at a time, in its canonical form, which jsonb may not
-// write a number in, until fn returns false or an error, which it returns. It
-// returns errDefinitionChanged once a page reads the definition at another
-// revision than a's, and an error for a value that is not one of the
-// definition's type, which the commands keep from it, as a read of the
-// component does.
-func eachValue(ctx context.Context, q *queries.Queries, a queries.AttributeDef, after pgtype.UUID,
-	fn func(row queries.AttributeValuesRow, v value.Value) (bool, error)) error {
-	cursor := after
+// attribute definition a, those in the trash included, with its component's
+// ID, in the order of the components' IDs, read a page at a time, in its
+// canonical form (storedValue), until fn returns an error, which it returns.
+// A command reads them under its project's lock, which every change of them
+// takes, so that its pages agree with one another.
+func eachValue(ctx context.Context, q *queries.Queries, a queries.AttributeDef,
+	fn func(component pgtype.UUID, v value.Value) error) error {
+	var cursor pgtype.UUID
 	for {
 		rows, err := q.AttributeValues(ctx, queries.AttributeValuesParams{WorkspaceID: a.WorkspaceID,
 			ProjectID: a.ProjectID, AttributeDefID: a.ID, After: cursor, MaxRows: valuesPage})
@@ -847,15 +852,11 @@ func eachValue(ctx context.Context, q *queries.Queries, a queries.AttributeDef, 
 			return fmt.Errorf("component: read the attribute definition's values: %w", err)
 		}
 		for _, row := range rows {
-			if row.AttributeDefRev != a.Rev {
-				return errDefinitionChanged
+			v, err := storedValue(a, row.ComponentID, row.Value)
+			if err != nil {
+				return err
 			}
-			v, problem := value.FromJSON(row.Value).Read(a.Type, value.Checks{}, a.EnumOptions...)
-			if problem != "" {
-				return fmt.Errorf("component: the value of the attribute definition %s that the component %s holds %s",
-					ids.Encode(ids.AttributeDef, a.ID.Bytes), ids.Encode(ids.Component, row.ComponentID.Bytes), problem)
-			}
-			if more, err := fn(row, v); err != nil || !more {
+			if err := fn(row.ComponentID, v); err != nil {
 				return err
 			}
 		}
@@ -866,12 +867,18 @@ func eachValue(ctx context.Context, q *queries.Queries, a queries.AttributeDef, 
 	}
 }
 
-// errDefinitionChanged is eachValue's error for an attribute definition that
-// a change committed to since it was read, which a page of its values reads
-// at a revision of its own. Only a read that holds no lock sees it, as
-// Unconvertible's but for its last, which locks the definition: a command
-// holds its project's lock, which every change of the definition takes.
-var errDefinitionChanged = errors.New("component: the attribute definition changed while its values were read")
+// storedValue returns raw, the value that the component componentID holds of
+// the attribute definition a, in its canonical form, which jsonb may not
+// write a number in, or an error for a value that is not one of the
+// definition's type, which the commands keep from it.
+func storedValue(a queries.AttributeDef, componentID pgtype.UUID, raw []byte) (value.Value, error) {
+	v, problem := value.FromJSON(raw).Read(a.Type, value.Checks{}, a.EnumOptions...)
+	if problem != "" {
+		return value.Value{}, fmt.Errorf("component: the value of the attribute definition %s that the component %s "+
+			"holds %s", ids.Encode(ids.AttributeDef, a.ID.Bytes), ids.Encode(ids.Component, componentID.Bytes), problem)
+	}
+	return v, nil
+}
 
 // setDefinition changes the definition a's type to typ, its options to
 // options, and its default to def, a value of typ that value.Value.Of

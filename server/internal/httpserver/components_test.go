@@ -180,6 +180,11 @@ func TestComponents(t *testing.T) {
 	}
 	wantCode(t, "a query of control characters", call(s.main, http.MethodGet, componentsPath(p.ID)+"?query=%07",
 		nil, owner.header(false)), http.StatusUnprocessableEntity, api.CodeValidationFailed)
+	// A user who may not read the project is answered as for a project that
+	// does not exist, before the query is checked.
+	outsider := newNamedAccount(t, s.main, "out@example.com", "Out")
+	wantCode(t, "an outsider's query of control characters", call(s.main, http.MethodGet,
+		componentsPath(p.ID)+"?query=%07", nil, outsider.header(false)), http.StatusNotFound, api.CodeNotFound)
 	if res := call(s.main, http.MethodPost, commandsPath(p.ID), commandBatch(t,
 		componentCommand("component.delete", map[string]string{"id": mira})), owner.header(true)); res.status !=
 		http.StatusOK {

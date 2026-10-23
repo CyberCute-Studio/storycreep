@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -121,6 +122,9 @@ type badInversePayload struct {
 	// only Apply may, and then be the note's deletion, which an undo could
 	// apply.
 	Changes bool `json:"changes,omitempty"`
+	// Room makes the inverse the note's deletion if the batch's undo has room
+	// for Room bytes more (Tx.UndoRoom), or else stop with ErrUndoTooLarge.
+	Room int `json:"room,omitempty"`
 }
 
 // meterPayload is noteMeter's payload. Undeclared makes the command declare
@@ -264,7 +268,8 @@ func noteRegistry() *Registry {
 	})
 	Register(r, Spec[notePayload]{
 		Type: noteUpdate, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
-		Check: func(p notePayload) input.FieldErrors { return checkNoteID(p.ID) },
+		UndoField: "body",
+		Check:     func(p notePayload) input.FieldErrors { return checkNoteID(p.ID) },
 		CheckNew: func(p notePayload) input.FieldErrors {
 			if strings.IndexFunc(p.Body, input.IsControl) >= 0 {
 				return input.FieldErrors{{Field: "body", Message: "contains a control character"}}
@@ -323,6 +328,12 @@ func noteRegistry() *Registry {
 	Register(r, Spec[badInversePayload]{
 		Type: noteBadInverse, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
 		Inverse: func(_ context.Context, tx *Tx, p badInversePayload) ([]Step, error) {
+			switch {
+			case p.Room > tx.UndoRoom():
+				return nil, fmt.Errorf("the note's deletion: %w", ErrUndoTooLarge)
+			case p.Room > 0:
+				return []Step{{Type: noteDelete, Payload: noteIDPayload{ID: p.ID}}}, nil
+			}
 			if p.Changes {
 				if err := tx.Changed(ids.Node, noteUUID(p.ID), 1<<40); err != nil {
 					return nil, err

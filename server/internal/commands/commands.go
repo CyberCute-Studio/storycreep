@@ -278,7 +278,28 @@ type Options struct {
 	Jobs Enqueuer
 	// Notifier is told of the batches that apply, or nil for nothing.
 	Notifier Notifier
+	// MaxUndoBytes is the most bytes that the payloads of the steps of a
+	// batch's inverse may take, as JSON encodes them for the operation log, or
+	// 0 for DefaultMaxUndoBytes, which a test lowers.
+	MaxUndoBytes int
 }
+
+// DefaultMaxUndoBytes is the most bytes that the payloads of the steps of a
+// batch's inverse may take, as JSON encodes them for the operation log: 4 MiB,
+// so that the batch that undoes it, which a client sends as the inverse's
+// commands, each with its command ID and its expected revisions (plan item
+// 37), fits in a request's body, of at most 5 MiB (api.DefaultMaxBodyBytes),
+// with a mebibyte for the rest of the commands. The pipeline refuses a
+// command whose inverse would take its batch's undo past it, so that every
+// operation that it records can be undone, whatever its commands' inverses
+// hold.
+const DefaultMaxUndoBytes = 4 << 20
+
+// ErrUndoTooLarge is the error of an Inverse that stops before its steps take
+// more than Tx.UndoRoom leaves, which the pipeline refuses the command for
+// as it refuses one whose inverse's steps it finds take more: at the
+// payload's field that the command's Spec.UndoField names.
+var ErrUndoTooLarge = errors.New("commands: the inverse would take its batch's undo past the pipeline's bound")
 
 // Pipeline applies batches of commands.
 type Pipeline struct {
@@ -289,6 +310,8 @@ type Pipeline struct {
 	jobs     Enqueuer
 	notifier Notifier
 	metrics  *metrics
+	// maxUndo is Options.MaxUndoBytes, or DefaultMaxUndoBytes.
+	maxUndo int
 }
 
 // New returns a Pipeline that applies the commands of opts.Registry in db. It
@@ -301,8 +324,12 @@ func New(db DB, opts Options) *Pipeline {
 	if reg == nil {
 		reg = NewRegistry()
 	}
+	maxUndo := opts.MaxUndoBytes
+	if maxUndo <= 0 {
+		maxUndo = DefaultMaxUndoBytes
+	}
 	return &Pipeline{db: db, registry: reg, policy: opts.Policy, ent: opts.Entitlements, jobs: opts.Jobs,
-		notifier: opts.Notifier, metrics: newMetrics(reg.Types())}
+		notifier: opts.Notifier, metrics: newMetrics(reg.Types()), maxUndo: maxUndo}
 }
 
 // Collector returns the pipeline's metrics (PRD NFR-OBS-02).
@@ -449,7 +476,7 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 			return ErrNotFound
 		}
 		t := &Tx{tx: tx, pipeline: p, actor: actor, project: projectID, workspace: workspaceID, at: map[Ref]int{},
-			revs: map[Ref]int64{}, usage: map[usage.Key]int64{}}
+			revs: map[Ref]int64{}, maxUndo: p.maxUndo, usage: map[usage.Key]int64{}}
 		// A batch that was sent before is answered as it was, whatever has
 		// changed since, before the project's state and the workspace's limits
 		// are checked (§10.2 step 4), so that a batch that applied is never
@@ -563,8 +590,19 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 			if err == nil {
 				inverses[i], err = p.registry.checkSteps(steps)
 			}
-			for _, st := range inverses[i] {
-				t.undoBytes += len(st.Payload)
+			// The batch's undo is its commands' inverses, which the bound
+			// holds whole, whatever a command's inverse holds: each command's
+			// steps add to what those of the commands before it take.
+			if err == nil {
+				for _, st := range inverses[i] {
+					t.undoBytes += len(st.Payload)
+				}
+				if t.undoBytes > t.maxUndo {
+					err = ErrUndoTooLarge
+				}
+			}
+			if errors.Is(err, ErrUndoTooLarge) {
+				return Result{}, undoRefusal(i, c, t.maxUndo)
 			}
 			if refused, ok := refusedBy(err, i, c); ok {
 				return Result{}, refused

@@ -178,7 +178,22 @@ type Scope struct {
 // transaction commits if fn returns nil, and rolls back if fn returns an
 // error or panics.
 func (db *DB) InTx(ctx context.Context, scope Scope, fn func(tx pgx.Tx) error) error {
-	return pgx.BeginTxFunc(ctx, db.pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
+	return db.inTx(ctx, scope, pgx.TxOptions{}, fn)
+}
+
+// InSnapshot runs fn as InTx does, in a transaction that only reads, and that
+// reads the database as of one moment, that of its first statement, which
+// sets the scope (REPEATABLE READ, READ ONLY): for a read of several
+// statements that must agree with one another, as a read a page at a time,
+// without locking what it reads, which a change then commits to meanwhile
+// without the read seeing it.
+func (db *DB) InSnapshot(ctx context.Context, scope Scope, fn func(tx pgx.Tx) error) error {
+	return db.inTx(ctx, scope, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, fn)
+}
+
+// inTx runs fn as InTx does, in a transaction of the options opts.
+func (db *DB) inTx(ctx context.Context, scope Scope, opts pgx.TxOptions, fn func(tx pgx.Tx) error) error {
+	return pgx.BeginTxFunc(ctx, db.pool, opts, func(tx pgx.Tx) error {
 		err := queries.New(tx).SetScope(ctx, queries.SetScopeParams{
 			WorkspaceID: settingValue(scope.WorkspaceID),
 			UserID:      settingValue(scope.UserID),

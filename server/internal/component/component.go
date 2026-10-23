@@ -352,9 +352,11 @@ func timeOf(t pgtype.Timestamptz) *time.Time {
 	return &t.Time
 }
 
-// DB runs a transaction of the application login, as *database.DB does.
+// DB runs a transaction of the application login, as *database.DB does, and
+// one that reads as of one moment (InSnapshot).
 type DB interface {
 	InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
+	InSnapshot(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
 }
 
 // Options configure a Service.
@@ -369,11 +371,10 @@ type Service struct {
 	db       DB
 	projects *project.Service
 	// definitionRead is called once Unconvertible has read the attribute
-	// definition, before it reads its values, with whether it locked it, by
-	// the test in component_test of a change of the definition that commits
-	// in between, which sets it on a Service of its own (SetDefinitionRead),
-	// and is nil otherwise.
-	definitionRead func(locked bool)
+	// definition, before it reads its values, by the test in component_test
+	// of a change that commits in between, which sets it on a Service of its
+	// own (SetDefinitionRead), and is nil otherwise.
+	definitionRead func()
 }
 
 // New returns a Service that reads the components in db, with opts. It
@@ -481,15 +482,17 @@ func pattern(q string) string {
 // projectID that are not in its trash and that f takes, without their
 // descriptions and values, in the order of their IDs: the first, if after is
 // zero, or else those after the component after (FR-COMP-02 AC3). It
-// returns input.FieldErrors at query for a query that CheckQuery refuses,
-// and the errors of project.Service.Get.
+// returns the errors of project.Service.Get first, so that a query is
+// checked only for an actor who may read the project, as Unconvertible's
+// target is, and then input.FieldErrors at query for a query that CheckQuery
+// refuses.
 func (s *Service) Components(ctx context.Context, actor commands.Actor, projectID ids.UUID, f Filter,
 	after ids.UUID, limit int) ([]Summary, error) {
-	if problem := CheckQuery(f.Query); problem != "" {
-		return nil, input.FieldErrors{{Field: "query", Message: problem}}
-	}
 	var out []Summary
 	err := s.read(ctx, actor, projectID, func(q *queries.Queries, workspaceID pgtype.UUID) error {
+		if problem := CheckQuery(f.Query); problem != "" {
+			return input.FieldErrors{{Field: "query", Message: problem}}
+		}
 		params := queries.ComponentsParams{WorkspaceID: workspaceID, ProjectID: nullUUID(projectID),
 			ComponentTypeID: nullUUID(f.TypeID), After: nullUUID(after), MaxRows: int32(min(limit, 1<<20))}
 		if f.Query != "" {
@@ -548,64 +551,48 @@ type Target struct {
 // IDs: the first, if after is zero, or else those after the component after,
 // so that a client can show what a retype with the conversion convert would
 // give the new default to before it applies one (FR-COMP-01 AC2), as the
-// retype reads and converts them. It reads them against one revision of the
-// definition: a change of the definition that commits while it reads them,
-// a page at a time, which it does not lock, starts the read again from the
-// definition as the change left it, and once maxRereads changes have, it
-// reads them with the definition locked against another until its read ends.
-// A change of a component's value alone, which leaves the definition as it
-// is, as component.set_attribute, may commit between two pages, and is then
-// read as the page reads it, before or after the change. It returns the
-// errors of project.Service.Get first, then input.FieldErrors at type for a
-// target of no type, and at options for an enum's options that are not
-// valid, or options of another type, ErrTypeNotFound or ErrAttributeNotFound
-// if the project has no such type, or the type no such definition, that is
-// not in the trash, and input.FieldErrors at type for a target that the
-// retype refuses: the definition's own type, or a text for a runtime
-// definition.
+// retype reads and converts them. It reads the definition and its values, a
+// page at a time, as of one moment, that of the read's start
+// (database.DB.InSnapshot), which locks nothing, so that what a change that
+// commits meanwhile does, to the definition or to a value, is not read. It
+// returns the errors of project.Service.Get first, then input.FieldErrors at
+// type for a target of no type, and at options for an enum's options that
+// are not valid, or options of another type, ErrTypeNotFound or
+// ErrAttributeNotFound if the project has no such type, or the type no such
+// definition, that is not in the trash, and input.FieldErrors at type for a
+// target that the retype refuses: the definition's own type, or a text for a
+// runtime definition.
 func (s *Service) Unconvertible(ctx context.Context, actor commands.Actor, projectID, typeID, attributeID ids.UUID,
 	to Target, after ids.UUID, limit int) ([]Unconvertible, error) {
 	var out []Unconvertible
-	err := s.read(ctx, actor, projectID, func(q *queries.Queries, workspaceID pgtype.UUID) error {
+	err := s.projects.ReadContent(ctx, snapshot{s.db}, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		if errs := checkTarget(to); len(errs) > 0 {
 			return errs
 		}
-		for reread := 0; ; reread++ {
-			list, err := s.unconvertible(ctx, q, workspaceID, nullUUID(projectID), typeID, nullUUID(attributeID), to,
-				nullUUID(after), limit, reread == maxRereads)
-			if !errors.Is(err, errDefinitionChanged) || reread == maxRereads {
-				out = list
-				return err
-			}
-		}
+		var err error
+		out, err = s.unconvertible(ctx, queries.New(tx), nullUUID(workspaceID), nullUUID(projectID), typeID,
+			nullUUID(attributeID), to, nullUUID(after), limit)
+		return err
 	})
 	return out, err
 }
 
-// maxRereads is how many times at most Unconvertible reads an attribute
-// definition's values again, each from the definition as a change that
-// committed while it read them left it, without a lock: the last time, it
-// locks the definition.
-const maxRereads = 3
+// snapshot is the DB whose transactions read as of one moment
+// (database.DB.InSnapshot).
+type snapshot struct {
+	db DB
+}
+
+func (d snapshot) InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
+	return d.db.InSnapshot(ctx, scope, fn)
+}
 
 // unconvertible is Unconvertible's read, in q's transaction, of the
-// definition attributeID of the type typeID and of its values, which returns
-// errDefinitionChanged for a definition that a change committed to since it
-// read it, or, if lock is set, reads the definition FOR SHARE, which no
-// change then commits to until the transaction ends.
+// definition attributeID of the type typeID and of its values.
 func (s *Service) unconvertible(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, typeID ids.UUID,
-	attributeID pgtype.UUID, to Target, after pgtype.UUID, limit int, lock bool) ([]Unconvertible, error) {
-	var row queries.AttributeDefAnyRow
-	var err error
-	if lock {
-		var locked queries.AttributeDefAnyForShareRow
-		locked, err = q.AttributeDefAnyForShare(ctx, queries.AttributeDefAnyForShareParams{WorkspaceID: ws,
-			ProjectID: project, ID: attributeID})
-		row = queries.AttributeDefAnyRow(locked)
-	} else {
-		row, err = q.AttributeDefAny(ctx, queries.AttributeDefAnyParams{WorkspaceID: ws, ProjectID: project,
-			ID: attributeID})
-	}
+	attributeID pgtype.UUID, to Target, after pgtype.UUID, limit int) ([]Unconvertible, error) {
+	row, err := q.AttributeDefAny(ctx, queries.AttributeDefAnyParams{WorkspaceID: ws, ProjectID: project,
+		ID: attributeID})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows) || err == nil && row.AttributeDef.ComponentTypeID.Bytes != typeID:
 		return nil, ErrAttributeNotFound
@@ -623,23 +610,37 @@ func (s *Service) unconvertible(ctx context.Context, q *queries.Queries, ws, pro
 		return nil, errs
 	}
 	if s.definitionRead != nil {
-		s.definitionRead(lock)
+		s.definitionRead()
 	}
 	out := []Unconvertible{}
-	if limit <= 0 {
-		return out, nil
-	}
-	// The values are read as a retype reads them (eachValue), a page at a
+	// The values are read as a retype reads them (storedValue), a page at a
 	// time, of which only those that do not convert are kept, until limit of
 	// them are found.
-	err = eachValue(ctx, q, a, after, func(c queries.AttributeValuesRow, v value.Value) (bool, error) {
-		if _, ok := value.Convert(v, a.Type, a.EnumOptions, to.Type, to.Options); !ok {
-			out = append(out, Unconvertible{ComponentID: ids.Encode(ids.Component, c.ComponentID.Bytes),
-				Key: c.Key, Name: c.Name, DeletedAt: timeOf(c.DeletedAt)})
+	for cursor := after; len(out) < limit; {
+		rows, err := q.AttributeValueComponents(ctx, queries.AttributeValueComponentsParams{WorkspaceID: ws,
+			ProjectID: project, AttributeDefID: a.ID, After: cursor, MaxRows: valuesPage})
+		if err != nil {
+			return nil, fmt.Errorf("component: read the attribute definition's values: %w", err)
 		}
-		return len(out) < limit, nil
-	})
-	return out, err
+		for _, c := range rows {
+			v, err := storedValue(a, c.ComponentID, c.Value)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := value.Convert(v, a.Type, a.EnumOptions, to.Type, to.Options); !ok {
+				out = append(out, Unconvertible{ComponentID: ids.Encode(ids.Component, c.ComponentID.Bytes),
+					Key: c.Key, Name: c.Name, DeletedAt: timeOf(c.DeletedAt)})
+				if len(out) == limit {
+					break
+				}
+			}
+		}
+		if len(rows) < valuesPage {
+			break
+		}
+		cursor = rows[len(rows)-1].ComponentID
+	}
+	return out, nil
 }
 
 // valuesPage is how many values of an attribute definition a query reads at
