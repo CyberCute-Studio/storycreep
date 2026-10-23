@@ -292,14 +292,14 @@
     },
     "text": {
       "additionalProperties": false,
-      "description": "Text, without control characters or line and paragraph separators: a line break is a hardBreak, and a paragraph a paragraph. A document's texts hold at most 100,000 characters together.",
+      "description": "Text, without control characters but tabs, or line and paragraph separators: a line break is a hardBreak, and a paragraph a paragraph. Nor does it hold bidirectional controls, as U+202E, which the server checks beyond this schema. A document's texts hold at most 100,000 characters together.",
       "properties": {
         "marks": {
           "$ref": "#/$defs/marks"
         },
         "text": {
           "minLength": 1,
-          "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\u2028\u2029]+$",
+          "pattern": "^[^\\x00-\\x08\\x0a-\\x1f\\x7f-\\x9f\u2028\u2029]+$",
           "type": "string"
         },
         "type": {

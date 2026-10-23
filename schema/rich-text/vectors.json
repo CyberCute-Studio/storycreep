@@ -1260,6 +1260,34 @@
       "hash": "sha256:55066f4dafda1097717a8629b188846b9cf0f26bd7447cd20d20d19db7d93744"
     },
     {
+      "note": "a tab in text is kept, as ProseMirror keeps it in text pasted as plain text: it is white space, which separates words, and which the preview writes as a space",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "text": "Rope\t2\tcoils",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Rope\t2\tcoils"
+        }
+      ],
+      "text": "Rope\t2\tcoils",
+      "preview": "Rope 2 coils",
+      "words": 3,
+      "hash": "sha256:ff341395678defff332797ae7e9b971dc6f6ed154b36e1dcdb2d8d1c1325cb08"
+    },
+    {
       "note": "HTML is not escaped: <, >, and & stay as they are, in a text and in a link",
       "doc": {
         "content": [
@@ -1386,6 +1414,43 @@
       "preview": "one two three",
       "words": 3,
       "hash": "sha256:6899ee404683a14e8c2a03149860df25d67d34d9cd4dae7350cbe91e4b3976be"
+    },
+    {
+      "note": "a mailto link to an IPv6 address literal, with IPv6: as RFC 5321 writes it, whose subject escapes a tab, as text may hold one",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "mailto:keeper@[IPv6:2001:db8::1]?subject=Light%09on"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "Write",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "href": "mailto:keeper@[IPv6:2001:db8::1]?subject=Light%09on",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "Write"
+        }
+      ],
+      "text": "Write",
+      "preview": "Write",
+      "words": 1,
+      "hash": "sha256:3f00927a719345edd4a8316599d3b328857987547f8884306861161ffa09647e"
     },
     {
       "note": "a link of 2,048 characters, counted as code points, though it has more UTF-16 code units",
@@ -2592,25 +2657,6 @@
       "pointer": "/content/0/content/0/text"
     },
     {
-      "note": "a tab in text",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "a\tb"
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "control_character",
-      "pointer": "/content/0/content/0/text"
-    },
-    {
       "note": "a C1 control in text",
       "doc": {
         "type": "doc",
@@ -2647,6 +2693,66 @@
       },
       "reason": "control_character",
       "pointer": "/content/0/content/0/text"
+    },
+    {
+      "note": "a right-to-left override in text, a bidirectional control, which reverses the text after it, as the other texts that people enter may not hold one",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Pay 10\u202e00 gold"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text",
+      "schema_accepts": true
+    },
+    {
+      "note": "a first strong isolate in text, a bidirectional control",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "a\u2068b"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text",
+      "schema_accepts": true
+    },
+    {
+      "note": "a right-to-left mark in text, a bidirectional control",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "a\u200fb"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "control_character",
+      "pointer": "/content/0/content/0/text",
+      "schema_accepts": true
     },
     {
       "note": "marks that are not an array",
@@ -3333,7 +3439,7 @@
                   {
                     "type": "link",
                     "attrs": {
-                      "href": "https://exa‮moc.elpm/"
+                      "href": "https://exa\u202emoc.elpm/"
                     }
                   }
                 ]
@@ -4659,6 +4765,146 @@
       "schema_accepts": true
     },
     {
+      "note": "a mailto link whose subject escapes U+202E RIGHT-TO-LEFT OVERRIDE, a bidirectional control, which text may not hold",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?subject=Light%E2%80%AE"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose domain has a /, which RFC 5322's atoms may hold but no domain that a message can be sent to does, so that a mail client shows support@paypal.com/.evil.example, which reads as an address at paypal.com",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@paypal.com%2F.evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose domain has a %, of an escaped escape, which a mail client that reads escapes twice reads as an @",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:x@paypal.com%2540evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose domain is a name in brackets, not an IP address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@[paypal.com]"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose domain is an IPv6 address in brackets without IPv6:, as RFC 5321 writes one",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@[2001:db8::1]"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
       "note": "a mailto link whose subject escapes a byte that is not UTF-8, which Latin-1 reads as NEL",
       "doc": {
         "type": "doc",
@@ -5714,14 +5960,59 @@
       "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
     },
     {
-      "note": "a cut within a word goes back to the space",
-      "text": "aaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "preview": "aaaa…"
+      "note": "a cut within a word goes back to the last space, when at least 50 characters come before it",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut goes back to a space with exactly 50 characters before it",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut within a word whose last space has fewer than 50 characters before it stays at 100 characters, as within a long URL",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb…"
+    },
+    {
+      "note": "a cut within a word stays at 100 characters when the text has only an early space, as Japanese, which separates no words with spaces, may",
+      "text": "エララ: 港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。",
+      "preview": "エララ: 港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え。港は余所者お断りだ。用件を言え…"
     },
     {
       "note": "characters are code points",
       "text": "🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴",
       "preview": "🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴…"
+    },
+    {
+      "note": "a cut stays out of a letter and its combining accent",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaéx",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut stays out of an emoji and its variation selector",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa❤️b",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut stays out of an emoji and its skin tone, an emoji modifier",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa👋🏽b",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut stays out of the emoji that zero width joiners join, as a family's",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa👨‍👩‍👧b",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+    },
+    {
+      "note": "a cut stays out of a flag, a pair of regional indicators, but falls between two flags",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa🇨🇿🇩🇪b",
+      "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa🇨🇿…"
+    },
+    {
+      "note": "a cut within a character that is all of the first 100 code points stays at 100, so that the preview is not empty",
+      "text": "é́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́",
+      "preview": "é́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́…"
     },
     {
       "note": "a zero-width no-break space, U+FEFF, is not white space, though JavaScript's \\s and trim take it for some, so it is kept",

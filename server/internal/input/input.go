@@ -128,6 +128,12 @@ var blank = &unicode.RangeTable{
 // are allowed, because names need some of them, as U+200D ZERO WIDTH JOINER
 // joins the emoji of a family, and U+200C ZERO WIDTH NON-JOINER writes
 // Persian.
+//
+// The text of a rich-text document is checked with it too (package
+// richtext), and a stored document is read by that check, so a change to the
+// characters that IsControl takes would leave the stored documents whose text
+// holds them unreadable: migrate them first. richtext's TestUnicodeTables
+// fails on such a change.
 func IsControl(r rune) bool {
 	return unicode.IsControl(r) || unicode.In(r, unicode.Bidi_Control, unicode.Zl, unicode.Zp)
 }

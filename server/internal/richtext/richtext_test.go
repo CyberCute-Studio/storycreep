@@ -648,10 +648,10 @@ func TestPlainTextBuilt(t *testing.T) {
 // set no field but to, cc, bcc, subject, and body, that escape UTF-8 alone
 // but in a body, no hidden character in an address or a to, cc, or bcc, which
 // are addresses as RFC 6068 has them, without a display name, a comment, or
-// quotes, in ASCII, and no control character or line or paragraph separator
-// in a subject, and nothing that could run a script or
-// read a file; and no link that holds a hidden character, as one that a
-// renderer shows nothing of.
+// quotes, in ASCII, with domains that a message can be sent to, and no
+// character in a subject that text may not hold, and nothing that could run a
+// script or read a file; and no link that holds a hidden character, as one
+// that a renderer shows nothing of.
 //
 // Verifies: NFR-SEC-08
 func TestCheckHref(t *testing.T) {
@@ -706,23 +706,27 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com,mira@example.com?body=https://example.com/a:b@c",
 		"mailto:a%26b%3Dc%3Fd@example.com",
 		// Every character of RFC 5322's atext, in atoms that dots separate, in a
-		// local part and in a domain, an empty to, cc, and bcc, and address
-		// literals of IP addresses.
-		"mailto:o'brien.a!%23$%25%26*+/%3D%3F^_`{|}~@a-b.c_d.example",
-		"mailto:keeper@a!%23$%25%26'*+/%3D%3F^_`{|}~.example",
+		// local part, a domain of letters, digits, and hyphens, an empty to,
+		// cc, and bcc, and address literals of IP addresses, with IPv6 in any
+		// case.
+		"mailto:o'brien.a!%23$%25%26*+/%3D%3F^_`{|}~@a-b.c-d.example",
+		"mailto:keeper@EXAMPLE-1.example.com",
 		"mailto:keeper@example.com?to=&cc=&bcc=",
 		"mailto:a@[192.0.2.1]",
 		"mailto:a@[IPv6:2001:db8::1]",
+		"mailto:a@[ipv6:::ffff:192.0.2.1]?cc=b@[IPV6:FE80::A]",
 		// A body's line breaks, as RFC 6068 writes them, and a tab, in any
-		// case of the field's name and of the escape's digits.
+		// case of the field's name and of the escape's digits, and a tab in a
+		// subject, as text may hold one.
 		"mailto:keeper@example.com?subject=Light%20on&body=Come%0D%0Aup%09now&BODY=%0d%0a%7f",
-		"mailto:keeper@example.com?subject=%7E%20%25",
+		"mailto:keeper@example.com?subject=%7E%20%25%09",
 		// Escaped characters beyond ASCII, of which a body may hold the line
-		// and paragraph separators and the C1 control characters too, and a
-		// subject white space and format characters, as text may; and a body
-		// may escape bytes that are not UTF-8.
+		// and paragraph separators, the C1 control characters, and the
+		// bidirectional controls too, and a subject white space and the format
+		// characters that are not bidirectional controls, as text may; and a
+		// body may escape bytes that are not UTF-8.
 		"mailto:keeper@example.com?subject=Caf%C3%A9%20%E2%80%A7&body=a%E2%80%A8b%E2%80%A9c%C2%85d%c2%9f",
-		"mailto:keeper@example.com?subject=%C2%A0%E2%80%8B%E2%80%AE%EF%BB%BF&body=%E2%80%AE%20",
+		"mailto:keeper@example.com?subject=%C2%A0%E2%80%8B%E2%80%8D%EF%BB%BF&body=%E2%80%AE%20%E2%81%A6",
 		"mailto:keeper@example.com?body=%C2%20%E2%80%20%FF%80%85",
 		// An internationalized domain, as IDNA writes it in ASCII, wherever an
 		// address is, and addresses with a comma, raw or escaped, between
@@ -730,7 +734,6 @@ func TestCheckHref(t *testing.T) {
 		"mailto:elodie@xn--caf-dma.example",
 		"mailto:a@XN--CAF-DMA.example%2Cb@example.com?to=c@xn--caf-dma.example,d@example.com" +
 			"&bcc=e@xn--caf-dma.example",
-		"mailto:a@[2001:db8::1]",
 	} {
 		if problem := CheckHref(href); problem != "" {
 			t.Errorf("CheckHref(%q) = %q, want none", href, problem)
@@ -800,6 +803,12 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com?CC=a@example.com%00",
 		"mailto:keeper@example.com?bcc=%1f",
 		"mailto:keeper@example.com?subject=%7F",
+		// Or a bidirectional control, which text may not hold, and which would
+		// reorder the subject that a mail client shows.
+		"mailto:keeper@example.com?subject=Light%E2%80%AE",
+		"mailto:keeper@example.com?subject=%E2%81%A6x%E2%81%A9",
+		"mailto:keeper@example.com?subject=%E2%80%8F",
+		"mailto:keeper@example.com?subject=%D8%9C",
 		// Or a C1 control character, or a line or paragraph separator, in
 		// UTF-8, which a reader of lines may take for a line break, as
 		// Python's str.splitlines takes NEL, U+0085, and U+2028.
@@ -922,6 +931,33 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com?cc=%E7%94%A8%E6%88%B7@example.com",
 		"mailto:keeper@example.com?bcc=a." + string([]rune{0x0661, 0x0662}) + "@example.com",
 		"mailto:" + string(rune(0x2EBF0)) + "@example.com",
+		// Or whose domain holds what no domain that a message can be sent to
+		// does, as RFC 5322's atext, raw or escaped, which a mail client could
+		// show as what it is not, or read otherwise: a /, which has
+		// support@paypal.com/.evil.example read as an address at paypal.com, a
+		// % of an escaped escape, which a client that reads escapes twice reads
+		// as an @, or an underscore; or an address literal that holds no IP
+		// address, as a name, or an IPv6 address without IPv6:, or an IPv4
+		// address with it, or one that is not four numbers from 0 to 255
+		// without leading zeros.
+		"mailto:support@paypal.com%2F.evil.example",
+		"mailto:support@paypal.com/.evil.example",
+		"mailto:x@paypal.com%2540evil.example",
+		"mailto:keeper@a!%23$%25%26'*+/%3D%3F^_`{|}~.example",
+		"mailto:keeper@exa_mple.com",
+		"mailto:keeper@example.com?to=a@b%3Fc.example",
+		"mailto:keeper@example.com?cc=a@paypal.com%7Cevil.example",
+		"mailto:keeper@example.com?bcc=a@paypal.com%7B.example",
+		"mailto:support@[paypal.com]",
+		"mailto:a@[2001:db8::1]",
+		"mailto:a@[IPv6:192.0.2.1]",
+		"mailto:a@[IPv6:]",
+		"mailto:a@[IPv6:2001:db8::1%25eth0]",
+		"mailto:a@[IPv6:1::2::3]",
+		"mailto:a@[192.0.2.256]",
+		"mailto:a@[192.0.2]",
+		"mailto:a@[192.0.2.01]",
+		"mailto:a@[x:192.0.2.1]",
 		// Or that is not a local part, an @, and a domain, each atoms of atext
 		// that single dots separate, or the domain an address literal.
 		"mailto:keeper",
@@ -1259,6 +1295,42 @@ func FuzzParse(f *testing.F) {
 		if !bytes.Equal(marshal(t, bd.Segments), marshal(t, d.Segments)) || bd.Text != d.Text || bd.Words != d.Words {
 			t.Fatalf("a built Doc of %s derives\n%s\nand the parsed one\n%s", canonical, marshal(t, bd.Segments),
 				marshal(t, d.Segments))
+		}
+	})
+}
+
+// FuzzPreview checks that a preview is the plain text with its white space
+// collapsed, or, with an ellipsis, the start of that, of at most PreviewChars
+// code points, which is not empty, does not end with a space, and ends before
+// a space or where a character does (splits), unless it is PreviewChars code
+// points long.
+func FuzzPreview(f *testing.F) {
+	for _, vec := range readVectors(f).Previews {
+		f.Add(vec.Text)
+	}
+	f.Fuzz(func(t *testing.T, plain string) {
+		if !utf8.ValidString(plain) {
+			return
+		}
+		collapsed := strings.Join(strings.Fields(plain), " ")
+		got := Preview(plain)
+		head, cut := strings.CutSuffix(got, "…")
+		if !cut || utf8.RuneCountInString(collapsed) <= PreviewChars {
+			if got != collapsed {
+				t.Fatalf("Preview(%q) = %q, want %q", plain, got, collapsed)
+			}
+			return
+		}
+		n := utf8.RuneCountInString(head)
+		switch {
+		case !strings.HasPrefix(collapsed, head) || n == 0 || n > PreviewChars:
+			t.Fatalf("Preview(%q) = %q, which is not 1 to %d code points of %q", plain, got, PreviewChars, collapsed)
+		case strings.HasSuffix(head, " "):
+			t.Fatalf("Preview(%q) = %q, which ends with a space", plain, got)
+		case n < PreviewChars && collapsed[len(head)] != ' ' && splits(collapsed, len(head)):
+			// A preview of PreviewChars code points may end within a character
+			// that is all of them, where the cut stays.
+			t.Fatalf("Preview(%q) = %q, which ends within a character", plain, got)
 		}
 	})
 }

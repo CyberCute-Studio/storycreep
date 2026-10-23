@@ -30,8 +30,10 @@ const SchemaPath = "schema/rich-text/v1/rich-text.schema.json"
 // over MaxBytes or MaxChars, a list item that does not start with a
 // paragraph, a mark twice, the code mark with another, a link that CheckHref
 // refuses beyond the schema's pattern, and a string that escapes a lone
-// surrogate; and what the schema could say only in keywords that the API's
-// tooling does not read, attrs on a bulletList.
+// surrogate; what the schema could say only in keywords that the API's
+// tooling does not read, attrs on a bulletList; and a text's bidirectional
+// controls, which a pattern could name only as the characters themselves
+// (textPattern).
 //
 // A validator's work on the schema grows with a document's size, whatever
 // the document holds, as the API's validation of a request needs (PRD
@@ -253,8 +255,15 @@ func (c humaConverter) schema(v any) *huma.Schema {
 // ECMAScript's read alike: an escape \xNN for the control characters, and
 // the line and paragraph separators as they are, which JSON then escapes.
 var (
-	// textPattern matches text without a control character (isControl).
-	textPattern = `^[^\x00-\x1f\x7f-\x9f` + string(rune(lineSeparator)) + string(rune(paragraphSeparator)) + `]+$`
+	// textPattern matches text without a control character but a tab, or a
+	// line or paragraph separator. It takes the bidirectional controls, which
+	// text may not hold either (isControl), and which the server refuses
+	// beyond the schema: a pattern could name them only as the characters
+	// themselves, as Go's regular expressions have no escape of a character
+	// beyond \xFF that ECMAScript's read, and JSON writes them unescaped, so
+	// that they would reorder how the schema and the API's OpenAPI document
+	// show.
+	textPattern = `^[^\x00-\x08\x0a-\x1f\x7f-\x9f` + string(rune(lineSeparator)) + string(rune(paragraphSeparator)) + `]+$`
 	// hrefPattern matches an http or https URL with a host or a mailto URL
 	// with an address, without a space or a control character, which
 	// CheckHref checks more strictly.
@@ -307,8 +316,9 @@ func definitions(prefix string) obj {
 			"marks": ref("marks"),
 			"text":  obj{"type": "string", "minLength": 1, "pattern": textPattern},
 			"type":  typ(nodeText),
-		}, "text", "type"), "Text, without control characters or line and paragraph separators: a line break is a "+
-			"hardBreak, and a paragraph a paragraph. "+
+		}, "text", "type"), "Text, without control characters but tabs, or line and paragraph separators: a line "+
+			"break is a hardBreak, and a paragraph a paragraph. Nor does it hold bidirectional controls, as U+202E, "+
+			"which the server checks beyond this schema. "+
 			fmt.Sprintf("A document's texts hold at most %s characters together.", thousands(MaxChars))),
 		"hardBreak": describe(object(obj{"marks": ref("marks"), "type": typ(nodeHardBreak)}, "type"),
 			"A line break within a paragraph."),

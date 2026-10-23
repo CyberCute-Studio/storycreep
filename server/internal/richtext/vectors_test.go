@@ -208,7 +208,10 @@ func TestWordVectors(t *testing.T) {
 // the stored documents whose links hold it, which could then no longer be
 // read, as reading a stored document is parsing it, and one whose tables take
 // fewer would take links that a client refuses. Such a Go needs the stored
-// documents migrated, and the README read again, before this is changed.
+// documents migrated, and the README read again, before this is changed. So
+// does a change to the characters that isControl takes, which text may not
+// hold, which reads package input's IsControl, as the other texts that people
+// enter are checked with it.
 func TestUnicodeTables(t *testing.T) {
 	readme, err := os.ReadFile(filepath.Join("..", "..", "..", "schema", "rich-text", "README.md"))
 	if err != nil {
@@ -234,21 +237,35 @@ func TestUnicodeTables(t *testing.T) {
 	// /[\p{White_Space}\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u, of
 	// Unicode 17.0, takes too: their number, and the start of the SHA-256 of
 	// each one's code point in hexadecimal and a line feed, in order.
-	const hiddenCount, hiddenSum = 4290, "3f41e26a"
+	if n, sum := takes(hidden); n != 4290 || sum != "3f41e26a" {
+		t.Errorf("hidden takes %d characters, whose hash starts %s, not 4290 and 3f41e26a: package unicode's "+
+			"tables (Unicode %s) take others as hidden, so that the links of stored documents may be refused, "+
+			"which then cannot be read, or links taken that a client refuses", n, sum, unicode.Version)
+	}
+	// And those that isControl takes, which Node 24's
+	// /[\p{Cc}\p{Bidi_Control}]/u takes too, with U+2028 and U+2029, but
+	// the tab.
+	if n, sum := takes(isControl); n != 78 || sum != "0e2abc3b" {
+		t.Errorf("isControl takes %d characters, whose hash starts %s, not 78 and 0e2abc3b: package input's "+
+			"IsControl, or package unicode's tables (Unicode %s), take others, so that stored documents whose "+
+			"text holds them may be refused, which then cannot be read, or text taken that a client refuses",
+			n, sum, unicode.Version)
+	}
+}
+
+// takes returns the number of the characters that is takes, and the start of
+// the SHA-256 of each one's code point in hexadecimal and a line feed, in
+// order.
+func takes(is func(rune) bool) (int, string) {
 	var n int
 	h := sha256.New()
 	for r := rune(0); r <= unicode.MaxRune; r++ {
-		if hidden(r) {
+		if is(r) {
 			n++
 			fmt.Fprintf(h, "%x\n", r)
 		}
 	}
-	if sum := hex.EncodeToString(h.Sum(nil))[:8]; n != hiddenCount || sum != hiddenSum {
-		t.Errorf("hidden takes %d characters, whose hash starts %s, not %d and %s: package unicode's tables "+
-			"(Unicode %s) take others as hidden, so that the links of stored documents may be refused, which "+
-			"then cannot be read, or links taken that a client refuses", n, sum, hiddenCount, hiddenSum,
-			unicode.Version)
-	}
+	return n, hex.EncodeToString(h.Sum(nil))[:8]
 }
 
 // TestLengthVectors checks that the size limit counts the length of a

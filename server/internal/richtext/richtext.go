@@ -31,6 +31,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 )
 
 // The limits of a document (PRD NFR-SEC-07). The JSON Schema states those
@@ -258,9 +259,9 @@ const (
 	Content Reason = "content"
 	// EmptyText is a text node without text.
 	EmptyText Reason = "empty_text"
-	// ControlCharacter is text with a control character, or a line or
-	// paragraph separator, which a line break or a paragraph stands for
-	// instead.
+	// ControlCharacter is text with a control character but a tab, a
+	// bidirectional control, or a line or paragraph separator, which a line
+	// break or a paragraph stands for instead (isControl).
 	ControlCharacter Reason = "control_character"
 	// DuplicateMark is a mark that an inline node has twice.
 	DuplicateMark Reason = "duplicate_mark"
@@ -933,7 +934,8 @@ func (p *parser) text(o map[string]any) (*Text, error) {
 	case s == "":
 		return nil, p.fail(EmptyText, "a text's text is empty")
 	case strings.IndexFunc(s, isControl) >= 0:
-		return nil, p.fail(ControlCharacter, "a text holds a control character; a line break is a hardBreak node")
+		return nil, p.fail(ControlCharacter, "a text holds a control character, a bidirectional control, or a line "+
+			"or paragraph separator; a line break is a hardBreak node")
 	}
 	p.chars += utf8.RuneCountInString(s)
 	if p.chars > MaxChars {
@@ -944,16 +946,30 @@ func (p *parser) text(o map[string]any) (*Text, error) {
 	return &Text{Text: s}, nil
 }
 
-// The characters that text may not hold besides the control characters (Cc).
+// The line and paragraph separators, which text may not hold (isControl).
 const (
 	lineSeparator      = 0x2028
 	paragraphSeparator = 0x2029
 )
 
-// isControl reports whether text may not hold r: a control character, or a
-// line or paragraph separator.
+// isControl reports whether text may not hold r: a control character (Cc)
+// but a tab, a bidirectional control (Bidi_Control), as U+202E RIGHT-TO-LEFT
+// OVERRIDE, which reverses the text after it, or a line or paragraph
+// separator, which a hardBreak or a paragraph stands for. Those are the
+// characters that the other texts that people enter may not hold
+// (input.IsControl), as a project's description (input.CheckText), so that
+// no text changes how the text around it is shown, as a node's preview beside
+// its title, but for a line feed, which a hardBreak stands for in a document.
+// A tab, which ProseMirror keeps in text that is pasted as plain text, is
+// white space, as a space is.
+//
+// A stored document is read with Parse, so a change to the characters that
+// isControl takes, in package input or in package unicode's tables, would
+// refuse the stored documents whose text holds them, which could no longer be
+// read: TestUnicodeTables holds isControl to the characters that it takes
+// now.
 func isControl(r rune) bool {
-	return unicode.IsControl(r) || r == lineSeparator || r == paragraphSeparator
+	return r != '\t' && input.IsControl(r)
 }
 
 func (p *parser) mention(o map[string]any) (*Mention, error) {
@@ -1158,8 +1174,8 @@ func (p *parser) link(mo map[string]any) (string, error) {
 // format character (Unicode's Cf, as U+200B, U+202E, or U+FEFF), or another
 // character that a renderer shows nothing of (Default_Ignorable_Code_Point,
 // as U+3164 HANGUL FILLER), which would hide or reorder what a reader sees of
-// it, and each % in it starts an escape, % and two hexadecimal digits, as
-// url.PathUnescape reads them. It is a mailto URL with an address and only
+// it, and each % in it starts an escape, % and two hexadecimal digits
+// (escapesValid). It is a mailto URL with an address and only
 // the fields that mailtoProblem takes, or an http or https URL whose
 // authority, after the //, is a host of ASCII and a port, as authorityProblem
 // reads it. A scheme is read regardless of ASCII case.
@@ -1180,10 +1196,9 @@ func CheckHref(href string) string {
 	case strings.IndexFunc(href, hidden) >= 0:
 		return "holds white space, a control character, a format character, or another character that is not shown"
 	}
-	// url.PathUnescape checks only that each % starts an escape. A mailto
-	// link's address and values are read again, each apart, by unescape: an
-	// escaped delimiter, as %26, is in a value, not between two.
-	if _, err := url.PathUnescape(href); err != nil {
+	// A mailto link's address and values are read, each apart, by unescape:
+	// an escaped delimiter, as %26, is in a value, not between two.
+	if !escapesValid(href) {
 		return "holds a % that starts no escape of two hexadecimal digits"
 	}
 	scheme, rest, _ := strings.Cut(href, ":")
@@ -1236,15 +1251,18 @@ var mailtoFields = []string{"bcc", "body", "cc", "subject", "to"}
 // %AD a soft hyphen. The address, and the value of to, cc, or bcc, which name
 // addresses too, are as addressesProblem has them: they escape no hidden
 // character, and are addresses as RFC 6068 has them, without a display name,
-// a comment, or quotes, in ASCII. A subject escapes no character that text
-// may not hold (isControl), a control character or a line or paragraph
-// separator, which a mail client could write into a header, as a line break
-// that starts another header in
+// a comment, or quotes, in ASCII, each with a domain that a message can be
+// sent to, as RFC 5321 has it. A subject escapes no character that text
+// may not hold (isControl), a control character but a tab, a bidirectional
+// control, or a line or paragraph separator, which a mail client could write
+// into a header, as a line break that starts another header in
 // mailto:keeper@example.com?subject=a%0D%0ABcc:evil@example.com, or that a
 // reader of lines may take for one, as Python's str.splitlines takes NEL,
-// %C2%85, and LINE SEPARATOR, %E2%80%A8. A subject may escape white space and
-// format characters, as text may hold them, and a body any byte: its line
-// breaks are %0D%0A, as RFC 6068 writes them.
+// %C2%85, and LINE SEPARATOR, %E2%80%A8, or that would reorder the subject
+// that a mail client shows. A subject may escape a tab and other white space,
+// and the format characters that are not bidirectional controls, as text may
+// hold them, and a body any byte: its line breaks are %0D%0A, as RFC 6068
+// writes them.
 func mailtoProblem(rest string) string {
 	switch {
 	case strings.Contains(rest, "#"):
@@ -1282,8 +1300,8 @@ func mailtoProblem(rest string) string {
 					"another character, as a control character"
 			}
 			if strings.ContainsFunc(decoded, isControl) {
-				return "has a subject that escapes a control character or a line or paragraph separator, which a " +
-					"mail client could write into a header"
+				return "has a subject that escapes a control character, a bidirectional control, or a line or " +
+					"paragraph separator, which text may not hold, and which a mail client could write into a header"
 			}
 		case name == "to" || name == "cc" || name == "bcc":
 			if problem := addressesProblem(value); problem != "" {
@@ -1301,12 +1319,11 @@ func mailtoProblem(rest string) string {
 // OVERRIDE, would, or start another header, as %0D%0A would. Once its escapes
 // are read, it is ASCII, as below, and either empty, which only a to, cc, or
 // bcc can be, or addresses that commas separate, each an addr-spec as
-// RFC 6068 has it, without a quoted local part: a local part, an @, and a
-// domain, each atoms that single dots separate (RFC 5322's dot-atom-text,
-// dotAtom), or a domain that is an address literal in brackets
-// (addressLiteral). So an address has no display name, comment, group, or
-// quotes, which a mail client shows in place of the address that the message
-// goes to, as it shows
+// RFC 6068 has it, without a quoted local part: a local part, atoms that
+// single dots separate (RFC 5322's dot-atom-text, dotAtom), an @, and a
+// domain that a message can be sent to (isDomain). So an address has no
+// display name, comment, group, or quotes, which a mail client shows in place
+// of the address that the message goes to, as it shows
 // mailto:%22support@paypal.com%22%3Cx@evil.example%3E, which goes to
 // x@evil.example, as support@paypal.com.
 //
@@ -1348,14 +1365,40 @@ func addressesProblem(s string) string {
 	}
 	for address := range strings.SplitSeq(decoded, ",") {
 		local, domain, ok := strings.Cut(address, "@")
-		if !ok || !dotAtom(local) || !dotAtom(domain) && !addressLiteral(domain) {
-			return "is not addresses that commas separate, each a local part, an @, and a domain, of letters, " +
-				"digits, and !#$%&'*+-/=?^_`{|}~ in atoms that single dots separate, without a display name, a " +
-				"comment, or quotes, which a mail client could show in place of the address that the message " +
-				"goes to"
+		if !ok || !dotAtom(local) || !isDomain(domain) {
+			return "is not addresses that commas separate, each a local part of letters, digits, and " +
+				"!#$%&'*+-/=?^_`{|}~ in atoms that single dots separate, an @, and a domain of letters, digits, and " +
+				"hyphens in labels that single dots separate, or an IP address in brackets, without a display " +
+				"name, a comment, or quotes, which a mail client could show in place of the address that the " +
+				"message goes to"
 		}
 	}
 	return ""
+}
+
+// isDomain reports whether a mailto link's domain is one that a message can
+// be sent to, as RFC 5321 has it: labels of one or more ASCII letters, digits,
+// and hyphens, which single dots separate, as example.com or
+// xn--caf-dma.example, or an address literal (addressLiteral). RFC 6068's
+// addr-spec takes RFC 5322's atoms in a domain too, of which no other
+// character is in a domain that a message can be sent to, and each of which
+// a mail client could show as what it is not, or read otherwise: a / or a ?,
+// as support@paypal.com/.evil.example reads as an address at paypal.com,
+// whose domain is a name under evil.example, or a %, as in
+// support@paypal.com%40evil.example, which a client that reads its escapes
+// twice reads as an address at evil.example.
+func isDomain(domain string) bool {
+	if addressLiteral(domain) {
+		return true
+	}
+	for label := range strings.SplitSeq(domain, ".") {
+		if label == "" || !onlyRunes(label, func(r rune) bool {
+			return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || isDigit(r) || r == '-'
+		}) {
+			return false
+		}
+	}
+	return true
 }
 
 // isAtext reports whether r may be in an atom of an address, as RFC 5322's
@@ -1380,20 +1423,24 @@ func dotAtom(s string) bool {
 	return true
 }
 
-// addressLiteral reports whether a domain is an address literal: brackets
-// around one or more ASCII letters, digits, colons, and dots, as
-// [192.0.2.1], [2001:db8::1], or [IPv6:2001:db8::1] (RFC 5321), which RFC
-// 6068 takes in a mailto link, without the other characters that its
-// domain-literal may hold, which a mail client could read otherwise.
+// addressLiteral reports whether a domain is an address literal of an IP
+// address, as RFC 5321 has it: brackets around an IPv4 address, four numbers
+// from 0 to 255 in decimal, without leading zeros, separated by dots, as
+// [192.0.2.1], or around IPv6, in any ASCII case, a colon, and an IPv6
+// address as an http link's brackets hold one (ipv6Problem), as
+// [IPv6:2001:db8::1]. So brackets hold no name, as [paypal.com], which a mail
+// client shows as a domain that the message does not go to.
 func addressLiteral(domain string) bool {
 	inner, opened := strings.CutPrefix(domain, "[")
 	inner, closed := strings.CutSuffix(inner, "]")
-	if !opened || !closed || inner == "" {
+	if !opened || !closed {
 		return false
 	}
-	return onlyRunes(inner, func(r rune) bool {
-		return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || isDigit(r) || r == ':' || r == '.'
-	})
+	if len(inner) > len("IPv6:") && asciiLower(inner[:len("IPv6:")]) == "ipv6:" {
+		return ipv6Problem(inner[len("IPv6:"):]) == ""
+	}
+	a, err := netip.ParseAddr(inner)
+	return onlyRunes(inner, func(r rune) bool { return isDigit(r) || r == '.' }) && err == nil && a.Is4()
 }
 
 // hidden reports whether r is a character that a link may not hold, which
@@ -1427,6 +1474,22 @@ func addressLiteral(domain string) bool {
 func hidden(r rune) bool {
 	return unicode.IsSpace(r) || unicode.IsControl(r) ||
 		unicode.In(r, unicode.Cf, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector)
+}
+
+// escapesValid reports whether each % of s starts an escape, % and two
+// hexadecimal digits, as url.PathUnescape reads them, without writing what
+// they stand for.
+func escapesValid(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] != '%' {
+			continue
+		}
+		if i+2 >= len(s) || !isHexDigit(rune(s[i+1])) || !isHexDigit(rune(s[i+2])) {
+			return false
+		}
+		i += 2
+	}
+	return true
 }
 
 // unescape returns s, whose every % starts an escape, with each escape read

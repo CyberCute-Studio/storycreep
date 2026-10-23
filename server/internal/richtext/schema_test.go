@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/humatest"
@@ -545,6 +546,20 @@ func TestSchemaPatterns(t *testing.T) {
 		_, err := Parse(doc)
 		if (validate(doc) == nil) != (err == nil) {
 			t.Errorf("U+%04X in text: Parse says %v, and the schema the opposite", r, err)
+		}
+	}
+	// The schema takes a text's bidirectional controls, which Parse refuses
+	// beyond it (textPattern says why), and which the schema's description
+	// of a text names.
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if !unicode.Is(unicode.Bidi_Control, r) {
+			continue
+		}
+		doc := withText("a" + string(r))
+		_, err := Parse(doc)
+		wantError(t, err, ControlCharacter, "/content/0/content/0/text")
+		if problems := validate(doc); problems != nil {
+			t.Errorf("U+%04X in text: the schema refuses it, which textPattern says that it takes: %v", r, problems)
 		}
 	}
 	// The schema refuses a link with a space or a control character, and

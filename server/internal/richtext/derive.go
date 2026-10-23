@@ -389,9 +389,9 @@ const PreviewChars = 100
 
 // Preview returns the preview of a plain text: the text with each run of
 // white space written as one space and none around it, and, when that is
-// longer than PreviewChars code points, its first PreviewChars, back to the
-// last space among them when the cut falls within a word, without the
-// spaces at its end, and an ellipsis (…).
+// longer than PreviewChars code points, its first PreviewChars, cut back when
+// the cut falls within a word (previewCut), without the spaces at its end,
+// and an ellipsis (…).
 func Preview(plain string) string {
 	// The text collapsed, as far as the code point after the first
 	// PreviewChars, which says whether the cut falls within a word.
@@ -417,13 +417,85 @@ func Preview(plain string) string {
 		_, size := utf8.DecodeRuneInString(collapsed[cut:])
 		cut += size
 	}
-	head := collapsed[:cut]
 	if collapsed[cut] != ' ' {
-		if i := strings.LastIndexByte(head, ' '); i > 0 {
-			head = head[:i]
-		}
+		cut = previewCut(collapsed, cut)
 	}
-	return strings.TrimRight(head, " ") + "…"
+	return strings.TrimRight(collapsed[:cut], " ") + "…"
+}
+
+// previewCut returns where the preview of collapsed, a plain text with its
+// white space collapsed, is cut when its first PreviewChars code points, which
+// end at cut, end within a word: at the last space among them, so that no
+// word is cut, when at least PreviewChars/2 code points come before that
+// space; and otherwise, as when the text is Chinese or Japanese, which
+// separate no words with spaces, or a word is longer than half the preview,
+// as a URL may be, at cut, moved back to the start of the character that it
+// falls within (splits), so that no character loses what continues it, as a
+// letter its accent, an emoji its skin tone, or a flag half of itself. A cut
+// within a character that is all of those PreviewChars code points stays
+// where it is, so that the preview is never empty.
+func previewCut(collapsed string, cut int) int {
+	if i := strings.LastIndexByte(collapsed[:cut], ' '); i >= 0 &&
+		utf8.RuneCountInString(collapsed[:i]) >= PreviewChars/2 {
+		return i
+	}
+	for at := cut; at > 0; {
+		if !splits(collapsed, at) {
+			return at
+		}
+		_, size := utf8.DecodeLastRuneInString(collapsed[:at])
+		at -= size
+	}
+	return cut
+}
+
+// zeroWidthJoiner is U+200D ZERO WIDTH JOINER, which joins the characters
+// around it, as the emoji of a family.
+const zeroWidthJoiner = 0x200D
+
+// splits reports whether a cut of s at offset at, which is neither its start
+// nor its end, falls within a character as a reader sees it: before a
+// character that continues the one before it (continues), after U+200D ZERO
+// WIDTH JOINER, or between two regional indicators of which the first is the
+// first of a pair, a flag, as after an odd number of them in a row. These are
+// the rules of Unicode's grapheme clusters (UAX #29) that keep the characters
+// of most text and emoji together, rather than all of them, whose tables a
+// client's engine, as Intl.Segmenter, has of another version than the
+// server's, so that every implementation cuts a preview where the server does.
+func splits(s string, at int) bool {
+	next, _ := utf8.DecodeRuneInString(s[at:])
+	prev, _ := utf8.DecodeLastRuneInString(s[:at])
+	switch {
+	case continues(next) || prev == zeroWidthJoiner:
+		return true
+	case unicode.Is(unicode.Regional_Indicator, next):
+		n := 0
+		for rest := s[:at]; ; n++ {
+			r, size := utf8.DecodeLastRuneInString(rest)
+			if size == 0 || !unicode.Is(unicode.Regional_Indicator, r) {
+				break
+			}
+			rest = rest[:len(rest)-size]
+		}
+		return n%2 == 1
+	}
+	return false
+}
+
+// continues reports whether r continues the character before it, rather than
+// starting one, as a reader sees it: a mark (Unicode's M), as U+0301
+// COMBINING ACUTE ACCENT, a Thai vowel sign, or a variation selector, a
+// character that Unicode extends a grapheme with (Grapheme_Extend, which also
+// holds the tags of a flag's emoji, U+E0020 to U+E007F), a join control
+// (Join_Control: U+200C ZERO WIDTH NON-JOINER and U+200D ZERO WIDTH JOINER),
+// or an emoji modifier, a skin tone (Emoji_Modifier, U+1F3FB to U+1F3FF),
+// which JavaScript's /[\p{M}\p{Grapheme_Extend}\p{Join_Control}
+// \p{Emoji_Modifier}]/u takes too. The marks are those of package unicode's
+// tables, which a client whose tables are newer, as a JavaScript engine's,
+// has more of, as the README says.
+func continues(r rune) bool {
+	return unicode.In(r, unicode.M, unicode.Other_Grapheme_Extend, unicode.Join_Control) ||
+		0x1F3FB <= r && r <= 0x1F3FF
 }
 
 // Hash returns the hash of a plain text, as the text export shows it
