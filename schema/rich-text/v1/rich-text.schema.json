@@ -120,7 +120,7 @@
     },
     "link": {
       "additionalProperties": false,
-      "description": "A link to an absolute http or https URL with a host, or a mailto URL, without white space.",
+      "description": "A link to an absolute http or https URL with a host, without white space, or a mailto URL of one address and nothing else.",
       "properties": {
         "attrs": {
           "additionalProperties": false,
@@ -128,7 +128,7 @@
             "href": {
               "maxLength": 2048,
               "minLength": 1,
-              "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss]?://[^\\x00-\\x20\\x7f-\\x9f/?#]|[Mm][Aa][Ii][Ll][Tt][Oo]:[^\\x00-\\x20\\x7f-\\x9f])[^\\x00-\\x20\\x7f-\\x9f]*$",
+              "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss]?://[^\\x00-\\x20\\x7f-\\x9f/?#][^\\x00-\\x20\\x7f-\\x9f]*|[Mm][Aa][Ii][Ll][Tt][Oo]:[A-Za-z0-9_+-]+(?:\\.[A-Za-z0-9_+-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)*(?:[0-9]*[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?|[0-9]+-[A-Za-z0-9-]*[A-Za-z0-9]))$",
               "type": "string"
             }
           },

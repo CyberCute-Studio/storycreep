@@ -1385,7 +1385,7 @@
       "hash": "sha256:cbdc6be8042546270cfd3c3396e4a1ca932575821b75d46a6069d64a7f0020dd"
     },
     {
-      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one, with an e acute and a zero width space, a format character, escaped in the subject, an address in the cc whose internationalized domain is written as IDNA writes it in ASCII, a line break, a line separator, NEL, ?, =, ;, and a byte that is not UTF-8 escaped in the body, an address in the bcc whose local part has an apostrophe and a dot, and whose domain is an address literal, and an address in the to whose local part has a digit and a +",
+      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link of one address, whose local part has a _, a dot, a -, a digit, and a +, and whose internationalized domain is written as IDNA writes it in ASCII",
       "doc": {
         "content": [
           {
@@ -1426,7 +1426,7 @@
                 "marks": [
                   {
                     "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,elodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&bcc=o'brien.lamp@[192.0.2.1]&to=mira.2+lamp@example.com&"
+                      "href": "mailto:o_brien.lamp-2+harbour@xn--caf-dma.example"
                     },
                     "type": "link"
                   }
@@ -1464,7 +1464,7 @@
           "value": " "
         },
         {
-          "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,elodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&bcc=o'brien.lamp@[192.0.2.1]&to=mira.2+lamp@example.com&",
+          "href": "mailto:o_brien.lamp-2+harbour@xn--caf-dma.example",
           "kind": "text",
           "marks": ["link"],
           "value": "three"
@@ -1476,7 +1476,7 @@
       "hash": "sha256:6899ee404683a14e8c2a03149860df25d67d34d9cd4dae7350cbe91e4b3976be"
     },
     {
-      "note": "a mailto link to an IPv6 address literal, with IPv6: as RFC 5321 writes it, whose subject escapes a tab, as text may hold one",
+      "note": "a mailto link of one address and nothing else",
       "doc": {
         "content": [
           {
@@ -1485,7 +1485,7 @@
                 "marks": [
                   {
                     "attrs": {
-                      "href": "mailto:keeper@[IPv6:2001:db8::1]?subject=Light%09on"
+                      "href": "mailto:keeper@example.com"
                     },
                     "type": "link"
                   }
@@ -1501,81 +1501,7 @@
       },
       "segments": [
         {
-          "href": "mailto:keeper@[IPv6:2001:db8::1]?subject=Light%09on",
-          "kind": "text",
-          "marks": ["link"],
-          "value": "Write"
-        }
-      ],
-      "text": "Write",
-      "preview": "Write",
-      "words": 1,
-      "hash": "sha256:3f00927a719345edd4a8316599d3b328857987547f8884306861161ffa09647e"
-    },
-    {
-      "note": "a mailto link whose subject escapes a % (%25) followed by what is not two hexadecimal digits, so that a mail client that reads escapes twice reads the subject that reading them once does, 50% off",
-      "doc": {
-        "content": [
-          {
-            "content": [
-              {
-                "marks": [
-                  {
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?subject=50%25%20off"
-                    },
-                    "type": "link"
-                  }
-                ],
-                "text": "Write",
-                "type": "text"
-              }
-            ],
-            "type": "paragraph"
-          }
-        ],
-        "type": "doc"
-      },
-      "segments": [
-        {
-          "href": "mailto:keeper@example.com?subject=50%25%20off",
-          "kind": "text",
-          "marks": ["link"],
-          "value": "Write"
-        }
-      ],
-      "text": "Write",
-      "preview": "Write",
-      "words": 1,
-      "hash": "sha256:3f00927a719345edd4a8316599d3b328857987547f8884306861161ffa09647e"
-    },
-    {
-      "note": "a mailto link to an IPv4 address literal whose brackets are escaped, as RFC 6068 has them",
-      "doc": {
-        "content": [
-          {
-            "content": [
-              {
-                "marks": [
-                  {
-                    "attrs": {
-                      "href": "mailto:keeper@%5B192.0.2.1%5D"
-                    },
-                    "type": "link"
-                  }
-                ],
-                "text": "Write",
-                "type": "text"
-              }
-            ],
-            "type": "paragraph"
-          }
-        ],
-        "type": "doc"
-      },
-      "segments": [
-        {
-          "href": "mailto:keeper@%5B192.0.2.1%5D",
+          "href": "mailto:keeper@example.com",
           "kind": "text",
           "marks": ["link"],
           "value": "Write"
@@ -3726,7 +3652,7 @@
       "pointer": "/content/0/content/0/marks/0/attrs/href"
     },
     {
-      "note": "a mailto link with a subject and no address",
+      "note": "a mailto link whose address has no @, and so no domain",
       "doc": {
         "type": "doc",
         "content": [
@@ -3740,7 +3666,7 @@
                   {
                     "type": "link",
                     "attrs": {
-                      "href": "mailto:?subject=Light"
+                      "href": "mailto:keeper"
                     }
                   }
                 ]
@@ -3750,8 +3676,1114 @@
         ]
       },
       "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link without a local part before its @",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link without a domain after its @",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a query that attaches a file, as some mail clients did: a mailto link has no query",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?attach=file:///etc/passwd"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a query that sets a subject, which a link does not prefill",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?subject=Light"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a query that sets a body, which a link does not prefill",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?body=Come"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with an empty query, a ? after its address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a fragment, which RFC 6068 gives a mailto URL no use for, and after which a mail client that does not cut a fragment off could read a field",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com#x"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with two addresses, which a comma separates: a mailto link names one",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com,mira@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with an & after its address, after which a mail client that reads a field wherever an & is reads attach",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com&attach=/etc/passwd"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has an =, which a local part does not hold",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper=x@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part is quoted, as RFC 5322 has some, which a mailto link's is not",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:\"keeper\"@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a display name, which a mail client shows, as Support, in place of the address that the message goes to",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:Support<x@evil.example>"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose address has a comment, which a mail client may show in place of the address that the message goes to",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:x@evil.example(support)"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link with a % that starts no escape",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper%zz@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link that escapes a line break, which a mail client could write into a header: a mailto link holds no escape",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com%0D%0A"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part escapes U+202E RIGHT-TO-LEFT OVERRIDE, a format character, so that a mail client would show it as elpmaxe.live@example.com",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:%E2%80%AEmoc.elpmaxe@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part escapes U+3164 HANGUL FILLER, which a renderer shows nothing of",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper%E3%85%A4@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part escapes a byte that is not UTF-8, which Latin-1 reads as a soft hyphen",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper%AD@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part escapes an underscore, which a local part holds as it is",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support%5Fdesk@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part escapes a % (%25), so that a mail client that reads escapes twice would read a display name, support@paypal.com, and an address, x@evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:%2522support%2540paypal.com%2522%253Cx@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain escapes a /, so that a mail client would show support@paypal.com/.evil.example, which reads as an address at paypal.com",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@paypal.com%2F.evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain escapes a % (%25), which a mail client that reads escapes twice would read as an @",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:x@paypal.com%2540evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain escapes a dot, so that the link reads as an address at paypal.com, as a browser's status bar may show it, and the message goes to paypal.com.evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@paypal.com%2Eevil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain escapes a character beyond ASCII",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@p%D0%B0ypal.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain has a character beyond ASCII, the Cyrillic a, U+0430, in place of the first Latin a of paypal.com, which it looks like, so that a mail client shows a domain that the message does not go to",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@pаypal.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has an e acute, a letter beyond ASCII, as an internationalized address's may: an address is ASCII, as no property of Unicode's tells such a letter from those that look like a delimiter of an address or show as a blank",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:élodie@xn--caf-dma.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has Chinese letters, as an internationalized address's may",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:用户@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has U+FF02 FULLWIDTH QUOTATION MARK, U+FF20 FULLWIDTH COMMERCIAL AT, and U+FF1C FULLWIDTH LESS-THAN SIGN, characters beyond ASCII, which look like a quote, an @, and a <, so that the address reads as a display name, support@paypal.com, and an address, x@evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:＂support＠paypal.com＂＜x@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has U+02BA MODIFIER LETTER DOUBLE PRIME and U+1438 CANADIAN SYLLABICS PA, letters beyond ASCII that look like a quote and a <, so that the address reads as a display name and an address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:ʺsupportʺᐸx@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has a run of U+2800 BRAILLE PATTERN BLANK, which shows as wide as a letter does, and would push the domain after it out of what a mail client shows of the address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support＠paypal.com⠀⠀⠀@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has a run of U+13441 EGYPTIAN HIEROGLYPH FULL BLANK, a letter that shows as a blank as wide as a letter does, which would push the domain after it out of what a mail client shows",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support.paypal.com𓑁𓑁𓑁@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part starts with a dot",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:.keeper@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part ends with a dot",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper.@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose local part has two dots in a row",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:kee..per@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain has a label that starts with a hyphen, as RFC 5321's sub-domain does not",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@-example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain has a label that ends with a hyphen, as RFC 5321's sub-domain does not",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example-.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain's last label is digits, which no top-level domain is, as in an IP address, which a mailto link does not name",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@192.0.2.1"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain is an address literal of an IPv4 address, which a mailto link does not name",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@[192.0.2.1]"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain is an address literal of an IPv6 address, as RFC 5321 writes one, which a mailto link does not name",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@[IPv6:2001:db8::1]"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain is an IPv6 address in brackets",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@[2001:db8::1]"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
+    },
+    {
+      "note": "a mailto link whose domain is a name in brackets",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@[paypal.com]"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href"
     },
     {
       "note": "a link with a space",
@@ -3892,34 +4924,6 @@
       "schema_accepts": true
     },
     {
-      "note": "a mailto link with a % that starts no escape",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper%zz@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
       "note": "a link whose host holds what no host does",
       "doc": {
         "type": "doc",
@@ -4047,146 +5051,6 @@
                     "type": "link",
                     "attrs": {
                       "href": "https://example.com:443@evil.example/"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link that attaches a file, as some mail clients did",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?attach=file:///etc/passwd"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link with a field other than to, cc, bcc, subject, and body",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light&in-reply-to=x"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link's field without an =",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?subject"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link with a #, after which a mail client that reads the fields after the first ?, without cutting a fragment off, reads attach",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com#?attach=/etc/passwd"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link with a # in its query, after which a mail client that reads the fields between the &s reads attach",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light#&attach=/etc/passwd"
                     }
                   }
                 ]
@@ -4579,1126 +5443,6 @@
                     "type": "link",
                     "attrs": {
                       "href": "https://[1::2::3]/"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address escapes a line break, which a mail client could write into a header as another",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com%0D%0ABcc:evil@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose subject escapes a line break, which a mail client could write into a header as another",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light%0d%0aBcc:evil@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose subject escapes NEL, a control character, which a reader of lines may take for a line break",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light%C2%85Bcc:evil@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose subject escapes a % (%25) followed by two hexadecimal digits, so that, once its escapes are read, it holds an escape, which a mail client that reads escapes twice reads as a line break that starts another header",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light%250D%250ABcc:evil@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address escapes a line separator, which a reader of lines may take for a line break",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com%e2%80%a8Bcc:evil@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address has an &, after which a mail client that reads a field wherever an & is reads attach",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com&attach=/etc/passwd"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address has an =",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper=x@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose subject has a ?, after which a mail client that reads the fields after the last ? reads attach",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light?attach=/etc/passwd"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose body has an =, which RFC 6068 escapes",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?body=1+1=2"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link with a ;, which a mail client that reads it as an &, as HTML 4 did, reads attach after",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light;attach=/etc/passwd"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address escapes U+202E RIGHT-TO-LEFT OVERRIDE, a format character, so that a mail client shows it as elpmaxe.live@example.com",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:%E2%80%AEmoc.elpmaxe@evil.example"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose cc escapes a space, white space, which would hide where the message goes",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?cc=mira@example.com%20evil@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address escapes U+3164 HANGUL FILLER, which a renderer shows nothing of",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper%E3%85%A4@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose subject escapes U+202E RIGHT-TO-LEFT OVERRIDE, a bidirectional control, which text may not hold",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light%E2%80%AE"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose domain has a /, which RFC 5322's atoms may hold but no domain that a message can be sent to does, so that a mail client shows support@paypal.com/.evil.example, which reads as an address at paypal.com",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:support@paypal.com%2F.evil.example"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose domain has a %, of an escaped escape, which a mail client that reads escapes twice reads as an @",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:x@paypal.com%2540evil.example"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose domain escapes a dot, which a URL never needs to escape, so that the link reads as an address at paypal.com, as a browser's status bar may show it, and the message goes to paypal.com.evil.example",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:support@paypal.com%2Eevil.example"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose local part escapes a % (%25), so that a mail client that reads escapes twice reads a display name, support@paypal.com, and an address, x@evil.example",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:%2522support%2540paypal.com%2522%253Cx@evil.example"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose local part escapes an underscore, one of RFC 3986's unreserved characters, which a URL never needs to escape, so that the link reads otherwise than the address that the message goes to",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:support%5Fdesk@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose domain has a label that ends with a hyphen, as RFC 5321's sub-domain does not",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example-.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose domain's last label is digits, which no top-level domain is: an IP address is written in brackets",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@192.0.2.1"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose domain is a name in brackets, not an IP address",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:support@[paypal.com]"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose domain is an IPv6 address in brackets without IPv6:, as RFC 5321 writes one",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@[2001:db8::1]"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose subject escapes a byte that is not UTF-8, which Latin-1 reads as NEL",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light%85Bcc:evil@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address escapes a byte that is not UTF-8, which Latin-1 reads as a soft hyphen",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper%AD@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose domain has a character beyond ASCII, the Cyrillic a, U+0430, in place of the first Latin a of paypal.com, which it looks like, so that a mail client shows a domain that the message does not go to",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:support@pаypal.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose domain escapes a character beyond ASCII",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:support@p%D0%B0ypal.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose cc has an address, after a comma, whose domain has a character beyond ASCII",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?cc=mira@example.com,support@p%D0%B0ypal.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address has a display name, which a mail client shows, as support@paypal.com, in place of the address that the message goes to, x@evil.example",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:%22support@paypal.com%22%3Cx@evil.example%3E"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose to has a comment, which a mail client may show in place of the address that the message goes to",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?to=x@evil.example(support@paypal.com)"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address has no @, and so no domain",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address's local part has two dots in a row",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:kee..per@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose cc has an empty address between two commas",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?cc=a@example.com,,b@example.com"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address's local part has U+FF02 FULLWIDTH QUOTATION MARK, U+FF20 FULLWIDTH COMMERCIAL AT, and U+FF1C FULLWIDTH LESS-THAN SIGN, characters beyond ASCII, which look like a quote, an @, and a <, so that the address reads as a display name, support@paypal.com, and an address, x@evil.example",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:＂support＠paypal.com＂＜x@evil.example"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address's local part has a run of U+2800 BRAILLE PATTERN BLANK, which shows as wide as a letter does, and would push the domain after it out of what a mail client shows of the address",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:support＠paypal.com⠀⠀⠀@evil.example"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose to escapes U+FE6B SMALL COMMERCIAL AT in a local part",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?to=support%EF%B9%ABpaypal.com@evil.example"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address's local part has U+02BA MODIFIER LETTER DOUBLE PRIME and U+1438 CANADIAN SYLLABICS PA, letters beyond ASCII that look like a quote and a <, so that the address reads as a display name and an address",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:ʺsupportʺᐸx@evil.example"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose to's local part has a run of U+13441 EGYPTIAN HIEROGLYPH FULL BLANK, a letter that shows as a blank as wide as a letter does, which would push the domain after it out of what a mail client shows",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?to=support.paypal.com𓑁𓑁𓑁@evil.example"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose address's local part has an e acute, a letter beyond ASCII, as an internationalized address's may: an address is ASCII, as no property of Unicode's tells such a letter from those that look like a delimiter of an address or show as a blank",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:élodie@xn--caf-dma.example"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "reason": "link",
-      "pointer": "/content/0/content/0/marks/0/attrs/href",
-      "schema_accepts": true
-    },
-    {
-      "note": "a mailto link whose cc escapes Chinese letters in a local part",
-      "doc": {
-        "type": "doc",
-        "content": [
-          {
-            "type": "paragraph",
-            "content": [
-              {
-                "type": "text",
-                "text": "x",
-                "marks": [
-                  {
-                    "type": "link",
-                    "attrs": {
-                      "href": "mailto:keeper@example.com?cc=%E7%94%A8%E6%88%B7@example.com"
                     }
                   }
                 ]

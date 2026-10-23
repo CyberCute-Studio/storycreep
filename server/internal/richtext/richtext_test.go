@@ -683,20 +683,14 @@ func TestPlainTextBuilt(t *testing.T) {
 
 // TestCheckHref checks the links' allowlist: http and https URLs with a host
 // of ASCII, a name of labels or an IPv4 or IPv6 address, a port of at most
-// 65535, and no userinfo, which could show another host, and mailto URLs
-// without a # or a ;, with a ?, an &, and an = only where they delimit, that
-// set no field but to, cc, bcc, subject, and body, that escape UTF-8 alone
-// but in a body, no hidden character, letter, digit, -, ., or % in an address
-// or a to, cc, or bcc, which are addresses as RFC 6068 has them, without a
-// display name, a comment, or quotes, in ASCII, with domains that a message
-// can be sent to, and no character in a subject that text may not hold, nor an
-// escape once its escapes are read, and nothing that could run a script or
-// read a file; and no link that holds a hidden character, as one that a
-// renderer shows nothing of.
+// 65535, and no userinfo, which could show another host, and mailto URLs of
+// one address and nothing else (mailtoAccepted, mailtoRefused); and nothing
+// that could run a script or read a file, and no link that holds a hidden
+// character, as one that a renderer shows nothing of.
 //
 // Verifies: NFR-SEC-08
 func TestCheckHref(t *testing.T) {
-	for _, href := range []string{
+	for _, href := range slices.Concat([]string{
 		"https://example.com",
 		"http://example.com/a?b=c#d",
 		"HTTPS://EXAMPLE.COM/",
@@ -734,62 +728,12 @@ func TestCheckHref(t *testing.T) {
 		// What a browser escapes in a path, a query, or a fragment.
 		"https://example.com/a|b?q={x}&r=\"<y>\"#^`",
 		"https://example.com/a\\b",
-		"mailto:keeper@example.com",
-		"MAILTO:keeper@example.com?subject=Light",
-		"mailto:/keeper@example.com",
-		// The fields that say what a message is sent to and what it says, in
-		// any ASCII case, and empty ones, with the delimiters escaped in a
-		// value, and an address that holds what an address may, as a , between
-		// two of them, or a / or an escaped & or = in a local part, and a body
-		// that holds a :.
-		"mailto:keeper@example.com?to=mira@example.com&CC=a@example.com&Bcc=b@example.com&subject=a%26b&body=x%3Dy",
-		"mailto:keeper@example.com?&subject=&&body=a%3Fb%23c%3Bd",
-		"mailto:keeper@example.com,mira@example.com?body=https://example.com/a:b@c",
-		"mailto:a%26b%3Dc%3Fd@example.com",
-		// Every character of RFC 5322's atext but %, which an address does not
-		// escape, in atoms that dots separate, in a local part, a domain of
-		// labels of letters, digits, and hyphens that start and end with a
-		// letter or a digit, whose last label is not only digits, an empty to,
-		// cc, and bcc, and address literals of IP addresses, with IPv6 in any
-		// case, and their brackets escaped, as RFC 6068 has them, or not.
-		"mailto:o'brien.a!%23$%26*+/%3D%3F^_`{|}~@a-b.c-d.example",
-		"mailto:keeper@EXAMPLE-1.example.com",
-		"mailto:keeper@1x--y.example.c0m",
-		"mailto:keeper@example.com?to=&cc=&bcc=",
-		"mailto:a@[192.0.2.1]",
-		"mailto:a@%5B192.0.2.1%5D",
-		"mailto:a@[IPv6:2001:db8::1]",
-		"mailto:a@[ipv6:::ffff:192.0.2.1]?cc=b@[IPV6:FE80::A]",
-		// A body's line breaks, as RFC 6068 writes them, and a tab, in any
-		// case of the field's name and of the escape's digits, and a tab in a
-		// subject, as text may hold one.
-		"mailto:keeper@example.com?subject=Light%20on&body=Come%0D%0Aup%09now&BODY=%0d%0a%7f",
-		"mailto:keeper@example.com?subject=%7E%20%25%09",
-		// A subject's %, escaped, followed by what is not two hexadecimal
-		// digits, which reading the subject's escapes again leaves as it is;
-		// and a body's, followed by what is.
-		"mailto:keeper@example.com?subject=50%25%20off%2C%20100%25",
-		"mailto:keeper@example.com?subject=%25zz%25A%25%25&body=%250D%250A",
-		// Escaped characters beyond ASCII, of which a body may hold the line
-		// and paragraph separators, the C1 control characters, and the
-		// bidirectional controls too, and a subject white space and the format
-		// characters that are not bidirectional controls, as text may; and a
-		// body may escape bytes that are not UTF-8.
-		"mailto:keeper@example.com?subject=Caf%C3%A9%20%E2%80%A7&body=a%E2%80%A8b%E2%80%A9c%C2%85d%c2%9f",
-		"mailto:keeper@example.com?subject=%C2%A0%E2%80%8B%E2%80%8D%EF%BB%BF&body=%E2%80%AE%20%E2%81%A6",
-		"mailto:keeper@example.com?body=%C2%20%E2%80%20%FF%80%85",
-		// An internationalized domain, as IDNA writes it in ASCII, wherever an
-		// address is, and addresses with a comma, raw or escaped, between
-		// them.
-		"mailto:elodie@xn--caf-dma.example",
-		"mailto:a@XN--CAF-DMA.example%2Cb@example.com?to=c@xn--caf-dma.example,d@example.com" +
-			"&bcc=e@xn--caf-dma.example",
-	} {
+	}, mailtoAccepted) {
 		if problem := CheckHref(href); problem != "" {
 			t.Errorf("CheckHref(%q) = %q, want none", href, problem)
 		}
 	}
-	for _, href := range []string{
+	for _, href := range slices.Concat([]string{
 		"",
 		"javascript:alert(1)",
 		"JavaScript:alert(1)",
@@ -811,7 +755,6 @@ func TestCheckHref(t *testing.T) {
 		"https://:80/",
 		"https://user@:80/",
 		"http://[]/",
-		"mailto:",
 		"https://example.com:port",
 		"https://example.com:-1/",
 		"https://example.com:80:80/",
@@ -820,7 +763,6 @@ func TestCheckHref(t *testing.T) {
 		"https://example.com/?q=100%",
 		"https://example.com/#%2",
 		"https://u%zz@example.com/",
-		"mailto:keeper%zz@example.com",
 		// A userinfo, which shows a host that the link does not lead to.
 		"https://www.example.com@evil.example/login",
 		"https://example.com:443@evil.example/",
@@ -828,250 +770,6 @@ func TestCheckHref(t *testing.T) {
 		"https://user:pass%40word@example.com/",
 		"https://@example.com/",
 		"https://[::1]@evil.example/",
-		// A mailto link's field that a mail client could read a file for, or
-		// any other than to, cc, bcc, subject, and body.
-		"mailto:keeper@example.com?attach=file:///home/keeper/.ssh/id_rsa",
-		"mailto:keeper@example.com?subject=Light&Attachment=/etc/passwd",
-		"mailto:keeper@example.com?%61ttach=/etc/passwd",
-		"mailto:keeper@example.com?subject",
-		"mailto:keeper@example.com?in-reply-to=x",
-		"mailto:keeper@example.com?subject=a&body=b&x-attach=c",
-		"mailto:?to=keeper@example.com",
-		"mailto:#a",
-		// A #, after which a mail client that reads the fields between the
-		// first ? and the &s, without cutting a fragment off, reads one.
-		"mailto:keeper@example.com#x",
-		"mailto:keeper@example.com#?attach=/home/keeper/.ssh/id_rsa",
-		"mailto:keeper@example.com?to=x#&attach=/etc/passwd",
-		"mailto:keeper@example.com?&subject=&&body=a?b#attach=x",
-		// An escaped control character outside a body, which a mail client
-		// could write into a header, as a line break that starts another.
-		"mailto:keeper@example.com%0D%0ABcc:evil@example.com",
-		"mailto:keeper@example.com%0aBcc:evil@example.com",
-		"mailto:keeper@example.com?subject=Light%0D%0ABcc:%20evil@example.com",
-		"mailto:keeper@example.com?to=a@example.com%0A&body=x",
-		"mailto:keeper@example.com?CC=a@example.com%00",
-		"mailto:keeper@example.com?bcc=%1f",
-		"mailto:keeper@example.com?subject=%7F",
-		// Or a bidirectional control, which text may not hold, and which would
-		// reorder the subject that a mail client shows.
-		"mailto:keeper@example.com?subject=Light%E2%80%AE",
-		"mailto:keeper@example.com?subject=%E2%81%A6x%E2%81%A9",
-		"mailto:keeper@example.com?subject=%E2%80%8F",
-		"mailto:keeper@example.com?subject=%D8%9C",
-		// Or a C1 control character, or a line or paragraph separator, in
-		// UTF-8, which a reader of lines may take for a line break, as
-		// Python's str.splitlines takes NEL, U+0085, and U+2028.
-		"mailto:keeper@example.com?subject=Light%C2%85Bcc:evil@example.com",
-		"mailto:keeper@example.com?subject=Light%e2%80%a8Bcc:evil@example.com",
-		"mailto:keeper@example.com%E2%80%A9Bcc:evil@example.com",
-		// Or a subject that, once its escapes are read, holds an escape,
-		// which a mail client that reads escapes twice reads again, as a line
-		// break that starts another header, or a bidirectional control,
-		// however its % and digits are escaped.
-		"mailto:keeper@example.com?subject=Light%250D%250ABcc:%2520evil@example.com",
-		"mailto:keeper@example.com?subject=Light%25E2%2580%25AE",
-		"mailto:keeper@example.com?subject=%25%30%61",
-		"mailto:keeper@example.com?SUBJECT=100%2541",
-		"mailto:keeper@example.com?cc=a@example.com%C2%9F",
-		"mailto:keeper@example.com?to=a@example.com%c2%80",
-		// A delimiter where it delimits nothing, after which a mail client
-		// that reads the fields otherwise than at the first ? and between the
-		// &s, as at the last ?, wherever an & or a ? is, or at a ;, reads one.
-		"mailto:keeper@example.com&attach=/etc/passwd",
-		"mailto:keeper@example.com&subject=x",
-		"mailto:keeper=x@example.com",
-		"mailto:keeper@example.com?subject=Light?attach=/etc/passwd",
-		"mailto:keeper@example.com?body=a?b",
-		"mailto:keeper@example.com?subject=a=b",
-		"mailto:keeper@example.com?to=mira@example.com=attach=/etc/passwd",
-		"mailto:keeper@example.com?subject=Light;attach=/etc/passwd",
-		"mailto:keeper@example.com;attach=/etc/passwd",
-		"mailto:keeper@example.com?;attach=/etc/passwd",
-		// An address, or a to, cc, or bcc, that escapes white space or a
-		// format character, which would hide or reorder the address that a
-		// mail client shows, as U+202E RIGHT-TO-LEFT OVERRIDE does.
-		"mailto:%E2%80%AEmoc.elpmaxe@evil.example",
-		"mailto:%e2%80%8bkeeper@evil.example",
-		"mailto:keeper@example.com%20evil@example.com",
-		"mailto:keeper@example.com%C2%A0",
-		"mailto:keeper@example.com?to=%EF%BB%BFmira@evil.example",
-		"mailto:keeper@example.com?CC=mira@example.com%E3%80%80",
-		"mailto:keeper@example.com?bcc=%E2%81%A6x@evil.example",
-		// Or that escapes a character that a renderer shows nothing of, as
-		// U+3164 HANGUL FILLER, a letter, U+034F COMBINING GRAPHEME JOINER, a
-		// mark, or a variation selector.
-		"mailto:keeper%E3%85%A4@example.com",
-		"mailto:keeper@example.com?to=a%CD%8F@example.com",
-		"mailto:keeper@example.com?cc=a%EF%B8%8F@example.com",
-		// Escapes that are not UTF-8, which a mail client reads as it
-		// chooses, as Latin-1, in which %85 is NEL and %AD a soft hyphen, in
-		// an address, a to, cc, or bcc, or a subject.
-		"mailto:keeper%AD@example.com",
-		"mailto:keeper@example.com?to=a%A0b@example.com",
-		"mailto:keeper@example.com?subject=Light%85Bcc:evil@example.com",
-		"mailto:keeper@example.com?subject=%C0%8A",
-		"mailto:keeper@example.com?subject=%C2%20%E2%80%20%FF%80",
-		"mailto:%C2%41%E2%80%41%FF%80@example.com",
-		"mailto:keeper@example.com?to=%C2%41",
-		// A domain with a character beyond ASCII, raw or escaped, which may
-		// look like another, as the Cyrillic а of pаypal.com, wherever an
-		// address is, and after whichever @ a mail client reads.
-		"mailto:support@p" + string(rune(0x0430)) + "ypal.com",
-		"mailto:support@p%D0%B0ypal.com",
-		"mailto:support%40p%D0%B0ypal.com",
-		"mailto:support@paypal.com" + string(rune(0x3002)) + "evil.example",
-		"mailto:support@paypal.com" + string(rune(0xFF20)) + "evil.example",
-		"mailto:keeper@example.com,support@p%D0%B0ypal.com",
-		"mailto:keeper@example.com%2Csupport@p%D0%B0ypal.com",
-		"mailto:a@b@p" + string(rune(0x0430)) + "ypal.com",
-		"mailto:keeper@example.com?to=support@p%D0%B0ypal.com",
-		"mailto:keeper@example.com?CC=x@example.com,support@xn--pypal-4ve.com" + string(rune(0x0430)),
-		"mailto:keeper@example.com?bcc=support@p%D0%B0ypal.com",
-		"mailto:keeper@caf%C3%A9.example",
-		// An address with a display name, a comment, a group, or quotes,
-		// which a mail client shows in place of the address that the message
-		// goes to, as support@paypal.com for x@evil.example, raw or escaped,
-		// wherever an address is.
-		"mailto:%22support@paypal.com%22%3Cx@evil.example%3E",
-		"mailto:support@paypal.com%3Cx@evil.example%3E",
-		"mailto:Support%3Cx@evil.example%3E",
-		"mailto:x@evil.example(support@paypal.com)",
-		"mailto:x@evil.example%28support@paypal.com%29",
-		"mailto:(support@paypal.com)x@evil.example",
-		"mailto:paypal%3Ax@evil.example%3B",
-		"mailto:%22support@paypal.com%22@evil.example",
-		"mailto:%22support%22@evil.example",
-		"mailto:keeper@example.com?to=%22support@paypal.com%22%3Cy@evil.example%3E",
-		"mailto:keeper@example.com?CC=y@evil.example(support@paypal.com)",
-		"mailto:keeper@example.com?bcc=Support%3Cy@evil.example%3E",
-		"mailto:keeper@example.com,%22support@paypal.com%22%3Cy@evil.example%3E",
-		// Or whose local part has a character beyond ASCII, raw or escaped,
-		// wherever an address is: one that looks like a delimiter of an
-		// address, punctuation or a symbol, as U+FF02 FULLWIDTH QUOTATION
-		// MARK, U+FF20 FULLWIDTH COMMERCIAL AT, U+FF1C FULLWIDTH LESS-THAN
-		// SIGN, and U+FE6B SMALL COMMERCIAL AT, or a letter, as U+02BA
-		// MODIFIER LETTER DOUBLE PRIME, U+1438 CANADIAN SYLLABICS PA, U+1433
-		// CANADIAN SYLLABICS PO, U+A4F9 LISU LETTER TONE NA PO, and U+A4F8
-		// LISU LETTER TONE MYA TI, which look like ", <, >, a comma, and a
-		// dot, so that the address reads as a display name and another
-		// address; a blank, a symbol, as U+2800 BRAILLE PATTERN BLANK, or a
-		// letter, as U+13441 EGYPTIAN HIEROGLYPH FULL BLANK and U+13442
-		// EGYPTIAN HIEROGLYPH HALF BLANK, a run of which would push the domain
-		// out of what a mail client shows; another symbol; a private use
-		// character, which a font may draw as anything; and the letters,
-		// marks, and numbers of an internationalized address, which no
-		// property tells from those above: an e acute, a Cyrillic a,
-		// Devanagari with its vowel signs, which are marks, Chinese,
-		// Arabic-Indic digits, and U+2EBF0, a CJK ideograph that Unicode 15.1
-		// assigned.
-		"mailto:" + string(rune(0xFF02)) + "support" + string(rune(0xFF20)) + "paypal.com" + string(rune(0xFF02)) +
-			string(rune(0xFF1C)) + "x@evil.example",
-		"mailto:%EF%BC%82support%EF%BC%A0paypal.com%EF%BC%82%EF%BC%9Cx@evil.example",
-		"mailto:support" + string(rune(0xFF20)) + "paypal.com" + strings.Repeat(string(rune(0x2800)), 3) +
-			"@evil.example",
-		"mailto:keeper@example.com?to=support%EF%B9%ABpaypal.com@evil.example",
-		"mailto:keeper@example.com?CC=y@example.com,support" + string(rune(0xFF20)) + "paypal.com@evil.example",
-		"mailto:" + string(rune(0x02BA)) + "support" + string(rune(0x02BA)) + string(rune(0x1438)) + "x@evil.example",
-		"mailto:%CA%BAsupport%CA%BA%E1%90%B8x@evil.example",
-		"mailto:keeper@example.com?to=" + string(rune(0x1438)) + "support" + string(rune(0x1433)) + "x@evil.example",
-		"mailto:keeper@example.com?cc=support" + string(rune(0xA4F9)) + "paypal" + string(rune(0xA4F8)) +
-			"com@evil.example",
-		"mailto:support.paypal.com" + strings.Repeat(string(rune(0x13441)), 40) + "@evil.example",
-		"mailto:keeper@example.com?bcc=support" + strings.Repeat("%F0%93%91%82", 3) + "@evil.example",
-		"mailto:keeper@example.com?bcc=" + string(rune(0x2605)) + "@example.com",
-		"mailto:keeper%EE%80%80@example.com",
-		"mailto:élodie@xn--caf-dma.example",
-		"mailto:%C3%A9lodie@XN--CAF-DMA.example",
-		"mailto:ü@a.example%2Cö@b.example",
-		"mailto:keeper@example.com?to=" + string(rune(0x0430)) + "@example.com",
-		"mailto:" + string([]rune{0x092A, 0x0942, 0x091C, 0x093E}) + "@example.com",
-		"mailto:keeper@example.com?cc=%E7%94%A8%E6%88%B7@example.com",
-		"mailto:keeper@example.com?bcc=a." + string([]rune{0x0661, 0x0662}) + "@example.com",
-		"mailto:" + string(rune(0x2EBF0)) + "@example.com",
-		// Or whose domain holds what no domain that a message can be sent to
-		// does, as RFC 5322's atext, raw or escaped, which a mail client could
-		// show as what it is not, or read otherwise: a /, which has
-		// support@paypal.com/.evil.example read as an address at paypal.com, a
-		// % of an escaped escape, which a client that reads escapes twice reads
-		// as an @, or an underscore; or an address literal that holds no IP
-		// address, as a name, or an IPv6 address without IPv6:, or an IPv4
-		// address with it, or one that is not four numbers from 0 to 255
-		// without leading zeros.
-		"mailto:support@paypal.com%2F.evil.example",
-		"mailto:support@paypal.com/.evil.example",
-		"mailto:x@paypal.com%2540evil.example",
-		"mailto:keeper@a!%23$%25%26'*+/%3D%3F^_`{|}~.example",
-		"mailto:keeper@exa_mple.com",
-		"mailto:keeper@example.com?to=a@b%3Fc.example",
-		"mailto:keeper@example.com?cc=a@paypal.com%7Cevil.example",
-		"mailto:keeper@example.com?bcc=a@paypal.com%7B.example",
-		"mailto:support@[paypal.com]",
-		"mailto:a@[2001:db8::1]",
-		"mailto:a@[IPv6:192.0.2.1]",
-		"mailto:a@[IPv6:]",
-		"mailto:a@[IPv6:2001:db8::1%25eth0]",
-		"mailto:a@[IPv6:1::2::3]",
-		"mailto:a@[192.0.2.256]",
-		"mailto:a@[192.0.2]",
-		"mailto:a@[192.0.2.01]",
-		"mailto:a@[x:192.0.2.1]",
-		// Or whose domain has a label that starts or ends with a hyphen, as
-		// RFC 5321's sub-domain does not, or a last label of digits, which no
-		// top-level domain is, so that an IP address is in brackets.
-		"mailto:keeper@-example.com",
-		"mailto:keeper@example-.com",
-		"mailto:x@paypal.com-.evil",
-		"mailto:x@-.-",
-		"mailto:keeper@example.com?cc=a@example.-com",
-		"mailto:keeper@192.0.2.1",
-		"mailto:keeper@example.123",
-		"mailto:keeper@example.com?to=a@1",
-		// Or that escapes one of RFC 3986's unreserved characters, a letter, a
-		// digit, a -, a ., a _, or a ~, which a URL never needs to escape, so
-		// that a domain would read otherwise as the link writes it than the
-		// one that the message goes to, as paypal.com in
-		// support@paypal.com%2Eevil.example, which goes to
-		// paypal.com.evil.example; or a %, which a mail client that reads
-		// escapes twice reads as another escape, so that it reads a display
-		// name, a comment, or another domain; wherever an address is.
-		"mailto:support%5Fdesk@example.com",
-		"mailto:a%5f@example.com",
-		"mailto:keeper@example.com?cc=a%7Eb@example.com",
-		"mailto:keeper@example.com?TO=a@example.com,%7e@example.com",
-		"mailto:support@paypal.com%2Eevil.example",
-		"mailto:support@paypal.com%2eevil%2Eexample",
-		"mailto:support%2Epaypal.com@evil.example",
-		"mailto:support@pay%70al.com",
-		"mailto:support@paypal.com%2D2.example",
-		"mailto:%73upport@example.com",
-		"mailto:keeper@example.com?to=a@example%2Ecom",
-		"mailto:keeper@example.com?CC=a@example.com,b@x%31.example",
-		"mailto:%2522support%2540paypal.com%2522%253Cx@evil.example",
-		"mailto:keeper@example.com?to=%2522support%2540paypal.com%2522%253Cx@evil.example",
-		"mailto:x%2528support%2540paypal.com%2529@evil.example",
-		"mailto:keeper@example.com?bcc=a%25b@example.com",
-		"mailto:a%25@example.com",
-		// Or that is not a local part, an @, and a domain, each atoms of atext
-		// that single dots separate, or the domain an address literal.
-		"mailto:keeper",
-		"mailto:keeper@",
-		"mailto:@example.com",
-		"mailto:.keeper@example.com",
-		"mailto:keeper.@example.com",
-		"mailto:kee..per@example.com",
-		"mailto:keeper@.example.com",
-		"mailto:keeper@example..com",
-		"mailto:keeper@example.com.",
-		"mailto:a\\b@example.com",
-		"mailto:keeper@exa[mple.com",
-		"mailto:keeper@[]",
-		"mailto:keeper@[192.0.2.1",
-		"mailto:keeper@[x%3Cy@evil.example]",
-		"mailto:keeper@[2001:db8::1]x",
-		"mailto:keeper@example.com?to=,",
-		"mailto:keeper@example.com?cc=a@example.com,,b@example.com",
-		"mailto:keeper@example.com?to=mira",
 		// A port that no browser takes.
 		"https://example.com:65536/",
 		"https://example.com:99999999999999999999/",
@@ -1161,21 +859,184 @@ func TestCheckHref(t *testing.T) {
 		"https://example.com/" + string(rune(0x2764)) + string(rune(0xFE0F)),
 		"https://example.com/" + string(rune(0x180B)),
 		"https://example.com/" + string(rune(0xE0100)),
-		"mailto:keeper" + string(rune(0x3164)) + "@example.com",
-		"mailto:keeper@example.com?subject=" + string(rune(0x3164)),
-	} {
+	}, mailtoRefused) {
 		if CheckHref(href) == "" {
 			t.Errorf("CheckHref(%q) accepts it", href)
 		}
 	}
 }
 
-// FuzzUnescape checks that unescape, the one reader of a link's escapes,
-// reads them as url.PathUnescape does, refuses a % that starts no escape as
-// it does, and reports an escape of one of RFC 3986's unreserved characters,
-// which url.QueryEscape leaves as they are, or of a %, exactly when one is
-// there.
-func FuzzUnescape(f *testing.F) {
+// mailtoAccepted are mailto links that CheckHref takes, and the schema too
+// (TestSchemaPatterns, FuzzMailtoPattern): one address and nothing else, a
+// local part of atoms of ASCII letters, digits, _, +, and - that single dots
+// separate, an @, and a domain of labels of ASCII letters, digits, and
+// hyphens that start and end with a letter or a digit, which single dots
+// separate, the last not only digits, with the scheme in any ASCII case.
+var mailtoAccepted = []string{
+	"mailto:keeper@example.com",
+	"MAILTO:keeper@example.com",
+	"MailTo:Keeper@Example.COM",
+	// Every character that a local part may hold, in atoms that dots
+	// separate, and an internationalized domain, as IDNA writes it in ASCII.
+	"mailto:first.last+tag@xn--caf-dma.example",
+	"mailto:a_b-c+d.E9@example.com",
+	"mailto:_@example.com",
+	"mailto:-.+@example.com",
+	"mailto:keeper@XN--CAF-DMA.EXAMPLE",
+	// Labels that start with a digit or hold hyphens in a row, a domain of
+	// one label, and last labels that are not only digits, as they hold a
+	// letter or a hyphen.
+	"mailto:keeper@1x--y.example.c0m",
+	"mailto:keeper@EXAMPLE-1.example.com",
+	"mailto:k@b",
+	"mailto:keeper@example.1a",
+	"mailto:keeper@example.123a4",
+	"mailto:keeper@example.1-2",
+	"mailto:keeper@192.0.2.1a",
+	// The longest link, of MaxHrefChars characters.
+	"mailto:" + strings.Repeat("a", MaxHrefChars-len("mailto:@example.com")) + "@example.com",
+}
+
+// mailtoRefused are mailto links that CheckHref refuses, and the schema too
+// (TestSchemaPatterns, FuzzMailtoPattern), for what each holds beyond one
+// address, or what its address may not hold.
+var mailtoRefused = []string{
+	// No address, or no local part or domain.
+	"mailto:",
+	"mailto:keeper",
+	"mailto:@example.com",
+	"mailto:keeper@",
+	"mailto:@",
+	// A query, of any field, as subject, body, to, cc, bcc, or attach, for
+	// which a mail client could read a file, or an empty one.
+	"mailto:keeper@example.com?subject=Light",
+	"mailto:keeper@example.com?body=Come",
+	"mailto:keeper@example.com?to=mira@example.com",
+	"mailto:keeper@example.com?cc=mira@example.com&bcc=elodie@example.com",
+	"mailto:keeper@example.com?attach=/etc/passwd",
+	"mailto:keeper@example.com?",
+	"mailto:?to=keeper@example.com",
+	// A fragment.
+	"mailto:keeper@example.com#x",
+	"mailto:keeper@example.com#?attach=/etc/passwd",
+	// An escape, of whatever character, as a line break, which a mail
+	// client could write into a header, an @, a dot, a letter, a quote, or a
+	// character beyond ASCII, or a % that starts none.
+	"mailto:keeper@example.com%0D%0ABcc:evil@example.com",
+	"mailto:keeper%40example.com",
+	"mailto:support@paypal.com%2Eevil.example",
+	"mailto:%6Beeper@example.com",
+	"mailto:%22support@paypal.com%22%3Cx@evil.example%3E",
+	"mailto:%C3%A9lodie@xn--caf-dma.example",
+	"mailto:keeper%zz@example.com",
+	// A second address, after a comma or an @, raw or escaped.
+	"mailto:keeper@example.com,mira@example.com",
+	"mailto:keeper@example.com%2Cmira@example.com",
+	"mailto:a@b@example.com",
+	// A delimiter that a mail client could read as one of a query: a ;, an
+	// &, or an =.
+	"mailto:keeper@example.com;attach=/etc/passwd",
+	"mailto:keeper@example.com&attach=/etc/passwd",
+	"mailto:keeper=x@example.com",
+	// A display name, a comment, or quotes, which a mail client shows in
+	// place of the address that the message goes to.
+	`mailto:"support@paypal.com"<x@evil.example>`,
+	"mailto:Support<x@evil.example>",
+	"mailto:x@evil.example(support@paypal.com)",
+	`mailto:"keeper"@example.com`,
+	// A character of RFC 5322's atext that a local part does not hold, or a
+	// backslash.
+	"mailto:o'brien@example.com",
+	"mailto:a/b@example.com",
+	"mailto:/keeper@example.com",
+	"mailto:a!b@example.com",
+	"mailto:a*b@example.com",
+	"mailto:a~b@example.com",
+	"mailto:a{b}@example.com",
+	"mailto:a^b@example.com",
+	"mailto:a|b@example.com",
+	"mailto:a" + string(rune(0x5C)) + "b@example.com",
+	// A character beyond ASCII: in a local part, an e acute or Chinese, the
+	// letters of an internationalized address, U+FF20 FULLWIDTH COMMERCIAL
+	// AT, which looks like an @, U+02BA MODIFIER LETTER DOUBLE PRIME, a
+	// letter that looks like a quote, or U+2800 BRAILLE PATTERN BLANK, which
+	// shows as wide as a letter does; or in a domain, the Cyrillic a of
+	// paypal.com, which looks like the Latin one, an e acute, or U+3002
+	// IDEOGRAPHIC FULL STOP, which IDNA reads as a dot.
+	"mailto:" + string(rune(0xE9)) + "lodie@xn--caf-dma.example",
+	"mailto:" + string([]rune{0x7528, 0x6237}) + "@example.com",
+	"mailto:support" + string(rune(0xFF20)) + "paypal.com@evil.example",
+	"mailto:" + string(rune(0x02BA)) + "support" + string(rune(0x02BA)) + "@evil.example",
+	"mailto:support" + strings.Repeat(string(rune(0x2800)), 3) + "@evil.example",
+	"mailto:support@p" + string(rune(0x0430)) + "ypal.com",
+	"mailto:keeper@caf" + string(rune(0xE9)) + ".example",
+	"mailto:support@paypal.com" + string(rune(0x3002)) + "evil.example",
+	// A character that is not shown, which no link holds.
+	"mailto:keeper" + string(rune(0x3164)) + "@example.com",
+	"mailto:keeper@example.com" + string(rune(0x200B)),
+	"mailto: keeper@example.com",
+	// A local part with a dot at its start or its end, or two in a row.
+	"mailto:.keeper@example.com",
+	"mailto:keeper.@example.com",
+	"mailto:kee..per@example.com",
+	// A domain with an empty label, a label that starts or ends with a
+	// hyphen, a character that no label holds, or a last label of digits, as
+	// an IP address has, which a mailto link does not name.
+	"mailto:keeper@.example.com",
+	"mailto:keeper@example..com",
+	"mailto:keeper@example.com.",
+	"mailto:keeper@-example.com",
+	"mailto:keeper@example-.com",
+	"mailto:x@-.-",
+	"mailto:keeper@exa_mple.com",
+	"mailto:keeper@exa+mple.com",
+	"mailto:support@paypal.com/.evil.example",
+	"mailto:keeper@192.0.2.1",
+	"mailto:keeper@example.123",
+	"mailto:keeper@1",
+	// An address literal, of an IP address or of a name, raw or escaped.
+	"mailto:keeper@[192.0.2.1]",
+	"mailto:keeper@[IPv6:2001:db8::1]",
+	"mailto:keeper@%5B192.0.2.1%5D",
+	"mailto:support@[paypal.com]",
+	// A link longer than MaxHrefChars characters.
+	"mailto:" + strings.Repeat("a", MaxHrefChars-len("mailto:@example.com")+1) + "@example.com",
+}
+
+// TestMailtoProblem checks that CheckHref says what is wrong with a mailto
+// link, one message for each kind of fault: that it holds more than an
+// address, that it has no address, or what is wrong with its local part or
+// with its domain.
+//
+// Verifies: NFR-SEC-08
+func TestMailtoProblem(t *testing.T) {
+	for href, want := range map[string]string{
+		"mailto:keeper@example.com?subject=Light":                    "with more than an address",
+		"mailto:keeper@example.com#x":                                "with more than an address",
+		"mailto:keeper%40example.com":                                "with more than an address",
+		"mailto:keeper@example.com,mira@example.com":                 "with more than an address",
+		"mailto:a@b@example.com":                                     "with more than an address",
+		`mailto:"keeper"@example.com`:                                "with more than an address",
+		"mailto:" + string(rune(0xE9)) + "lodie@xn--caf-dma.example": "with more than an address",
+		"mailto:keeper@[192.0.2.1]":                                  "with more than an address",
+		"mailto:":                                                    "without an address",
+		"mailto:keeper":                                              "without an address",
+		"mailto:@example.com":                                        "whose local part",
+		"mailto:kee..per@example.com":                                "whose local part",
+		"mailto:keeper@":                                             "whose domain",
+		"mailto:keeper@example-.com":                                 "whose domain",
+		"mailto:keeper@192.0.2.1":                                    "whose domain",
+		"mailto:keeper@exa_mple.com":                                 "whose domain",
+	} {
+		if got := CheckHref(href); !strings.HasPrefix(got, "is a mailto URL "+want) {
+			t.Errorf("CheckHref(%q) = %q, want it to say that it is a mailto URL %s", href, got, want)
+		}
+	}
+}
+
+// FuzzValidEscapes checks that validEscapes refuses a % that starts no escape
+// as url.PathUnescape does, and takes every other.
+func FuzzValidEscapes(f *testing.F) {
 	for _, s := range []string{
 		"", "a", "%", "%2", "a%", "%zz", "%g0", "a%41b", "%2e%7E%5f%2D%25", "%2F%3a%40%2b", "%E2%80%AE",
 		"%c3%a9", "+%20+", "100%", "%%41", "%25%30%61", "%FF%00",
@@ -1183,30 +1044,8 @@ func FuzzUnescape(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
-		decoded, valid, plain := unescape(s)
-		want, err := url.PathUnescape(s)
-		switch {
-		case valid != (err == nil):
-			t.Fatalf("unescape(%q) reports valid %v, and url.PathUnescape the error %v", s, valid, err)
-		case !valid:
-			if decoded != "" || plain {
-				t.Fatalf("unescape(%q) = %q, %v, %v, want \"\", false, false", s, decoded, valid, plain)
-			}
-			return
-		case decoded != want:
-			t.Fatalf("unescape(%q) = %q, want %q", s, decoded, want)
-		}
-		wantPlain := false
-		for _, escape := range strings.Split(s, "%")[1:] {
-			b, err := strconv.ParseUint(escape[:2], 16, 8)
-			if err != nil {
-				t.Fatalf("unescape(%q) reads %%%s as an escape", s, escape[:2])
-			}
-			c := string([]byte{byte(b)})
-			wantPlain = wantPlain || c == "%" || url.QueryEscape(c) == c
-		}
-		if plain != wantPlain {
-			t.Fatalf("unescape(%q) reports plain %v, want %v", s, plain, wantPlain)
+		if _, err := url.PathUnescape(s); validEscapes(s) != (err == nil) {
+			t.Fatalf("validEscapes(%q) = %v, and url.PathUnescape returns the error %v", s, validEscapes(s), err)
 		}
 	})
 }

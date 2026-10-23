@@ -264,11 +264,21 @@ var (
 	// that they would reorder how the schema and the API's OpenAPI document
 	// show.
 	textPattern = `^[^\x00-\x08\x0a-\x1f\x7f-\x9f` + string(rune(lineSeparator)) + string(rune(paragraphSeparator)) + `]+$`
-	// hrefPattern matches an http or https URL with a host or a mailto URL
-	// with an address, without a space or a control character, which
-	// CheckHref checks more strictly.
-	hrefPattern = `^(?:[Hh][Tt][Tt][Pp][Ss]?://[^\x00-\x20\x7f-\x9f/?#]|[Mm][Aa][Ii][Ll][Tt][Oo]:[^\x00-\x20\x7f-\x9f])` +
-		`[^\x00-\x20\x7f-\x9f]*$`
+	// hrefPattern matches an http or https URL with a host, without a space
+	// or a control character, which CheckHref checks more strictly, or a
+	// mailto URL as CheckHref takes one (mailtoPattern).
+	hrefPattern = `^(?:[Hh][Tt][Tt][Pp][Ss]?://[^\x00-\x20\x7f-\x9f/?#][^\x00-\x20\x7f-\x9f]*|` + mailtoPattern + `)$`
+	// mailtoPattern matches a mailto URL of one address and nothing else
+	// (mailtoProblem): a local part of atoms that single dots separate, an
+	// @, and a domain of labels that single dots separate, the last of which
+	// is not only digits: after the digits that it starts with, if any, comes
+	// a letter, or a hyphen and then what ends with a letter or a digit.
+	mailtoPattern = `[Mm][Aa][Ii][Ll][Tt][Oo]:` + mailtoAtom + `(?:\.` + mailtoAtom + `)*@(?:` + domainLabel + `\.)*` +
+		`(?:[0-9]*[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?|[0-9]+-[A-Za-z0-9-]*[A-Za-z0-9])`
+	// mailtoAtom matches an atom of a mailto link's local part (isLocalPart).
+	mailtoAtom = `[A-Za-z0-9_+-]+`
+	// domainLabel matches a label of a mailto link's domain (isDomain).
+	domainLabel = `[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?`
 )
 
 // definitions returns the schema's definitions, each referring to the others
@@ -354,7 +364,8 @@ func definitions(prefix string) obj {
 				"pattern": hrefPattern,
 			}}, "href"),
 			"type": typ(markLink),
-		}, "attrs", "type"), "A link to an absolute http or https URL with a host, or a mailto URL, without white space."),
+		}, "attrs", "type"), "A link to an absolute http or https URL with a host, without white space, or a mailto URL "+
+			"of one address and nothing else."),
 		"componentId": id(ids.Component, "A component's ID."),
 		"variableId":  id(ids.Variable, "A variable's ID."),
 		"attributeId": id(ids.AttributeDef, "A component type's attribute definition's ID."),

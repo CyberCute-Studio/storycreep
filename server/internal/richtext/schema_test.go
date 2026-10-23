@@ -12,11 +12,13 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/humatest"
@@ -562,9 +564,9 @@ func TestSchemaPatterns(t *testing.T) {
 			t.Errorf("U+%04X in text: the schema refuses it, which textPattern says that it takes: %v", r, problems)
 		}
 	}
-	// The schema refuses a link with a space or a control character, and
-	// leaves the rest of what makes one not a URL, as a % that starts no
-	// escape, or white space beyond ASCII, to Parse.
+	// The schema refuses an http or https link with a space or a control
+	// character, and leaves the rest of what makes one not a URL, as a % that
+	// starts no escape, or white space beyond ASCII, to Parse.
 	for _, r := range rangeOf(0, 0xA0) {
 		doc := withHref("https://example.com/a" + string(r))
 		_, err := Parse(doc)
@@ -576,6 +578,31 @@ func TestSchemaPatterns(t *testing.T) {
 			t.Errorf("U+%04X in a link: the schema accepts it", r)
 		}
 	}
+	// It takes exactly the mailto links that Parse takes (FuzzMailtoPattern).
+	for _, href := range slices.Concat(mailtoAccepted, mailtoRefused) {
+		doc := withHref(href)
+		_, err := Parse(doc)
+		if (validate(doc) == nil) != (err == nil) {
+			t.Errorf("%q: Parse says %v, and the schema the opposite", href, err)
+		}
+	}
+}
+
+// FuzzMailtoPattern checks that the schema takes exactly the mailto links that
+// CheckHref takes, by the pattern of a link and its length, whatever follows
+// the scheme.
+func FuzzMailtoPattern(f *testing.F) {
+	for _, href := range slices.Concat(mailtoAccepted, mailtoRefused) {
+		f.Add(href[len("mailto:"):])
+	}
+	pattern := regexp.MustCompile(hrefPattern)
+	f.Fuzz(func(t *testing.T, rest string) {
+		href := "mailto:" + rest
+		schema := pattern.MatchString(href) && utf8.RuneCountInString(href) <= MaxHrefChars
+		if problem := CheckHref(href); schema != (problem == "") {
+			t.Fatalf("CheckHref(%q) = %q, and the schema takes it: %v", href, problem, schema)
+		}
+	})
 }
 
 func rangeOf(lo, hi rune) []rune {
