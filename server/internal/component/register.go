@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/text/language"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
@@ -25,16 +26,9 @@ func Register(r *commands.Registry) {
 	commands.RegisterEntity(r, commands.Entity{
 		Kind: ids.ComponentType,
 		Revs: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]int64, error) {
-			rows, err := queries.New(tx).ComponentTypeRevs(ctx, queries.ComponentTypeRevsParams{
-				WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)})
-			if err != nil {
-				return nil, err
-			}
-			out := make(map[ids.UUID]int64, len(rows))
-			for _, row := range rows {
-				out[row.ID.Bytes] = row.Rev
-			}
-			return out, nil
+			return revs(func(row queries.ComponentTypeRevsRow) (pgtype.UUID, int64) { return row.ID, row.Rev })(
+				queries.New(tx).ComponentTypeRevs(ctx, queries.ComponentTypeRevsParams{
+					WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)}))
 		},
 		States: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]any, error) {
 			q := queries.New(tx)
@@ -61,16 +55,9 @@ func Register(r *commands.Registry) {
 	commands.RegisterEntity(r, commands.Entity{
 		Kind: ids.AttributeDef,
 		Revs: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]int64, error) {
-			rows, err := queries.New(tx).AttributeDefRevs(ctx, queries.AttributeDefRevsParams{
-				WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)})
-			if err != nil {
-				return nil, err
-			}
-			out := make(map[ids.UUID]int64, len(rows))
-			for _, row := range rows {
-				out[row.ID.Bytes] = row.Rev
-			}
-			return out, nil
+			return revs(func(row queries.AttributeDefRevsRow) (pgtype.UUID, int64) { return row.ID, row.Rev })(
+				queries.New(tx).AttributeDefRevs(ctx, queries.AttributeDefRevsParams{
+					WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)}))
 		},
 		States: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]any, error) {
 			rows, err := queries.New(tx).AttributeDefsByID(ctx, queries.AttributeDefsByIDParams{
@@ -98,16 +85,9 @@ func Register(r *commands.Registry) {
 	commands.RegisterEntity(r, commands.Entity{
 		Kind: ids.Component,
 		Revs: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]int64, error) {
-			rows, err := queries.New(tx).ComponentRevs(ctx, queries.ComponentRevsParams{
-				WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)})
-			if err != nil {
-				return nil, err
-			}
-			out := make(map[ids.UUID]int64, len(rows))
-			for _, row := range rows {
-				out[row.ID.Bytes] = row.Rev
-			}
-			return out, nil
+			return revs(func(row queries.ComponentRevsRow) (pgtype.UUID, int64) { return row.ID, row.Rev })(
+				queries.New(tx).ComponentRevs(ctx, queries.ComponentRevsParams{
+					WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)}))
 		},
 		States: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]any, error) {
 			q := queries.New(tx)
@@ -134,6 +114,24 @@ func Register(r *commands.Registry) {
 	registerTypes(r)
 	registerAttributes(r)
 	registerComponents(r)
+}
+
+// revs returns a function that returns the revisions that a query of the
+// entities' revisions returned, with its error, by the UUIDs of their
+// entities, as the pipeline asks for them (commands.Entity.Revs), or the
+// query's error. of returns a row's entity and its revision.
+func revs[R any](of func(R) (pgtype.UUID, int64)) func(rows []R, err error) (map[ids.UUID]int64, error) {
+	return func(rows []R, err error) (map[ids.UUID]int64, error) {
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[ids.UUID]int64, len(rows))
+		for _, row := range rows {
+			id, rev := of(row)
+			out[id.Bytes] = rev
+		}
+		return out, nil
+	}
 }
 
 // defaultType is a type that a project is created with.

@@ -252,8 +252,10 @@ func (q *Queries) AttributeKeysFrom(ctx context.Context, arg AttributeKeysFromPa
 }
 
 const attributeValues = `-- name: AttributeValues :many
-SELECT v.component_id, v.value, c.key, c.name, c.deleted_at FROM attribute_value v
+SELECT v.component_id, v.value, c.key, c.name, c.deleted_at, a.rev AS attribute_def_rev FROM attribute_value v
 JOIN component c ON c.workspace_id = v.workspace_id AND c.project_id = v.project_id AND c.id = v.component_id
+JOIN attribute_def a ON a.workspace_id = v.workspace_id AND a.project_id = v.project_id
+    AND a.id = v.attribute_def_id
 WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.attribute_def_id = $3
     AND ($4::uuid IS NULL OR v.component_id > $4::uuid)
 ORDER BY v.component_id
@@ -269,18 +271,23 @@ type AttributeValuesParams struct {
 }
 
 type AttributeValuesRow struct {
-	ComponentID pgtype.UUID
-	Value       []byte
-	Key         string
-	Name        string
-	DeletedAt   pgtype.Timestamptz
+	ComponentID     pgtype.UUID
+	Value           []byte
+	Key             string
+	Name            string
+	DeletedAt       pgtype.Timestamptz
+	AttributeDefRev int64
 }
 
 // AttributeValues returns the values that the project's components hold of
 // the attribute definition attribute_def_id, those of the components in the
 // trash included, in the order of the components' IDs, after the component
 // after, or from the first if after is null, each with its component's key,
-// name, and when it was deleted, if it is in the trash.
+// name, and when it was deleted, if it is in the trash, and with the
+// definition's revision as the statement reads it, so that a read of them a
+// page at a time that holds no lock, as the list of what a retype would not
+// convert, sees a change of the definition that commits between two of its
+// statements.
 func (q *Queries) AttributeValues(ctx context.Context, arg AttributeValuesParams) ([]AttributeValuesRow, error) {
 	rows, err := q.db.Query(ctx, attributeValues,
 		arg.WorkspaceID,
@@ -302,6 +309,7 @@ func (q *Queries) AttributeValues(ctx context.Context, arg AttributeValuesParams
 			&i.Key,
 			&i.Name,
 			&i.DeletedAt,
+			&i.AttributeDefRev,
 		); err != nil {
 			return nil, err
 		}
@@ -1419,6 +1427,52 @@ func (q *Queries) SetAttributeValues(ctx context.Context, arg SetAttributeValues
 		arg.ProjectID,
 		arg.AttributeDefID,
 		arg.Vals,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var component_id pgtype.UUID
+		if err := rows.Scan(&component_id); err != nil {
+			return nil, err
+		}
+		items = append(items, component_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setAttributeValuesTo = `-- name: SetAttributeValuesTo :many
+UPDATE attribute_value SET value = $1
+WHERE workspace_id = $2 AND project_id = $3 AND attribute_def_id = $4
+    AND component_id = ANY($5::uuid[]) AND value <> $1
+RETURNING component_id
+`
+
+type SetAttributeValuesToParams struct {
+	Value          []byte
+	WorkspaceID    pgtype.UUID
+	ProjectID      pgtype.UUID
+	AttributeDefID pgtype.UUID
+	Ids            []pgtype.UUID
+}
+
+// SetAttributeValuesTo sets the values that the components whose IDs are
+// among ids hold of the attribute definition attribute_def_id to value, as a
+// change gives its new default to many of them, which is sent once however
+// many it gives it to, but for those that hold it already, and returns the
+// IDs of the components whose values it changed.
+func (q *Queries) SetAttributeValuesTo(ctx context.Context, arg SetAttributeValuesToParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, setAttributeValuesTo,
+		arg.Value,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.AttributeDefID,
+		arg.Ids,
 	)
 	if err != nil {
 		return nil, err

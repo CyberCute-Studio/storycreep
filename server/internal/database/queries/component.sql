@@ -400,9 +400,15 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND component_id
 -- the attribute definition attribute_def_id, those of the components in the
 -- trash included, in the order of the components' IDs, after the component
 -- after, or from the first if after is null, each with its component's key,
--- name, and when it was deleted, if it is in the trash.
-SELECT v.component_id, v.value, c.key, c.name, c.deleted_at FROM attribute_value v
+-- name, and when it was deleted, if it is in the trash, and with the
+-- definition's revision as the statement reads it, so that a read of them a
+-- page at a time that holds no lock, as the list of what a retype would not
+-- convert, sees a change of the definition that commits between two of its
+-- statements.
+SELECT v.component_id, v.value, c.key, c.name, c.deleted_at, a.rev AS attribute_def_rev FROM attribute_value v
 JOIN component c ON c.workspace_id = v.workspace_id AND c.project_id = v.project_id AND c.id = v.component_id
+JOIN attribute_def a ON a.workspace_id = v.workspace_id AND a.project_id = v.project_id
+    AND a.id = v.attribute_def_id
 WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.attribute_def_id = @attribute_def_id
     AND (sqlc.narg(after)::uuid IS NULL OR v.component_id > sqlc.narg(after)::uuid)
 ORDER BY v.component_id
@@ -444,3 +450,14 @@ FROM jsonb_each(@vals::jsonb) e
 WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.attribute_def_id = @attribute_def_id
     AND v.component_id = e.key::uuid AND v.value <> e.value
 RETURNING v.component_id;
+
+-- name: SetAttributeValuesTo :many
+-- SetAttributeValuesTo sets the values that the components whose IDs are
+-- among ids hold of the attribute definition attribute_def_id to value, as a
+-- change gives its new default to many of them, which is sent once however
+-- many it gives it to, but for those that hold it already, and returns the
+-- IDs of the components whose values it changed.
+UPDATE attribute_value SET value = @value
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND attribute_def_id = @attribute_def_id
+    AND component_id = ANY(@ids::uuid[]) AND value <> @value
+RETURNING component_id;

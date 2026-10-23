@@ -58,10 +58,11 @@ const (
 	RestoreAttribute commands.Type = "attribute.restore"
 )
 
-// maxUndoValues is the most bytes of values that the undo of a change of an
-// attribute definition's options or type holds, those that the change loses,
-// which the operation log keeps: 16 MiB, which only a test that is not
-// parallel lowers (SetMaxUndoValues).
+// maxUndoValues is the most bytes that the values that the undo of a change of
+// an attribute definition's options or type holds, those that the change
+// loses, take in its payload, which the operation log keeps, each with its
+// component's ID: 16 MiB, which only a test that is not parallel lowers
+// (SetMaxUndoValues).
 var maxUndoValues = 16 << 20
 
 // createAttributePayload is CreateAttribute's payload.
@@ -108,7 +109,7 @@ type attributeOptionsPayload struct {
 	Default value.Value `json:"default,omitzero" doc:"The enum's new default, one of its new options. Without it, the default stays as it is, which must then be one of them."`
 	// Values are the values that the components are given, rather than the
 	// default, by their IDs.
-	Values map[string]value.Value `json:"values,omitempty" doc:"The values, each one of the new options, that components of the definition's type are given, by their IDs, in place of what they hold: a component that holds a value that is none of the new options, and is not given one here, is given the default"`
+	Values map[string]value.Value `json:"values,omitempty" doc:"The values, each one of the new options, that components of the definition's type are given, by their IDs, in place of what they hold: a component that holds a value that is none of the new options, and is not given one here, is given the default. A component of another type is refused, and one that the project no longer has, as one that the purge has deleted, is passed over."`
 }
 
 // retypeAttributePayload is RetypeAttribute's payload.
@@ -120,7 +121,7 @@ type retypeAttributePayload struct {
 	Default    value.Value `json:"default,omitzero" doc:"The definition's default of its new type: a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. Without it, the type's zero value: false, 0, 0.0, the empty string, or an enum's first option."`
 	// Values are the values that the components are given, rather than what
 	// the conversion makes of theirs, by their IDs.
-	Values map[string]value.Value `json:"values,omitempty" doc:"The values of the new type that components of the definition's type are given, by their IDs, in place of what the conversion makes of what they hold"`
+	Values map[string]value.Value `json:"values,omitempty" doc:"The values of the new type that components of the definition's type are given, by their IDs, in place of what the conversion makes of what they hold. A component of another type is refused, and one that the project no longer has, as one that the purge has deleted, is passed over."`
 }
 
 // moveAttributePayload is MoveAttribute's payload.
@@ -683,11 +684,14 @@ func (plan *valuesPlan) give(given map[string]value.Value) error {
 // that it holds and the one that it is given: the value that the command
 // gives it, or what the plan's conversion makes of what it holds if that
 // converts, or else the new default. It refuses the batch for a component
-// that the command gives a value but that holds none of the definition, as
-// one of another type.
+// that the command gives a value but that holds none of the definition, one
+// of another type, and passes over one that the project does not have, as
+// one that the purge has deleted since the change whose undo gives it back
+// its value, so that the undo still applies.
 func (plan *valuesPlan) each(ctx context.Context, tx *commands.Tx, fn func(u ids.UUID, old, to value.Value) error) error {
 	found := make(map[ids.UUID]bool, len(plan.given))
-	if err := eachValue(ctx, queries.New(tx), plan.a, pgtype.UUID{}, func(row queries.AttributeValuesRow,
+	q := queries.New(tx)
+	if err := eachValue(ctx, q, plan.a, pgtype.UUID{}, func(row queries.AttributeValuesRow,
 		old value.Value) (bool, error) {
 		u := ids.UUID(row.ComponentID.Bytes)
 		var to value.Value
@@ -708,9 +712,28 @@ func (plan *valuesPlan) each(ctx context.Context, tx *commands.Tx, fn func(u ids
 	}); err != nil {
 		return err
 	}
+	var missing []ids.UUID
 	for _, k := range sortedKeyed(plan.given) {
 		if !found[k] {
-			return commands.Refuse(plan.given[k].at, "is not a component of the attribute definition's type", nil)
+			missing = append(missing, k)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	rows, err := q.ComponentRevs(ctx, queries.ComponentRevsParams{WorkspaceID: plan.a.WorkspaceID,
+		ProjectID: plan.a.ProjectID, Ids: uuids(missing)})
+	if err != nil {
+		return fmt.Errorf("component: read the components that hold no value of the attribute definition: %w", err)
+	}
+	exists := make(map[ids.UUID]bool, len(rows))
+	for _, row := range rows {
+		exists[row.ID.Bytes] = true
+	}
+	for _, k := range missing {
+		if exists[k] {
+			return commands.Refuse(plan.given[k].at, "is a component of another type than the attribute "+
+				"definition's", nil)
 		}
 	}
 	return nil
@@ -720,7 +743,8 @@ func (plan *valuesPlan) each(ctx context.Context, tx *commands.Tx, fn func(u ids
 // IDs, which its undo gives back: those that what back makes of the new value
 // is not, as none that back does not convert, or refuses the batch, at the
 // payload's field at, the field that the change changes, once they come to
-// more than maxUndoValues bytes.
+// more than maxUndoValues bytes of the undo's payload, as the operation log
+// keeps it: each value with its component's ID, quoted, a colon, and a comma.
 func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, at string,
 	back func(value.Value) (value.Value, bool)) (map[string]value.Value, error) {
 	out := map[string]value.Value{}
@@ -729,12 +753,13 @@ func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, at string,
 		if again, ok := back(to); ok && again.Equal(old) {
 			return nil
 		}
-		size += len(old.JSON())
+		id := ids.Encode(ids.Component, u)
+		size += len(id) + len(`"":,`) + len(old.JSON())
 		if size > maxUndoValues {
 			return commands.Refuse(at, fmt.Sprintf("would change values of more than %d MiB that the change's undo "+
 				"would have to hold: delete the attribute definition and add another instead", maxUndoValues>>20), nil)
 		}
-		out[ids.Encode(ids.Component, u)] = old
+		out[id] = old
 		return nil
 	})
 	if err != nil {
@@ -745,11 +770,19 @@ func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, at string,
 
 // apply changes the plan's definition to its new type and options, with its
 // new default, and its components' values as the plan says, and reports the
-// changes.
+// changes. The components that it gives the new default, as a reset gives
+// every one, are sent by their IDs, and the default once, so that what it
+// sends grows with the values that it converts or that the command gives,
+// not with the default's length times the components.
 func (plan *valuesPlan) apply(ctx context.Context, tx *commands.Tx) error {
 	vals := map[string]json.RawMessage{}
+	var defaulted []pgtype.UUID
 	if err := plan.each(ctx, tx, func(u ids.UUID, _, to value.Value) error {
-		vals[u.String()] = to.JSON()
+		if to.Equal(plan.newDefault) {
+			defaulted = append(defaulted, nullUUID(u))
+		} else {
+			vals[u.String()] = to.JSON()
+		}
 		return nil
 	}); err != nil {
 		return err
@@ -757,18 +790,26 @@ func (plan *valuesPlan) apply(ctx context.Context, tx *commands.Tx) error {
 	if err := setDefinition(ctx, tx, plan.a, plan.typ, plan.options, plan.newDefault); err != nil {
 		return err
 	}
-	if len(vals) == 0 {
-		return nil
-	}
-	doc, err := json.Marshal(vals)
-	if err != nil {
-		return fmt.Errorf("component: encode the values: %w", err)
-	}
 	a := plan.a
-	set, err := queries.New(tx).SetAttributeValues(ctx, queries.SetAttributeValuesParams{Vals: doc,
-		WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID, AttributeDefID: a.ID})
-	if err != nil {
-		return fmt.Errorf("component: change the values: %w", err)
+	q := queries.New(tx)
+	var set []pgtype.UUID
+	if len(vals) > 0 {
+		doc, err := json.Marshal(vals)
+		if err != nil {
+			return fmt.Errorf("component: encode the values: %w", err)
+		}
+		if set, err = q.SetAttributeValues(ctx, queries.SetAttributeValuesParams{Vals: doc,
+			WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID, AttributeDefID: a.ID}); err != nil {
+			return fmt.Errorf("component: change the values: %w", err)
+		}
+	}
+	if len(defaulted) > 0 {
+		reset, err := q.SetAttributeValuesTo(ctx, queries.SetAttributeValuesToParams{Value: plan.newDefault.JSON(),
+			WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID, AttributeDefID: a.ID, Ids: defaulted})
+		if err != nil {
+			return fmt.Errorf("component: give the values the default: %w", err)
+		}
+		set = append(set, reset...)
 	}
 	return touch(ctx, tx, a.WorkspaceID, a.ProjectID, set)
 }
@@ -778,8 +819,10 @@ func (plan *valuesPlan) apply(ctx context.Context, tx *commands.Tx) error {
 // components' IDs, after the component after, or from the first if after is
 // null, read a page at a time, in its canonical form, which jsonb may not
 // write a number in, until fn returns false or an error, which it returns. It
-// returns an error for a value that is not one of the definition's type,
-// which the commands keep from it, as a read of the component does.
+// returns errDefinitionChanged once a page reads the definition at another
+// revision than a's, and an error for a value that is not one of the
+// definition's type, which the commands keep from it, as a read of the
+// component does.
 func eachValue(ctx context.Context, q *queries.Queries, a queries.AttributeDef, after pgtype.UUID,
 	fn func(row queries.AttributeValuesRow, v value.Value) (bool, error)) error {
 	cursor := after
@@ -790,6 +833,9 @@ func eachValue(ctx context.Context, q *queries.Queries, a queries.AttributeDef, 
 			return fmt.Errorf("component: read the attribute definition's values: %w", err)
 		}
 		for _, row := range rows {
+			if row.AttributeDefRev != a.Rev {
+				return errDefinitionChanged
+			}
 			v, problem := value.FromJSON(row.Value).Read(a.Type, value.Checks{}, a.EnumOptions...)
 			if problem != "" {
 				return fmt.Errorf("component: the value of the attribute definition %s that the component %s holds %s",
@@ -805,6 +851,13 @@ func eachValue(ctx context.Context, q *queries.Queries, a queries.AttributeDef, 
 		cursor = rows[len(rows)-1].ComponentID
 	}
 }
+
+// errDefinitionChanged is eachValue's error for an attribute definition that
+// a change committed to since it was read, which a page of its values reads
+// at a revision of its own. Only a read that holds no lock sees it, as
+// Unconvertible: a command holds its project's lock, which every change of
+// the definition takes.
+var errDefinitionChanged = errors.New("component: the attribute definition changed while its values were read")
 
 // setDefinition changes the definition a's type to typ, its options to
 // options, and its default to def, a value of typ that value.Value.Of

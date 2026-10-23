@@ -201,7 +201,7 @@ export interface AttributeRetypePayload {
   options?: Array<string> | null;
   /** The definition's new type, which is not its type already: an enum's options change with attribute.set_options. A runtime definition may not become a text: unset runtime first. */
   type: "bool" | "int" | "float" | "string" | "text" | "enum";
-  /** The values of the new type that components of the definition's type are given, by their IDs, in place of what the conversion makes of what they hold */
+  /** The values of the new type that components of the definition's type are given, by their IDs, in place of what the conversion makes of what they hold. A component of another type is refused, and one that the project no longer has, as one that the purge has deleted, is passed over. */
   values?: Record<string, boolean | number | string>;
 }
 
@@ -262,7 +262,7 @@ export interface AttributeSetOptionsPayload {
   id: string;
   /** The enum's new options, in their order: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, line separators, and U+FFFD, the replacement character, which an escape of a lone surrogate is read as, among them, no two alike, compared by their characters, as they are. A value that a component holds that is none of them is given the default, unless values gives it another. */
   options: Array<string> | null;
-  /** The values, each one of the new options, that components of the definition's type are given, by their IDs, in place of what they hold: a component that holds a value that is none of the new options, and is not given one here, is given the default */
+  /** The values, each one of the new options, that components of the definition's type are given, by their IDs, in place of what they hold: a component that holds a value that is none of the new options, and is not given one here, is given the default. A component of another type is refused, and one that the project no longer has, as one that the purge has deleted, is passed over. */
   values?: Record<string, boolean | number | string>;
 }
 
@@ -1034,7 +1034,7 @@ export interface FolderDeleteCommand {
 
 /** The payload of a command of the type folder.delete. */
 export interface FolderDeletePayload {
-  /** The ID of the folder to delete, which holds no folder, no board, and no variable that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, a variable of a board in the trash among it, and stays in the folder, which restoring it restores too. */
+  /** The ID of the folder to delete, which holds no folder, no board, no variable, and no component that is not deleted, or the command is answered with 409 folder_not_empty. What is in the project's trash does not count, a variable of a board in the trash among it, and stays in the folder, which restoring it restores too. */
   id: string;
 }
 
@@ -2978,7 +2978,7 @@ export interface Operations {
   /**
    * List the values that a retype would not convert
    *
-   * Lists the components of the type, those in the project's trash included, whose values of the attribute definition do not convert to the type that the query names, in the order of their IDs, oldest first: those that the command attribute.retype with the conversion convert gives the new default, which a client shows before it applies one (PRD FR-COMP-01 AC2). A value converts as the expression language's to_int, to_float, and to_string convert it (PRD §5.8.4, §5.8.9), a bool as 0 or 1, an int or a float that is 0 or 1 as a bool, a string that is true or false as a bool, and a value whose string is one of an enum's options as that option. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A type that the project does not have, or a definition that the type does not have, or either in the project's trash, is answered with 404 not_found, and a type of the query that is the definition's own, or options that are not an enum's, with 422 validation_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   * Lists the components of the type, those in the project's trash included, whose values of the attribute definition do not convert to the type that the query names, in the order of their IDs, oldest first: those that the command attribute.retype with the conversion convert gives the new default, which a client shows before it applies one (PRD FR-COMP-01 AC2). A value converts as the expression language's to_int, to_float, and to_string convert it (PRD §5.8.4, §5.8.9), a bool as 0 or 1, an int or a float that is 0 or 1 as a bool, a string that is true or false as a bool, and a value whose string is one of an enum's options as that option. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A type that the project does not have, or a definition that the type does not have, or either in the project's trash, is answered with 404 not_found, and a type of the query that the retype refuses, the definition's own, or text for a runtime definition, or options that are not an enum's, with 422 validation_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
    */
   listUnconvertibleValues: {
     input: {
@@ -2997,7 +2997,7 @@ export interface Operations {
         limit?: number;
         /** The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line separators, and U+FFFD, the replacement character, among them, no two alike. Another type has none. */
         options?: string;
-        /** The type that the definition would be given, which is not its type already */
+        /** The type that the definition would be given, which is not its type already, nor text for a runtime definition */
         type: "bool" | "int" | "float" | "string" | "text" | "enum";
       };
     };

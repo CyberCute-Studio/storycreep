@@ -37,7 +37,7 @@ type conversionInput struct {
 	ProjectID       string `path:"project_id" doc:"The project's ID"`
 	ComponentTypeID string `path:"component_type_id" doc:"The component type's ID"`
 	AttributeID     string `path:"attribute_id" doc:"The ID of the attribute definition, one of the type's"`
-	Type            string `query:"type" required:"true" enum:"bool,int,float,string,text,enum" doc:"The type that the definition would be given, which is not its type already"`
+	Type            string `query:"type" required:"true" enum:"bool,int,float,string,text,enum" doc:"The type that the definition would be given, which is not its type already, nor text for a runtime definition"`
 	Options         string `query:"options" maxLength:"10099" doc:"The options of an enum, which type then is, one to a line, separated by line feeds (%0A), as Harbour%0APier: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line separators, and U+FFFD, the replacement character, among them, no two alike. Another type has none."`
 	api.PageParams
 }
@@ -147,8 +147,9 @@ func registerComponents(m *api.Mux, components *component.Service) {
 			"or 1, an int or a float that is 0 or 1 as a bool, a string that is true or false as a bool, and a value " +
 			"whose string is one of an enum's options as that option." + projectNotFoundDoc + tokenNotFoundDoc +
 			" A type that the project does not have, or a definition that the type does not have, or either in " +
-			"the project's trash, is answered with 404 not_found, and a type of the query that is the definition's " +
-			"own, or options that are not an enum's, with 422 validation_failed." + tokenAuthDoc(scope.ProjectRead),
+			"the project's trash, is answered with 404 not_found, and a type of the query that the retype refuses, " +
+			"the definition's own, or text for a runtime definition, or options that are not an enum's, with 422 " +
+			"validation_failed." + tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Components"},
 	}, func(ctx context.Context, in *conversionInput) (*conversionOutput, error) {
 		id, actor, err := projectActor(ctx, in.ProjectID)

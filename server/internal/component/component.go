@@ -542,13 +542,16 @@ type Target struct {
 // IDs: the first, if after is zero, or else those after the component after,
 // so that a client can show what a retype with the conversion convert would
 // give the new default to before it applies one (FR-COMP-01 AC2), as the
-// retype reads and converts them. It returns the errors of
-// project.Service.Get first, then input.FieldErrors at type for a target of
-// no type, and at options for an enum's options that are not valid, or
-// options of another type, ErrTypeNotFound or ErrAttributeNotFound if the
-// project has no such type, or the type no such definition, that is not in
-// the trash, and input.FieldErrors at type for a target of the definition's
-// own type.
+// retype reads and converts them, as of one moment: a change of the
+// definition that commits while it reads them, which it does not lock,
+// starts the read again from the definition as the change left it, at most
+// maxRereads times. It returns the errors of project.Service.Get first, then
+// input.FieldErrors at type for a target of no type, and at options for an
+// enum's options that are not valid, or options of another type,
+// ErrTypeNotFound or ErrAttributeNotFound if the project has no such type, or
+// the type no such definition, that is not in the trash, and
+// input.FieldErrors at type for a target that the retype refuses: the
+// definition's own type, or a text for a runtime definition.
 func (s *Service) Unconvertible(ctx context.Context, actor commands.Actor, projectID, typeID, attributeID ids.UUID,
 	to Target, after ids.UUID, limit int) ([]Unconvertible, error) {
 	var out []Unconvertible
@@ -556,39 +559,74 @@ func (s *Service) Unconvertible(ctx context.Context, actor commands.Actor, proje
 		if errs := checkTarget(to); len(errs) > 0 {
 			return errs
 		}
-		row, err := q.AttributeDefAny(ctx, queries.AttributeDefAnyParams{WorkspaceID: workspaceID,
-			ProjectID: nullUUID(projectID), ID: nullUUID(attributeID)})
-		switch {
-		case errors.Is(err, pgx.ErrNoRows) || err == nil && row.AttributeDef.ComponentTypeID.Bytes != typeID:
-			return ErrAttributeNotFound
-		case err != nil:
-			return fmt.Errorf("component: read the attribute definition: %w", err)
-		case row.TypeDeleted:
-			return ErrTypeNotFound
-		case row.AttributeDef.DeletedAt.Valid:
-			return ErrAttributeNotFound
-		case row.AttributeDef.Type == to.Type:
-			return input.FieldErrors{{Field: "type", Message: "is the attribute definition's type already"}}
-		}
-		a := row.AttributeDef
-		out = []Unconvertible{}
-		if limit <= 0 {
-			return nil
-		}
-		// The values are read as a retype reads them (eachValue), a page at a
-		// time, of which only those that do not convert are kept, until limit
-		// of them are found.
-		return eachValue(ctx, q, a, nullUUID(after), func(c queries.AttributeValuesRow, v value.Value) (bool,
-			error) {
-			if _, ok := value.Convert(v, a.Type, a.EnumOptions, to.Type, to.Options); !ok {
-				out = append(out, Unconvertible{ComponentID: ids.Encode(ids.Component, c.ComponentID.Bytes),
-					Key: c.Key, Name: c.Name, DeletedAt: timeOf(c.DeletedAt)})
+		for range maxRereads {
+			list, err := unconvertible(ctx, q, workspaceID, nullUUID(projectID), typeID, nullUUID(attributeID), to,
+				nullUUID(after), limit)
+			if !errors.Is(err, errDefinitionChanged) {
+				out = list
+				return err
 			}
-			return len(out) < limit, nil
-		})
+		}
+		return fmt.Errorf("component: the attribute definition %s changed %d times while its values were read",
+			ids.Encode(ids.AttributeDef, attributeID), maxRereads)
 	})
 	return out, err
 }
+
+// maxRereads is how many times at most Unconvertible reads an attribute
+// definition's values, each from the definition as a change that committed
+// while it read them left it.
+const maxRereads = 3
+
+// unconvertible is Unconvertible's read, in q's transaction, of the
+// definition attributeID of the type typeID and of its values, which returns
+// errDefinitionChanged for a definition that a change committed to since it
+// read it.
+func unconvertible(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, typeID ids.UUID,
+	attributeID pgtype.UUID, to Target, after pgtype.UUID, limit int) ([]Unconvertible, error) {
+	row, err := q.AttributeDefAny(ctx, queries.AttributeDefAnyParams{WorkspaceID: ws, ProjectID: project,
+		ID: attributeID})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows) || err == nil && row.AttributeDef.ComponentTypeID.Bytes != typeID:
+		return nil, ErrAttributeNotFound
+	case err != nil:
+		return nil, fmt.Errorf("component: read the attribute definition: %w", err)
+	case row.TypeDeleted:
+		return nil, ErrTypeNotFound
+	case row.AttributeDef.DeletedAt.Valid:
+		return nil, ErrAttributeNotFound
+	case row.AttributeDef.Type == to.Type:
+		return nil, input.FieldErrors{{Field: "type", Message: "is the attribute definition's type already"}}
+	}
+	a := row.AttributeDef
+	if errs := checkRuntime("type", to.Type, a.IsRuntime); len(errs) > 0 {
+		return nil, errs
+	}
+	if definitionRead != nil {
+		definitionRead()
+	}
+	out := []Unconvertible{}
+	if limit <= 0 {
+		return out, nil
+	}
+	// The values are read as a retype reads them (eachValue), a page at a
+	// time, of which only those that do not convert are kept, until limit of
+	// them are found.
+	err = eachValue(ctx, q, a, after, func(c queries.AttributeValuesRow, v value.Value) (bool, error) {
+		if _, ok := value.Convert(v, a.Type, a.EnumOptions, to.Type, to.Options); !ok {
+			out = append(out, Unconvertible{ComponentID: ids.Encode(ids.Component, c.ComponentID.Bytes),
+				Key: c.Key, Name: c.Name, DeletedAt: timeOf(c.DeletedAt)})
+		}
+		return len(out) < limit, nil
+	})
+	return out, err
+}
+
+// definitionRead is called once unconvertible has read the attribute
+// definition, before it reads its values, by the test in component_test of a
+// change of the definition that commits in between, which is not parallel
+// (SetDefinitionRead), and is nil otherwise.
+var definitionRead func()
 
 // valuesPage is how many values of an attribute definition a query reads at
 // a time.

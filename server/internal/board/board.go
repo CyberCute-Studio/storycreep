@@ -113,9 +113,10 @@ var (
 	// (commands.RefusedError), which the API answers with slug_taken.
 	ErrSlugTaken = errors.New("board: another board of the project has the slug")
 	// ErrFolderNotEmpty is the reason of a command's refusal to delete a
-	// folder that holds a folder, a board, or a variable that is not in the
-	// trash, which the API answers with folder_not_empty.
-	ErrFolderNotEmpty = errors.New("board: the folder holds folders, boards, or variables that are not deleted")
+	// folder that holds a folder, a board, a variable, or a component that
+	// is not in the trash, which the API answers with folder_not_empty.
+	ErrFolderNotEmpty = errors.New("board: the folder holds folders, boards, variables, or components that are not " +
+		"deleted")
 )
 
 // Board is a board as the API shows it, and as an answer of revision_conflict

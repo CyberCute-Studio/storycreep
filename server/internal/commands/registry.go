@@ -270,7 +270,8 @@ type spec struct {
 // that is not registered or twice, a limit that the plan file does not check
 // or twice, both Inverse and NonUndoable or neither, Trashed without
 // Archived, no Apply, or a payload that is not a struct, or that has a field
-// with a default or a type that resolves itself.
+// with a default or a type that resolves itself, or that holds a rich-text
+// document other than as a field of its own.
 func Register[P any](r *Registry, s Spec[P]) {
 	fail := func(format string, args ...any) {
 		panic(fmt.Sprintf("commands: %s: ", s.Type) + fmt.Sprintf(format, args...))
@@ -301,6 +302,10 @@ func Register[P any](r *Registry, s Spec[P]) {
 	}
 	if problem := unapplied(pt); problem != "" {
 		fail("%s", problem)
+	}
+	if at := nestedDoc(pt); at != "" {
+		fail("the payload's %s holds a rich-text document, which a payload holds only as a field of its own, a "+
+			"richtext.Doc or a pointer to one, so that a document that Parse refuses is answered at its field", at)
 	}
 	for i, k := range s.Touches {
 		if _, ok := r.entities[k]; !ok {
@@ -392,18 +397,72 @@ func docFields(t reflect.Type) []string {
 
 // docField returns the location within the payload raw of the value that err
 // says is wrong in one of its documents, the fields named docs: the first of
-// them that Parse refuses, joined with where in it the value is, or "" for the
-// payload itself if none of them is, as when the payload is not an object.
+// them that Parse refuses, in the order of the payload's fields, in which the
+// decoder decodes them, and stops at the first that fails, an occurrence of a
+// field that the payload holds twice among them, joined with where in it the
+// value is, or "" for the payload itself if none of them is, as when the
+// payload is not an object. Only a refused payload is read again, so a
+// payload that applies is parsed once.
 func docField(raw []byte, docs []string, err *richtext.Error) string {
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(raw, &fields) != nil {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	if t, e := d.Token(); e != nil || t != json.Delim('{') {
 		return ""
 	}
-	for _, name := range docs {
-		if doc, ok := fields[name]; ok && string(doc) != "null" {
+	for d.More() {
+		t, e := d.Token()
+		if e != nil {
+			return ""
+		}
+		var doc json.RawMessage
+		if d.Decode(&doc) != nil {
+			return ""
+		}
+		if name, _ := t.(string); slices.Contains(docs, name) && string(doc) != "null" {
 			if _, parseErr := richtext.Parse(doc); parseErr != nil {
 				return name + err.Location()
 			}
+		}
+	}
+	return ""
+}
+
+// nestedDoc returns where the payload's type t holds a rich-text document
+// other than as a field of its own, a richtext.Doc or a pointer to one, as in
+// a slice, a map, or a struct that a field holds, or "" if it holds none
+// there: docField finds a document that Parse refuses only among t's own
+// fields. It walks the types as unapplied does.
+func nestedDoc(t reflect.Type) string {
+	doc := reflect.TypeFor[richtext.Doc]()
+	seen := map[reflect.Type]bool{}
+	var walk func(t reflect.Type, at string) string
+	walk = func(t reflect.Type, at string) string {
+		for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array ||
+			t.Kind() == reflect.Map {
+			t = t.Elem()
+		}
+		switch {
+		case t == doc:
+			return at
+		case seen[t] || t.Kind() != reflect.Struct:
+			return ""
+		}
+		seen[t] = true
+		for i := range t.NumField() {
+			if f := t.Field(i); f.IsExported() {
+				if found := walk(f.Type, at+"."+f.Name); found != "" {
+					return found
+				}
+			}
+		}
+		return ""
+	}
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if !f.IsExported() || f.Type == doc || f.Type == reflect.PointerTo(doc) {
+			continue
+		}
+		if at := walk(f.Type, t.Name()+"."+f.Name); at != "" {
+			return at
 		}
 	}
 	return ""

@@ -481,9 +481,10 @@ func createValues(ctx context.Context, q *queries.Queries, t queries.ComponentTy
 		}
 		vals[ids.UUID(a.ID.Bytes).String()] = v.JSON()
 	}
-	if left := firstKeyed(byID); left != nil {
-		return nil, commands.Refuse(left.at, "is not an attribute definition of the component's type, or is one in "+
-			"the project's trash", nil)
+	// The one that sorts first is refused, so that it is the same each time.
+	if left := sortedKeyed(byID); len(left) > 0 {
+		return nil, commands.Refuse(byID[left[0]].at, "is not an attribute definition of the component's type, or "+
+			"is one in the project's trash", nil)
 	}
 	return json.Marshal(vals)
 }
@@ -511,19 +512,6 @@ func keyedByUUID(kind ids.Kind, name string, m map[string]value.Value) (map[ids.
 		out[u] = keyed{at: at, value: m[k]}
 	}
 	return out, nil
-}
-
-// firstKeyed returns the value of m whose field sorts first, or nil if m is
-// empty, so that the batch is refused for the same one each time.
-func firstKeyed(m map[ids.UUID]keyed) *keyed {
-	var first *keyed
-	for _, k := range m {
-		if first == nil || k.at < first.at {
-			k := k
-			first = &k
-		}
-	}
-	return first
 }
 
 // applyRestore is Restore's Apply.

@@ -25,6 +25,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/trash"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
@@ -559,6 +560,9 @@ func TestRetype(t *testing.T) {
 		cmds, byName[name] = append(cmds, c), id
 	}
 	f.must(t, cmds...)
+	dock := f.newType(t, "Dock", nil)
+	pier, pierID := newComponent(dock, "Pier", nil)
+	f.must(t, pier)
 	// A retype without a conversion is refused by its schema.
 	invalidAt(t, func() error {
 		_, err := f.apply(t, cmd{component.RetypeAttribute, map[string]any{"id": mood, "type": "int"}})
@@ -570,7 +574,7 @@ func TestRetype(t *testing.T) {
 	}{
 		{map[string]any{"id": mood, "type": "string", "conversion": "convert"}, "type"},
 		{map[string]any{"id": mood, "type": "int", "conversion": "convert", "values": map[string]any{
-			componentID(): 1}}, ""},
+			pierID: 1}}, ""},
 	} {
 		r := refused(t, func() error { _, err := f.apply(t, cmd{component.RetypeAttribute, c.payload}); return err }())
 		if c.field != "" && r.Field != c.field || c.field == "" && !strings.HasPrefix(r.Field, "values.") {
@@ -604,7 +608,8 @@ func TestRetype(t *testing.T) {
 	if got := f.state(t, true); got != before {
 		t.Errorf("undoing the reset left\n%s\nwant\n%s", got, before)
 	}
-	// A runtime definition is not made a text.
+	// A runtime definition is not made a text, which the list of what would
+	// not convert answers as the retype does.
 	f.must(t, cmd{component.RetypeAttribute, map[string]any{"id": mood, "type": "float", "conversion": "convert"}},
 		cmd{component.SetAttributeRuntime, map[string]any{"id": mood, "runtime": true}})
 	if r := refused(t, func() error {
@@ -613,6 +618,40 @@ func TestRetype(t *testing.T) {
 		return err
 	}()); r.Field != "type" {
 		t.Errorf("the retype of a runtime definition to a text was refused at %s", r.Field)
+	}
+	var errs input.FieldErrors
+	if _, err := f.components.Unconvertible(context.Background(), f.actor(), f.project,
+		decodeID(t, ids.ComponentType, ship), decodeID(t, ids.AttributeDef, mood), component.Target{Type: value.Text},
+		ids.UUID{}, 10); !errors.As(err, &errs) || len(errs) != 1 || errs[0].Field != "type" {
+		t.Errorf("the values that a runtime definition's retype to a text would not convert are answered with %v", err)
+	}
+}
+
+// TestUndoAfterPurge checks that the undo of a change of a definition's type
+// applies once the purge has deleted a component whose value it gives back,
+// and gives back the others' values (FR-PROJ-06).
+func TestUndoAfterPurge(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	ship := f.newType(t, "Ship", nil)
+	add, mood := newAttribute(ship, "Mood", value.String, nil)
+	elara, elaraID := newComponent(ship, "Elara", map[string]any{"attributes": map[string]any{mood: "calm"}})
+	sol, solID := newComponent(ship, "Sol", map[string]any{"attributes": map[string]any{mood: "angry"}})
+	f.must(t, add, elara, sol, cmd{component.Delete, map[string]any{"id": solID}})
+	res := f.must(t, cmd{component.RetypeAttribute, map[string]any{"id": mood, "type": "int", "conversion": "reset"}})
+	if _, err := f.d.Admin(t).Exec(ctx, "UPDATE component SET deleted_at = now() - interval '31 days' WHERE id = $1",
+		decodeID(t, ids.Component, solID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := trash.Purge(ctx, f.db); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.undo(t, res.Seq); err != nil {
+		t.Fatalf("undo the retype once the purge has deleted a component whose value it gives back: %v", err)
+	}
+	if got := f.valueOf(t, elaraID, mood); got != `"calm"` {
+		t.Errorf("after the undo, Elara holds %s, want \"calm\"", got)
 	}
 }
 
@@ -693,13 +732,14 @@ func TestAttributeChecks(t *testing.T) {
 // than the operation log keeps is refused at the field that it changes.
 func TestUndoLimit(t *testing.T) {
 	// Not parallel: it lowers the limit, which the parallel tests' changes
-	// read once it is set back.
-	defer component.SetMaxUndoValues(len(`"angry"`) + 1)()
+	// read once it is set back. One lost value fits, with its component's ID,
+	// as the undo's payload holds it, but two do not.
+	defer component.SetMaxUndoValues(len(`"`+componentID()+`":"angry",`) + 1)()
 	f := newFixture(t)
 	ship := f.newType(t, "Ship", nil)
 	add, mood := newAttribute(ship, "Mood", value.Enum, map[string]any{"options": []string{"calm", "angry"}})
 	elara, _ := newComponent(ship, "Elara", map[string]any{"attributes": map[string]any{mood: "angry"}})
-	mira, _ := newComponent(ship, "Mira", map[string]any{"attributes": map[string]any{mood: "angry"}})
+	mira, miraID := newComponent(ship, "Mira", map[string]any{"attributes": map[string]any{mood: "angry"}})
 	f.must(t, add, elara, mira)
 	for _, c := range []struct {
 		cmd   cmd
@@ -711,6 +751,11 @@ func TestUndoLimit(t *testing.T) {
 		if r := refused(t, func() error { _, err := f.apply(t, c.cmd); return err }()); r.Field != c.field {
 			t.Errorf("%v, whose undo would hold too much, was refused at %s, want %s", c.cmd, r.Field, c.field)
 		}
+	}
+	f.must(t, cmd{component.SetAttribute, map[string]any{"id": miraID, "attribute_id": mood, "value": "calm"}})
+	if _, err := f.apply(t, cmd{component.SetAttributeOptions, map[string]any{"id": mood,
+		"options": []string{"calm"}}}); err != nil {
+		t.Errorf("a change whose undo holds one value: %v", err)
 	}
 }
 
@@ -760,6 +805,40 @@ func TestStoredValues(t *testing.T) {
 	if _, err := f.apply(t, cmd{component.RetypeAttribute, map[string]any{"id": notes, "type": "string",
 		"conversion": "convert"}}); err == nil || errors.As(err, &r) {
 		t.Errorf("the retype of a value of another type was answered with %v", err)
+	}
+}
+
+// TestUnconvertibleWhileChanged checks that the list of the values that a
+// retype would not convert reads them as of one moment: a change of the
+// definition that commits once the list has read the definition, before it
+// reads the values, starts the read again from the definition as the change
+// left it, rather than failing on values of another type.
+//
+// Verifies: FR-COMP-01/AC2
+func TestUnconvertibleWhileChanged(t *testing.T) {
+	// Not parallel: it sets what every list calls once it has read the
+	// definition.
+	ctx := context.Background()
+	f := newFixture(t)
+	ship := f.newType(t, "Ship", nil)
+	add, mood := newAttribute(ship, "Mood", value.String, nil)
+	elara, _ := newComponent(ship, "Elara", map[string]any{"attributes": map[string]any{mood: "12"}})
+	mira, _ := newComponent(ship, "Mira", map[string]any{"attributes": map[string]any{mood: "calm"}})
+	f.must(t, add, elara, mira)
+	reads := 0
+	defer component.SetDefinitionRead(func() {
+		if reads++; reads == 1 {
+			// Both values become 1, which converts to a bool, where neither
+			// string does.
+			f.must(t, cmd{component.RetypeAttribute, map[string]any{"id": mood, "type": "float",
+				"conversion": "reset", "default": 1}})
+		}
+	})()
+	list, err := f.components.Unconvertible(ctx, f.actor(), f.project, decodeID(t, ids.ComponentType, ship),
+		decodeID(t, ids.AttributeDef, mood), component.Target{Type: value.Bool}, ids.UUID{}, 10)
+	if err != nil || len(list) != 0 || reads != 2 {
+		t.Errorf("the values that a retype to a bool would not convert, read while the definition changed, are %v, "+
+			"%v, after %d reads of the definition, want none after 2", list, err, reads)
 	}
 }
 
@@ -1232,6 +1311,18 @@ func TestComponentIsolation(t *testing.T) {
 			rows, err := queries.New(tx).SetAttributeValues(ctx, queries.SetAttributeValuesParams{Vals: vals,
 				WorkspaceID: uuid(target.ID), ProjectID: uuid(target.Rows["project"]),
 				AttributeDefID: uuid(target.Rows["attribute_def"])})
+			var out []ids.UUID
+			for _, r := range rows {
+				out = append(out, r.Bytes)
+			}
+			return out, err
+		}},
+		{Name: "give a definition's values one value", Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			rows, err := queries.New(tx).SetAttributeValuesTo(ctx, queries.SetAttributeValuesToParams{
+				Value: []byte("9"), WorkspaceID: uuid(target.ID), ProjectID: uuid(target.Rows["project"]),
+				AttributeDefID: uuid(target.Rows["attribute_def"]),
+				Ids:            []pgtype.UUID{uuid(target.Rows["component"])}})
 			var out []ids.UUID
 			for _, r := range rows {
 				out = append(out, r.Bytes)
