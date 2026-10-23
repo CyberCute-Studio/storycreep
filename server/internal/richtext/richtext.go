@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,12 +36,14 @@ import (
 // that it can express.
 const (
 	// MaxBytes is the most bytes of a document's JSON, counted without the
-	// white space between its tokens, so that however the JSON is laid out,
-	// as PostgreSQL's jsonb writes it, with a space after each colon and
-	// comma, the same document is within the limit; and the most bytes of
-	// its canonical form, which can be longer than the JSON that Parse
-	// read, as 9e5 is 900000, so that every document that Parse returns can
-	// be written and read again.
+	// white space between its tokens and with each escape in a string
+	// counted as the character that it stands for (jsonLength), so that
+	// however the JSON is laid out, as PostgreSQL's jsonb writes it, with a
+	// space after each colon and comma, and whichever characters its encoder
+	// escapes, as json.Marshal escapes <, >, and &, the same document is
+	// within the limit; and the most bytes of its canonical form, which can
+	// be longer than the JSON that Parse read, as 9e5 is 900000, so that
+	// every document that Parse returns can be written and read again.
 	MaxBytes = 1 << 20
 	// MaxChars is the most characters, counted as code points, that the
 	// text nodes of a document hold together.
@@ -276,8 +279,9 @@ const (
 	// TooDeep is a list nested deeper than MaxListDepth.
 	TooDeep Reason = "too_deep"
 	// TooLarge is a document of more than MaxBytes, without the white space
-	// between its tokens or in its canonical form, or whose text has more
-	// than MaxChars characters.
+	// between its tokens and with its escapes counted as the characters that
+	// they stand for, or in its canonical form, or whose text has more than
+	// MaxChars characters.
 	TooLarge Reason = "too_large"
 )
 
@@ -300,10 +304,11 @@ type Error struct {
 const maxTokenChars = 40
 
 // Error writes the pointer and the message, with each reference token of the
-// pointer that is longer than maxTokenChars characters cut to its first ones
-// and an ellipsis, as the message cuts a name, so that an error, which the API
-// answers with and which a log may hold, does not repeat a name that is most
-// of a megabyte long.
+// pointer whose name is longer than maxTokenChars characters cut to the first
+// ones of the name, escaped again, and an ellipsis, as the message cuts a
+// name, so that an error, which the API answers with and which a log may
+// hold, does not repeat a name that is most of a megabyte long, and no cut
+// falls within an escape, ~0 or ~1.
 func (e *Error) Error() string {
 	at := e.Pointer
 	if at == "" {
@@ -311,18 +316,25 @@ func (e *Error) Error() string {
 	} else {
 		tokens := strings.Split(at, "/")
 		for i, t := range tokens {
-			if utf8.RuneCountInString(t) > maxTokenChars {
+			name := strings.ReplaceAll(strings.ReplaceAll(t, "~1", "/"), "~0", "~")
+			if utf8.RuneCountInString(name) > maxTokenChars {
 				cut := 0
 				for range maxTokenChars {
-					_, size := utf8.DecodeRuneInString(t[cut:])
+					_, size := utf8.DecodeRuneInString(name[cut:])
 					cut += size
 				}
-				tokens[i] = t[:cut] + "…"
+				tokens[i] = escapeToken(name[:cut]) + "…"
 			}
 		}
 		at = strings.Join(tokens, "/")
 	}
 	return "rich text: " + at + ": " + e.Message
+}
+
+// escapeToken returns an object's key as a reference token of a JSON Pointer
+// writes it (RFC 6901), with ~ as ~0 and / as ~1.
+func escapeToken(key string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(key, "~", "~0"), "/", "~1")
 }
 
 // Parse reads a document from its JSON, checks it against the schema and the
@@ -359,9 +371,10 @@ func parse(data []byte) (*Doc, []byte, error) {
 }
 
 func parseDoc(data []byte) (*Doc, error) {
-	if compactLength(data) > MaxBytes {
+	if jsonLength(data) > MaxBytes {
 		return nil, &Error{Reason: TooLarge,
-			Message: fmt.Sprintf("the document is longer than %d bytes without the white space between its tokens", MaxBytes)}
+			Message: fmt.Sprintf("the document is longer than %d bytes without the white space between its tokens, "+
+				"with each escape counted as the character that it stands for", MaxBytes)}
 	}
 	if !utf8.Valid(data) {
 		return nil, &Error{Reason: InvalidJSON, Message: "the document is not UTF-8"}
@@ -385,29 +398,54 @@ func parseDoc(data []byte) (*Doc, error) {
 	return p.doc(v)
 }
 
-// compactLength returns the length of data without the white space that JSON
-// allows between its tokens, outside its strings: the length of the JSON as
-// it is written without that white space, however it is laid out.
-func compactLength(data []byte) int {
+// jsonLength returns the length of data as MaxBytes counts it: without the
+// white space that JSON allows between its tokens, outside its strings, and
+// with each escape in a string, as \u00e9 or \", counted as the bytes of the
+// UTF-8 of the character that it stands for, and an escaped pair of
+// surrogates as the one character that the pair stands for. So the length of
+// a document depends neither on how its JSON is laid out nor on which
+// characters its encoder escapes: json.Marshal escapes <, >, and & as \u003c,
+// \u003e, and \u0026 in what a MarshalJSON method writes, and Python's
+// json.dumps every character beyond ASCII, which would otherwise make the
+// same document up to six times as long. It reads data before the decoder
+// does, so it counts what is not JSON without failing, which the decoder then
+// refuses.
+func jsonLength(data []byte) int {
 	n, inString := 0, false
 	for i := 0; i < len(data); i++ {
 		c := data[i]
 		switch {
-		case inString:
-			n++
-			switch c {
-			case '\\':
-				if i+1 < len(data) {
-					i++
-					n++
-				}
-			case '"':
-				inString = false
+		case !inString:
+			if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+				n++
+				inString = c == '"'
 			}
-		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
-		default:
+		case c == '"':
 			n++
-			inString = c == '"'
+			inString = false
+		case c != '\\':
+			n++
+		case i+5 < len(data) && data[i+1] == 'u':
+			r := hex4(data[i+2 : i+6])
+			i += 5
+			if r >= 0xD800 && r < 0xDC00 && i+6 < len(data) && data[i+1] == '\\' && data[i+2] == 'u' {
+				if low := hex4(data[i+3 : i+7]); low >= 0xDC00 && low < 0xE000 {
+					n += 4
+					i += 6
+					continue
+				}
+			}
+			size := utf8.RuneLen(r)
+			if size < 0 {
+				// A lone surrogate, which Parse refuses, counts as U+FFFD.
+				size = utf8.RuneLen(utf8.RuneError)
+			}
+			n += size
+		default:
+			// An escape of one character, as \" or \n, or a backslash that
+			// starts no escape, which the decoder refuses.
+			n++
+			i++
 		}
 	}
 	return n
@@ -516,7 +554,7 @@ func (p *parser) fail(reason Reason, format string, args ...any) *Error {
 		if t.index >= 0 {
 			b.WriteString(strconv.Itoa(t.index))
 		} else {
-			b.WriteString(strings.ReplaceAll(strings.ReplaceAll(t.key, "~", "~0"), "/", "~1"))
+			b.WriteString(escapeToken(t.key))
 		}
 	}
 	return &Error{Pointer: b.String(), Reason: reason, Message: fmt.Sprintf(format, args...)}
@@ -587,7 +625,7 @@ func (p *parser) node(v any, w where) (map[string]any, string, error) {
 		return nil, "", p.fail(UnknownNode, "%.*q is not a node of the schema", maxTokenChars, typ)
 	}
 	if !w.holds(typ) {
-		return nil, "", p.fail(Content, "%s, not a %s", w.holdsWhat(), typ)
+		return nil, "", p.fail(Content, "%s, not %s", w.holdsWhat(), article(typ))
 	}
 	if err := p.fields(o, "the "+typ, nodeFields[typ]...); err != nil {
 		return nil, "", err
@@ -854,12 +892,23 @@ func canonicalInlines(inlines []Inline) []Inline {
 }
 
 // canonicalID returns id in its canonical spelling, or id as it is when it is
-// not an ID, as "" is not.
+// not an ID, as "" is not. ids.Encode spells an ID with its prefix in
+// lowercase and its body in uppercase, of which DecodeAny reads each in
+// either case and nothing else, so an ID that DecodeAny reads, without an
+// uppercase letter before its underscore or a lowercase one after it, is
+// spelt canonically already, and is returned without a new string, as every
+// ID of a document that Parse returned is when it derives.
 func canonicalID(id string) string {
-	if kind, u, err := ids.DecodeAny(id); err == nil {
-		return ids.Encode(kind, u)
+	kind, u, err := ids.DecodeAny(id)
+	if err != nil {
+		return id
 	}
-	return id
+	prefix, body, _ := strings.Cut(id, "_")
+	if !strings.ContainsFunc(prefix, func(r rune) bool { return 'A' <= r && r <= 'Z' }) &&
+		!strings.ContainsFunc(body, func(r rune) bool { return 'a' <= r && r <= 'z' }) {
+		return id
+	}
+	return ids.Encode(kind, u)
 }
 
 func (p *parser) inline(v any) (Inline, error) {
@@ -967,7 +1016,7 @@ func (p *parser) value(o map[string]any) (*Value, error) {
 	case kind == ids.Component && !named:
 		return nil, p.fail(Reference, "a reference to a component names its attribute")
 	case named:
-		if _, val.Attribute, err = p.id(attrs, "attribute", "a value reference's attribute", ids.AttributeDef); err != nil {
+		if _, val.Attribute, err = p.id(attrs, "attribute", "a value reference", ids.AttributeDef); err != nil {
 			return nil, err
 		}
 	}
@@ -1001,12 +1050,32 @@ func (p *parser) id(attrs map[string]any, key, what string, kinds ...ids.Kind) (
 	if err != nil || !slices.Contains(kinds, kind) {
 		names := make([]string, len(kinds))
 		for i, k := range kinds {
-			names[i] = k.String()
+			names[i] = article(kindName(k))
 		}
-		return 0, "", p.fail(Reference, "%s's %s is not the ID of a %s", what, key, strings.Join(names, " or a "))
+		return 0, "", p.fail(Reference, "%s's %s is not the ID of %s", what, key, strings.Join(names, " or "))
 	}
 	p.pop()
 	return kind, s, nil
+}
+
+// kindName returns the name of the kind of entity that a document refers to,
+// as a message names it.
+func kindName(k ids.Kind) string {
+	if k == ids.AttributeDef {
+		return "attribute definition"
+	}
+	return k.String()
+}
+
+// article returns name after the indefinite article that it takes, as "an
+// orderedList": the names of the schema's nodes and of the kinds of entity
+// that a document refers to each take "an" exactly when they start with a
+// vowel letter.
+func article(name string) string {
+	if name != "" && strings.ContainsRune("aeiouAEIOU", rune(name[0])) {
+		return "an " + name
+	}
+	return "a " + name
 }
 
 func (p *parser) marks(o map[string]any) (Marks, error) {
@@ -1108,8 +1177,8 @@ func (p *parser) link(mo map[string]any) (string, error) {
 // reorder what a reader sees of it, and each % in it starts an escape, % and
 // two hexadecimal digits. It is a mailto URL with an address and only the
 // fields that mailtoProblem takes, or an http or https URL whose authority,
-// after the //, is a host and a port, as authorityProblem reads it. A scheme
-// is read regardless of ASCII case.
+// after the //, is a host of ASCII and a port, as authorityProblem reads it. A
+// scheme is read regardless of ASCII case.
 //
 // CheckHref reads a link by these rules, which schema/rich-text/README.md
 // states, rather than as a URL parser does, so that the TypeScript client
@@ -1160,7 +1229,11 @@ var mailtoFields = []string{"bcc", "body", "cc", "subject", "to"}
 // in mailto:keeper@example.com#?attach=/etc/passwd. Its address, what is
 // before the first ?, is not empty, and each of the fields that & separates
 // in its query, what follows that ?, is empty or a name of mailtoFields, read
-// regardless of ASCII case, followed by =.
+// regardless of ASCII case, followed by = and its value. Neither the address
+// nor a value but body's escapes a control character (escapesControl), which
+// a mail client could write into a header, as a line break that starts
+// another header in mailto:keeper@example.com%0D%0ABcc:evil@example.com; a
+// body's line breaks are %0D%0A, as RFC 6068 writes them.
 func mailtoProblem(rest string) string {
 	if strings.Contains(rest, "#") {
 		return "has a #, which a mailto URL has no use for, and after which a mail client could read a field"
@@ -1169,13 +1242,35 @@ func mailtoProblem(rest string) string {
 	if address == "" {
 		return "has no address"
 	}
+	if escapesControl(address) {
+		return "has an address that escapes a control character, which a mail client could write into a header"
+	}
 	for field := range strings.SplitSeq(query, "&") {
-		name, _, set := strings.Cut(field, "=")
-		if field != "" && (!set || !slices.Contains(mailtoFields, asciiLower(name))) {
+		name, value, set := strings.Cut(field, "=")
+		name = asciiLower(name)
+		if field != "" && (!set || !slices.Contains(mailtoFields, name)) {
 			return "sets a field other than to, cc, bcc, subject, or body"
+		}
+		if name != "body" && escapesControl(value) {
+			return "has a field other than body that escapes a control character, which a mail client could " +
+				"write into a header"
 		}
 	}
 	return ""
+}
+
+// escapesControl reports whether s, whose every % starts an escape, escapes
+// an ASCII control character, %00 to %1F or %7F, in either case.
+func escapesControl(s string) bool {
+	for i := 0; i+2 < len(s); i++ {
+		if s[i] == '%' {
+			if b, err := strconv.ParseUint(s[i+1:i+3], 16, 8); err == nil && (b < 0x20 || b == 0x7F) {
+				return true
+			}
+			i += 2
+		}
+	}
+	return false
 }
 
 // maxPort is the highest port, which a browser's URL parser takes.
@@ -1183,44 +1278,43 @@ const maxPort = 65535
 
 // authorityProblem says what is wrong with the authority of an http or https
 // link, what is between its // and the first /, ?, or # after it, or returns
-// "". It is a host, then a colon and a port when it has one. The host is not
-// empty: an IPv6 address in brackets, of hexadecimal digits, colons, and
-// dots, followed by nothing or by the colon and the port; or a name of the
-// ASCII letters and digits, -._~!$&'()*+,;=, and the letters, marks, and
-// numbers beyond ASCII (isNameRune), which the authority's last colon
-// separates from the port. The port is ASCII digits whose value is at most
-// maxPort, or nothing. So an authority has no @, and a link no userinfo, as
+// "". It is a host, then a colon and a port when it has one: an IPv6 address
+// in brackets (ipv6Problem), followed by nothing or by the colon and the
+// port; or a name (nameProblem), which the authority's last colon separates
+// from the port. The port is ASCII digits whose value is at most maxPort, or
+// nothing. So an authority has no @, and a link no userinfo, as
 // https://example.com@evil.example/ has, whose host is evil.example, and a
-// backslash, which a browser reads as a slash, or a character that looks
-// like a slash or a dot, cannot hide another host in it.
+// backslash, which a browser reads as a slash, cannot hide another host in
+// it.
 func authorityProblem(authority string) string {
 	if strings.Contains(authority, "@") {
 		return "has a userinfo, before an @, which could show another host than the one that it leads to"
 	}
-	host, port, bracketed := authority, "", strings.HasPrefix(authority, "[")
-	if bracketed {
+	var port string
+	if strings.HasPrefix(authority, "[") {
 		end := strings.IndexByte(authority, ']')
 		if end < 0 {
 			return "has an IPv6 address without its closing bracket"
 		}
-		host = authority[1:end]
 		if after := authority[end+1:]; after != "" {
 			var ok bool
 			if port, ok = strings.CutPrefix(after, ":"); !ok {
 				return "has a host followed by more than a port"
 			}
 		}
-	} else if colon := strings.LastIndexByte(authority, ':'); colon >= 0 {
-		host, port = authority[:colon], authority[colon+1:]
+		if problem := ipv6Problem(authority[1:end]); problem != "" {
+			return problem
+		}
+	} else {
+		host := authority
+		if colon := strings.LastIndexByte(authority, ':'); colon >= 0 {
+			host, port = authority[:colon], authority[colon+1:]
+		}
+		if problem := nameProblem(host); problem != "" {
+			return problem
+		}
 	}
-	switch {
-	case host == "":
-		return "has no host"
-	case bracketed && !onlyRunes(host, func(r rune) bool { return r == ':' || r == '.' || isHexDigit(r) }):
-		return "has an IPv6 address in brackets that holds what no address does"
-	case !bracketed && !onlyRunes(host, isNameRune):
-		return "has a host with a character that a host may not hold"
-	case !onlyRunes(port, func(r rune) bool { return '0' <= r && r <= '9' }):
+	if !onlyRunes(port, isDigit) {
 		return "has a port that is not a number"
 	}
 	n := 0
@@ -1232,21 +1326,81 @@ func authorityProblem(authority string) string {
 	return ""
 }
 
-// isNameRune reports whether a host's name may hold r: an ASCII letter or
-// digit, one of -._~!$&'()*+,;=, or a letter, a mark, or a number beyond
-// ASCII (Unicode's L, M, and N), of which a host in any script is written.
-// Not another character beyond ASCII, which could look like a delimiter that
-// it is not: IDNA keeps U+2215 DIVISION SLASH in a host, so that
-// https://bank.example∕login.evil.example/, which reads as a path of
-// bank.example, leads to a host of evil.example, and it reads U+3002
-// IDEOGRAPHIC FULL STOP as a dot.
-func isNameRune(r rune) bool {
-	if r >= utf8.RuneSelf {
-		return unicode.In(r, unicode.L, unicode.M, unicode.N)
+// ipv6Problem says what is wrong with what the brackets of an authority hold,
+// or returns "". It is an IPv6 address as RFC 4291 (section 2.2) writes it:
+// eight groups of one to four hexadecimal digits, separated by colons, of
+// which one run of one or more groups of zeros may be written as ::, and the
+// last two of which may be written as an IPv4 address, four numbers from 0
+// to 255 in decimal, without leading zeros, separated by dots; and without a
+// zone, which no URL has.
+func ipv6Problem(address string) string {
+	if address == "" {
+		return "has no host"
 	}
-	return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' ||
-		strings.ContainsRune("-._~!$&'()*+,;=", r)
+	if !onlyRunes(address, func(r rune) bool { return r == ':' || r == '.' || isHexDigit(r) }) {
+		return "has an IPv6 address in brackets that holds what no address does"
+	}
+	if a, err := netip.ParseAddr(address); err != nil || !a.Is6() {
+		return "has in brackets what is not an IPv6 address"
+	}
+	return ""
 }
+
+// nameProblem says what is wrong with a host's name, or returns "". It is
+// ASCII: letters, digits, and -._~!$&'()*+,;=, so that an internationalized
+// name is written as IDNA writes it in ASCII, as xn--caf-dma.example for
+// café.example, which a browser's URL parser gives (new URL(href).hostname).
+// A character beyond ASCII may look like another, a letter as a slash, as
+// U+30CE KATAKANA LETTER NO (ノ), a digit as a dot, as U+0660 ARABIC-INDIC
+// DIGIT ZERO, or a symbol as either, as U+2215 DIVISION SLASH, all of which
+// IDNA keeps in the host, so that https://bank.exampleノlogin.evil.example/,
+// which reads as a path of bank.example, leads to a host of evil.example. The
+// name's labels, which dots separate, are not empty, but for a last one after
+// a dot that ends the name, as in example.com.; and when its last label (not
+// that empty one) is digits, or 0x or 0X and hexadecimal digits, which a
+// browser then reads as an IPv4 address, the name is one, four numbers from
+// 0 to 255 in decimal, without leading zeros, separated by dots.
+func nameProblem(name string) string {
+	if name == "" {
+		return "has no host"
+	}
+	if !onlyRunes(name, isNameRune) {
+		return "has a host with a character that a host may not hold, as one beyond ASCII: an internationalized " +
+			"host is written as IDNA writes it in ASCII (xn--)"
+	}
+	labels := strings.Split(strings.TrimSuffix(name, "."), ".")
+	if slices.Contains(labels, "") {
+		return "has a host with an empty label, before a dot that does not end it"
+	}
+	if last := labels[len(labels)-1]; onlyRunes(last, isDigit) || hexNumber(last) {
+		if len(labels) != 4 || slices.ContainsFunc(labels, func(l string) bool {
+			n, err := strconv.Atoi(l)
+			return err != nil || !onlyRunes(l, isDigit) || n > 255 || l != strconv.Itoa(n)
+		}) {
+			return "has a host that a browser reads as an IPv4 address, which is not four numbers from 0 to 255 " +
+				"in decimal without leading zeros"
+		}
+	}
+	return ""
+}
+
+// hexNumber reports whether a label is 0x or 0X and hexadecimal digits, which
+// a browser reads as a number.
+func hexNumber(label string) bool {
+	digits, ok := strings.CutPrefix(label, "0x")
+	if !ok {
+		digits, ok = strings.CutPrefix(label, "0X")
+	}
+	return ok && onlyRunes(digits, isHexDigit)
+}
+
+// isNameRune reports whether a host's name may hold r: an ASCII letter or
+// digit, or one of -._~!$&'()*+,;=.
+func isNameRune(r rune) bool {
+	return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || isDigit(r) || strings.ContainsRune("-._~!$&'()*+,;=", r)
+}
+
+func isDigit(r rune) bool { return '0' <= r && r <= '9' }
 
 func isHexDigit(r rune) bool {
 	return '0' <= r && r <= '9' || 'a' <= r && r <= 'f' || 'A' <= r && r <= 'F'
@@ -1421,38 +1575,39 @@ func wireBlocks(blocks []Block) ([]wireNode, error) {
 func wireInlines(inlines []Inline) ([]wireNode, error) {
 	nodes := make([]wireNode, len(inlines))
 	for i, in := range inlines {
-		var utf8OK bool
-		switch in := in.(type) {
+		// own are the node's strings besides its link, which its marks hold
+		// for every type of node.
+		var own [2]string
+		switch n := in.(type) {
 		case *Text:
-			if in == nil {
+			if n == nil {
 				return nil, errors.New("richtext: a text is nil")
 			}
-			utf8OK = utf8.ValidString(in.Text) && utf8.ValidString(in.Marks.Link)
-			nodes[i] = wireNode{Type: nodeText, Text: in.Text, Marks: wireMarks(in.Marks)}
+			nodes[i], own[0] = wireNode{Type: nodeText, Text: n.Text}, n.Text
 		case *Break:
-			if in == nil {
+			if n == nil {
 				return nil, errors.New("richtext: a line break is nil")
 			}
-			utf8OK = utf8.ValidString(in.Marks.Link)
-			nodes[i] = wireNode{Type: nodeHardBreak, Marks: wireMarks(in.Marks)}
+			nodes[i] = wireNode{Type: nodeHardBreak}
 		case *Mention:
-			if in == nil {
+			if n == nil {
 				return nil, errors.New("richtext: a mention is nil")
 			}
-			utf8OK = utf8.ValidString(in.Component) && utf8.ValidString(in.Marks.Link)
-			nodes[i] = wireNode{Type: nodeMention, Attrs: wireMention{in.Component}, Marks: wireMarks(in.Marks)}
+			nodes[i], own[0] = wireNode{Type: nodeMention, Attrs: wireMention{n.Component}}, n.Component
 		case *Value:
-			if in == nil {
+			if n == nil {
 				return nil, errors.New("richtext: a value reference is nil")
 			}
-			utf8OK = utf8.ValidString(in.Ref) && utf8.ValidString(in.Attribute) && utf8.ValidString(in.Marks.Link)
-			nodes[i] = wireNode{Type: nodeValueRef, Attrs: wireValue{in.Attribute, in.Decimals, in.Ref}, Marks: wireMarks(in.Marks)}
+			nodes[i] = wireNode{Type: nodeValueRef, Attrs: wireValue{n.Attribute, n.Decimals, n.Ref}}
+			own = [2]string{n.Ref, n.Attribute}
 		default:
 			return nil, errors.New("richtext: an inline node is nil")
 		}
-		if !utf8OK {
+		marks := in.marked()
+		if !utf8.ValidString(own[0]) || !utf8.ValidString(own[1]) || !utf8.ValidString(marks.Link) {
 			return nil, errors.New("richtext: an inline node holds a string that is not UTF-8")
 		}
+		nodes[i].Marks = wireMarks(*marks)
 	}
 	return nodes, nil
 }

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
 // paragraphs returns a document of a paragraph of each text.
@@ -120,6 +122,37 @@ func TestLimits(t *testing.T) {
 			}
 		}
 
+		// Nor is it counted how a string's characters are escaped: an escape
+		// counts as the character that it stands for, so that the same
+		// document is within the limit whichever characters its encoder
+		// escapes, as json.Marshal escapes each & of what a MarshalJSON method
+		// writes, which the commands' pipeline does to a step's payload, and
+		// Python's json.dumps every character beyond ASCII.
+		parsed, err = Parse(bytes.Replace(doc, []byte(`"text":"x`), []byte(`"text":"&`), 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload struct {
+			Body Doc `json:"body"`
+		}
+		payload.Body = *parsed
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(raw, []byte(`\u0026`)) {
+			t.Fatal("json.Marshal escapes no &")
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Errorf("a document of %d bytes, with its & escaped by json.Marshal: %v", MaxBytes, err)
+		}
+		escaped := func(n int) []byte { return bytes.ReplaceAll(sized(n), []byte("x"), []byte(`\u0078`)) }
+		if _, err := Parse(escaped(MaxBytes)); err != nil {
+			t.Errorf("a document of %d bytes with each x escaped: %v", MaxBytes, err)
+		}
+		_, err = Parse(escaped(MaxBytes + 1))
+		wantError(t, err, TooLarge, "")
+
 		// A canonical form longer than the JSON that Parse read, as an
 		// ordered list's start of 9e5, which is 900000, is within the limit
 		// too, so that every document that Parse returns can be written and
@@ -196,6 +229,34 @@ func TestLimits(t *testing.T) {
 		_, err := Parse(link(href + "a"))
 		wantError(t, err, Link, "/content/0/content/0/marks/0/attrs/href")
 	})
+}
+
+// TestJSONLength checks how MaxBytes counts a document's JSON: without the
+// white space between its tokens, and with each escape in a string counted
+// as the bytes of the UTF-8 of the character that it stands for, and an
+// escaped surrogate pair as the one character that it stands for.
+func TestJSONLength(t *testing.T) {
+	for in, want := range map[string]int{
+		` { "a" : [ 1 , 2 ] } `:         len(`{"a":[1,2]}`),
+		`"a b	c"`:                       len(`"a b	c"`),
+		`"\u00e9\u00E9"`:                len(`"éé"`),
+		`"\u0026\u003c\u003e"`:          len(`"&<>"`),
+		`"\u2028\u4E3F"`:                len(`"` + string(rune(0x2028)) + string(rune(0x4E3F)) + `"`),
+		`"\ud83d\udc34"`:                len(`"🐴"`),
+		`"\" \\ \/ \b \f \n \r \t"`:     len(`"x x x x x x x x"`),
+		`"\ud800"`:                      len(`"` + string(utf8.RuneError) + `"`),
+		`"\ud800\u0041"`:                len(`"` + string(utf8.RuneError) + `A"`),
+		`"\ud83d\udc34\ud83d"`:          len(`"🐴` + string(utf8.RuneError) + `"`),
+		`{"\u0074ype":"\u0064oc"}`:      len(`{"type":"doc"}`),
+		`"a\`:                           len(`"a\`),
+		`"\u12`:                         len(`"u12`),
+		`"\u12"`:                        len(`"u12"`),
+		"\"\\u00e9\"   \t\r\n" + `"\u0`: len(`"é""u0`),
+	} {
+		if got := jsonLength([]byte(in)); got != want {
+			t.Errorf("jsonLength(%s) = %d, want %d", in, got, want)
+		}
+	}
 }
 
 // TestParseJSON checks that Parse refuses input that is not one JSON value
@@ -394,6 +455,31 @@ func TestDeriveBuilt(t *testing.T) {
 	}
 }
 
+// TestCanonicalID checks that canonicalID spells an ID as ids.Encode does,
+// in whatever case it is written, leaves what is no ID as it is, and returns
+// an ID spelt canonically already without a new string, as Derive reads every
+// ID of a document that Parse returned.
+func TestCanonicalID(t *testing.T) {
+	for _, k := range []ids.Kind{ids.Component, ids.Variable, ids.AttributeDef} {
+		id := ids.Encode(k, ids.New())
+		prefix, body, _ := strings.Cut(id, "_")
+		for _, spelt := range []string{id, strings.ToLower(id), strings.ToUpper(id), strings.ToUpper(prefix) + "_" + body,
+			prefix + "_" + strings.ToLower(body[:1]) + body[1:], prefix + "_" + body[:25] + strings.ToLower(body[25:])} {
+			if got := canonicalID(spelt); got != id {
+				t.Errorf("canonicalID(%s) = %s, want %s", spelt, got, id)
+			}
+		}
+		if allocs := testing.AllocsPerRun(100, func() { canonicalID(id) }); allocs != 0 {
+			t.Errorf("canonicalID of a canonical ID allocates %v times", allocs)
+		}
+	}
+	for _, s := range []string{"", "x", "cmp_123", "CMP_01HQ8Z7KD3M9P2W5XRTVNQ4BCI"} {
+		if got := canonicalID(s); got != s {
+			t.Errorf("canonicalID(%q) = %q", s, got)
+		}
+	}
+}
+
 // TestDeriveNilNodes checks that Derive gives a nil node of a Doc that a
 // program built, which MarshalJSON refuses, no segment, rather than panic or
 // derive a segment of no kind.
@@ -492,11 +578,12 @@ func TestPlainTextBuilt(t *testing.T) {
 	}
 }
 
-// TestCheckHref checks the links' allowlist: http and https URLs with a host,
-// of no character beyond ASCII but letters, marks, and numbers, a port of at
-// most 65535, and no userinfo, which could show another host, and mailto URLs
-// without a # that set no field but to, cc, bcc, subject, and body, and
-// nothing that could run a script or read a file.
+// TestCheckHref checks the links' allowlist: http and https URLs with a host
+// of ASCII, a name of labels or an IPv4 or IPv6 address, a port of at most
+// 65535, and no userinfo, which could show another host, and mailto URLs
+// without a # that set no field but to, cc, bcc, subject, and body, and that
+// escape no control character but in a body, and nothing that could run a
+// script or read a file.
 //
 // Verifies: NFR-SEC-08
 func TestCheckHref(t *testing.T) {
@@ -508,12 +595,28 @@ func TestCheckHref(t *testing.T) {
 		"https://example.com/a@b?c=d@e#f@g",
 		"https://[::1]/",
 		"https://[2001:db8::1]:8443/a",
+		"https://[::]/",
+		"https://[1:2:3:4:5:6:7:8]/",
+		"https://[1:2:3:4:5:6::8]/",
+		"https://[::ffff:192.0.2.1]/",
+		"https://[FE80::A]/",
 		"https://example.com:/",
 		"https://cs.wikipedia.org/wiki/Příliš",
-		"https://příliš.example/",
-		// Letters, marks, and numbers beyond ASCII: a combining acute accent,
-		// and an Arabic-Indic digit three.
-		"https://cafe" + string(rune(0x0301)) + "-" + string(rune(0x0663)) + ".example/",
+		// Internationalized hosts, příliš.example and café.example, as IDNA
+		// writes them in ASCII.
+		"https://xn--pli-rma35ctb.example/",
+		"https://XN--CAF-DMA.example/",
+		// A name that ends with a dot, and one of every character that a
+		// name may hold.
+		"https://example.com./",
+		"https://a-b_c~d!e$f&g'h(i)j*k+l,m;n=o.example/",
+		// IPv4 addresses, and names whose last label is not a number.
+		"https://192.0.2.1/",
+		"https://0.0.0.0:80/",
+		"https://255.255.255.255./",
+		"https://1.example/",
+		"https://example.1a/",
+		"https://example.0xg/",
 		"https://example.com:65535/",
 		"https://example.com:000080/",
 		// What follows the authority may hold what a host may not.
@@ -529,6 +632,10 @@ func TestCheckHref(t *testing.T) {
 		// any ASCII case, and empty ones.
 		"mailto:keeper@example.com?to=mira@example.com&CC=a@example.com&Bcc=b@example.com&subject=a%26b&body=x=y",
 		"mailto:keeper@example.com?&subject=&&body=a?b%23c",
+		// A body's line breaks, as RFC 6068 writes them, and a tab, in any
+		// case of the field's name and of the escape's digits.
+		"mailto:keeper@example.com?subject=Light%20on&body=Come%0D%0Aup%09now&BODY=%0d%0a%7f",
+		"mailto:keeper@example.com?subject=%7E%20%25",
 	} {
 		if problem := CheckHref(href); problem != "" {
 			t.Errorf("CheckHref(%q) = %q, want none", href, problem)
@@ -589,6 +696,15 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com#?attach=/home/keeper/.ssh/id_rsa",
 		"mailto:keeper@example.com?to=x#&attach=/etc/passwd",
 		"mailto:keeper@example.com?&subject=&&body=a?b#attach=x",
+		// An escaped control character outside a body, which a mail client
+		// could write into a header, as a line break that starts another.
+		"mailto:keeper@example.com%0D%0ABcc:evil@example.com",
+		"mailto:keeper@example.com%0aBcc:evil@example.com",
+		"mailto:keeper@example.com?subject=Light%0D%0ABcc:%20evil@example.com",
+		"mailto:keeper@example.com?to=a@example.com%0A&body=x",
+		"mailto:keeper@example.com?CC=a@example.com%00",
+		"mailto:keeper@example.com?bcc=%1f",
+		"mailto:keeper@example.com?subject=%7F",
 		// A port that no browser takes.
 		"https://example.com:65536/",
 		"https://example.com:99999999999999999999/",
@@ -596,16 +712,55 @@ func TestCheckHref(t *testing.T) {
 		"https://\xffevil.example/",
 		"https://exa\xc0\xafmple/",
 		"https://example.com/\xff",
-		// A character beyond ASCII in a host that is no letter, mark, or
-		// number, and that could look like a delimiter: IDNA keeps U+2215
-		// DIVISION SLASH and U+2044 FRACTION SLASH in the host, which is then
-		// a host of evil.example, and reads U+3002 as a dot.
+		// A character beyond ASCII in a host, which an internationalized host
+		// is written without, and which could look like a delimiter: IDNA
+		// keeps U+2215 DIVISION SLASH, U+2044 FRACTION SLASH, and letters
+		// that look like a slash, U+30CE KATAKANA LETTER NO, U+4E3F, and
+		// U+FF89, in the host, which is then a host of evil.example, keeps
+		// U+0660 ARABIC-INDIC DIGIT ZERO, which looks like a dot, and reads
+		// U+3002 as a dot, and U+2488 DIGIT ONE FULL STOP as 1 and a dot.
 		"https://bank.example" + string(rune(0x2215)) + "login.evil.example/",
 		"https://bank.example" + string(rune(0x2044)) + "login.evil.example/",
 		"https://bank.example" + string(rune(0xFF0F)) + "login.evil.example/",
+		"https://bank.example" + string(rune(0x30CE)) + "login.evil.example/",
+		"https://bank.example" + string(rune(0x4E3F)) + "login.evil.example/",
+		"https://bank.example" + string(rune(0xFF89)) + "login.evil.example/",
+		"https://bank" + string(rune(0x0660)) + "example.evil.example/",
 		"https://bank.example" + string(rune(0x3002)) + "evil.example/",
 		"https://bank.example" + string(rune(0xFF20)) + "evil.example/",
 		"https://bank" + string(rune(0x2024)) + "example/",
+		"https://example" + string(rune(0x2488)) + "com/",
+		"https://příliš.example/",
+		"https://cafe" + string(rune(0x0301)) + ".example/",
+		// A name with an empty label, which no host has.
+		"https://./",
+		"https://../",
+		"https://.example.com/",
+		"https://example..com/",
+		"https://example.com../",
+		// A name that a browser reads as an IPv4 address, as its last label
+		// is a number, but that is not four numbers from 0 to 255 in decimal
+		// without leading zeros.
+		"https://999/",
+		"https://1.2.3.256/",
+		"https://1.2.3/",
+		"https://1.2.3.4.5/",
+		"https://01.2.3.4/",
+		"https://127.1/",
+		"https://0x7f.0.0.1/",
+		"https://example.123/",
+		"https://example.0x1F/",
+		"https://example.0x/",
+		// What no IPv6 address is, in brackets.
+		"https://[1]/",
+		"https://[:::::]/",
+		"https://[1::2::3]/",
+		"https://[12345::]/",
+		"https://[1:2:3:4:5:6:7:8:9]/",
+		"https://[192.0.2.1]/",
+		"https://[::192.0.2.01]/",
+		"https://[::1.2.3]/",
+		"https://[.]/",
 		// A host with what it does not hold, as a backslash, which a browser
 		// reads as a slash, so that the host would be another.
 		"https://example.com\\@evil.example/",
@@ -686,6 +841,40 @@ func TestErrorString(t *testing.T) {
 	cut := strings.Repeat("ž", 40)
 	if got := err.Error(); got != `rich text: /content/0/`+cut+`…: the paragraph has no field "`+cut+`"` {
 		t.Errorf("Error() = %.200s, %d bytes", got, len(got))
+	}
+
+	// A name is cut, as the message cuts it, before it is escaped, so that
+	// no cut falls within an escape, as ~1 for a slash, and a name of 40
+	// characters is kept whole, however long it is escaped.
+	a39 := strings.Repeat("a", 39)
+	for name, want := range map[string]string{
+		a39 + "/b": `rich text: /content/0/` + a39 + `~1…: the paragraph has no field "` + a39 + `/"`,
+		a39 + "~":  `rich text: /content/0/` + a39 + `~0: the paragraph has no field "` + a39 + `~"`,
+	} {
+		_, err := Parse([]byte(`{"type":"doc","content":[{"type":"paragraph","` + name + `":1}]}`))
+		if got := err.Error(); got != want {
+			t.Errorf("Error() = %s, want %s", got, want)
+		}
+	}
+}
+
+// TestMessages checks that a message names what is wrong in English, with
+// the article that a name takes, and no word twice.
+func TestMessages(t *testing.T) {
+	const cmp = `"ref":"cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"`
+	for doc, want := range map[string]string{
+		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"valueRef","attrs":{` + cmp + `,"attribute":null}}]}]}`: "a value reference's attribute is not a string",
+		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"valueRef","attrs":{` + cmp + `,"attribute":""}}]}]}`:   "a value reference's attribute is not the ID of an attribute definition",
+		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"valueRef","attrs":{"ref":"x"}}]}]}`:                    "a value reference's ref is not the ID of a variable or a component",
+		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"mention","attrs":{"id":"x"}}]}]}`:                      "a mention's id is not the ID of a component",
+		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"orderedList","content":[]}]}]}`:                        "a paragraph holds text, line breaks, mentions, and value references, not an orderedList",
+		`{"type":"doc","content":[{"type":"bulletList","content":[{"type":"paragraph"}]}]}`:                                      "a list holds list items, not a paragraph",
+	} {
+		_, err := Parse([]byte(doc))
+		var e *Error
+		if !errors.As(err, &e) || e.Message != want {
+			t.Errorf("%s: %v, want %q", doc, err, want)
+		}
 	}
 }
 

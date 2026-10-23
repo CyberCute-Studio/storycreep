@@ -1297,7 +1297,7 @@
       "hash": "sha256:cbdc6be8042546270cfd3c3396e4a1ca932575821b75d46a6069d64a7f0020dd"
     },
     {
-      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one",
+      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one, with a line break escaped in the body",
       "doc": {
         "content": [
           {
@@ -1338,7 +1338,7 @@
                 "marks": [
                   {
                     "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light%20on&CC=mira@example.com&body=Come%20up&"
+                      "href": "mailto:keeper@example.com?subject=Light%20on&CC=mira@example.com&body=Come%20up%0D%0Anow&"
                     },
                     "type": "link"
                   }
@@ -1376,7 +1376,7 @@
           "value": " "
         },
         {
-          "href": "mailto:keeper@example.com?subject=Light%20on&CC=mira@example.com&body=Come%20up&",
+          "href": "mailto:keeper@example.com?subject=Light%20on&CC=mira@example.com&body=Come%20up%0D%0Anow&",
           "kind": "text",
           "marks": ["link"],
           "value": "three"
@@ -1425,7 +1425,7 @@
       "hash": "sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
     },
     {
-      "note": "a link whose host has letters, marks, and numbers beyond ASCII, and whose port is 65,535, the highest, with a leading zero",
+      "note": "hosts that the server takes: an internationalized one, written as IDNA writes it in ASCII, with the highest port, 65,535, written with a leading zero; an IPv4 address; an IPv6 address that ends with an IPv4 one; and a name that ends with a dot",
       "doc": {
         "content": [
           {
@@ -1434,12 +1434,60 @@
                 "marks": [
                   {
                     "attrs": {
-                      "href": "https://café-٣.example:065535/"
+                      "href": "https://xn--caf-dma.example:065535/"
                     },
                     "type": "link"
                   }
                 ],
-                "text": "x",
+                "text": "one",
+                "type": "text"
+              },
+              {
+                "text": " ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "http://192.0.2.1/"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "two",
+                "type": "text"
+              },
+              {
+                "text": " ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "https://[::ffff:192.0.2.1]/"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "three",
+                "type": "text"
+              },
+              {
+                "text": " ",
+                "type": "text"
+              },
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "https://example.com./"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "four",
                 "type": "text"
               }
             ],
@@ -1450,16 +1498,49 @@
       },
       "segments": [
         {
-          "href": "https://café-٣.example:065535/",
+          "href": "https://xn--caf-dma.example:065535/",
           "kind": "text",
           "marks": ["link"],
-          "value": "x"
+          "value": "one"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " "
+        },
+        {
+          "href": "http://192.0.2.1/",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "two"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " "
+        },
+        {
+          "href": "https://[::ffff:192.0.2.1]/",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "three"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " "
+        },
+        {
+          "href": "https://example.com./",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "four"
         }
       ],
-      "text": "x",
-      "preview": "x",
-      "words": 1,
-      "hash": "sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+      "text": "one two three four",
+      "preview": "one two three four",
+      "words": 4,
+      "hash": "sha256:113f69ccf08f80a63beba2f49218eaa72a183f374065e6cb56ebe9bd68eb79cc"
     },
     {
       "note": "a number is read as JSON.parse reads it, as the nearest double: 3.0 is 3, and so is 2.99999999999999999999",
@@ -3828,6 +3909,370 @@
                     "type": "link",
                     "attrs": {
                       "href": "https://bank.example。evil.example/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host has a letter that looks like a slash, U+30CE KATAKANA LETTER NO, which IDNA keeps in the host: its host is of evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://bank.exampleノlogin.evil.example/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host has a digit that looks like a dot, U+0660 ARABIC-INDIC DIGIT ZERO, which IDNA keeps in the host",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://bank٠example.evil.example/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose internationalized host is not written as IDNA writes it in ASCII, as xn--caf-dma.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://café.example/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host has an empty label",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example..com/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host is a dot",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://./"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host a browser reads as an IPv4 address, which is not one, with a number above 255",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://192.0.2.256/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host a browser reads as an IPv4 address, as its last label is a number, which is not four numbers",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.123/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host a browser reads as an IPv4 address, as its last label is a hexadecimal number",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.0x1f/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose host is an IPv4 address of fewer than four numbers, which the server does not take",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://127.1/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose brackets hold no IPv6 address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://[1]/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link whose brackets hold an IPv6 address with two ::",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://[1::2::3]/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose address escapes a line break, which a mail client could write into a header as another",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com%0D%0ABcc:evil@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose subject escapes a line break, which a mail client could write into a header as another",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?subject=Light%0d%0aBcc:evil@example.com"
                     }
                   }
                 ]
