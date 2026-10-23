@@ -192,12 +192,16 @@ func (q *Queries) PurgeVariables(ctx context.Context, arg PurgeVariablesParams) 
 
 const trashItems = `-- name: TrashItems :many
 
-SELECT t.kind::text AS kind, t.id::uuid AS id, t.name::text AS name, t.deleted_at::timestamptz AS deleted_at
+SELECT t.kind::text AS kind, t.id::uuid AS id, t.name::text AS name, t.deleted_at::timestamptz AS deleted_at,
+    t.purged_from::timestamptz AS purged_from
 FROM (
-    SELECT 'board' AS kind, b.id, b.name, b.deleted_at FROM board b
+    SELECT 'board' AS kind, b.id, b.name, b.deleted_at, b.deleted_at AS purged_from FROM board b
     WHERE b.workspace_id = $1 AND b.project_id = $2 AND b.deleted_at IS NOT NULL
     UNION ALL
-    SELECT 'variable' AS kind, v.id, v.key::text, v.deleted_at FROM variable v
+    -- least passes over the null deleted_at of a board that is not in the
+    -- trash.
+    SELECT 'variable' AS kind, v.id, v.key::text, v.deleted_at, least(v.deleted_at, vb.deleted_at) FROM variable v
+    LEFT JOIN board vb ON vb.workspace_id = v.workspace_id AND vb.project_id = v.project_id AND vb.id = v.board_id
     WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.deleted_at IS NOT NULL
 ) t
 WHERE t.deleted_at <= coalesce($3::timestamptz, 'infinity'::timestamptz)
@@ -218,10 +222,11 @@ type TrashItemsParams struct {
 }
 
 type TrashItemsRow struct {
-	Kind      string
-	ID        pgtype.UUID
-	Name      string
-	DeletedAt pgtype.Timestamptz
+	Kind       string
+	ID         pgtype.UUID
+	Name       string
+	DeletedAt  pgtype.Timestamptz
+	PurgedFrom pgtype.Timestamptz
 }
 
 // A project's trash (package trash, PRD FR-PROJ-06): the rows of its content
@@ -232,16 +237,20 @@ type TrashItemsRow struct {
 // list and in the purge, which package trash's tests hold it to. A row that
 // belongs to a board, as a board's variable, is in the trash with its board
 // too, which lists the board alone, and is purged with it, by the cascade of
-// its foreign key to the board.
+// its foreign key to the board, even one deleted on its own, which the list
+// holds, and whose time in the trash ends with its board's if that ends
+// first.
 // TrashItems returns the entities in the project's trash that it lists, the
 // most recently deleted first, then by their kinds and their IDs, after the
 // entity whose deletion, kind, and ID are after_deleted_at, after_kind, and
 // after_id, or from the first if after_deleted_at is null, each with its
-// kind, its ID, its name, a variable's key, and when it was deleted. The
-// bound on deleted_at
-// alone, which the infinite time leaves open for the first page, lets the
-// index of each table's trash start where the page does, rather than read
-// every row that the pages before it held.
+// kind, its ID, its name, a variable's key, when it was deleted, and when its
+// time in the trash started, as purged_from: when it was deleted, or, for a
+// variable of a board in the trash, when the board was, if that was earlier,
+// since the board's purge deletes the variable with it. The bound on
+// deleted_at alone, which the infinite time leaves open for the first page,
+// lets the index of each table's trash start where the page does, rather
+// than read every row that the pages before it held.
 func (q *Queries) TrashItems(ctx context.Context, arg TrashItemsParams) ([]TrashItemsRow, error) {
 	rows, err := q.db.Query(ctx, trashItems,
 		arg.WorkspaceID,
@@ -263,6 +272,7 @@ func (q *Queries) TrashItems(ctx context.Context, arg TrashItemsParams) ([]Trash
 			&i.ID,
 			&i.Name,
 			&i.DeletedAt,
+			&i.PurgedFrom,
 		); err != nil {
 			return nil, err
 		}

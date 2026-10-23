@@ -308,7 +308,7 @@ func registerBoards(r *commands.Registry) {
 				return err
 			}
 			// The board's variables come back with it, into their folders,
-			// which come back with them.
+			// which come back with them if they are deleted.
 			held, err := variableFolders(ctx, q, b)
 			if err != nil {
 				return err

@@ -439,6 +439,25 @@ func TestDefaults(t *testing.T) {
 	if v := f.get(t, n.ID); v.Type != "float" || string(must(json.Marshal(v.Default))) != "0" {
 		t.Errorf("the variable retyped without a default is a %s with %s", v.Type, must(json.Marshal(v.Default)))
 	}
+	// A default that the database holds is read without the check of its
+	// characters that a command's default passes, which the database's own
+	// check does not make, so that a row that the pipeline did not write, or
+	// a later change of that check, leaves the project's variables readable,
+	// and their defaults changeable.
+	s := f.create(t, "rumour", map[string]any{"type": "string", "default": "kept"})
+	if _, err := f.d.Admin(t).Exec(context.Background(), `UPDATE variable SET default_value = to_jsonb('a' || chr(7) ||
+		'b') WHERE id = $1`, decodeID(t, ids.Variable, s.ID)); err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	if err := json.Unmarshal(must(json.Marshal(f.get(t, s.ID).Default)), &stored); err != nil ||
+		stored != "a"+string(rune(7))+"b" {
+		t.Errorf("a stored default with a control character is read as %q, %v", stored, err)
+	}
+	if keys := f.list(t); !slices.Contains(keys, "rumour") {
+		t.Errorf("with a stored default with a control character, the project lists %v", keys)
+	}
+	f.must(t, cmd{variable.SetDefault, map[string]any{"id": s.ID, "default": "plain"}})
 }
 
 // must returns b, or panics with err.
@@ -506,9 +525,10 @@ func TestScopes(t *testing.T) {
 // board: the project lists none of them while it is there, and nothing but
 // their deletion changes them, a folder that holds only them is deleted, and
 // one of them deleted on its own stays in the trash until the board is
-// restored, which brings the others back, into their folders, which the
-// restoration brings back too, and whose undo deletes again. The purge of the
-// board deletes them with it.
+// restored, its time there ending with the board's while the board is there
+// too. The restoration brings the others back, into their folders, which it
+// brings back too, and whose undo deletes again. The purge of the board
+// deletes them with it.
 func TestBoardTrash(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -544,7 +564,13 @@ func TestBoardTrash(t *testing.T) {
 	items, err := f.trash.List(ctx, f.actor(), f.project, trash.Cursor{}, 10)
 	if err != nil || len(items) != 2 || items[0].Kind != "variable" || items[0].Name != "greeted" ||
 		items[1].Kind != "board" {
-		t.Errorf("the trash lists %+v, %v; want the variable deleted on its own, then the board", items, err)
+		t.Fatalf("the trash lists %+v, %v; want the variable deleted on its own, then the board", items, err)
+	}
+	// The variable's time in the trash ends with its board's, which started
+	// first, since the board's purge deletes it.
+	if !items[0].DeletedAt.After(items[1].DeletedAt) || !items[0].PurgeAfter.Equal(items[1].PurgeAfter) {
+		t.Errorf("the variable deleted at %v after its board, deleted at %v, is purged after %v, want the board's %v",
+			items[0].DeletedAt, items[1].DeletedAt, items[0].PurgeAfter, items[1].PurgeAfter)
 	}
 
 	before := f.state(t)
@@ -566,6 +592,13 @@ func TestBoardTrash(t *testing.T) {
 		t.Errorf("undoing the board's restoration left\n%s\nwant\n%s", got, before)
 	}
 	f.must(t, cmd{board.Restore, map[string]any{"id": a}})
+	// With its board restored, the variable's time in the trash is its own.
+	items, err = f.trash.List(ctx, f.actor(), f.project, trash.Cursor{}, 10)
+	if err != nil || len(items) != 1 || items[0].Name != "greeted" ||
+		!items[0].PurgeAfter.Equal(items[0].DeletedAt.Add(trash.Retention)) {
+		t.Errorf("with the board restored, the trash lists %+v, %v; want the variable, purged after its own time",
+			items, err)
+	}
 	f.must(t, cmd{variable.Restore, map[string]any{"id": alone.ID}})
 
 	// The purge of the board deletes its variables with it, in the trash or
@@ -593,6 +626,38 @@ func TestBoardTrash(t *testing.T) {
 	if variables != 0 || boards != 0 || kept != 1 {
 		t.Errorf("after the purge, %d variables of boards, %d boards, and %d folders and variables are left, want "+
 			"the global variable alone", variables, boards, kept)
+	}
+}
+
+// TestBoardTrashOrder checks that a variable in the trash with its board is
+// a deleted child of its folder, as the variables of its folder are ordered:
+// the folder's last variable that is not in the trash, moved into the folder
+// without a key, stays where it is, though the board's comes after it, a new
+// variable goes after them both, and the board's comes back where it was,
+// with its folder, which is not deleted, left as it is.
+func TestBoardTrashOrder(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	a := f.newBoard(t, "Harbour")
+	quests := folderID()
+	f.must(t, cmd{board.CreateFolder, map[string]any{"id": quests, "kind": "variable", "name": "Quests"}})
+	seen := f.create(t, "met_elara", map[string]any{"folder_id": quests})
+	hidden := f.create(t, "asked", map[string]any{"scope": "board", "board_id": a, "folder_id": quests})
+	f.must(t, cmd{board.Delete, map[string]any{"id": a}})
+	if res := f.must(t, cmd{variable.Move, map[string]any{"id": seen.ID, "folder_id": quests}}); len(
+		res.Revisions) != 0 {
+		t.Errorf("moving the folder's last variable that is not in the trash into it changed %v", res.Revisions)
+	}
+	added := f.create(t, "harbour_rumours", map[string]any{"folder_id": quests})
+	if res := f.must(t, cmd{board.Restore, map[string]any{"id": a}}); len(res.Revisions) != 1 ||
+		res.Revisions[0].Kind != ids.Board {
+		t.Errorf("restoring the board, whose variable's folder is not deleted, changed %v, want the board alone",
+			res.Revisions)
+	}
+	if h := f.get(t, hidden.ID); f.get(t, seen.ID).Order != seen.Order || seen.Order >= h.Order ||
+		h.Order >= added.Order {
+		t.Errorf("the variables of the folder are at %q, %q, and %q, want the board's between the others",
+			f.get(t, seen.ID).Order, h.Order, added.Order)
 	}
 }
 

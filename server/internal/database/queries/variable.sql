@@ -71,12 +71,16 @@ WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.scope 
 LIMIT 1;
 
 -- name: BoardVariableFolders :many
--- BoardVariableFolders returns the folders of the board's variables that are
--- not deleted themselves, which restoring the board from the trash brings
--- back with it (package board), so that the folders above them come back too.
-SELECT DISTINCT folder_id::uuid AS folder_id FROM variable
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND board_id = @board_id AND deleted_at IS NULL
-    AND folder_id IS NOT NULL
+-- BoardVariableFolders returns the folders that are deleted of the board's
+-- variables that are not deleted themselves, which restoring the board from
+-- the trash brings back with it (package board), so that those folders, and
+-- the deleted ones above them, come back too. A folder that is not deleted
+-- has none deleted above it, since a folder is deleted only once it holds
+-- nothing that is not, so restoring the board restores nothing for it.
+SELECT DISTINCT v.folder_id::uuid AS folder_id FROM variable v
+JOIN folder f ON f.workspace_id = v.workspace_id AND f.project_id = v.project_id AND f.id = v.folder_id
+WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.board_id = @board_id
+    AND v.deleted_at IS NULL AND f.deleted_at IS NOT NULL
 ORDER BY folder_id;
 
 -- name: UpdateVariableKey :one

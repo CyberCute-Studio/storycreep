@@ -105,7 +105,7 @@ type resetPayload struct {
 type movePayload struct {
 	ID       string `json:"id" doc:"The variable's ID"`
 	FolderID string `json:"folder_id,omitempty" doc:"The ID of the folder of variables that the variable goes into, which is not deleted. Without it, the variable goes to the top."`
-	Order    string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The variable's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, var_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the variable goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted."`
+	Order    string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The variable's place among the children of its folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, var_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the variable goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted, a variable of a board in the project's trash counting as a deleted one."`
 }
 
 // idPayload is the payload of a command that needs nothing but its
@@ -310,9 +310,8 @@ func Register(r *commands.Registry) {
 			if err != nil {
 				return err
 			}
-			if p.ResetOnEnter && v.Scope != ScopeBoard {
-				return commands.Refuse("reset_on_enter", "is set on a global variable, which has no board to enter, "+
-					"and which only a board's variable may be", nil)
+			if errs := checkReset(v.Scope, p.ResetOnEnter); len(errs) > 0 {
+				return commands.Refuse(errs[0].Field, errs[0].Message, nil)
 			}
 			return changed(tx, v.ID)(queries.New(tx).UpdateVariableResetOnEnter(ctx,
 				queries.UpdateVariableResetOnEnterParams{ResetOnEnter: p.ResetOnEnter, UpdatedBy: by(tx),
@@ -510,17 +509,6 @@ func setValue(ctx context.Context, tx *commands.Tx, v queries.Variable, typ stri
 		DefaultValue: def.raw, UpdatedBy: by(tx), WorkspaceID: v.WorkspaceID, ProjectID: v.ProjectID, ID: v.ID}))
 }
 
-// stored returns the default of the variable v as a Value, as the inverse of
-// a change of it sets it back.
-func stored(v queries.Variable) (Value, error) {
-	def, problem := Value{raw: v.DefaultValue}.Of(v.Type)
-	if problem != "" {
-		return Value{}, fmt.Errorf("variable: the default of the variable %s %s", ids.Encode(ids.Variable,
-			v.ID.Bytes), problem)
-	}
-	return def, nil
-}
-
 // anyVariable returns the variable of the batch's project whose ID is id, a
 // variable's ID that its payload's Check checked, whether or not it is in the
 // trash, with whether its board is, or refuses the batch if the project has
@@ -625,7 +613,9 @@ func checkScope(s, boardID string) input.FieldErrors {
 }
 
 // checkReset returns the problem of a reset_on_enter that a variable of the
-// scope s may not have: a global's, which has no board to enter.
+// scope s may not have: a global's, which has no board to enter. A create's
+// Check refuses it, and SetResetOnEnter's Apply, which reads the variable's
+// scope, refuses it too.
 func checkReset(s string, reset bool) input.FieldErrors {
 	if reset && s != ScopeBoard {
 		return field("reset_on_enter", "is set on a global variable, which has no board to enter, and which only "+

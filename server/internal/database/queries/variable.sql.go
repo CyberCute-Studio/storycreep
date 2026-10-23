@@ -12,9 +12,10 @@ import (
 )
 
 const boardVariableFolders = `-- name: BoardVariableFolders :many
-SELECT DISTINCT folder_id::uuid AS folder_id FROM variable
-WHERE workspace_id = $1 AND project_id = $2 AND board_id = $3 AND deleted_at IS NULL
-    AND folder_id IS NOT NULL
+SELECT DISTINCT v.folder_id::uuid AS folder_id FROM variable v
+JOIN folder f ON f.workspace_id = v.workspace_id AND f.project_id = v.project_id AND f.id = v.folder_id
+WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.board_id = $3
+    AND v.deleted_at IS NULL AND f.deleted_at IS NOT NULL
 ORDER BY folder_id
 `
 
@@ -24,9 +25,12 @@ type BoardVariableFoldersParams struct {
 	BoardID     pgtype.UUID
 }
 
-// BoardVariableFolders returns the folders of the board's variables that are
-// not deleted themselves, which restoring the board from the trash brings
-// back with it (package board), so that the folders above them come back too.
+// BoardVariableFolders returns the folders that are deleted of the board's
+// variables that are not deleted themselves, which restoring the board from
+// the trash brings back with it (package board), so that those folders, and
+// the deleted ones above them, come back too. A folder that is not deleted
+// has none deleted above it, since a folder is deleted only once it holds
+// nothing that is not, so restoring the board restores nothing for it.
 func (q *Queries) BoardVariableFolders(ctx context.Context, arg BoardVariableFoldersParams) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, boardVariableFolders, arg.WorkspaceID, arg.ProjectID, arg.BoardID)
 	if err != nil {

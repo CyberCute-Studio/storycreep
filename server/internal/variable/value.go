@@ -116,6 +116,17 @@ func Zero(typ string) Value {
 // keeps it, so that the server would store other text than the client holds.
 // None, the zero Value, is the type's zero value (Zero).
 func (v Value) Of(typ string) (Value, string) {
+	return v.of(typ, true)
+}
+
+// of returns v as a value of the type typ as Of does, but checks a string's
+// characters and its length (input.CheckText) only if checked is set. A
+// default that the database holds is read without that check (stored): the
+// database's own check holds it to the length, but not to the characters, so
+// that a change of what input.CheckText takes, or a row that the pipeline did
+// not write, leaves the project's variables readable. A command that sets a
+// default, the undo of a change of one among them, checks it whole (Of).
+func (v Value) of(typ string, checked bool) (Value, string) {
 	if v.raw == nil {
 		return Zero(typ), ""
 	}
@@ -131,7 +142,7 @@ func (v Value) Of(typ string) (Value, string) {
 	case typ == TypeBool && kind == "boolean":
 		return Value{raw: json.RawMessage(raw)}, ""
 	case typ == TypeString && kind == "string":
-		return text(v.raw)
+		return text(v.raw, checked)
 	case !slices.Contains(types, typ):
 		return Value{}, fmt.Sprintf("is a value of the type %q, which is no variable's type", typ)
 	}
@@ -235,8 +246,8 @@ func integer(raw string) (int64, string) {
 }
 
 // text returns raw, a JSON string, as a value of the type string, as Of
-// does.
-func text(raw json.RawMessage) (Value, string) {
+// does, or as of does without input.CheckText unless checked is set.
+func text(raw json.RawMessage, checked bool) (Value, string) {
 	var s string
 	switch {
 	case !utf8.Valid(raw):
@@ -246,8 +257,10 @@ func text(raw json.RawMessage) (Value, string) {
 	case json.Unmarshal(raw, &s) != nil:
 		return Value{}, "is not a JSON string"
 	}
-	if problem := input.CheckText(s, MaxStringLength); problem != "" {
-		return Value{}, problem
+	if checked {
+		if problem := input.CheckText(s, MaxStringLength); problem != "" {
+			return Value{}, problem
+		}
 	}
 	out, err := json.Marshal(s)
 	if err != nil {

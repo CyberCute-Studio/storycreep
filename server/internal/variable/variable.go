@@ -108,16 +108,29 @@ type Variable struct {
 // variableOf returns the variable v as the API shows it, or an error if its
 // default is not one of its type, which the database's check keeps from it.
 func variableOf(v queries.Variable) (Variable, error) {
-	def, problem := Value{raw: json.RawMessage(v.DefaultValue)}.Of(v.Type)
-	if problem != "" {
-		return Variable{}, fmt.Errorf("variable: the default of the variable %s %s", ids.Encode(ids.Variable,
-			v.ID.Bytes), problem)
+	def, err := stored(v)
+	if err != nil {
+		return Variable{}, err
 	}
 	return Variable{ID: ids.Encode(ids.Variable, v.ID.Bytes), ProjectID: ids.Encode(ids.Project, v.ProjectID.Bytes),
 		Scope: v.Scope, BoardID: encode(ids.Board, v.BoardID), FolderID: encode(ids.Folder, v.FolderID),
 		Order: v.Order, Key: v.Key, Type: v.Type, Default: def, Description: v.Description,
 		ResetOnEnter: v.ResetOnEnter, Rev: v.Rev, DeletedAt: timeOf(v.DeletedAt), CreatedAt: v.CreatedAt.Time,
 		UpdatedAt: v.UpdatedAt.Time}, nil
+}
+
+// stored returns the default of the variable v, as the database holds it, in
+// its canonical form, as the API shows it and as the inverse of a change of
+// it sets it back, without checking its characters again (Value.of), or an
+// error if it is not a value of its type, which the database's check keeps
+// from it.
+func stored(v queries.Variable) (Value, error) {
+	def, problem := Value{raw: json.RawMessage(v.DefaultValue)}.of(v.Type, false)
+	if problem != "" {
+		return Value{}, fmt.Errorf("variable: the default of the variable %s %s", ids.Encode(ids.Variable,
+			v.ID.Bytes), problem)
+	}
+	return def, nil
 }
 
 // encode returns the ID of the entity of the kind k whose UUID is the column

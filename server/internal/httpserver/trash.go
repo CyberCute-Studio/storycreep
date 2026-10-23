@@ -45,14 +45,16 @@ func registerTrash(m *api.Mux, items *trash.Service) {
 		Method:      http.MethodGet,
 		Path:        "/api/v1/projects/{project_id}/trash",
 		Summary:     "List a project's trash",
-		Description: "Lists what is in the project's trash, the most recently deleted first: its boards, and, once " +
-			"they exist, its nodes, variables, and components, each with its kind. Each stays in the trash for " +
-			strconv.Itoa(trash.Days) + " days from its deletion, until its purge_after, when a purge that runs every " +
-			"hour deletes it for good; until then, the command of its kind restores it where it was, as " +
-			"board.restore with its ID, through POST /api/v1/projects/{project_id}/commands. A deleted folder is " +
-			"not listed: restoring a board restores the deleted folders above it, and the purge deletes a deleted " +
-			"folder once its " + strconv.Itoa(trash.Days) + " days have passed and it holds nothing. Nothing in the " +
-			"trash is in the project's other reads." +
+		Description: "Lists what is in the project's trash, the most recently deleted first: its boards and " +
+			"variables, and, once they exist, its nodes and components, each with its kind. Each stays in the " +
+			"trash for " + strconv.Itoa(trash.Days) + " days from its deletion, until its purge_after, when a purge " +
+			"that runs every hour deletes it for good; until then, the command of its kind restores it where it " +
+			"was, as board.restore with its ID, through POST /api/v1/projects/{project_id}/commands. A board's " +
+			"variables are in the trash with it, unlisted, come back with it, and are purged with it, a variable " +
+			"of the board deleted on its own among them, which is listed, and restored only once its board is. A " +
+			"deleted folder is not listed: restoring a board restores the deleted folders above it, and the purge " +
+			"deletes a deleted folder once its " + strconv.Itoa(trash.Days) + " days have passed and it holds " +
+			"nothing. Nothing in the trash is in the project's other reads." +
 			projectNotFoundDoc + tokenNotFoundDoc + tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Trash"},
 	}, func(ctx context.Context, in *projectTrashInput) (*projectTrashOutput, error) {

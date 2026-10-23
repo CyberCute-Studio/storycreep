@@ -366,9 +366,11 @@ func DeleteFolderSteps(folders []pgtype.UUID) []commands.Step {
 	return steps
 }
 
-// variableFolders returns the folders of the variables of the board b that
-// are not deleted themselves, which are in the trash with b while it is
-// there, and which restoring it brings back into those folders.
+// variableFolders returns the folders that are deleted of the variables of
+// the board b that are not deleted themselves, which are in the trash with b
+// while it is there, and which restoring it brings back into those folders,
+// which it restores, with the deleted folders above them. A folder that is not
+// deleted has none deleted above it, so it needs nothing restored.
 func variableFolders(ctx context.Context, q *queries.Queries, b queries.Board) ([]pgtype.UUID, error) {
 	folders, err := q.BoardVariableFolders(ctx, queries.BoardVariableFoldersParams{WorkspaceID: b.WorkspaceID,
 		ProjectID: b.ProjectID, BoardID: b.ID})
