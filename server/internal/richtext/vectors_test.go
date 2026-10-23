@@ -2,10 +2,14 @@ package richtext
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode"
@@ -186,27 +190,67 @@ func TestWordVectors(t *testing.T) {
 	}
 }
 
-// TestWordsUnicodeVersion checks that the README states the version of
-// Unicode whose letters and numbers make a word on the server, that of
-// package unicode's tables, so that a client whose tables are another
-// version, as a JavaScript engine's are, knows where its word counts differ
-// from the server's: U+2EBF0, a CJK ideograph that Unicode 15.1 assigned, is
-// no letter in Unicode 15.0's. A Go whose tables are another version changes
-// the server's word counts of text with the letters and numbers that Unicode
-// assigned between the two, which the README, N40, and the exports' word
-// counts (FR-TEXT-05) are then to be read again for.
-func TestWordsUnicodeVersion(t *testing.T) {
+// TestUnicodeTables checks the rules that read package unicode's tables. The
+// README states their version wherever it names the letters, marks, and
+// numbers that the server takes, of a word and of a mailto link's local part,
+// so that a client whose tables are another version, as a JavaScript engine's
+// are, knows where it differs from the server: U+2EBF0, a CJK ideograph that
+// Unicode 15.1 assigned, is no letter in Unicode 15.0's. A Go whose tables
+// are another version changes the server's word counts of text with the
+// letters and numbers that Unicode assigned between the two, which the
+// README, N40, and the exports' word counts (FR-TEXT-05) are then to be read
+// again for, and takes those letters in a local part too, refusing none that
+// it took.
+//
+// hidden takes the characters that it takes in Unicode 15.0, which are those
+// of Unicode 17.0 too: a Go whose tables take another as hidden would refuse
+// the stored documents whose links hold it, which could then no longer be
+// read, as reading a stored document is parsing it, and one whose tables take
+// fewer would take links that a client refuses. Such a Go needs the stored
+// documents migrated, and the README read again, before this is changed.
+func TestUnicodeTables(t *testing.T) {
 	readme, err := os.ReadFile(filepath.Join("..", "..", "..", "schema", "rich-text", "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	major, rest, _ := strings.Cut(unicode.Version, ".")
 	minor, _, _ := strings.Cut(rest, ".")
-	if want := "as Unicode " + major + "." + minor + " has them"; !bytes.Contains(readme, []byte(want)) {
-		t.Errorf("the README's words do not say %q: package unicode's tables are Unicode %s", want, unicode.Version)
+	stated := regexp.MustCompile(`as Unicode (\d+\.\d+) has them`).FindAllSubmatch(readme, -1)
+	if len(stated) < 2 {
+		t.Errorf("the README states the version of Unicode %d times, not once for a word's letters and once for "+
+			"a local part's", len(stated))
 	}
-	if got := CountWords(string(rune(0x2EBF0))); unicode.Version == "15.0.0" && got != 0 {
-		t.Errorf("CountWords(U+2EBF0) = %d in Unicode 15.0, which has not assigned it", got)
+	for _, m := range stated {
+		if v := string(m[1]); v != major+"."+minor {
+			t.Errorf("the README says %q: package unicode's tables are Unicode %s", m[0], unicode.Version)
+		}
+	}
+	if unicode.Version == "15.0.0" {
+		if got := CountWords(string(rune(0x2EBF0))); got != 0 {
+			t.Errorf("CountWords(U+2EBF0) = %d in Unicode 15.0, which has not assigned it", got)
+		}
+		if problem := CheckHref("mailto:" + string(rune(0x2EBF0)) + "@example.com"); problem == "" {
+			t.Errorf("a local part of U+2EBF0 is taken in Unicode 15.0, which has not assigned it")
+		}
+	}
+	// The characters that hidden takes, which Node 24's
+	// /[\p{White_Space}\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u, of
+	// Unicode 17.0, takes too: their number, and the start of the SHA-256 of
+	// each one's code point in hexadecimal and a line feed, in order.
+	const hiddenCount, hiddenSum = 4290, "3f41e26a"
+	var n int
+	h := sha256.New()
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if hidden(r) {
+			n++
+			fmt.Fprintf(h, "%x\n", r)
+		}
+	}
+	if sum := hex.EncodeToString(h.Sum(nil))[:8]; n != hiddenCount || sum != hiddenSum {
+		t.Errorf("hidden takes %d characters, whose hash starts %s, not %d and %s: package unicode's tables "+
+			"(Unicode %s) take others as hidden, so that the links of stored documents may be refused, which "+
+			"then cannot be read, or links taken that a client refuses", n, sum, hiddenCount, hiddenSum,
+			unicode.Version)
 	}
 }
 

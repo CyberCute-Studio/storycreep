@@ -551,6 +551,27 @@ func TestDeriveNilNames(t *testing.T) {
 	doc.Derive(nil)
 }
 
+// TestDeriveBeyondLimits checks that what a document derives is not bounded
+// by its limits, as the README says: a mention's segment and the plain text
+// hold the component's name, which the document does not, so that a
+// document of two mentions and no text derives more than MaxChars
+// characters.
+func TestDeriveBeyondLimits(t *testing.T) {
+	const id = "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+	mention := `{"type":"mention","attrs":{"id":"` + id + `"}}`
+	doc, err := Parse([]byte(`{"type":"doc","content":[{"type":"paragraph","content":[` + mention + `,` +
+		mention + `]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := strings.Repeat("n", MaxChars)
+	got := doc.Derive(mapNames{components: map[string]string{id: name}})
+	if got.Text != name+name || len(got.Segments) != 2 || got.Segments[1].Value != name {
+		t.Errorf("two mentions of a component named with %d characters derive %d characters of text and %d "+
+			"segments", MaxChars, utf8.RuneCountInString(got.Text), len(got.Segments))
+	}
+}
+
 // TestMarshalParsed checks that a Doc that Parse returned is written in its
 // canonical form, and that one whose nodes a program changes afterwards is
 // checked and written as a built one is, though MarshalJSON writes a parsed
@@ -619,11 +640,11 @@ func TestPlainTextBuilt(t *testing.T) {
 // set no field but to, cc, bcc, subject, and body, that escape UTF-8 alone
 // but in a body, no hidden character in an address or a to, cc, or bcc, which
 // are addresses as RFC 6068 has them, without a display name, a comment, or
-// quotes, whose domains are ASCII, and no control character or line or
-// paragraph separator
-// in a subject, and nothing that could run a script or read a file; and no
-// link that holds a hidden character, as one that a renderer shows nothing
-// of.
+// quotes, whose local parts' characters beyond ASCII are letters, marks, and
+// numbers, and whose domains are ASCII, and no control character or line or
+// paragraph separator in a subject, and nothing that could run a script or
+// read a file; and no link that holds a hidden character, as one that a
+// renderer shows nothing of.
 //
 // Verifies: NFR-SEC-08
 func TestCheckHref(t *testing.T) {
@@ -705,6 +726,12 @@ func TestCheckHref(t *testing.T) {
 			string(rune(0x0431)) + "@example.com",
 		"mailto:ü@a.example%2Cö@b.example?cc=x@a.example,ü@c.example&bcc=ü@d.example",
 		"mailto:a@[2001:db8::1]",
+		// Local parts of letters, marks, and numbers beyond ASCII, raw or
+		// escaped: Devanagari with its vowel signs, which are marks, Chinese,
+		// and Arabic-Indic digits.
+		"mailto:" + string([]rune{0x092A, 0x0942, 0x091C, 0x093E}) + "@example.com",
+		"mailto:keeper@example.com?cc=%E7%94%A8%E6%88%B7@example.com&bcc=a." + string([]rune{0x0661, 0x0662}) +
+			"@example.com",
 	} {
 		if problem := CheckHref(href); problem != "" {
 			t.Errorf("CheckHref(%q) = %q, want none", href, problem)
@@ -853,6 +880,24 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com?CC=y@evil.example(support@paypal.com)",
 		"mailto:keeper@example.com?bcc=Support%3Cy@evil.example%3E",
 		"mailto:keeper@example.com,%22support@paypal.com%22%3Cy@evil.example%3E",
+		// Or whose local part has a character beyond ASCII that is not a
+		// letter, a mark, or a number, raw or escaped, wherever an address
+		// is: one that looks like a delimiter of an address, as U+FF02
+		// FULLWIDTH QUOTATION MARK, U+FF20 FULLWIDTH COMMERCIAL AT, U+FF1C
+		// FULLWIDTH LESS-THAN SIGN, and U+FE6B SMALL COMMERCIAL AT, so that
+		// the address reads as a display name and another address; a blank,
+		// U+2800 BRAILLE PATTERN BLANK, a run of which would push the domain
+		// out of what a mail client shows; a symbol; or a private use
+		// character, which a font may draw as anything.
+		"mailto:" + string(rune(0xFF02)) + "support" + string(rune(0xFF20)) + "paypal.com" + string(rune(0xFF02)) +
+			string(rune(0xFF1C)) + "x@evil.example",
+		"mailto:%EF%BC%82support%EF%BC%A0paypal.com%EF%BC%82%EF%BC%9Cx@evil.example",
+		"mailto:support" + string(rune(0xFF20)) + "paypal.com" + strings.Repeat(string(rune(0x2800)), 3) +
+			"@evil.example",
+		"mailto:keeper@example.com?to=support%EF%B9%ABpaypal.com@evil.example",
+		"mailto:keeper@example.com?CC=y@example.com,support" + string(rune(0xFF20)) + "paypal.com@evil.example",
+		"mailto:keeper@example.com?bcc=" + string(rune(0x2605)) + "@example.com",
+		"mailto:keeper%EE%80%80@example.com",
 		// Or that is not a local part, an @, and a domain, each atoms of atext
 		// that single dots separate, or the domain an address literal.
 		"mailto:keeper",

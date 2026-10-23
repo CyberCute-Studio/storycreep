@@ -166,6 +166,13 @@ type Derived struct {
 // texts with the same marks are one text segment, and its IDs are in their
 // canonical spelling. Derive does not check the document: a nil node, which
 // MarshalJSON refuses, has no segment.
+//
+// The document's limits do not bound what Derive derives: a mention's
+// segment and the plain text hold the component's name, and a value's
+// segment and the plain text the value's name, which names gives and the
+// document does not hold, so that a document within MaxBytes and MaxChars
+// may derive a plain text of many more than MaxChars characters, as the
+// README says.
 func (d *Doc) Derive(names Names) Derived {
 	segs := d.Segments(names)
 	text := PlainText(segs)
@@ -341,7 +348,7 @@ func WordCount(segs []Segment) int {
 // or number among them, so a dash between spaces is no word, and a run of
 // Chinese or Japanese without spaces is one. The letters and numbers are
 // those of package unicode's tables, of the version that unicode.Version
-// names and schema/rich-text/README.md states (TestWordsUnicodeVersion), since
+// names and schema/rich-text/README.md states (TestUnicodeTables), since
 // a client whose tables are newer, as a JavaScript engine's are, takes the
 // letters and numbers that Unicode has assigned since as letters and numbers
 // too, and counts a word where the server counts none in a run of them.

@@ -1297,7 +1297,7 @@
       "hash": "sha256:cbdc6be8042546270cfd3c3396e4a1ca932575821b75d46a6069d64a7f0020dd"
     },
     {
-      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one, with an e acute and a zero width space, a format character, escaped in the subject, an internationalized address in the cc, whose domain is written as IDNA writes it in ASCII, a line break, a line separator, NEL, ?, =, ;, and a byte that is not UTF-8 escaped in the body, and an address in the bcc whose local part has an apostrophe and a dot, and whose domain is an address literal",
+      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one, with an e acute and a zero width space, a format character, escaped in the subject, an internationalized address in the cc, whose domain is written as IDNA writes it in ASCII, a line break, a line separator, NEL, ?, =, ;, and a byte that is not UTF-8 escaped in the body, an address in the bcc whose local part has an apostrophe and a dot, and whose domain is an address literal, and an address in the to whose local part has letters, marks, and numbers beyond ASCII: Devanagari letters and vowel signs, which are marks, and Arabic-Indic digits",
       "doc": {
         "content": [
           {
@@ -1338,7 +1338,7 @@
                 "marks": [
                   {
                     "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,élodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&bcc=o'brien.lamp@[192.0.2.1]&"
+                      "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,élodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&bcc=o'brien.lamp@[192.0.2.1]&to=पूजा.١٢@example.com&"
                     },
                     "type": "link"
                   }
@@ -1376,7 +1376,7 @@
           "value": " "
         },
         {
-          "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,élodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&bcc=o'brien.lamp@[192.0.2.1]&",
+          "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,élodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&bcc=o'brien.lamp@[192.0.2.1]&to=पूजा.١٢@example.com&",
           "kind": "text",
           "marks": ["link"],
           "value": "three"
@@ -4926,6 +4926,90 @@
                     "type": "link",
                     "attrs": {
                       "href": "mailto:keeper@example.com?cc=a@example.com,,b@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose address's local part has U+FF02 FULLWIDTH QUOTATION MARK, U+FF20 FULLWIDTH COMMERCIAL AT, and U+FF1C FULLWIDTH LESS-THAN SIGN, characters beyond ASCII that are not letters, marks, or numbers, which look like a quote, an @, and a <, so that the address reads as a display name, support@paypal.com, and an address, x@evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:＂support＠paypal.com＂＜x@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose address's local part has a run of U+2800 BRAILLE PATTERN BLANK, which shows as wide as a letter does, and would push the domain after it out of what a mail client shows of the address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support＠paypal.com⠀⠀⠀@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose to escapes U+FE6B SMALL COMMERCIAL AT in a local part",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?to=support%EF%B9%ABpaypal.com@evil.example"
                     }
                   }
                 ]
