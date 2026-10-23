@@ -390,7 +390,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### Milestone D — Narrative model (server)
 
 ### 32. Rich-text document model
-**Status:** todo · **Depends on:** 4, 6
+**Status:** done ([#36](https://github.com/CyberCute-Studio/storycreep/pull/36)) · **Depends on:** 4, 6
 **PRD:** FR-TEXT-01 (AC1, validator), ADR-020, NFR-SEC-07, NFR-SEC-08
 - A constrained ProseMirror schema, with TipTap's names. Marks: bold, italic, strike, code, link. Nodes: paragraph, lists, hard break, a value-reference atom, and a mention atom (N40).
 - A Go validator that rejects unknown marks and nodes and enforces depth limits, and returns a document in its canonical form. A published rich-text JSON Schema, generated from the validator's package. Link URL allowlist (N40).
