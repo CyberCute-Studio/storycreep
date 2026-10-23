@@ -53,7 +53,7 @@ func TestValueOf(t *testing.T) {
 		{TypeString, `""`, `""`},
 		{TypeString, `"Elara"`, `"Elara"`},
 		{TypeString, `"two\nlines\tand a tab"`, `"two\nlines\tand a tab"`},
-		{TypeString, `"é😀"`, `"é😀"`},
+		{TypeString, `"\u00e9\ud83d\ude00"`, `"é😀"`},
 		{TypeString, `" padded "`, `" padded "`},
 		{TypeString, `"` + long + `"`, `"` + long + `"`},
 	} {
@@ -83,8 +83,8 @@ func TestValueOf(t *testing.T) {
 		{TypeString, `"` + long + `e"`},
 		{TypeString, `"bell\u0007"`},
 		{TypeString, `"carriage\rreturn"`},
-		{TypeString, `"right‮left"`},
-		{TypeString, `"line separator"`},
+		{TypeString, `"right\u202eleft"`},
+		{TypeString, `"line\u2028separator"`},
 		{TypeString, `"lone \ud800"`},
 		{TypeString, `"lone \udc00 low"`},
 		{TypeString, `"swapped \udc00\ud800"`},

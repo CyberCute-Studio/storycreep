@@ -29,7 +29,7 @@ func TestCheck(t *testing.T) {
 		"met.elara":                            ident.Format,
 		"mét":                                  ident.Format,
 		"ｍet":                                  ident.Format,
-		"met​elara":                            ident.Format,
+		"met\u200belara":                       ident.Format,
 		"met_elara\n":                          ident.Format,
 		strings.Repeat("a", ident.MaxLength+1): ident.Format,
 		"true":                                 ident.Reserved,
