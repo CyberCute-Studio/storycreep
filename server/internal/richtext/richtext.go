@@ -23,6 +23,7 @@ import (
 	"io"
 	"math"
 	"net/netip"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -307,7 +308,11 @@ const maxTokenChars = 40
 // ones of the name, escaped again, and an ellipsis, as the message cuts a
 // name, so that an error, which the API answers with and which a log may
 // hold, does not repeat a name that is most of a megabyte long, and no cut
-// falls within an escape, ~0 or ~1.
+// falls within an escape, ~0 or ~1. A token that holds a character that is
+// not printable (strconv.IsPrint), as a line feed, an escape that a terminal
+// reads, or U+202E RIGHT-TO-LEFT OVERRIDE, is quoted as Go quotes a string,
+// as the message quotes a name, so that no name that a client chose writes a
+// line of its own into a log, or reorders the error.
 func (e *Error) Error() string {
 	at := e.Pointer
 	if at == "" {
@@ -316,14 +321,22 @@ func (e *Error) Error() string {
 		tokens := strings.Split(at, "/")
 		for i, t := range tokens {
 			name := strings.ReplaceAll(strings.ReplaceAll(t, "~1", "/"), "~0", "~")
-			if utf8.RuneCountInString(name) > maxTokenChars {
+			long := utf8.RuneCountInString(name) > maxTokenChars
+			if long {
 				cut := 0
 				for range maxTokenChars {
 					_, size := utf8.DecodeRuneInString(name[cut:])
 					cut += size
 				}
-				tokens[i] = escapeToken(name[:cut]) + "…"
+				t = escapeToken(name[:cut])
 			}
+			if strings.ContainsFunc(t, func(r rune) bool { return !strconv.IsPrint(r) }) {
+				t = strconv.Quote(t)
+			}
+			if long {
+				t += "…"
+			}
+			tokens[i] = t
 		}
 		at = strings.Join(tokens, "/")
 	}
@@ -1139,13 +1152,15 @@ func (p *parser) link(mo map[string]any) (string, error) {
 // no link runs a script or reads a file when it is followed, or hides where it
 // leads (PRD NFR-SEC-08). A link is UTF-8, as every string of a document that
 // Parse reads is, and has at most MaxHrefChars characters, counted as code
-// points, none of them hidden: white space, a control character, or a format
-// character (Unicode's Cf, as U+200B, U+202E, or U+FEFF), which would hide or
-// reorder what a reader sees of it, and each % in it starts an escape, % and
-// two hexadecimal digits. It is a mailto URL with an address and only the
-// fields that mailtoProblem takes, or an http or https URL whose authority,
-// after the //, is a host of ASCII and a port, as authorityProblem reads it. A
-// scheme is read regardless of ASCII case.
+// points, none of them hidden (hidden): white space, a control character, a
+// format character (Unicode's Cf, as U+200B, U+202E, or U+FEFF), or another
+// character that a renderer shows nothing of (Default_Ignorable_Code_Point,
+// as U+3164 HANGUL FILLER), which would hide or reorder what a reader sees of
+// it, and each % in it starts an escape, % and two hexadecimal digits, as
+// url.PathUnescape reads them. It is a mailto URL with an address and only
+// the fields that mailtoProblem takes, or an http or https URL whose
+// authority, after the //, is a host of ASCII and a port, as authorityProblem
+// reads it. A scheme is read regardless of ASCII case.
 //
 // CheckHref reads a link by these rules, which schema/rich-text/README.md
 // states, rather than as a URL parser does, so that the TypeScript client
@@ -1161,7 +1176,7 @@ func CheckHref(href string) string {
 	case utf8.RuneCountInString(href) > MaxHrefChars:
 		return fmt.Sprintf("is longer than %d characters", MaxHrefChars)
 	case strings.IndexFunc(href, hidden) >= 0:
-		return "holds white space, a control character, or a format character"
+		return "holds white space, a control character, a format character, or another character that is not shown"
 	case !escapesValid(href):
 		return "holds a % that starts no escape of two hexadecimal digits"
 	}
@@ -1209,18 +1224,20 @@ var mailtoFields = []string{"bcc", "body", "cc", "subject", "to"}
 //     ? reads attach.
 //
 // Each of these characters in an address or a value is escaped: %23, %3B,
-// %26, %3F, and %3D. And the address, and the value of to, cc, or bcc, which
-// name addresses too, escape no hidden character, which would hide or reorder
-// the address that a mail client shows, as %E2%80%AE, U+202E RIGHT-TO-LEFT
-// OVERRIDE, would, or start another header; a subject escapes no character
-// that text may not hold (isControl), a control character or a line or
-// paragraph separator, which a mail client could write into a header, as a
-// line break that starts another header in
+// %26, %3F, and %3D. The escapes of the address and of a value but a body's
+// stand for UTF-8 (unescape), as RFC 6068 has them, since a mail client reads
+// bytes that are not UTF-8 as it chooses, as Latin-1, in which %85 is NEL and
+// %AD a soft hyphen. The address, and the value of to, cc, or bcc, which name
+// addresses too, are as addressesProblem has them: they escape no hidden
+// character, and their domains are ASCII. A subject escapes no character that
+// text may not hold (isControl), a control character or a line or paragraph
+// separator, which a mail client could write into a header, as a line break
+// that starts another header in
 // mailto:keeper@example.com?subject=a%0D%0ABcc:evil@example.com, or that a
 // reader of lines may take for one, as Python's str.splitlines takes NEL,
 // %C2%85, and LINE SEPARATOR, %E2%80%A8. A subject may escape white space and
-// format characters, as text may hold them, and a body any character: its
-// line breaks are %0D%0A, as RFC 6068 writes them.
+// format characters, as text may hold them, and a body any byte: its line
+// breaks are %0D%0A, as RFC 6068 writes them.
 func mailtoProblem(rest string) string {
 	switch {
 	case strings.Contains(rest, "#"):
@@ -1235,9 +1252,9 @@ func mailtoProblem(rest string) string {
 	case strings.ContainsAny(address, "&="):
 		return "has an address with an & or an =, after which a mail client could read a field; they are " +
 			"escaped, %26 and %3D"
-	case escapes(address, hidden):
-		return "has an address that escapes white space, a control character, or a format character, which " +
-			"would hide or reorder the address that a mail client shows, or start another header"
+	}
+	if problem := addressesProblem(address); problem != "" {
+		return "has an address that " + problem
 	}
 	for field := range strings.SplitSeq(query, "&") {
 		if field == "" {
@@ -1251,12 +1268,54 @@ func mailtoProblem(rest string) string {
 		case strings.ContainsAny(value, "?="):
 			return "has a field whose value holds a ? or an =, after which a mail client could read a field; " +
 				"they are escaped, %3F and %3D"
-		case name == "subject" && escapes(value, isControl):
-			return "has a subject that escapes a control character or a line or paragraph separator, which a " +
-				"mail client could write into a header"
-		case name != "subject" && name != "body" && escapes(value, hidden):
-			return "has a to, cc, or bcc that escapes white space, a control character, or a format character, " +
-				"which would hide or reorder the address that a mail client shows, or start another header"
+		case name == "subject":
+			decoded, ok := unescape(value)
+			if !ok {
+				return "has a subject that escapes bytes that are not UTF-8, which a mail client could read as " +
+					"another character, as a control character"
+			}
+			if strings.ContainsFunc(decoded, isControl) {
+				return "has a subject that escapes a control character or a line or paragraph separator, which a " +
+					"mail client could write into a header"
+			}
+		case name == "to" || name == "cc" || name == "bcc":
+			if problem := addressesProblem(value); problem != "" {
+				return "has a to, cc, or bcc that " + problem
+			}
+		}
+	}
+	return ""
+}
+
+// addressesProblem says what is wrong with a mailto link's address, or with
+// the value of its to, cc, or bcc, or returns "". Its escapes stand for UTF-8
+// (unescape), of which none is hidden, which would hide or reorder the
+// address that a mail client shows, as %E2%80%AE, U+202E RIGHT-TO-LEFT
+// OVERRIDE, would, or start another header, as %0D%0A would. Once its escapes
+// are read, it is addresses that commas separate, of each of which what
+// follows its first @, the domain, whichever @ a mail client reads as the
+// address's, is ASCII, as an http link's host is (nameProblem), since a
+// character beyond ASCII may look like another, as the Cyrillic а of
+// mailto:support@pаypal.com looks like a Latin a, so that a mail client shows
+// a domain that the message does not go to: an internationalized domain is
+// written as IDNA writes it in ASCII, as élodie@xn--caf-dma.example. A local
+// part, before the @, may hold any character that a link may.
+func addressesProblem(s string) string {
+	decoded, ok := unescape(s)
+	switch {
+	case !ok:
+		return "escapes bytes that are not UTF-8, which a mail client could read as another character, as a " +
+			"control character"
+	case strings.ContainsFunc(decoded, hidden):
+		// A character of s itself is not hidden, which CheckHref refuses
+		// before, so an escape stands for it.
+		return "escapes white space, a control character, a format character, or another character that is not " +
+			"shown, which would hide or reorder the address that a mail client shows, or start another header"
+	}
+	for address := range strings.SplitSeq(decoded, ",") {
+		if _, domain, ok := strings.Cut(address, "@"); ok && !onlyRunes(domain, isASCII) {
+			return "has a domain, after an @, with a character beyond ASCII, which may look like another: an " +
+				"internationalized domain is written as IDNA writes it in ASCII (xn--)"
 		}
 	}
 	return ""
@@ -1264,38 +1323,44 @@ func mailtoProblem(rest string) string {
 
 // hidden reports whether r is a character that a link may not hold, which
 // would hide or reorder what a reader sees of it: white space (Unicode's
-// White_Space), a control character (Cc), or a format character (Cf). A line
-// or paragraph separator is white space, so every character that text may
-// not hold (isControl) is hidden.
+// White_Space), a control character (Cc), a format character (Cf), or another
+// character that a renderer shows nothing of unless it supports it
+// (Default_Ignorable_Code_Point), as U+3164 HANGUL FILLER, a letter, U+034F
+// COMBINING GRAPHEME JOINER, a mark, or a variation selector. Unicode derives
+// Default_Ignorable_Code_Point from Other_Default_Ignorable_Code_Point, the
+// format characters, and the variation selectors, without white space and a
+// few format characters, so the tables of package unicode that hidden reads
+// take what JavaScript's \p{White_Space}, \p{Cc}, \p{Cf}, and
+// \p{Default_Ignorable_Code_Point} take together. A line or paragraph
+// separator is white space, so every character that text may not hold
+// (isControl) is hidden.
+//
+// hidden is not the complement of input.Printed, which an account's email
+// address is checked with. That also refuses the characters that Unicode has
+// not assigned, which change with each version of Unicode, of which
+// JavaScript's engines have newer ones than package unicode, so that the
+// client would take a link that the server refuses; and the blanks that no
+// property of Unicode's names, as U+2800 BRAILLE PATTERN BLANK, which shows
+// as wide as a letter does, and cannot change where a link leads, whose host,
+// and a mailto link's domains, are ASCII.
 func hidden(r rune) bool {
-	return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+	return unicode.IsSpace(r) || unicode.IsControl(r) ||
+		unicode.In(r, unicode.Cf, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector)
 }
 
-// escapes reports whether s, whose every % starts an escape, escapes a
-// character that bad reports, as %0A, or, in UTF-8, %C2%85 or %E2%80%AE, with
-// the escapes' digits in either case. It reads each escape as the byte that
-// it stands for, and those bytes, with the characters between them, as UTF-8,
-// in which a byte that starts or continues no character is U+FFFD. A
-// character of s itself is not hidden, which CheckHref refuses before.
-func escapes(s string, bad func(rune) bool) bool {
-	if !strings.Contains(s, "%") {
-		return false
-	}
-	decoded := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		if s[i] == '%' && i+2 < len(s) {
-			b, _ := strconv.ParseUint(s[i+1:i+3], 16, 8)
-			decoded = append(decoded, byte(b))
-			i += 2
-			continue
-		}
-		decoded = append(decoded, s[i])
-	}
-	return bytes.ContainsFunc(decoded, bad)
+// unescape returns s, whose every % starts an escape, with each escape read
+// as the byte that it stands for, with its digits in either case, and reports
+// whether those bytes, with the characters between them, are UTF-8, as
+// RFC 6068 has a mailto link's escapes, and as JavaScript's
+// decodeURIComponent requires.
+func unescape(s string) (string, bool) {
+	decoded, err := url.PathUnescape(s)
+	return decoded, err == nil && utf8.ValidString(decoded)
 }
 
-// maxPort is the highest port, which a browser's URL parser takes.
-const maxPort = 65535
+// maxPort is the highest port, which a browser's URL parser takes: the
+// highest number of 16 bits.
+const maxPort = 1<<16 - 1
 
 // authorityProblem says what is wrong with the authority of an http or https
 // link, what is between its // and the first /, ?, or # after it, or returns
@@ -1335,14 +1400,17 @@ func authorityProblem(authority string) string {
 			return problem
 		}
 	}
-	if !onlyRunes(port, isDigit) {
-		return "has a port that is not a number"
+	if port == "" {
+		return ""
 	}
-	n := 0
-	for _, c := range port {
-		if n = n*10 + int(c-'0'); n > maxPort {
-			return fmt.Sprintf("has a port above %d", maxPort)
-		}
+	// ParseUint takes ASCII digits in base 10, and refuses a number of more
+	// than 16 bits, which is above maxPort.
+	_, err := strconv.ParseUint(port, 10, 16)
+	switch {
+	case !onlyRunes(port, isDigit):
+		return "has a port that is not a number"
+	case err != nil:
+		return fmt.Sprintf("has a port above %d", maxPort)
 	}
 	return ""
 }
@@ -1389,15 +1457,16 @@ func nameProblem(name string) string {
 		return "has a host with a character that a host may not hold, as one beyond ASCII: an internationalized " +
 			"host is written as IDNA writes it in ASCII (xn--)"
 	}
-	labels := strings.Split(strings.TrimSuffix(name, "."), ".")
+	trimmed := strings.TrimSuffix(name, ".")
+	labels := strings.Split(trimmed, ".")
 	if slices.Contains(labels, "") {
 		return "has a host with an empty label, before a dot that does not end it"
 	}
 	if last := labels[len(labels)-1]; onlyRunes(last, isDigit) || hexNumber(last) {
-		if len(labels) != 4 || slices.ContainsFunc(labels, func(l string) bool {
-			n, err := strconv.Atoi(l)
-			return err != nil || !onlyRunes(l, isDigit) || n > 255 || l != strconv.Itoa(n)
-		}) {
+		// ParseAddr reads an IPv4 address as four numbers from 0 to 255 in
+		// decimal, without leading zeros, separated by dots, and the name has
+		// no colon, which an IPv6 address would.
+		if a, err := netip.ParseAddr(trimmed); err != nil || !a.Is4() {
 			return "has a host that a browser reads as an IPv4 address, which is not four numbers from 0 to 255 " +
 				"in decimal without leading zeros"
 		}
@@ -1423,6 +1492,8 @@ func isNameRune(r rune) bool {
 
 func isDigit(r rune) bool { return '0' <= r && r <= '9' }
 
+func isASCII(r rune) bool { return r < utf8.RuneSelf }
+
 func isHexDigit(r rune) bool {
 	return '0' <= r && r <= '9' || 'a' <= r && r <= 'f' || 'A' <= r && r <= 'F'
 }
@@ -1433,17 +1504,10 @@ func onlyRunes(s string, ok func(rune) bool) bool {
 }
 
 // escapesValid reports whether every % of s starts an escape: % and two
-// hexadecimal digits.
+// hexadecimal digits, which is all that url.PathUnescape checks.
 func escapesValid(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] == '%' {
-			if i+2 >= len(s) || !isHexDigit(rune(s[i+1])) || !isHexDigit(rune(s[i+2])) {
-				return false
-			}
-			i += 2
-		}
-	}
-	return true
+	_, err := url.PathUnescape(s)
+	return err == nil
 }
 
 // asciiLower returns s with its ASCII uppercase letters lowercased, and no

@@ -616,10 +616,12 @@ func TestPlainTextBuilt(t *testing.T) {
 // of ASCII, a name of labels or an IPv4 or IPv6 address, a port of at most
 // 65535, and no userinfo, which could show another host, and mailto URLs
 // without a # or a ;, with a ?, an &, and an = only where they delimit, that
-// set no field but to, cc, bcc, subject, and body, and that escape no hidden
-// character in an address or a to, cc, or bcc, and no control character or
-// line or paragraph separator in a subject, and nothing that could run a
-// script or read a file.
+// set no field but to, cc, bcc, subject, and body, that escape UTF-8 alone
+// but in a body, no hidden character in an address or a to, cc, or bcc, whose
+// domains are ASCII, and no control character or line or paragraph separator
+// in a subject, and nothing that could run a script or read a file; and no
+// link that holds a hidden character, as one that a renderer shows nothing
+// of.
 //
 // Verifies: NFR-SEC-08
 func TestCheckHref(t *testing.T) {
@@ -678,12 +680,20 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com?subject=%7E%20%25",
 		// Escaped characters beyond ASCII, of which a body may hold the line
 		// and paragraph separators and the C1 control characters too, and a
-		// subject white space and format characters, as text may; and escapes
-		// that are not UTF-8, which stand for no hidden character.
+		// subject white space and format characters, as text may; and a body
+		// may escape bytes that are not UTF-8.
 		"mailto:keeper@example.com?subject=Caf%C3%A9%20%E2%80%A7&body=a%E2%80%A8b%E2%80%A9c%C2%85d%c2%9f",
 		"mailto:keeper@example.com?subject=%C2%A0%E2%80%8B%E2%80%AE%EF%BB%BF&body=%E2%80%AE%20",
-		"mailto:keeper@example.com?subject=%C2%20%E2%80%20%FF%80",
-		"mailto:%C2%41%E2%80%41%FF%80@example.com?to=%C2%41",
+		"mailto:keeper@example.com?body=%C2%20%E2%80%20%FF%80%85",
+		// An internationalized address: its local part, raw or escaped,
+		// beyond ASCII, and its domain as IDNA writes it in ASCII, and
+		// addresses whose characters beyond ASCII are all before their first
+		// @, with a comma, raw or escaped, between them.
+		"mailto:élodie@xn--caf-dma.example",
+		"mailto:%C3%A9lodie@XN--CAF-DMA.example?to=" + string(rune(0x0430)) + "@example.com," +
+			string(rune(0x0431)) + "@example.com",
+		"mailto:ü@a.example%2Cö@b.example?cc=x@a.example,,ü&bcc=ü",
+		"mailto:a@[2001:db8::1]",
 	} {
 		if problem := CheckHref(href); problem != "" {
 			t.Errorf("CheckHref(%q) = %q, want none", href, problem)
@@ -784,6 +794,37 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com?to=%EF%BB%BFmira@evil.example",
 		"mailto:keeper@example.com?CC=mira@example.com%E3%80%80",
 		"mailto:keeper@example.com?bcc=%E2%81%A6x@evil.example",
+		// Or that escapes a character that a renderer shows nothing of, as
+		// U+3164 HANGUL FILLER, a letter, U+034F COMBINING GRAPHEME JOINER, a
+		// mark, or a variation selector.
+		"mailto:keeper%E3%85%A4@example.com",
+		"mailto:keeper@example.com?to=a%CD%8F@example.com",
+		"mailto:keeper@example.com?cc=a%EF%B8%8F@example.com",
+		// Escapes that are not UTF-8, which a mail client reads as it
+		// chooses, as Latin-1, in which %85 is NEL and %AD a soft hyphen, in
+		// an address, a to, cc, or bcc, or a subject.
+		"mailto:keeper%AD@example.com",
+		"mailto:keeper@example.com?to=a%A0b@example.com",
+		"mailto:keeper@example.com?subject=Light%85Bcc:evil@example.com",
+		"mailto:keeper@example.com?subject=%C0%8A",
+		"mailto:keeper@example.com?subject=%C2%20%E2%80%20%FF%80",
+		"mailto:%C2%41%E2%80%41%FF%80@example.com",
+		"mailto:keeper@example.com?to=%C2%41",
+		// A domain with a character beyond ASCII, raw or escaped, which may
+		// look like another, as the Cyrillic а of pаypal.com, wherever an
+		// address is, and after whichever @ a mail client reads.
+		"mailto:support@p" + string(rune(0x0430)) + "ypal.com",
+		"mailto:support@p%D0%B0ypal.com",
+		"mailto:support%40p%D0%B0ypal.com",
+		"mailto:support@paypal.com" + string(rune(0x3002)) + "evil.example",
+		"mailto:support@paypal.com" + string(rune(0xFF20)) + "evil.example",
+		"mailto:keeper@example.com,support@p%D0%B0ypal.com",
+		"mailto:keeper@example.com%2Csupport@p%D0%B0ypal.com",
+		"mailto:a@b@p" + string(rune(0x0430)) + "ypal.com",
+		"mailto:keeper@example.com?to=support@p%D0%B0ypal.com",
+		"mailto:keeper@example.com?CC=x@example.com,support@xn--pypal-4ve.com" + string(rune(0x0430)),
+		"mailto:keeper@example.com?bcc=support@p%D0%B0ypal.com",
+		"mailto:keeper@caf%C3%A9.example",
 		// A port that no browser takes.
 		"https://example.com:65536/",
 		"https://example.com:99999999999999999999/",
@@ -861,6 +902,20 @@ func TestCheckHref(t *testing.T) {
 		"https://example.com/" + string(rune(0x200B)),
 		"https://example.com/" + string(rune(0x00AD)) + "a",
 		"https://example.com/" + string(rune(0x2066)) + "a",
+		// Characters that a renderer shows nothing of, which are not format
+		// characters (Default_Ignorable_Code_Point): Hangul fillers, letters,
+		// U+034F COMBINING GRAPHEME JOINER and U+17B4, marks, and variation
+		// selectors, wherever a link holds them.
+		"https://example.com/" + string(rune(0x3164)),
+		"https://example.com/a" + string(rune(0x115F)) + string(rune(0x1160)),
+		"https://example.com/?q=" + string(rune(0xFFA0)),
+		"https://example.com/#" + string(rune(0x034F)),
+		"https://example.com/" + string(rune(0x17B4)),
+		"https://example.com/" + string(rune(0x2764)) + string(rune(0xFE0F)),
+		"https://example.com/" + string(rune(0x180B)),
+		"https://example.com/" + string(rune(0xE0100)),
+		"mailto:keeper" + string(rune(0x3164)) + "@example.com",
+		"mailto:keeper@example.com?subject=" + string(rune(0x3164)),
 	} {
 		if CheckHref(href) == "" {
 			t.Errorf("CheckHref(%q) accepts it", href)
@@ -931,6 +986,29 @@ func TestErrorString(t *testing.T) {
 		a39 + "~":  `rich text: /content/0/` + a39 + `~0: the paragraph has no field "` + a39 + `~"`,
 	} {
 		_, err := Parse([]byte(`{"type":"doc","content":[{"type":"paragraph","` + name + `":1}]}`))
+		if got := err.Error(); got != want {
+			t.Errorf("Error() = %s, want %s", got, want)
+		}
+	}
+
+	// A name with a character that is not printable, as a line feed, an
+	// escape that a terminal reads, U+202E, or NEL, is quoted in Error, as
+	// the message quotes it, so that it writes no line of its own into a
+	// log, and kept as it is in the pointer.
+	for name, want := range map[string]string{
+		`\n\u001b[31mFAKE LOG LINE`: `rich text: /content/0/"\n\x1b[31mFAKE LOG LINE": ` +
+			`the paragraph has no field "\n\x1b[31mFAKE LOG LINE"`,
+		"a" + string(rune(0x202E)) + "b/c": `rich text: /content/0/"a\` + `u202eb~1c": ` +
+			`the paragraph has no field "a\` + `u202eb/c"`,
+		a39 + `\u0085` + strings.Repeat("b", 10): `rich text: /content/0/"` + a39 + `\u0085"…: ` +
+			`the paragraph has no field "` + a39 + `\u0085"`,
+	} {
+		_, err := Parse([]byte(`{"type":"doc","content":[{"type":"paragraph","` + name + `":1}]}`))
+		var key string
+		if err := json.Unmarshal([]byte(`"`+name+`"`), &key); err != nil {
+			t.Fatal(err)
+		}
+		wantError(t, err, UnknownField, "/content/0/"+escapeToken(key))
 		if got := err.Error(); got != want {
 			t.Errorf("Error() = %s, want %s", got, want)
 		}

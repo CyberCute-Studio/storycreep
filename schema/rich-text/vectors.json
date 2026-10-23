@@ -1297,7 +1297,7 @@
       "hash": "sha256:cbdc6be8042546270cfd3c3396e4a1ca932575821b75d46a6069d64a7f0020dd"
     },
     {
-      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one, with an e acute and a zero width space, a format character, escaped in the subject, and a line break, a line separator, NEL, ?, =, and ; escaped in the body",
+      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one, with an e acute and a zero width space, a format character, escaped in the subject, an internationalized address in the cc, whose domain is written as IDNA writes it in ASCII, and a line break, a line separator, NEL, ?, =, ;, and a byte that is not UTF-8 escaped in the body",
       "doc": {
         "content": [
           {
@@ -1338,7 +1338,7 @@
                 "marks": [
                   {
                     "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B&"
+                      "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,élodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&"
                     },
                     "type": "link"
                   }
@@ -1376,7 +1376,7 @@
           "value": " "
         },
         {
-          "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B&",
+          "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,élodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&",
           "kind": "text",
           "marks": ["link"],
           "value": "three"
@@ -3375,6 +3375,62 @@
       "schema_accepts": true
     },
     {
+      "note": "a link with U+3164 HANGUL FILLER, a letter that a renderer shows nothing of (Default_Ignorable_Code_Point)",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/aㅤb"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a link with a variation selector, which a renderer shows nothing of (Default_Ignorable_Code_Point)",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/❤️"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
       "note": "an http link that is not hierarchical",
       "doc": {
         "type": "doc",
@@ -4562,6 +4618,174 @@
                     "type": "link",
                     "attrs": {
                       "href": "mailto:keeper@example.com?cc=mira@example.com%20evil@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose address escapes U+3164 HANGUL FILLER, which a renderer shows nothing of",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper%E3%85%A4@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose subject escapes a byte that is not UTF-8, which Latin-1 reads as NEL",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?subject=Light%85Bcc:evil@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose address escapes a byte that is not UTF-8, which Latin-1 reads as a soft hyphen",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper%AD@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose domain has a character beyond ASCII, the Cyrillic a, U+0430, in place of the first Latin a of paypal.com, which it looks like, so that a mail client shows a domain that the message does not go to",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@pаypal.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose domain escapes a character beyond ASCII",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@p%D0%B0ypal.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose cc has an address, after a comma, whose domain has a character beyond ASCII",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?cc=mira@example.com,support@p%D0%B0ypal.com"
                     }
                   }
                 ]

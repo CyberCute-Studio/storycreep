@@ -81,11 +81,16 @@ func (c Change) String() string {
 // that gains one, every member of base's needs the property: then the
 // discriminator leads every object that base took to the member that took it,
 // as when a request's union of nodes gains a type of node and maps it to the
-// member that it gains. Any other change to a discriminator breaks a client:
-// one that maps a value to another member, or no longer maps it, or reads
-// another property, one that a request's oneOf loses, which then validates
-// an object whose property is not a string against every member, and any
-// change to a response's.
+// member that it gains. A response's oneOf may gain a discriminator, and a
+// response's discriminator may map values that base's did not, since huma
+// does not validate a response, so its discriminator changes nothing that a
+// client receives, and a client of base's reads it, if at all, only as far
+// as base's mapped, to the same members; a member that the oneOf gains is
+// compared as a member is. Any other change to a discriminator breaks a
+// client: one that maps a value to another member, or no longer maps it, or
+// reads another property, and one that a oneOf loses, which, in a request,
+// then validates an object whose property is not a string against every
+// member.
 //
 // Schemas combined with oneOf, anyOf, or allOf are compared member by
 // member. If the members of a oneOf or an anyOf all refer to named schemas,
@@ -431,14 +436,34 @@ func (c *comparer) compare(loc string, b, h *Schema, dir direction, headNull boo
 }
 
 // discriminator reports a change from base's discriminator of the oneOf at loc
-// to head's that breaks a client: any change in a response, and in a request
-// any change but one that widens judges compatible.
+// to head's that breaks a client: in a response, any change but one that
+// keeps what base's mapped, and in a request any change but one that widens
+// judges compatible.
 func (c *comparer) discriminator(loc string, b, h *Schema, dir direction) {
 	was, is := describeDiscriminator(b.Discriminator), describeDiscriminator(h.Discriminator)
-	if was == is || dir == request && c.widens(b, h) {
+	if was == is || dir == request && c.widens(b, h) || dir == response && keeps(b.Discriminator, h.Discriminator) {
 		return
 	}
 	c.report("%s: the discriminator changed from %s to %s", loc, was, is)
+}
+
+// keeps reports whether head's discriminator hd reads the property that
+// base's, bd, read, and maps each value that bd mapped to the same member, or
+// whether bd is nil and hd is not: whether hd keeps what bd said of the
+// objects of the oneOf.
+func keeps(bd, hd *Discriminator) bool {
+	if hd == nil || bd != nil && bd.PropertyName != hd.PropertyName {
+		return false
+	}
+	if bd == nil {
+		return true
+	}
+	for value, to := range bd.Mapping {
+		if got, ok := hd.Mapping[value]; !ok || refName(got) != refName(to) {
+			return false
+		}
+	}
+	return true
 }
 
 // widens reports whether, in a request, head's oneOf, with its discriminator,
@@ -462,18 +487,13 @@ func (c *comparer) discriminator(loc string, b, h *Schema, dir direction) {
 // every member, which base let through.
 func (c *comparer) widens(b, h *Schema) bool {
 	bd, hd := b.Discriminator, h.Discriminator
-	if hd == nil || bd != nil && bd.PropertyName != hd.PropertyName {
+	if !keeps(bd, hd) {
 		return false
 	}
 	property := hd.PropertyName
 	var mapped map[string]string
 	if bd != nil {
 		mapped = bd.Mapping
-	}
-	for _, value := range slices.Sorted(maps.Keys(mapped)) {
-		if to, ok := hd.Mapping[value]; !ok || refName(to) != refName(mapped[value]) {
-			return false
-		}
 	}
 	// needs reports whether base's member m needs the property in a request,
 	// and returns the property's schema, or nil when it has none.
@@ -489,7 +509,10 @@ func (c *comparer) widens(b, h *Schema) bool {
 		if _, ok := mapped[value]; ok {
 			continue
 		}
-		taken := &Schema{Const: json.RawMessage(strconv.Quote(value))}
+		// The value as JSON writes it, which strconv.Quote does not for a
+		// control character or DEL; a string always encodes.
+		quoted, _ := json.Marshal(value)
+		taken := &Schema{Const: quoted}
 		for _, m := range b.OneOf {
 			if m != nil && m.Ref != "" && refName(m.Ref) == refName(hd.Mapping[value]) {
 				continue
