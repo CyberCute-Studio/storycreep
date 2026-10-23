@@ -102,15 +102,6 @@ const (
 	ConversionReset = "reset"
 )
 
-// conversions are the conversions that a retype takes.
-var conversions = []string{ConversionConvert, ConversionReset}
-
-// Conversions returns the conversions that a retype takes, as a copy that the
-// caller may change.
-func Conversions() []string {
-	return slices.Clone(conversions)
-}
-
 var (
 	// ErrNotFound is returned for a component that the project does not have,
 	// or that is in its trash.
@@ -370,11 +361,6 @@ type Options struct {
 type Service struct {
 	db       DB
 	projects *project.Service
-	// definitionRead is called once Unconvertible has read the attribute
-	// definition, before it reads its values, by the test in component_test
-	// of a change that commits in between, which sets it on a Service of its
-	// own (SetDefinitionRead), and is nil otherwise.
-	definitionRead func()
 }
 
 // New returns a Service that reads the components in db, with opts. It
@@ -482,10 +468,12 @@ func pattern(q string) string {
 // projectID that are not in its trash and that f takes, without their
 // descriptions and values, in the order of their IDs: the first, if after is
 // zero, or else those after the component after (FR-COMP-02 AC3). It
-// returns the errors of project.Service.Get first, so that a query is
-// checked only for an actor who may read the project, as Unconvertible's
+// returns the errors of project.Service.Get first, so that what a query holds
+// is checked only for an actor who may read the project, as Unconvertible's
 // target is, and then input.FieldErrors at query for a query that CheckQuery
-// refuses.
+// refuses. The route's schema refuses a query longer than MaxQueryLength
+// before, as it refuses any parameter that breaks it, whoever sends it, which
+// tells nothing of the project.
 func (s *Service) Components(ctx context.Context, actor commands.Actor, projectID ids.UUID, f Filter,
 	after ids.UUID, limit int) ([]Summary, error) {
 	var out []Summary
@@ -561,7 +549,9 @@ type Target struct {
 // ErrAttributeNotFound if the project has no such type, or the type no such
 // definition, that is not in the trash, and input.FieldErrors at type for a
 // target that the retype refuses: the definition's own type, or a text for a
-// runtime definition.
+// runtime definition. The route's schema refuses a target of no type, or of
+// one that is none, and options longer than an enum's can be, before, as it
+// refuses any parameter that breaks it, whoever sends it.
 func (s *Service) Unconvertible(ctx context.Context, actor commands.Actor, projectID, typeID, attributeID ids.UUID,
 	to Target, after ids.UUID, limit int) ([]Unconvertible, error) {
 	var out []Unconvertible
@@ -608,9 +598,6 @@ func (s *Service) unconvertible(ctx context.Context, q *queries.Queries, ws, pro
 	a := row.AttributeDef
 	if errs := checkRuntime("type", to.Type, a.IsRuntime); len(errs) > 0 {
 		return nil, errs
-	}
-	if s.definitionRead != nil {
-		s.definitionRead()
 	}
 	out := []Unconvertible{}
 	// The values are read as a retype reads them (storedValue), a page at a

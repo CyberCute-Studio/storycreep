@@ -336,8 +336,10 @@ var codes = []codeSpec{
 		"A parameter or the body does not match the route's schema: a field that the schema does not have, " +
 			"which is never ignored (PRD FR-API-01 AC2), a missing field, a value of the wrong type, or one out of " +
 			"range; or a field's value is not one that the route takes, such as a registration's email address " +
-			"that is not one. `details.errors` lists each problem with its `location`, such as `body.name` or " +
-			"`query.limit`, and a `message`."},
+			"that is not one, or, for a batch of commands, one that the project's state does not take, or one " +
+			"that would take the batch's undo, which a client sends back as a batch to undo it, past what a " +
+			"request can hold (`POST /api/v1/projects/{project_id}/commands`). `details.errors` lists each " +
+			"problem with its `location`, such as `body.name` or `query.limit`, and a `message`."},
 	{CodeIdempotencyMismatch, http.StatusUnprocessableEntity, i18n.K("error.idempotency_mismatch"),
 		"A batch of commands holds commands that were applied already, in another batch, and commands that were " +
 			"not, so nothing of it is applied (PRD FR-API-03). A batch applies whole or not at all, so only a client " +

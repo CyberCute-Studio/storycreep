@@ -292,11 +292,13 @@ func registerAttributes(r *commands.Registry) {
 			if err != nil {
 				return nil, err
 			}
-			// The undo gives a value that is none of the old options the old
-			// default, so it holds every value that the change changes.
+			// The undo keeps a value that is one of the old options, and gives
+			// one that is none of them the old default, so it holds only the
+			// values that it would not give back so.
 			undo := attributeOptionsPayload{ID: p.ID, Options: plan.a.EnumOptions, Default: plan.oldDefault}
-			lost, err := plan.lost(ctx, tx, undo, func(value.Value) (value.Value, bool) {
-				return value.Value{}, false
+			lost, err := plan.lost(ctx, tx, undo, func(v value.Value) (value.Value, bool) {
+				_, problem := v.Read(value.Enum, value.Checks{}, plan.a.EnumOptions...)
+				return v, problem == ""
 			})
 			if err != nil {
 				return nil, err
@@ -340,9 +342,9 @@ func registerAttributes(r *commands.Registry) {
 			}
 			undo := retypeAttributePayload{ID: p.ID, Type: a.Type, Conversion: ConversionConvert, Options: options,
 				Default: plan.oldDefault}
-			// A value that the conversion back makes of the new one is the value
-			// that the definition's components held, but for those that the
-			// undo then gives back.
+			// The undo converts each new value back, and gives one that does not
+			// convert the old default, so it holds only the values that it would
+			// not give back so.
 			lost, err := plan.lost(ctx, tx, undo, func(v value.Value) (value.Value, bool) {
 				return value.Convert(v, p.Type, p.Options, a.Type, a.EnumOptions)
 			})
@@ -740,17 +742,19 @@ func (plan *valuesPlan) each(ctx context.Context, tx *commands.Tx, fn func(u ids
 }
 
 // lost returns the values that the plan's change loses, by their components'
-// IDs, which its undo, undo, a payload whose values field, its last, holds
-// none of them, gives back: those that what back makes of the new value is
-// not, as none that back does not convert. It stops with
-// commands.ErrUndoTooLarge, which the pipeline refuses the change for, at
-// the field that it changes (commands.Spec.UndoField), as soon as undo with
-// them would take more bytes, as JSON encodes it for the operation log, than
-// the batch's undo has room for (commands.Tx.UndoRoom): undo as it encodes,
-// its old default and options among it, and then the field that holds them,
-// and each value, as JSON encodes it, with its component's ID, quoted, and a
-// colon, and a comma between two, so that it never holds more of them than
-// the pipeline would keep, whatever the definition's components hold.
+// IDs, which its undo, undo, gives back: a payload whose values field, its
+// last, holds none of them, and whose default is the plan's old default. The
+// undo makes of each new value what back makes of it, or its default if back
+// does not convert it, so lost holds each old value that that is not. It
+// stops with commands.ErrUndoTooLarge, which the pipeline refuses the change
+// for, at the field that it changes (commands.Spec.UndoField), as soon as
+// undo with them would take more bytes, as JSON encodes it for the operation
+// log, than the batch's undo has room for (commands.Tx.UndoRoom): undo as it
+// encodes, its old default and options among it, and then the field that
+// holds them, and each value, as JSON encodes it, with its component's ID,
+// quoted, and a colon, and a comma between two, so that it never holds more
+// of them than the pipeline would keep, whatever the definition's components
+// hold.
 func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, undo any,
 	back func(value.Value) (value.Value, bool)) (map[string]value.Value, error) {
 	base, err := json.Marshal(undo)
@@ -763,7 +767,11 @@ func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, undo any,
 	}
 	out := map[string]value.Value{}
 	err = plan.each(ctx, tx, func(u ids.UUID, old, to value.Value) error {
-		if again, ok := back(to); ok && again.Equal(old) {
+		again, ok := back(to)
+		if !ok {
+			again = plan.oldDefault
+		}
+		if again.Equal(old) {
 			return nil
 		}
 		// json.Marshal escapes what a value's JSON may hold unescaped, as <,

@@ -56,8 +56,10 @@ CREATE TABLE component_type (
 	rev bigint NOT NULL DEFAULT 1 CHECK (rev >= 1),
 	deleted_at timestamptz,
 	-- The users who created the type and changed it last, or null once their
-	-- accounts are deleted, or for a type that the server added with its
-	-- project.
+	-- accounts are deleted, or for a default type that this migration gave a
+	-- project that existed before it. A default type that the server adds as
+	-- it creates a project names the user who creates it (package component,
+	-- Seed).
 	created_by uuid REFERENCES "user" ON DELETE SET NULL,
 	updated_by uuid REFERENCES "user" ON DELETE SET NULL,
 	created_at timestamptz NOT NULL DEFAULT now(),

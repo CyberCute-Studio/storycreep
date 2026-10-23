@@ -160,6 +160,28 @@ func (f *fixture) undo(t *testing.T, seq int64) error {
 	return err
 }
 
+// undoValues returns the IDs, sorted, of the components whose values the
+// inverse of the batch whose seq is seq gives them, which the operation log
+// keeps: those of its one step, a retype or a change of an enum's options.
+func (f *fixture) undoValues(t *testing.T, seq int64) []string {
+	t.Helper()
+	var steps []struct {
+		Payload struct {
+			Values map[string]json.RawMessage `json:"values"`
+		} `json:"payload"`
+	}
+	var inverse []byte
+	if err := f.d.Admin(t).QueryRow(context.Background(),
+		"SELECT inverse FROM operation WHERE project_id = $1 AND seq = $2", f.project, seq).Scan(&inverse); err != nil ||
+		json.Unmarshal(inverse, &steps) != nil || len(steps) != 1 {
+		t.Fatalf("the inverse of %d, %s: %v", seq, inverse, err)
+	}
+	if len(steps[0].Payload.Values) == 0 {
+		return nil
+	}
+	return slices.Sorted(maps.Keys(steps[0].Payload.Values))
+}
+
 // state reads every type, attribute definition, component, value, and folder
 // of the fixture's project as the superuser, the deleted ones too if deleted
 // is set, but for their revisions and timestamps: what a change and its undo
@@ -696,6 +718,33 @@ func TestOptions(t *testing.T) {
 	if got := f.state(t, true); got != before {
 		t.Errorf("undoing the options left\n%s\nwant\n%s", got, before)
 	}
+	// Renaming the default's option gives Kai, who holds it, the new default,
+	// which the undo, whose default is the old, gives back as it is, so it
+	// holds no value of Kai's; and so does the undo of a reset, which converts
+	// none of the values back, and gives Kai's back as its default too.
+	kai, _ := newComponent(ship, "Kai", nil)
+	f.must(t, kai)
+	before = f.state(t, true)
+	for _, c := range []struct {
+		change cmd
+		held   []string
+	}{
+		{cmd{component.SetAttributeOptions, map[string]any{"id": mood, "options": []string{"serene", "angry", "sad"},
+			"default": "serene"}}, nil},
+		{cmd{component.RetypeAttribute, map[string]any{"id": mood, "type": "int", "conversion": "reset"}},
+			[]string{elaraID, miraID}},
+	} {
+		res := f.must(t, c.change)
+		if held := f.undoValues(t, res.Seq); !slices.Equal(held, slices.Sorted(slices.Values(c.held))) {
+			t.Errorf("the undo of %v holds the values of %v, want %v", c.change, held, c.held)
+		}
+		if err := f.undo(t, res.Seq); err != nil {
+			t.Fatalf("undo %v: %v", c.change, err)
+		}
+		if got := f.state(t, true); got != before {
+			t.Errorf("undoing %v left\n%s\nwant\n%s", c.change, got, before)
+		}
+	}
 	add, num := newAttribute(ship, "Count", value.Int, nil)
 	f.must(t, add)
 	if r := refused(t, func() error {
@@ -935,15 +984,16 @@ func TestUnconvertibleWhileChanged(t *testing.T) {
 	mira, miraID := newComponent(ship, "Mira", map[string]any{"attributes": map[string]any{mood: "calm"}})
 	f.must(t, add, elara, mira)
 	reads := 0
-	component.SetDefinitionRead(f.components, func() {
+	db := beforeValues{DB: f.db, fn: func() {
 		reads++
 		// Both values become 1, which converts to a bool, where neither
 		// string does, and then Elara's 0, which does too.
 		f.must(t, cmd{component.RetypeAttribute, map[string]any{"id": mood, "type": "float",
 			"conversion": "reset", "default": 1}})
 		f.must(t, cmd{component.SetAttribute, map[string]any{"id": elaraID, "attribute_id": mood, "value": 0}})
-	})
-	list, err := f.components.Unconvertible(ctx, f.actor(), f.project, decodeID(t, ids.ComponentType, ship),
+	}}
+	components := component.New(db, component.Options{Projects: f.projects})
+	list, err := components.Unconvertible(ctx, f.actor(), f.project, decodeID(t, ids.ComponentType, ship),
 		decodeID(t, ids.AttributeDef, mood), component.Target{Type: value.Bool}, ids.UUID{}, 10)
 	var got []string
 	for _, u := range list {
@@ -955,6 +1005,36 @@ func TestUnconvertibleWhileChanged(t *testing.T) {
 		t.Errorf("the values that a retype to a bool would not convert, read while the definition and a value "+
 			"changed, are %v, %v, after %d reads of the definition, want %v after one", got, err, reads, want)
 	}
+}
+
+// beforeValues is a component.DB whose transactions that read as of one
+// moment call fn before their first read of an attribute definition's values
+// for the list of what a retype would not convert, once they have read the
+// definition, as a change that commits in between would.
+type beforeValues struct {
+	component.DB
+	fn func()
+}
+
+func (d beforeValues) InSnapshot(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
+	return d.DB.InSnapshot(ctx, scope, func(tx pgx.Tx) error {
+		return fn(&valuesTx{Tx: tx, fn: d.fn})
+	})
+}
+
+// valuesTx is the transaction of beforeValues, which calls fn once, before
+// its first read of the values.
+type valuesTx struct {
+	pgx.Tx
+	fn func()
+}
+
+func (tx *valuesTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if tx.fn != nil && strings.HasPrefix(sql, "-- name: AttributeValueComponents ") {
+		tx.fn()
+		tx.fn = nil
+	}
+	return tx.Tx.Query(ctx, sql, args...)
 }
 
 // TestTypeTrash checks the trash of component types and attribute

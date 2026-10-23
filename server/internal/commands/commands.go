@@ -289,10 +289,14 @@ type Options struct {
 // so that the batch that undoes it, which a client sends as the inverse's
 // commands, each with its command ID and its expected revisions (plan item
 // 37), fits in a request's body, of at most 5 MiB (api.DefaultMaxBodyBytes),
-// with a mebibyte for the rest of the commands. The pipeline refuses a
-// command whose inverse would take its batch's undo past it, so that every
-// operation that it records can be undone, whatever its commands' inverses
-// hold.
+// with a mebibyte for the rest of the commands: their IDs and types, and the
+// expected revisions of some ten thousand entities. The pipeline refuses a
+// command whose inverse would take its batch's undo past it, whatever its
+// commands' inverses hold. The batch that undoes another is a batch as any
+// other, whose own inverse writes again what the other's commands wrote, so
+// the pipeline refuses it alike once that passes the bound: a batch whose
+// commands write more than the bound, as several large descriptions over
+// small ones, applies, but is undone only in smaller batches.
 const DefaultMaxUndoBytes = 4 << 20
 
 // ErrUndoTooLarge is the error of an Inverse that stops before its steps take

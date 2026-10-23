@@ -1073,8 +1073,9 @@ func TestUndo(t *testing.T) {
 // escapes and all, at the field that its type's UndoField names, or at the
 // payload, though the command's own inverse fits, and that it refuses one
 // whose Inverse stops with ErrUndoTooLarge alike, once Tx.UndoRoom tells it
-// the room that the inverses of the commands before it leave, and that a
-// batch whose undo takes the bound exactly applies.
+// the room that the inverses of the commands before it leave, that a batch
+// whose undo takes the bound exactly applies, and that the batch that undoes
+// another is bounded alike, by its own inverse.
 func TestUndoBound(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -1124,6 +1125,21 @@ func TestUndoBound(t *testing.T) {
 	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, `[{"type": "note.delete", "payload": {"id": "`+xID+
 		`"}}, {"type": "note.update", "payload": {"id": "`+xID+`", "body": "`+body+`"}}]`) {
 		t.Errorf("the batch's inverse is %s", o.inverse)
+	}
+
+	// The batch that undoes another is bounded alike, by its own inverse,
+	// which writes again what the other wrote: a change whose payload passes
+	// the bound, over a small value, applies, but its undo is refused.
+	if _, err := w.pipeline(t, nil).Apply(ctx, w.as(ownerUser), w.project, []Command{update(yID)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bounded(one-1).Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, noteUpdate, notePayload{ID: yID, Body: body}, nil)}); err != nil {
+		t.Fatalf("a change whose undo is small: %v", err)
+	}
+	if _, err := bounded(one-1).Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{update(yID)}); !errors.As(err, &r) || r.Command != 0 || r.Field != "body" {
+		t.Errorf("the undo of a change whose payload passes the bound: %v, want a refusal of command 0 at body", err)
 	}
 }
 

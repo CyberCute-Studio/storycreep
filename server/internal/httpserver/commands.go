@@ -253,7 +253,10 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 				"would take more than %d MiB, so that the batch that undoes it would not fit in a request, is "+
 				"refused with 422 validation_failed at the command that takes it past: at its payload, as "+
 				"body.commands[3].payload, or at the field whose change the undo holds the values of, as "+
-				"body.commands[3].payload.type for an attribute.retype that would lose too much.",
+				"body.commands[3].payload.type for an attribute.retype that would lose too much. The batch "+
+				"that undoes another is bounded alike, by its own undo, which writes again what the other's "+
+				"commands wrote, so the undo of a batch whose commands wrote more than %[1]d MiB, as several "+
+				"large descriptions over small ones, is refused so too, and is sent in smaller batches.",
 				commands.DefaultMaxUndoBytes>>20) +
 			"\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch " +
 			"sent again, as when its answer was lost, is answered as it was the first time and applies nothing " +
