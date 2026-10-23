@@ -399,7 +399,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** the validator accepts the published schema's examples and rejects unknown marks, unknown nodes, and over-deep documents in unit tests. No endpoint stores rich text yet, so FR-TEXT-01 AC1 passes at the API boundary in item 36.
 
 ### 33. Variables
-**Status:** todo · **Depends on:** 31
+**Status:** done ([#37](https://github.com/CyberCute-Studio/storycreep/pull/37)) · **Depends on:** 31
 **PRD:** FR-VAR-01 (AC1, AC2), FR-VAR-02 (data model), FR-PROJ-06 (trash registration)
 - `variable` with key (identifier grammar and reserved words from §5.8.1), type, typed default, description, folder and its place there, `global` or `board` scope, and `reset_on_enter` (default `false`) (N41).
 - Keys unique per scope among the variables that are not in the trash. Commands: create, rename, describe, set the default, retype, set the scope, set `reset_on_enter`, move, delete, and restore, and routes that read the variables (N41). Guarded deletion, and the rename's rewrite of expressions, arrive in item 47.
