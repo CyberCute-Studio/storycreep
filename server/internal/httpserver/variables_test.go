@@ -165,6 +165,10 @@ func TestVariableRefusals(t *testing.T) {
 		// it refuses the body before a command reads its default.
 		{[]wireCommand{create("far", "float", json.RawMessage("-1e400"))}, http.StatusBadRequest,
 			api.CodeInvalidRequest, "body", ""},
+		// A number written with more digits after its point than the operation
+		// log holds, its exponent counted, is refused at its default.
+		{[]wireCommand{create("near", "float", json.RawMessage("1e-16384"))}, http.StatusUnprocessableEntity,
+			api.CodeValidationFailed, "body.commands[0].payload.default", ""},
 		{[]wireCommand{variableCommand("variable.set_scope", map[string]string{"id": taken, "scope": "board",
 			"board_id": newBoardID()})}, http.StatusUnprocessableEntity, api.CodeValidationFailed,
 			"body.commands[0].payload.board_id", ""},

@@ -452,7 +452,27 @@ func TestDefaults(t *testing.T) {
 	_, err := f.apply(t, newVariable("refused", map[string]any{"type": "float",
 		"default": json.RawMessage("1e400")}))
 	invalidAt(t, err, "payload")
+	// A number written with more digits after its point than the operation
+	// log's jsonb holds, its exponent counted, is refused at the default,
+	// though it reads as a value of the type, rather than fail the batch as
+	// the log is written; one at the limit is taken.
+	for _, c := range []struct{ typ, def string }{{"float", "1e-16384"}, {"int", "0e-16384"},
+		{"int", "0.0e-16383"}} {
+		_, err = f.apply(t, newVariable("refused", map[string]any{"type": c.typ, "default": json.RawMessage(c.def)}))
+		invalidAt(t, err, "payload.default")
+	}
+	for _, c := range []struct{ typ, def string }{{"float", "1e-16383"}, {"int", "0e-16383"}} {
+		v := f.create(t, "v_"+strings.ReplaceAll(ids.New().String(), "-", ""),
+			map[string]any{"type": c.typ, "default": json.RawMessage(c.def)})
+		if got := string(must(json.Marshal(v.Default))); got != "0" {
+			t.Errorf("a %s created with %s has the default %s, want 0", c.typ, c.def, got)
+		}
+	}
 	n := f.create(t, "rumours", map[string]any{"type": "int", "default": 2})
+	_, err = f.apply(t, cmd{variable.SetDefault, map[string]any{"id": n.ID, "default": json.RawMessage("0e-16384")}})
+	if r := refused(t, err); r.Field != "default" || r.Reason != nil {
+		t.Errorf("a default with too many digits after its point was refused for %v at %q", r.Reason, r.Field)
+	}
 	_, err = f.apply(t, cmd{variable.SetDefault, map[string]any{"id": n.ID, "default": "two"}})
 	if r := refused(t, err); r.Field != "default" || r.Reason != nil {
 		t.Errorf("a string default of an int was refused for %v at %q", r.Reason, r.Field)

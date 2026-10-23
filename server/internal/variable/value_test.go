@@ -47,6 +47,11 @@ func TestValueOf(t *testing.T) {
 		{TypeFloat, "-0.0", "0"},
 		{TypeFloat, "1e-400", "0"},
 		{TypeFloat, "-1e-400", "0"},
+		{TypeFloat, "1e-16383", "0"},
+		{TypeFloat, "0.5e-16382", "0"},
+		{TypeInt, "0e-16383", "0"},
+		{TypeInt, "-0e-16383", "0"},
+		{TypeInt, "0.0e99999999999", "0"},
 		{TypeFloat, "1e21", "1e+21"},
 		{TypeFloat, "1.7976931348623157e308", "1.7976931348623157e+308"},
 		{TypeFloat, "9007199254740993", "9007199254740992"},
@@ -78,6 +83,17 @@ func TestValueOf(t *testing.T) {
 		{TypeInt, "12345678901234567890123"},
 		{TypeFloat, "1e400"},
 		{TypeFloat, "-1e400"},
+		// More digits after the point than the operation log's jsonb holds,
+		// its exponent counted, though each reads as a value of its type.
+		{TypeFloat, "1e-16384"},
+		{TypeFloat, "-1E-16384"},
+		{TypeFloat, "0.5e-16383"},
+		{TypeFloat, "1." + strings.Repeat("0", 16384)},
+		{TypeFloat, "1e-99999999999"},
+		{TypeInt, "0e-16384"},
+		{TypeInt, "-0e-99999999999"},
+		{TypeInt, "3." + strings.Repeat("0", 16384)},
+		{TypeInt, "3" + strings.Repeat("0", 16384) + "e-16384"},
 		{TypeFloat, `"1.5"`},
 		{TypeString, "3"},
 		{TypeString, `"` + long + `e"`},
@@ -127,6 +143,13 @@ func FuzzIntegerValue(f *testing.F) {
 		// An exponent too large for big.Rat to compute quickly is read by the
 		// code's own shortcut, which the seeds cover.
 		if i := strings.IndexAny(raw, "eE"); i >= 0 && len(strings.TrimLeft(raw[i+1:], "+-0")) > 3 {
+			return
+		}
+		// A number written with more than maxScale digits after its point,
+		// its exponent counted, is refused whatever it reads as, which
+		// TestValueOf checks; with an exponent of three digits at most, a
+		// shorter one is written with fewer.
+		if len(raw) > maxScale-1000 {
 			return
 		}
 		want, ok := new(big.Rat).SetString(raw)

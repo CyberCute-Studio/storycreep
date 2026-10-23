@@ -41,6 +41,11 @@ const (
 	// MaxStringLength is the most characters that a string may have, as a
 	// string literal of the expression language may.
 	MaxStringLength = 4096
+	// maxScale is the most digits after its point that a number may be
+	// written with, its exponent counted, as 1e-16383 is: the operation log
+	// keeps a payload's default as it is written, in jsonb, whose numbers
+	// PostgreSQL's numeric holds, which holds no more.
+	maxScale = 16383
 )
 
 // Value is a variable's default, as JSON: a boolean, a number, or a string,
@@ -74,7 +79,8 @@ func (v *Value) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// MarshalJSON writes the value as Of returned it, or null for none.
+// MarshalJSON writes the value as it was read, a payload's as the client wrote
+// it, which the operation log keeps, or as Of returned it, or null for none.
 func (v Value) MarshalJSON() ([]byte, error) {
 	if v.raw == nil {
 		return []byte("null"), nil
@@ -110,13 +116,15 @@ func Zero(typ string) Value {
 // it is written, as 3, 3.0, or 3e0, which is written as 3; for float, a number
 // that a double holds without overflowing to an infinity, read as the double
 // nearest it, as JSON.parse reads it, and written as the shortest number that
-// reads as that double again, -0 as 0; and for string, a string of at most
-// MaxStringLength characters, without control characters but line feeds and
-// tabs (input.CheckText), and without an escape of a lone surrogate, which no
-// UTF-8 holds, and which encoding/json would read as U+FFFD where JSON.parse
-// keeps it, so that the server would store other text than the client holds;
-// a string is written without escaping <, >, and & (PRD §6.2). None, the zero
-// Value, is the type's zero value (Zero).
+// reads as that double again, -0 as 0, each written with at most maxScale
+// digits after its point, its exponent counted, since the operation log keeps
+// it as it is written, so that 1e-16384 and 0e-16384 are neither; and for
+// string, a string of at most MaxStringLength characters, without control
+// characters but line feeds and tabs (input.CheckText), and without an escape
+// of a lone surrogate, which no UTF-8 holds, and which encoding/json would
+// read as U+FFFD where JSON.parse keeps it, so that the server would store
+// other text than the client holds; a string is written without escaping <,
+// >, and & (PRD §6.2). None, the zero Value, is the type's zero value (Zero).
 func (v Value) Of(typ string) (Value, string) {
 	return v.of(typ, true)
 }
@@ -170,6 +178,11 @@ func kindOf(raw string) string {
 // number returns raw, a JSON number, as a value of the type typ, int or
 // float, as Of does.
 func number(typ, raw string) (Value, string) {
+	if overScale(raw) {
+		return Value{}, fmt.Sprintf("is written with more than %d digits after its point, its exponent counted, "+
+			"as 1e-%d is, more than the operation log, which keeps the command as it is written, holds", maxScale,
+			maxScale+1)
+	}
 	if typ == TypeInt {
 		n, problem := integer(raw)
 		if problem != "" {
@@ -190,6 +203,29 @@ func number(typ, raw string) (Value, string) {
 		return Value{}, "is not a number that JSON writes"
 	}
 	return Value{raw: out}, ""
+}
+
+// overScale reports whether raw, a JSON number, is written with more than
+// maxScale digits after its point, its exponent counted, as 1e-16384,
+// 0e-16384, and 1.5e-16383 are, whatever its value: PostgreSQL's numeric
+// counts the digits as they are written, zeros included. An exponent of more
+// than 9 digits decides the answer alone, as integer's does.
+func overScale(raw string) bool {
+	mantissa, exponent := raw, ""
+	if i := strings.IndexAny(raw, "eE"); i >= 0 {
+		mantissa, exponent = raw[:i], raw[i+1:]
+	}
+	_, fraction, _ := strings.Cut(mantissa, ".")
+	down := strings.HasPrefix(exponent, "-")
+	e := strings.TrimLeft(strings.TrimLeft(exponent, "+-"), "0")
+	if len(e) > 9 {
+		return down
+	}
+	n, _ := strconv.Atoi(e)
+	if !down {
+		n = -n
+	}
+	return len(fraction)+n > maxScale
 }
 
 // integer returns the value of raw, a JSON number, if it is an integer from
