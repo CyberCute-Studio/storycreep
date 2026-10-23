@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,7 +41,8 @@ const SchemaPath = "schema/rich-text/v1/rich-text.schema.json"
 // uniqueItems, which huma checks in time that grows with the square of the
 // array's length. The schema has only the keywords that package apicontract
 // reads, so that the API's OpenAPI document, which holds it for a Doc field,
-// loads and generates the TypeScript client's types.
+// loads and generates the TypeScript client's types; the document also holds
+// the discriminators that Doc.Schema gives huma, which apicontract reads too.
 func Schema() []byte {
 	examples := make([]any, len(schemaExamples))
 	for i, ex := range schemaExamples {
@@ -85,10 +87,18 @@ const defsPrefix = "#/$defs/"
 // definitions beside it, as RichTextBlock, once however many fields refer to
 // it.
 //
+// Each oneOf of a block, an inline node, or a mark has a discriminator in
+// huma's registry, which the published schema, a JSON Schema, has no keyword
+// for: huma validates a node against the definition of its type alone, and
+// refuses a document at the value that is wrong, with what is wrong with it
+// (discriminator).
+//
 // huma passes over a null in a property that a schema does not require, as
 // it does in any body, where JSON Schema checks it against the property's
 // schema, so a null in an optional field of a document, as a valueRef's
-// decimals, reaches UnmarshalJSON, which refuses it with WrongType.
+// decimals, reaches UnmarshalJSON, which refuses it with WrongType; and so do
+// a node or a mark that is not an object, or whose type is not a string,
+// which a discriminator does not read.
 func (Doc) Schema(r huma.Registry) *huma.Schema {
 	return r.Schema(reflect.TypeFor[richTextDoc](), true, "")
 }
@@ -185,7 +195,9 @@ func (c humaConverter) schema(v any) *huma.Schema {
 		case "const":
 			s.Const = x
 		case "enum":
-			s.Enum = x.([]any)
+			// A copy, so that no registry shares the definitions' slice with
+			// another, or with schemaDefinitions.
+			s.Enum = slices.Clone(x.([]any))
 		case "pattern":
 			s.Pattern = x.(string)
 		case "minLength":
@@ -217,12 +229,56 @@ func (c humaConverter) schema(v any) *huma.Schema {
 			for _, o := range x.([]any) {
 				s.OneOf = append(s.OneOf, c.schema(o))
 			}
+			s.Discriminator = discriminator(x.([]any), s.OneOf)
 		default:
 			panic("richtext: the schema has the keyword " + k + ", which the conversion to huma does not convert")
 		}
 	}
 	s.PrecomputeMessages()
 	return s
+}
+
+// discriminator returns the discriminator of a oneOf whose members, as the
+// schema writes them, each refer to a definition of objects that require a
+// type of their own, a const or an enum of strings, as a block's, an inline
+// node's, and a mark's do, or nil for another oneOf. It maps each type to its
+// member as converted, a reference in huma's registry.
+//
+// With it, huma validates a node against the definition of its type alone,
+// rather than against every member of the oneOf, of which it keeps no error
+// but "expected value to match exactly one schema but matched none" at the
+// oneOf: so a request with an unknown mark or a javascript: link deep in a
+// list is refused at the mark or the link, with what is wrong with it, rather
+// than at the list's block, and a node's marks are validated once rather than
+// once for each kind of inline node, and each mark once rather than once for
+// each kind of mark, which made a body of 5 MiB of marked text cost huma
+// about 0.9 s, against 65 ms. huma lets through a value that is not an object
+// or whose type is not a string, which Parse then refuses, and validates one
+// whose type no member has against every member, as a oneOf.
+func discriminator(members []any, converted []*huma.Schema) *huma.Discriminator {
+	mapping := map[string]string{}
+	for i, m := range members {
+		ref, _ := m.(map[string]any)["$ref"].(string)
+		def, _ := schemaDefinitions()[strings.TrimPrefix(ref, defsPrefix)].(map[string]any)
+		required, _ := def["required"].([]any)
+		properties, _ := def["properties"].(map[string]any)
+		typ, _ := properties["type"].(map[string]any)
+		values, _ := typ["enum"].([]any)
+		if v, ok := typ["const"]; ok {
+			values = []any{v}
+		}
+		if ref == "" || !slices.Contains(required, any("type")) || len(values) == 0 {
+			return nil
+		}
+		for _, v := range values {
+			name, ok := v.(string)
+			if _, taken := mapping[name]; !ok || taken {
+				return nil
+			}
+			mapping[name] = converted[i].Ref
+		}
+	}
+	return &huma.Discriminator{PropertyName: "type", Mapping: mapping}
 }
 
 // The patterns of the schema, which Go's regular expressions and

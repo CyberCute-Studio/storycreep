@@ -231,10 +231,12 @@ func TestLimits(t *testing.T) {
 	})
 }
 
-// TestJSONLength checks how MaxBytes counts a document's JSON: without the
-// white space between its tokens, and with each escape in a string counted
-// as the bytes of the UTF-8 of the character that it stands for, and an
-// escaped surrogate pair as the one character that it stands for.
+// TestJSONLength checks how scan counts a document's JSON for MaxBytes:
+// without the white space between its tokens, and with each escape in a
+// string counted as the bytes of the UTF-8 of the character that it stands
+// for, and an escaped surrogate pair as the one character that it stands for;
+// and that it finds an escaped surrogate that is not one of a pair, which
+// Parse refuses once the decoder has read the document.
 func TestJSONLength(t *testing.T) {
 	for in, want := range map[string]int{
 		` { "a" : [ 1 , 2 ] } `:         len(`{"a":[1,2]}`),
@@ -253,8 +255,25 @@ func TestJSONLength(t *testing.T) {
 		`"\u12"`:                        len(`"u12"`),
 		"\"\\u00e9\"   \t\r\n" + `"\u0`: len(`"é""u0`),
 	} {
-		if got := jsonLength([]byte(in)); got != want {
-			t.Errorf("jsonLength(%s) = %d, want %d", in, got, want)
+		if got, _ := scan([]byte(in)); got != want {
+			t.Errorf("scan(%s) = %d, want %d", in, got, want)
+		}
+	}
+	for in, want := range map[string]bool{
+		`"a\u00e9"`:                 false,
+		`"\ud83d\udc34"`:            false,
+		`"\\ud800"`:                 false,
+		`"\ud800"`:                  true,
+		`"\udc00"`:                  true,
+		`"\ud800\u0041"`:            true,
+		`"\ud800\\udc00"`:           true,
+		`"\ud83d\udc34\ud83d"`:      true,
+		`{"\udfff":1}`:              true,
+		`"\ud800`:                   true,
+		`["\ud83d\udc34","\ud800"]`: true,
+	} {
+		if _, got := scan([]byte(in)); got != want {
+			t.Errorf("scan(%s) finds a lone surrogate: %v, want %v", in, got, want)
 		}
 	}
 }
@@ -417,6 +436,21 @@ func TestMarshalBuilt(t *testing.T) {
 		`"type":"paragraph"},{"content":[{"content":[{"type":"paragraph"}],"type":"listItem"}],"type":"orderedList"}],"type":"doc"}`
 	if string(got) != want {
 		t.Errorf("a built Doc's canonical form\n%s\nwant\n%s", got, want)
+	}
+
+	// A paragraph of as many texts of one character as a document holds
+	// characters is written joined, as Parse stores it and Derive reads it,
+	// though written apart, as 100,000 text nodes, it would be longer than
+	// MaxBytes.
+	many := make([]Inline, MaxChars)
+	for i := range many {
+		many[i] = &Text{Text: "a"}
+	}
+	got = marshal(t, Doc{Blocks: []Block{&Paragraph{Inlines: many}}})
+	want = `{"content":[{"content":[{"text":"` + strings.Repeat("a", MaxChars) + `","type":"text"}],"type":"paragraph"}],` +
+		`"type":"doc"}`
+	if string(got) != want {
+		t.Errorf("a paragraph of %d texts of one character is written as %.100s", MaxChars, got)
 	}
 }
 
@@ -582,8 +616,8 @@ func TestPlainTextBuilt(t *testing.T) {
 // of ASCII, a name of labels or an IPv4 or IPv6 address, a port of at most
 // 65535, and no userinfo, which could show another host, and mailto URLs
 // without a # that set no field but to, cc, bcc, subject, and body, and that
-// escape no control character but in a body, and nothing that could run a
-// script or read a file.
+// escape no control character or line or paragraph separator but in a body,
+// and nothing that could run a script or read a file.
 //
 // Verifies: NFR-SEC-08
 func TestCheckHref(t *testing.T) {
@@ -636,6 +670,11 @@ func TestCheckHref(t *testing.T) {
 		// case of the field's name and of the escape's digits.
 		"mailto:keeper@example.com?subject=Light%20on&body=Come%0D%0Aup%09now&BODY=%0d%0a%7f",
 		"mailto:keeper@example.com?subject=%7E%20%25",
+		// Escaped characters beyond ASCII, of which a body may hold the line
+		// and paragraph separators and the C1 control characters too, and
+		// escapes that are not UTF-8, which stand for no control character.
+		"mailto:keeper@example.com?subject=Caf%C3%A9%20%E2%80%A7&body=a%E2%80%A8b%E2%80%A9c%C2%85d%c2%9f",
+		"mailto:keeper@example.com?subject=%C2%20%E2%80%20%FF%80",
 	} {
 		if problem := CheckHref(href); problem != "" {
 			t.Errorf("CheckHref(%q) = %q, want none", href, problem)
@@ -705,6 +744,14 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com?CC=a@example.com%00",
 		"mailto:keeper@example.com?bcc=%1f",
 		"mailto:keeper@example.com?subject=%7F",
+		// Or a C1 control character, or a line or paragraph separator, in
+		// UTF-8, which a reader of lines may take for a line break, as
+		// Python's str.splitlines takes NEL, U+0085, and U+2028.
+		"mailto:keeper@example.com?subject=Light%C2%85Bcc:evil@example.com",
+		"mailto:keeper@example.com?subject=Light%e2%80%a8Bcc:evil@example.com",
+		"mailto:keeper@example.com%E2%80%A9Bcc:evil@example.com",
+		"mailto:keeper@example.com?cc=a@example.com%C2%9F",
+		"mailto:keeper@example.com?to=a@example.com%c2%80",
 		// A port that no browser takes.
 		"https://example.com:65536/",
 		"https://example.com:99999999999999999999/",
@@ -915,11 +962,13 @@ func resolve(v any, pointer string) (any, bool) {
 	return v, true
 }
 
-// FuzzParse checks that Parse never panics, that its canonical form is a
-// fixed point that the schema accepts and that derives without panicking,
-// that a Doc that a program builds of the same document out of its canonical
-// form is written as it and derives what it derives, and that every error has
-// a known reason and points at a value of the input.
+// FuzzParse checks that Parse never panics, that a document that it accepts,
+// and its canonical form, validate against the schema, as JSON Schema reads
+// it and as the API's huma validates it, that the canonical form is a fixed
+// point that derives without panicking, that a Doc that a program builds of
+// the same document out of its canonical form is written as it and derives
+// what it derives, and that every error has a known reason and points at a
+// value of the input.
 func FuzzParse(f *testing.F) {
 	v := readVectors(f)
 	for _, vec := range v.Valid {
@@ -929,6 +978,8 @@ func FuzzParse(f *testing.F) {
 		f.Add([]byte(vec.Doc))
 	}
 	names := v.names()
+	s := publishedSchema(f)
+	validators := map[string]func([]byte) []error{"the schema": humaValidator(f, s, true), "huma": humaValidator(f, s, false)}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		doc, err := Parse(data)
 		if err != nil {
@@ -954,6 +1005,14 @@ func FuzzParse(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		for name, validate := range validators {
+			if problems := validate(data); problems != nil {
+				t.Fatalf("%s refuses a document that Parse accepts: %v", name, problems)
+			}
+			if problems := validate(canonical); problems != nil {
+				t.Fatalf("%s refuses the canonical form %s: %v", name, canonical, problems)
+			}
+		}
 		again, err := Parse(canonical)
 		if err != nil {
 			t.Fatalf("the canonical form %s is refused: %v", canonical, err)
@@ -966,10 +1025,8 @@ func FuzzParse(f *testing.F) {
 			t.Fatal("Derive disagrees with PlainText and Hash")
 		}
 		// A program's Doc of the same document, out of its canonical form,
-		// is written as the canonical form and derives what it does.
-		if len(canonical) > MaxBytes/4 {
-			return
-		}
+		// is written as the canonical form, which joins its texts again,
+		// and derives what it does.
 		built := Doc{Blocks: uncanonical(doc.Blocks)}
 		if b, err := marshalNoEscape(built); err != nil || !bytes.Equal(b, marshal(t, doc)) {
 			t.Fatalf("a built Doc of %s is written as %s (%v)", canonical, b, err)

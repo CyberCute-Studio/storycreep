@@ -71,6 +71,13 @@ func (c Change) String() string {
 //     allow. A required property is required as huma reads it: not in a
 //     request if it is readOnly, and not in a response if it is writeOnly.
 //
+// A oneOf's discriminator, which huma's validator reads to choose the member
+// that it validates an object against, and to let through a value that is not
+// an object, breaks a client when it is added, removed, or changed in any
+// way, as when it maps a value to another member, or gains or loses one: the
+// comparison does not judge whether the members that it chooses take what the
+// oneOf took.
+//
 // Schemas combined with oneOf, anyOf, or allOf are compared member by
 // member. If the members of a oneOf or an anyOf all refer to named schemas,
 // as those of the command endpoint's union of the types of command do, they
@@ -406,11 +413,29 @@ func (c *comparer) compare(loc string, b, h *Schema, dir direction, headNull boo
 	if dir == request && b.Default != nil && !sameJSON(b.Default, h.Default) {
 		c.report("%s: the default changed from %s to %s", loc, jsonOrNone(b.Default), jsonOrNone(h.Default))
 	}
+	if describeDiscriminator(b.Discriminator) != describeDiscriminator(h.Discriminator) {
+		c.report("%s: the discriminator changed from %s to %s", loc, describeDiscriminator(b.Discriminator),
+			describeDiscriminator(h.Discriminator))
+	}
 	c.composition(loc, b, h, dir, headNull)
 	c.object(loc, b, h, dir)
 	if b.Items != nil || h.Items != nil {
 		c.schema(loc+"[]", b.Items, h.Items, dir)
 	}
+}
+
+// describeDiscriminator writes a oneOf's discriminator d as a change names
+// it: its property, and the name of the schema that it maps each value to, in
+// the order of the values, or "none".
+func describeDiscriminator(d *Discriminator) string {
+	if d == nil {
+		return "none"
+	}
+	var mapping []string
+	for _, value := range slices.Sorted(maps.Keys(d.Mapping)) {
+		mapping = append(mapping, strconv.Quote(value)+": "+refName(d.Mapping[value]))
+	}
+	return fmt.Sprintf("%s {%s}", strconv.Quote(d.PropertyName), strings.Join(mapping, ", "))
 }
 
 // typeSet returns the types that s allows, apart from null, whether it

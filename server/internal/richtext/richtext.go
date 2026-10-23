@@ -371,7 +371,8 @@ func parse(data []byte) (*Doc, []byte, error) {
 }
 
 func parseDoc(data []byte) (*Doc, error) {
-	if jsonLength(data) > MaxBytes {
+	length, lone := scan(data)
+	if length > MaxBytes {
 		return nil, &Error{Reason: TooLarge,
 			Message: fmt.Sprintf("the document is longer than %d bytes without the white space between its tokens, "+
 				"with each escape counted as the character that it stands for", MaxBytes)}
@@ -391,26 +392,32 @@ func parseDoc(data []byte) (*Doc, error) {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, &Error{Reason: InvalidJSON, Message: "the document is followed by more JSON"}
 	}
-	if loneSurrogate(data) {
+	if lone {
+		// encoding/json reads a lone surrogate as U+FFFD, and JSON.parse keeps
+		// it as it is, so that the server would store other text than the
+		// client holds.
 		return nil, &Error{Reason: InvalidJSON, Message: "the document escapes a lone surrogate, which is not a character"}
 	}
 	var p parser
 	return p.doc(v)
 }
 
-// jsonLength returns the length of data as MaxBytes counts it: without the
-// white space that JSON allows between its tokens, outside its strings, and
-// with each escape in a string, as \u00e9 or \", counted as the bytes of the
-// UTF-8 of the character that it stands for, and an escaped pair of
-// surrogates as the one character that the pair stands for. So the length of
-// a document depends neither on how its JSON is laid out nor on which
+// scan reads data once, before the decoder does, and returns its length as
+// MaxBytes counts it, and whether one of its strings escapes a UTF-16
+// surrogate that is not one of a pair, as "\ud800", a lone surrogate, which
+// no UTF-8 holds. The length is without the white space that JSON allows
+// between its tokens, outside its strings, and with each escape in a string,
+// as \u00e9 or \", counted as the bytes of the UTF-8 of the character that it
+// stands for, an escaped pair of surrogates as the one character that the
+// pair stands for, and a lone surrogate as U+FFFD. So the length of a
+// document depends neither on how its JSON is laid out nor on which
 // characters its encoder escapes: json.Marshal escapes <, >, and & as \u003c,
 // \u003e, and \u0026 in what a MarshalJSON method writes, and Python's
 // json.dumps every character beyond ASCII, which would otherwise make the
-// same document up to six times as long. It reads data before the decoder
-// does, so it counts what is not JSON without failing, which the decoder then
-// refuses.
-func jsonLength(data []byte) int {
+// same document up to six times as long. It reads what is not JSON without
+// failing, which the decoder then refuses, before Parse reports a lone
+// surrogate.
+func scan(data []byte) (length int, lone bool) {
 	n, inString := 0, false
 	for i := 0; i < len(data); i++ {
 		c := data[i]
@@ -437,8 +444,10 @@ func jsonLength(data []byte) int {
 			}
 			size := utf8.RuneLen(r)
 			if size < 0 {
-				// A lone surrogate, which Parse refuses, counts as U+FFFD.
-				size = utf8.RuneLen(utf8.RuneError)
+				// A surrogate that is not the first of a pair, or is not
+				// followed by the second, which Parse refuses, counts as
+				// U+FFFD.
+				size, lone = utf8.RuneLen(utf8.RuneError), true
 			}
 			n += size
 		default:
@@ -448,49 +457,7 @@ func jsonLength(data []byte) int {
 			i++
 		}
 	}
-	return n
-}
-
-// loneSurrogate reports whether a string of data, which is one JSON value,
-// escapes a UTF-16 surrogate that is not one of a pair, as "\ud800", which no
-// UTF-8 holds. encoding/json reads one as U+FFFD, and JSON.parse keeps it as
-// it is, so that the server would store other text than the client holds.
-func loneSurrogate(data []byte) bool {
-	if !bytes.Contains(data, []byte(`\u`)) {
-		return false
-	}
-	inString := false
-	for i := 0; i < len(data); i++ {
-		c := data[i]
-		switch {
-		case !inString:
-			inString = c == '"'
-		case c == '"':
-			inString = false
-		case c == '\\':
-			i++
-			if data[i] != 'u' {
-				continue
-			}
-			u := hex4(data[i+1 : i+5])
-			i += 4
-			switch {
-			case u >= 0xD800 && u < 0xDC00:
-				// A string ends with a quote, so an escape that follows
-				// has its four digits.
-				if data[i+1] == '\\' && data[i+2] == 'u' {
-					if low := hex4(data[i+3 : i+7]); low >= 0xDC00 && low < 0xE000 {
-						i += 6
-						continue
-					}
-				}
-				return true
-			case u >= 0xDC00 && u < 0xE000:
-				return true
-			}
-		}
-	}
-	return false
+	return n, lone
 }
 
 // hex4 returns the value of four hexadecimal digits.
@@ -826,13 +793,14 @@ func (p *parser) paragraph(o map[string]any) (*Paragraph, error) {
 // canonicalInlines returns a paragraph's inline nodes as its canonical form
 // holds them: each run of neighbouring texts with the same marks joined into
 // one text, as ProseMirror joins them, and each ID in its canonical spelling.
-// Parse reads a paragraph through it, and so do a document's segments, so
-// that a Doc that a program builds derives what it derives once it is
-// stored, by the same rules. It changes neither inlines nor their nodes: it
-// returns inlines when they are canonical already, and otherwise a new slice,
-// with a new node in place of each that differs. It writes each run's text
-// once, so that a paragraph of many short texts costs no more than their
-// length. A nil node, which MarshalJSON refuses, is kept, and ends a run.
+// Parse reads a paragraph through it, and so do a document's segments and
+// MarshalJSON, so that a Doc that a program builds derives and is written as
+// it is once it is stored, by the same rules. It changes neither inlines nor
+// their nodes: it returns inlines when they are canonical already, and
+// otherwise a new slice, with a new node in place of each that differs. It
+// writes each run's text once, so that a paragraph of many short texts costs
+// no more than their length. A nil node, which MarshalJSON refuses, is kept,
+// and ends a run.
 func canonicalInlines(inlines []Inline) []Inline {
 	// out is nil as long as the inlines are canonical so far.
 	var out []Inline
@@ -1230,10 +1198,13 @@ var mailtoFields = []string{"bcc", "body", "cc", "subject", "to"}
 // before the first ?, is not empty, and each of the fields that & separates
 // in its query, what follows that ?, is empty or a name of mailtoFields, read
 // regardless of ASCII case, followed by = and its value. Neither the address
-// nor a value but body's escapes a control character (escapesControl), which
-// a mail client could write into a header, as a line break that starts
-// another header in mailto:keeper@example.com%0D%0ABcc:evil@example.com; a
-// body's line breaks are %0D%0A, as RFC 6068 writes them.
+// nor a value but body's escapes a character that text may not hold
+// (escapesControl), a control character or a line or paragraph separator,
+// which a mail client could write into a header, as a line break that starts
+// another header in mailto:keeper@example.com%0D%0ABcc:evil@example.com, or
+// that a reader of lines may take for one, as Python's str.splitlines takes
+// NEL, %C2%85, and LINE SEPARATOR, %E2%80%A8; a body's line breaks are
+// %0D%0A, as RFC 6068 writes them.
 func mailtoProblem(rest string) string {
 	if strings.Contains(rest, "#") {
 		return "has a #, which a mailto URL has no use for, and after which a mail client could read a field"
@@ -1243,7 +1214,8 @@ func mailtoProblem(rest string) string {
 		return "has no address"
 	}
 	if escapesControl(address) {
-		return "has an address that escapes a control character, which a mail client could write into a header"
+		return "has an address that escapes a control character or a line or paragraph separator, which a mail " +
+			"client could write into a header"
 	}
 	for field := range strings.SplitSeq(query, "&") {
 		name, value, set := strings.Cut(field, "=")
@@ -1252,25 +1224,36 @@ func mailtoProblem(rest string) string {
 			return "sets a field other than to, cc, bcc, subject, or body"
 		}
 		if name != "body" && escapesControl(value) {
-			return "has a field other than body that escapes a control character, which a mail client could " +
-				"write into a header"
+			return "has a field other than body that escapes a control character or a line or paragraph separator, " +
+				"which a mail client could write into a header"
 		}
 	}
 	return ""
 }
 
 // escapesControl reports whether s, whose every % starts an escape, escapes
-// an ASCII control character, %00 to %1F or %7F, in either case.
+// a character that text may not hold (isControl): a control character, as
+// %0A, %7F, or, in UTF-8, %C2%85, or a line or paragraph separator, %E2%80%A8
+// or %E2%80%A9, with the escapes' digits in either case. It reads each escape
+// as the byte that it stands for, and those bytes, with the characters
+// between them, as UTF-8, in which a byte that starts or continues no
+// character is U+FFFD. A character of s itself is no control character,
+// which CheckHref refuses before.
 func escapesControl(s string) bool {
-	for i := 0; i+2 < len(s); i++ {
-		if s[i] == '%' {
-			if b, err := strconv.ParseUint(s[i+1:i+3], 16, 8); err == nil && (b < 0x20 || b == 0x7F) {
-				return true
-			}
-			i += 2
-		}
+	if !strings.Contains(s, "%") {
+		return false
 	}
-	return false
+	decoded := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) {
+			b, _ := strconv.ParseUint(s[i+1:i+3], 16, 8)
+			decoded = append(decoded, byte(b))
+			i += 2
+			continue
+		}
+		decoded = append(decoded, s[i])
+	}
+	return bytes.ContainsFunc(decoded, isControl)
 }
 
 // maxPort is the highest port, which a browser's URL parser takes.
@@ -1528,11 +1511,15 @@ type wireValue struct {
 	Ref       string `json:"ref"`
 }
 
-// wireBlocks returns the nodes of blocks as JSON holds them. It refuses only
-// what JSON cannot hold, a nil node, and a string that is not UTF-8, which
-// encoding/json would write with U+FFFD in place of its bytes, so that Parse
-// would accept other text than the Doc holds; it leaves the rest to Parse,
-// which MarshalJSON reads them with.
+// wireBlocks returns the nodes of blocks as JSON holds them, each paragraph's
+// inline nodes in their canonical form (canonicalInlines), so that a Doc that
+// a program builds of many neighbouring texts with the same marks, which it
+// derives as one, is measured against MaxBytes as Parse stores it, joined,
+// rather than refused as longer than it is. It refuses only what JSON cannot
+// hold, a nil node, and a string that is not UTF-8, which encoding/json would
+// write with U+FFFD in place of its bytes, so that Parse would accept other
+// text than the Doc holds; it leaves the rest to Parse, which MarshalJSON
+// reads them with.
 func wireBlocks(blocks []Block) ([]wireNode, error) {
 	nodes := make([]wireNode, len(blocks))
 	for i, b := range blocks {
@@ -1541,7 +1528,7 @@ func wireBlocks(blocks []Block) ([]wireNode, error) {
 			if b == nil {
 				return nil, errors.New("richtext: a paragraph is nil")
 			}
-			inlines, err := wireInlines(b.Inlines)
+			inlines, err := wireInlines(canonicalInlines(b.Inlines))
 			if err != nil {
 				return nil, err
 			}

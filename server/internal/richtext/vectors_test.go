@@ -47,6 +47,11 @@ type vectors struct {
 		Text    string `json:"text"`
 		Preview string `json:"preview"`
 	} `json:"previews"`
+	Lengths []struct {
+		Note   string `json:"note"`
+		JSON   string `json:"json"`
+		Length int    `json:"length"`
+	} `json:"lengths"`
 }
 
 func readVectors(t testing.TB) vectors {
@@ -64,7 +69,7 @@ func readVectors(t testing.TB) vectors {
 		t.Fatal(err)
 	}
 	if len(v.Names.Components) == 0 || len(v.Names.Values) == 0 || len(v.Valid) == 0 || len(v.Invalid) == 0 ||
-		len(v.Words) == 0 || len(v.Previews) == 0 {
+		len(v.Words) == 0 || len(v.Previews) == 0 || len(v.Lengths) == 0 {
 		t.Fatal("vectors.json has an empty section")
 	}
 	return v
@@ -175,6 +180,23 @@ func TestWordVectors(t *testing.T) {
 	for _, vec := range readVectors(t).Words {
 		if got := CountWords(vec.Text); got != vec.Words {
 			t.Errorf("%s: CountWords(%q) = %d, want %d", vec.Note, vec.Text, got, vec.Words)
+		}
+	}
+}
+
+// TestLengthVectors checks that the size limit counts the length of a
+// document's JSON as the vectors do: without the white space between its
+// tokens, and with each escape as the character that it stands for, so that
+// a document has one length, however it is written.
+//
+// Verifies: NFR-SEC-07
+func TestLengthVectors(t *testing.T) {
+	for _, vec := range readVectors(t).Lengths {
+		if !json.Valid([]byte(vec.JSON)) {
+			t.Errorf("%s: the vector's json is not JSON", vec.Note)
+		}
+		if got, _ := scan([]byte(vec.JSON)); got != vec.Length {
+			t.Errorf("%s: the length is %d, want %d", vec.Note, got, vec.Length)
 		}
 	}
 }

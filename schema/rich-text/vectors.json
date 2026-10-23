@@ -1297,7 +1297,7 @@
       "hash": "sha256:cbdc6be8042546270cfd3c3396e4a1ca932575821b75d46a6069d64a7f0020dd"
     },
     {
-      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one, with a line break escaped in the body",
+      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one, with an e acute escaped in the subject, and a line break, a line separator, and NEL escaped in the body",
       "doc": {
         "content": [
           {
@@ -1338,7 +1338,7 @@
                 "marks": [
                   {
                     "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light%20on&CC=mira@example.com&body=Come%20up%0D%0Anow&"
+                      "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9&CC=mira@example.com&body=Come%20up%0D%0Anow%E2%80%A8%C2%85&"
                     },
                     "type": "link"
                   }
@@ -1376,7 +1376,7 @@
           "value": " "
         },
         {
-          "href": "mailto:keeper@example.com?subject=Light%20on&CC=mira@example.com&body=Come%20up%0D%0Anow&",
+          "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9&CC=mira@example.com&body=Come%20up%0D%0Anow%E2%80%A8%C2%85&",
           "kind": "text",
           "marks": ["link"],
           "value": "three"
@@ -1827,6 +1827,19 @@
       },
       "reason": "wrong_type",
       "pointer": "/content/0"
+    },
+    {
+      "note": "a node whose type is not a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": 1
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/type"
     },
     {
       "note": "a heading",
@@ -2694,6 +2707,30 @@
       },
       "reason": "wrong_type",
       "pointer": "/content/0/content/0/marks/0"
+    },
+    {
+      "note": "a mark whose type is not a string",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "wrong_type",
+      "pointer": "/content/0/content/0/marks/0/type"
     },
     {
       "note": "a mark without a type",
@@ -4286,6 +4323,62 @@
       "schema_accepts": true
     },
     {
+      "note": "a mailto link whose subject escapes NEL, a control character, which a reader of lines may take for a line break",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?subject=Light%C2%85Bcc:evil@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose address escapes a line separator, which a reader of lines may take for a line break",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com%e2%80%a8Bcc:evil@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
       "note": "a link with a port above 65,535",
       "doc": {
         "type": "doc",
@@ -4821,6 +4914,16 @@
       "note": "a zero-width space is not white space",
       "text": "a​b",
       "words": 1
+    },
+    {
+      "note": "a zero-width no-break space, U+FEFF, is not white space, though JavaScript's \\s matches it",
+      "text": "a\ufeffb \ufeffc",
+      "words": 2
+    },
+    {
+      "note": "a Mongolian vowel separator, U+180E, is not white space",
+      "text": "a᠎b",
+      "words": 1
     }
   ],
   "previews": [
@@ -4863,6 +4966,43 @@
       "note": "characters are code points",
       "text": "🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴",
       "preview": "🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴🐴…"
+    },
+    {
+      "note": "a zero-width no-break space, U+FEFF, is not white space, though JavaScript's \\s and trim take it for some, so it is kept",
+      "text": "\ufeff a\ufeff \ufeffb \ufeff",
+      "preview": "\ufeff a\ufeff \ufeffb \ufeff"
+    }
+  ],
+  "lengths": [
+    {
+      "note": "a document in its canonical form",
+      "json": "{\"content\":[{\"content\":[{\"marks\":[{\"type\":\"bold\"}],\"text\":\"Fish & chips <hot>, café 🐴\",\"type\":\"text\"},{\"marks\":[{\"attrs\":{\"href\":\"https://example.com/?a=1&b=2\"},\"type\":\"link\"}],\"text\":\" \\\"quoted\\\" \\\\ a/b\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"doc\"}",
+      "length": 256
+    },
+    {
+      "note": "the same document as PostgreSQL's jsonb writes it, with a space after each colon and comma",
+      "json": "{\"content\": [{\"content\": [{\"marks\": [{\"type\": \"bold\"}], \"text\": \"Fish & chips <hot>, café 🐴\", \"type\": \"text\"}, {\"marks\": [{\"attrs\": {\"href\": \"https://example.com/?a=1&b=2\"}, \"type\": \"link\"}], \"text\": \" \\\"quoted\\\" \\\\ a/b\", \"type\": \"text\"}], \"type\": \"paragraph\"}], \"type\": \"doc\"}",
+      "length": 256
+    },
+    {
+      "note": "the same document indented, with line feeds, carriage returns, and tabs",
+      "json": "{\r\n\t\"type\": \"doc\",\r\n\t\"content\": [\r\n\t\t{\r\n\t\t\t\"type\": \"paragraph\",\r\n\t\t\t\"content\": [\r\n\t\t\t\t{\r\n\t\t\t\t\t\"type\": \"text\",\r\n\t\t\t\t\t\"text\": \"Fish & chips <hot>, café 🐴\",\r\n\t\t\t\t\t\"marks\": [\r\n\t\t\t\t\t\t{\r\n\t\t\t\t\t\t\t\"type\": \"bold\"\r\n\t\t\t\t\t\t}\r\n\t\t\t\t\t]\r\n\t\t\t\t},\r\n\t\t\t\t{\r\n\t\t\t\t\t\"type\": \"text\",\r\n\t\t\t\t\t\"text\": \" \\\"quoted\\\" \\\\ a/b\",\r\n\t\t\t\t\t\"marks\": [\r\n\t\t\t\t\t\t{\r\n\t\t\t\t\t\t\t\"type\": \"link\",\r\n\t\t\t\t\t\t\t\"attrs\": {\r\n\t\t\t\t\t\t\t\t\"href\": \"https://example.com/?a=1&b=2\"\r\n\t\t\t\t\t\t\t}\r\n\t\t\t\t\t\t}\r\n\t\t\t\t\t]\r\n\t\t\t\t}\r\n\t\t\t]\r\n\t\t}\r\n\t]\r\n}",
+      "length": 256
+    },
+    {
+      "note": "the same document as Python's json.dumps writes it, with each character beyond ASCII escaped, an emoji as a surrogate pair",
+      "json": "{\"type\": \"doc\", \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"Fish & chips <hot>, caf\\u00e9 \\ud83d\\udc34\", \"marks\": [{\"type\": \"bold\"}]}, {\"type\": \"text\", \"text\": \" \\\"quoted\\\" \\\\ a/b\", \"marks\": [{\"type\": \"link\", \"attrs\": {\"href\": \"https://example.com/?a=1&b=2\"}}]}]}]}",
+      "length": 256
+    },
+    {
+      "note": "the same document as Go's json.Marshal writes it, with <, >, and & escaped",
+      "json": "{\"content\":[{\"content\":[{\"marks\":[{\"type\":\"bold\"}],\"text\":\"Fish \\u0026 chips \\u003chot\\u003e, café 🐴\",\"type\":\"text\"},{\"marks\":[{\"attrs\":{\"href\":\"https://example.com/?a=1\\u0026b=2\"},\"type\":\"link\"}],\"text\":\" \\\"quoted\\\" \\\\ a/b\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"doc\"}",
+      "length": 256
+    },
+    {
+      "note": "the same document with its slashes and some letters escaped, with hexadecimal digits in either case",
+      "json": "{\"content\":[{\"content\":[{\"marks\":[{\"\\u0074ype\":\"bold\"}],\"\\u0074\\u0065xt\":\"Fish & chips <hot>, caf\\u00E9 🐴\",\"\\u0074ype\":\"\\u0074\\u0065xt\"},{\"marks\":[{\"attrs\":{\"href\":\"https:\\/\\/example.com\\/?a=1&b=2\"},\"\\u0074ype\":\"link\"}],\"\\u0074\\u0065xt\":\" \\\"quoted\\\" \\\\ a\\/b\",\"\\u0074ype\":\"\\u0074\\u0065xt\"}],\"\\u0074ype\":\"paragraph\"}],\"\\u0074ype\":\"doc\"}",
+      "length": 256
     }
   ]
 }

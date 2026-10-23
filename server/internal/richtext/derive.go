@@ -183,22 +183,7 @@ func (d *Doc) Segments(names Names) Segments {
 		panic("richtext: Segments needs the Names of what a document refers to, not nil")
 	}
 	sg := segmenter{names: names, segs: Segments{}}
-	for i, b := range d.Blocks {
-		switch b := b.(type) {
-		case *Paragraph:
-			if b == nil {
-				continue
-			}
-			if i > 0 {
-				sg.segs = append(sg.segs, Segment{Kind: SegmentParagraph})
-			}
-			sg.inlines(b.Inlines)
-		case *List:
-			if b != nil {
-				sg.list(b, 1)
-			}
-		}
-	}
+	sg.blocks(d.Blocks, 0)
 	return sg.segs
 }
 
@@ -207,28 +192,33 @@ type segmenter struct {
 	segs  Segments
 }
 
-// list adds the segments of list l, whose items are at depth.
-func (sg *segmenter) list(l *List, depth int) {
-	for i, item := range l.Items {
-		s := Segment{Kind: SegmentItem, Depth: depth, List: ListBullet}
-		if l.Ordered {
-			s.List, s.Number = ListOrdered, l.Start+i
-		}
-		sg.segs = append(sg.segs, s)
-		for j, b := range item.Blocks {
-			switch b := b.(type) {
-			case *Paragraph:
-				if b == nil {
-					continue
+// blocks adds the segments of the blocks of the document, at depth 0, or of
+// a list item at depth, the item's: a paragraph segment, of the depth, for
+// each paragraph but the first block, which the document's start or the
+// item's segment begins instead, and the items of each list at the next
+// depth.
+func (sg *segmenter) blocks(blocks []Block, depth int) {
+	for i, b := range blocks {
+		switch b := b.(type) {
+		case *Paragraph:
+			if b == nil {
+				continue
+			}
+			if i > 0 {
+				sg.segs = append(sg.segs, Segment{Kind: SegmentParagraph, Depth: depth})
+			}
+			sg.inlines(b.Inlines)
+		case *List:
+			if b == nil {
+				continue
+			}
+			for j, item := range b.Items {
+				s := Segment{Kind: SegmentItem, Depth: depth + 1, List: ListBullet}
+				if b.Ordered {
+					s.List, s.Number = ListOrdered, b.Start+j
 				}
-				if j > 0 {
-					sg.segs = append(sg.segs, Segment{Kind: SegmentParagraph, Depth: depth})
-				}
-				sg.inlines(b.Inlines)
-			case *List:
-				if b != nil {
-					sg.list(b, depth+1)
-				}
+				sg.segs = append(sg.segs, s)
+				sg.blocks(item.Blocks, depth+1)
 			}
 		}
 	}

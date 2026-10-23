@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"maps"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -47,7 +49,7 @@ func TestSchemaFile(t *testing.T) {
 }
 
 // publishedSchema returns the published JSON Schema as JSON decodes it.
-func publishedSchema(t *testing.T) map[string]any {
+func publishedSchema(t testing.TB) map[string]any {
 	t.Helper()
 	data, err := os.ReadFile(schemaFile)
 	if err != nil {
@@ -68,7 +70,7 @@ func publishedSchema(t *testing.T) map[string]any {
 // against the schema.
 func TestSchemaExamples(t *testing.T) {
 	s := publishedSchema(t)
-	validate := humaValidator(t, s)
+	validate := humaValidator(t, s, true)
 	examples, _ := s["examples"].([]any)
 	if len(examples) == 0 {
 		t.Fatal("the schema has no examples")
@@ -102,28 +104,34 @@ func TestSchemaExamples(t *testing.T) {
 // Parse refuses, except those that the vectors mark schema_accepts, which it
 // accepts, because what is wrong with them is beyond what JSON Schema
 // expresses. The schema is validated with huma's validator, as Doc gives it
-// to huma, with which the API validates requests. huma passes over a null in
-// a property that a schema does not require, which JSON Schema refuses where
-// the property's schema does, so a vector whose document holds a null may
-// pass huma unless it is marked schema_accepts, as long as its null is all
-// that is wrong with it.
+// to huma, with which the API validates requests, both as JSON Schema reads
+// it and with the discriminators that Doc gives huma. huma passes over a null
+// in a property that a schema does not require, which JSON Schema refuses
+// where the property's schema does, so a vector whose document holds a null
+// may pass huma unless it is marked schema_accepts, as long as its null is
+// all that is wrong with it; and, with the discriminators, a block, an inline
+// node, or a mark that is not an object, or whose type is not a string
+// (discriminated).
 func TestSchemaAgreesWithParse(t *testing.T) {
-	validate := humaValidator(t, publishedSchema(t))
+	s := publishedSchema(t)
+	validate, validateAPI := humaValidator(t, s, true), humaValidator(t, s, false)
 	v := readVectors(t)
 	for _, vec := range v.Valid {
-		if problems := validate(vec.Doc); problems != nil {
-			t.Errorf("%s: the document does not validate against the schema: %v", vec.Note, problems)
-		}
 		doc, err := Parse(vec.Doc)
 		if err != nil {
 			t.Fatalf("%s: %v", vec.Note, err)
 		}
 		canonical, _ := json.Marshal(doc)
-		if problems := validate(canonical); problems != nil {
-			t.Errorf("%s: the canonical form does not validate against the schema: %v", vec.Note, problems)
+		for name, validate := range map[string]func([]byte) []error{"the schema": validate, "huma": validateAPI} {
+			if problems := validate(vec.Doc); problems != nil {
+				t.Errorf("%s: %s refuses the document: %v", vec.Note, name, problems)
+			}
+			if problems := validate(canonical); problems != nil {
+				t.Errorf("%s: %s refuses the canonical form: %v", vec.Note, name, problems)
+			}
 		}
 	}
-	nulls := 0
+	nulls, passed := 0, 0
 	for _, vec := range v.Invalid {
 		problems := validate(vec.Doc)
 		switch {
@@ -136,10 +144,63 @@ func TestSchemaAgreesWithParse(t *testing.T) {
 			}
 			nulls++
 		}
+		if problems != nil && validateAPI(vec.Doc) == nil {
+			if !discriminated(t, vec.Doc, vec.Reason, vec.Pointer) {
+				t.Errorf("%s: the schema refuses it, but huma, with its discriminators, accepts it", vec.Note)
+			}
+			passed++
+		}
 	}
 	if nulls == 0 {
 		t.Error("no vector has a null in an optional field, which huma passes over")
 	}
+	if passed == 0 {
+		t.Error("no vector has a node that is not an object, which huma's discriminators pass over")
+	}
+}
+
+// discriminated reports whether an invalid vector's document is wrong only
+// where huma's discriminator of a oneOf reads nothing: a block, an inline
+// node, or a mark that is not an object, or whose type is not a string, which
+// huma lets through without validating it against a member, and which Parse
+// refuses with wrong_type at the value.
+func discriminated(t *testing.T, doc []byte, reason Reason, pointer string) bool {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal(doc, &v); err != nil || reason != WrongType {
+		return false
+	}
+	value, ok := resolve(v, pointer)
+	if !ok {
+		return false
+	}
+	at := pointer
+	if node, isType := strings.CutSuffix(pointer, "/type"); isType {
+		if _, isString := value.(string); isString {
+			return false
+		}
+		at = node
+	} else if _, isObject := value.(map[string]any); isObject {
+		return false
+	}
+	// at is an element of an array: of a node's content or marks.
+	i := strings.LastIndexByte(at, '/')
+	if _, err := strconv.Atoi(at[i+1:]); i < 0 || err != nil {
+		return false
+	}
+	j := strings.LastIndexByte(at[:i], '/')
+	if j < 0 {
+		return false
+	}
+	owner, _ := resolve(v, at[:j])
+	o, _ := owner.(map[string]any)
+	switch at[j+1 : i] {
+	case "marks":
+		return o != nil
+	case "content":
+		return o["type"] == nodeDoc || o["type"] == nodeListItem || o["type"] == nodeParagraph
+	}
+	return false
 }
 
 // nullAt returns the pointer of the first null in the JSON document doc, in
@@ -182,16 +243,45 @@ func init() {
 // humaValidator returns a function that validates a JSON document with huma,
 // against the schema that Doc gives huma, and returns the problems that it
 // finds. That schema is converted from the definitions of Schema, which
-// TestSchemaFile holds the published schema s to. A document that
-// encoding/json cannot decode, as one with a number too large for a double,
-// is refused, as the API refuses a body before huma validates it.
-func humaValidator(t *testing.T, s map[string]any) func(doc []byte) []error {
+// TestSchemaFile holds the published schema s to; when strict, without the
+// discriminators that Doc gives huma, of which JSON Schema has none, so that
+// it validates as the published schema does. A document that encoding/json
+// cannot decode, as one with a number too large for a double, is refused, as
+// the API refuses a body before huma validates it.
+func humaValidator(t testing.TB, s map[string]any, strict bool) func(doc []byte) []error {
 	t.Helper()
 	if !reflect.DeepEqual(s["$defs"], schemaDefinitions()) {
 		t.Fatal("the published schema's definitions are not those that Doc gives huma")
 	}
 	reg := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
 	root := huma.SchemaFromType(reg, reflect.TypeFor[Doc]())
+	discriminators := 0
+	var strip func(s *huma.Schema)
+	strip = func(s *huma.Schema) {
+		if s == nil {
+			return
+		}
+		if s.Discriminator != nil {
+			discriminators++
+			if strict {
+				s.Discriminator = nil
+			}
+		}
+		strip(s.Items)
+		for _, p := range s.Properties {
+			strip(p)
+		}
+		for _, o := range s.OneOf {
+			strip(o)
+		}
+	}
+	for _, rs := range reg.Map() {
+		strip(rs)
+	}
+	// A block's, an inline node's, and a mark's.
+	if discriminators != 3 {
+		t.Fatalf("the schema that Doc gives huma has %d discriminators, not 3", discriminators)
+	}
 	return func(doc []byte) []error {
 		var v any
 		if err := json.Unmarshal(doc, &v); err != nil {
@@ -251,6 +341,53 @@ func TestSchemaValidationCost(t *testing.T) {
 			t.Errorf("%s: huma took more than 10 seconds to validate %d bytes", name, len(doc))
 		}
 	}
+
+	// Each node is validated against the definition of its type alone, which
+	// a discriminator chooses, rather than against every member of a oneOf, so
+	// that a body of marked text costs huma about what a body of as many bytes
+	// of plain objects costs. Validating each inline node against each kind of
+	// inline node, and each of its marks against each kind of mark, made it
+	// cost twenty times as much: 0.9 s for the 5 MiB that the API takes.
+	type plainItem struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	type plainBody struct {
+		Items []plainItem `json:"items"`
+	}
+	const size = 2 << 20
+	node := `{"type":"text","text":"a","marks":[{"type":"bold"},{"type":"italic"},{"type":"strike"},` +
+		`{"type":"link","attrs":{"href":"https://example.com/"}}]}`
+	item := `{"type":"text","text":"a"}`
+	marked := `{"type":"doc","content":[{"type":"paragraph","content":[` +
+		strings.Join(slices.Repeat([]string{node}, size/(len(node)+1)), ",") + `]}]}`
+	plain := `{"items":[` + strings.Join(slices.Repeat([]string{item}, size/(len(item)+1)), ",") + `]}`
+	// cost returns the least time of three that huma takes to validate body
+	// against the schema of type typ.
+	cost := func(typ reflect.Type, body string) time.Duration {
+		r := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
+		s := huma.SchemaFromType(r, typ)
+		var v any
+		if err := json.Unmarshal([]byte(body), &v); err != nil {
+			t.Fatal(err)
+		}
+		least := time.Duration(math.MaxInt64)
+		for range 3 {
+			res := &huma.ValidateResult{}
+			start := time.Now()
+			huma.Validate(r, s, huma.NewPathBuffer([]byte{}, 0), huma.ModeWriteToServer, v, res)
+			least = min(least, time.Since(start))
+			if res.Errors != nil {
+				t.Fatalf("%s does not validate: %v", typ, res.Errors[0])
+			}
+		}
+		return least
+	}
+	markedCost, plainCost := cost(reflect.TypeFor[Doc](), marked), cost(reflect.TypeFor[plainBody](), plain)
+	if markedCost > 5*plainCost {
+		t.Errorf("huma took %v to validate %d bytes of marked text, and %v for as many bytes of plain objects",
+			markedCost, len(marked), plainCost)
+	}
 }
 
 // TestDocField checks that a request's body or a command's payload can hold
@@ -299,15 +436,33 @@ func TestDocField(t *testing.T) {
 		`{"text":"ab","type":"text"}],"type":"paragraph"}],"type":"listItem"}],"type":"bulletList"}],"type":"doc"}` {
 		t.Errorf("read %s", got)
 	}
-	for _, body := range []string{
-		`{"text":{"type":"doc","content":[{"type":"heading"}]}}`,
-		`{"text":{"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[` +
-			`{"type":"paragraph","content":[{"type":"text","text":"a","marks":[{"type":"underline"}]}]}]}]}]}}`,
-		`{"text":{"Type":"doc","content":[{"type":"paragraph"}]}}`,
-		`{"text":null}`,
+	// huma refuses a document at the value that is wrong, as the schema's
+	// discriminators have it validate each node against its type's
+	// definition alone, rather than at the outermost oneOf, whose members'
+	// errors it does not keep.
+	list := func(inline string) string {
+		return `{"text":{"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[` +
+			`{"type":"paragraph","content":[` + inline + `]}]}]}]}}`
+	}
+	const item = "text.content[0].content[0].content[0].content[0]"
+	for body, at := range map[string]string{
+		`{"text":{"type":"doc","content":[{"type":"heading"}]}}`:          "text.content[0]",
+		list(`{"type":"text","text":"a","marks":[{"type":"underline"}]}`): item + ".marks[0]",
+		list(`{"type":"text","text":"a","marks":[{"type":"link","attrs":{"href":"javascript:alert(1)"}}]}`): item +
+			".marks[0].attrs.href",
+		list(`{"type":"text","text":"a` + `\n"}`):                                  item + ".text",
+		list(`{"type":"mention","attrs":{"id":"var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"}}`): item + ".attrs.id",
+		`{"text":{"Type":"doc","content":[{"type":"paragraph"}]}}`:                 "text",
+		`{"text":null}`: "text",
 	} {
-		if validate(body) == nil {
+		problems := validate(body)
+		if len(problems) == 0 {
 			t.Errorf("%s validates", body)
+			continue
+		}
+		var detail *huma.ErrorDetail
+		if !errors.As(problems[0], &detail) || detail.Location != at {
+			t.Errorf("%s is refused at %v, not %s", body, problems, at)
 		}
 	}
 	p = payload{Text: Doc{Blocks: []Block{&Paragraph{Inlines: []Inline{&Text{Text: "kept"}}}}}}
@@ -375,6 +530,22 @@ func TestDocFieldOpenAPI(t *testing.T) {
 	if changes := apicontract.Breaking(d, d); len(changes) > 0 {
 		t.Errorf("the document breaks itself: %v", changes)
 	}
+	// The discriminators of a block's, an inline node's, and a mark's oneOf,
+	// which map each type to its definition, as apicontract checks.
+	schemas := d.Components.Schemas
+	for _, c := range []struct {
+		at     string
+		s      *apicontract.Schema
+		values int
+	}{
+		{"RichTextBlock", schemas["RichTextBlock"], 3},
+		{"RichTextInline", schemas["RichTextInline"], 4},
+		{"RichTextMarks.items", schemas["RichTextMarks"].Items, len(markOrder)},
+	} {
+		if disc := c.s.Discriminator; disc == nil || disc.PropertyName != "type" || len(disc.Mapping) != c.values {
+			t.Errorf("%s's discriminator is %+v", c.at, disc)
+		}
+	}
 	ts, err := apicontract.TypeScript(d, "")
 	if err != nil {
 		t.Fatal(err)
@@ -391,7 +562,7 @@ func TestDocFieldOpenAPI(t *testing.T) {
 // refuses for the characters that they cover, so that the schema is no looser
 // there than it says.
 func TestSchemaPatterns(t *testing.T) {
-	validate := humaValidator(t, publishedSchema(t))
+	validate := humaValidator(t, publishedSchema(t), true)
 	withText := func(text string) []byte {
 		s, _ := json.Marshal(text)
 		return fmt.Appendf(nil, `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":%s}]}]}`, s)

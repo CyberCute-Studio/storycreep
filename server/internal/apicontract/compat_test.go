@@ -727,6 +727,72 @@ func TestBreakingUnions(t *testing.T) {
 	}
 }
 
+// TestBreakingDiscriminator checks that a oneOf's discriminator, which huma's
+// validator reads to choose the member that it validates an object against,
+// breaks a client when it is added, removed, or changed in any way, in a
+// request or a response, and that the same one breaks nothing.
+func TestBreakingDiscriminator(t *testing.T) {
+	tagged := func(v string) *Schema {
+		return &Schema{Type: Types{"object"}, Required: []string{"type"}, AdditionalProperties: &Additional{},
+			Properties: map[string]*Schema{"type": {Enum: []json.RawMessage{raw(strconv.Quote(v))}}}}
+	}
+	// doc returns a document whose operation takes and answers with one of A
+	// and B, with the discriminator that maps each of mapping's values to the
+	// member named by the next, or none if mapping is nil.
+	doc := func(property string, mapping ...string) *Document {
+		union := func() *Schema {
+			s := &Schema{OneOf: []*Schema{{Ref: refPrefix + "A"}, {Ref: refPrefix + "B"}}}
+			if mapping != nil {
+				s.Discriminator = &Discriminator{PropertyName: property, Mapping: map[string]string{}}
+				for i := 0; i < len(mapping); i += 2 {
+					s.Discriminator.Mapping[mapping[i]] = refPrefix + mapping[i+1]
+				}
+			}
+			return s
+		}
+		return &Document{
+			OpenAPI: "3.1.0",
+			Paths: map[string]*PathItem{"/x": {Post: &Operation{
+				OperationID: "postX",
+				RequestBody: &RequestBody{Content: map[string]*MediaType{"application/json": {Schema: union()}}},
+				Responses: map[string]*Response{"200": {Content: map[string]*MediaType{"application/json": {
+					Schema: union(),
+				}}}},
+			}}},
+			Components: &Components{Schemas: map[string]*Schema{"A": tagged("a"), "B": tagged("b")}},
+		}
+	}
+	both := func(from, to string) []string {
+		return []string{
+			"POST /x: the request body: the discriminator changed from " + from + " to " + to,
+			"POST /x: the response 200 body: the discriminator changed from " + from + " to " + to,
+		}
+	}
+	tests := []struct {
+		name       string
+		base, head *Document
+		want       []string
+	}{
+		{"the same discriminator", doc("type", "a", "A", "b", "B"), doc("type", "b", "B", "a", "A"), nil},
+		{"no discriminator", doc(""), doc(""), nil},
+		{"a discriminator is added", doc(""), doc("type", "a", "A", "b", "B"),
+			both("none", `"type" {"a": A, "b": B}`)},
+		{"a discriminator is removed", doc("type", "a", "A", "b", "B"), doc(""),
+			both(`"type" {"a": A, "b": B}`, "none")},
+		{"a discriminator reads another property", doc("type", "a", "A"), doc("kind", "a", "A"),
+			both(`"type" {"a": A}`, `"kind" {"a": A}`)},
+		{"a discriminator maps a value to another member", doc("type", "a", "A", "b", "B"),
+			doc("type", "a", "A", "b", "A"), both(`"type" {"a": A, "b": B}`, `"type" {"a": A, "b": A}`)},
+		{"a discriminator gains a value", doc("type", "a", "A"), doc("type", "a", "A", "b", "B"),
+			both(`"type" {"a": A}`, `"type" {"a": A, "b": B}`)},
+	}
+	for _, tt := range tests {
+		if got := messages(Breaking(tt.base, tt.head)); !slices.Equal(got, tt.want) {
+			t.Errorf("%s: Breaking = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
 // TestBreakingThroughAnAlias checks that a named schema that only refers to
 // another, as an alias does, is compared as the schema it names.
 func TestBreakingThroughAnAlias(t *testing.T) {

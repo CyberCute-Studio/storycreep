@@ -180,6 +180,21 @@ type Schema struct {
 	OneOf                []*Schema          `json:"oneOf"`
 	AnyOf                []*Schema          `json:"anyOf"`
 	AllOf                []*Schema          `json:"allOf"`
+	// Discriminator, beside a oneOf, names the property whose value chooses
+	// the member that huma's validator validates a value against.
+	Discriminator *Discriminator `json:"discriminator"`
+}
+
+// Discriminator is the discriminator of a oneOf, as huma writes it: the
+// property whose value, a string, chooses the member that huma's validator
+// validates an object against, by Mapping, the reference to the member for
+// each value. huma validates an object whose value the mapping lacks against
+// the oneOf, refuses one without the property, and lets through a value that
+// is not an object or whose property is not a string, without reading any
+// member.
+type Discriminator struct {
+	PropertyName string            `json:"propertyName"`
+	Mapping      map[string]string `json:"mapping"`
 }
 
 // Types is the type keyword, which is one type name or a list of them, such
@@ -477,11 +492,28 @@ func (d *Document) checkMediaType(m *MediaType) error {
 var typeNames = []string{"string", "integer", "number", "boolean", "array", "object", "null"}
 
 // checkSchema checks that every type in s is one of JSON Schema's, every
-// property that s requires is one that it names, and every reference names a
-// schema that exists and has beside it only the keywords that annotate it.
+// property that s requires is one that it names, every reference names a
+// schema that exists and has beside it only the keywords that annotate it,
+// and a discriminator is beside a oneOf, names a property, and maps each
+// value to a member of the oneOf.
 func (d *Document) checkSchema(s *Schema) error {
 	if s == nil {
 		return nil
+	}
+	if disc := s.Discriminator; disc != nil {
+		// huma's validator reads a discriminator only beside a oneOf.
+		if len(s.OneOf) == 0 {
+			return errors.New("it has a discriminator without a oneOf")
+		}
+		if disc.PropertyName == "" {
+			return errors.New("its discriminator names no property")
+		}
+		for _, value := range slices.Sorted(maps.Keys(disc.Mapping)) {
+			ref := disc.Mapping[value]
+			if !slices.ContainsFunc(s.OneOf, func(m *Schema) bool { return m != nil && m.Ref == ref }) {
+				return fmt.Errorf("its discriminator maps %q to %s, which is no member of its oneOf", value, ref)
+			}
+		}
 	}
 	for _, t := range s.Type {
 		if !slices.Contains(typeNames, t) {

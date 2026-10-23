@@ -65,6 +65,18 @@ func TestLoadRefuses(t *testing.T) {
 			`"required": ["name", "colour"]`, "schema ThingInput: it requires the property colour, which it does not name"},
 		{"references in a cycle", `"schemas": {`, `"schemas": {"A": {"$ref": "#/components/schemas/B"}, ` +
 			`"B": {"$ref": "#/components/schemas/A"},`, "schema A: its references go round in a cycle"},
+		{"a discriminator without a oneOf", `"maxLength": 1024`,
+			`"maxLength": 1024, "discriminator": {"propertyName": "kind"}`, "a discriminator without a oneOf"},
+		{"a discriminator that names no property", `"$ref": "#/components/schemas/Thing"`,
+			`"oneOf": [{"$ref": "#/components/schemas/Thing"}], "discriminator": {"mapping": {}}`,
+			"its discriminator names no property"},
+		{"a discriminator that maps a value to no member", `"$ref": "#/components/schemas/Thing"`,
+			`"oneOf": [{"$ref": "#/components/schemas/Thing"}], "discriminator": {"propertyName": "kind", ` +
+				`"mapping": {"note": "#/components/schemas/ThingInput"}}`,
+			`maps "note" to #/components/schemas/ThingInput, which is no member of its oneOf`},
+		{"an unknown keyword of a discriminator", `"$ref": "#/components/schemas/Thing"`,
+			`"oneOf": [{"$ref": "#/components/schemas/Thing"}], "discriminator": {"propertyName": "kind", "x": 1}`,
+			`unknown field "x"`},
 	}
 	for _, tt := range tests {
 		if !strings.Contains(string(base), tt.old) {
@@ -87,6 +99,19 @@ func TestLoadRefuses(t *testing.T) {
 		`"schemas": {"A": {"$ref": "#/components/schemas/B"}, "B": {"$ref": "#/components/schemas/Thing"},`, 1)
 	if _, err := Load([]byte(alias)); err != nil {
 		t.Errorf("a chain of aliases: Load = %v, want no error", err)
+	}
+	// A discriminator beside a oneOf, as huma writes one, which the
+	// TypeScript client's types leave out, as they are the oneOf's union.
+	discriminated := strings.Replace(string(base), `"$ref": "#/components/schemas/Thing"`,
+		`"oneOf": [{"$ref": "#/components/schemas/Thing"}, {"$ref": "#/components/schemas/ThingInput"}], `+
+			`"discriminator": {"propertyName": "kind", "mapping": {"note": "#/components/schemas/Thing", `+
+			`"choice": "#/components/schemas/ThingInput"}}`, 1)
+	d, err := Load([]byte(discriminated))
+	if err != nil {
+		t.Fatalf("a discriminator beside a oneOf: Load = %v, want no error", err)
+	}
+	if ts, err := TypeScript(d, ""); err != nil || !strings.Contains(string(ts), "Thing | ThingInput") {
+		t.Errorf("a discriminator beside a oneOf: TypeScript = %v, want the union Thing | ThingInput", err)
 	}
 
 	// Of two problems, Load names the first, in the order of the paths and
