@@ -23,7 +23,6 @@ import (
 	"io"
 	"math"
 	"net/netip"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -39,7 +38,7 @@ import (
 const (
 	// MaxBytes is the most bytes of a document's JSON, counted without the
 	// white space between its tokens and with each escape in a string
-	// counted as the character that it stands for (jsonLength), so that
+	// counted as the character that it stands for (scan), so that
 	// however the JSON is laid out, as PostgreSQL's jsonb writes it, with a
 	// space after each colon and comma, and whichever characters its encoder
 	// escapes, as json.Marshal escapes <, >, and &, the same document is
@@ -486,17 +485,23 @@ func scan(data []byte) (length int, lone bool) {
 func hex4(digits []byte) rune {
 	var r rune
 	for _, c := range digits {
-		r <<= 4
-		switch {
-		case c >= '0' && c <= '9':
-			r |= rune(c - '0')
-		case c >= 'a' && c <= 'f':
-			r |= rune(c - 'a' + 10)
-		case c >= 'A' && c <= 'F':
-			r |= rune(c - 'A' + 10)
-		}
+		r = r<<4 | rune(hexValue(c))
 	}
 	return r
+}
+
+// hexValue returns the value of a hexadecimal digit, in either case, or 0 for
+// a byte that is not one.
+func hexValue(c byte) byte {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0'
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10
+	}
+	return 0
 }
 
 // UnmarshalJSON reads a document as Parse does, so that a request's or a
@@ -1182,7 +1187,7 @@ func (p *parser) link(mo map[string]any) (string, error) {
 // character that a renderer shows nothing of (Default_Ignorable_Code_Point,
 // as U+3164 HANGUL FILLER), which would hide or reorder what a reader sees of
 // it, and each % in it starts an escape, % and two hexadecimal digits
-// (escapesValid). It is a mailto URL with an address and only
+// (unescape). It is a mailto URL with an address and only
 // the fields that mailtoProblem takes, or an http or https URL whose
 // authority, after the //, is a host of ASCII and a port, as authorityProblem
 // reads it. A scheme is read regardless of ASCII case.
@@ -1205,7 +1210,7 @@ func CheckHref(href string) string {
 	}
 	// A mailto link's address and values are read, each apart, by unescape:
 	// an escaped delimiter, as %26, is in a value, not between two.
-	if !escapesValid(href) {
+	if _, valid, _ := unescape(href); !valid {
 		return "holds a % that starts no escape of two hexadecimal digits"
 	}
 	scheme, rest, _ := strings.Cut(href, ":")
@@ -1268,10 +1273,16 @@ var mailtoFields = []string{"bcc", "body", "cc", "subject", "to"}
 // mailto:keeper@example.com?subject=a%0D%0ABcc:evil@example.com, or that a
 // reader of lines may take for one, as Python's str.splitlines takes NEL,
 // %C2%85, and LINE SEPARATOR, %E2%80%A8, or that would reorder the subject
-// that a mail client shows. A subject may escape a tab and other white space,
-// and the format characters that are not bidirectional controls, as text may
-// hold them, and a body any byte: its line breaks are %0D%0A, as RFC 6068
-// writes them.
+// that a mail client shows; nor, once its escapes are read, does it hold an
+// escape (holdsEscape), as subject=a%250D%250ABcc:evil@example.com does,
+// which a mail client that reads escapes twice, against RFC 6068, as
+// addressesProblem guards an address against, would read as a line break,
+// so that reading a subject's escapes twice reads what reading them once
+// does: a % that a subject escapes, %25, is followed by what is not two
+// hexadecimal digits, as in 50%25%20off. A subject may escape a tab and other
+// white space, and the format characters that are not bidirectional controls,
+// as text may hold them, and a body any byte: its line breaks are %0D%0A, as
+// RFC 6068 writes them.
 func mailtoProblem(rest string) string {
 	switch {
 	case strings.Contains(rest, "#"):
@@ -1303,14 +1314,18 @@ func mailtoProblem(rest string) string {
 			return "has a field whose value holds a ? or an =, after which a mail client could read a field; " +
 				"they are escaped, %3F and %3D"
 		case name == "subject":
-			decoded, ok := unescape(value)
-			if !ok {
+			// CheckHref has checked that each % starts an escape.
+			decoded, _, _ := unescape(value)
+			switch {
+			case !utf8.ValidString(decoded):
 				return "has a subject that escapes bytes that are not UTF-8, which a mail client could read as " +
 					"another character, as a control character"
-			}
-			if strings.ContainsFunc(decoded, isControl) {
+			case strings.ContainsFunc(decoded, isControl):
 				return "has a subject that escapes a control character, a bidirectional control, or a line or " +
 					"paragraph separator, which text may not hold, and which a mail client could write into a header"
+			case holdsEscape(decoded):
+				return "has a subject that escapes a % (%25) followed by two hexadecimal digits, which a mail " +
+					"client that reads escapes twice would read as another escape, as %250D%250A as a line break"
 			}
 		case name == "to" || name == "cc" || name == "bcc":
 			if problem := addressesProblem(value); problem != "" {
@@ -1341,7 +1356,7 @@ func mailtoProblem(rest string) string {
 // bar or an editor's link may show it, and a client that reads escapes twice,
 // against RFC 6068, reads it otherwise again, so none of its escapes stands
 // for a character that would have those read another address than the one
-// checked (escapesPlain): one of RFC 3986's unreserved characters, an ASCII
+// checked (unescape's plain): one of RFC 3986's unreserved characters, an ASCII
 // letter or digit, a -, a ., a _, or a ~, which a URL never needs to escape,
 // and of which, but _ and ~, a domain's labels are written, so that a domain
 // reads as the link writes it, rather than as paypal.com in
@@ -1369,9 +1384,10 @@ func mailtoProblem(rest string) string {
 // whatever the version of its Unicode tables. An internationalized domain is
 // written as IDNA writes it in ASCII, as keeper@xn--caf-dma.example.
 func addressesProblem(s string) string {
-	decoded, ok := unescape(s)
+	// CheckHref has checked that each % starts an escape.
+	decoded, _, plain := unescape(s)
 	switch {
-	case !ok:
+	case !utf8.ValidString(decoded):
 		return "escapes bytes that are not UTF-8, which a mail client could read as another character, as a " +
 			"control character"
 	case strings.ContainsFunc(decoded, hidden):
@@ -1384,7 +1400,7 @@ func addressesProblem(s string) string {
 			"a in a domain, or like a delimiter of an address, as U+FF20 FULLWIDTH COMMERCIAL AT looks like an @, " +
 			"or show as a blank that hides the domain: an address is ASCII, and an internationalized domain is " +
 			"written as IDNA writes it in ASCII (xn--)"
-	case escapesPlain(s):
+	case plain:
 		return "escapes a letter, a digit, a -, a ., a _, or a ~, which a URL never needs to escape, and which would " +
 			"have the link show a domain that the message does not go to, as paypal.com in " +
 			"support@paypal.com%2Eevil.example, or a %, which a mail client that reads escapes twice would read as " +
@@ -1403,23 +1419,6 @@ func addressesProblem(s string) string {
 		}
 	}
 	return ""
-}
-
-// escapesPlain reports whether an escape of s, each of whose % starts one
-// (escapesValid), stands for one of RFC 3986's unreserved characters, an
-// ASCII letter or digit, a -, a ., a _, or a ~, or for a % (addressesProblem).
-func escapesPlain(s string) bool {
-	for i := 0; i+2 < len(s); i++ {
-		if s[i] != '%' {
-			continue
-		}
-		c := rune(hex4([]byte(s[i+1 : i+3])))
-		if 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || isDigit(c) || strings.ContainsRune("-._~%", c) {
-			return true
-		}
-		i += 2
-	}
-	return false
 }
 
 // isDomain reports whether a mailto link's domain is one that a message can
@@ -1526,30 +1525,51 @@ func hidden(r rune) bool {
 		unicode.In(r, unicode.Cf, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector)
 }
 
-// escapesValid reports whether each % of s starts an escape, % and two
-// hexadecimal digits, as url.PathUnescape reads them, without writing what
-// they stand for.
-func escapesValid(s string) bool {
+// unescape reads the escapes of a link, or of a part of a mailto link, each %
+// and two hexadecimal digits, in either case, as RFC 3986 has them, and is
+// the only reader of them, so that what CheckHref checks of an escape is what
+// it reads of it. It returns s with each escape read as the byte that it
+// stands for, as url.PathUnescape returns it, and reports whether each % of
+// s starts an escape (valid), and whether an escape stands for one of
+// RFC 3986's unreserved characters, an ASCII letter or digit, a -, a ., a _,
+// or a ~, or for a % (plain), which an address does not escape
+// (addressesProblem). It does not check that the bytes are UTF-8, as
+// RFC 6068 has a mailto link's escapes but a body's, and as JavaScript's
+// decodeURIComponent requires, which its callers check. When a % starts no
+// escape, decoded is "" and plain false.
+func unescape(s string) (decoded string, valid, plain bool) {
+	if !strings.Contains(s, "%") {
+		return s, true, false
+	}
+	b := make([]byte, 0, len(s))
 	for i := 0; i < len(s); i++ {
 		if s[i] != '%' {
+			b = append(b, s[i])
 			continue
 		}
 		if i+2 >= len(s) || !isHexDigit(rune(s[i+1])) || !isHexDigit(rune(s[i+2])) {
-			return false
+			return "", false, false
 		}
+		c := hexValue(s[i+1])<<4 | hexValue(s[i+2])
+		r := rune(c)
+		plain = plain || 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || isDigit(r) || strings.ContainsRune("-._~%", r)
+		b = append(b, c)
 		i += 2
 	}
-	return true
+	return string(b), true, plain
 }
 
-// unescape returns s, whose every % starts an escape, with each escape read
-// as the byte that it stands for, with its digits in either case, and reports
-// whether those bytes, with the characters between them, are UTF-8, as
-// RFC 6068 has a mailto link's escapes, and as JavaScript's
-// decodeURIComponent requires.
-func unescape(s string) (string, bool) {
-	decoded, err := url.PathUnescape(s)
-	return decoded, err == nil && utf8.ValidString(decoded)
+// holdsEscape reports whether s, a mailto link's subject once its escapes are
+// read, still holds an escape, % and two hexadecimal digits in either case,
+// which a mail client that reads escapes twice would read again
+// (mailtoProblem).
+func holdsEscape(s string) bool {
+	for i := 0; i+2 < len(s); i++ {
+		if s[i] == '%' && isHexDigit(rune(s[i+1])) && isHexDigit(rune(s[i+2])) {
+			return true
+		}
+	}
+	return false
 }
 
 // maxPort is the highest port, which a browser's URL parser takes: the

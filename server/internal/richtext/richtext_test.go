@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"net/url"
 	"runtime"
 	"slices"
 	"strconv"
@@ -232,10 +234,9 @@ func TestLimits(t *testing.T) {
 		head, tail := `{"type":"doc","content":[{"type":"paragraph","content":[`, `{"type":"text","text":"ab"}]}]}`
 		n := (MaxBytes - len(head) - len(tail)) / len(node)
 		doc := []byte(head + strings.Repeat(node, n) + tail)
-		var before, after runtime.MemStats
-		runtime.ReadMemStats(&before)
-		parsed, err := Parse(doc)
-		runtime.ReadMemStats(&after)
+		var parsed *Doc
+		var err error
+		used := allocated(func() { parsed, err = Parse(doc) })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -244,8 +245,8 @@ func TestLimits(t *testing.T) {
 		}
 		// Reading the JSON allocates about 20 times its size; joining
 		// each text onto the run so far allocated gigabytes.
-		if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 100*MaxBytes {
-			t.Errorf("Parse allocated %d MB to join %d texts", allocated>>20, n+1)
+		if used > 100*MaxBytes {
+			t.Errorf("Parse allocated %d MB to join %d texts", used>>20, n+1)
 		}
 	})
 	t.Run("link", func(t *testing.T) {
@@ -688,10 +689,10 @@ func TestPlainTextBuilt(t *testing.T) {
 // but in a body, no hidden character, letter, digit, -, ., or % in an address
 // or a to, cc, or bcc, which are addresses as RFC 6068 has them, without a
 // display name, a comment, or quotes, in ASCII, with domains that a message
-// can be sent to, and no
-// character in a subject that text may not hold, and nothing that could run a
-// script or read a file; and no link that holds a hidden character, as one
-// that a renderer shows nothing of.
+// can be sent to, and no character in a subject that text may not hold, nor an
+// escape once its escapes are read, and nothing that could run a script or
+// read a file; and no link that holds a hidden character, as one that a
+// renderer shows nothing of.
 //
 // Verifies: NFR-SEC-08
 func TestCheckHref(t *testing.T) {
@@ -764,6 +765,11 @@ func TestCheckHref(t *testing.T) {
 		// subject, as text may hold one.
 		"mailto:keeper@example.com?subject=Light%20on&body=Come%0D%0Aup%09now&BODY=%0d%0a%7f",
 		"mailto:keeper@example.com?subject=%7E%20%25%09",
+		// A subject's %, escaped, followed by what is not two hexadecimal
+		// digits, which reading the subject's escapes again leaves as it is;
+		// and a body's, followed by what is.
+		"mailto:keeper@example.com?subject=50%25%20off%2C%20100%25",
+		"mailto:keeper@example.com?subject=%25zz%25A%25%25&body=%250D%250A",
 		// Escaped characters beyond ASCII, of which a body may hold the line
 		// and paragraph separators, the C1 control characters, and the
 		// bidirectional controls too, and a subject white space and the format
@@ -859,6 +865,14 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com?subject=Light%C2%85Bcc:evil@example.com",
 		"mailto:keeper@example.com?subject=Light%e2%80%a8Bcc:evil@example.com",
 		"mailto:keeper@example.com%E2%80%A9Bcc:evil@example.com",
+		// Or a subject that, once its escapes are read, holds an escape,
+		// which a mail client that reads escapes twice reads again, as a line
+		// break that starts another header, or a bidirectional control,
+		// however its % and digits are escaped.
+		"mailto:keeper@example.com?subject=Light%250D%250ABcc:%2520evil@example.com",
+		"mailto:keeper@example.com?subject=Light%25E2%2580%25AE",
+		"mailto:keeper@example.com?subject=%25%30%61",
+		"mailto:keeper@example.com?SUBJECT=100%2541",
 		"mailto:keeper@example.com?cc=a@example.com%C2%9F",
 		"mailto:keeper@example.com?to=a@example.com%c2%80",
 		// A delimiter where it delimits nothing, after which a mail client
@@ -1156,6 +1170,47 @@ func TestCheckHref(t *testing.T) {
 	}
 }
 
+// FuzzUnescape checks that unescape, the one reader of a link's escapes,
+// reads them as url.PathUnescape does, refuses a % that starts no escape as
+// it does, and reports an escape of one of RFC 3986's unreserved characters,
+// which url.QueryEscape leaves as they are, or of a %, exactly when one is
+// there.
+func FuzzUnescape(f *testing.F) {
+	for _, s := range []string{
+		"", "a", "%", "%2", "a%", "%zz", "%g0", "a%41b", "%2e%7E%5f%2D%25", "%2F%3a%40%2b", "%E2%80%AE",
+		"%c3%a9", "+%20+", "100%", "%%41", "%25%30%61", "%FF%00",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		decoded, valid, plain := unescape(s)
+		want, err := url.PathUnescape(s)
+		switch {
+		case valid != (err == nil):
+			t.Fatalf("unescape(%q) reports valid %v, and url.PathUnescape the error %v", s, valid, err)
+		case !valid:
+			if decoded != "" || plain {
+				t.Fatalf("unescape(%q) = %q, %v, %v, want \"\", false, false", s, decoded, valid, plain)
+			}
+			return
+		case decoded != want:
+			t.Fatalf("unescape(%q) = %q, want %q", s, decoded, want)
+		}
+		wantPlain := false
+		for _, escape := range strings.Split(s, "%")[1:] {
+			b, err := strconv.ParseUint(escape[:2], 16, 8)
+			if err != nil {
+				t.Fatalf("unescape(%q) reads %%%s as an escape", s, escape[:2])
+			}
+			c := string([]byte{byte(b)})
+			wantPlain = wantPlain || c == "%" || url.QueryEscape(c) == c
+		}
+		if plain != wantPlain {
+			t.Fatalf("unescape(%q) reports plain %v, want %v", s, plain, wantPlain)
+		}
+	})
+}
+
 // TestLoneSurrogate checks that a string that escapes a lone surrogate is
 // refused wherever it is, which encoding/json would read as U+FFFD, and that
 // an escaped pair is the character it stands for.
@@ -1426,19 +1481,33 @@ func TestPreviewOfLongText(t *testing.T) {
 		"a " + strings.Repeat(string(rune(0x3042)), 4<<20),
 		strings.Repeat(" ", 4<<20) + strings.Repeat("ab ", 4<<20),
 	} {
-		var before, after runtime.MemStats
-		runtime.ReadMemStats(&before)
-		got := Preview(plain)
-		runtime.ReadMemStats(&after)
+		var got string
+		used := allocated(func() { got = Preview(plain) })
 		if !strings.HasSuffix(got, "…") || utf8.RuneCountInString(got) > PreviewChars+1 {
 			t.Errorf("Preview of %d bytes = %q", len(plain), got)
 		}
 		// The preview's own allocations are a few hundred bytes; writing
 		// the word in which the first PreviewChars end allocated megabytes.
-		if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 64<<10 {
-			t.Errorf("Preview of %d bytes allocated %d bytes", len(plain), allocated)
+		if used > 64<<10 {
+			t.Errorf("Preview of %d bytes allocated %d bytes", len(plain), used)
 		}
 	}
+}
+
+// allocated returns the fewest bytes that the process allocated in each of
+// three runs of f, so that what another goroutine allocates during a run, as
+// the runtime's own or one that an earlier test left running, which the
+// runtime counts too, fails no test unless it does so during every run.
+func allocated(f func()) uint64 {
+	least := uint64(math.MaxUint64)
+	for range 3 {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		f()
+		runtime.ReadMemStats(&after)
+		least = min(least, after.TotalAlloc-before.TotalAlloc)
+	}
+	return least
 }
 
 // uncanonical returns a copy of blocks out of their canonical form, as a

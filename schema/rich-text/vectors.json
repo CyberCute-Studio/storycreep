@@ -1513,6 +1513,43 @@
       "hash": "sha256:3f00927a719345edd4a8316599d3b328857987547f8884306861161ffa09647e"
     },
     {
+      "note": "a mailto link whose subject escapes a % (%25) followed by what is not two hexadecimal digits, so that a mail client that reads escapes twice reads the subject that reading them once does, 50% off",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?subject=50%25%20off"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "Write",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "href": "mailto:keeper@example.com?subject=50%25%20off",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "Write"
+        }
+      ],
+      "text": "Write",
+      "preview": "Write",
+      "words": 1,
+      "hash": "sha256:3f00927a719345edd4a8316599d3b328857987547f8884306861161ffa09647e"
+    },
+    {
       "note": "a mailto link to an IPv4 address literal whose brackets are escaped, as RFC 6068 has them",
       "doc": {
         "content": [
@@ -4626,6 +4663,34 @@
                     "type": "link",
                     "attrs": {
                       "href": "mailto:keeper@example.com?subject=Light%C2%85Bcc:evil@example.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose subject escapes a % (%25) followed by two hexadecimal digits, so that, once its escapes are read, it holds an escape, which a mail client that reads escapes twice reads as a line break that starts another header",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?subject=Light%250D%250ABcc:evil@example.com"
                     }
                   }
                 ]
