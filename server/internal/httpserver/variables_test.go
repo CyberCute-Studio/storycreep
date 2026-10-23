@@ -161,6 +161,10 @@ func TestVariableRefusals(t *testing.T) {
 			"body.commands[0].payload.default", ""},
 		{[]wireCommand{create("count", "int", []int{3})}, http.StatusUnprocessableEntity, api.CodeValidationFailed,
 			"body.commands[0].payload.default", ""},
+		// A number beyond a double's range is no number that the API reads, so
+		// it refuses the body before a command reads its default.
+		{[]wireCommand{create("far", "float", json.RawMessage("-1e400"))}, http.StatusBadRequest,
+			api.CodeInvalidRequest, "body", ""},
 		{[]wireCommand{variableCommand("variable.set_scope", map[string]string{"id": taken, "scope": "board",
 			"board_id": newBoardID()})}, http.StatusUnprocessableEntity, api.CodeValidationFailed,
 			"body.commands[0].payload.board_id", ""},

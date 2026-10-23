@@ -56,7 +56,7 @@ type createPayload struct {
 	Type         string `json:"type" enum:"bool,int,float,string" doc:"The variable's type"`
 	Scope        string `json:"scope" enum:"global,board" doc:"Who reads the variable: every board's expressions, for global, or only its board's, for board (PRD FR-VAR-02). A board's variable keeps its value across the board's entries, as a global does, unless reset_on_enter is set."`
 	BoardID      string `json:"board_id,omitempty" doc:"The ID of the variable's board, which is not in the project's trash, if scope is board. A global variable has none."`
-	Default      Value  `json:"default,omitzero" doc:"The variable's default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. Without it, the type's zero value: false, 0, 0.0, or the empty string."`
+	Default      Value  `json:"default,omitzero" doc:"The variable's default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number beyond a double's range, which is no number that the API reads, is answered with 400 invalid_request. Without it, the type's zero value: false, 0, 0.0, or the empty string."`
 	Description  string `json:"description,omitempty" maxLength:"2000" doc:"The variable's description, of at most 2000 characters, without white space around it, and without control characters but line feeds and tabs. Without it, the variable has none."`
 	ResetOnEnter bool   `json:"reset_on_enter,omitempty" doc:"Whether the variable is reset to its default each time the flow enters its board (PRD FR-VAR-02, §5.8.5), which only a board's variable may be. Without it, false."`
 	FolderID     string `json:"folder_id,omitempty" doc:"The ID of the folder of variables that the variable goes into, which is not deleted. Without it, the variable goes at the top."`
@@ -78,14 +78,14 @@ type describePayload struct {
 // defaultPayload is SetDefault's payload.
 type defaultPayload struct {
 	ID      string `json:"id" doc:"The variable's ID"`
-	Default Value  `json:"default" doc:"The variable's new default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed."`
+	Default Value  `json:"default" doc:"The variable's new default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number beyond a double's range, which is no number that the API reads, is answered with 400 invalid_request."`
 }
 
 // retypePayload is Retype's payload.
 type retypePayload struct {
 	ID      string `json:"id" doc:"The variable's ID"`
 	Type    string `json:"type" enum:"bool,int,float,string" doc:"The variable's new type"`
-	Default Value  `json:"default,omitzero" doc:"The variable's default of its new type, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. Without it, the type's zero value: false, 0, 0.0, or the empty string."`
+	Default Value  `json:"default,omitzero" doc:"The variable's default of its new type, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number beyond a double's range, which is no number that the API reads, is answered with 400 invalid_request. Without it, the type's zero value: false, 0, 0.0, or the empty string."`
 }
 
 // scopePayload is SetScope's payload.
@@ -205,10 +205,15 @@ func Register(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[describePayload]{
 		Type: Describe, Capability: op, Scope: sc, Touches: variable,
-		Check: func(p describePayload) input.FieldErrors {
-			return append(entityID(ids.Variable, "id", p.ID), field("description",
-				checkDescription(p.Description))...)
-		},
+		// Apply checks the description, rather than Check, which the pipeline
+		// runs on the step of the inverse too, so that the pipeline takes the
+		// inverse of a change of a stored description that input.CheckTrimmedText
+		// refuses, as a row that the pipeline did not write or a later change of
+		// input.IsControl leaves, which Apply then refuses as an undo applies it,
+		// rather than fail every change of the description, as SetDefault and
+		// Retype take a stored default. The database holds a description to the
+		// length that the payload's schema allows.
+		Check: func(p describePayload) input.FieldErrors { return entityID(ids.Variable, "id", p.ID) },
 		Inverse: func(ctx context.Context, tx *commands.Tx, p describePayload) ([]commands.Step, error) {
 			v, err := liveVariable(ctx, tx, p.ID)
 			if err != nil {
@@ -221,6 +226,9 @@ func Register(r *commands.Registry) {
 			v, err := liveVariable(ctx, tx, p.ID)
 			if err != nil {
 				return err
+			}
+			if problem := checkDescription(p.Description); problem != "" {
+				return commands.Refuse("description", problem, nil)
 			}
 			return changed(tx, v.ID)(queries.New(tx).UpdateVariableDescription(ctx,
 				queries.UpdateVariableDescriptionParams{Description: p.Description, UpdatedBy: by(tx),

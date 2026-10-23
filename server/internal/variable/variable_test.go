@@ -511,6 +511,47 @@ func TestDefaults(t *testing.T) {
 	f.must(t, cmd{variable.SetDefault, map[string]any{"id": s.ID, "default": "plain"}})
 }
 
+// TestDescriptions checks that a variable's description is a text of at most
+// MaxDescriptionLength characters, without white space around it, and without
+// control characters but line feeds and tabs, which a create and a change of
+// the description check, at the payload's description, and that a stored
+// description that the check refuses, as a row that the pipeline did not
+// write, or a later change of the check, leaves, can be changed, though not
+// set back.
+func TestDescriptions(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	_, err := f.apply(t, newVariable("refused", map[string]any{"description": " padded"}))
+	invalidAt(t, err, "payload.description")
+	v := f.create(t, "rumours", map[string]any{"description": "What the harbour knows"})
+	for _, d := range []string{" padded", "padded\n", "bell\a"} {
+		_, err := f.apply(t, cmd{variable.Describe, map[string]any{"id": v.ID, "description": d}})
+		if r := refused(t, err); r.Field != "description" || r.Reason != nil {
+			t.Errorf("the description %q was refused for %v at %q", d, r.Reason, r.Field)
+		}
+	}
+	_, err = f.apply(t, cmd{variable.Describe, map[string]any{"id": v.ID,
+		"description": strings.Repeat("d", variable.MaxDescriptionLength+1)}})
+	invalidAt(t, err, "payload.description")
+	f.must(t, cmd{variable.Describe, map[string]any{"id": v.ID, "description": "What\n\tthe harbour knows"}})
+	if got := f.get(t, v.ID).Description; got != "What\n\tthe harbour knows" {
+		t.Errorf("the variable's description is %q", got)
+	}
+	if _, err := f.d.Admin(t).Exec(context.Background(), `UPDATE variable SET description = 'a' || chr(7) || 'b'
+		WHERE id = $1`, decodeID(t, ids.Variable, v.ID)); err != nil {
+		t.Fatal(err)
+	}
+	res := f.must(t, cmd{variable.Describe, map[string]any{"id": v.ID, "description": "plain"}})
+	if got := f.get(t, v.ID).Description; got != "plain" {
+		t.Errorf("the description that replaced a stored one with a control character is %q", got)
+	}
+	_, err = f.pipeline.Apply(context.Background(), f.actor(), f.project, f.inverse(t, res.Seq))
+	if r := refused(t, err); r.Field != "description" {
+		t.Errorf("the undo of the change of a stored description with a control character was refused at %q",
+			r.Field)
+	}
+}
+
 // must returns b, or panics with err.
 func must(b []byte, err error) []byte {
 	if err != nil {
@@ -913,9 +954,10 @@ func TestNotFound(t *testing.T) {
 // TestEnumerations checks that the database takes every type and scope of a
 // variable that the package lists, which their schemas take too
 // (TestSchemaEnums), refuses as a key every reserved word that package ident
-// lists, as the commands do (FR-VAR-01 AC1), and refuses a default that is not
-// of its variable's type (AC2), so that a word or a type added to one list and
-// not to the database's checks fails.
+// lists, as the commands do (FR-VAR-01 AC1), refuses a default that is not of
+// its variable's type (AC2), and holds a description to MaxDescriptionLength
+// characters, as variable.describe's payload, so that a word, a type, or a
+// limit changed in one place and not in the database's checks fails.
 //
 // Verifies: FR-VAR-01/AC1, FR-VAR-01/AC2
 func TestEnumerations(t *testing.T) {
@@ -954,6 +996,10 @@ func TestEnumerations(t *testing.T) {
 		"true": false, "null": false,
 	} {
 		check("UPDATE variable SET default_value = $1::jsonb WHERE id = $2", raw, want)
+	}
+	// Characters, not bytes, as the payload's schema counts them.
+	for n, want := range map[int]bool{variable.MaxDescriptionLength: true, variable.MaxDescriptionLength + 1: false} {
+		check("UPDATE variable SET description = $1 WHERE id = $2", strings.Repeat("é", n), want)
 	}
 }
 

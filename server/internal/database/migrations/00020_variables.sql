@@ -49,7 +49,10 @@ CREATE TABLE variable (
 	),
 	type text NOT NULL CHECK (type IN ('bool', 'int', 'float', 'string')),
 	default_value jsonb NOT NULL,
-	description text NOT NULL DEFAULT '',
+	-- At most 2,000 characters, as variable.describe's payload takes, so that
+	-- its undo, which sets the stored description back, holds none that the
+	-- payload's schema refuses (package variable, MaxDescriptionLength).
+	description text NOT NULL DEFAULT '' CHECK (length(description) <= 2000),
 	reset_on_enter boolean NOT NULL DEFAULT false,
 	-- Incremented by every command that changes the variable.
 	rev bigint NOT NULL DEFAULT 1 CHECK (rev >= 1),

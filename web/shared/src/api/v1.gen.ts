@@ -1149,7 +1149,7 @@ export interface VariableCreateCommand {
 export interface VariableCreatePayload {
   /** The ID of the variable's board, which is not in the project's trash, if scope is board. A global variable has none. */
   board_id?: string;
-  /** The variable's default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. Without it, the type's zero value: false, 0, 0.0, or the empty string. */
+  /** The variable's default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number beyond a double's range, which is no number that the API reads, is answered with 400 invalid_request. Without it, the type's zero value: false, 0, 0.0, or the empty string. */
   default?: boolean | number | string;
   /** The variable's description, of at most 2000 characters, without white space around it, and without control characters but line feeds and tabs. Without it, the variable has none. */
   description?: string;
@@ -1275,7 +1275,7 @@ export interface VariableRetypeCommand {
 
 /** The payload of a command of the type variable.retype. */
 export interface VariableRetypePayload {
-  /** The variable's default of its new type, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. Without it, the type's zero value: false, 0, 0.0, or the empty string. */
+  /** The variable's default of its new type, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number beyond a double's range, which is no number that the API reads, is answered with 400 invalid_request. Without it, the type's zero value: false, 0, 0.0, or the empty string. */
   default?: boolean | number | string;
   /** The variable's ID */
   id: string;
@@ -1296,7 +1296,7 @@ export interface VariableSetDefaultCommand {
 
 /** The payload of a command of the type variable.set_default. */
 export interface VariableSetDefaultPayload {
-  /** The variable's new default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. */
+  /** The variable's new default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number beyond a double's range, which is no number that the API reads, is answered with 400 invalid_request. */
   default: boolean | number | string;
   /** The variable's ID */
   id: string;

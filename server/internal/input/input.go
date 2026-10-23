@@ -133,10 +133,11 @@ var blank = &unicode.RangeTable{
 // richtext), and a stored document is read by that check, so a change to the
 // characters that IsControl takes would leave the stored documents whose text
 // holds them unreadable: migrate them first. richtext's TestUnicodeTables
-// fails on such a change. A variable's string default is checked with it too
-// (package variable), as a command sets it, and as the undo of a change of it
-// sets it back, though not as it is read, so such a change leaves a stored
-// default that holds them readable, but not set back: migrate those too.
+// fails on such a change. A variable's string default and its description
+// are checked with it too (package variable), as a command sets them, and as
+// the undo of a change of one sets it back, though not as they are read, so
+// such a change leaves a stored one that holds them readable, and
+// changeable, but not set back: migrate those too.
 func IsControl(r rune) bool {
 	return unicode.IsControl(r) || unicode.In(r, unicode.Bidi_Control, unicode.Zl, unicode.Zp)
 }

@@ -45,18 +45,18 @@ func RegisterJobs(r *jobs.Registry) {
 // foreign keys deletes, as their variables, then the variables, and then the
 // deleted folders that hold nothing, in the trash or not, once those that
 // they held are purged. It returns how many boards, variables, and folders it
-// deleted, but for those that a board's cascade deleted. It works on each workspace in
-// transactions of the workspace (§5.4), as package sweep runs them, each of
-// one project, which it locks as a batch of the project's commands does, so
-// that the batches see none of its deletions while they apply (plan note
-// N30), and which deletes purgeRows rows at most. It skips a project whose
-// lock a transaction holds, as a batch does, which its next run purges, goes
-// on past a project whose purge fails, so that a project whose purge keeps
-// failing keeps no other's trash from its purge, and returns the errors of
-// all of them, and stops once it has run for sweep.Budget, which leaves the
-// projects that it does not reach for its next run. So it is safe to repeat.
-// It records no operation: an undo that would restore a purged entity finds
-// that it no longer exists (§5.7).
+// deleted, but for those that a board's cascade deleted. It works on each
+// workspace in transactions of the workspace (§5.4), as package sweep runs
+// them, each of one project, which it locks as a batch of the project's
+// commands does, so that the batches see none of its deletions while they
+// apply (plan note N30), and which deletes purgeRows rows at most. It skips a
+// project whose lock a transaction holds, as a batch does, which its next run
+// purges, goes on past a project whose purge fails, so that a project whose
+// purge keeps failing keeps no other's trash from its purge, and returns the
+// errors of all of them, and stops once it has run for sweep.Budget, which
+// leaves the projects that it does not reach for its next run. So it is safe
+// to repeat. It records no operation: an undo that would restore a purged
+// entity finds that it no longer exists (§5.7).
 func Purge(ctx context.Context, db sweep.DB) (int64, error) {
 	more := sweep.Within(sweep.Budget)
 	retention := database.Interval(Retention)
