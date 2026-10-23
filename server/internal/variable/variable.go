@@ -39,7 +39,7 @@ package variable
 
 import (
 	"context"
-	"encoding/json"
+
 	"errors"
 	"fmt"
 	"slices"
@@ -53,6 +53,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
+	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
 // MaxDescriptionLength is the most characters that a variable's description
@@ -130,7 +131,7 @@ func variableOf(v queries.Variable) (Variable, error) {
 // error if it is not a value of its type, which the database's check keeps
 // from it.
 func stored(v queries.Variable) (Value, error) {
-	def, problem := Value{raw: json.RawMessage(v.DefaultValue)}.of(v.Type, checks{})
+	def, problem := value.FromJSON(v.DefaultValue).Read(v.Type, value.Checks{})
 	if problem != "" {
 		return Value{}, fmt.Errorf("variable: the default of the variable %s %s", ids.Encode(ids.Variable,
 			v.ID.Bytes), problem)

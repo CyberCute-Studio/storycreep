@@ -14,6 +14,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/component"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
@@ -245,8 +246,10 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			"take, as the ID of a folder that the project does not have, or that is deleted, or with the code that " +
 			"the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a " +
 			"slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, " +
-			"or variables, 422 key_invalid for a variable's key that is not an identifier, or 409 key_taken for a " +
-			"key that another variable of its scope has." +
+			"variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute " +
+			"definition, or a component that is not an identifier, 409 key_taken for a key that another entity of " +
+			"its scope has, or 409 component_type_in_use for a component type to delete of which a component that " +
+			"is not in the trash is." +
 			"\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch " +
 			"sent again, as when its answer was lost, is answered as it was the first time and applies nothing " +
 			"again, before the project's state and the workspace's limits are checked: the same batch, with the " +
@@ -461,9 +464,12 @@ func pipelineError(err error) error {
 // rule that the slug breaks as details.reason, for a slug that is not one,
 // 409 slug_taken for a slug that another board has, 409 folder_not_empty for
 // a folder to delete that holds something, 422 key_invalid, with the rule
-// that the key breaks as details.reason, for a variable's key that is not an
-// identifier, 409 key_taken for a key that another variable of its scope
-// has, and 422 validation_failed for any other value that the project's
+// that the key breaks as details.reason, for a key of a variable, a component
+// type, an attribute definition, or a component that is not an identifier,
+// 409 key_taken for a key that another entity of its scope has, 409
+// component_type_in_use for a component type to delete of which a component
+// that is not in the trash is, and 422 validation_failed for any other value
+// that the project's
 // state does not take, as an ID of a board that the project does not have,
 // each with the field's problem in details.errors.
 func refusalError(r *commands.RefusedError, loc string) *api.Error {
@@ -481,8 +487,10 @@ func refusalError(r *commands.RefusedError, loc string) *api.Error {
 	case errors.As(r.Reason, &key):
 		return &api.Error{Code: api.CodeKeyInvalid, Details: map[string]any{"reason": key.Reason,
 			"errors": problems}}
-	case errors.Is(r.Reason, variable.ErrKeyTaken):
+	case errors.Is(r.Reason, variable.ErrKeyTaken), errors.Is(r.Reason, component.ErrKeyTaken):
 		return &api.Error{Code: api.CodeKeyTaken, Details: map[string]any{"errors": problems}}
+	case errors.Is(r.Reason, component.ErrTypeInUse):
+		return &api.Error{Code: api.CodeComponentTypeInUse, Details: map[string]any{"errors": problems}}
 	}
 	return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
 }

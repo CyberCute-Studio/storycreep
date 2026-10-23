@@ -413,6 +413,8 @@ SELECT (
         AND b.folder_id = $3)
     OR EXISTS (SELECT 1 FROM live_variable v WHERE v.workspace_id = $1 AND v.project_id = $2
         AND v.folder_id = $3)
+    OR EXISTS (SELECT 1 FROM live_component c WHERE c.workspace_id = $1 AND c.project_id = $2
+        AND c.folder_id = $3)
 )::boolean AS holds
 `
 
@@ -423,10 +425,10 @@ type FolderHoldsParams struct {
 }
 
 // FolderHolds returns whether the folder id of the project holds a folder, a
-// board, or a variable that is not in the trash, a variable of a board in
-// the trash being in the trash with it. A later table whose rows go into a
-// folder, as the components (plan item 34), adds its rows here, and to
-// PurgeFolders, which TestFolderChildren holds it to.
+// board, a variable, or a component that is not in the trash, a variable of
+// a board in the trash being in the trash with it. A later table whose rows
+// go into a folder adds its rows here, and to PurgeFolders, which
+// TestFolderChildren holds it to.
 func (q *Queries) FolderHolds(ctx context.Context, arg FolderHoldsParams) (bool, error) {
 	row := q.db.QueryRow(ctx, folderHolds, arg.WorkspaceID, arg.ProjectID, arg.ID)
 	var holds bool
@@ -695,6 +697,15 @@ WITH c (id, sort_key, deleted) AS (
     WHERE $3::text = 'variable' AND $4::uuid IS NULL AND v.workspace_id = $1
         AND v.project_id = $2 AND v.folder_id IS NULL
         AND v.id IS DISTINCT FROM $7::uuid
+    UNION ALL
+    SELECT c.id, c."order", c.deleted_at IS NOT NULL FROM component c
+    WHERE $3::text = 'component' AND c.workspace_id = $1 AND c.project_id = $2
+        AND c.folder_id = $4::uuid AND c.id IS DISTINCT FROM $8::uuid
+    UNION ALL
+    SELECT c.id, c."order", c.deleted_at IS NOT NULL FROM component c
+    WHERE $3::text = 'component' AND $4::uuid IS NULL AND c.workspace_id = $1
+        AND c.project_id = $2 AND c.folder_id IS NULL
+        AND c.id IS DISTINCT FROM $8::uuid
 ), live AS (
     SELECT c.id, c.sort_key FROM c WHERE NOT c.deleted ORDER BY c.sort_key DESC, c.id DESC LIMIT 1
 )
@@ -704,13 +715,14 @@ SELECT coalesce((SELECT max(c.sort_key) FROM c), '')::text AS last,
 `
 
 type LastSortKeysParams struct {
-	WorkspaceID   pgtype.UUID
-	ProjectID     pgtype.UUID
-	Kind          string
-	ParentID      pgtype.UUID
-	MovedFolder   pgtype.UUID
-	MovedBoard    pgtype.UUID
-	MovedVariable pgtype.UUID
+	WorkspaceID    pgtype.UUID
+	ProjectID      pgtype.UUID
+	Kind           string
+	ParentID       pgtype.UUID
+	MovedFolder    pgtype.UUID
+	MovedBoard     pgtype.UUID
+	MovedVariable  pgtype.UUID
+	MovedComponent pgtype.UUID
 }
 
 type LastSortKeysRow struct {
@@ -721,10 +733,11 @@ type LastSortKeysRow struct {
 
 // LastSortKeys returns the greatest order of the project's children of the
 // folder parent_id of the kind kind, or of those at the top if parent_id is
-// null, but for the folder moved_folder, the board moved_board, or the
-// variable moved_variable, if it is not null, which moves there: its
-// folders, and, for a folder of boards, its boards, and for a folder of
-// variables, its variables, deleted ones included, so that one restored
+// null, but for the folder moved_folder, the board moved_board, the variable
+// moved_variable, or the component moved_component, if it is not null, which
+// moves there: its folders, and, for a folder of boards, its boards, for a
+// folder of variables, its variables, and for a folder of components, its
+// components, deleted ones included, so that one restored
 // later keeps its place, as last, or an empty string if there is none, and
 // the last of those that are not deleted, in the order of the children, by
 // their orders and then their IDs, as last_live, with its ID as last_live_id,
@@ -747,6 +760,7 @@ func (q *Queries) LastSortKeys(ctx context.Context, arg LastSortKeysParams) (Las
 		arg.MovedFolder,
 		arg.MovedBoard,
 		arg.MovedVariable,
+		arg.MovedComponent,
 	)
 	var i LastSortKeysRow
 	err := row.Scan(&i.Last, &i.LastLive, &i.LastLiveID)

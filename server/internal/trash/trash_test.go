@@ -492,7 +492,8 @@ func TestRestorePurged(t *testing.T) {
 // trash, with the kind of entity that the trash lists each row as, or "" for
 // a table whose rows it does not list. A table of a project's content with a
 // deleted_at must be one of them (TestTrashTables).
-var trashTables = []struct{ name, kind string }{{"folder", ""}, {"board", "board"}, {"variable", "variable"}}
+var trashTables = []struct{ name, kind string }{{"folder", ""}, {"board", "board"}, {"variable", "variable"},
+	{"attribute_def", ""}, {"component_type", ""}, {"component", "component"}}
 
 // TestTrashTables checks that every table of a project's content with a
 // deleted_at is registered with the trash, and holds each to what that
@@ -693,11 +694,42 @@ func TestTrashIsolation(t *testing.T) {
 			}
 			return out, err
 		}},
+		{Name: "a project's live component types", Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			rows, err := queries.New(tx).ComponentTypes(ctx, queries.ComponentTypesParams{WorkspaceID: uuid(target.ID),
+				ProjectID: uuid(target.Rows["project"]), MaxRows: 10})
+			var out []ids.UUID
+			for _, r := range rows {
+				out = append(out, r.LiveComponentType.ID.Bytes)
+			}
+			return out, err
+		}},
+		{Name: "a project's live attribute definitions", Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			rows, err := queries.New(tx).TypeAttributeDefs(ctx, queries.TypeAttributeDefsParams{
+				WorkspaceID: uuid(target.ID), ProjectID: uuid(target.Rows["project"]),
+				TypeIds: []pgtype.UUID{uuid(target.Rows["component_type"])}})
+			var out []ids.UUID
+			for _, r := range rows {
+				out = append(out, r.LiveAttributeDef.ID.Bytes)
+			}
+			return out, err
+		}},
+		{Name: "a project's live components", Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			rows, err := queries.New(tx).Components(ctx, queries.ComponentsParams{WorkspaceID: uuid(target.ID),
+				ProjectID: uuid(target.Rows["project"]), MaxRows: 10})
+			var out []ids.UUID
+			for _, r := range rows {
+				out = append(out, r.LiveComponent.ID.Bytes)
+			}
+			return out, err
+		}},
 	} {
 		f.Check(t, op)
 	}
 	for _, w := range []*isolationtest.Workspace{f.A, f.B} {
-		for _, table := range []string{"board", "folder", "variable"} {
+		for _, table := range []string{"board", "folder", "variable", "component_type", "attribute_def", "component"} {
 			if _, err := f.Admin().Exec(ctx, "UPDATE "+table+" SET deleted_at = now() - interval '31 days' "+
 				"WHERE id = $1", w.Rows[table]); err != nil {
 				t.Fatal(err)
@@ -742,6 +774,18 @@ func TestTrashIsolation(t *testing.T) {
 				return nil, err
 			}
 			if _, err := q.PurgeVariables(ctx, queries.PurgeVariablesParams{WorkspaceID: uuid(target.ID),
+				ProjectID: uuid(target.Rows["project"]), Retention: retention, MaxRows: 10}); err != nil {
+				return nil, err
+			}
+			if _, err := q.PurgeComponents(ctx, queries.PurgeComponentsParams{WorkspaceID: uuid(target.ID),
+				ProjectID: uuid(target.Rows["project"]), Retention: retention, MaxRows: 10}); err != nil {
+				return nil, err
+			}
+			if _, err := q.PurgeAttributeDefs(ctx, queries.PurgeAttributeDefsParams{WorkspaceID: uuid(target.ID),
+				ProjectID: uuid(target.Rows["project"]), Retention: retention, MaxRows: 10}); err != nil {
+				return nil, err
+			}
+			if _, err := q.PurgeComponentTypes(ctx, queries.PurgeComponentTypesParams{WorkspaceID: uuid(target.ID),
 				ProjectID: uuid(target.Rows["project"]), Retention: retention, MaxRows: 10}); err != nil {
 				return nil, err
 			}

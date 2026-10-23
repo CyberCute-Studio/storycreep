@@ -1,0 +1,943 @@
+package component
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
+	"github.com/CyberCute-Studio/storycreep/server/internal/board"
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
+	"github.com/CyberCute-Studio/storycreep/server/internal/value"
+)
+
+// The types of command of an attribute definition (PRD §5.7). Each names the
+// definition that it is about by its ID, id, and applies to the definition
+// of the batch's project.
+const (
+	// CreateAttribute adds an attribute definition to a component type,
+	// whose ID the client makes, and gives each component of the type its
+	// default, as one command (FR-COMP-01 AC1). Deleting it to the trash
+	// undoes it.
+	CreateAttribute commands.Type = "attribute.create"
+	// RenameAttribute changes a definition's name, SetAttributeKey its key,
+	// SetAttributeDefault its default, which leaves the values that its
+	// components hold as they are, and SetAttributeRuntime whether it is part
+	// of the game's state. Changing each back undoes it.
+	RenameAttribute     commands.Type = "attribute.rename"
+	SetAttributeKey     commands.Type = "attribute.set_key"
+	SetAttributeDefault commands.Type = "attribute.set_default"
+	SetAttributeRuntime commands.Type = "attribute.set_runtime"
+	// SetAttributeOptions changes an enum's options, and gives a value that
+	// is none of them the default, unless the command gives another, and
+	// RetypeAttribute changes a definition's type, and converts its values as
+	// the command's conversion says (FR-COMP-01 AC2). Each is undone by
+	// another that sets the options or the type back, with the values that
+	// the change lost.
+	SetAttributeOptions commands.Type = "attribute.set_options"
+	RetypeAttribute     commands.Type = "attribute.retype"
+	// MoveAttribute places a definition among its type's. Moving it back
+	// undoes it.
+	MoveAttribute commands.Type = "attribute.move"
+	// DeleteAttribute deletes a definition to the project's trash, with the
+	// values that its components hold, and RestoreAttribute restores it with
+	// them. Each undoes the other.
+	DeleteAttribute  commands.Type = "attribute.delete"
+	RestoreAttribute commands.Type = "attribute.restore"
+)
+
+// maxUndoValues is the most bytes of values that the undo of a change of an
+// attribute definition's options or type holds, those that the change loses,
+// which the operation log keeps.
+const maxUndoValues = 16 << 20
+
+// createAttributePayload is CreateAttribute's payload.
+type createAttributePayload struct {
+	ID              string      `json:"id" doc:"The new attribute definition's ID, an atr_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	ComponentTypeID string      `json:"component_type_id" doc:"The ID of the component type that the definition is added to, which is not in the project's trash, and which has fewer than 100 definitions that are not"`
+	Name            string      `json:"name" maxLength:"100" doc:"The definition's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
+	Key             string      `json:"key,omitempty" doc:"The definition's key, by which expressions name its values, as trust in elara.trust: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as trust, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other attribute definition of its type has, of those that are not in the project's trash, which is answered with 409 key_taken. Without it, the key is derived from the name, as a component type's is, or is attribute for a name without letters or digits."`
+	Type            string      `json:"type" enum:"bool,int,float,string,text,enum" doc:"The definition's type: bool, int, float, string, of at most 4096 characters, text, a string of several lines of at most 100000 characters, or enum, one of its options"`
+	Options         []string    `json:"options,omitempty" maxItems:"100" doc:"An enum's options, which its values are one of: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, and line separators among them, no two alike, compared by their characters, as they are. Another type has none."`
+	Default         value.Value `json:"default,omitzero" doc:"The definition's default, which each component of its type is given: a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. Without it, the type's zero value: false, 0, 0.0, the empty string, or an enum's first option."`
+	Runtime         bool        `json:"runtime,omitempty" doc:"Whether the definition's values are part of the game's state, which expressions read and write, and which saved games record (PRD FR-COMP-03). A text may not be. Without it, false."`
+	Order           string      `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The definition's place among its type's. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the definitions by its bytes, and those with the same key by their IDs without the prefix, atr_, compared by their bytes too: pick one between the keys of the definitions that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the definition goes after the type's last."`
+}
+
+// renameAttributePayload is RenameAttribute's payload.
+type renameAttributePayload struct {
+	ID   string `json:"id" doc:"The attribute definition's ID"`
+	Name string `json:"name" maxLength:"100" doc:"The definition's new name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them. Its key stays as it is."`
+}
+
+// attributeKeyPayload is SetAttributeKey's payload.
+type attributeKeyPayload struct {
+	ID  string `json:"id" doc:"The attribute definition's ID"`
+	Key string `json:"key" doc:"The definition's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as trust, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other attribute definition of its type has, of those that are not in the project's trash, which is answered with 409 key_taken. The definition keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3)."`
+}
+
+// attributeDefaultPayload is SetAttributeDefault's payload.
+type attributeDefaultPayload struct {
+	ID      string      `json:"id" doc:"The attribute definition's ID"`
+	Default value.Value `json:"default" doc:"The definition's new default, which a component of its type that is created later is given: a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. The values that the type's components hold stay as they are."`
+}
+
+// attributeRuntimePayload is SetAttributeRuntime's payload.
+type attributeRuntimePayload struct {
+	ID      string `json:"id" doc:"The attribute definition's ID"`
+	Runtime bool   `json:"runtime" doc:"Whether the definition's values are part of the game's state, which expressions read and write, and which saved games record (PRD FR-COMP-03). A text may not be."`
+}
+
+// attributeOptionsPayload is SetAttributeOptions's payload.
+type attributeOptionsPayload struct {
+	ID      string      `json:"id" doc:"The ID of the attribute definition, an enum"`
+	Options []string    `json:"options" maxItems:"100" doc:"The enum's new options, in their order: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, and line separators among them, no two alike, compared by their characters, as they are. A value that a component holds that is none of them is given the default, unless values gives it another."`
+	Default value.Value `json:"default,omitzero" doc:"The enum's new default, one of its new options. Without it, the default stays as it is, which must then be one of them."`
+	// Values are the values that the components are given, rather than the
+	// default, by their IDs.
+	Values map[string]value.Value `json:"values,omitempty" doc:"The values, each one of the new options, that components of the definition's type are given, by their IDs, in place of what they hold: a component that holds a value that is none of the new options, and is not given one here, is given the default"`
+}
+
+// retypeAttributePayload is RetypeAttribute's payload.
+type retypeAttributePayload struct {
+	ID         string      `json:"id" doc:"The attribute definition's ID"`
+	Type       string      `json:"type" enum:"bool,int,float,string,text,enum" doc:"The definition's new type, which is not its type already: an enum's options change with attribute.set_options. A runtime definition may not become a text: unset runtime first."`
+	Conversion string      `json:"conversion" enum:"convert,reset" doc:"What becomes of the values that the type's components hold, those in the project's trash included (PRD FR-COMP-01 AC2): convert converts each to the new type, as the expression language's to_int, to_float, and to_string do (PRD §5.8.4, §5.8.9), a bool as 0 or 1 and an int or a float that is 0 or 1 as a bool, and a string that is true or false as a bool, and gives the new default to each that does not convert, which GET /api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/conversion lists beforehand; reset gives every value the new default."`
+	Options    []string    `json:"options,omitempty" maxItems:"100" doc:"The options of an enum, which the new type then is: 1 to 100 options, each of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, line feeds, and line separators among them, no two alike, compared by their characters, as they are. Another type has none."`
+	Default    value.Value `json:"default,omitzero" doc:"The definition's default of its new type: a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. Without it, the type's zero value: false, 0, 0.0, the empty string, or an enum's first option."`
+	// Values are the values that the components are given, rather than what
+	// the conversion makes of theirs, by their IDs.
+	Values map[string]value.Value `json:"values,omitempty" doc:"The values of the new type that components of the definition's type are given, by their IDs, in place of what the conversion makes of what they hold"`
+}
+
+// moveAttributePayload is MoveAttribute's payload.
+type moveAttributePayload struct {
+	ID    string `json:"id" doc:"The attribute definition's ID"`
+	Order string `json:"order,omitempty" maxLength:"128" pattern:"^[0-9A-Za-z]*[1-9A-Za-z]$" doc:"The definition's place among its type's. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the definitions by its bytes, and those with the same key by their IDs without the prefix, atr_, compared by their bytes too: pick one between the keys of the definitions that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the definition goes after the type's last, or stays where it is if it is the last already that is not deleted."`
+}
+
+// attributeIDPayload is the payload of a command that needs nothing but its
+// definition's ID.
+type attributeIDPayload struct {
+	ID string `json:"id" doc:"The attribute definition's ID"`
+}
+
+// registerAttributes registers in r the commands of an attribute definition.
+func registerAttributes(r *commands.Registry) {
+	atr := []ids.Kind{ids.AttributeDef}
+	// A command that changes the values of the definition's components
+	// changes the components too.
+	values := []ids.Kind{ids.AttributeDef, ids.Component}
+	op, sc := authz.ManageVariablesAndComponents, scope.ProjectWrite
+
+	commands.Register(r, commands.Spec[createAttributePayload]{
+		Type: CreateAttribute, Capability: op, Scope: sc,
+		Touches: []ids.Kind{ids.AttributeDef, ids.ComponentType, ids.Component},
+		Check: func(p createAttributePayload) input.FieldErrors {
+			errs := newID(ids.AttributeDef, p.ID)
+			errs = append(errs, entityID(ids.ComponentType, "component_type_id", p.ComponentTypeID)...)
+			errs = append(errs, checkOptions(p.Type, p.Options)...)
+			if len(errs) == 0 {
+				errs = append(errs, checkRuntime("runtime", p.Type, p.Runtime)...)
+				_, problem := p.Default.Read(p.Type, value.Checks{Length: true}, p.Options...)
+				errs = append(errs, field("default", problem)...)
+			}
+			return errs
+		},
+		CheckNew: func(p createAttributePayload) input.FieldErrors {
+			errs := field("name", checkName(p.Name))
+			errs = append(errs, field("options", value.CheckOptionNames(p.Options))...)
+			if _, problem := p.Default.Of(p.Type, p.Options...); problem != "" {
+				errs = append(errs, field("default", problem)...)
+			}
+			return errs
+		},
+		Inverse: func(_ context.Context, _ *commands.Tx, p createAttributePayload) ([]commands.Step, error) {
+			return []commands.Step{{Type: DeleteAttribute, Payload: attributeIDPayload{ID: p.ID}}}, nil
+		},
+		Apply: applyCreateAttribute,
+	})
+
+	commands.Register(r, commands.Spec[renameAttributePayload]{
+		Type: RenameAttribute, Capability: op, Scope: sc, Touches: atr,
+		Check: func(p renameAttributePayload) input.FieldErrors { return entityID(ids.AttributeDef, "id", p.ID) },
+		CheckNew: func(p renameAttributePayload) input.FieldErrors {
+			return field("name", checkName(p.Name))
+		},
+		Inverse: func(ctx context.Context, tx *commands.Tx, p renameAttributePayload) ([]commands.Step, error) {
+			a, err := liveAttribute(ctx, tx, p.ID)
+			if err != nil {
+				return nil, err
+			}
+			return []commands.Step{{Type: RenameAttribute, Payload: renameAttributePayload{ID: p.ID, Name: a.Name}}},
+				nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p renameAttributePayload) error {
+			a, err := liveAttribute(ctx, tx, p.ID)
+			if err != nil {
+				return err
+			}
+			return changed(tx, ids.AttributeDef, a.ID)(queries.New(tx).UpdateAttributeDefName(ctx,
+				queries.UpdateAttributeDefNameParams{Name: p.Name, UpdatedBy: by(tx), WorkspaceID: a.WorkspaceID,
+					ProjectID: a.ProjectID, ID: a.ID}))
+		},
+	})
+
+	commands.Register(r, commands.Spec[attributeKeyPayload]{
+		Type: SetAttributeKey, Capability: op, Scope: sc, Touches: atr,
+		Check: func(p attributeKeyPayload) input.FieldErrors { return entityID(ids.AttributeDef, "id", p.ID) },
+		Inverse: func(ctx context.Context, tx *commands.Tx, p attributeKeyPayload) ([]commands.Step, error) {
+			a, err := liveAttribute(ctx, tx, p.ID)
+			if err != nil {
+				return nil, err
+			}
+			return []commands.Step{{Type: SetAttributeKey, Payload: attributeKeyPayload{ID: p.ID, Key: a.Key}}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p attributeKeyPayload) error {
+			a, err := liveAttribute(ctx, tx, p.ID)
+			if err != nil {
+				return err
+			}
+			q := queries.New(tx)
+			if err := checkKey(ctx, attributeKeyOwner(q, a.WorkspaceID, a.ProjectID, a.ComponentTypeID), "key",
+				p.Key, a.ID, "attribute definition of the type"); err != nil {
+				return err
+			}
+			return changed(tx, ids.AttributeDef, a.ID)(q.UpdateAttributeDefKey(ctx, queries.UpdateAttributeDefKeyParams{
+				Key: p.Key, UpdatedBy: by(tx), WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID, ID: a.ID}))
+		},
+	})
+
+	commands.Register(r, commands.Spec[attributeDefaultPayload]{
+		Type: SetAttributeDefault, Capability: op, Scope: sc, Touches: atr,
+		Check: func(p attributeDefaultPayload) input.FieldErrors { return entityID(ids.AttributeDef, "id", p.ID) },
+		Inverse: func(ctx context.Context, tx *commands.Tx, p attributeDefaultPayload) ([]commands.Step, error) {
+			a, err := liveAttribute(ctx, tx, p.ID)
+			if err != nil {
+				return nil, err
+			}
+			old, err := storedDefault(a)
+			if err != nil {
+				return nil, err
+			}
+			return []commands.Step{{Type: SetAttributeDefault, Payload: attributeDefaultPayload{ID: p.ID,
+				Default: old}}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p attributeDefaultPayload) error {
+			a, err := liveAttribute(ctx, tx, p.ID)
+			if err != nil {
+				return err
+			}
+			// The default's type is the definition's, which the payload does not
+			// say, so Apply checks it whole, as a variable's set_default does.
+			def, problem := p.Default.Of(a.Type, a.EnumOptions...)
+			if problem != "" {
+				return commands.Refuse("default", problem, nil)
+			}
+			return setDefinition(ctx, tx, a, a.Type, a.EnumOptions, def)
+		},
+	})
+
+	commands.Register(r, commands.Spec[attributeRuntimePayload]{
+		Type: SetAttributeRuntime, Capability: op, Scope: sc, Touches: atr,
+		Check: func(p attributeRuntimePayload) input.FieldErrors { return entityID(ids.AttributeDef, "id", p.ID) },
+		Inverse: func(ctx context.Context, tx *commands.Tx, p attributeRuntimePayload) ([]commands.Step, error) {
+			a, err := liveAttribute(ctx, tx, p.ID)
+			if err != nil {
+				return nil, err
+			}
+			return []commands.Step{{Type: SetAttributeRuntime, Payload: attributeRuntimePayload{ID: p.ID,
+				Runtime: a.IsRuntime}}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p attributeRuntimePayload) error {
+			a, err := liveAttribute(ctx, tx, p.ID)
+			if err != nil {
+				return err
+			}
+			if err := refuse(checkRuntime("runtime", a.Type, p.Runtime)); err != nil {
+				return err
+			}
+			return changed(tx, ids.AttributeDef, a.ID)(queries.New(tx).UpdateAttributeDefRuntime(ctx,
+				queries.UpdateAttributeDefRuntimeParams{IsRuntime: p.Runtime, UpdatedBy: by(tx),
+					WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID, ID: a.ID}))
+		},
+	})
+
+	commands.Register(r, commands.Spec[attributeOptionsPayload]{
+		Type: SetAttributeOptions, Capability: op, Scope: sc, Touches: values,
+		Check: func(p attributeOptionsPayload) input.FieldErrors {
+			errs := entityID(ids.AttributeDef, "id", p.ID)
+			if problem := value.CheckOptions(p.Options); problem != "" {
+				return append(errs, field("options", problem)...)
+			}
+			if !p.Default.IsZero() {
+				_, problem := p.Default.Read(value.Enum, value.Checks{}, p.Options...)
+				errs = append(errs, field("default", problem)...)
+			}
+			return append(errs, checkValues(p.Values, value.Enum, p.Options)...)
+		},
+		CheckNew: func(p attributeOptionsPayload) input.FieldErrors {
+			return field("options", value.CheckOptionNames(p.Options))
+		},
+		Inverse: func(ctx context.Context, tx *commands.Tx, p attributeOptionsPayload) ([]commands.Step, error) {
+			plan, err := planOptions(ctx, tx, p)
+			if err != nil {
+				return nil, err
+			}
+			lost, err := plan.lost(func(_ value.Value) (value.Value, bool) { return value.Value{}, false })
+			if err != nil {
+				return nil, err
+			}
+			return []commands.Step{{Type: SetAttributeOptions, Payload: attributeOptionsPayload{ID: p.ID,
+				Options: plan.a.EnumOptions, Default: plan.oldDefault, Values: lost}}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p attributeOptionsPayload) error {
+			plan, err := planOptions(ctx, tx, p)
+			if err != nil {
+				return err
+			}
+			return plan.apply(ctx, tx, value.Enum, p.Options)
+		},
+	})
+
+	commands.Register(r, commands.Spec[retypeAttributePayload]{
+		Type: RetypeAttribute, Capability: op, Scope: sc, Touches: values,
+		Check: func(p retypeAttributePayload) input.FieldErrors {
+			errs := append(entityID(ids.AttributeDef, "id", p.ID), checkOptions(p.Type, p.Options)...)
+			if len(errs) > 0 {
+				return errs
+			}
+			_, problem := p.Default.Read(p.Type, value.Checks{Length: true}, p.Options...)
+			return append(append(errs, field("default", problem)...), checkValues(p.Values, p.Type, p.Options)...)
+		},
+		CheckNew: func(p retypeAttributePayload) input.FieldErrors {
+			return field("options", value.CheckOptionNames(p.Options))
+		},
+		Inverse: func(ctx context.Context, tx *commands.Tx, p retypeAttributePayload) ([]commands.Step, error) {
+			plan, err := planRetype(ctx, tx, p)
+			if err != nil {
+				return nil, err
+			}
+			a := plan.a
+			// A value that the conversion back makes of the new one is the value
+			// that the definition's components held, but for those that the
+			// undo then gives back.
+			lost, err := plan.lost(func(v value.Value) (value.Value, bool) {
+				return value.Convert(v, p.Type, p.Options, a.Type, a.EnumOptions)
+			})
+			if err != nil {
+				return nil, err
+			}
+			var options []string
+			if a.Type == value.Enum {
+				options = a.EnumOptions
+			}
+			return []commands.Step{{Type: RetypeAttribute, Payload: retypeAttributePayload{ID: p.ID, Type: a.Type,
+				Conversion: ConversionConvert, Options: options, Default: plan.oldDefault, Values: lost}}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p retypeAttributePayload) error {
+			plan, err := planRetype(ctx, tx, p)
+			if err != nil {
+				return err
+			}
+			return plan.apply(ctx, tx, p.Type, p.Options)
+		},
+	})
+
+	commands.Register(r, commands.Spec[moveAttributePayload]{
+		Type: MoveAttribute, Capability: op, Scope: sc, Touches: atr,
+		Check: func(p moveAttributePayload) input.FieldErrors { return entityID(ids.AttributeDef, "id", p.ID) },
+		Inverse: func(ctx context.Context, tx *commands.Tx, p moveAttributePayload) ([]commands.Step, error) {
+			a, err := liveAttribute(ctx, tx, p.ID)
+			if err != nil {
+				return nil, err
+			}
+			return []commands.Step{{Type: MoveAttribute, Payload: moveAttributePayload{ID: p.ID, Order: a.Order}}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p moveAttributePayload) error {
+			a, err := liveAttribute(ctx, tx, p.ID)
+			if err != nil {
+				return err
+			}
+			q := queries.New(tx)
+			order, err := attributeSortKey(ctx, q, a.WorkspaceID, a.ProjectID, a.ComponentTypeID, p.Order,
+				&board.Child{ID: a.ID, Key: a.Order, Kind: ids.AttributeDef})
+			if err != nil {
+				return err
+			}
+			return changed(tx, ids.AttributeDef, a.ID)(q.MoveAttributeDef(ctx, queries.MoveAttributeDefParams{
+				SortKey: order, UpdatedBy: by(tx), WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID, ID: a.ID}))
+		},
+	})
+
+	commands.Register(r, commands.Spec[attributeIDPayload]{
+		Type: DeleteAttribute, Capability: op, Scope: sc, Touches: values,
+		Check: func(p attributeIDPayload) input.FieldErrors { return entityID(ids.AttributeDef, "id", p.ID) },
+		// Deleting a definition that is in the trash already does nothing, and
+		// its undo nothing either. One of a type in the trash, in the trash
+		// with it but not deleted itself, is refused, as a variable of a board
+		// in the trash is, because its undo, a restore, would be refused until
+		// the type is restored.
+		Inverse: func(ctx context.Context, tx *commands.Tx, p attributeIDPayload) ([]commands.Step, error) {
+			row, err := anyAttribute(ctx, tx, p.ID)
+			if err != nil || row.AttributeDef.DeletedAt.Valid || row.TypeDeleted {
+				return []commands.Step{}, err
+			}
+			return []commands.Step{{Type: RestoreAttribute, Payload: attributeIDPayload{ID: p.ID}}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p attributeIDPayload) error {
+			row, err := anyAttribute(ctx, tx, p.ID)
+			switch {
+			case err != nil:
+				return err
+			case row.AttributeDef.DeletedAt.Valid:
+				return nil
+			case row.TypeDeleted:
+				return refuseTypeInTrash()
+			}
+			a := row.AttributeDef
+			if err := changed(tx, ids.AttributeDef, a.ID)(queries.New(tx).TrashAttributeDef(ctx,
+				queries.TrashAttributeDefParams{UpdatedBy: by(tx), WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID,
+					ID: a.ID})); err != nil {
+				return err
+			}
+			return touchType(ctx, tx, a.ComponentTypeID)
+		},
+	})
+
+	commands.Register(r, commands.Spec[attributeIDPayload]{
+		Type: RestoreAttribute, Capability: op, Scope: sc, Touches: values,
+		Check: func(p attributeIDPayload) input.FieldErrors { return entityID(ids.AttributeDef, "id", p.ID) },
+		// Restoring a definition that is not in the trash does nothing, and its
+		// undo nothing either. One of a type in the trash is refused, since it
+		// comes back with its type.
+		Inverse: func(ctx context.Context, tx *commands.Tx, p attributeIDPayload) ([]commands.Step, error) {
+			row, err := anyAttribute(ctx, tx, p.ID)
+			if err != nil || !row.AttributeDef.DeletedAt.Valid || row.TypeDeleted {
+				return []commands.Step{}, err
+			}
+			return []commands.Step{{Type: DeleteAttribute, Payload: attributeIDPayload{ID: p.ID}}}, nil
+		},
+		Apply: applyRestoreAttribute,
+	})
+}
+
+// applyCreateAttribute is CreateAttribute's Apply.
+func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p createAttributePayload) error {
+	q := queries.New(tx)
+	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
+	id := decoded(ids.AttributeDef, p.ID)
+	// A definition of the project with the ID is refused for its ID before
+	// anything else is checked, as a variable's create is.
+	if _, err := q.AttributeDefAny(ctx, queries.AttributeDefAnyParams{WorkspaceID: ws, ProjectID: project,
+		ID: id}); err == nil {
+		return commands.Refuse("id", "is the ID of an attribute definition that exists already", nil)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("component: read the attribute definition: %w", err)
+	}
+	t, err := liveType(ctx, tx, "component_type_id", p.ComponentTypeID)
+	if err != nil {
+		return err
+	}
+	if err := checkRoom(ctx, q, t, "component_type_id"); err != nil {
+		return err
+	}
+	key := p.Key
+	owner := attributeKeyOwner(q, ws, project, t.ID)
+	if key == "" {
+		if key, err = deriveKey(ctx, func(ctx context.Context, stem string) ([]string, error) {
+			return q.AttributeKeysFrom(ctx, queries.AttributeKeysFromParams{WorkspaceID: ws, ProjectID: project,
+				ComponentTypeID: t.ID, Stem: stem})
+		}, p.Name, "attribute"); err != nil {
+			return fmt.Errorf("component: derive the attribute definition's key: %w", err)
+		}
+	} else if err := checkKey(ctx, owner, "key", key, pgtype.UUID{}, "attribute definition of the type"); err != nil {
+		return err
+	}
+	order, err := attributeSortKey(ctx, q, ws, project, t.ID, p.Order, nil)
+	if err != nil {
+		return err
+	}
+	// CheckNew checked the default against the type.
+	def, _ := p.Default.Of(p.Type, p.Options...)
+	options := p.Options
+	if options == nil {
+		options = []string{}
+	}
+	err = q.InsertAttributeDef(ctx, queries.InsertAttributeDefParams{ID: id, WorkspaceID: ws, ProjectID: project,
+		ComponentTypeID: t.ID, SortKey: order, Key: key, Name: p.Name, Type: p.Type, EnumOptions: options,
+		DefaultValue: def.JSON(), IsRuntime: p.Runtime, CreatedBy: by(tx)})
+	if database.UniqueViolation(err, "attribute_def_pkey") {
+		return commands.Refuse("id", "is the ID of an attribute definition that exists already", nil)
+	}
+	if err != nil {
+		return fmt.Errorf("component: add the attribute definition: %w", err)
+	}
+	if err := tx.Changed(ids.AttributeDef, id.Bytes, 1); err != nil {
+		return err
+	}
+	// Each component of the type, those in the trash included, is given the
+	// default (FR-COMP-01 AC1).
+	if _, err := q.FillAttributeValues(ctx, queries.FillAttributeValuesParams{AttributeDefID: id, Value: def.JSON(),
+		WorkspaceID: ws, ProjectID: project, ComponentTypeID: t.ID}); err != nil {
+		return fmt.Errorf("component: give the components the attribute definition's default: %w", err)
+	}
+	return touchType(ctx, tx, t.ID)
+}
+
+// applyRestoreAttribute is RestoreAttribute's Apply.
+func applyRestoreAttribute(ctx context.Context, tx *commands.Tx, p attributeIDPayload) error {
+	row, err := anyAttribute(ctx, tx, p.ID)
+	switch {
+	case err != nil:
+		return err
+	case row.TypeDeleted:
+		return commands.Refuse("id", "is an attribute definition of a component type in the project's trash, which "+
+			"comes back only with its type: restore the type first", nil)
+	case !row.AttributeDef.DeletedAt.Valid:
+		return nil
+	}
+	a := row.AttributeDef
+	q := queries.New(tx)
+	if err := keyFree(ctx, attributeKeyOwner(q, a.WorkspaceID, a.ProjectID, a.ComponentTypeID), "id", a.Key, a.ID,
+		"is an attribute definition whose key another definition of its type, which is not in the trash, has taken "+
+			"since it was deleted: change that definition's key, or delete it, first"); err != nil {
+		return err
+	}
+	t := queries.ComponentType{WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID, ID: a.ComponentTypeID}
+	if err := checkRoom(ctx, q, t, "id"); err != nil {
+		return err
+	}
+	def, err := storedDefault(a)
+	if err != nil {
+		return err
+	}
+	if err := changed(tx, ids.AttributeDef, a.ID)(q.RestoreAttributeDef(ctx, queries.RestoreAttributeDefParams{
+		UpdatedBy: by(tx), WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID, ID: a.ID})); err != nil {
+		return err
+	}
+	// A component created while the definition was in the trash holds no
+	// value of it, and is given its default.
+	if _, err := q.FillAttributeValues(ctx, queries.FillAttributeValuesParams{AttributeDefID: a.ID,
+		Value: def.JSON(), WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID,
+		ComponentTypeID: a.ComponentTypeID}); err != nil {
+		return fmt.Errorf("component: give the components the attribute definition's default: %w", err)
+	}
+	return touchType(ctx, tx, a.ComponentTypeID)
+}
+
+// checkRoom refuses the batch, at the payload's field at, if the type t has
+// MaxAttributes definitions that are not in the trash already.
+func checkRoom(ctx context.Context, q *queries.Queries, t queries.ComponentType, at string) error {
+	n, err := q.AttributeDefCount(ctx, queries.AttributeDefCountParams{WorkspaceID: t.WorkspaceID,
+		ProjectID: t.ProjectID, ComponentTypeID: t.ID})
+	switch {
+	case err != nil:
+		return fmt.Errorf("component: count the type's attribute definitions: %w", err)
+	case n >= MaxAttributes:
+		return commands.Refuse(at, fmt.Sprintf("is a component type that has %d attribute definitions that are not "+
+			"in the project's trash already, the most that a type may have", MaxAttributes), nil)
+	}
+	return nil
+}
+
+// valuesPlan is what a change of an attribute definition's options or type
+// makes of its definition and of the values that its components hold.
+type valuesPlan struct {
+	a queries.AttributeDef
+	// oldDefault is the definition's default, and newDefault its default once
+	// the change applies.
+	oldDefault, newDefault value.Value
+	// old are the values that the components hold, and changes the values of
+	// those whose value the change changes, by the components' UUIDs.
+	old, changes map[ids.UUID]value.Value
+}
+
+// planOptions returns what the change of an enum's options p makes of it and
+// of its values: a value that is none of the new options is given the
+// default, or the one that p.Values gives the component, as is each that it
+// names. It refuses the batch for a definition that is not an enum, for a
+// default that is none of the options, and for a component in p.Values that
+// is not of the definition's type.
+func planOptions(ctx context.Context, tx *commands.Tx, p attributeOptionsPayload) (valuesPlan, error) {
+	a, err := liveAttribute(ctx, tx, p.ID)
+	if err != nil {
+		return valuesPlan{}, err
+	}
+	if a.Type != value.Enum {
+		return valuesPlan{}, commands.Refuse("id", fmt.Sprintf("is an attribute definition of the type %s, which "+
+			"has no options: change its type with attribute.retype", a.Type), nil)
+	}
+	old, err := storedDefault(a)
+	if err != nil {
+		return valuesPlan{}, err
+	}
+	def := p.Default
+	if def.IsZero() {
+		def = old
+	}
+	def, problem := def.Of(value.Enum, p.Options...)
+	switch {
+	case problem != "" && p.Default.IsZero():
+		return valuesPlan{}, commands.Refuse("default", "is missing, and the definition's default is none of the "+
+			"new options", nil)
+	case problem != "":
+		return valuesPlan{}, commands.Refuse("default", problem, nil)
+	}
+	plan := valuesPlan{a: a, oldDefault: old, newDefault: def}
+	return plan, plan.read(ctx, tx, p.Values, value.Enum, p.Options, func(v value.Value) (value.Value, bool) {
+		_, problem := v.Read(value.Enum, value.Checks{}, p.Options...)
+		return v, problem == ""
+	})
+}
+
+// planRetype returns what the retype p makes of its definition and of its
+// values, as its conversion says, or the values that p.Values gives. It
+// refuses the batch for a retype to the definition's own type, of a runtime
+// definition to a text, and for a component in p.Values that is not of the
+// definition's type.
+func planRetype(ctx context.Context, tx *commands.Tx, p retypeAttributePayload) (valuesPlan, error) {
+	a, err := liveAttribute(ctx, tx, p.ID)
+	if err != nil {
+		return valuesPlan{}, err
+	}
+	switch {
+	case a.Type == p.Type && a.Type == value.Enum:
+		return valuesPlan{}, commands.Refuse("type", "is the attribute definition's type already: change an enum's "+
+			"options with attribute.set_options", nil)
+	case a.Type == p.Type:
+		return valuesPlan{}, commands.Refuse("type", "is the attribute definition's type already", nil)
+	}
+	if err := refuse(checkRuntime("type", p.Type, a.IsRuntime)); err != nil {
+		return valuesPlan{}, err
+	}
+	old, err := storedDefault(a)
+	if err != nil {
+		return valuesPlan{}, err
+	}
+	def, problem := p.Default.Of(p.Type, p.Options...)
+	if problem != "" {
+		return valuesPlan{}, commands.Refuse("default", problem, nil)
+	}
+	plan := valuesPlan{a: a, oldDefault: old, newDefault: def}
+	return plan, plan.read(ctx, tx, p.Values, p.Type, p.Options, func(v value.Value) (value.Value, bool) {
+		if p.Conversion == ConversionReset {
+			return value.Value{}, false
+		}
+		return value.Convert(v, a.Type, a.EnumOptions, p.Type, p.Options)
+	})
+}
+
+// read reads the values that the components hold of the plan's definition,
+// and works out what each becomes: the value that given gives its
+// component, a value of the type typ, whose options are options, or what
+// convert makes of it if it converts, or else the new default. It refuses the
+// batch for a component in given that holds no value of the definition, as
+// one of another type, and for a value there that is not one of typ.
+func (plan *valuesPlan) read(ctx context.Context, tx *commands.Tx, given map[string]value.Value, typ string,
+	options []string, convert func(value.Value) (value.Value, bool)) error {
+	a := plan.a
+	q := queries.New(tx)
+	plan.old, plan.changes = map[ids.UUID]value.Value{}, map[ids.UUID]value.Value{}
+	var cursor pgtype.UUID
+	for {
+		rows, err := q.AttributeValues(ctx, queries.AttributeValuesParams{WorkspaceID: a.WorkspaceID,
+			ProjectID: a.ProjectID, AttributeDefID: a.ID, After: cursor, MaxRows: valuesPage})
+		if err != nil {
+			return fmt.Errorf("component: read the attribute definition's values: %w", err)
+		}
+		for _, row := range rows {
+			// The value is compared in its canonical form, which jsonb may not
+			// write a number in.
+			v, problem := value.FromJSON(row.Value).Read(a.Type, value.Checks{}, a.EnumOptions...)
+			if problem != "" {
+				return fmt.Errorf("component: the value of the attribute definition %s that the component %s holds %s",
+					ids.Encode(ids.AttributeDef, a.ID.Bytes), ids.Encode(ids.Component, row.ComponentID.Bytes), problem)
+			}
+			plan.old[row.ComponentID.Bytes] = v
+			to, ok := convert(v)
+			if !ok {
+				to = plan.newDefault
+			}
+			if !to.Equal(v) {
+				plan.changes[row.ComponentID.Bytes] = to
+			}
+		}
+		if len(rows) < valuesPage {
+			break
+		}
+		cursor = rows[len(rows)-1].ComponentID
+	}
+	byID, err := keyedByUUID(ids.Component, "values", given)
+	if err != nil {
+		return err
+	}
+	// The values are checked in the order of their fields, so that the first
+	// that is refused is the same each time.
+	for _, k := range sortedKeyed(byID) {
+		g := byID[k]
+		old, ok := plan.old[k]
+		if !ok {
+			return commands.Refuse(g.at, "is not a component of the attribute definition's type", nil)
+		}
+		v, problem := g.value.Of(typ, options...)
+		if problem != "" {
+			return commands.Refuse(g.at, problem, nil)
+		}
+		if v.Equal(old) {
+			delete(plan.changes, k)
+		} else {
+			plan.changes[k] = v
+		}
+	}
+	return nil
+}
+
+// lost returns the values that the plan's change loses, by their components'
+// IDs, which its undo gives back: those that what back makes of the new value
+// is not, as none that back does not convert, or an error that refuses the
+// batch, at type, if they come to more than maxUndoValues bytes.
+func (plan *valuesPlan) lost(back func(value.Value) (value.Value, bool)) (map[string]value.Value, error) {
+	out := map[string]value.Value{}
+	bytes := 0
+	for u, to := range plan.changes {
+		old := plan.old[u]
+		if again, ok := back(to); ok && again.Equal(old) {
+			continue
+		}
+		bytes += len(old.JSON())
+		if bytes > maxUndoValues {
+			return nil, commands.Refuse("type", fmt.Sprintf("would change values of more than %d MiB that the change's "+
+				"undo would have to hold: delete the attribute definition and add another instead", maxUndoValues>>20),
+				nil)
+		}
+		out[ids.Encode(ids.Component, u)] = old
+	}
+	return out, nil
+}
+
+// apply changes the plan's definition to the type typ, whose options are
+// options, with its new default, and its components' values as the plan says,
+// and reports the changes.
+func (plan *valuesPlan) apply(ctx context.Context, tx *commands.Tx, typ string, options []string) error {
+	if err := setDefinition(ctx, tx, plan.a, typ, options, plan.newDefault); err != nil {
+		return err
+	}
+	if len(plan.changes) == 0 {
+		return nil
+	}
+	vals := make(map[string]json.RawMessage, len(plan.changes))
+	for u, v := range plan.changes {
+		vals[u.String()] = v.JSON()
+	}
+	doc, err := json.Marshal(vals)
+	if err != nil {
+		return fmt.Errorf("component: encode the values: %w", err)
+	}
+	a := plan.a
+	q := queries.New(tx)
+	set, err := q.SetAttributeValues(ctx, queries.SetAttributeValuesParams{Vals: doc, WorkspaceID: a.WorkspaceID,
+		ProjectID: a.ProjectID, AttributeDefID: a.ID})
+	if err != nil {
+		return fmt.Errorf("component: change the values: %w", err)
+	}
+	return touch(ctx, tx, a.WorkspaceID, a.ProjectID, set)
+}
+
+// setDefinition changes the definition a's type to typ, its options to
+// options, and its default to def, a value of typ that value.Value.Of
+// returned, and reports the change.
+func setDefinition(ctx context.Context, tx *commands.Tx, a queries.AttributeDef, typ string, options []string,
+	def value.Value) error {
+	if typ != value.Enum || options == nil {
+		options = []string{}
+	}
+	return changed(tx, ids.AttributeDef, a.ID)(queries.New(tx).UpdateAttributeDefType(ctx,
+		queries.UpdateAttributeDefTypeParams{Type: typ, EnumOptions: options, DefaultValue: def.JSON(),
+			UpdatedBy: by(tx), WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID, ID: a.ID}))
+}
+
+// touchType increments the revisions of the components of the type typeID,
+// those in the trash included, whose values a change of one of its
+// definitions changes, and reports each change.
+func touchType(ctx context.Context, tx *commands.Tx, typeID pgtype.UUID) error {
+	rows, err := queries.New(tx).TouchTypeComponents(ctx, queries.TouchTypeComponentsParams{UpdatedBy: by(tx),
+		WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), ComponentTypeID: typeID})
+	if err != nil {
+		return fmt.Errorf("component: change the type's components: %w", err)
+	}
+	for _, row := range rows {
+		if err := tx.Changed(ids.Component, row.ID.Bytes, row.Rev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// touch increments the revisions of the components components of the
+// project, whose values changed, and reports each change.
+func touch(ctx context.Context, tx *commands.Tx, ws, project pgtype.UUID, components []pgtype.UUID) error {
+	if len(components) == 0 {
+		return nil
+	}
+	rows, err := queries.New(tx).TouchComponents(ctx, queries.TouchComponentsParams{UpdatedBy: by(tx),
+		WorkspaceID: ws, ProjectID: project, Ids: components})
+	if err != nil {
+		return fmt.Errorf("component: change the components: %w", err)
+	}
+	for _, row := range rows {
+		if err := tx.Changed(ids.Component, row.ID.Bytes, row.Rev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// attributeSortKey returns the key that a definition of the type typeID is
+// placed at among the type's: the key given, if it is not "", or else as
+// board.SortKey places a child among a folder's, after the type's last
+// definition. moving is the definition that moves, or nil for a new one.
+func attributeSortKey(ctx context.Context, q *queries.Queries, ws, project, typeID pgtype.UUID, given string,
+	moving *board.Child) (string, error) {
+	if given != "" {
+		return given, nil
+	}
+	params := queries.LastAttributeSortKeysParams{WorkspaceID: ws, ProjectID: project, ComponentTypeID: typeID}
+	if moving != nil {
+		params.Moved = moving.ID
+	}
+	last, err := q.LastAttributeSortKeys(ctx, params)
+	if err != nil {
+		return "", fmt.Errorf("component: read the type's last keys: %w", err)
+	}
+	return board.Place(board.Last{Key: last.Last, Live: last.LastLive, LiveID: last.LastLiveID}, moving,
+		"the type's last attribute definition")
+}
+
+// attributeKeyOwner returns the owner of a key among the definitions of the
+// type typeID.
+func attributeKeyOwner(q *queries.Queries, ws, project, typeID pgtype.UUID) keyOwner {
+	return func(ctx context.Context, key string) (pgtype.UUID, error) {
+		return q.AttributeDefWithKey(ctx, queries.AttributeDefWithKeyParams{WorkspaceID: ws, ProjectID: project,
+			ComponentTypeID: typeID, Key: key})
+	}
+}
+
+// anyAttribute returns the attribute definition of the batch's project whose
+// ID is id, a definition's ID that its payload's Check checked, whether or
+// not it is in the trash, with whether its type is, or refuses the batch if
+// the project has no such definition.
+func anyAttribute(ctx context.Context, tx *commands.Tx, id string) (queries.AttributeDefAnyRow, error) {
+	row, err := queries.New(tx).AttributeDefAny(ctx, queries.AttributeDefAnyParams{
+		WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()),
+		ID: decoded(ids.AttributeDef, id)})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return queries.AttributeDefAnyRow{}, commands.Refuse("id", "is not an attribute definition of the project",
+			nil)
+	case err != nil:
+		return queries.AttributeDefAnyRow{}, fmt.Errorf("component: read the attribute definition: %w", err)
+	}
+	return row, nil
+}
+
+// liveAttribute returns the attribute definition of the batch's project whose
+// ID is id as anyAttribute does, or refuses the batch if it is in the trash,
+// where nothing but restoring it changes it, or its type is, with which it
+// comes back.
+func liveAttribute(ctx context.Context, tx *commands.Tx, id string) (queries.AttributeDef, error) {
+	row, err := anyAttribute(ctx, tx, id)
+	switch {
+	case err != nil:
+		return queries.AttributeDef{}, err
+	case row.AttributeDef.DeletedAt.Valid:
+		return queries.AttributeDef{}, commands.Refuse("id", "is an attribute definition in the project's trash, "+
+			"which only restoring it changes", nil)
+	case row.TypeDeleted:
+		return queries.AttributeDef{}, refuseTypeInTrash()
+	}
+	return row.AttributeDef, nil
+}
+
+// refuseTypeInTrash returns the refusal of a command that would change an
+// attribute definition of a type in the trash, which is in the trash with it,
+// and which nothing but the type's restoration changes.
+func refuseTypeInTrash() error {
+	return commands.Refuse("id", "is an attribute definition of a component type in the project's trash, which "+
+		"comes back with its type", nil)
+}
+
+// checkOptions returns the problems of options as those of a definition of
+// the type typ, but for the text rules of their names
+// (value.CheckOptionNames): an enum's options, and none of another type.
+func checkOptions(typ string, options []string) input.FieldErrors {
+	if typ != value.Enum {
+		if len(options) > 0 {
+			return field("options", "is set for a type other than enum, which has none")
+		}
+		return nil
+	}
+	return field("options", value.CheckOptions(options))
+}
+
+// checkRuntime returns the problem of a definition of the type typ whose
+// runtime is runtime, at the payload's field at, the field that the command
+// sets: at runtime for a create's and SetAttributeRuntime's, and at type for
+// a retype's of a runtime definition. A text is no part of the game's state.
+func checkRuntime(at, typ string, runtime bool) input.FieldErrors {
+	switch {
+	case typ != value.Text || !runtime:
+		return nil
+	case at == "type":
+		return field(at, "is text, which a runtime attribute definition may not be: unset its runtime first")
+	}
+	return field(at, "is set on a text, which is no part of the game's state")
+}
+
+// checkValues returns the problems of values, the values that a command
+// gives components, by their IDs, as values of the type typ, whose options
+// are options, but for their characters, which Apply checks.
+func checkValues(values map[string]value.Value, typ string, options []string) input.FieldErrors {
+	var errs input.FieldErrors
+	for _, k := range sortedKeys(values) {
+		at := "values." + k
+		if e := entityID(ids.Component, at, k); e != nil {
+			errs = append(errs, e...)
+			continue
+		}
+		_, problem := values[k].Read(typ, value.Checks{Length: true}, options...)
+		errs = append(errs, field(at, problem)...)
+	}
+	return errs
+}
+
+// sortedKeyed returns the UUIDs of m in the order of their values' fields.
+func sortedKeyed(m map[ids.UUID]keyed) []ids.UUID {
+	keys := make([]ids.UUID, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.SortFunc(keys, func(a, b ids.UUID) int { return strings.Compare(m[a].at, m[b].at) })
+	return keys
+}
+
+// sortedKeys returns the keys of m, sorted.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}

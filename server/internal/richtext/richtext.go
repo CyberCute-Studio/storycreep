@@ -298,6 +298,38 @@ type Error struct {
 	// Message says it in English, for programs and logs. It cuts a name
 	// that the document gives, as a field's, to its first 40 characters.
 	Message string
+	// path holds the reference tokens of Pointer, which say which of them
+	// index an array, for Location.
+	path []token
+}
+
+// Location returns where in the document the value that is wrong is, as the
+// API locates a problem within a request's body or a command's payload: each
+// object's key after a dot, and each array's index in brackets, as
+// .content[0].content[2], or "" for the document itself. It cuts a key that
+// is longer than 40 characters, as Error does.
+func (e *Error) Location() string {
+	var b strings.Builder
+	for _, t := range e.path {
+		if t.index >= 0 {
+			b.WriteString("[" + strconv.Itoa(t.index) + "]")
+			continue
+		}
+		key := t.key
+		if utf8.RuneCountInString(key) > maxTokenChars {
+			cut := 0
+			for range maxTokenChars {
+				_, size := utf8.DecodeRuneInString(key[cut:])
+				cut += size
+			}
+			key = key[:cut] + "…"
+		}
+		if strings.ContainsFunc(key, func(r rune) bool { return !strconv.IsPrint(r) }) {
+			key = strconv.Quote(key)
+		}
+		b.WriteString("." + key)
+	}
+	return b.String()
 }
 
 // maxTokenChars is the most characters of a name that Error and a message
@@ -551,7 +583,8 @@ func (p *parser) fail(reason Reason, format string, args ...any) *Error {
 			b.WriteString(escapeToken(t.key))
 		}
 	}
-	return &Error{Pointer: b.String(), Reason: reason, Message: fmt.Sprintf(format, args...)}
+	return &Error{Pointer: b.String(), Reason: reason, Message: fmt.Sprintf(format, args...),
+		path: slices.Clone(p.path)}
 }
 
 // where is where a node is read, which decides the types that it may have.

@@ -18,6 +18,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
 
@@ -330,11 +331,20 @@ func Register[P any](r *Registry, s Spec[P]) {
 			}
 		}
 	}
+	docs := docFields(pt)
 	sp.decode = func(raw []byte, step bool) (any, input.FieldErrors) {
 		var p P
 		d := json.NewDecoder(bytes.NewReader(raw))
 		d.DisallowUnknownFields()
 		if err := d.Decode(&p); err != nil {
+			// A rich-text document that its schema allows but Parse refuses,
+			// as one with lists nested too deep, is answered at its field,
+			// joined with where in it the value that is wrong is (plan note
+			// N40), with the error's message, which holds its pointer.
+			var doc *richtext.Error
+			if errors.As(err, &doc) {
+				return nil, input.FieldErrors{{Field: docField(raw, docs, doc), Message: err.Error()}}
+			}
 			// The schema allows the payload, so this is only a value that
 			// the schema cannot describe, such as an integer out of its
 			// type's range.
@@ -359,6 +369,44 @@ func Register[P any](r *Registry, s Spec[P]) {
 	}
 	sp.apply = func(ctx context.Context, tx *Tx, payload any) error { return s.Apply(ctx, tx, payload.(P)) }
 	r.specs[s.Type] = sp
+}
+
+// docFields returns the names, in a payload's JSON, of the fields of the
+// payload's type t that hold a rich-text document, a richtext.Doc or a
+// pointer to one, in their order.
+func docFields(t reflect.Type) []string {
+	var out []string
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if f.Type != reflect.TypeFor[richtext.Doc]() && f.Type != reflect.TypeFor[*richtext.Doc]() {
+			continue
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "" {
+			name = f.Name
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// docField returns the location within the payload raw of the value that err
+// says is wrong in one of its documents, the fields named docs: the first of
+// them that Parse refuses, joined with where in it the value is, or "" for the
+// payload itself if none of them is, as when the payload is not an object.
+func docField(raw []byte, docs []string, err *richtext.Error) string {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return ""
+	}
+	for _, name := range docs {
+		if doc, ok := fields[name]; ok && string(doc) != "null" {
+			if _, parseErr := richtext.Parse(doc); parseErr != nil {
+				return name + err.Location()
+			}
+		}
+	}
+	return ""
 }
 
 // resolvers are the interfaces of a type that resolves itself, whose method

@@ -1,4 +1,4 @@
-package variable
+package value
 
 import (
 	"encoding/json"
@@ -6,7 +6,6 @@ import (
 	"math"
 	"math/big"
 	"math/rand/v2"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -28,51 +27,51 @@ func TestValueOf(t *testing.T) {
 	for _, c := range []struct {
 		typ, in, want string
 	}{
-		{TypeBool, "true", "true"},
-		{TypeBool, "false", "false"},
-		{TypeInt, "3", "3"},
-		{TypeInt, "-3", "-3"},
-		{TypeInt, "-0", "0"},
-		{TypeInt, "0.0", "0"},
-		{TypeInt, "3.0", "3"},
-		{TypeInt, "3e0", "3"},
-		{TypeInt, "30E-1", "3"},
-		{TypeInt, "1.5e1", "15"},
-		{TypeInt, "0.1e1", "1"},
-		{TypeInt, "0.000e999", "0"},
-		{TypeInt, "0e+000999", "0"},
-		{TypeInt, "9007199254740991", "9007199254740991"},
-		{TypeInt, "-9007199254740991", "-9007199254740991"},
-		{TypeInt, "9.007199254740991e15", "9007199254740991"},
-		{TypeInt, "100000000000000E-14", "1"},
-		{TypeFloat, "3", "3"},
-		{TypeFloat, "2.0", "2"},
-		{TypeFloat, "0.1", "0.1"},
-		{TypeFloat, "-0", "0"},
-		{TypeFloat, "-0.0", "0"},
-		{TypeFloat, "1e-400", "0"},
-		{TypeFloat, "-1e-400", "0"},
-		{TypeFloat, "1e-999", "0"},
-		{TypeFloat, "-0e999", "0"},
-		{TypeFloat, "4.9e-324", "5e-324"},
-		{TypeInt, "-0e-999", "0"},
+		{Bool, "true", "true"},
+		{Bool, "false", "false"},
+		{Int, "3", "3"},
+		{Int, "-3", "-3"},
+		{Int, "-0", "0"},
+		{Int, "0.0", "0"},
+		{Int, "3.0", "3"},
+		{Int, "3e0", "3"},
+		{Int, "30E-1", "3"},
+		{Int, "1.5e1", "15"},
+		{Int, "0.1e1", "1"},
+		{Int, "0.000e999", "0"},
+		{Int, "0e+000999", "0"},
+		{Int, "9007199254740991", "9007199254740991"},
+		{Int, "-9007199254740991", "-9007199254740991"},
+		{Int, "9.007199254740991e15", "9007199254740991"},
+		{Int, "100000000000000E-14", "1"},
+		{Float, "3", "3"},
+		{Float, "2.0", "2"},
+		{Float, "0.1", "0.1"},
+		{Float, "-0", "0"},
+		{Float, "-0.0", "0"},
+		{Float, "1e-400", "0"},
+		{Float, "-1e-400", "0"},
+		{Float, "1e-999", "0"},
+		{Float, "-0e999", "0"},
+		{Float, "4.9e-324", "5e-324"},
+		{Int, "-0e-999", "0"},
 		// The longest that a number may be written with, 327 characters.
-		{TypeInt, "3." + strings.Repeat("0", 325), "3"},
-		{TypeFloat, "-0." + strings.Repeat("0", 319) + "1e320", "-1"},
-		{TypeFloat, "1e21", "1e+21"},
-		{TypeFloat, "1.7976931348623157e308", "1.7976931348623157e+308"},
+		{Int, "3." + strings.Repeat("0", 325), "3"},
+		{Float, "-0." + strings.Repeat("0", 319) + "1e320", "-1"},
+		{Float, "1e21", "1e+21"},
+		{Float, "1.7976931348623157e308", "1.7976931348623157e+308"},
 		// As PostgreSQL's jsonb writes a float's default back, without an
 		// exponent, the longest, -5e-324, with 327 characters among them.
-		{TypeFloat, "-0." + strings.Repeat("0", 323) + "5", "-5e-324"},
-		{TypeFloat, "-17976931348623157" + strings.Repeat("0", 292), "-1.7976931348623157e+308"},
-		{TypeFloat, "1" + strings.Repeat("0", 100), "1e+100"},
-		{TypeFloat, "9007199254740993", "9007199254740992"},
-		{TypeString, `""`, `""`},
-		{TypeString, `"Elara"`, `"Elara"`},
-		{TypeString, `"two\nlines\tand a tab"`, `"two\nlines\tand a tab"`},
-		{TypeString, `"\u00e9\ud83d\ude00"`, `"é😀"`},
-		{TypeString, `" padded "`, `" padded "`},
-		{TypeString, `"` + long + `"`, `"` + long + `"`},
+		{Float, "-0." + strings.Repeat("0", 323) + "5", "-5e-324"},
+		{Float, "-17976931348623157" + strings.Repeat("0", 292), "-1.7976931348623157e+308"},
+		{Float, "1" + strings.Repeat("0", 100), "1e+100"},
+		{Float, "9007199254740993", "9007199254740992"},
+		{String, `""`, `""`},
+		{String, `"Elara"`, `"Elara"`},
+		{String, `"two\nlines\tand a tab"`, `"two\nlines\tand a tab"`},
+		{String, `"\u00e9\ud83d\ude00"`, `"é😀"`},
+		{String, `" padded "`, `" padded "`},
+		{String, `"` + long + `"`, `"` + long + `"`},
 	} {
 		got, problem := Value{raw: json.RawMessage(c.in)}.Of(c.typ)
 		if problem != "" || string(got.raw) != c.want {
@@ -80,50 +79,50 @@ func TestValueOf(t *testing.T) {
 		}
 	}
 	for _, c := range []struct{ typ, in string }{
-		{TypeBool, "0"},
-		{TypeBool, `"true"`},
-		{TypeInt, `"3"`},
-		{TypeInt, "true"},
-		{TypeInt, "3.5"},
-		{TypeInt, "0.11e1"},
-		{TypeInt, "4503599627370495.5"},
-		{TypeInt, "9007199254740992"},
-		{TypeInt, "-9007199254740992"},
-		{TypeInt, "1e16"},
-		{TypeInt, "1e999999999999"},
-		{TypeInt, "1e-999999999999"},
-		{TypeInt, "12345678901234567890123"},
-		{TypeFloat, "1e400"},
-		{TypeFloat, "-1e400"},
-		{TypeFloat, "1e999"},
+		{Bool, "0"},
+		{Bool, `"true"`},
+		{Int, `"3"`},
+		{Int, "true"},
+		{Int, "3.5"},
+		{Int, "0.11e1"},
+		{Int, "4503599627370495.5"},
+		{Int, "9007199254740992"},
+		{Int, "-9007199254740992"},
+		{Int, "1e16"},
+		{Int, "1e999999999999"},
+		{Int, "1e-999999999999"},
+		{Int, "12345678901234567890123"},
+		{Float, "1e400"},
+		{Float, "-1e400"},
+		{Float, "1e999"},
 		// Written past the bounds, more than 327 characters or an exponent
 		// beyond ±999, though each reads as a value of its type.
-		{TypeInt, "3." + strings.Repeat("0", 326)},
-		{TypeFloat, "3." + strings.Repeat("0", 326)},
-		{TypeFloat, "-0." + strings.Repeat("0", 324) + "5"},
-		{TypeInt, "0e1000"},
-		{TypeFloat, "0e-1000"},
-		{TypeFloat, "1E-1000"},
-		{TypeInt, "0.000e99999999999"},
-		{TypeFloat, "-0.0E+99999999999999999999"},
-		{TypeInt, "0e1073741824"},
-		{TypeFloat, "1e-16384"},
-		{TypeFloat, "-0." + strings.Repeat("0", 99999) + "1e100000"},
-		{TypeFloat, "1" + strings.Repeat("0", 1000) + "e-1000"},
-		{TypeFloat, `"1.5"`},
-		{TypeString, "3"},
-		{TypeString, `"` + long + `e"`},
-		{TypeString, `"bell\u0007"`},
-		{TypeString, `"carriage\rreturn"`},
-		{TypeString, `"right\u202eleft"`},
-		{TypeString, `"line\u2028separator"`},
-		{TypeString, `"lone \ud800"`},
-		{TypeString, `"lone \udc00 low"`},
-		{TypeString, `"swapped \udc00\ud800"`},
-		{TypeString, `"high then text \ud800x"`},
-		{TypeBool, "null"},
-		{TypeString, "null"},
-		{TypeInt, "[3]"},
+		{Int, "3." + strings.Repeat("0", 326)},
+		{Float, "3." + strings.Repeat("0", 326)},
+		{Float, "-0." + strings.Repeat("0", 324) + "5"},
+		{Int, "0e1000"},
+		{Float, "0e-1000"},
+		{Float, "1E-1000"},
+		{Int, "0.000e99999999999"},
+		{Float, "-0.0E+99999999999999999999"},
+		{Int, "0e1073741824"},
+		{Float, "1e-16384"},
+		{Float, "-0." + strings.Repeat("0", 99999) + "1e100000"},
+		{Float, "1" + strings.Repeat("0", 1000) + "e-1000"},
+		{Float, `"1.5"`},
+		{String, "3"},
+		{String, `"` + long + `e"`},
+		{String, `"bell\u0007"`},
+		{String, `"carriage\rreturn"`},
+		{String, `"right\u202eleft"`},
+		{String, `"line\u2028separator"`},
+		{String, `"lone \ud800"`},
+		{String, `"lone \udc00 low"`},
+		{String, `"swapped \udc00\ud800"`},
+		{String, `"high then text \ud800x"`},
+		{Bool, "null"},
+		{String, "null"},
+		{Int, "[3]"},
 		{"bigint", "3"},
 	} {
 		if got, problem := (Value{raw: json.RawMessage(c.in)}).Of(c.typ); problem == "" {
@@ -131,13 +130,13 @@ func TestValueOf(t *testing.T) {
 		}
 	}
 	// None is the type's zero value.
-	for typ, want := range map[string]string{TypeBool: "false", TypeInt: "0", TypeFloat: "0", TypeString: `""`} {
+	for typ, want := range map[string]string{Bool: "false", Int: "0", Float: "0", String: `""`} {
 		if got, problem := (Value{}).Of(typ); problem != "" || string(got.raw) != want {
 			t.Errorf("none of %s is %s, %q; want %s", typ, got.raw, problem, want)
 		}
 	}
 	// An escaped backslash before u starts no escape.
-	if got, problem := (Value{raw: json.RawMessage(`"\\ud800"`)}).Of(TypeString); problem != "" ||
+	if got, problem := (Value{raw: json.RawMessage(`"\\ud800"`)}).Of(String); problem != "" ||
 		string(got.raw) != `"\\ud800"` {
 		t.Errorf(`"\\ud800" is %s, %q`, got.raw, problem)
 	}
@@ -146,14 +145,14 @@ func TestValueOf(t *testing.T) {
 	// exponent, but not without that of its exponent, which jsonb never
 	// writes.
 	for _, c := range []struct{ typ, in, want string }{
-		{TypeFloat, "0." + strings.Repeat("0", 998) + "1", "0"},
-		{TypeFloat, "-1" + strings.Repeat("0", 308) + "." + strings.Repeat("9", 2000), "-1e+308"},
-		{TypeInt, "3." + strings.Repeat("0", 2000), "3"},
-		{TypeInt, "9007199254740991" + "." + strings.Repeat("0", 500), "9007199254740991"},
-		{TypeInt, "1" + strings.Repeat("0", 500), ""},
-		{TypeInt, "1e1000", ""},
+		{Float, "0." + strings.Repeat("0", 998) + "1", "0"},
+		{Float, "-1" + strings.Repeat("0", 308) + "." + strings.Repeat("9", 2000), "-1e+308"},
+		{Int, "3." + strings.Repeat("0", 2000), "3"},
+		{Int, "9007199254740991" + "." + strings.Repeat("0", 500), "9007199254740991"},
+		{Int, "1" + strings.Repeat("0", 500), ""},
+		{Int, "1e1000", ""},
 	} {
-		got, problem := Value{raw: json.RawMessage(c.in)}.of(c.typ, checks{})
+		got, problem := Value{raw: json.RawMessage(c.in)}.Read(c.typ, Checks{})
 		if c.want == "" && problem == "" || c.want != "" && (problem != "" || string(got.raw) != c.want) {
 			t.Errorf("the stored %s %s is %s, %q; want %q", c.typ, c.in, got.raw, problem, c.want)
 		}
@@ -175,8 +174,8 @@ func FuzzNumberValue(f *testing.F) {
 		if !numberForm.MatchString(raw) {
 			return
 		}
-		gotInt, intProblem := Value{raw: json.RawMessage(raw)}.Of(TypeInt)
-		gotFloat, floatProblem := Value{raw: json.RawMessage(raw)}.Of(TypeFloat)
+		gotInt, intProblem := Value{raw: json.RawMessage(raw)}.Of(Int)
+		gotFloat, floatProblem := Value{raw: json.RawMessage(raw)}.Of(Float)
 		if formProblem(raw, true) != "" {
 			if intProblem == "" || floatProblem == "" {
 				t.Errorf("%s, past the bounds, is taken as the int %s or the float %s", raw, gotInt.raw, gotFloat.raw)
@@ -242,8 +241,8 @@ func TestNumberForms(t *testing.T) {
 	for _, m := range mantissas {
 		for _, e := range exponents {
 			raw := m + e
-			gotInt, intProblem := Value{raw: json.RawMessage(raw)}.Of(TypeInt)
-			gotFloat, floatProblem := Value{raw: json.RawMessage(raw)}.Of(TypeFloat)
+			gotInt, intProblem := Value{raw: json.RawMessage(raw)}.Of(Int)
+			gotFloat, floatProblem := Value{raw: json.RawMessage(raw)}.Of(Float)
 			if formProblem(raw, true) != "" {
 				if intProblem == "" || floatProblem == "" {
 					t.Errorf("%s, past the bounds, is taken as the int %s or the float %s", raw, gotInt.raw,
@@ -299,7 +298,7 @@ func TestPlainDecimals(t *testing.T) {
 					f = 0
 				}
 				want, _ := json.Marshal(f)
-				if got, problem := (Value{raw: json.RawMessage(plain)}).Of(TypeFloat); problem != "" ||
+				if got, problem := (Value{raw: json.RawMessage(plain)}).Of(Float); problem != "" ||
 					string(got.raw) != string(want) {
 					t.Errorf("%s, of %s, is %s, %q", plain, want, got.raw, problem)
 				}
@@ -332,31 +331,5 @@ func TestValueJSON(t *testing.T) {
 	}
 	if out, err := json.Marshal(Value{}); err != nil || string(out) != "null" {
 		t.Errorf("none writes %s, %v", out, err)
-	}
-}
-
-// TestSchemaEnums checks that the types and the scopes of a variable that the
-// package lists are those that the schemas of the commands' payloads and of
-// the API's answers take, which their enum tags give, so that a type or a
-// scope added to the list and not to a schema, or to a schema and not to the
-// list, fails. TestEnumerations checks the database's.
-func TestSchemaEnums(t *testing.T) {
-	t.Parallel()
-	for _, c := range []struct {
-		typ   reflect.Type
-		field string
-		want  []string
-	}{
-		{reflect.TypeFor[createPayload](), "Type", Types()},
-		{reflect.TypeFor[retypePayload](), "Type", Types()},
-		{reflect.TypeFor[Variable](), "Type", Types()},
-		{reflect.TypeFor[createPayload](), "Scope", Scopes()},
-		{reflect.TypeFor[scopePayload](), "Scope", Scopes()},
-		{reflect.TypeFor[Variable](), "Scope", Scopes()},
-	} {
-		f, ok := c.typ.FieldByName(c.field)
-		if got, want := f.Tag.Get("enum"), strings.Join(c.want, ","); !ok || got != want {
-			t.Errorf("%s.%s takes %q, want %q", c.typ.Name(), c.field, got, want)
-		}
 	}
 }

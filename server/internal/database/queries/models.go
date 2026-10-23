@@ -23,6 +23,26 @@ type Asset struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type AttributeDef struct {
+	ID              pgtype.UUID
+	WorkspaceID     pgtype.UUID
+	ProjectID       pgtype.UUID
+	ComponentTypeID pgtype.UUID
+	Order           string
+	Key             string
+	Name            string
+	Type            string
+	EnumOptions     []string
+	DefaultValue    []byte
+	IsRuntime       bool
+	Rev             int64
+	DeletedAt       pgtype.Timestamptz
+	CreatedBy       pgtype.UUID
+	UpdatedBy       pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type Board struct {
 	ID          pgtype.UUID
 	WorkspaceID pgtype.UUID
@@ -35,6 +55,41 @@ type Board struct {
 	Description string
 	Color       string
 	EntryNodeID pgtype.UUID
+	Rev         int64
+	DeletedAt   pgtype.Timestamptz
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type Component struct {
+	ID              pgtype.UUID
+	WorkspaceID     pgtype.UUID
+	ProjectID       pgtype.UUID
+	ComponentTypeID pgtype.UUID
+	FolderID        pgtype.UUID
+	FolderKind      string
+	Order           string
+	Key             string
+	Name            string
+	Description     []byte
+	ImageAssetID    pgtype.UUID
+	Rev             int64
+	DeletedAt       pgtype.Timestamptz
+	CreatedBy       pgtype.UUID
+	UpdatedBy       pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type ComponentType struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Key         string
+	Name        string
+	Icon        string
 	Rev         int64
 	DeletedAt   pgtype.Timestamptz
 	CreatedBy   pgtype.UUID
@@ -59,6 +114,26 @@ type Folder struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type LiveAttributeDef struct {
+	ID              pgtype.UUID
+	WorkspaceID     pgtype.UUID
+	ProjectID       pgtype.UUID
+	ComponentTypeID pgtype.UUID
+	Order           string
+	Key             string
+	Name            string
+	Type            string
+	EnumOptions     []string
+	DefaultValue    []byte
+	IsRuntime       bool
+	Rev             int64
+	DeletedAt       pgtype.Timestamptz
+	CreatedBy       pgtype.UUID
+	UpdatedBy       pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type LiveBoard struct {
 	ID          pgtype.UUID
 	WorkspaceID pgtype.UUID
@@ -71,6 +146,41 @@ type LiveBoard struct {
 	Description string
 	Color       string
 	EntryNodeID pgtype.UUID
+	Rev         int64
+	DeletedAt   pgtype.Timestamptz
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type LiveComponent struct {
+	ID              pgtype.UUID
+	WorkspaceID     pgtype.UUID
+	ProjectID       pgtype.UUID
+	ComponentTypeID pgtype.UUID
+	FolderID        pgtype.UUID
+	FolderKind      string
+	Order           string
+	Key             string
+	Name            string
+	Description     []byte
+	ImageAssetID    pgtype.UUID
+	Rev             int64
+	DeletedAt       pgtype.Timestamptz
+	CreatedBy       pgtype.UUID
+	UpdatedBy       pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type LiveComponentType struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Key         string
+	Name        string
+	Icon        string
 	Rev         int64
 	DeletedAt   pgtype.Timestamptz
 	CreatedBy   pgtype.UUID

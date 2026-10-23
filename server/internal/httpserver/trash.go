@@ -45,8 +45,8 @@ func registerTrash(m *api.Mux, items *trash.Service) {
 		Method:      http.MethodGet,
 		Path:        "/api/v1/projects/{project_id}/trash",
 		Summary:     "List a project's trash",
-		Description: "Lists what is in the project's trash, the most recently deleted first: its boards and " +
-			"variables, and, once they exist, its nodes and components, each with its kind. Each stays in the " +
+		Description: "Lists what is in the project's trash, the most recently deleted first: its boards, " +
+			"variables, and components, and, once they exist, its nodes, each with its kind. Each stays in the " +
 			"trash for " + strconv.Itoa(trash.Days) + " days from its deletion, until its purge_after, when a purge " +
 			"that runs every hour deletes it for good; until then, the command of its kind restores it where it " +
 			"was, as board.restore with its ID, through POST /api/v1/projects/{project_id}/commands. A board's " +
@@ -54,7 +54,10 @@ func registerTrash(m *api.Mux, items *trash.Service) {
 			"of the board deleted on its own among them, which is listed, and restored only once its board is. A " +
 			"deleted folder is not listed: restoring a board restores the deleted folders above it, and the purge " +
 			"deletes a deleted folder once its " + strconv.Itoa(trash.Days) + " days have passed and it holds " +
-			"nothing. Nothing in the trash is in the project's other reads." +
+			"nothing. Neither is a deleted component type or attribute definition: a type's definitions are in the " +
+			"trash with it, restoring a component restores its type, and the purge deletes a type once its " +
+			strconv.Itoa(trash.Days) + " days have passed and it holds no component. Nothing in the trash is in the " +
+			"project's other reads." +
 			projectNotFoundDoc + tokenNotFoundDoc + tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Trash"},
 	}, func(ctx context.Context, in *projectTrashInput) (*projectTrashOutput, error) {

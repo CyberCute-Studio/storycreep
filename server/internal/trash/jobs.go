@@ -114,10 +114,12 @@ func purgeWorkspace(ctx context.Context, db sweep.DB, more func() bool, workspac
 }
 
 // purgeProject deletes, in a transaction of the workspace, at most purgeRows
-// of the boards, the variables, and the folders of the project that have been
-// in its trash for retention, the boards and the variables first, which may
-// leave a folder empty for the purge of the folders that follows, and returns
-// how many it deleted, or none if a transaction holds the project's lock.
+// of the boards, the variables, the components, the attribute definitions,
+// the folders, and the component types of the project that have been in its
+// trash for retention, the boards, the variables, and the components first,
+// which may leave a folder or a type empty for the purge of the folders and
+// of the types that follows, and returns how many it deleted, or none if a
+// transaction holds the project's lock.
 func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, project pgtype.UUID,
 	retention pgtype.Interval) (int64, error) {
 	var n int64
@@ -142,6 +144,24 @@ func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, projec
 			return fmt.Errorf("purge the variables: %w", err)
 		}
 		n += variables
+		components, err := q.PurgeComponents(ctx, queries.PurgeComponentsParams{WorkspaceID: ws,
+			ProjectID: project, Retention: retention, MaxRows: int32(purgeRows - n)})
+		if err != nil {
+			return fmt.Errorf("purge the components: %w", err)
+		}
+		n += components
+		attributes, err := q.PurgeAttributeDefs(ctx, queries.PurgeAttributeDefsParams{WorkspaceID: ws,
+			ProjectID: project, Retention: retention, MaxRows: int32(purgeRows - n)})
+		if err != nil {
+			return fmt.Errorf("purge the attribute definitions: %w", err)
+		}
+		n += attributes
+		types, err := q.PurgeComponentTypes(ctx, queries.PurgeComponentTypesParams{WorkspaceID: ws,
+			ProjectID: project, Retention: retention, MaxRows: int32(purgeRows - n)})
+		if err != nil {
+			return fmt.Errorf("purge the component types: %w", err)
+		}
+		n += types
 		// Each statement deletes the folders that hold nothing as it starts,
 		// so a folder whose last child it deletes is deleted by the next.
 		for n < purgeRows {

@@ -667,7 +667,7 @@ func TestFolderChildren(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"board", "folder", "variable"}; !slices.Equal(tables, want) {
+	if want := []string{"board", "component", "folder", "variable"}; !slices.Equal(tables, want) {
 		t.Errorf("the tables whose rows go into a folder are %v, want %v, which FolderHolds and PurgeFolders count",
 			tables, want)
 	}

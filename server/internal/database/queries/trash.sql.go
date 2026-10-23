@@ -43,7 +43,13 @@ WHERE p.workspace_id = $1 AND (
     OR EXISTS (SELECT 1 FROM variable v WHERE v.workspace_id = p.workspace_id AND v.project_id = p.id
         AND v.deleted_at <= now() - $2::interval)
     OR EXISTS (SELECT 1 FROM folder f WHERE f.workspace_id = p.workspace_id AND f.project_id = p.id
-        AND f.deleted_at <= now() - $2::interval))
+        AND f.deleted_at <= now() - $2::interval)
+    OR EXISTS (SELECT 1 FROM component c WHERE c.workspace_id = p.workspace_id AND c.project_id = p.id
+        AND c.deleted_at <= now() - $2::interval)
+    OR EXISTS (SELECT 1 FROM attribute_def a WHERE a.workspace_id = p.workspace_id AND a.project_id = p.id
+        AND a.deleted_at <= now() - $2::interval)
+    OR EXISTS (SELECT 1 FROM component_type t WHERE t.workspace_id = p.workspace_id AND t.project_id = p.id
+        AND t.deleted_at <= now() - $2::interval))
 ORDER BY p.id
 `
 
@@ -74,6 +80,43 @@ func (q *Queries) ProjectsToPurge(ctx context.Context, arg ProjectsToPurgeParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const purgeAttributeDefs = `-- name: PurgeAttributeDefs :execrows
+DELETE FROM attribute_def d
+WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
+    SELECT a.id FROM attribute_def a
+    WHERE a.workspace_id = $1 AND a.project_id = $2
+        AND a.deleted_at <= now() - $3::interval
+    ORDER BY a.deleted_at, a.id
+    LIMIT $4
+)
+`
+
+type PurgeAttributeDefsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Retention   pgtype.Interval
+	MaxRows     int32
+}
+
+// PurgeAttributeDefs deletes at most max_rows of the project's attribute
+// definitions that have been in its trash for retention, those that have
+// been there longest first, with the values that its components hold of
+// them, by the cascade of their foreign key, and returns how many it
+// deleted. A definition of a type in the trash, which is in the trash with
+// it, is purged with its type, by the cascade of its foreign key.
+func (q *Queries) PurgeAttributeDefs(ctx context.Context, arg PurgeAttributeDefsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeAttributeDefs,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Retention,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const purgeBoards = `-- name: PurgeBoards :execrows
@@ -110,6 +153,82 @@ func (q *Queries) PurgeBoards(ctx context.Context, arg PurgeBoardsParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const purgeComponentTypes = `-- name: PurgeComponentTypes :execrows
+DELETE FROM component_type d
+WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
+    SELECT t.id FROM component_type t
+    WHERE t.workspace_id = $1 AND t.project_id = $2
+        AND t.deleted_at <= now() - $3::interval
+        AND NOT EXISTS (SELECT 1 FROM component c WHERE c.workspace_id = $1
+            AND c.project_id = $2 AND c.component_type_id = t.id)
+    ORDER BY t.deleted_at, t.id
+    LIMIT $4
+)
+`
+
+type PurgeComponentTypesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Retention   pgtype.Interval
+	MaxRows     int32
+}
+
+// PurgeComponentTypes deletes at most max_rows of the project's component
+// types that have been deleted for retention and hold no component, in the
+// trash or not, those deleted longest ago first, with their attribute
+// definitions, by the cascade of their foreign key, and returns how many it
+// deleted. A type is deleted only once each of its components is in the
+// trash, and restoring one restores it, so a type whose time has passed
+// holds none once their own times have passed too, which the purge of the
+// components before it deletes.
+func (q *Queries) PurgeComponentTypes(ctx context.Context, arg PurgeComponentTypesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeComponentTypes,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Retention,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeComponents = `-- name: PurgeComponents :execrows
+DELETE FROM component d
+WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
+    SELECT c.id FROM component c
+    WHERE c.workspace_id = $1 AND c.project_id = $2
+        AND c.deleted_at <= now() - $3::interval
+    ORDER BY c.deleted_at, c.id
+    LIMIT $4
+)
+`
+
+type PurgeComponentsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Retention   pgtype.Interval
+	MaxRows     int32
+}
+
+// PurgeComponents deletes at most max_rows of the project's components that
+// have been in its trash for retention, those that have been there longest
+// first, with their values, by the cascade of their foreign key, and returns
+// how many it deleted.
+func (q *Queries) PurgeComponents(ctx context.Context, arg PurgeComponentsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeComponents,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Retention,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const purgeFolders = `-- name: PurgeFolders :execrows
 DELETE FROM folder d
 WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
@@ -122,6 +241,8 @@ WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
             AND b.folder_id = f.id)
         AND NOT EXISTS (SELECT 1 FROM variable v WHERE v.workspace_id = $1
             AND v.project_id = $2 AND v.folder_id = f.id)
+        AND NOT EXISTS (SELECT 1 FROM component c WHERE c.workspace_id = $1
+            AND c.project_id = $2 AND c.folder_id = f.id)
     ORDER BY f.deleted_at, f.id
     LIMIT $4
 )
@@ -136,13 +257,12 @@ type PurgeFoldersParams struct {
 
 // PurgeFolders deletes at most max_rows of the project's folders that have
 // been deleted for retention and hold nothing, neither a folder, nor a
-// board, nor a variable, in the trash or not, those deleted longest ago
-// first, and returns how many it deleted. A folder deleted later than what it
-// holds holds it no longer once the purge has deleted that, which the
-// folder's own purge then waits for: a later statement deletes it. A later
-// table whose rows go into a folder, as the components' (plan item 34), adds
-// its rows here, as it does to FolderHolds, which TestFolderChildren holds it
-// to.
+// board, nor a variable, nor a component, in the trash or not, those deleted
+// longest ago first, and returns how many it deleted. A folder deleted later
+// than what it holds holds it no longer once the purge has deleted that,
+// which the folder's own purge then waits for: a later statement deletes it.
+// A later table whose rows go into a folder adds its rows here, as it does to
+// FolderHolds, which TestFolderChildren holds it to.
 func (q *Queries) PurgeFolders(ctx context.Context, arg PurgeFoldersParams) (int64, error) {
 	result, err := q.db.Exec(ctx, purgeFolders,
 		arg.WorkspaceID,
@@ -199,6 +319,9 @@ FROM (
     UNION ALL
     SELECT 'variable' AS kind, v.id, v.key::text, v.deleted_at FROM variable v
     WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.deleted_at IS NOT NULL
+    UNION ALL
+    SELECT 'component' AS kind, c.id, c.name, c.deleted_at FROM component c
+    WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.deleted_at IS NOT NULL
 ) t
 WHERE t.deleted_at <= coalesce($3::timestamptz, 'infinity'::timestamptz)
     AND ($3::timestamptz IS NULL
@@ -226,9 +349,10 @@ type TrashItemsRow struct {
 
 // A project's trash (package trash, PRD FR-PROJ-06): the rows of its content
 // with deleted_at, which the live views leave out (migration 00019). The
-// tables whose rows the trash lists are its boards' and its variables', and,
-// as they are added, its nodes' and components'; its folders' rows go to the
-// trash too, but are not listed. Each such table has a branch here, in the
+// tables whose rows the trash lists are its boards', its variables', and its
+// components', and, once it is added, its nodes'; its folders', its
+// component types', and its attribute definitions' rows go to the trash too,
+// but are not listed. Each such table has a branch here, in the
 // list and in the purge, which package trash's tests hold it to. A row that
 // belongs to a board, as a board's variable, is in the trash with its board
 // too, which lists the board alone, and is purged with it, by the cascade of

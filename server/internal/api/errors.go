@@ -53,6 +53,7 @@ const (
 	CodeSlugTaken             Code = "slug_taken"
 	CodeFolderNotEmpty        Code = "folder_not_empty"
 	CodeKeyTaken              Code = "key_taken"
+	CodeComponentTypeInUse    Code = "component_type_in_use"
 	CodeLastOwner             Code = "last_owner"
 	CodeAlreadyMember         Code = "already_member"
 	CodeInviteExists          Code = "invite_exists"
@@ -237,17 +238,24 @@ var codes = []codeSpec{
 			"the project has it, in the project's trash or not, which a board's is unique within (FR-PROJ-02 AC1). " +
 			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeFolderNotEmpty, http.StatusConflict, i18n.K("error.folder_not_empty"),
-		"A `folder.delete` command names a folder that still holds folders, boards, or variables that are not " +
-			"deleted, so nothing of its batch is applied (PRD FR-PROJ-02). Move them out of it, or delete them, " +
-			"first; what is in the trash does not count, a variable of a board in the trash among it. " +
+		"A `folder.delete` command names a folder that still holds folders, boards, variables, or components that " +
+			"are not deleted, so nothing of its batch is applied (PRD FR-PROJ-02). Move them out of it, or delete " +
+			"them, first; what is in the trash does not count, a variable of a board in the trash among it. " +
 			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeKeyTaken, http.StatusConflict, i18n.K("error.key_taken"),
-		"Another variable of the project has the key in the variable's scope, among the project's global " +
-			"variables for a global, or among its board's for a board's, of those that are not in the project's " +
-			"trash, which a key is unique within (PRD FR-VAR-01): a command creates or renames a variable with the " +
-			"key, moves it to a scope where another has its key, or restores it from the trash once another has " +
-			"taken its key. A deleted variable's key is free. `details.errors` names the field, with its " +
-			"`location` and a `message`, as for `validation_failed`."},
+		"Another entity of the scope that a key is unique within has the key, of those that are not in the " +
+			"project's trash: another variable of the variable's scope, among the project's global variables for a " +
+			"global, or among its board's for a board's (PRD FR-VAR-01), another component type of the project, " +
+			"another attribute definition of the definition's type (FR-COMP-01 AC3), or another component of the " +
+			"project (FR-COMP-02 AC1). A command creates the entity with the key, or changes its key to it, moves a " +
+			"variable to a scope where another has its key, or restores an entity from the trash, or a component's " +
+			"type with it, once another has taken its key. A deleted entity's key is free. `details.errors` names " +
+			"the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeComponentTypeInUse, http.StatusConflict, i18n.K("error.component_type_in_use"),
+		"A `component_type.delete` command names a type of which a component that is not in the project's trash " +
+			"is, so nothing of its batch is applied (PRD FR-COMP-01). Delete the type's components first; a type " +
+			"goes to the trash only once each of its components is there, and restoring one of them restores it. " +
+			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeLastOwner, http.StatusConflict, i18n.K("error.last_owner"),
 		"The change would leave the workspace without an owner whose account is active, and a workspace keeps one " +
 			"(PRD FR-TEN-02 AC2): its last owner cannot be removed or demoted. An owner whose account's deletion is " +
@@ -366,7 +374,8 @@ var codes = []codeSpec{
 			"`admin` or `api`. `details.reason` says which rule it breaks: `format` or `reserved`. `details.errors` " +
 			"names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeKeyInvalid, http.StatusUnprocessableEntity, i18n.K("error.key_invalid"),
-		"A variable's key is not an identifier of the expression language (PRD FR-VAR-01 AC1, §5.8.1): an ASCII " +
+		"The key of a variable, a component type, an attribute definition, or a component is not an identifier of " +
+			"the expression language (PRD FR-VAR-01 AC1, FR-COMP-01 AC3, FR-COMP-02 AC1, §5.8.1): an ASCII " +
 			"letter or an underscore, then ASCII letters, digits, and underscores, as `met_elara`, of at most 64 " +
 			"characters, compared case by case, and not one of the language's reserved words, `true`, `false`, " +
 			"`and`, `or`, `not`, `global`, `board`, `null`, `if`, `else`, and `elseif`. `details.reason` says which " +

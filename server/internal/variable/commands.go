@@ -17,6 +17,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
+	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
 // The types of command of a variable (PRD §5.7). Each names the variable
@@ -270,7 +271,7 @@ func Register(r *commands.Registry) {
 		// characters that input.CheckText refuses (stored), which Apply then
 		// refuses as an undo applies it, rather than fail the retype.
 		Check: func(p retypePayload) input.FieldErrors {
-			_, problem := p.Default.of(p.Type, checks{length: true})
+			_, problem := p.Default.Read(p.Type, value.Checks{Length: true})
 			return append(entityID(ids.Variable, "id", p.ID), field("default", problem)...)
 		},
 		Inverse: func(ctx context.Context, tx *commands.Tx, p retypePayload) ([]commands.Step, error) {
@@ -469,7 +470,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	def, _ := p.Default.Of(p.Type)
 	err = q.InsertVariable(ctx, queries.InsertVariableParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		Scope: p.Scope, BoardID: boardID, FolderID: folder, SortKey: order, Key: p.Key, Type: p.Type,
-		DefaultValue: def.raw, Description: p.Description, ResetOnEnter: p.ResetOnEnter, CreatedBy: by(tx)})
+		DefaultValue: def.JSON(), Description: p.Description, ResetOnEnter: p.ResetOnEnter, CreatedBy: by(tx)})
 	if database.UniqueViolation(err, "variable_pkey") {
 		// The ID is another workspace's, or another project's, whose rows this
 		// transaction does not see.
@@ -541,7 +542,7 @@ func applyRestore(ctx context.Context, tx *commands.Tx, p idPayload) error {
 // def, a value of typ that Value.Of returned, and reports the change.
 func setValue(ctx context.Context, tx *commands.Tx, v queries.Variable, typ string, def Value) error {
 	return changed(tx, v.ID)(queries.New(tx).UpdateVariableValue(ctx, queries.UpdateVariableValueParams{Type: typ,
-		DefaultValue: def.raw, UpdatedBy: by(tx), WorkspaceID: v.WorkspaceID, ProjectID: v.ProjectID, ID: v.ID}))
+		DefaultValue: def.JSON(), UpdatedBy: by(tx), WorkspaceID: v.WorkspaceID, ProjectID: v.ProjectID, ID: v.ID}))
 }
 
 // anyVariable returns the variable of the batch's project whose ID is id, a
