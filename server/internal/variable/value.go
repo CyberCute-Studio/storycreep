@@ -1,0 +1,296 @@
+package variable
+
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"slices"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+)
+
+// The types of a variable (PRD FR-VAR-01, §5.8.3).
+const (
+	TypeBool   = "bool"
+	TypeInt    = "int"
+	TypeFloat  = "float"
+	TypeString = "string"
+)
+
+// types are the types of a variable.
+var types = []string{TypeBool, TypeInt, TypeFloat, TypeString}
+
+// Types returns the types of a variable, in the order of the database's
+// check and of the schemas' enums, as a copy that the caller may change.
+func Types() []string {
+	return slices.Clone(types)
+}
+
+// Limits of a variable's default (§5.8.1, §5.8.9).
+const (
+	// MaxInt is the greatest int, and -MaxInt the least: 2^53 − 1, which
+	// every evaluator, the TypeScript one's doubles among them, represents
+	// exactly.
+	MaxInt = 1<<53 - 1
+	// MaxStringLength is the most characters that a string may have, as a
+	// string literal of the expression language may.
+	MaxStringLength = 4096
+)
+
+// Value is a variable's default, as JSON: a boolean, a number, or a string,
+// which the variable's type says how to read (Of). The zero Value is none, as
+// a payload that leaves its default out has, which stands for the type's
+// zero value.
+type Value struct {
+	raw json.RawMessage
+}
+
+// valueSchema is the schema of a Value: a boolean, a number, or a string, of
+// which the variable's type takes one kind.
+func valueSchema() *huma.Schema {
+	return &huma.Schema{OneOf: []*huma.Schema{{Type: huma.TypeBoolean}, {Type: huma.TypeNumber},
+		{Type: huma.TypeString}}}
+}
+
+// Schema gives huma the schema of a Value (huma.SchemaProvider), which
+// validates a request's body and a command's payload, and describes the
+// field in the OpenAPI document. It is not null, which huma passes over in a
+// field that a schema does not require: UnmarshalJSON keeps it, which the
+// payload's Check then refuses at the field.
+func (Value) Schema(huma.Registry) *huma.Schema {
+	return valueSchema()
+}
+
+// UnmarshalJSON keeps the JSON of the value as it is, which Of reads once the
+// variable's type is known.
+func (v *Value) UnmarshalJSON(data []byte) error {
+	v.raw = slices.Clone(data)
+	return nil
+}
+
+// MarshalJSON writes the value as Of returned it, or null for none.
+func (v Value) MarshalJSON() ([]byte, error) {
+	if v.raw == nil {
+		return []byte("null"), nil
+	}
+	return v.raw, nil
+}
+
+// IsZero reports whether v is none, so that a payload's field that the
+// client left out, tagged omitzero, stays out when the pipeline encodes the
+// payload again for the operation log, rather than being written as null,
+// which no default is.
+func (v Value) IsZero() bool {
+	return v.raw == nil
+}
+
+// Zero returns the zero value of the type typ, a variable's type: false, 0,
+// 0.0, which is written as 0, or the empty string.
+func Zero(typ string) Value {
+	switch typ {
+	case TypeBool:
+		return Value{raw: json.RawMessage("false")}
+	case TypeString:
+		return Value{raw: json.RawMessage(`""`)}
+	}
+	return Value{raw: json.RawMessage("0")}
+}
+
+// Of returns v as a value of the type typ, a variable's type, in its
+// canonical form, which is what is stored and shown, or says what is wrong
+// with it as a value of the type, in English, for programs and logs, as the
+// message of a field's problem. A value of a type is: true or false for
+// bool; for int, a number that is an integer from -MaxInt to MaxInt, however
+// it is written, as 3, 3.0, or 3e0, which is written as 3; for float, a number
+// that a double holds without overflowing to an infinity, read as the double
+// nearest it, as JSON.parse reads it, and written as the shortest number that
+// reads as that double again, -0 as 0; and for string, a string of at most
+// MaxStringLength characters, without control characters but line feeds and
+// tabs (input.CheckText), and without an escape of a lone surrogate, which no
+// UTF-8 holds, and which encoding/json would read as U+FFFD where JSON.parse
+// keeps it, so that the server would store other text than the client holds.
+// None, the zero Value, is the type's zero value (Zero).
+func (v Value) Of(typ string) (Value, string) {
+	if v.raw == nil {
+		return Zero(typ), ""
+	}
+	raw := string(v.raw)
+	kind := kindOf(raw)
+	switch {
+	case raw == "null":
+		return Value{}, "is null, which no variable's default is"
+	case kind == "":
+		return Value{}, "is neither a boolean, a number, nor a string"
+	case (typ == TypeInt || typ == TypeFloat) && kind == "number":
+		return number(typ, raw)
+	case typ == TypeBool && kind == "boolean":
+		return Value{raw: json.RawMessage(raw)}, ""
+	case typ == TypeString && kind == "string":
+		return text(v.raw)
+	case !slices.Contains(types, typ):
+		return Value{}, fmt.Sprintf("is a value of the type %q, which is no variable's type", typ)
+	}
+	return Value{}, fmt.Sprintf("is a %s, not a value of the variable's type, %s", kind, typ)
+}
+
+// kindOf returns the kind of the JSON value raw: boolean, number, or string,
+// or "" for any other, as null, an object, or an array.
+func kindOf(raw string) string {
+	switch {
+	case raw == "true" || raw == "false":
+		return "boolean"
+	case strings.HasPrefix(raw, `"`):
+		return "string"
+	case raw != "" && (raw[0] == '-' || '0' <= raw[0] && raw[0] <= '9'):
+		return "number"
+	}
+	return ""
+}
+
+// number returns raw, a JSON number, as a value of the type typ, int or
+// float, as Of does.
+func number(typ, raw string) (Value, string) {
+	if typ == TypeInt {
+		n, problem := integer(raw)
+		if problem != "" {
+			return Value{}, problem
+		}
+		return Value{raw: json.RawMessage(strconv.FormatInt(n, 10))}, ""
+	}
+	f, err := strconv.ParseFloat(raw, 64)
+	if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
+		return Value{}, "is beyond the range of a float, a double, which holds no number greater than about 1.8e308"
+	}
+	if f == 0 {
+		// -0 is written as 0, as the evaluators normalise it (§5.8.9).
+		f = 0
+	}
+	out, err := json.Marshal(f)
+	if err != nil {
+		return Value{}, "is not a number that JSON writes"
+	}
+	return Value{raw: out}, ""
+}
+
+// integer returns the value of raw, a JSON number, if it is an integer from
+// -MaxInt to MaxInt, or says why it is not one. It reads raw as a decimal,
+// exactly, so that a number that rounds to an integer as a double, as
+// 4503599627370495.5, is not one, and a number with a large exponent, as
+// 1e999999999, is too large without being computed.
+func integer(raw string) (int64, string) {
+	const notInteger = "is not an integer, which an int's default is"
+	tooLarge := fmt.Sprintf("is not an integer from -%d to %d, which every runtime holds exactly", MaxInt, MaxInt)
+	s, negative := strings.CutPrefix(raw, "-")
+	mantissa, exponent := s, ""
+	if i := strings.IndexAny(s, "eE"); i >= 0 {
+		mantissa, exponent = s[:i], s[i+1:]
+	}
+	whole, fraction, _ := strings.Cut(mantissa, ".")
+	digits := strings.TrimLeft(whole+fraction, "0")
+	if digits == "" {
+		return 0, ""
+	}
+	// The value is digits times ten to the power of shift. A mantissa holds
+	// a few million digits at most, which a body's size bounds, so an
+	// exponent of more than 9 digits decides the answer alone, whichever
+	// the mantissa is, and is not read as a number.
+	shift := -len(fraction)
+	if exponent != "" {
+		down := strings.HasPrefix(exponent, "-")
+		e := strings.TrimLeft(strings.TrimLeft(exponent, "+-"), "0")
+		switch n, _ := strconv.Atoi(e); {
+		case len(e) > 9 && down:
+			return 0, notInteger
+		case len(e) > 9:
+			return 0, tooLarge
+		case down:
+			shift -= n
+		default:
+			shift += n
+		}
+	}
+	for strings.HasSuffix(digits, "0") {
+		digits = digits[:len(digits)-1]
+		shift++
+	}
+	switch {
+	case shift < 0:
+		return 0, notInteger
+	case len(digits)+shift > len(strconv.Itoa(MaxInt)):
+		return 0, tooLarge
+	}
+	n, err := strconv.ParseInt(digits+strings.Repeat("0", shift), 10, 64)
+	if err != nil || n > MaxInt {
+		return 0, tooLarge
+	}
+	if negative {
+		n = -n
+	}
+	return n, ""
+}
+
+// text returns raw, a JSON string, as a value of the type string, as Of
+// does.
+func text(raw json.RawMessage) (Value, string) {
+	var s string
+	switch {
+	case !utf8.Valid(raw):
+		return Value{}, "is not UTF-8"
+	case loneSurrogate(raw):
+		return Value{}, "escapes a lone surrogate, which is not a character"
+	case json.Unmarshal(raw, &s) != nil:
+		return Value{}, "is not a JSON string"
+	}
+	if problem := input.CheckText(s, MaxStringLength); problem != "" {
+		return Value{}, problem
+	}
+	out, err := json.Marshal(s)
+	if err != nil {
+		return Value{}, "is not a string that JSON writes"
+	}
+	return Value{raw: out}, ""
+}
+
+// loneSurrogate reports whether raw, a JSON string, escapes a UTF-16
+// surrogate that is not one of a pair, as "\ud800".
+func loneSurrogate(raw []byte) bool {
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		if i+5 >= len(raw) || raw[i+1] != 'u' {
+			// An escape of one character, as \" or \n, which the skip below
+			// steps over, so that its second character starts no escape.
+			i++
+			continue
+		}
+		r, ok := hex4(raw[i+2 : i+6])
+		i += 5
+		switch {
+		case !ok || r < 0xD800 || r >= 0xE000:
+		case r >= 0xDC00:
+			return true
+		case i+6 < len(raw) && raw[i+1] == '\\' && raw[i+2] == 'u':
+			if low, ok := hex4(raw[i+3 : i+7]); ok && low >= 0xDC00 && low < 0xE000 {
+				i += 6
+				continue
+			}
+			return true
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// hex4 returns the value of four hexadecimal digits, in either case, and
+// whether they are four such digits.
+func hex4(digits []byte) (rune, bool) {
+	n, err := strconv.ParseUint(string(digits), 16, 32)
+	return rune(n), err == nil
+}

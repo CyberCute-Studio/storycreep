@@ -76,6 +76,12 @@ const (
 	// project's folders, of boards, variables, and components alike (P,
 	// "Create, rename, move, and delete folders", FR-PROJ-02).
 	ManageFolders Operation = "project.folders"
+	// ManageVariablesAndComponents is creating a project's variables, and
+	// renaming, describing, retyping, rescoping, moving, deleting, and
+	// restoring them, and changing their defaults (P, "Manage variables,
+	// components, component types", FR-VAR-01), which the components and
+	// their types (plan item 34) join.
+	ManageVariablesAndComponents Operation = "project.variables"
 	// ManageOwnProjectTokens is creating, listing, and revoking one's own API
 	// tokens narrowed to a project (P, "Manage own API tokens narrowed to
 	// this project", FR-AUTH-04).
@@ -131,18 +137,19 @@ type rule struct {
 
 // matrix is §5.6, for the operations that exist so far.
 var matrix = map[Operation]rule{
-	ListMembers:             {scope: Workspace, least: role.Viewer, denied: ErrInsufficientRole},
-	ManageMembers:           {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
-	ManageOwners:            {scope: Workspace, least: role.Owner, denied: ErrOwnerRequired},
-	ManageWorkspaceSettings: {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
-	ManageProjects:          {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
-	ManageProjectGrants:     {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
-	ReadProject:             {scope: Project, least: role.Viewer, denied: ErrInsufficientRole},
-	UploadAssets:            {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
-	ChangeProjectSettings:   {scope: Project, least: role.Admin, denied: ErrInsufficientRole},
-	ManageBoards:            {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
-	ManageFolders:           {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
-	ManageOwnProjectTokens:  {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
+	ListMembers:                  {scope: Workspace, least: role.Viewer, denied: ErrInsufficientRole},
+	ManageMembers:                {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
+	ManageOwners:                 {scope: Workspace, least: role.Owner, denied: ErrOwnerRequired},
+	ManageWorkspaceSettings:      {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
+	ManageProjects:               {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
+	ManageProjectGrants:          {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
+	ReadProject:                  {scope: Project, least: role.Viewer, denied: ErrInsufficientRole},
+	UploadAssets:                 {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
+	ChangeProjectSettings:        {scope: Project, least: role.Admin, denied: ErrInsufficientRole},
+	ManageBoards:                 {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
+	ManageFolders:                {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
+	ManageVariablesAndComponents: {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
+	ManageOwnProjectTokens:       {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	// The workspace's own tokens and the others' are rows of their own.
 	ManageOwnWorkspaceTokens: {scope: Workspace, least: role.Editor, denied: ErrInsufficientRole},
 	ManageTokens:             {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},

@@ -492,7 +492,7 @@ func TestRestorePurged(t *testing.T) {
 // trash, with the kind of entity that the trash lists each row as, or "" for
 // a table whose rows it does not list. A table of a project's content with a
 // deleted_at must be one of them (TestTrashTables).
-var trashTables = []struct{ name, kind string }{{"folder", ""}, {"board", "board"}}
+var trashTables = []struct{ name, kind string }{{"folder", ""}, {"board", "board"}, {"variable", "variable"}}
 
 // TestTrashTables checks that every table of a project's content with a
 // deleted_at is registered with the trash, and holds each to what that
@@ -683,11 +683,21 @@ func TestTrashIsolation(t *testing.T) {
 			}
 			return out, err
 		}},
+		{Name: "a project's live variables", Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			rows, err := queries.New(tx).Variables(ctx, queries.VariablesParams{WorkspaceID: uuid(target.ID),
+				ProjectID: uuid(target.Rows["project"]), MaxRows: 10})
+			var out []ids.UUID
+			for _, r := range rows {
+				out = append(out, r.LiveVariable.ID.Bytes)
+			}
+			return out, err
+		}},
 	} {
 		f.Check(t, op)
 	}
 	for _, w := range []*isolationtest.Workspace{f.A, f.B} {
-		for _, table := range []string{"board", "folder"} {
+		for _, table := range []string{"board", "folder", "variable"} {
 			if _, err := f.Admin().Exec(ctx, "UPDATE "+table+" SET deleted_at = now() - interval '31 days' "+
 				"WHERE id = $1", w.Rows[table]); err != nil {
 				t.Fatal(err)
@@ -728,6 +738,10 @@ func TestTrashIsolation(t *testing.T) {
 			target *isolationtest.Workspace) ([]ids.UUID, error) {
 			q := queries.New(tx)
 			if _, err := q.PurgeBoards(ctx, queries.PurgeBoardsParams{WorkspaceID: uuid(target.ID),
+				ProjectID: uuid(target.Rows["project"]), Retention: retention, MaxRows: 10}); err != nil {
+				return nil, err
+			}
+			if _, err := q.PurgeVariables(ctx, queries.PurgeVariablesParams{WorkspaceID: uuid(target.ID),
 				ProjectID: uuid(target.Rows["project"]), Retention: retention, MaxRows: 10}); err != nil {
 				return nil, err
 			}

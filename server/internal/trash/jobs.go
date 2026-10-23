@@ -42,9 +42,10 @@ func RegisterJobs(r *jobs.Registry) {
 
 // Purge deletes for good what has been in its project's trash for Retention:
 // the boards, with every row that refers to them, which the cascade of their
-// foreign keys deletes, and then the deleted folders that hold nothing, in
-// the trash or not, once those that they held are purged. It returns how
-// many boards and folders it deleted. It works on each workspace in
+// foreign keys deletes, as their variables, then the variables, and then the
+// deleted folders that hold nothing, in the trash or not, once those that
+// they held are purged. It returns how many boards, variables, and folders it
+// deleted, but for those that a board's cascade deleted. It works on each workspace in
 // transactions of the workspace (§5.4), as package sweep runs them, each of
 // one project, which it locks as a batch of the project's commands does, so
 // that the batches see none of its deletions while they apply (plan note
@@ -110,10 +111,10 @@ func purgeWorkspace(ctx context.Context, db sweep.DB, more func() bool, workspac
 }
 
 // purgeProject deletes, in a transaction of the workspace, at most purgeRows
-// of the boards and the folders of the project that have been in its trash
-// for retention, the boards first, which may leave a folder empty for the
-// purge of the folders that follows, and returns how many it deleted, or
-// none if a transaction holds the project's lock.
+// of the boards, the variables, and the folders of the project that have been
+// in its trash for retention, the boards and the variables first, which may
+// leave a folder empty for the purge of the folders that follows, and returns
+// how many it deleted, or none if a transaction holds the project's lock.
 func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, project pgtype.UUID,
 	retention pgtype.Interval) (int64, error) {
 	var n int64
@@ -132,6 +133,12 @@ func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, projec
 			Retention: retention, MaxRows: purgeRows}); err != nil {
 			return fmt.Errorf("purge the boards: %w", err)
 		}
+		variables, err := q.PurgeVariables(ctx, queries.PurgeVariablesParams{WorkspaceID: ws, ProjectID: project,
+			Retention: retention, MaxRows: int32(purgeRows - n)})
+		if err != nil {
+			return fmt.Errorf("purge the variables: %w", err)
+		}
+		n += variables
 		// Each statement deletes the folders that hold nothing as it starts,
 		// so a folder whose last child it deletes is deleted by the next.
 		for n < purgeRows {

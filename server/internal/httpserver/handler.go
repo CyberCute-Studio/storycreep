@@ -28,6 +28,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/setup"
 	"github.com/CyberCute-Studio/storycreep/server/internal/trash"
+	"github.com/CyberCute-Studio/storycreep/server/internal/variable"
 	"github.com/CyberCute-Studio/storycreep/server/internal/version"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
 )
@@ -57,6 +58,9 @@ type server struct {
 	// boards reads the projects' boards and folders, which their commands
 	// change (package board).
 	boards *board.Service
+	// variables reads the projects' variables, which their commands change
+	// (package variable).
+	variables *variable.Service
 	// trash lists the projects' trash, from which their commands restore
 	// what it holds (package trash).
 	trash *trash.Service
@@ -97,6 +101,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registry := commands.NewRegistry()
 	project.Register(registry)
 	board.Register(registry)
+	variable.Register(registry)
 	s.queue = &queueRef{}
 	s.commands = commands.New(readyDB{s.ready}, commands.Options{
 		Registry:     registry,
@@ -111,6 +116,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		Pipeline:     s.commands,
 	})
 	s.boards = board.New(readyDB{s.ready}, board.Options{Projects: s.projects})
+	s.variables = variable.New(readyDB{s.ready}, variable.Options{Projects: s.projects})
 	s.trash = trash.New(readyDB{s.ready}, trash.Options{Projects: s.projects})
 	s.assets = asset.New(readyDB{s.ready}, asset.Options{
 		Projects:     s.projects,
@@ -193,6 +199,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerProjects(s.main, s.projects)
 	registerCommands(s.main, s.commands)
 	registerBoards(s.main, s.boards)
+	registerVariables(s.main, s.variables)
 	registerTrash(s.main, s.trash)
 	registerAssets(s.main, s.assets)
 	registerGrants(s.main, s.projects)

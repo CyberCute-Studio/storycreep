@@ -63,32 +63,38 @@ WITH RECURSIVE up (id, parent_id, deleted, depth) AS (
 SELECT up.id, up.deleted::boolean AS deleted FROM up WHERE NOT up.is_cycle ORDER BY up.depth;
 
 -- name: FolderHolds :one
--- FolderHolds returns whether the folder id of the project holds a folder or
--- a board that is not deleted. A later table whose rows go into a folder, as
--- the variables and the components (plan items 33 and 34), adds its rows
--- here, and to PurgeFolders, which TestFolderChildren holds it to.
+-- FolderHolds returns whether the folder id of the project holds a folder, a
+-- board, or a variable that is not in the trash, a variable of a board in
+-- the trash being in the trash with it. A later table whose rows go into a
+-- folder, as the components (plan item 34), adds its rows here, and to
+-- PurgeFolders, which TestFolderChildren holds it to.
 SELECT (
     EXISTS (SELECT 1 FROM live_folder f WHERE f.workspace_id = @workspace_id AND f.project_id = @project_id
         AND f.parent_id = @id)
     OR EXISTS (SELECT 1 FROM live_board b WHERE b.workspace_id = @workspace_id AND b.project_id = @project_id
         AND b.folder_id = @id)
+    OR EXISTS (SELECT 1 FROM live_variable v WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id
+        AND v.folder_id = @id)
 )::boolean AS holds;
 
 -- name: LastSortKeys :one
 -- LastSortKeys returns the greatest order of the project's children of the
 -- folder parent_id of the kind kind, or of those at the top if parent_id is
--- null, but for the folder moved_folder, or the board moved_board, if it is
--- not null, which moves there: its folders, and, for a folder of boards, its
--- boards, deleted ones included, so that one restored later keeps its place,
--- as last, or an empty string if there is none, and the last of those that
--- are not deleted, in the order of the children, by their orders and then
--- their IDs, as last_live, with its ID as last_live_id, or an empty string
--- and null if there is none. The child moved is left out of its own table
--- alone, so that a child of the other table with the same UUID, which a
--- client may give it, still counts. Each table is read by a branch for the
--- children of a folder and one for those at the top, so that the index of
--- the children's parent finds them in a plan made for any parent_id, which a
--- condition that takes either kind of parent keeps it from.
+-- null, but for the folder moved_folder, the board moved_board, or the
+-- variable moved_variable, if it is not null, which moves there: its
+-- folders, and, for a folder of boards, its boards, and for a folder of
+-- variables, its variables, deleted ones included, so that one restored
+-- later keeps its place, as last, or an empty string if there is none, and
+-- the last of those that are not deleted, in the order of the children, by
+-- their orders and then their IDs, as last_live, with its ID as last_live_id,
+-- or an empty string and null if there is none. A variable of a board in the
+-- trash counts as one that is not deleted, which comes back where it is with
+-- its board. The child moved is left out of its own table alone, so that a
+-- child of another table with the same UUID, which a client may give it,
+-- still counts. Each table is read by a branch for the children of a folder
+-- and one for those at the top, so that the index of the children's parent
+-- finds them in a plan made for any parent_id, which a condition that takes
+-- either kind of parent keeps it from.
 WITH c (id, sort_key, deleted) AS (
     SELECT f.id, f."order", f.deleted_at IS NOT NULL FROM folder f
     WHERE f.workspace_id = @workspace_id AND f.project_id = @project_id AND f.kind = @kind
@@ -106,6 +112,15 @@ WITH c (id, sort_key, deleted) AS (
     WHERE @kind::text = 'board' AND sqlc.narg(parent_id)::uuid IS NULL AND b.workspace_id = @workspace_id
         AND b.project_id = @project_id AND b.folder_id IS NULL
         AND b.id IS DISTINCT FROM sqlc.narg(moved_board)::uuid
+    UNION ALL
+    SELECT v.id, v."order", v.deleted_at IS NOT NULL FROM variable v
+    WHERE @kind::text = 'variable' AND v.workspace_id = @workspace_id AND v.project_id = @project_id
+        AND v.folder_id = sqlc.narg(parent_id)::uuid AND v.id IS DISTINCT FROM sqlc.narg(moved_variable)::uuid
+    UNION ALL
+    SELECT v.id, v."order", v.deleted_at IS NOT NULL FROM variable v
+    WHERE @kind::text = 'variable' AND sqlc.narg(parent_id)::uuid IS NULL AND v.workspace_id = @workspace_id
+        AND v.project_id = @project_id AND v.folder_id IS NULL
+        AND v.id IS DISTINCT FROM sqlc.narg(moved_variable)::uuid
 ), live AS (
     SELECT c.id, c.sort_key FROM c WHERE NOT c.deleted ORDER BY c.sort_key DESC, c.id DESC LIMIT 1
 )

@@ -52,6 +52,7 @@ const (
 	CodeNotFound              Code = "not_found"
 	CodeSlugTaken             Code = "slug_taken"
 	CodeFolderNotEmpty        Code = "folder_not_empty"
+	CodeKeyTaken              Code = "key_taken"
 	CodeLastOwner             Code = "last_owner"
 	CodeAlreadyMember         Code = "already_member"
 	CodeInviteExists          Code = "invite_exists"
@@ -71,6 +72,7 @@ const (
 	CodeWeakPassword          Code = "weak_password"
 	CodeImageInvalid          Code = "image_invalid"
 	CodeSlugInvalid           Code = "slug_invalid"
+	CodeKeyInvalid            Code = "key_invalid"
 	CodeRateLimited           Code = "rate_limited"
 	CodeInternal              Code = "internal_error"
 	CodeNotReady              Code = "not_ready"
@@ -235,10 +237,17 @@ var codes = []codeSpec{
 			"the project has it, in the project's trash or not, which a board's is unique within (FR-PROJ-02 AC1). " +
 			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeFolderNotEmpty, http.StatusConflict, i18n.K("error.folder_not_empty"),
-		"A `folder.delete` command names a folder that still holds folders or boards that are not deleted, so " +
-			"nothing of its batch is applied (PRD FR-PROJ-02). Move them out of it, or delete them, first; what is in " +
-			"the trash does not count. `details.errors` names the field, with its `location` and a `message`, as for " +
-			"`validation_failed`."},
+		"A `folder.delete` command names a folder that still holds folders, boards, or variables that are not " +
+			"deleted, so nothing of its batch is applied (PRD FR-PROJ-02). Move them out of it, or delete them, " +
+			"first; what is in the trash does not count, a variable of a board in the trash among it. " +
+			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeKeyTaken, http.StatusConflict, i18n.K("error.key_taken"),
+		"Another variable of the project has the key in the variable's scope, among the project's global " +
+			"variables for a global, or among its board's for a board's, of those that are not in the project's " +
+			"trash, which a key is unique within (PRD FR-VAR-01): a command creates or renames a variable with the " +
+			"key, moves it to a scope where another has its key, or restores it from the trash once another has " +
+			"taken its key. A deleted variable's key is free. `details.errors` names the field, with its " +
+			"`location` and a `message`, as for `validation_failed`."},
 	{CodeLastOwner, http.StatusConflict, i18n.K("error.last_owner"),
 		"The change would leave the workspace without an owner whose account is active, and a workspace keeps one " +
 			"(PRD FR-TEN-02 AC2): its last owner cannot be removed or demoted. An owner whose account's deletion is " +
@@ -356,6 +365,13 @@ var codes = []codeSpec{
 			"`com1`, which no slug may be, and, for a workspace's, a word that the product keeps for itself, such as " +
 			"`admin` or `api`. `details.reason` says which rule it breaks: `format` or `reserved`. `details.errors` " +
 			"names the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeKeyInvalid, http.StatusUnprocessableEntity, i18n.K("error.key_invalid"),
+		"A variable's key is not an identifier of the expression language (PRD FR-VAR-01 AC1, §5.8.1): an ASCII " +
+			"letter or an underscore, then ASCII letters, digits, and underscores, as `met_elara`, of at most 64 " +
+			"characters, compared case by case, and not one of the language's reserved words, `true`, `false`, " +
+			"`and`, `or`, `not`, `global`, `board`, `null`, `if`, `else`, and `elseif`. `details.reason` says which " +
+			"rule it breaks: `format` or `reserved`. `details.errors` names the field, with its `location` and a " +
+			"`message`, as for `validation_failed`."},
 	{CodeRateLimited, http.StatusTooManyRequests, i18n.K("error.rate_limited"),
 		"The client made too many requests (PRD FR-API-04 AC3, NFR-SEC-06), or signing in with an email address " +
 			"failed too often in a row (FR-AUTH-05). The `Retry-After` header says how many seconds to wait. " +
