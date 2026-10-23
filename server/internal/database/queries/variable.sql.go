@@ -583,9 +583,12 @@ func (q *Queries) Variables(ctx context.Context, arg VariablesParams) ([]Variabl
 }
 
 const variablesByID = `-- name: VariablesByID :many
-SELECT variable.id, variable.workspace_id, variable.project_id, variable.scope, variable.board_id, variable.folder_id, variable.folder_kind, variable."order", variable.key, variable.type, variable.default_value, variable.description, variable.reset_on_enter, variable.rev, variable.deleted_at, variable.created_by, variable.updated_by, variable.created_at, variable.updated_at
+SELECT variable.id, variable.workspace_id, variable.project_id, variable.scope, variable.board_id, variable.folder_id, variable.folder_kind, variable."order", variable.key, variable.type, variable.default_value, variable.description, variable.reset_on_enter, variable.rev, variable.deleted_at, variable.created_by, variable.updated_by, variable.created_at, variable.updated_at, b.deleted_at AS board_deleted_at
 FROM variable
-WHERE workspace_id = $1 AND project_id = $2 AND id = ANY($3::uuid[])
+LEFT JOIN board b ON b.workspace_id = variable.workspace_id AND b.project_id = variable.project_id
+    AND b.id = variable.board_id
+WHERE variable.workspace_id = $1 AND variable.project_id = $2
+    AND variable.id = ANY($3::uuid[])
 `
 
 type VariablesByIDParams struct {
@@ -595,11 +598,14 @@ type VariablesByIDParams struct {
 }
 
 type VariablesByIDRow struct {
-	Variable Variable
+	Variable       Variable
+	BoardDeletedAt pgtype.Timestamptz
 }
 
 // VariablesByID returns the variables of the project whose IDs are among ids,
-// whether or not they are in the trash.
+// whether or not they are in the trash, each with when its board was deleted
+// to the trash, as board_deleted_at, if it is there, which a variable is in
+// with it.
 func (q *Queries) VariablesByID(ctx context.Context, arg VariablesByIDParams) ([]VariablesByIDRow, error) {
 	rows, err := q.db.Query(ctx, variablesByID, arg.WorkspaceID, arg.ProjectID, arg.Ids)
 	if err != nil {
@@ -629,6 +635,7 @@ func (q *Queries) VariablesByID(ctx context.Context, arg VariablesByIDParams) ([
 			&i.Variable.UpdatedBy,
 			&i.Variable.CreatedAt,
 			&i.Variable.UpdatedAt,
+			&i.BoardDeletedAt,
 		); err != nil {
 			return nil, err
 		}

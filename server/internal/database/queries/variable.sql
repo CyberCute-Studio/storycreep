@@ -32,10 +32,15 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id;
 
 -- name: VariablesByID :many
 -- VariablesByID returns the variables of the project whose IDs are among ids,
--- whether or not they are in the trash.
-SELECT sqlc.embed(variable)
+-- whether or not they are in the trash, each with when its board was deleted
+-- to the trash, as board_deleted_at, if it is there, which a variable is in
+-- with it.
+SELECT sqlc.embed(variable), b.deleted_at AS board_deleted_at
 FROM variable
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[]);
+LEFT JOIN board b ON b.workspace_id = variable.workspace_id AND b.project_id = variable.project_id
+    AND b.id = variable.board_id
+WHERE variable.workspace_id = @workspace_id AND variable.project_id = @project_id
+    AND variable.id = ANY(@ids::uuid[]);
 
 -- name: Variables :many
 -- Variables returns the project's variables that are not in the trash, in the

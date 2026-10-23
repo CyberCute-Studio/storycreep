@@ -1,6 +1,7 @@
 package variable
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -113,8 +114,9 @@ func Zero(typ string) Value {
 // MaxStringLength characters, without control characters but line feeds and
 // tabs (input.CheckText), and without an escape of a lone surrogate, which no
 // UTF-8 holds, and which encoding/json would read as U+FFFD where JSON.parse
-// keeps it, so that the server would store other text than the client holds.
-// None, the zero Value, is the type's zero value (Zero).
+// keeps it, so that the server would store other text than the client holds;
+// a string is written without escaping <, >, and & (PRD §6.2). None, the zero
+// Value, is the type's zero value (Zero).
 func (v Value) Of(typ string) (Value, string) {
 	return v.of(typ, true)
 }
@@ -125,7 +127,9 @@ func (v Value) Of(typ string) (Value, string) {
 // database's own check holds it to the length, but not to the characters, so
 // that a change of what input.CheckText takes, or a row that the pipeline did
 // not write, leaves the project's variables readable. A command that sets a
-// default, the undo of a change of one among them, checks it whole (Of).
+// default, the undo of a change of one among them, checks it whole as it
+// applies (Of); variable.retype's payload check, which the step of an undo
+// passes too, checks it without its characters.
 func (v Value) of(typ string, checked bool) (Value, string) {
 	if v.raw == nil {
 		return Zero(typ), ""
@@ -195,7 +199,10 @@ func number(typ, raw string) (Value, string) {
 // 1e999999999, is too large without being computed.
 func integer(raw string) (int64, string) {
 	const notInteger = "is not an integer, which an int's default is"
-	tooLarge := fmt.Sprintf("is not an integer from -%d to %d, which every runtime holds exactly", MaxInt, MaxInt)
+	// MaxInt is converted to int64, the type that holds it on every
+	// platform, as int does not on a 32-bit one.
+	tooLarge := fmt.Sprintf("is not an integer from -%d to %d, which every runtime holds exactly", int64(MaxInt),
+		int64(MaxInt))
 	s, negative := strings.CutPrefix(raw, "-")
 	mantissa, exponent := s, ""
 	if i := strings.IndexAny(s, "eE"); i >= 0 {
@@ -232,7 +239,7 @@ func integer(raw string) (int64, string) {
 	switch {
 	case shift < 0:
 		return 0, notInteger
-	case len(digits)+shift > len(strconv.Itoa(MaxInt)):
+	case len(digits)+shift > len(strconv.FormatInt(MaxInt, 10)):
 		return 0, tooLarge
 	}
 	n, err := strconv.ParseInt(digits+strings.Repeat("0", shift), 10, 64)
@@ -262,11 +269,15 @@ func text(raw json.RawMessage, checked bool) (Value, string) {
 			return Value{}, problem
 		}
 	}
-	out, err := json.Marshal(s)
-	if err != nil {
+	// The string is written without escaping <, >, and &, as the API writes
+	// its other texts (PRD §6.2), which json.Marshal would escape.
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(s); err != nil {
 		return Value{}, "is not a string that JSON writes"
 	}
-	return Value{raw: out}, ""
+	return Value{raw: bytes.TrimSuffix(out.Bytes(), []byte("\n"))}, ""
 }
 
 // loneSurrogate reports whether raw, a JSON string, escapes a UTF-16

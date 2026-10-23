@@ -3427,7 +3427,7 @@
             ]
           },
           "deleted_at": {
-            "description": "When the variable was deleted to the project's trash, if it is there",
+            "description": "When the variable went to the project's trash, if it is there: when it was deleted, or, if it was not, but its board is in the trash, with which it is in the trash too, and comes back, when the board was deleted",
             "format": "date-time",
             "type": "string"
           },

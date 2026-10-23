@@ -148,6 +148,12 @@ func Register(r *commands.Registry) {
 				if err != nil {
 					return nil, err
 				}
+				// A variable of a board in the trash is in the trash with it,
+				// which its state says, as the state of an entity in the trash
+				// does, though only its board's deletion put it there.
+				if v.DeletedAt == nil && row.BoardDeletedAt.Valid {
+					v.DeletedAt = timeOf(row.BoardDeletedAt)
+				}
 				out[row.Variable.ID.Bytes] = v
 			}
 			return out, nil
@@ -253,8 +259,14 @@ func Register(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[retypePayload]{
 		Type: Retype, Capability: op, Scope: sc, Touches: variable,
+		// Check checks the default against the type, and Apply checks its
+		// characters too, as SetDefault's Apply does, so that the pipeline
+		// takes the inverse of a retype of a variable whose stored default has
+		// characters that input.CheckText refuses (stored), which Apply then
+		// refuses as an undo applies it, rather than fail the retype.
 		Check: func(p retypePayload) input.FieldErrors {
-			return append(entityID(ids.Variable, "id", p.ID), checkDefault(p.Type, p.Default)...)
+			_, problem := p.Default.of(p.Type, false)
+			return append(entityID(ids.Variable, "id", p.ID), field("default", problem)...)
 		},
 		Inverse: func(ctx context.Context, tx *commands.Tx, p retypePayload) ([]commands.Step, error) {
 			v, err := liveVariable(ctx, tx, p.ID)
@@ -272,8 +284,10 @@ func Register(r *commands.Registry) {
 			if err != nil {
 				return err
 			}
-			// Check checked the default against the type.
-			def, _ := p.Default.Of(p.Type)
+			def, problem := p.Default.Of(p.Type)
+			if problem != "" {
+				return commands.Refuse("default", problem, nil)
+			}
 			return setValue(ctx, tx, v, p.Type, def)
 		},
 	})
@@ -383,9 +397,12 @@ func Register(r *commands.Registry) {
 		Type: Restore, Capability: op, Scope: sc, Touches: []ids.Kind{ids.Variable, ids.Folder},
 		Check: func(p idPayload) input.FieldErrors { return entityID(ids.Variable, "id", p.ID) },
 		// Restoring a variable that is not in the trash does nothing, and its
-		// undo nothing either. The undo of a restore deletes the variable,
-		// and then the folders that the restore restored above it, from the
-		// nearest, each of which then holds nothing that is not deleted.
+		// undo nothing either. A variable of a board in the trash, which is in
+		// the trash with it, deleted on its own or not, is refused, since it
+		// comes back only with its board. The undo of a restore deletes the
+		// variable, and then the folders that the restore restored above it,
+		// from the nearest, each of which then holds nothing that is not
+		// deleted.
 		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
 			row, err := anyVariable(ctx, tx, p.ID)
 			if err != nil || !row.Variable.DeletedAt.Valid {
@@ -481,14 +498,16 @@ func applySetScope(ctx context.Context, tx *commands.Tx, p scopePayload) error {
 // applyRestore is Restore's Apply.
 func applyRestore(ctx context.Context, tx *commands.Tx, p idPayload) error {
 	row, err := anyVariable(ctx, tx, p.ID)
-	if err != nil || !row.Variable.DeletedAt.Valid {
+	switch {
+	case err != nil:
 		return err
-	}
-	v := row.Variable
-	if row.BoardDeleted {
+	case row.BoardDeleted:
 		return commands.Refuse("id", "is a variable of a board in the project's trash, which comes back only with "+
 			"its board: restore the board first", nil)
+	case !row.Variable.DeletedAt.Valid:
+		return nil
 	}
+	v := row.Variable
 	q := queries.New(tx)
 	if err := keyFree(ctx, q, v.WorkspaceID, v.ProjectID, "id", v.Key, v.BoardID, v.ID,
 		"is a variable whose key another variable of its scope has taken since it was deleted, which must be "+

@@ -685,15 +685,13 @@ WITH c (id, sort_key, deleted) AS (
         AND b.project_id = $2 AND b.folder_id IS NULL
         AND b.id IS DISTINCT FROM $6::uuid
     UNION ALL
-    SELECT v.id, v."order", v.deleted_at IS NOT NULL OR EXISTS (SELECT 1 FROM board b
-        WHERE b.workspace_id = v.workspace_id AND b.project_id = v.project_id AND b.id = v.board_id
-            AND b.deleted_at IS NOT NULL) FROM variable v
+    SELECT v.id, v."order", NOT EXISTS (SELECT 1 FROM live_variable lv WHERE lv.workspace_id = v.workspace_id
+        AND lv.project_id = v.project_id AND lv.id = v.id) FROM variable v
     WHERE $3::text = 'variable' AND v.workspace_id = $1 AND v.project_id = $2
         AND v.folder_id = $4::uuid AND v.id IS DISTINCT FROM $7::uuid
     UNION ALL
-    SELECT v.id, v."order", v.deleted_at IS NOT NULL OR EXISTS (SELECT 1 FROM board b
-        WHERE b.workspace_id = v.workspace_id AND b.project_id = v.project_id AND b.id = v.board_id
-            AND b.deleted_at IS NOT NULL) FROM variable v
+    SELECT v.id, v."order", NOT EXISTS (SELECT 1 FROM live_variable lv WHERE lv.workspace_id = v.workspace_id
+        AND lv.project_id = v.project_id AND lv.id = v.id) FROM variable v
     WHERE $3::text = 'variable' AND $4::uuid IS NULL AND v.workspace_id = $1
         AND v.project_id = $2 AND v.folder_id IS NULL
         AND v.id IS DISTINCT FROM $7::uuid
@@ -730,15 +728,16 @@ type LastSortKeysRow struct {
 // later keeps its place, as last, or an empty string if there is none, and
 // the last of those that are not deleted, in the order of the children, by
 // their orders and then their IDs, as last_live, with its ID as last_live_id,
-// or an empty string and null if there is none. A variable of a board in the
-// trash counts as a deleted one, since it is in the trash with its board,
-// which no client sees, and from which it comes back where it is, as a
-// deleted board does. The child moved is left out of its own table alone, so
-// that a child of another table with the same UUID, which a client may give
-// it, still counts. Each table is read by a branch for the children of a
-// folder and one for those at the top, so that the index of the children's
-// parent finds them in a plan made for any parent_id, which a condition that
-// takes either kind of parent keeps it from.
+// or an empty string and null if there is none. A variable that is not in
+// live_variable counts as a deleted one, one of a board in the trash among
+// them, since it is in the trash with its board, which no client sees, and
+// from which it comes back where it is, as a deleted board does. The child
+// moved is left out of its own table alone, so that a child of another table
+// with the same UUID, which a client may give it, still counts. Each table is
+// read by a branch for the children of a folder and one for those at the
+// top, so that the index of the children's parent finds them in a plan made
+// for any parent_id, which a condition that takes either kind of parent keeps
+// it from.
 func (q *Queries) LastSortKeys(ctx context.Context, arg LastSortKeysParams) (LastSortKeysRow, error) {
 	row := q.db.QueryRow(ctx, lastSortKeys,
 		arg.WorkspaceID,

@@ -1108,7 +1108,7 @@ export interface Variable {
   created_at: string;
   /** The variable's default, a value of its type: true or false for bool, an integer for int, a number for float, which is written without a decimal point when it is integral, as 2, and a string for string. A client reads a number by the variable's type, never by how it is written (PRD §5.8.9). */
   default: boolean | number | string;
-  /** When the variable was deleted to the project's trash, if it is there */
+  /** When the variable went to the project's trash, if it is there: when it was deleted, or, if it was not, but its board is in the trash, with which it is in the trash too, and comes back, when the board was deleted */
   deleted_at?: string;
   /** The variable's description, which may be empty */
   description: string;

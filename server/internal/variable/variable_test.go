@@ -127,6 +127,19 @@ func (f *fixture) must(t *testing.T, cmds ...cmd) commands.Result {
 // operation log keeps.
 func (f *fixture) undo(t *testing.T, seq int64) {
 	t.Helper()
+	batch := f.inverse(t, seq)
+	if len(batch) == 0 {
+		return
+	}
+	if _, err := f.pipeline.Apply(context.Background(), f.actor(), f.project, batch); err != nil {
+		t.Fatalf("undo %d: %v", seq, err)
+	}
+}
+
+// inverse returns the inverse of the batch whose seq is seq, which the
+// operation log keeps, as a batch of new commands.
+func (f *fixture) inverse(t *testing.T, seq int64) []commands.Command {
+	t.Helper()
 	var steps []struct {
 		Type    commands.Type   `json:"type"`
 		Payload json.RawMessage `json:"payload"`
@@ -141,12 +154,7 @@ func (f *fixture) undo(t *testing.T, seq int64) {
 	for i, st := range steps {
 		batch[i] = commands.Command{ID: ids.New(), Type: st.Type, Payload: st.Payload}
 	}
-	if len(batch) == 0 {
-		return
-	}
-	if _, err := f.pipeline.Apply(context.Background(), f.actor(), f.project, batch); err != nil {
-		t.Fatalf("undo %d (%s): %v", seq, inverse, err)
-	}
+	return batch
 }
 
 // state reads every variable, board, and folder of the fixture's project as
@@ -270,6 +278,29 @@ func invalidAt(t *testing.T, err error, field string) {
 	}
 }
 
+// conflictState returns the state of the variable id that a rename which
+// expects its revision rev, a stale one, is answered with, or fails the test
+// unless the rename is answered with a revision conflict.
+func (f *fixture) conflictState(t *testing.T, id string, rev int64) variable.Variable {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"id": id, "key": "renamed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.pipeline.Apply(context.Background(), f.actor(), f.project, []commands.Command{{ID: ids.New(),
+		Type: variable.Rename, Payload: raw, ExpectedRev: map[commands.Ref]int64{
+			{Kind: ids.Variable, ID: decodeID(t, ids.Variable, id)}: rev}}})
+	var conflict *commands.RevisionConflictError
+	if !errors.As(err, &conflict) || len(conflict.Conflicts) != 1 {
+		t.Fatalf("a rename of %s that expects the revision %d: %v", id, rev, err)
+	}
+	var state variable.Variable
+	if err := json.Unmarshal(conflict.Conflicts[0].State, &state); err != nil {
+		t.Fatalf("the state of %s: %s, %v", id, conflict.Conflicts[0].State, err)
+	}
+	return state
+}
+
 // TestKeys checks that a variable's key is an identifier of the expression
 // language, which a variable is created and renamed with, and that any other
 // is refused, at the payload's key, as not of the form or as a reserved word.
@@ -386,13 +417,17 @@ func TestDefaults(t *testing.T) {
 		{"int", nil, "0"}, {"float", nil, "0"}, {"bool", nil, "false"}, {"string", nil, `""`},
 		{"int", json.RawMessage("3.0"), "3"}, {"int", json.RawMessage("-4e2"), "-400"}, {"float", 2.5, "2.5"},
 		{"float", json.RawMessage("-0.0"), "0"}, {"bool", true, "true"}, {"string", "Elara\nwaits", `"Elara\nwaits"`},
+		// A string is written without escaping <, >, and & (PRD §6.2).
+		{"string", json.RawMessage(`"a\u003cb \u0026 c>"`), `"a<b & c>"`},
 	} {
 		p := map[string]any{"type": c.typ}
 		if c.def != nil {
 			p["default"] = c.def
 		}
 		v := f.create(t, "v_"+strings.ReplaceAll(ids.New().String(), "-", ""), p)
-		if got, _ := json.Marshal(v.Default); v.Type != c.typ || string(got) != c.want {
+		// The default's own JSON, which json.Marshal would write again with
+		// the escapes of <, >, and &.
+		if got, _ := v.Default.MarshalJSON(); v.Type != c.typ || string(got) != c.want {
 			t.Errorf("a %s created with %v has the default %s, want %s", c.typ, c.def, got, c.want)
 		}
 	}
@@ -431,6 +466,12 @@ func TestDefaults(t *testing.T) {
 	// A change of type takes a default of the new type, or its zero value.
 	_, err = f.apply(t, cmd{variable.Retype, map[string]any{"id": n.ID, "type": "bool", "default": 7}})
 	invalidAt(t, err, "payload.default")
+	// A string with a control character is refused as the retype applies, at
+	// its default too.
+	_, err = f.apply(t, cmd{variable.Retype, map[string]any{"id": n.ID, "type": "string", "default": "bell\a"}})
+	if r := refused(t, err); r.Field != "default" || r.Reason != nil {
+		t.Errorf("a string default with a control character was refused for %v at %q", r.Reason, r.Field)
+	}
 	f.must(t, cmd{variable.Retype, map[string]any{"id": n.ID, "type": "string", "default": "seven"}})
 	if v := f.get(t, n.ID); v.Type != "string" || string(must(json.Marshal(v.Default))) != `"seven"` {
 		t.Errorf("the retyped variable is a %s with %s", v.Type, must(json.Marshal(v.Default)))
@@ -443,12 +484,22 @@ func TestDefaults(t *testing.T) {
 	// characters that a command's default passes, which the database's own
 	// check does not make, so that a row that the pipeline did not write, or
 	// a later change of that check, leaves the project's variables readable,
-	// and their defaults changeable.
+	// and their defaults and types changeable, though not set back.
 	s := f.create(t, "rumour", map[string]any{"type": "string", "default": "kept"})
-	if _, err := f.d.Admin(t).Exec(context.Background(), `UPDATE variable SET default_value = to_jsonb('a' || chr(7) ||
-		'b') WHERE id = $1`, decodeID(t, ids.Variable, s.ID)); err != nil {
-		t.Fatal(err)
+	control := func() {
+		t.Helper()
+		if _, err := f.d.Admin(t).Exec(context.Background(), `UPDATE variable SET type = 'string',
+			default_value = to_jsonb('a' || chr(7) || 'b') WHERE id = $1`, decodeID(t, ids.Variable, s.ID)); err != nil {
+			t.Fatal(err)
+		}
 	}
+	control()
+	res := f.must(t, cmd{variable.Retype, map[string]any{"id": s.ID, "type": "int"}})
+	_, err = f.pipeline.Apply(context.Background(), f.actor(), f.project, f.inverse(t, res.Seq))
+	if r := refused(t, err); r.Field != "default" {
+		t.Errorf("the undo of the retype of a stored default with a control character was refused at %q", r.Field)
+	}
+	control()
 	var stored string
 	if err := json.Unmarshal(must(json.Marshal(f.get(t, s.ID).Default)), &stored); err != nil ||
 		stored != "a"+string(rune(7))+"b" {
@@ -523,12 +574,13 @@ func TestScopes(t *testing.T) {
 
 // TestBoardTrash checks that a board's variables are in the trash with their
 // board: the project lists none of them while it is there, and nothing but
-// their deletion changes them, a folder that holds only them is deleted, and
-// one of them deleted on its own stays in the trash until the board is
-// restored, its time there ending with the board's while the board is there
-// too. The restoration brings the others back, into their folders, which it
-// brings back too, and whose undo deletes again. The purge of the board
-// deletes them with it.
+// their deletion changes them, a folder that holds only them is deleted, a
+// conflict's state of each says that it is in the trash, and each, deleted on
+// its own or not, stays in the trash until the board is restored, the time
+// there of one deleted on its own ending with the board's while the board is
+// there too. The restoration brings the others back, into their folders,
+// which it brings back too, and whose undo deletes again. The purge of the
+// board deletes them with it.
 func TestBoardTrash(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -554,6 +606,22 @@ func TestBoardTrash(t *testing.T) {
 	if r := refused(t, err); r.Field != "id" {
 		t.Errorf("renaming a variable of a board in the trash was refused at %q", r.Field)
 	}
+	// Restoring it is refused, since it comes back only with its board, and a
+	// batch that expects another revision of it is answered with its state,
+	// which says that it is in the trash, since its board was deleted.
+	_, err = f.apply(t, cmd{variable.Restore, map[string]any{"id": held.ID}})
+	if r := refused(t, err); r.Field != "id" {
+		t.Errorf("restoring a variable in the trash with its board was refused at %q", r.Field)
+	}
+	var boardDeleted time.Time
+	if err := f.d.Admin(t).QueryRow(ctx, "SELECT deleted_at FROM board WHERE id = $1", decodeID(t, ids.Board,
+		a)).Scan(&boardDeleted); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.conflictState(t, held.ID, held.Rev+1); got.DeletedAt == nil || !got.DeletedAt.Equal(boardDeleted) {
+		t.Errorf("the state of a variable in the trash with its board, deleted at %v, says it was deleted at %v",
+			boardDeleted, got.DeletedAt)
+	}
 	// The folders hold nothing that is not in the trash.
 	f.must(t, cmd{board.DeleteFolder, map[string]any{"id": inner}}, cmd{board.DeleteFolder, map[string]any{"id": outer}})
 	f.must(t, cmd{variable.Delete, map[string]any{"id": alone.ID}})
@@ -571,6 +639,11 @@ func TestBoardTrash(t *testing.T) {
 	if !items[0].DeletedAt.After(items[1].DeletedAt) || !items[0].PurgeAfter.Equal(items[1].PurgeAfter) {
 		t.Errorf("the variable deleted at %v after its board, deleted at %v, is purged after %v, want the board's %v",
 			items[0].DeletedAt, items[1].DeletedAt, items[0].PurgeAfter, items[1].PurgeAfter)
+	}
+	// The state of one deleted on its own says when it was.
+	if got := f.conflictState(t, alone.ID, 1); got.DeletedAt == nil || !got.DeletedAt.Equal(items[0].DeletedAt) {
+		t.Errorf("the state of a variable deleted on its own at %v says it was deleted at %v", items[0].DeletedAt,
+			got.DeletedAt)
 	}
 
 	before := f.state(t)

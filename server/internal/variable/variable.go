@@ -25,9 +25,10 @@
 // since (package trash lists the trash, and purges what has been in it for
 // 30 days). A board's variables are in the trash with their board while it is
 // there, hold their keys, and come back with it; nothing but deleting them
-// changes them meanwhile, and restoring one that was deleted on its own waits
-// for its board's restoration. The reads of what is not in the trash read
-// the live view of the variables, live_variable, which leaves them out.
+// changes them meanwhile, and restoring one of them, deleted on its own or
+// not, waits for its board's restoration. The reads of what is not in the
+// trash read the live view of the variables, live_variable, which leaves them
+// out.
 //
 // Every command needs project:write of an API token (FR-AUTH-04), and the
 // actor's role on the project "Manage variables, components, component
@@ -99,8 +100,11 @@ type Variable struct {
 	Description  string `json:"description" doc:"The variable's description, which may be empty"`
 	ResetOnEnter bool   `json:"reset_on_enter" doc:"Whether the variable is reset to its default each time the flow enters its board (PRD FR-VAR-02), which only a board's variable may be"`
 	Rev          int64  `json:"rev" doc:"The variable's revision, which every change of it increments, and which a change expects with expected_rev"`
-	// DeletedAt is set while the variable is in the project's trash.
-	DeletedAt *time.Time `json:"deleted_at,omitempty" doc:"When the variable was deleted to the project's trash, if it is there"`
+	// DeletedAt is set while the variable is in the project's trash: when it
+	// was deleted, or, for a variable in the trash with its board alone, when
+	// the board was, which only an answer of revision_conflict shows, since
+	// the reads show no variable in the trash.
+	DeletedAt *time.Time `json:"deleted_at,omitempty" doc:"When the variable went to the project's trash, if it is there: when it was deleted, or, if it was not, but its board is in the trash, with which it is in the trash too, and comes back, when the board was deleted"`
 	CreatedAt time.Time  `json:"created_at" doc:"When the variable was created"`
 	UpdatedAt time.Time  `json:"updated_at" doc:"When the variable last changed"`
 }
