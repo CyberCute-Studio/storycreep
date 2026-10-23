@@ -43,9 +43,10 @@ const (
 	// however the JSON is laid out, as PostgreSQL's jsonb writes it, with a
 	// space after each colon and comma, and whichever characters its encoder
 	// escapes, as json.Marshal escapes <, >, and &, the same document is
-	// within the limit; and the most bytes of its canonical form, which can
-	// be longer than the JSON that Parse read, as 9e5 is 900000, so that
-	// every document that Parse returns can be written and read again.
+	// within the limit; and the most bytes of its canonical form, counted
+	// alike, which can be longer than the JSON that Parse read, as 9e5 is
+	// 900000, so that every document that Parse returns can be written and
+	// read again.
 	MaxBytes = 1 << 20
 	// MaxChars is the most characters, counted as code points, that the
 	// text nodes of a document hold together.
@@ -281,8 +282,8 @@ const (
 	TooDeep Reason = "too_deep"
 	// TooLarge is a document of more than MaxBytes, without the white space
 	// between its tokens and with its escapes counted as the characters that
-	// they stand for, or in its canonical form, or whose text has more than
-	// MaxChars characters.
+	// they stand for, or in its canonical form, counted alike, or whose text
+	// has more than MaxChars characters.
 	TooLarge Reason = "too_large"
 )
 
@@ -375,9 +376,14 @@ func parse(data []byte) (*Doc, []byte, error) {
 		// not UTF-8, which is all that wire refuses.
 		panic("richtext: a parsed document does not encode: " + err.Error())
 	}
-	if len(canonical) > MaxBytes {
+	// The canonical form is counted as the JSON that Parse read is (scan), so
+	// that it is within the limit exactly when Parse would read it again,
+	// rather than counted in bytes, in which the \" and \\ of a link's URL,
+	// and the \t of a text, are two each.
+	if length, _ := scan(canonical); length > MaxBytes {
 		return nil, nil, &Error{Reason: TooLarge,
-			Message: fmt.Sprintf("the document's canonical form is longer than %d bytes", MaxBytes)}
+			Message: fmt.Sprintf("the document's canonical form is longer than %d bytes, with each escape counted as "+
+				"the character that it stands for", MaxBytes)}
 	}
 	doc.sum = sha256.Sum256(canonical)
 	return doc, canonical, nil
@@ -431,7 +437,8 @@ func parseDoc(data []byte) (*Doc, error) {
 // failing, which the decoder then refuses, before Parse reports a lone
 // surrogate. It stops once the length is more than MaxBytes, which Parse
 // refuses whatever follows, so that a field of 5 MiB, which the API takes, is
-// read only as far as its first MiB.
+// read only as far as its first MiB. A canonical form is counted by it too,
+// so that the limit on it is the limit that Parse reads it again with.
 func scan(data []byte) (length int, lone bool) {
 	n, inString := 0, false
 	for i := 0; i < len(data) && n <= MaxBytes; i++ {
@@ -1250,12 +1257,13 @@ var mailtoFields = []string{"bcc", "body", "cc", "subject", "to"}
 // bytes that are not UTF-8 as it chooses, as Latin-1, in which %85 is NEL and
 // %AD a soft hyphen. The address, and the value of to, cc, or bcc, which name
 // addresses too, are as addressesProblem has them: they escape no hidden
-// character, and are addresses as RFC 6068 has them, without a display name,
-// a comment, or quotes, in ASCII, each with a domain that a message can be
-// sent to, as RFC 5321 has it. A subject escapes no character that text
-// may not hold (isControl), a control character but a tab, a bidirectional
-// control, or a line or paragraph separator, which a mail client could write
-// into a header, as a line break that starts another header in
+// character, nor a letter, a digit, a -, a ., or a %, and are addresses as
+// RFC 6068 has them, without a display name, a comment, or quotes, in ASCII,
+// each with a domain that a message can be sent to, as RFC 5321 has it. A
+// subject escapes no character that text may not hold (isControl), a control
+// character but a tab, a bidirectional control, or a line or paragraph
+// separator, which a mail client could write into a header, as a line break
+// that starts another header in
 // mailto:keeper@example.com?subject=a%0D%0ABcc:evil@example.com, or that a
 // reader of lines may take for one, as Python's str.splitlines takes NEL,
 // %C2%85, and LINE SEPARATOR, %E2%80%A8, or that would reorder the subject
@@ -1327,6 +1335,20 @@ func mailtoProblem(rest string) string {
 // mailto:%22support@paypal.com%22%3Cx@evil.example%3E, which goes to
 // x@evil.example, as support@paypal.com.
 //
+// The address is checked once its escapes are read, as a mail client reads
+// it, but a reader may see it as the link writes it, as a browser's status
+// bar or an editor's link may show it, and a client that reads escapes twice,
+// against RFC 6068, reads it otherwise again, so none of its escapes stands
+// for a character that would have those read another address than the one
+// checked (escapesPlain): an ASCII letter or digit, a -, or a ., which a URL
+// never needs to escape (RFC 3986's unreserved characters), and of which a
+// domain's labels are written, so that a domain reads as the link writes it,
+// rather than as paypal.com in support@paypal.com%2Eevil.example, whose
+// message goes to paypal.com.evil.example; or a %, so that reading its
+// escapes twice reads what reading them once does, rather than a display name
+// in %2522support%2540paypal.com%2522%253Cx@evil.example, which reads as
+// "support@paypal.com"<x@evil.example> once its escapes are read twice.
+//
 // An address is ASCII, as an http link's host is (nameProblem), since a
 // character beyond ASCII may look like another: in a domain, a letter of
 // another script, as the Cyrillic а of mailto:support@pаypal.com looks like a
@@ -1360,6 +1382,10 @@ func addressesProblem(s string) string {
 			"a in a domain, or like a delimiter of an address, as U+FF20 FULLWIDTH COMMERCIAL AT looks like an @, " +
 			"or show as a blank that hides the domain: an address is ASCII, and an internationalized domain is " +
 			"written as IDNA writes it in ASCII (xn--)"
+	case escapesPlain(s):
+		return "escapes a letter, a digit, a -, or a ., which a URL never needs to escape, and which would have the " +
+			"link show a domain that the message does not go to, as paypal.com in support@paypal.com%2Eevil.example, " +
+			"or a %, which a mail client that reads escapes twice would read as another escape, as %2522 as a quote"
 	case decoded == "":
 		return ""
 	}
@@ -1367,23 +1393,43 @@ func addressesProblem(s string) string {
 		local, domain, ok := strings.Cut(address, "@")
 		if !ok || !dotAtom(local) || !isDomain(domain) {
 			return "is not addresses that commas separate, each a local part of letters, digits, and " +
-				"!#$%&'*+-/=?^_`{|}~ in atoms that single dots separate, an @, and a domain of letters, digits, and " +
-				"hyphens in labels that single dots separate, or an IP address in brackets, without a display " +
-				"name, a comment, or quotes, which a mail client could show in place of the address that the " +
-				"message goes to"
+				"!#$%&'*+-/=?^_`{|}~ in atoms that single dots separate, an @, and a domain of labels of letters, " +
+				"digits, and hyphens that start and end with a letter or a digit, which single dots separate, and " +
+				"the last of which is not only digits, or an IP address in brackets, without a display name, a " +
+				"comment, or quotes, which a mail client could show in place of the address that the message goes to"
 		}
 	}
 	return ""
 }
 
+// escapesPlain reports whether an escape of s, each of whose % starts one
+// (escapesValid), stands for an ASCII letter or digit, a -, a ., or a %
+// (addressesProblem).
+func escapesPlain(s string) bool {
+	for i := 0; i+2 < len(s); i++ {
+		if s[i] != '%' {
+			continue
+		}
+		c := rune(hex4([]byte(s[i+1 : i+3])))
+		if 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || isDigit(c) || c == '-' || c == '.' || c == '%' {
+			return true
+		}
+		i += 2
+	}
+	return false
+}
+
 // isDomain reports whether a mailto link's domain is one that a message can
 // be sent to, as RFC 5321 has it: labels of one or more ASCII letters, digits,
-// and hyphens, which single dots separate, as example.com or
-// xn--caf-dma.example, or an address literal (addressLiteral). RFC 6068's
-// addr-spec takes RFC 5322's atoms in a domain too, of which no other
-// character is in a domain that a message can be sent to, and each of which
-// a mail client could show as what it is not, or read otherwise: a / or a ?,
-// as support@paypal.com/.evil.example reads as an address at paypal.com,
+// and hyphens that start and end with a letter or a digit (RFC 5321's
+// sub-domain), which single dots separate, as example.com or
+// xn--caf-dma.example, of which the last is not only digits, as no top-level
+// domain is (RFC 3696, section 2), since an IP address, as 192.0.2.1, is
+// written as an address literal (addressLiteral), which is a domain too.
+// RFC 6068's addr-spec takes RFC 5322's atoms in a domain too, of which no
+// other character is in a domain that a message can be sent to, and each of
+// which a mail client could show as what it is not, or read otherwise: a / or
+// a ?, as support@paypal.com/.evil.example reads as an address at paypal.com,
 // whose domain is a name under evil.example, or a %, as in
 // support@paypal.com%40evil.example, which a client that reads its escapes
 // twice reads as an address at evil.example.
@@ -1391,14 +1437,15 @@ func isDomain(domain string) bool {
 	if addressLiteral(domain) {
 		return true
 	}
-	for label := range strings.SplitSeq(domain, ".") {
-		if label == "" || !onlyRunes(label, func(r rune) bool {
+	labels := strings.Split(domain, ".")
+	for _, label := range labels {
+		if label == "" || label[0] == '-' || label[len(label)-1] == '-' || !onlyRunes(label, func(r rune) bool {
 			return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || isDigit(r) || r == '-'
 		}) {
 			return false
 		}
 	}
-	return true
+	return !onlyRunes(labels[len(labels)-1], isDigit)
 }
 
 // isAtext reports whether r may be in an atom of an address, as RFC 5322's

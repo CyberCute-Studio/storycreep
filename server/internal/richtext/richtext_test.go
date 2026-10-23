@@ -171,6 +171,37 @@ func TestLimits(t *testing.T) {
 		if _, err := json.Marshal(parsed); err != nil {
 			t.Errorf("a document that Parse returned does not marshal: %v", err)
 		}
+
+		// The canonical form is counted as the JSON is, with each escape as
+		// the character that it stands for: a document of links whose URLs
+		// hold quotes, which the canonical form writes as \", two bytes each,
+		// is within the limit, as its JSON is, though its canonical form has
+		// more than MaxBytes bytes.
+		const quotes = 2000
+		head, tail := `{"content":[{"content":[`, `],"type":"paragraph"}],"type":"doc"}`
+		node := func(i int) string {
+			return `{"marks":[{"attrs":{"href":"https://example.com/` + fmt.Sprintf("%04d", i) +
+				strings.Repeat(`\"`, quotes) + `"},"type":"link"}],"text":"x","type":"text"}`
+		}
+		nodes := make([]string, (MaxBytes-len(head)-len(tail))/(len(node(0))-quotes+1))
+		for i := range nodes {
+			nodes[i] = node(i)
+		}
+		quoted := []byte(head + strings.Join(nodes, ",") + tail)
+		if n, _ := scan(quoted); n > MaxBytes || len(quoted) <= MaxBytes {
+			t.Fatalf("the document of quoted links counts %d and has %d bytes", n, len(quoted))
+		}
+		parsed, err = Parse(quoted)
+		if err != nil {
+			t.Fatalf("a document whose canonical form has %d bytes, with each \\\" counted as \": %v", len(quoted), err)
+		}
+		canonical := marshal(t, parsed)
+		if !bytes.Equal(canonical, quoted) {
+			t.Error("the document of quoted links in its canonical form is written otherwise")
+		}
+		if _, err := Parse(canonical); err != nil {
+			t.Errorf("the canonical form of the document of quoted links: %v", err)
+		}
 	})
 	t.Run("characters", func(t *testing.T) {
 		// Characters are code points, of all the texts together.
@@ -524,7 +555,9 @@ func TestCanonicalID(t *testing.T) {
 
 // TestDeriveNilNodes checks that Derive gives a nil node of a Doc that a
 // program built, which MarshalJSON refuses, no segment, rather than panic or
-// derive a segment of no kind.
+// derive a segment of no kind, and that a nil block before the first
+// paragraph of the document or of a list item does not have that paragraph
+// begin with a paragraph segment.
 func TestDeriveNilNodes(t *testing.T) {
 	names := readVectors(t).names()
 	a, b := &Text{Text: "a"}, &Text{Text: "b", Marks: Marks{Bold: true}}
@@ -537,9 +570,15 @@ func TestDeriveNilNodes(t *testing.T) {
 		"typed": {Blocks: []Block{&Paragraph{Inlines: []Inline{a, (*Text)(nil), (*Break)(nil), (*Mention)(nil), (*Value)(nil), b}},
 			(*Paragraph)(nil), (*List)(nil),
 			&List{Items: []Item{{Blocks: []Block{&Paragraph{Inlines: []Inline{(*Text)(nil), b}}, (*List)(nil), (*Paragraph)(nil)}}}}}},
+		"leading": {Blocks: []Block{nil, (*Paragraph)(nil), (*List)(nil), &Paragraph{Inlines: []Inline{a, b}},
+			&List{Items: []Item{{Blocks: []Block{nil, (*List)(nil), (*Paragraph)(nil), &Paragraph{Inlines: []Inline{b}}}}}}}},
 	} {
-		if got := marshal(t, d.Derive(names).Segments); !bytes.Equal(got, want) {
+		derived := d.Derive(names)
+		if got := marshal(t, derived.Segments); !bytes.Equal(got, want) {
 			t.Errorf("%s nil nodes: %s, want %s", name, got, want)
+		}
+		if derived.Text != "ab\n• b" {
+			t.Errorf("%s nil nodes: plain text %q", name, derived.Text)
 		}
 	}
 }
@@ -646,9 +685,10 @@ func TestPlainTextBuilt(t *testing.T) {
 // 65535, and no userinfo, which could show another host, and mailto URLs
 // without a # or a ;, with a ?, an &, and an = only where they delimit, that
 // set no field but to, cc, bcc, subject, and body, that escape UTF-8 alone
-// but in a body, no hidden character in an address or a to, cc, or bcc, which
-// are addresses as RFC 6068 has them, without a display name, a comment, or
-// quotes, in ASCII, with domains that a message can be sent to, and no
+// but in a body, no hidden character, letter, digit, -, ., or % in an address
+// or a to, cc, or bcc, which are addresses as RFC 6068 has them, without a
+// display name, a comment, or quotes, in ASCII, with domains that a message
+// can be sent to, and no
 // character in a subject that text may not hold, and nothing that could run a
 // script or read a file; and no link that holds a hidden character, as one
 // that a renderer shows nothing of.
@@ -705,14 +745,18 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com?&subject=&&body=a%3Fb%23c%3Bd",
 		"mailto:keeper@example.com,mira@example.com?body=https://example.com/a:b@c",
 		"mailto:a%26b%3Dc%3Fd@example.com",
-		// Every character of RFC 5322's atext, in atoms that dots separate, in a
-		// local part, a domain of letters, digits, and hyphens, an empty to,
+		// Every character of RFC 5322's atext but %, which an address does not
+		// escape, in atoms that dots separate, in a local part, a domain of
+		// labels of letters, digits, and hyphens that start and end with a
+		// letter or a digit, whose last label is not only digits, an empty to,
 		// cc, and bcc, and address literals of IP addresses, with IPv6 in any
-		// case.
-		"mailto:o'brien.a!%23$%25%26*+/%3D%3F^_`{|}~@a-b.c-d.example",
+		// case, and their brackets escaped, as RFC 6068 has them, or not.
+		"mailto:o'brien.a!%23$%26*+/%3D%3F^_`{|}~@a-b.c-d.example",
 		"mailto:keeper@EXAMPLE-1.example.com",
+		"mailto:keeper@1x--y.example.c0m",
 		"mailto:keeper@example.com?to=&cc=&bcc=",
 		"mailto:a@[192.0.2.1]",
+		"mailto:a@%5B192.0.2.1%5D",
 		"mailto:a@[IPv6:2001:db8::1]",
 		"mailto:a@[ipv6:::ffff:192.0.2.1]?cc=b@[IPV6:FE80::A]",
 		// A body's line breaks, as RFC 6068 writes them, and a tab, in any
@@ -958,6 +1002,37 @@ func TestCheckHref(t *testing.T) {
 		"mailto:a@[192.0.2]",
 		"mailto:a@[192.0.2.01]",
 		"mailto:a@[x:192.0.2.1]",
+		// Or whose domain has a label that starts or ends with a hyphen, as
+		// RFC 5321's sub-domain does not, or a last label of digits, which no
+		// top-level domain is, so that an IP address is in brackets.
+		"mailto:keeper@-example.com",
+		"mailto:keeper@example-.com",
+		"mailto:x@paypal.com-.evil",
+		"mailto:x@-.-",
+		"mailto:keeper@example.com?cc=a@example.-com",
+		"mailto:keeper@192.0.2.1",
+		"mailto:keeper@example.123",
+		"mailto:keeper@example.com?to=a@1",
+		// Or that escapes a letter, a digit, a -, or a ., which a URL never
+		// needs to escape, so that a domain would read otherwise as the link
+		// writes it than the one that the message goes to, as paypal.com in
+		// support@paypal.com%2Eevil.example, which goes to
+		// paypal.com.evil.example; or a %, which a mail client that reads
+		// escapes twice reads as another escape, so that it reads a display
+		// name, a comment, or another domain; wherever an address is.
+		"mailto:support@paypal.com%2Eevil.example",
+		"mailto:support@paypal.com%2eevil%2Eexample",
+		"mailto:support%2Epaypal.com@evil.example",
+		"mailto:support@pay%70al.com",
+		"mailto:support@paypal.com%2D2.example",
+		"mailto:%73upport@example.com",
+		"mailto:keeper@example.com?to=a@example%2Ecom",
+		"mailto:keeper@example.com?CC=a@example.com,b@x%31.example",
+		"mailto:%2522support%2540paypal.com%2522%253Cx@evil.example",
+		"mailto:keeper@example.com?to=%2522support%2540paypal.com%2522%253Cx@evil.example",
+		"mailto:x%2528support%2540paypal.com%2529@evil.example",
+		"mailto:keeper@example.com?bcc=a%25b@example.com",
+		"mailto:a%25@example.com",
 		// Or that is not a local part, an @, and a domain, each atoms of atext
 		// that single dots separate, or the domain an address literal.
 		"mailto:keeper",
@@ -1333,6 +1408,32 @@ func FuzzPreview(f *testing.F) {
 			t.Fatalf("Preview(%q) = %q, which ends within a character", plain, got)
 		}
 	})
+}
+
+// TestPreviewOfLongText checks that a preview reads its plain text only as far
+// as the code point after the first PreviewChars, rather than the whole of
+// the word or the text in which they end, as a mention of a component whose
+// name is megabytes long, or a text of Japanese without spaces, which
+// derives a plain text beyond the document's limits.
+func TestPreviewOfLongText(t *testing.T) {
+	for _, plain := range []string{
+		strings.Repeat("a", 8<<20),
+		"a " + strings.Repeat(string(rune(0x3042)), 4<<20),
+		strings.Repeat(" ", 4<<20) + strings.Repeat("ab ", 4<<20),
+	} {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		got := Preview(plain)
+		runtime.ReadMemStats(&after)
+		if !strings.HasSuffix(got, "…") || utf8.RuneCountInString(got) > PreviewChars+1 {
+			t.Errorf("Preview of %d bytes = %q", len(plain), got)
+		}
+		// The preview's own allocations are a few hundred bytes; writing
+		// the word in which the first PreviewChars end allocated megabytes.
+		if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 64<<10 {
+			t.Errorf("Preview of %d bytes allocated %d bytes", len(plain), allocated)
+		}
+	}
 }
 
 // uncanonical returns a copy of blocks out of their canonical form, as a

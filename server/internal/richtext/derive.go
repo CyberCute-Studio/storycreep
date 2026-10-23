@@ -203,15 +203,17 @@ type segmenter struct {
 // a list item at depth, the item's: a paragraph segment, of the depth, for
 // each paragraph but the first block, which the document's start or the
 // item's segment begins instead, and the items of each list at the next
-// depth.
+// depth. A nil block has no segment, and is not the first block, so that the
+// blocks derive what MarshalJSON's check of them would, which refuses it.
 func (sg *segmenter) blocks(blocks []Block, depth int) {
-	for i, b := range blocks {
+	first := true
+	for _, b := range blocks {
 		switch b := b.(type) {
 		case *Paragraph:
 			if b == nil {
 				continue
 			}
-			if i > 0 {
+			if !first {
 				sg.segs = append(sg.segs, Segment{Kind: SegmentParagraph, Depth: depth})
 			}
 			sg.inlines(b.Inlines)
@@ -227,7 +229,10 @@ func (sg *segmenter) blocks(blocks []Block, depth int) {
 				sg.segs = append(sg.segs, s)
 				sg.blocks(item.Blocks, depth+1)
 			}
+		default:
+			continue
 		}
+		first = false
 	}
 }
 
@@ -391,20 +396,33 @@ const PreviewChars = 100
 // white space written as one space and none around it, and, when that is
 // longer than PreviewChars code points, its first PreviewChars, cut back when
 // the cut falls within a word (previewCut), without the spaces at its end,
-// and an ellipsis (…).
+// and an ellipsis (…). It reads the text only as far as the code point after
+// the first PreviewChars, however long the text and its words are.
 func Preview(plain string) string {
 	// The text collapsed, as far as the code point after the first
-	// PreviewChars, which says whether the cut falls within a word.
+	// PreviewChars, which says whether the cut falls within a word. A run of
+	// white space is written once a code point that is not white space
+	// follows it.
 	var b strings.Builder
-	n := 0
-	for field := range strings.FieldsSeq(plain) {
-		if n > 0 {
-			b.WriteByte(' ')
-			n++
+	n, space := 0, false
+	for i, r := range plain {
+		if unicode.IsSpace(r) {
+			space = n > 0
+			continue
 		}
-		b.WriteString(field)
-		n += utf8.RuneCountInString(field)
-		if n > PreviewChars {
+		if space {
+			b.WriteByte(' ')
+			if n++; n > PreviewChars {
+				break
+			}
+			space = false
+		}
+		// The bytes of the code point as the text has them, as
+		// strings.Fields keeps them, rather than U+FFFD for a byte that is
+		// not UTF-8, which a Doc's text never holds.
+		_, size := utf8.DecodeRuneInString(plain[i:])
+		b.WriteString(plain[i : i+size])
+		if n++; n > PreviewChars {
 			break
 		}
 	}

@@ -1453,6 +1453,43 @@
       "hash": "sha256:3f00927a719345edd4a8316599d3b328857987547f8884306861161ffa09647e"
     },
     {
+      "note": "a mailto link to an IPv4 address literal whose brackets are escaped, as RFC 6068 has them",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "marks": [
+                  {
+                    "attrs": {
+                      "href": "mailto:keeper@%5B192.0.2.1%5D"
+                    },
+                    "type": "link"
+                  }
+                ],
+                "text": "Write",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "href": "mailto:keeper@%5B192.0.2.1%5D",
+          "kind": "text",
+          "marks": ["link"],
+          "value": "Write"
+        }
+      ],
+      "text": "Write",
+      "preview": "Write",
+      "words": 1,
+      "hash": "sha256:3f00927a719345edd4a8316599d3b328857987547f8884306861161ffa09647e"
+    },
+    {
       "note": "a link of 2,048 characters, counted as code points, though it has more UTF-16 code units",
       "doc": {
         "content": [
@@ -4836,6 +4873,118 @@
                     "type": "link",
                     "attrs": {
                       "href": "mailto:x@paypal.com%2540evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose domain escapes a dot, which a URL never needs to escape, so that the link reads as an address at paypal.com, as a browser's status bar may show it, and the message goes to paypal.com.evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support@paypal.com%2Eevil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose local part escapes a % (%25), so that a mail client that reads escapes twice reads a display name, support@paypal.com, and an address, x@evil.example",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:%2522support%2540paypal.com%2522%253Cx@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose domain has a label that ends with a hyphen, as RFC 5321's sub-domain does not",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example-.com"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose domain's last label is digits, which no top-level domain is: an IP address is written in brackets",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@192.0.2.1"
                     }
                   }
                 ]
