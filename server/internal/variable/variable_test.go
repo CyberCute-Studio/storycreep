@@ -614,14 +614,15 @@ func TestScopes(t *testing.T) {
 }
 
 // TestBoardTrash checks that a board's variables are in the trash with their
-// board: the project lists none of them while it is there, and nothing but
-// their deletion changes them, a folder that holds only them is deleted, a
-// conflict's state of each says that it is in the trash, and each, deleted on
-// its own or not, stays in the trash until the board is restored, the time
-// there of one deleted on its own ending with the board's while the board is
-// there too. The restoration brings the others back, into their folders,
-// which it brings back too, and whose undo deletes again. The purge of the
-// board deletes them with it.
+// board: the project lists none of them while it is there, and nothing
+// changes them, deleting them included, a folder that holds only them is
+// deleted, a conflict's state of each says that it is in the trash, and each,
+// deleted on its own before the board or not, stays in the trash until the
+// board is restored, one deleted on its own for its own time. The
+// restoration brings the others back, into their folders, which it brings
+// back too, and whose undo deletes again. The undo of a variable's creation
+// waits for the restoration of its board. The purge of the board deletes them
+// with it.
 func TestBoardTrash(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -635,6 +636,14 @@ func TestBoardTrash(t *testing.T) {
 	alone := f.create(t, "greeted", map[string]any{"scope": "board", "board_id": a})
 	f.create(t, "met_elara", nil)
 
+	// A batch that deletes the board and then its variable is refused, since
+	// its undo would restore the variable before the board, which is refused.
+	_, err := f.apply(t, cmd{board.Delete, map[string]any{"id": a}}, cmd{variable.Delete,
+		map[string]any{"id": held.ID}})
+	if r := refused(t, err); r.Command != 1 || r.Field != "id" {
+		t.Errorf("deleting a board and then its variable was refused by command %d at %q", r.Command, r.Field)
+	}
+	f.must(t, cmd{variable.Delete, map[string]any{"id": alone.ID}})
 	f.must(t, cmd{board.Delete, map[string]any{"id": a}})
 	if got := f.list(t); !slices.Equal(got, []string{"met_elara"}) {
 		t.Errorf("with the board in the trash, the project lists %v", got)
@@ -643,16 +652,20 @@ func TestBoardTrash(t *testing.T) {
 		variable.ErrNotFound) {
 		t.Errorf("a variable of a board in the trash: %v", err)
 	}
-	_, err := f.apply(t, cmd{variable.Rename, map[string]any{"id": held.ID, "key": "asked_again"}})
-	if r := refused(t, err); r.Field != "id" {
-		t.Errorf("renaming a variable of a board in the trash was refused at %q", r.Field)
-	}
-	// Restoring it is refused, since it comes back only with its board, and a
-	// batch that expects another revision of it is answered with its state,
-	// which says that it is in the trash, since its board was deleted.
-	_, err = f.apply(t, cmd{variable.Restore, map[string]any{"id": held.ID}})
-	if r := refused(t, err); r.Field != "id" {
-		t.Errorf("restoring a variable in the trash with its board was refused at %q", r.Field)
+	// Nothing changes it, deleting it included, and restoring it, or the one
+	// deleted on its own, is refused, since each comes back only with its
+	// board. A batch that expects another revision of it is answered with its
+	// state, which says that it is in the trash, since its board was deleted.
+	for _, c := range []cmd{
+		{variable.Rename, map[string]any{"id": held.ID, "key": "asked_again"}},
+		{variable.Delete, map[string]any{"id": held.ID}},
+		{variable.Restore, map[string]any{"id": held.ID}},
+		{variable.Restore, map[string]any{"id": alone.ID}},
+	} {
+		_, err := f.apply(t, c)
+		if r := refused(t, err); r.Field != "id" {
+			t.Errorf("%s %v of a variable in the trash with its board was refused at %q", c.typ, c.payload, r.Field)
+		}
 	}
 	var boardDeleted time.Time
 	if err := f.d.Admin(t).QueryRow(ctx, "SELECT deleted_at FROM board WHERE id = $1", decodeID(t, ids.Board,
@@ -665,25 +678,21 @@ func TestBoardTrash(t *testing.T) {
 	}
 	// The folders hold nothing that is not in the trash.
 	f.must(t, cmd{board.DeleteFolder, map[string]any{"id": inner}}, cmd{board.DeleteFolder, map[string]any{"id": outer}})
-	f.must(t, cmd{variable.Delete, map[string]any{"id": alone.ID}})
-	_, err = f.apply(t, cmd{variable.Restore, map[string]any{"id": alone.ID}})
-	if r := refused(t, err); r.Field != "id" {
-		t.Errorf("restoring a variable of a board in the trash was refused at %q", r.Field)
-	}
 	items, err := f.trash.List(ctx, f.actor(), f.project, trash.Cursor{}, 10)
-	if err != nil || len(items) != 2 || items[0].Kind != "variable" || items[0].Name != "greeted" ||
-		items[1].Kind != "board" {
-		t.Fatalf("the trash lists %+v, %v; want the variable deleted on its own, then the board", items, err)
+	if err != nil || len(items) != 2 || items[0].Kind != "board" || items[1].Kind != "variable" ||
+		items[1].Name != "greeted" {
+		t.Fatalf("the trash lists %+v, %v; want the board, then the variable deleted on its own", items, err)
 	}
-	// The variable's time in the trash ends with its board's, which started
-	// first, since the board's purge deletes it.
-	if !items[0].DeletedAt.After(items[1].DeletedAt) || !items[0].PurgeAfter.Equal(items[1].PurgeAfter) {
-		t.Errorf("the variable deleted at %v after its board, deleted at %v, is purged after %v, want the board's %v",
-			items[0].DeletedAt, items[1].DeletedAt, items[0].PurgeAfter, items[1].PurgeAfter)
+	// The variable's time in the trash is its own, which ends before its
+	// board's, since it was deleted first.
+	if !items[1].PurgeAfter.Equal(items[1].DeletedAt.Add(trash.Retention)) ||
+		!items[1].PurgeAfter.Before(items[0].PurgeAfter) {
+		t.Errorf("the variable deleted at %v before its board, deleted at %v, is purged after %v, want its own time",
+			items[1].DeletedAt, items[0].DeletedAt, items[1].PurgeAfter)
 	}
 	// The state of one deleted on its own says when it was.
-	if got := f.conflictState(t, alone.ID, 1); got.DeletedAt == nil || !got.DeletedAt.Equal(items[0].DeletedAt) {
-		t.Errorf("the state of a variable deleted on its own at %v says it was deleted at %v", items[0].DeletedAt,
+	if got := f.conflictState(t, alone.ID, 1); got.DeletedAt == nil || !got.DeletedAt.Equal(items[1].DeletedAt) {
+		t.Errorf("the state of a variable deleted on its own at %v says it was deleted at %v", items[1].DeletedAt,
 			got.DeletedAt)
 	}
 
@@ -706,14 +715,27 @@ func TestBoardTrash(t *testing.T) {
 		t.Errorf("undoing the board's restoration left\n%s\nwant\n%s", got, before)
 	}
 	f.must(t, cmd{board.Restore, map[string]any{"id": a}})
-	// With its board restored, the variable's time in the trash is its own.
+	// With its board restored, the variable deleted on its own stays in the
+	// trash, and its restoration is taken.
 	items, err = f.trash.List(ctx, f.actor(), f.project, trash.Cursor{}, 10)
-	if err != nil || len(items) != 1 || items[0].Name != "greeted" ||
-		!items[0].PurgeAfter.Equal(items[0].DeletedAt.Add(trash.Retention)) {
-		t.Errorf("with the board restored, the trash lists %+v, %v; want the variable, purged after its own time",
-			items, err)
+	if err != nil || len(items) != 1 || items[0].Name != "greeted" {
+		t.Errorf("with the board restored, the trash lists %+v, %v; want the variable", items, err)
 	}
 	f.must(t, cmd{variable.Restore, map[string]any{"id": alone.ID}})
+
+	// The undo of a variable's creation waits for its board's restoration, as
+	// the undo of its rename does.
+	created := f.must(t, newVariable("rumoured", map[string]any{"scope": "board", "board_id": a}))
+	f.must(t, cmd{board.Delete, map[string]any{"id": a}})
+	_, err = f.pipeline.Apply(ctx, f.actor(), f.project, f.inverse(t, created.Seq))
+	if r := refused(t, err); r.Field != "id" {
+		t.Errorf("undoing the creation of a variable of a board in the trash was refused at %q", r.Field)
+	}
+	f.must(t, cmd{board.Restore, map[string]any{"id": a}})
+	f.undo(t, created.Seq)
+	if got := f.list(t); !slices.Equal(got, []string{"asked", "greeted", "met_elara"}) {
+		t.Errorf("with the variable's creation undone, the project lists %v", got)
+	}
 
 	// The purge of the board deletes its variables with it, in the trash or
 	// not, and then the folders that held them.

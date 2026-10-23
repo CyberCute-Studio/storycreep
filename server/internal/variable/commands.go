@@ -379,21 +379,30 @@ func Register(r *commands.Registry) {
 		Type: Delete, Capability: op, Scope: sc, Touches: variable,
 		Check: func(p idPayload) input.FieldErrors { return entityID(ids.Variable, "id", p.ID) },
 		// Deleting a variable that is in the trash already does nothing, and
-		// its undo nothing either. A variable of a board in the trash is
-		// deleted on its own, so that the undo of its creation deletes it
-		// whatever became of its board since, and its board's restoration
-		// then leaves it in the trash.
+		// its undo nothing either. One of a board in the trash, in the trash
+		// with it but not deleted itself, is refused, as every command but
+		// its board's restoration refuses it, because its undo, a restore,
+		// would be refused until the board is restored: the undo of a batch
+		// that deletes the board and then the variable restores the variable
+		// first. So a board's variable is deleted on its own only before its
+		// board, and the undo of its creation waits for its board's
+		// restoration, as the undo of its rename does.
 		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
 			row, err := anyVariable(ctx, tx, p.ID)
-			if err != nil || row.Variable.DeletedAt.Valid {
+			if err != nil || row.Variable.DeletedAt.Valid || row.BoardDeleted {
 				return []commands.Step{}, err
 			}
 			return []commands.Step{{Type: Restore, Payload: idPayload{ID: p.ID}}}, nil
 		},
 		Apply: func(ctx context.Context, tx *commands.Tx, p idPayload) error {
 			row, err := anyVariable(ctx, tx, p.ID)
-			if err != nil {
+			switch {
+			case err != nil:
 				return err
+			case row.Variable.DeletedAt.Valid:
+				return nil
+			case row.BoardDeleted:
+				return refuseBoardInTrash()
 			}
 			v := row.Variable
 			return changed(tx, v.ID)(queries.New(tx).TrashVariable(ctx, queries.TrashVariableParams{
@@ -407,13 +416,14 @@ func Register(r *commands.Registry) {
 		// Restoring a variable that is not in the trash does nothing, and its
 		// undo nothing either. A variable of a board in the trash, which is in
 		// the trash with it, deleted on its own or not, is refused, since it
-		// comes back only with its board. The undo of a restore deletes the
+		// comes back only with its board, so the inverse of its restore, which
+		// Apply refuses, reads nothing more. The undo of a restore deletes the
 		// variable, and then the folders that the restore restored above it,
 		// from the nearest, each of which then holds nothing that is not
 		// deleted.
 		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
 			row, err := anyVariable(ctx, tx, p.ID)
-			if err != nil || !row.Variable.DeletedAt.Valid {
+			if err != nil || !row.Variable.DeletedAt.Valid || row.BoardDeleted {
 				return []commands.Step{}, err
 			}
 			v := row.Variable
@@ -564,10 +574,17 @@ func liveVariable(ctx context.Context, tx *commands.Tx, id string) (queries.Vari
 		return queries.Variable{}, commands.Refuse("id", "is a variable in the project's trash, which only "+
 			"restoring it changes", nil)
 	case row.BoardDeleted:
-		return queries.Variable{}, commands.Refuse("id", "is a variable of a board in the project's trash, which "+
-			"comes back with its board", nil)
+		return queries.Variable{}, refuseBoardInTrash()
 	}
 	return row.Variable, nil
+}
+
+// refuseBoardInTrash returns the refusal of a command that would change a
+// variable of a board in the trash, which is in the trash with it, and which
+// nothing but the board's restoration changes.
+func refuseBoardInTrash() error {
+	return commands.Refuse("id", "is a variable of a board in the project's trash, which comes back with its board",
+		nil)
 }
 
 // liveBoard returns the UUID of the board whose ID is id, a board's ID that a

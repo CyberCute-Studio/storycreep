@@ -5,8 +5,8 @@
 // (package board), and after which the purge deletes it for good. What
 // belongs to a board, as a board's variables, is in the trash with its board
 // while the board is there, which the list holds alone, and is purged with
-// it, even one deleted on its own, which the list holds, and whose time in
-// the trash ends with its board's if that ends first (Item.PurgeAfter).
+// it, even one deleted on its own, before its board, which the list holds,
+// and whose own time in the trash ends first.
 //
 // A row of the project's content is in the trash while its deleted_at is
 // set. Nothing reads it there but its restoration and this package: the
@@ -92,10 +92,8 @@ type Item struct {
 	Name string `json:"name" doc:"The entity's name, or a variable's key"`
 	// DeletedAt is when the entity was deleted to the trash.
 	DeletedAt time.Time `json:"deleted_at" doc:"When the entity was deleted to the trash"`
-	// PurgeAfter is DeletedAt and Retention, or, for a variable of a board in
-	// the trash, the board's deletion and Retention if that is earlier, since
-	// the board's purge deletes the variable with it.
-	PurgeAfter time.Time `json:"purge_after" doc:"When the entity's time in the trash ends, which starts at its deletion, or, for a variable of a board that is in the trash too, at the board's, if that is earlier, since the board's purge deletes its variables with it. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored."`
+	// PurgeAfter is DeletedAt and Retention.
+	PurgeAfter time.Time `json:"purge_after" doc:"When the entity's time in the trash ends. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored."`
 	// uuid is the UUID that ID encodes, by which the list orders the
 	// entities of a kind deleted at once.
 	uuid ids.UUID
@@ -171,7 +169,7 @@ func (s *Service) List(ctx context.Context, actor commands.Actor, projectID ids.
 				return fmt.Errorf("trash: the trash holds an entity of the kind %q, which it does not list", row.Kind)
 			}
 			out = append(out, Item{Kind: row.Kind, ID: ids.Encode(kind, row.ID.Bytes), Name: row.Name,
-				DeletedAt: row.DeletedAt.Time, PurgeAfter: row.PurgedFrom.Time.Add(Retention), uuid: row.ID.Bytes})
+				DeletedAt: row.DeletedAt.Time, PurgeAfter: row.DeletedAt.Time.Add(Retention), uuid: row.ID.Bytes})
 		}
 		return nil
 	})

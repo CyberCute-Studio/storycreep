@@ -3280,7 +3280,7 @@
             "type": "string"
           },
           "purge_after": {
-            "description": "When the entity's time in the trash ends, which starts at its deletion, or, for a variable of a board that is in the trash too, at the board's, if that is earlier, since the board's purge deletes its variables with it. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored.",
+            "description": "When the entity's time in the trash ends. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored.",
             "format": "date-time",
             "type": "string"
           }

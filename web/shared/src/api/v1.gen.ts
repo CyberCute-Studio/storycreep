@@ -1054,7 +1054,7 @@ export interface TrashItemBody {
   kind: "board" | "node" | "variable" | "component";
   /** The entity's name, or a variable's key */
   name: string;
-  /** When the entity's time in the trash ends, which starts at its deletion, or, for a variable of a board that is in the trash too, at the board's, if that is earlier, since the board's purge deletes its variables with it. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored. */
+  /** When the entity's time in the trash ends. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored. */
   purge_after: string;
 }
 

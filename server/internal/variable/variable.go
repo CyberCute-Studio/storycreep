@@ -24,11 +24,11 @@
 // brings it back where it was, with the folders above it that were deleted
 // since (package trash lists the trash, and purges what has been in it for
 // 30 days). A board's variables are in the trash with their board while it is
-// there, hold their keys, and come back with it; nothing but deleting them
-// changes them meanwhile, and restoring one of them, deleted on its own or
-// not, waits for its board's restoration. The reads of what is not in the
-// trash read the live view of the variables, live_variable, which leaves them
-// out.
+// there, hold their keys, and come back with it; nothing changes them
+// meanwhile, deleting them included, and restoring one of them deleted on its
+// own, before its board, waits for its board's restoration. The reads of what
+// is not in the trash read the live view of the variables, live_variable,
+// which leaves them out.
 //
 // Every command needs project:write of an API token (FR-AUTH-04), and the
 // actor's role on the project "Manage variables, components, component
