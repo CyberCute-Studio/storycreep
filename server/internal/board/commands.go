@@ -98,7 +98,7 @@ type idPayload struct {
 // deletePayload is Delete's payload.
 type deletePayload struct {
 	ID      string `json:"id" doc:"The board's ID"`
-	Confirm bool   `json:"confirm,omitempty" doc:"Whether to delete the board even though jumpers on the project's other boards, which are not in its trash, target its nodes, which its deletion leaves dangling, never dropped, for the validation to report (PRD FR-PROJ-02 AC2). Without it, a board that such jumpers target is not deleted: the command is answered with 409 board_referenced, which lists them, as GET /api/v1/projects/{project_id}/boards/{board_id}/referenced-by does, for a client to warn of before it sends the command again with confirm."`
+	Confirm bool   `json:"confirm,omitempty" doc:"Whether to delete the board even though jumpers on the project's other boards, which are not in its trash, target its nodes that are not deleted themselves, which its deletion leaves dangling, never dropped, for the validation to report (PRD FR-PROJ-02 AC2). Without it, a board that such jumpers target is not deleted: the command is answered with 409 board_referenced, which lists them, as GET /api/v1/projects/{project_id}/boards/{board_id}/referenced-by does, for a client to warn of before it sends the command again with confirm."`
 }
 
 // MaxReferrers is the most jumpers that a refusal of a board's deletion
@@ -115,9 +115,9 @@ type Referrer struct {
 
 // ReferencedError is the reason of the refusal of a board's deletion that is
 // not confirmed while jumpers on the project's other boards, which are not
-// in its trash, target its nodes (FR-PROJ-02 AC2), which the API answers with
-// board_referenced: Count of them, the first MaxReferrers of which, in the
-// order of their IDs, are Jumpers.
+// in its trash, target its nodes that are not deleted themselves (FR-PROJ-02
+// AC2), which the API answers with board_referenced: Count of them, the first
+// MaxReferrers of which, in the order of their IDs, are Jumpers.
 type ReferencedError struct {
 	Jumpers []Referrer
 	Count   int64
@@ -378,19 +378,24 @@ func applyDelete(ctx context.Context, tx *commands.Tx, p deletePayload) error {
 	q := queries.New(tx)
 	// The jumpers on the project's other boards that target the board's
 	// nodes stay as they are, dangling, which a client warns of before it
-	// confirms the deletion (FR-PROJ-02 AC2).
+	// confirms the deletion (FR-PROJ-02 AC2). One whose target is deleted
+	// already dangles already, and is not warned of.
 	if !p.Confirm {
-		count, err := q.BoardReferrerCount(ctx, queries.BoardReferrerCountParams{WorkspaceID: b.WorkspaceID,
-			ProjectID: b.ProjectID, BoardID: b.ID})
+		rows, err := q.BoardReferrers(ctx, queries.BoardReferrersParams{WorkspaceID: b.WorkspaceID,
+			ProjectID: b.ProjectID, BoardID: b.ID, MaxRows: MaxReferrers})
 		if err != nil {
-			return fmt.Errorf("board: count the jumpers that target the board: %w", err)
+			return fmt.Errorf("board: list the jumpers that target the board: %w", err)
+		}
+		// The list holds them all unless it is full, and they are counted
+		// then.
+		count := int64(len(rows))
+		if count == MaxReferrers {
+			if count, err = q.BoardReferrerCount(ctx, queries.BoardReferrerCountParams{WorkspaceID: b.WorkspaceID,
+				ProjectID: b.ProjectID, BoardID: b.ID}); err != nil {
+				return fmt.Errorf("board: count the jumpers that target the board: %w", err)
+			}
 		}
 		if count > 0 {
-			rows, err := q.BoardReferrers(ctx, queries.BoardReferrersParams{WorkspaceID: b.WorkspaceID,
-				ProjectID: b.ProjectID, BoardID: b.ID, MaxRows: MaxReferrers})
-			if err != nil {
-				return fmt.Errorf("board: list the jumpers that target the board: %w", err)
-			}
 			referenced := &ReferencedError{Jumpers: make([]Referrer, len(rows)), Count: count}
 			for i, row := range rows {
 				referenced.Jumpers[i] = Referrer{ID: ids.Encode(ids.Node, row.LiveNode.ID.Bytes),

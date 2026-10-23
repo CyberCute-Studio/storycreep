@@ -156,10 +156,11 @@ func registerNodes(m *api.Mux, nodes *node.Service) {
 		Path:        "/api/v1/projects/{project_id}/boards/{board_id}/referenced-by",
 		Summary:     "List the jumpers that target a board's nodes",
 		Description: "Lists the jumpers on the project's other boards, which are not in its trash, that target a " +
-			"node of the board, in the order of their IDs, oldest first: those that deleting the board would " +
-			"leave dangling, which a client warns of before it deletes the board, as the command board.delete, " +
-			"which refuses an unconfirmed deletion of such a board with 409 board_referenced, asks it to (PRD " +
-			"FR-PROJ-02 AC2)." + nodeChangesDoc + projectNotFoundDoc + tokenNotFoundDoc + " A board that the " +
+			"node of the board that is not in its trash either, in the order of their IDs, oldest first: those " +
+			"that deleting the board would leave dangling, which a client warns of before it deletes the board, " +
+			"as the command board.delete, which refuses an unconfirmed deletion of such a board with 409 " +
+			"board_referenced, asks it to (PRD FR-PROJ-02 AC2). A jumper whose target is deleted already, or " +
+			"purged, dangles already, and is not listed." + nodeChangesDoc + projectNotFoundDoc + tokenNotFoundDoc + " A board that the " +
 			"project does not have, or that is in its trash, is answered with 404 not_found." +
 			tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Nodes"},

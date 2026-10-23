@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
 // The bounds of a node's position and size, in units of its board's canvas,
@@ -46,26 +47,20 @@ type Length struct {
 	raw string
 }
 
-// coordSchema and lengthSchema are the schemas of a Coord and a Length.
-var (
-	coordSchema  = numberSchema(-MaxCoordinate, MaxCoordinate)
-	lengthSchema = numberSchema(MinLength, MaxLength)
-)
-
-// numberSchema returns the schema of a number from least to most.
+// numberSchema returns a new schema of a number from least to most. Each
+// field of a Coord or a Length has one of its own, since huma writes the
+// field's tags, as its doc, into the schema that it is given.
 func numberSchema(least, most float64) *huma.Schema {
-	s := &huma.Schema{Type: huma.TypeNumber, Minimum: &least, Maximum: &most}
-	s.PrecomputeMessages()
-	return s
+	return &huma.Schema{Type: huma.TypeNumber, Minimum: &least, Maximum: &most}
 }
 
 // Schema gives huma the schema of a Coord (huma.SchemaProvider), which
 // validates a command's payload and describes the field in the OpenAPI
 // document.
-func (Coord) Schema(huma.Registry) *huma.Schema { return coordSchema }
+func (Coord) Schema(huma.Registry) *huma.Schema { return numberSchema(-MaxCoordinate, MaxCoordinate) }
 
 // Schema gives huma the schema of a Length (huma.SchemaProvider).
-func (Length) Schema(huma.Registry) *huma.Schema { return lengthSchema }
+func (Length) Schema(huma.Registry) *huma.Schema { return numberSchema(MinLength, MaxLength) }
 
 // UnmarshalJSON keeps the JSON of the coordinate as it is, which a payload's
 // Check reads (hundredths), as value.Value keeps a value's.
@@ -122,17 +117,22 @@ func (l Length) hundredths() (int64, string) {
 }
 
 // hundredthsWithin returns raw, a JSON number, in hundredths of a unit,
-// rounded half away from zero, if it is one from least to most once rounded,
-// or says what is wrong with it.
+// rounded half away from zero, if it is one from least to most, as the
+// decimal that it is written as, before it is rounded, as its schema's
+// minimum and maximum take it, or says what is wrong with it. Rounded, it is
+// within the bounds too, which are whole.
 func hundredthsWithin(raw string, least, most int64) (int64, string) {
 	if !jsonNumber.MatchString(raw) {
 		return 0, "is not a number"
 	}
 	n, problem := toHundredths(raw)
-	switch {
-	case problem != "":
+	if problem != "" {
 		return 0, problem
-	case n < least*100 || n > most*100:
+	}
+	// toHundredths took the number's form, which bounds how long its exact
+	// value is.
+	exact, ok := new(big.Rat).SetString(raw)
+	if !ok || exact.Cmp(big.NewRat(least, 1)) < 0 || exact.Cmp(big.NewRat(most, 1)) > 0 {
 		return 0, fmt.Sprintf("is not a number from %d to %d", least, most)
 	}
 	return n, ""
@@ -142,13 +142,13 @@ func hundredthsWithin(raw string, least, most int64) (int64, string) {
 // that a payload's coordinate is, and which a step of an inverse writes.
 var jsonNumber = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
 
-// The bounds of how a number of a position or a size is written, as package
-// value bounds a value's: no number needs more characters, or a greater
-// exponent, either way, so that one that has them is refused rather than
-// read at length.
+// The bounds of how a number of a position or a size is written, which are
+// those of a value's (package value): no number needs more characters, or a
+// greater exponent, either way, so that one that has them is refused rather
+// than read at length.
 const (
-	maxNumberLength = 327
-	maxExponent     = 999
+	maxNumberLength = value.MaxNumberLength
+	maxExponent     = value.MaxExponent
 )
 
 // maxHundredthsDigits is how many digits a number of hundredths that a bound

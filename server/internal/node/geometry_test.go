@@ -2,9 +2,12 @@ package node
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/danielgtaylor/huma/v2"
 )
 
 // TestHundredths checks that a coordinate is read exactly as the decimal
@@ -51,9 +54,11 @@ func TestHundredths(t *testing.T) {
 			t.Errorf("%s is written as %s (%v), want %s", c.raw, out, err, c.out)
 		}
 	}
-	for _, raw := range []string{"1000000000.01", "-1000000000.005", "1e10", "1e999", `"1"`, "null", "true", "01",
-		"1.", ".5", "+1", "0x10", "1e1000", "1e-1000", "1e99999999999999999999", "1e-99999999999999999999",
-		"1" + strings.Repeat("0", 327)} {
+	// The bounds hold the number as it is written, before it is rounded, as
+	// the schema's minimum and maximum do.
+	for _, raw := range []string{"1000000000.01", "-1000000000.005", "-1000000000.004", "1000000000.0000000001",
+		"1e10", "1e999", `"1"`, "null", "true", "01", "1.", ".5", "+1", "0x10", "1e1000", "1e-1000",
+		"1e99999999999999999999", "1e-99999999999999999999", "1" + strings.Repeat("0", 327)} {
 		if got, problem := (Coord{raw: raw}).hundredths(); problem == "" {
 			t.Errorf("%s reads as %d, want it refused", raw, got)
 		}
@@ -61,10 +66,29 @@ func TestHundredths(t *testing.T) {
 	for _, c := range []struct {
 		raw string
 		ok  bool
-	}{{"1", true}, {"0.995", true}, {"0.994", false}, {"100000", true}, {"100000.004", true}, {"100000.005", false},
-		{"0", false}, {"-1", false}} {
+	}{{"1", true}, {"1.004", true}, {"0.995", false}, {"0.999999999999999999", false}, {"100000", true},
+		{"99999.995", true}, {"100000.004", false}, {"0", false}, {"-1", false}} {
 		if _, problem := (Length{raw: c.raw}).hundredths(); (problem == "") != c.ok {
 			t.Errorf("the length %s: %q, want it taken %v", c.raw, problem, c.ok)
+		}
+	}
+}
+
+// TestNumberSchemas checks that each field of a position and of a size is
+// described by its own doc in the OpenAPI document, which huma writes into
+// the schema that the field's type gives it.
+func TestNumberSchemas(t *testing.T) {
+	t.Parallel()
+	r := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
+	r.Schema(reflect.TypeFor[NodePosition](), true, "")
+	r.Schema(reflect.TypeFor[NodeSize](), true, "")
+	for _, c := range []struct{ schema, a, b string }{{"NodePosition", "x", "y"}, {"NodeSize", "width", "height"}} {
+		s := r.Map()[c.schema]
+		if s == nil {
+			t.Fatalf("%s is not registered", c.schema)
+		}
+		if a, b := s.Properties[c.a].Description, s.Properties[c.b].Description; a == "" || a == b {
+			t.Errorf("%s's %s is described as %q, and its %s as %q", c.schema, c.a, a, c.b, b)
 		}
 	}
 }
@@ -126,6 +150,9 @@ func TestTags(t *testing.T) {
 	got = suggest([]spelling{{"QUEST", 1}, {"Quest", 3}, {"Harbour", 5}, {"Hidden", 1}, {"Lore", 9}}, "", 3)
 	if want := []Tag{{"Lore", 9}, {"Harbour", 5}, {"Quest", 4}}; !slices.Equal(got, want) {
 		t.Errorf("the first 3 suggestions are %v, want %v", got, want)
+	}
+	if got = suggest([]spelling{{"Lore", 9}}, "", -1); len(got) != 0 {
+		t.Errorf("the suggestions for a limit of -1 are %v, want none", got)
 	}
 	if problem := CheckTagQuery("a\u0007"); problem == "" {
 		t.Error("a prefix with a control character is taken")

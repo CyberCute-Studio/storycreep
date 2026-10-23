@@ -137,21 +137,29 @@ LIMIT @max_rows;
 -- name: BoardReferrers :many
 -- BoardReferrers returns the jumpers of the project that are not in the
 -- trash, on its boards other than board_id, that target a node of the board
--- board_id, which deleting the board leaves dangling (FR-PROJ-02 AC2), in
--- the order of their IDs, after the jumper after, or from the first if after
--- is null.
+-- board_id that is not deleted itself, which deleting the board leaves
+-- dangling (FR-PROJ-02 AC2), in the order of their IDs, after the jumper
+-- after, or from the first if after is null. A jumper whose target is deleted
+-- already, or purged, dangles already, whatever becomes of the board.
 SELECT sqlc.embed(live_node)
 FROM live_node
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND target_board_id = @board_id
-    AND board_id <> @board_id AND (sqlc.narg(after)::uuid IS NULL OR id > sqlc.narg(after)::uuid)
-ORDER BY id
+WHERE live_node.workspace_id = @workspace_id AND live_node.project_id = @project_id
+    AND live_node.target_board_id = @board_id AND live_node.board_id <> @board_id
+    AND (sqlc.narg(after)::uuid IS NULL OR live_node.id > sqlc.narg(after)::uuid)
+    AND EXISTS (SELECT 1 FROM node t WHERE t.workspace_id = live_node.workspace_id
+        AND t.project_id = live_node.project_id AND t.id = live_node.target_node_id
+        AND t.board_id = live_node.target_board_id AND t.deleted_at IS NULL)
+ORDER BY live_node.id
 LIMIT @max_rows;
 
 -- name: BoardReferrerCount :one
 -- BoardReferrerCount returns how many jumpers BoardReferrers returns in all.
 SELECT count(*) FROM live_node
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND target_board_id = @board_id
-    AND board_id <> @board_id;
+WHERE live_node.workspace_id = @workspace_id AND live_node.project_id = @project_id
+    AND live_node.target_board_id = @board_id AND live_node.board_id <> @board_id
+    AND EXISTS (SELECT 1 FROM node t WHERE t.workspace_id = live_node.workspace_id
+        AND t.project_id = live_node.project_id AND t.id = live_node.target_node_id
+        AND t.board_id = live_node.target_board_id AND t.deleted_at IS NULL);
 
 -- name: BoardNodeCount :one
 -- BoardNodeCount returns how many nodes of the board are not deleted

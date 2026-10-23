@@ -110,8 +110,11 @@ func (q *Queries) BoardNodes(ctx context.Context, arg BoardNodesParams) ([]Board
 
 const boardReferrerCount = `-- name: BoardReferrerCount :one
 SELECT count(*) FROM live_node
-WHERE workspace_id = $1 AND project_id = $2 AND target_board_id = $3
-    AND board_id <> $3
+WHERE live_node.workspace_id = $1 AND live_node.project_id = $2
+    AND live_node.target_board_id = $3 AND live_node.board_id <> $3
+    AND EXISTS (SELECT 1 FROM node t WHERE t.workspace_id = live_node.workspace_id
+        AND t.project_id = live_node.project_id AND t.id = live_node.target_node_id
+        AND t.board_id = live_node.target_board_id AND t.deleted_at IS NULL)
 `
 
 type BoardReferrerCountParams struct {
@@ -131,9 +134,13 @@ func (q *Queries) BoardReferrerCount(ctx context.Context, arg BoardReferrerCount
 const boardReferrers = `-- name: BoardReferrers :many
 SELECT live_node.id, live_node.workspace_id, live_node.project_id, live_node.board_id, live_node.type, live_node.kind, live_node.title, live_node.text, live_node.speaker_component_id, live_node.cover_asset_id, live_node.color, live_node.tags, live_node.x, live_node.y, live_node.width, live_node.height, live_node.is_ending, live_node.target_board_id, live_node.target_node_id, live_node.rev, live_node.deleted_at, live_node.created_by, live_node.updated_by, live_node.created_at, live_node.updated_at
 FROM live_node
-WHERE workspace_id = $1 AND project_id = $2 AND target_board_id = $3
-    AND board_id <> $3 AND ($4::uuid IS NULL OR id > $4::uuid)
-ORDER BY id
+WHERE live_node.workspace_id = $1 AND live_node.project_id = $2
+    AND live_node.target_board_id = $3 AND live_node.board_id <> $3
+    AND ($4::uuid IS NULL OR live_node.id > $4::uuid)
+    AND EXISTS (SELECT 1 FROM node t WHERE t.workspace_id = live_node.workspace_id
+        AND t.project_id = live_node.project_id AND t.id = live_node.target_node_id
+        AND t.board_id = live_node.target_board_id AND t.deleted_at IS NULL)
+ORDER BY live_node.id
 LIMIT $5
 `
 
@@ -151,9 +158,10 @@ type BoardReferrersRow struct {
 
 // BoardReferrers returns the jumpers of the project that are not in the
 // trash, on its boards other than board_id, that target a node of the board
-// board_id, which deleting the board leaves dangling (FR-PROJ-02 AC2), in
-// the order of their IDs, after the jumper after, or from the first if after
-// is null.
+// board_id that is not deleted itself, which deleting the board leaves
+// dangling (FR-PROJ-02 AC2), in the order of their IDs, after the jumper
+// after, or from the first if after is null. A jumper whose target is deleted
+// already, or purged, dangles already, whatever becomes of the board.
 func (q *Queries) BoardReferrers(ctx context.Context, arg BoardReferrersParams) ([]BoardReferrersRow, error) {
 	rows, err := q.db.Query(ctx, boardReferrers,
 		arg.WorkspaceID,

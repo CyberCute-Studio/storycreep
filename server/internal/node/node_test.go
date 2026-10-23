@@ -788,9 +788,11 @@ func TestUsage(t *testing.T) {
 
 // TestBoardReferenced checks that a board whose nodes jumpers on other boards
 // target is deleted only once its deletion is confirmed, which the refusal
-// lists them for, and that the jumpers keep their targets then, dangling,
-// rather than lose them, while those of the board itself go to the trash with
-// it.
+// lists them for, but for the jumpers whose targets are deleted already, or
+// purged, which dangle already, that the refusal counts every jumper, past
+// the most that it lists, and that the jumpers keep their targets then,
+// dangling, rather than lose them, while those of the board itself go to the
+// trash with it.
 //
 // Verifies: FR-PROJ-02/AC2
 func TestBoardReferenced(t *testing.T) {
@@ -804,6 +806,12 @@ func TestBoardReferenced(t *testing.T) {
 		"board_id": harbour, "node_id": keeper}})
 	gone := f.newNode(t, pier, node.TypeJumper, payload{"target": payload{"board_id": harbour, "node_id": keeper}})
 	f.must(t, cmd{node.Delete, payload{"id": gone}})
+	// A jumper whose target is in the trash, or purged, dangles already.
+	lost, purged := f.newNode(t, harbour, node.TypeElement, nil), f.newNode(t, harbour, node.TypeElement, nil)
+	f.newNode(t, pier, node.TypeJumper, payload{"target": payload{"board_id": harbour, "node_id": lost}})
+	f.newNode(t, pier, node.TypeJumper, payload{"target": payload{"board_id": harbour, "node_id": purged}})
+	f.must(t, cmd{node.Delete, payload{"id": lost}})
+	f.exec(t, "DELETE FROM node WHERE id = $1", decode(t, ids.Node, purged))
 
 	r := f.refused(t, cmd{board.Delete, payload{"id": harbour}})
 	var referenced *board.ReferencedError
@@ -835,6 +843,22 @@ func TestBoardReferenced(t *testing.T) {
 	// Once the jumper is gone, the deletion needs no confirmation.
 	f.must(t, cmd{board.Restore, payload{"id": harbour}}, cmd{node.Delete, payload{"id": jumper}},
 		cmd{board.Delete, payload{"id": harbour}})
+
+	// The refusal lists the first jumpers, and counts them all.
+	dock := f.newBoard(t, f.project, "Dock")
+	moored := f.newNode(t, dock, node.TypeElement, nil)
+	var many []cmd
+	for i := range board.MaxReferrers + 1 {
+		many = append(many, create(newID(), pier, node.TypeJumper, i, payload{"target": payload{"board_id": dock,
+			"node_id": moored}}))
+	}
+	f.must(t, many...)
+	r = f.refused(t, cmd{board.Delete, payload{"id": dock}})
+	if !errors.As(r, &referenced) || referenced.Count != board.MaxReferrers+1 ||
+		len(referenced.Jumpers) != board.MaxReferrers {
+		t.Errorf("the refusal of a board that %d jumpers target counts %d, and lists %d", board.MaxReferrers+1,
+			referenced.Count, len(referenced.Jumpers))
+	}
 }
 
 // TestReferencedBy checks that the jumpers that target a node are listed,

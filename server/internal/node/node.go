@@ -319,11 +319,11 @@ func (s *Service) ReferencedBy(ctx context.Context, actor commands.Actor, projec
 
 // BoardReferencedBy returns at most limit of the jumpers of the project
 // projectID that are not in the trash, on its boards other than boardID,
-// that target a node of the board boardID, which deleting the board would
-// leave dangling (PRD FR-PROJ-02 AC2), in the order of their IDs: the first,
-// if after is zero, or else those after the jumper after. It returns the
-// errors of project.Service.Get first, then board.ErrNotFound if the project
-// has no such board, or it is in the trash.
+// that target a node of the board boardID that is not in the trash either,
+// which deleting the board would leave dangling (PRD FR-PROJ-02 AC2), in the
+// order of their IDs: the first, if after is zero, or else those after the
+// jumper after. It returns the errors of project.Service.Get first, then
+// board.ErrNotFound if the project has no such board, or it is in the trash.
 func (s *Service) BoardReferencedBy(ctx context.Context, actor commands.Actor, projectID, boardID, after ids.UUID,
 	limit int) ([]Node, error) {
 	var out []Node

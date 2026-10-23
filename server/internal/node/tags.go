@@ -113,8 +113,10 @@ func suggest(spellings []spelling, prefix string, limit int) []Tag {
 		}
 		return strings.Compare(a, b)
 	})
-	out := make([]Tag, 0, min(limit, len(keys)))
-	for _, k := range keys[:min(limit, len(keys))] {
+	// A limit below 1 suggests none.
+	n := min(max(limit, 0), len(keys))
+	out := make([]Tag, 0, n)
+	for _, k := range keys[:n] {
 		out = append(out, Tag{Tag: byKey[k].best.tag, Nodes: byKey[k].uses})
 	}
 	return out

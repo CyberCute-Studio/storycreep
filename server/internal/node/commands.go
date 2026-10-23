@@ -395,20 +395,8 @@ func Register(r *commands.Registry) {
 func checkCreate(p createPayload) input.FieldErrors {
 	errs := newID(ids.Node, p.ID)
 	errs = append(errs, entityID(ids.Board, "board_id", p.BoardID)...)
-	if p.Type != TypeElement {
-		for _, f := range []struct {
-			name string
-			set  bool
-		}{{"kind", p.Kind != ""}, {"text", p.Text != nil}, {"speaker_component_id", p.SpeakerComponentID != ""},
-			{"cover_asset_id", p.CoverAssetID != ""}, {"is_ending", p.IsEnding}} {
-			if f.set {
-				errs = append(errs, notOf(f.name, p.Type, TypeElement))
-			}
-		}
-	}
-	if p.Type != TypeJumper && p.Target != nil {
-		errs = append(errs, notOf("target", p.Type, TypeJumper))
-	}
+	errs = append(errs, typedFields{kind: p.Kind != "", text: p.Text != nil, speaker: p.SpeakerComponentID != "",
+		cover: p.CoverAssetID != "", isEnding: p.IsEnding, target: p.Target != nil}.misplaced(p.Type)...)
 	errs = append(errs, optionalID(ids.Component, "speaker_component_id", p.SpeakerComponentID)...)
 	errs = append(errs, optionalID(ids.Asset, "cover_asset_id", p.CoverAssetID)...)
 	errs = append(errs, checkPosition("position", p.Position)...)
@@ -443,8 +431,12 @@ func checkUpdate(p updatePayload) input.FieldErrors {
 
 // checkMove returns what is wrong with Move's payload p that its schema
 // cannot say: each node's ID, which is no other node's of the payload, and
-// its position.
+// its position, once it has checked that p moves at most MaxMoved nodes, as
+// its schema says too.
 func checkMove(p movePayload) input.FieldErrors {
+	if len(p.Nodes) > MaxMoved {
+		return field("nodes", fmt.Sprintf("holds more than %d nodes", MaxMoved))
+	}
 	var errs input.FieldErrors
 	first := make(map[ids.UUID]int, len(p.Nodes))
 	for i, place := range p.Nodes {
@@ -477,6 +469,37 @@ func checkTarget(at string, t NodeTarget) input.FieldErrors {
 	return append(entityID(ids.Board, at+".board_id", t.BoardID), entityID(ids.Node, at+".node_id", t.NodeID)...)
 }
 
+// typedFields says which of the fields that only an element has, or only a
+// jumper, a payload sets: a create's and an update's, which check them alike.
+type typedFields struct {
+	// kind, text, speaker, cover, and isEnding are an element's alone.
+	kind, text, speaker, cover, isEnding bool
+	// target is a jumper's alone.
+	target bool
+}
+
+// misplaced returns the problems of the fields that the payload sets, as f
+// says, that a node of the type nodeType does not have, in the order of the
+// payload's fields.
+func (f typedFields) misplaced(nodeType string) input.FieldErrors {
+	var errs input.FieldErrors
+	if nodeType != TypeElement {
+		for _, c := range []struct {
+			name string
+			set  bool
+		}{{"kind", f.kind}, {"text", f.text}, {"speaker_component_id", f.speaker}, {"cover_asset_id", f.cover},
+			{"is_ending", f.isEnding}} {
+			if c.set {
+				errs = append(errs, notOf(c.name, nodeType, TypeElement))
+			}
+		}
+	}
+	if nodeType != TypeJumper && f.target {
+		errs = append(errs, notOf("target", nodeType, TypeJumper))
+	}
+	return errs
+}
+
 // notOf returns the problem of a payload's field that only a node of the
 // type typ has, which a node of the type nodeType does not.
 func notOf(name, nodeType, typ string) input.FieldError {
@@ -499,13 +522,8 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.Node, p.ID)
-	// A node of the project with the ID is refused for its ID before anything
-	// else is checked, as a board's create is; the insert below refuses the ID
-	// of a node that this transaction does not see.
-	if _, err := q.NodeAny(ctx, queries.NodeAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
-		return commands.Refuse("id", "is the ID of a node that exists already", nil)
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("node: read the node: %w", err)
+	if err := checkNewNode(ctx, q, ws, project, id); err != nil {
+		return err
 	}
 	boardID := decoded(ids.Board, p.BoardID)
 	if _, err := q.Board(ctx, queries.BoardParams{WorkspaceID: ws, ProjectID: project, ID: boardID}); errors.Is(err,
@@ -557,9 +575,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	}
 	err = q.InsertNode(ctx, params)
 	if database.UniqueViolation(err, "node_pkey") {
-		// The ID is another workspace's, or another project's, whose rows this
-		// transaction does not see.
-		return commands.Refuse("id", "is the ID of a node that exists already", nil)
+		return refuseTakenID()
 	}
 	if err != nil {
 		return fmt.Errorf("node: add the node: %w", err)
@@ -575,10 +591,8 @@ func applyDuplicate(ctx context.Context, tx *commands.Tx, p duplicatePayload) er
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.Node, p.ID)
-	if _, err := q.NodeAny(ctx, queries.NodeAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
-		return commands.Refuse("id", "is the ID of a node that exists already", nil)
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("node: read the node: %w", err)
+	if err := checkNewNode(ctx, q, ws, project, id); err != nil {
+		return err
 	}
 	source, err := liveNodeOf(ctx, tx, "source_id", p.SourceID)
 	if err != nil {
@@ -589,7 +603,7 @@ func applyDuplicate(ctx context.Context, tx *commands.Tx, p duplicatePayload) er
 		WorkspaceID: ws, ProjectID: project, SourceID: source.ID})
 	switch {
 	case database.UniqueViolation(err, "node_pkey"):
-		return commands.Refuse("id", "is the ID of a node that exists already", nil)
+		return refuseTakenID()
 	case err != nil:
 		return fmt.Errorf("node: duplicate the node: %w", err)
 	case n != 1:
@@ -599,6 +613,28 @@ func applyDuplicate(ctx context.Context, tx *commands.Tx, p duplicatePayload) er
 		return err
 	}
 	return tx.AddUsage(usage.Nodes, 1)
+}
+
+// checkNewNode refuses the batch, at id, if the project has a node whose
+// UUID is id, the ID of a node that a command creates, before anything else
+// is checked, as a board's create does; the insert refuses the ID of a node
+// that the transaction does not see (refuseTakenID).
+func checkNewNode(ctx context.Context, q *queries.Queries, ws, project, id pgtype.UUID) error {
+	_, err := q.NodeAny(ctx, queries.NodeAnyParams{WorkspaceID: ws, ProjectID: project, ID: id})
+	switch {
+	case err == nil:
+		return refuseTakenID()
+	case !errors.Is(err, pgx.ErrNoRows):
+		return fmt.Errorf("node: read the node: %w", err)
+	}
+	return nil
+}
+
+// refuseTakenID returns the refusal, at id, of a command that creates a node
+// with the ID of one that exists already, which may be another workspace's,
+// or another project's, whose rows the transaction does not see.
+func refuseTakenID() error {
+	return commands.Refuse("id", "is the ID of a node that exists already", nil)
 }
 
 // planUpdate returns the node of Update's payload p, as it is, and every
@@ -622,21 +658,10 @@ func planUpdate(ctx context.Context, tx *commands.Tx, p updatePayload) (queries.
 	if next.Tags == nil {
 		next.Tags = []string{}
 	}
-	if n.Type != TypeElement {
-		for _, f := range []struct {
-			name string
-			set  bool
-		}{{"kind", p.Kind != nil}, {"text", p.Text != nil}, {"speaker_component_id", p.SpeakerComponentID != nil},
-			{"cover_asset_id", p.CoverAssetID != nil}, {"is_ending", p.IsEnding != nil}} {
-			if f.set {
-				problem := notOf(f.name, n.Type, TypeElement)
-				return n, next, commands.Refuse(problem.Field, problem.Message, nil)
-			}
-		}
-	}
-	if n.Type != TypeJumper && p.Target != nil {
-		problem := notOf("target", n.Type, TypeJumper)
-		return n, next, commands.Refuse(problem.Field, problem.Message, nil)
+	typed := typedFields{kind: p.Kind != nil, text: p.Text != nil, speaker: p.SpeakerComponentID != nil,
+		cover: p.CoverAssetID != nil, isEnding: p.IsEnding != nil, target: p.Target != nil}
+	if errs := typed.misplaced(n.Type); len(errs) > 0 {
+		return n, next, commands.Refuse(errs[0].Field, errs[0].Message, nil)
 	}
 	if p.Kind != nil {
 		next.Kind = pgtype.Text{String: *p.Kind, Valid: true}

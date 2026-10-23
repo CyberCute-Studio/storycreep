@@ -356,7 +356,7 @@ export interface BoardDeleteCommand {
 
 /** The payload of a command of the type board.delete. */
 export interface BoardDeletePayload {
-  /** Whether to delete the board even though jumpers on the project's other boards, which are not in its trash, target its nodes, which its deletion leaves dangling, never dropped, for the validation to report (PRD FR-PROJ-02 AC2). Without it, a board that such jumpers target is not deleted: the command is answered with 409 board_referenced, which lists them, as GET /api/v1/projects/{project_id}/boards/{board_id}/referenced-by does, for a client to warn of before it sends the command again with confirm. */
+  /** Whether to delete the board even though jumpers on the project's other boards, which are not in its trash, target its nodes that are not deleted themselves, which its deletion leaves dangling, never dropped, for the validation to report (PRD FR-PROJ-02 AC2). Without it, a board that such jumpers target is not deleted: the command is answered with 409 board_referenced, which lists them, as GET /api/v1/projects/{project_id}/boards/{board_id}/referenced-by does, for a client to warn of before it sends the command again with confirm. */
   confirm?: boolean;
   /** The board's ID */
   id: string;
@@ -1391,7 +1391,7 @@ export interface NodePlace {
 }
 
 export interface NodePosition {
-  /** The node's position down its board's canvas, downward, in units of the canvas: a number from -1000000000 to 1000000000, read and kept as x is. */
+  /** The node's position across its board's canvas, rightward, in units of the canvas: a number from -1000000000 to 1000000000, read as the decimal that it is written as, and kept to 2 decimal places, rounded half away from zero, as 0.125 is 0.13 (PRD FR-EDIT-02 AC4). The node is shown with it written without trailing zeros, as 240 or 120.5. */
   x: number;
   /** The node's position down its board's canvas, downward, in units of the canvas: a number from -1000000000 to 1000000000, read and kept as x is. */
   y: number;
@@ -1417,7 +1417,7 @@ export interface NodeRestorePayload {
 export interface NodeSize {
   /** The node's height, in units of its board's canvas: a number from 1 to 100000, read and kept as a position's x is. With width, or neither of them, for none. */
   height?: number;
-  /** The node's height, in units of its board's canvas: a number from 1 to 100000, read and kept as a position's x is. With width, or neither of them, for none. */
+  /** The node's width, in units of its board's canvas: a number from 1 to 100000, read and kept as a position's x is. With height, or neither of them, for none. */
   width?: number;
 }
 
@@ -2990,7 +2990,7 @@ export interface Operations {
   /**
    * List the jumpers that target a board's nodes
    *
-   * Lists the jumpers on the project's other boards, which are not in its trash, that target a node of the board, in the order of their IDs, oldest first: those that deleting the board would leave dangling, which a client warns of before it deletes the board, as the command board.delete, which refuses an unconfirmed deletion of such a board with 409 board_referenced, asks it to (PRD FR-PROJ-02 AC2). They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type node.* create, change, move, duplicate, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   * Lists the jumpers on the project's other boards, which are not in its trash, that target a node of the board that is not in its trash either, in the order of their IDs, oldest first: those that deleting the board would leave dangling, which a client warns of before it deletes the board, as the command board.delete, which refuses an unconfirmed deletion of such a board with 409 board_referenced, asks it to (PRD FR-PROJ-02 AC2). A jumper whose target is deleted already, or purged, dangles already, and is not listed. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type node.* create, change, move, duplicate, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
    */
   listBoardReferrers: {
     input: {
