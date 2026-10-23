@@ -408,7 +408,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-VAR-01 AC1–AC2 pass.
 
 ### 34. Component types and components
-**Status:** todo · **Depends on:** 29, 31, 32
+**Status:** done ([#39](https://github.com/CyberCute-Studio/storycreep/pull/39)) · **Depends on:** 29, 31, 32
 **PRD:** FR-COMP-01, FR-COMP-02 (AC1, AC3), FR-PROJ-06 (trash registration)
 - Default types seeded per project: Character, Item, Location, Faction, Custom, without attribute definitions, named in the project's default locale (N42).
 - Ordered attribute definitions with a `runtime` flag. Adding an attribute is one command and fills the default on every component. Changing an attribute's type needs an explicit conversion choice, `convert` or `reset`, and a route reports values that cannot convert (N42).
