@@ -445,6 +445,66 @@
       "hash": "sha256:e8da259d791343d935cfd1cc81bb8e5fc35a5f3c88806f63a6a58504d512e6f6"
     },
     {
+      "note": "a paragraph after a list that is the document's first block has a paragraph segment: only the first block of the document, or of a list item, has none",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "Rope",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "listItem"
+              }
+            ],
+            "type": "bulletList"
+          },
+          {
+            "content": [
+              {
+                "text": "Then go.",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "depth": 1,
+          "kind": "item",
+          "list": "bullet"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Rope"
+        },
+        {
+          "kind": "paragraph"
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Then go."
+        }
+      ],
+      "text": "• Rope\nThen go.",
+      "preview": "• Rope Then go.",
+      "words": 3,
+      "hash": "sha256:bc527b3a9e8c8b6a750b3e56e550d507a4cc03e33a4a1df3b2226158f67774c8"
+    },
+    {
       "note": "the canonical form: marks in alphabetical order, neighbouring texts with the same marks joined, an ID in its canonical spelling, and no field that holds its default",
       "doc": {
         "type": "doc",
@@ -1820,8 +1880,9 @@
       "pointer": ""
     },
     {
-      "note": "a type spelt in another case, which is no type",
+      "note": "a type spelt in another case, which is a field that no node has, not the node's type",
       "doc": {
+        "type": "doc",
         "Type": "doc",
         "content": [
           {
@@ -1829,8 +1890,8 @@
           }
         ]
       },
-      "reason": "missing_field",
-      "pointer": ""
+      "reason": "unknown_field",
+      "pointer": "/Type"
     },
     {
       "note": "a type that is not a string",
@@ -4382,6 +4443,34 @@
       "schema_accepts": true
     },
     {
+      "note": "a link whose host a browser reads as an IPv4 address, as its last label is 0x without digits, which a browser reads as the number 0",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.0x/"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
       "note": "a link whose host is an IPv4 address of fewer than four numbers, which the server does not take",
       "doc": {
         "type": "doc",
@@ -4929,6 +5018,34 @@
                     "type": "link",
                     "attrs": {
                       "href": "mailto:%2522support%2540paypal.com%2522%253Cx@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose local part escapes an underscore, one of RFC 3986's unreserved characters, which a URL never needs to escape, so that the link reads otherwise than the address that the message goes to",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:support%5Fdesk@example.com"
                     }
                   }
                 ]
@@ -5851,7 +5968,7 @@
       "pointer": "/content/0/content/0/attrs/attribute"
     },
     {
-      "note": "a value of a variable whose attribute is null, as ProseMirror writes an attribute that is not set",
+      "note": "a value of a component whose attribute is null, which is refused wherever it is",
       "doc": {
         "type": "doc",
         "content": [
@@ -5861,7 +5978,7 @@
               {
                 "type": "valueRef",
                 "attrs": {
-                  "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA",
+                  "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
                   "attribute": null
                 }
               }

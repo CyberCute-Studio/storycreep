@@ -1257,13 +1257,14 @@ var mailtoFields = []string{"bcc", "body", "cc", "subject", "to"}
 // bytes that are not UTF-8 as it chooses, as Latin-1, in which %85 is NEL and
 // %AD a soft hyphen. The address, and the value of to, cc, or bcc, which name
 // addresses too, are as addressesProblem has them: they escape no hidden
-// character, nor a letter, a digit, a -, a ., or a %, and are addresses as
-// RFC 6068 has them, without a display name, a comment, or quotes, in ASCII,
-// each with a domain that a message can be sent to, as RFC 5321 has it. A
-// subject escapes no character that text may not hold (isControl), a control
-// character but a tab, a bidirectional control, or a line or paragraph
-// separator, which a mail client could write into a header, as a line break
-// that starts another header in
+// character, nor one of RFC 3986's unreserved characters, a letter, a digit,
+// a -, a ., a _, or a ~, nor a %, and are addresses as RFC 6068 has them,
+// without a display name, a comment, or quotes, in ASCII, each with a domain
+// that a message can be sent to, as RFC 5321 has it. A subject escapes no
+// character that text may not hold (isControl), a control character but a
+// tab, a bidirectional control, or a line or paragraph separator, which a
+// mail client could write into a header, as a line break that starts another
+// header in
 // mailto:keeper@example.com?subject=a%0D%0ABcc:evil@example.com, or that a
 // reader of lines may take for one, as Python's str.splitlines takes NEL,
 // %C2%85, and LINE SEPARATOR, %E2%80%A8, or that would reorder the subject
@@ -1340,13 +1341,14 @@ func mailtoProblem(rest string) string {
 // bar or an editor's link may show it, and a client that reads escapes twice,
 // against RFC 6068, reads it otherwise again, so none of its escapes stands
 // for a character that would have those read another address than the one
-// checked (escapesPlain): an ASCII letter or digit, a -, or a ., which a URL
-// never needs to escape (RFC 3986's unreserved characters), and of which a
-// domain's labels are written, so that a domain reads as the link writes it,
-// rather than as paypal.com in support@paypal.com%2Eevil.example, whose
-// message goes to paypal.com.evil.example; or a %, so that reading its
-// escapes twice reads what reading them once does, rather than a display name
-// in %2522support%2540paypal.com%2522%253Cx@evil.example, which reads as
+// checked (escapesPlain): one of RFC 3986's unreserved characters, an ASCII
+// letter or digit, a -, a ., a _, or a ~, which a URL never needs to escape,
+// and of which, but _ and ~, a domain's labels are written, so that a domain
+// reads as the link writes it, rather than as paypal.com in
+// support@paypal.com%2Eevil.example, whose message goes to
+// paypal.com.evil.example; or a %, so that reading its escapes twice reads
+// what reading them once does, rather than a display name in
+// %2522support%2540paypal.com%2522%253Cx@evil.example, which reads as
 // "support@paypal.com"<x@evil.example> once its escapes are read twice.
 //
 // An address is ASCII, as an http link's host is (nameProblem), since a
@@ -1383,9 +1385,10 @@ func addressesProblem(s string) string {
 			"or show as a blank that hides the domain: an address is ASCII, and an internationalized domain is " +
 			"written as IDNA writes it in ASCII (xn--)"
 	case escapesPlain(s):
-		return "escapes a letter, a digit, a -, or a ., which a URL never needs to escape, and which would have the " +
-			"link show a domain that the message does not go to, as paypal.com in support@paypal.com%2Eevil.example, " +
-			"or a %, which a mail client that reads escapes twice would read as another escape, as %2522 as a quote"
+		return "escapes a letter, a digit, a -, a ., a _, or a ~, which a URL never needs to escape, and which would " +
+			"have the link show a domain that the message does not go to, as paypal.com in " +
+			"support@paypal.com%2Eevil.example, or a %, which a mail client that reads escapes twice would read as " +
+			"another escape, as %2522 as a quote"
 	case decoded == "":
 		return ""
 	}
@@ -1403,15 +1406,15 @@ func addressesProblem(s string) string {
 }
 
 // escapesPlain reports whether an escape of s, each of whose % starts one
-// (escapesValid), stands for an ASCII letter or digit, a -, a ., or a %
-// (addressesProblem).
+// (escapesValid), stands for one of RFC 3986's unreserved characters, an
+// ASCII letter or digit, a -, a ., a _, or a ~, or for a % (addressesProblem).
 func escapesPlain(s string) bool {
 	for i := 0; i+2 < len(s); i++ {
 		if s[i] != '%' {
 			continue
 		}
 		c := rune(hex4([]byte(s[i+1 : i+3])))
-		if 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || isDigit(c) || c == '-' || c == '.' || c == '%' {
+		if 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || isDigit(c) || strings.ContainsRune("-._~%", c) {
 			return true
 		}
 		i += 2
@@ -1637,9 +1640,10 @@ func ipv6Problem(address string) string {
 // which reads as a path of bank.example, leads to a host of evil.example. The
 // name's labels, which dots separate, are not empty, but for a last one after
 // a dot that ends the name, as in example.com.; and when its last label (not
-// that empty one) is digits, or 0x or 0X and hexadecimal digits, which a
-// browser then reads as an IPv4 address, the name is one, four numbers from
-// 0 to 255 in decimal, without leading zeros, separated by dots.
+// that empty one) is digits, or 0x or 0X followed by hexadecimal digits or by
+// none (hexNumber), which a browser then reads as an IPv4 address, the name
+// is one, four numbers from 0 to 255 in decimal, without leading zeros,
+// separated by dots.
 func nameProblem(name string) string {
 	if name == "" {
 		return "has no host"
@@ -1665,8 +1669,10 @@ func nameProblem(name string) string {
 	return ""
 }
 
-// hexNumber reports whether a label is 0x or 0X and hexadecimal digits, which
-// a browser reads as a number.
+// hexNumber reports whether a label is 0x or 0X followed by hexadecimal digits
+// or by none, which a browser reads as a number, 0 when there are none, as
+// the URL Standard's "ends in a number checker" has it, so that
+// https://example.0x/ is a host that a browser reads as an IPv4 address.
 func hexNumber(label string) bool {
 	digits, ok := strings.CutPrefix(label, "0x")
 	if !ok {

@@ -41,9 +41,11 @@ const (
 // walk instead of the document's tree (PRD §6.1, ADR-020). A document's
 // segments are its inline content in order, texts, values, and mentions, each
 // with its marks, and segments that mark where its paragraphs, list items,
-// and line breaks begin: a paragraph segment begins each paragraph but the
-// document's first and the first of each list item, which an item segment
-// begins instead. schema/rich-text/README.md describes each kind.
+// and line breaks begin: a paragraph segment begins each paragraph but one
+// that is the first block of the document, which the document's start
+// begins, or of a list item, which the item's segment begins, so that a
+// paragraph after a list has one, even when the list is the document's first
+// block. schema/rich-text/README.md describes each kind.
 type Segment struct {
 	Kind string
 	// Marks are an inline segment's marks, in alphabetical order.

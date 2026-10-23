@@ -1013,13 +1013,18 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@192.0.2.1",
 		"mailto:keeper@example.123",
 		"mailto:keeper@example.com?to=a@1",
-		// Or that escapes a letter, a digit, a -, or a ., which a URL never
-		// needs to escape, so that a domain would read otherwise as the link
-		// writes it than the one that the message goes to, as paypal.com in
+		// Or that escapes one of RFC 3986's unreserved characters, a letter, a
+		// digit, a -, a ., a _, or a ~, which a URL never needs to escape, so
+		// that a domain would read otherwise as the link writes it than the
+		// one that the message goes to, as paypal.com in
 		// support@paypal.com%2Eevil.example, which goes to
 		// paypal.com.evil.example; or a %, which a mail client that reads
 		// escapes twice reads as another escape, so that it reads a display
 		// name, a comment, or another domain; wherever an address is.
+		"mailto:support%5Fdesk@example.com",
+		"mailto:a%5f@example.com",
+		"mailto:keeper@example.com?cc=a%7Eb@example.com",
+		"mailto:keeper@example.com?TO=a@example.com,%7e@example.com",
 		"mailto:support@paypal.com%2Eevil.example",
 		"mailto:support@paypal.com%2eevil%2Eexample",
 		"mailto:support%2Epaypal.com@evil.example",
