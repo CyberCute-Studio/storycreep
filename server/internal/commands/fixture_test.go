@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -60,7 +61,8 @@ const (
 	// job, and counts against the workspace's projects, as though a note
 	// were one. Deleting the note undoes it.
 	noteCreate Type = "note.create"
-	// noteUpdate replaces a note's body, which replacing it back undoes.
+	// noteUpdate replaces a note's body, which replacing it back undoes. A
+	// new body has no control character (Spec.CheckNew), as a stored one may.
 	noteUpdate Type = "note.update"
 	// noteDelete deletes a note to the trash, and cannot be undone. It needs
 	// owner or admin.
@@ -262,6 +264,12 @@ func noteRegistry() *Registry {
 	Register(r, Spec[notePayload]{
 		Type: noteUpdate, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
 		Check: func(p notePayload) input.FieldErrors { return checkNoteID(p.ID) },
+		CheckNew: func(p notePayload) input.FieldErrors {
+			if strings.IndexFunc(p.Body, input.IsControl) >= 0 {
+				return input.FieldErrors{{Field: "body", Message: "contains a control character"}}
+			}
+			return nil
+		},
 		Inverse: func(ctx context.Context, tx *Tx, p notePayload) ([]Step, error) {
 			s, err := readNote(ctx, tx, noteUUID(p.ID))
 			if err != nil {

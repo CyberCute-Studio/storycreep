@@ -3,10 +3,14 @@ package project_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
@@ -93,6 +97,27 @@ func (f *fixture) state(t *testing.T, id string) string {
 		t.Fatal(err)
 	}
 	return s
+}
+
+// inverse returns the inverse of the batch of the project id whose seq is
+// seq, which the operation log keeps, as a batch of commands.
+func (f *fixture) inverse(t *testing.T, id string, seq int64) []commands.Command {
+	t.Helper()
+	var steps []struct {
+		Type    commands.Type   `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	var inverse []byte
+	if err := f.d.Admin(t).QueryRow(context.Background(),
+		"SELECT inverse FROM operation WHERE project_id = $1 AND seq = $2", decode(t, id), seq).Scan(
+		&inverse); err != nil || json.Unmarshal(inverse, &steps) != nil {
+		t.Fatalf("the inverse of %d, %s: %v", seq, inverse, err)
+	}
+	batch := make([]commands.Command, len(steps))
+	for i, st := range steps {
+		batch[i] = commands.Command{ID: ids.New(), Type: st.Type, Payload: st.Payload}
+	}
+	return batch
 }
 
 // decode returns the UUID of a project's ID.
@@ -197,20 +222,7 @@ func TestUndo(t *testing.T) {
 		if f.state(t, p.ID) == before {
 			t.Errorf("%s %s changed nothing", c.typ, c.payload)
 		}
-		var steps []struct {
-			Type    commands.Type   `json:"type"`
-			Payload json.RawMessage `json:"payload"`
-		}
-		var inverse []byte
-		if err := f.d.Admin(t).QueryRow(ctx, "SELECT inverse FROM operation WHERE project_id = $1 AND seq = $2",
-			decode(t, p.ID), res.Seq).Scan(&inverse); err != nil || json.Unmarshal(inverse, &steps) != nil {
-			t.Fatalf("%s: the inverse %s: %v", c.typ, inverse, err)
-		}
-		undo := make([]commands.Command, len(steps))
-		for i, st := range steps {
-			undo[i] = commands.Command{ID: ids.New(), Type: st.Type, Payload: st.Payload}
-		}
-		if _, err := f.pipeline.Apply(ctx, f.actor(), decode(t, p.ID), undo); err != nil {
+		if _, err := f.pipeline.Apply(ctx, f.actor(), decode(t, p.ID), f.inverse(t, p.ID, res.Seq)); err != nil {
 			t.Fatalf("undo %s: %v", c.typ, err)
 		}
 		if got := f.state(t, p.ID); got != before {
@@ -229,6 +241,89 @@ func TestUndo(t *testing.T) {
 		Type: project.Unarchive, Payload: json.RawMessage(`{}`)}})
 	if err != nil || len(res.Revisions) != 0 {
 		t.Errorf("unarchiving a project that is not archived changed %v, %v", res.Revisions, err)
+	}
+}
+
+// TestStoredText checks that a project's name, description, or default
+// locale that is stored but that the rules of a new one refuse, as a row that
+// the pipeline did not write may hold, or one that a later change of
+// input.IsControl, of Go's Unicode tables, or of the tables of
+// golang.org/x/text/language leaves, is changed as any other is, rather than
+// fail every change of it with the step of its inverse that sets it back;
+// that the undo of the change, which sends that step, is refused for it, as a
+// batch that is not valid; and that what a command may write is as it was, so
+// that a name, a description, or a locale that the rules refuse is a problem
+// of its batch, listed with the others.
+func TestStoredText(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	p := f.create(t, "Harbour")
+	id := decode(t, p.ID)
+	_, err := f.pipeline.Apply(ctx, f.actor(), id, []commands.Command{
+		{ID: ids.New(), Type: project.Rename, Payload: json.RawMessage(`{"name": "Harbour\u0007"}`)},
+		{ID: ids.New(), Type: project.Describe, Payload: json.RawMessage(`{"description": " padded"}`)},
+		{ID: ids.New(), Type: project.UpdateSettings, Payload: json.RawMessage(`{"default_locale": "en-gb",
+			"entry": {"node_id": "nd_nope"}}`)},
+	})
+	var invalid *commands.InvalidError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("a batch of a name, a description, and a locale that the rules refuse: %v", err)
+	}
+	var got []string
+	for _, pr := range invalid.Problems {
+		got = append(got, fmt.Sprintf("%d %s", pr.Command, pr.Field))
+	}
+	if want := []string{"0 payload.name", "1 payload.description", "2 payload.entry.node_id",
+		"2 payload.default_locale"}; !slices.Equal(got, want) {
+		t.Errorf("the batch's problems are at %q, want %q", got, want)
+	}
+
+	// A line separator, a control character, and a locale that is not in its
+	// canonical form, none of which a command may write.
+	if _, err := f.d.Admin(t).Exec(ctx, `UPDATE project SET name = 'Har' || chr(8232) || 'bour',
+		description = 'Elara' || chr(27), settings = settings || '{"default_locale": "en-gb"}' WHERE id = $1`,
+		id); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		typ            commands.Type
+		payload, field string
+	}{
+		{project.Rename, `{"name": "Lighthouse"}`, "payload.name"},
+		{project.Describe, `{"description": "Elara's harbour"}`, "payload.description"},
+		{project.UpdateSettings, `{"default_locale": "cs"}`, "payload.default_locale"},
+	} {
+		res, err := f.pipeline.Apply(ctx, f.actor(), id, []commands.Command{{ID: ids.New(), Type: c.typ,
+			Payload: json.RawMessage(c.payload)}})
+		if err != nil {
+			t.Errorf("%s of a stored value that the rules refuse: %v", c.typ, err)
+			continue
+		}
+		_, err = f.pipeline.Apply(ctx, f.actor(), id, f.inverse(t, p.ID, res.Seq))
+		if !errors.As(err, &invalid) || !slices.ContainsFunc(invalid.Problems, func(pr commands.Problem) bool {
+			return pr.Command == 0 && pr.Field == c.field
+		}) {
+			t.Errorf("the undo of %s was not refused as invalid at %s: %v", c.typ, c.field, err)
+		}
+	}
+	if got, err := f.svc.Get(ctx, f.actor(), id); err != nil || got.Name != "Lighthouse" ||
+		got.Description != "Elara's harbour" || got.DefaultLocale != "cs" {
+		t.Errorf("the project is %+v, %v", got, err)
+	}
+
+	// The database holds a name and a description to the characters that the
+	// payload's schema takes, which it checks of the step too, so that no
+	// stored one is longer.
+	for _, c := range []struct{ sql, constraint string }{
+		{`UPDATE project SET name = repeat('ř', 101) WHERE id = $1`, "project_name_length"},
+		{`UPDATE project SET description = repeat('ř', 2001) WHERE id = $1`, "project_description_length"},
+	} {
+		var pg *pgconn.PgError
+		if _, err := f.d.Admin(t).Exec(ctx, c.sql, id); !errors.As(err, &pg) || pg.Code != "23514" ||
+			pg.ConstraintName != c.constraint {
+			t.Errorf("%s was not refused by %s: %v", c.sql, c.constraint, err)
+		}
 	}
 }
 

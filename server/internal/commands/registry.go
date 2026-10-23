@@ -93,8 +93,22 @@ type Spec[P any] struct {
 	Trashed bool
 	// Check returns what is wrong with a payload that its schema cannot say,
 	// such as an identifier of the wrong type, with each field's name in the
-	// payload, as name or items[2].id, or nil. It reads nothing but p.
+	// payload, as name or items[2].id, or nil. It reads nothing but p. The
+	// pipeline asks it of every command of a batch, and of every step of an
+	// inverse (checkSteps), so a rule that a value which a step writes back
+	// from the database may break belongs in CheckNew instead.
 	Check func(p P) input.FieldErrors
+	// CheckNew returns what else is wrong with a payload as Check does: the
+	// rules of a value that a command writes, which a stored value that the
+	// step of an inverse writes back may break, as the text rules of package
+	// input, which a change of input.IsControl or of Go's Unicode tables
+	// tightens, or which a row that the pipeline did not write may break. The
+	// pipeline asks it of every command of a batch, once Check, and lists its
+	// problems after Check's, but not of a step, so that a stored value that
+	// breaks it does not fail every change of it with its inverse: the undo
+	// that sends the step back is refused for it then, as any batch is. It
+	// reads nothing but p.
+	CheckNew func(p P) input.FieldErrors
 	// Inverse returns the commands that undo the command, in the order to
 	// apply them (§10.4). The pipeline calls it in the batch's transaction
 	// once it has checked the command's revisions, right before Apply, so
@@ -239,8 +253,8 @@ type spec struct {
 	// Spec.SessionOnly.
 	archived, trashed, sessionOnly bool
 	// decode decodes a payload that its schema allows, checks it, and
-	// returns it.
-	decode func(raw []byte) (payload any, problems input.FieldErrors)
+	// returns it: with Check, and with CheckNew too unless it is a step's.
+	decode func(raw []byte, step bool) (payload any, problems input.FieldErrors)
 	// inverse is nil for a command that cannot be undone.
 	inverse func(ctx context.Context, tx *Tx, payload any) ([]Step, error)
 	apply   func(ctx context.Context, tx *Tx, payload any) error
@@ -314,7 +328,7 @@ func Register[P any](r *Registry, s Spec[P]) {
 			}
 		}
 	}
-	sp.decode = func(raw []byte) (any, input.FieldErrors) {
+	sp.decode = func(raw []byte, step bool) (any, input.FieldErrors) {
 		var p P
 		d := json.NewDecoder(bytes.NewReader(raw))
 		d.DisallowUnknownFields()
@@ -324,10 +338,15 @@ func Register[P any](r *Registry, s Spec[P]) {
 			// type's range.
 			return nil, input.FieldErrors{{Message: "does not decode: " + err.Error()}}
 		}
+		var problems input.FieldErrors
 		if s.Check != nil {
-			if problems := s.Check(p); len(problems) > 0 {
-				return nil, problems
-			}
+			problems = s.Check(p)
+		}
+		if s.CheckNew != nil && !step {
+			problems = append(problems, s.CheckNew(p)...)
+		}
+		if len(problems) > 0 {
+			return nil, problems
 		}
 		return p, nil
 	}
@@ -500,7 +519,7 @@ func (r *Registry) check(batch []Command, skip map[int]bool, projectID ids.UUID)
 		fields := r.validate(s.schema, c.Payload)
 		var payload any
 		if len(fields) == 0 {
-			payload, fields = s.decode(c.Payload)
+			payload, fields = s.decode(c.Payload, false)
 		}
 		for _, f := range fields {
 			add(strings.TrimSuffix("payload."+f.Field, "."), f.Message)
@@ -581,7 +600,10 @@ func nulAt(v any, at string) (where string, ok bool) {
 // checkSteps returns the steps of an inverse as the operation log keeps
 // them, each with its payload encoded once, or an error unless every step
 // is a registered type of command whose payload its schema and Check allow,
-// so that an undo can apply it. A step that is not valid is the command's
+// so that an undo can apply it. It does not ask a step's CheckNew, whose
+// rules the stored value that the step writes back may break: the undo that
+// sends the step is refused for it then, as any batch is, rather than every
+// change of the value now. A step that is not valid is the command's
 // failure, not the batch's, whose payloads are valid, so its error does not
 // wrap the step's input.FieldErrors, which a caller would take for problems
 // of the payloads that it sent.
@@ -598,7 +620,7 @@ func (r *Registry) checkSteps(steps []Step) ([]logStep, error) {
 		}
 		problems := r.validate(s.schema, raw)
 		if len(problems) == 0 {
-			_, problems = s.decode(raw)
+			_, problems = s.decode(raw, true)
 		}
 		if len(problems) > 0 {
 			return nil, fmt.Errorf("step %d (%s) is not valid: %v", i, st.Type, problems)

@@ -129,9 +129,10 @@ func registerFolders(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[renameFolderPayload]{
 		Type: RenameFolder, Capability: authz.ManageFolders, Scope: scope.ProjectWrite, Touches: folder,
-		Check: func(p renameFolderPayload) input.FieldErrors {
-			return append(entityID(ids.Folder, "id", p.ID), field("name", checkName(p.Name))...)
-		},
+		Check: func(p renameFolderPayload) input.FieldErrors { return entityID(ids.Folder, "id", p.ID) },
+		// The step of the inverse writes back the stored name, which the text
+		// rules may refuse (commands.Spec.CheckNew).
+		CheckNew: func(p renameFolderPayload) input.FieldErrors { return field("name", checkName(p.Name)) },
 		Inverse: func(ctx context.Context, tx *commands.Tx, p renameFolderPayload) ([]commands.Step, error) {
 			f, err := liveFolderOf(ctx, tx, p.ID)
 			if err != nil {

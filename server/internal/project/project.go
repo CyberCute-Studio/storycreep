@@ -58,7 +58,10 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
-// Limits of a project's fields.
+// Limits of a project's fields, which the database holds the name and the
+// description to as well (migration 00021), so that the undo of a change of
+// one, which sets the stored one back, holds none that the payload's schema
+// refuses: change both at once.
 const (
 	// MaxNameLength is the most characters that a project's name may have.
 	MaxNameLength = 100

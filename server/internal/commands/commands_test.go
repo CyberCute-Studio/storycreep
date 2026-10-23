@@ -1066,6 +1066,68 @@ func TestUndo(t *testing.T) {
 	}
 }
 
+// TestUndoOfAStoredValue checks that the pipeline asks a type's CheckNew of
+// every command of a batch, which lists its problems after Check's, with the
+// batch's others, but not of the step of an inverse, which writes back a
+// stored value that its rules may refuse, as a row that the pipeline did not
+// write may hold, so that a change of such a value applies, with an inverse
+// that the operation log keeps, and the undo that sends the step is refused
+// for it, as a batch that is not valid.
+func TestUndoOfAStoredValue(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	p := w.pipeline(t, nil)
+	x, xID := newNote()
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteCreate, notePayload{ID: xID, Body: "x"}, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, noteUpdate, notePayload{ID: "nd_nope", Body: "bell\a"}, nil),
+		command(t, noteUpdate, notePayload{ID: xID, Body: "y"}, map[Ref]int64{noteRef(x): 0}),
+	})
+	var invalid *InvalidError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("a batch with a body that CheckNew refuses: %v", err)
+	}
+	var got []string
+	for _, pr := range invalid.Problems {
+		got = append(got, fmt.Sprintf("%d %s", pr.Command, pr.Field))
+	}
+	if want := []string{"0 payload.id", "0 payload.body", "1 expected_rev." + ids.Encode(ids.Node, x)}; !slices.Equal(
+		got, want) {
+		t.Errorf("the batch's problems are at %q, want %q", got, want)
+	}
+
+	w.exec(t, "UPDATE note SET body = 'bell' || chr(7) WHERE id = $1", x)
+	before := w.written(t)
+	res, err := p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteUpdate, notePayload{ID: xID, Body: "y"}, nil)})
+	if err != nil {
+		t.Fatalf("a change of a stored body that CheckNew refuses: %v", err)
+	}
+	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse,
+		`[{"type": "note.update", "payload": {"id": "`+xID+`", "body": "bell\u0007"}}]`) {
+		t.Errorf("the change's inverse is %s", o.inverse)
+	}
+	var steps []struct {
+		Type    Type            `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(w.operation(t, res.Seq).inverse, &steps); err != nil || len(steps) != 1 {
+		t.Fatalf("the inverse's steps: %v, %v", steps, err)
+	}
+	after := w.written(t)
+	_, err = p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{{ID: ids.New(), Type: steps[0].Type, Payload: steps[0].Payload}})
+	if !errors.As(err, &invalid) || len(invalid.Problems) != 1 || invalid.Problems[0].Field != "payload.body" {
+		t.Errorf("the undo of the change: %v", err)
+	}
+	if got := w.written(t); got != after || after.seq != before.seq+1 {
+		t.Errorf("the change and its refused undo wrote %+v, then %+v, where there was %+v", after, got, before)
+	}
+}
+
 // TestChanged checks that a command that reports a change of an entity of a
 // kind that it does not touch, or a revision that the entity had already, or
 // none, refuses its batch, as does one whose inverse reports a change, which
