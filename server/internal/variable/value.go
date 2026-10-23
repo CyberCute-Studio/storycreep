@@ -41,10 +41,19 @@ const (
 	// MaxStringLength is the most characters that a string may have, as a
 	// string literal of the expression language may.
 	MaxStringLength = 4096
+)
+
+// Limits of how a number is written, which the operation log keeps a
+// payload's default as, in jsonb, whose numbers PostgreSQL's numeric holds,
+// which reads no number written past them, whatever its value (formProblem).
+const (
+	// maxExponent is the greatest exponent, either way, that a number may be
+	// written with, as 0e1073741823 is: 2^30 − 1, beyond which numeric reads
+	// none.
+	maxExponent = 1<<30 - 1
 	// maxScale is the most digits after its point that a number may be
-	// written with, its exponent counted, as 1e-16383 is: the operation log
-	// keeps a payload's default as it is written, in jsonb, whose numbers
-	// PostgreSQL's numeric holds, which holds no more.
+	// written with, its exponent counted, as 1e-16383 is: numeric counts them
+	// as they are written, zeros included, and holds no more.
 	maxScale = 16383
 )
 
@@ -116,15 +125,17 @@ func Zero(typ string) Value {
 // it is written, as 3, 3.0, or 3e0, which is written as 3; for float, a number
 // that a double holds without overflowing to an infinity, read as the double
 // nearest it, as JSON.parse reads it, and written as the shortest number that
-// reads as that double again, -0 as 0, each written with at most maxScale
-// digits after its point, its exponent counted, since the operation log keeps
-// it as it is written, so that 1e-16384 and 0e-16384 are neither; and for
-// string, a string of at most MaxStringLength characters, without control
-// characters but line feeds and tabs (input.CheckText), and without an escape
-// of a lone surrogate, which no UTF-8 holds, and which encoding/json would
-// read as U+FFFD where JSON.parse keeps it, so that the server would store
-// other text than the client holds; a string is written without escaping <,
-// >, and & (PRD §6.2). None, the zero Value, is the type's zero value (Zero).
+// reads as that double again, -0 as 0, each written with an exponent within
+// ±maxExponent, and with at most maxScale digits after its point, its
+// exponent counted, since the operation log keeps it as it is written
+// (formProblem), so that 0e1073741824, 1e-16384, and 0e-16384 are neither;
+// and for string, a string of at most MaxStringLength characters, without
+// control characters but line feeds and tabs (input.CheckText), and without
+// an escape of a lone surrogate, which no UTF-8 holds, and which
+// encoding/json would read as U+FFFD where JSON.parse keeps it, so that the
+// server would store other text than the client holds; a string is written
+// without escaping <, >, and & (PRD §6.2). None, the zero Value, is the
+// type's zero value (Zero).
 func (v Value) Of(typ string) (Value, string) {
 	return v.of(typ, true)
 }
@@ -178,10 +189,8 @@ func kindOf(raw string) string {
 // number returns raw, a JSON number, as a value of the type typ, int or
 // float, as Of does.
 func number(typ, raw string) (Value, string) {
-	if overScale(raw) {
-		return Value{}, fmt.Sprintf("is written with more than %d digits after its point, its exponent counted, "+
-			"as 1e-%d is, more than the operation log, which keeps the command as it is written, holds", maxScale,
-			maxScale+1)
+	if problem := formProblem(raw); problem != "" {
+		return Value{}, problem
 	}
 	if typ == TypeInt {
 		n, problem := integer(raw)
@@ -190,8 +199,8 @@ func number(typ, raw string) (Value, string) {
 		}
 		return Value{raw: json.RawMessage(strconv.FormatInt(n, 10))}, ""
 	}
-	f, err := strconv.ParseFloat(raw, 64)
-	if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
+	f, ok := nearest(raw)
+	if !ok {
 		return Value{}, "is beyond the range of a float, a double, which holds no number greater than about 1.8e308"
 	}
 	if f == 0 {
@@ -205,12 +214,16 @@ func number(typ, raw string) (Value, string) {
 	return Value{raw: out}, ""
 }
 
-// overScale reports whether raw, a JSON number, is written with more than
-// maxScale digits after its point, its exponent counted, as 1e-16384,
-// 0e-16384, and 1.5e-16383 are, whatever its value: PostgreSQL's numeric
-// counts the digits as they are written, zeros included. An exponent of more
-// than 9 digits decides the answer alone, as integer's does.
-func overScale(raw string) bool {
+// formProblem says why the operation log, which keeps raw, a JSON number, as
+// it is written, in jsonb, does not hold it, whatever its value, or returns
+// "" if it does. PostgreSQL's numeric, which holds jsonb's numbers, reads no
+// number written with an exponent beyond maxExponent either way, as
+// 0e1073741824 is, and holds none written with more than maxScale digits
+// after its point, its exponent counted, as 1e-16384, 0e-16384, and
+// 1.5e-16383 are, zeros included. It holds every other number whose value
+// is an int's or a float's, none of which has more than 309 digits before its
+// point (TestLogHoldsNumbers).
+func formProblem(raw string) string {
 	mantissa, exponent := raw, ""
 	if i := strings.IndexAny(raw, "eE"); i >= 0 {
 		mantissa, exponent = raw[:i], raw[i+1:]
@@ -218,21 +231,65 @@ func overScale(raw string) bool {
 	_, fraction, _ := strings.Cut(mantissa, ".")
 	down := strings.HasPrefix(exponent, "-")
 	e := strings.TrimLeft(strings.TrimLeft(exponent, "+-"), "0")
-	if len(e) > 9 {
-		return down
-	}
+	// An exponent of more digits than maxExponent is beyond it, and is not
+	// read as a number.
 	n, _ := strconv.Atoi(e)
+	if len(e) > len(strconv.Itoa(maxExponent)) || n > maxExponent {
+		return fmt.Sprintf("is written with an exponent outside -%d to %d, as 0e%d is, which the operation log, "+
+			"which keeps the command as it is written, does not hold", maxExponent, maxExponent, maxExponent+1)
+	}
 	if !down {
 		n = -n
 	}
-	return len(fraction)+n > maxScale
+	if len(fraction)+n > maxScale {
+		return fmt.Sprintf("is written with more than %d digits after its point, its exponent counted, as 1e-%d "+
+			"is, more than the operation log, which keeps the command as it is written, holds", maxScale, maxScale+1)
+	}
+	return ""
 }
 
-// integer returns the value of raw, a JSON number, if it is an integer from
-// -MaxInt to MaxInt, or says why it is not one. It reads raw as a decimal,
-// exactly, so that a number that rounds to an integer as a double, as
-// 4503599627370495.5, is not one, and a number with a large exponent, as
-// 1e999999999, is too large without being computed.
+// nearest returns the double nearest raw, a JSON number that formProblem
+// took, and true, or false if raw is beyond a double's range. It hands
+// strconv.ParseFloat raw written again as 0.ddd…e±p, its significant digits
+// after the point and an exponent of five digits at most, since ParseFloat
+// reads neither a longer exponent exactly, taking 0.<99,999 zeros>1e100000
+// for 0, nor more than 800 digits before a number's point, taking 1 with a
+// thousand zeros and e-1000 for 1e-201 (TestNumberForms).
+func nearest(raw string) (float64, bool) {
+	s, negative := strings.CutPrefix(raw, "-")
+	mantissa, exponent := s, ""
+	if i := strings.IndexAny(s, "eE"); i >= 0 {
+		mantissa, exponent = s[:i], s[i+1:]
+	}
+	whole, fraction, _ := strings.Cut(mantissa, ".")
+	digits := strings.TrimLeft(whole+fraction, "0")
+	if digits == "" {
+		return 0, true
+	}
+	// The value is 0.digits times ten to the power of point, which the
+	// leading zeros lower, and which formProblem holds to -maxScale at
+	// least. A point past 309 is of 1e309 at least, beyond a double's range.
+	e, _ := strconv.Atoi(exponent)
+	leading := len(whole) + len(fraction) - len(digits)
+	point := len(whole) - leading + e
+	if point > 309 {
+		return 0, false
+	}
+	sign := ""
+	if negative {
+		sign = "-"
+	}
+	f, err := strconv.ParseFloat(sign+"0."+strings.TrimRight(digits, "0")+"e"+strconv.Itoa(point), 64)
+	if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
+		return 0, false
+	}
+	return f, true
+}
+
+// integer returns the value of raw, a JSON number that formProblem took, if
+// it is an integer from -MaxInt to MaxInt, or says why it is not one. It
+// reads raw as a decimal, exactly, so that a number that rounds to an integer
+// as a double, as 4503599627370495.5, is not one.
 func integer(raw string) (int64, string) {
 	const notInteger = "is not an integer, which an int's default is"
 	// MaxInt is converted to int64, the type that holds it on every
@@ -249,25 +306,12 @@ func integer(raw string) (int64, string) {
 	if digits == "" {
 		return 0, ""
 	}
-	// The value is digits times ten to the power of shift. A mantissa holds
-	// a few million digits at most, which a body's size bounds, so an
-	// exponent of more than 9 digits decides the answer alone, whichever
-	// the mantissa is, and is not read as a number.
-	shift := -len(fraction)
-	if exponent != "" {
-		down := strings.HasPrefix(exponent, "-")
-		e := strings.TrimLeft(strings.TrimLeft(exponent, "+-"), "0")
-		switch n, _ := strconv.Atoi(e); {
-		case len(e) > 9 && down:
-			return 0, notInteger
-		case len(e) > 9:
-			return 0, tooLarge
-		case down:
-			shift -= n
-		default:
-			shift += n
-		}
-	}
+	// The value is digits times ten to the power of shift. formProblem took
+	// the exponent, which is within ±maxExponent, which an int holds on
+	// every platform; Atoi reads its sign and its leading zeros, and none as
+	// 0.
+	e, _ := strconv.Atoi(exponent)
+	shift := e - len(fraction)
 	for strings.HasSuffix(digits, "0") {
 		digits = digits[:len(digits)-1]
 		shift++

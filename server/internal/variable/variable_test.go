@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -453,15 +454,17 @@ func TestDefaults(t *testing.T) {
 		"default": json.RawMessage("1e400")}))
 	invalidAt(t, err, "payload")
 	// A number written with more digits after its point than the operation
-	// log's jsonb holds, its exponent counted, is refused at the default,
-	// though it reads as a value of the type, rather than fail the batch as
-	// the log is written; one at the limit is taken.
+	// log's jsonb holds, its exponent counted, or with an exponent beyond what
+	// it reads, either way, is refused at the default, though it reads as a
+	// value of the type, rather than fail the batch as the log is written; one
+	// at each limit is taken (TestLogHoldsNumbers).
 	for _, c := range []struct{ typ, def string }{{"float", "1e-16384"}, {"int", "0e-16384"},
-		{"int", "0.0e-16383"}} {
+		{"int", "0.0e-16383"}, {"int", "0e1073741824"}, {"float", "-0.0E+99999999999"}, {"int", "0e-1073741824"}} {
 		_, err = f.apply(t, newVariable("refused", map[string]any{"type": c.typ, "default": json.RawMessage(c.def)}))
 		invalidAt(t, err, "payload.default")
 	}
-	for _, c := range []struct{ typ, def string }{{"float", "1e-16383"}, {"int", "0e-16383"}} {
+	for _, c := range []struct{ typ, def string }{{"float", "1e-16383"}, {"int", "0e-16383"}, {"int", "0e1073741823"},
+		{"float", "-0.0e+1073741823"}} {
 		v := f.create(t, "v_"+strings.ReplaceAll(ids.New().String(), "-", ""),
 			map[string]any{"type": c.typ, "default": json.RawMessage(c.def)})
 		if got := string(must(json.Marshal(v.Default))); got != "0" {
@@ -473,6 +476,14 @@ func TestDefaults(t *testing.T) {
 	if r := refused(t, err); r.Field != "default" || r.Reason != nil {
 		t.Errorf("a default with too many digits after its point was refused for %v at %q", r.Reason, r.Field)
 	}
+	_, err = f.apply(t, cmd{variable.SetDefault, map[string]any{"id": n.ID,
+		"default": json.RawMessage("0e1073741824")}})
+	if r := refused(t, err); r.Field != "default" || r.Reason != nil {
+		t.Errorf("a default with an exponent beyond the log's was refused for %v at %q", r.Reason, r.Field)
+	}
+	_, err = f.apply(t, cmd{variable.Retype, map[string]any{"id": n.ID, "type": "float",
+		"default": json.RawMessage("0e1073741824")}})
+	invalidAt(t, err, "payload.default")
 	_, err = f.apply(t, cmd{variable.SetDefault, map[string]any{"id": n.ID, "default": "two"}})
 	if r := refused(t, err); r.Field != "default" || r.Reason != nil {
 		t.Errorf("a string default of an int was refused for %v at %q", r.Reason, r.Field)
@@ -529,6 +540,52 @@ func TestDefaults(t *testing.T) {
 		t.Errorf("with a stored default with a control character, the project lists %v", keys)
 	}
 	f.must(t, cmd{variable.SetDefault, map[string]any{"id": s.ID, "default": "plain"}})
+}
+
+// TestLogHoldsNumbers checks, against PostgreSQL, that the operation log's
+// jsonb, which keeps a payload's default as the client wrote it, holds every
+// number that an int's or a float's default takes, however it is written,
+// and that every number that a default refuses for the log's sake is one that
+// jsonb refuses, so that the limits are numeric's own: an exponent within
+// ±(2^30 − 1), and at most 16383 digits after the point, the exponent
+// counted.
+//
+// Verifies: FR-VAR-01/AC2
+func TestLogHoldsNumbers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := dbtest.New(t).Admin(t)
+	zeros := strings.Repeat("0", 16382)
+	mantissas := []string{"0", "-0", "0.0", "1", "-1.5", "3.000", "9007199254740991", "0." + zeros + "1",
+		"1." + zeros + "0", "1" + zeros, "-0." + strings.Repeat("0", 99999) + "1"}
+	exponents := []string{"", "e0", "E+5", "e-1", "e-16382", "e-16383", "e-16384", "e16384", "e100000",
+		"e1073741823", "e+0001073741823", "e1073741824", "e-1073741823", "e-1073741824", "e99999999999",
+		"E-99999999999"}
+	// shown is a number as a failure shows it, its middle left out.
+	shown := func(raw string) string {
+		if len(raw) <= 40 {
+			return raw
+		}
+		return fmt.Sprintf("%s...%s (%d characters)", raw[:16], raw[len(raw)-24:], len(raw))
+	}
+	for _, m := range mantissas {
+		for _, e := range exponents {
+			raw := m + e
+			var v variable.Value
+			if err := json.Unmarshal([]byte(raw), &v); err != nil {
+				t.Fatalf("%s: %v", shown(raw), err)
+			}
+			_, err := conn.Exec(ctx, "SELECT $1::text::jsonb", raw)
+			for _, typ := range []string{variable.TypeInt, variable.TypeFloat} {
+				switch _, problem := v.Of(typ); {
+				case problem == "" && err != nil:
+					t.Errorf("a %s's default takes %s, which jsonb does not hold: %v", typ, shown(raw), err)
+				case strings.Contains(problem, "operation log") && err == nil:
+					t.Errorf("a %s's default refuses %s for the operation log, which jsonb holds", typ, shown(raw))
+				}
+			}
+		}
+	}
 }
 
 // TestDescriptions checks that a variable's description is a text of at most

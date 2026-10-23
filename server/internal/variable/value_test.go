@@ -2,6 +2,8 @@ package variable
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
 	"math/big"
 	"reflect"
 	"regexp"
@@ -35,7 +37,7 @@ func TestValueOf(t *testing.T) {
 		{TypeInt, "30E-1", "3"},
 		{TypeInt, "1.5e1", "15"},
 		{TypeInt, "0.1e1", "1"},
-		{TypeInt, "0.000e99999999999", "0"},
+		{TypeInt, "0.000e16383", "0"},
 		{TypeInt, "9007199254740991", "9007199254740991"},
 		{TypeInt, "-9007199254740991", "-9007199254740991"},
 		{TypeInt, "9.007199254740991e15", "9007199254740991"},
@@ -51,7 +53,15 @@ func TestValueOf(t *testing.T) {
 		{TypeFloat, "0.5e-16382", "0"},
 		{TypeInt, "0e-16383", "0"},
 		{TypeInt, "-0e-16383", "0"},
-		{TypeInt, "0.0e99999999999", "0"},
+		{TypeInt, "0e16384", "0"},
+		{TypeInt, "0.0e+0001073741823", "0"},
+		{TypeFloat, "-0e1073741823", "0"},
+		{TypeInt, "0." + strings.Repeat("0", 16382) + "1e16383", "1"},
+		// Long exponents and mantissas, which strconv.ParseFloat would read
+		// as 0 and 1e-201.
+		{TypeFloat, "-0." + strings.Repeat("0", 99999) + "1e100000", "-1"},
+		{TypeFloat, "1" + strings.Repeat("0", 1000) + "e-1000", "1"},
+		{TypeFloat, "1" + strings.Repeat("0", 1000) + ".5e-1000", "1"},
 		{TypeFloat, "1e21", "1e+21"},
 		{TypeFloat, "1.7976931348623157e308", "1.7976931348623157e+308"},
 		{TypeFloat, "9007199254740993", "9007199254740992"},
@@ -94,6 +104,17 @@ func TestValueOf(t *testing.T) {
 		{TypeInt, "-0e-99999999999"},
 		{TypeInt, "3." + strings.Repeat("0", 16384)},
 		{TypeInt, "3" + strings.Repeat("0", 16384) + "e-16384"},
+		// An exponent beyond what the operation log's jsonb reads, either way,
+		// though each reads as 0.
+		{TypeInt, "0e1073741824"},
+		{TypeFloat, "0e1073741824"},
+		{TypeInt, "0.000e99999999999"},
+		{TypeFloat, "-0.0E+99999999999"},
+		{TypeInt, "0e-1073741824"},
+		// Beyond a double's range, which strconv.ParseFloat would read as 0
+		// and 1e300.
+		{TypeFloat, "0." + strings.Repeat("0", 16382) + "1e1073741823"},
+		{TypeFloat, "1" + strings.Repeat("0", 1000) + "e-500"},
 		{TypeFloat, `"1.5"`},
 		{TypeString, "3"},
 		{TypeString, `"` + long + `e"`},
@@ -140,8 +161,9 @@ func FuzzIntegerValue(f *testing.F) {
 		if !numberForm.MatchString(raw) || json.Unmarshal([]byte(raw), &probe) != nil {
 			return
 		}
-		// An exponent too large for big.Rat to compute quickly is read by the
-		// code's own shortcut, which the seeds cover.
+		// An exponent of more than three digits, which big.Rat computes
+		// slowly, is left out: TestNumberForms checks such exponents, to
+		// maxExponent and beyond it, which formProblem refuses.
 		if i := strings.IndexAny(raw, "eE"); i >= 0 && len(strings.TrimLeft(raw[i+1:], "+-0")) > 3 {
 			return
 		}
@@ -165,6 +187,77 @@ func FuzzIntegerValue(f *testing.F) {
 			t.Errorf("%s, which is no int, is taken as %s", raw, got.raw)
 		}
 	})
+}
+
+// TestNumberForms checks that a number written within the limits that the
+// operation log holds, an exponent within ±maxExponent and at most maxScale
+// digits after its point, its exponent counted, is read exactly however long
+// its exponent and its mantissa are, as strconv.ParseFloat alone does not
+// read them: as an int exactly when math/big reads it as an integer from
+// -MaxInt to MaxInt, and as a float exactly when math/big rounds it to a
+// finite double, as that double; and that a number written past either limit
+// is neither, whatever it reads as. TestLogHoldsNumbers checks that the
+// operation log's jsonb holds each that is taken.
+//
+// Verifies: FR-VAR-01/AC2
+func TestNumberForms(t *testing.T) {
+	t.Parallel()
+	zeros := strings.Repeat("0", maxScale-1)
+	mantissas := []string{"0", "-0", "0.0", "1", "-1.5", "3.000", "9007199254740991", "1.7976931348623157",
+		"0." + zeros + "1", "1." + zeros + "0", "1" + zeros, "-0." + strings.Repeat("0", 99999) + "1",
+		"1" + strings.Repeat("0", 1000)}
+	exponents := []string{"", "e0", "E+5", "e-1", "e308", "e309", "e-324", "e-1000", "e-16382", "e-16383", "e-16384",
+		"e16382", "e16383", "e16384", "e100000", "e1073741823", "e+0001073741823", "e1073741824", "E-1073741823",
+		"e99999999999"}
+	// shown is a number as a failure shows it, its middle left out.
+	shown := func(raw string) string {
+		if len(raw) <= 40 {
+			return raw
+		}
+		return fmt.Sprintf("%s...%s (%d characters)", raw[:16], raw[len(raw)-24:], len(raw))
+	}
+	for _, m := range mantissas {
+		for _, e := range exponents {
+			raw := m + e
+			gotInt, intProblem := Value{raw: json.RawMessage(raw)}.Of(TypeInt)
+			gotFloat, floatProblem := Value{raw: json.RawMessage(raw)}.Of(TypeFloat)
+			if formProblem(raw) != "" {
+				if intProblem == "" || floatProblem == "" {
+					t.Errorf("%s, past the limits, is taken as the int %s or the float %s", shown(raw), gotInt.raw,
+						gotFloat.raw)
+				}
+				continue
+			}
+			want, ok := new(big.Rat).SetString(raw)
+			if !ok {
+				// math/big reads no number but 0 whose exponent, net of the
+				// digits after its point, passes a million, which is beyond
+				// both ranges.
+				if intProblem == "" || floatProblem == "" {
+					t.Errorf("%s, beyond both ranges, is taken as the int %s or the float %s", shown(raw),
+						gotInt.raw, gotFloat.raw)
+				}
+				continue
+			}
+			switch integral := want.IsInt() && want.Num().CmpAbs(big.NewInt(MaxInt)) <= 0; {
+			case integral && (intProblem != "" || string(gotInt.raw) != want.Num().String()):
+				t.Errorf("%s is the int %s, %q; want %s", shown(raw), gotInt.raw, intProblem, want.Num())
+			case !integral && intProblem == "":
+				t.Errorf("%s, which is no int, is taken as %s", shown(raw), gotInt.raw)
+			}
+			f, _ := want.Float64()
+			if f == 0 {
+				// -0 is written as 0.
+				f = 0
+			}
+			switch wantFloat, _ := json.Marshal(f); {
+			case math.IsInf(f, 0) && floatProblem == "":
+				t.Errorf("%s, beyond a double's range, is taken as %s", shown(raw), gotFloat.raw)
+			case !math.IsInf(f, 0) && (floatProblem != "" || string(gotFloat.raw) != string(wantFloat)):
+				t.Errorf("%s is the float %s, %q; want %s", shown(raw), gotFloat.raw, floatProblem, wantFloat)
+			}
+		}
+	}
 }
 
 // numberForm is the form of a JSON number.

@@ -56,7 +56,7 @@ type createPayload struct {
 	Type         string `json:"type" enum:"bool,int,float,string" doc:"The variable's type"`
 	Scope        string `json:"scope" enum:"global,board" doc:"Who reads the variable: every board's expressions, for global, or only its board's, for board (PRD FR-VAR-02). A board's variable keeps its value across the board's entries, as a global does, unless reset_on_enter is set."`
 	BoardID      string `json:"board_id,omitempty" doc:"The ID of the variable's board, which is not in the project's trash, if scope is board. A global variable has none."`
-	Default      Value  `json:"default,omitzero" doc:"The variable's default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number beyond a double's range, which is no number that the API reads, is answered with 400 invalid_request. A number written with more than 16383 digits after its point, its exponent counted, as 1e-16384 or 0e-16384, which the operation log does not hold, is answered with 422 validation_failed. Without it, the type's zero value: false, 0, 0.0, or the empty string."`
+	Default      Value  `json:"default,omitzero" doc:"The variable's default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number beyond a double's range is answered with 400 invalid_request as the API reads the body, or with 422 validation_failed if it is written with so many digits that the body's reader takes it for one within the range. Any other number written with an exponent beyond ±1073741823, as 0e1073741824, or with more than 16383 digits after its point, its exponent counted, as 1e-16384 or 0e-16384, which the operation log does not hold, is answered with 422 validation_failed. Without it, the type's zero value: false, 0, 0.0, or the empty string."`
 	Description  string `json:"description,omitempty" maxLength:"2000" doc:"The variable's description, of at most 2000 characters, without white space around it, and without control characters but line feeds and tabs. Without it, the variable has none."`
 	ResetOnEnter bool   `json:"reset_on_enter,omitempty" doc:"Whether the variable is reset to its default each time the flow enters its board (PRD FR-VAR-02, §5.8.5), which only a board's variable may be. Without it, false."`
 	FolderID     string `json:"folder_id,omitempty" doc:"The ID of the folder of variables that the variable goes into, which is not deleted. Without it, the variable goes at the top."`
@@ -78,14 +78,14 @@ type describePayload struct {
 // defaultPayload is SetDefault's payload.
 type defaultPayload struct {
 	ID      string `json:"id" doc:"The variable's ID"`
-	Default Value  `json:"default" doc:"The variable's new default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number beyond a double's range, which is no number that the API reads, is answered with 400 invalid_request. A number written with more than 16383 digits after its point, its exponent counted, as 1e-16384 or 0e-16384, which the operation log does not hold, is answered with 422 validation_failed."`
+	Default Value  `json:"default" doc:"The variable's new default, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number beyond a double's range is answered with 400 invalid_request as the API reads the body, or with 422 validation_failed if it is written with so many digits that the body's reader takes it for one within the range. Any other number written with an exponent beyond ±1073741823, as 0e1073741824, or with more than 16383 digits after its point, its exponent counted, as 1e-16384 or 0e-16384, which the operation log does not hold, is answered with 422 validation_failed."`
 }
 
 // retypePayload is Retype's payload.
 type retypePayload struct {
 	ID      string `json:"id" doc:"The variable's ID"`
 	Type    string `json:"type" enum:"bool,int,float,string" doc:"The variable's new type"`
-	Default Value  `json:"default,omitzero" doc:"The variable's default of its new type, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number beyond a double's range, which is no number that the API reads, is answered with 400 invalid_request. A number written with more than 16383 digits after its point, its exponent counted, as 1e-16384 or 0e-16384, which the operation log does not hold, is answered with 422 validation_failed. Without it, the type's zero value: false, 0, 0.0, or the empty string."`
+	Default Value  `json:"default,omitzero" doc:"The variable's default of its new type, a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; and a string of at most 4096 characters, without control characters but line feeds and tabs, for string. A value of another kind, as a string for an int (PRD FR-VAR-01 AC2), is answered with 422 validation_failed. A number beyond a double's range is answered with 400 invalid_request as the API reads the body, or with 422 validation_failed if it is written with so many digits that the body's reader takes it for one within the range. Any other number written with an exponent beyond ±1073741823, as 0e1073741824, or with more than 16383 digits after its point, its exponent counted, as 1e-16384 or 0e-16384, which the operation log does not hold, is answered with 422 validation_failed. Without it, the type's zero value: false, 0, 0.0, or the empty string."`
 }
 
 // scopePayload is SetScope's payload.
@@ -168,7 +168,7 @@ func Register(r *commands.Registry) {
 		Check: func(p createPayload) input.FieldErrors {
 			errs := newID(ids.Variable, p.ID)
 			errs = append(errs, checkScope(p.Scope, p.BoardID)...)
-			errs = append(errs, checkReset(p.Scope, p.ResetOnEnter)...)
+			errs = append(errs, checkReset("reset_on_enter", p.Scope, p.ResetOnEnter)...)
 			errs = append(errs, checkDefault(p.Type, p.Default)...)
 			errs = append(errs, field("description", checkDescription(p.Description))...)
 			return append(errs, optionalID(ids.Folder, "folder_id", p.FolderID)...)
@@ -332,8 +332,8 @@ func Register(r *commands.Registry) {
 			if err != nil {
 				return err
 			}
-			if errs := checkReset(v.Scope, p.ResetOnEnter); len(errs) > 0 {
-				return commands.Refuse(errs[0].Field, errs[0].Message, nil)
+			if err := refuse(checkReset("reset_on_enter", v.Scope, p.ResetOnEnter)); err != nil {
+				return err
 			}
 			return changed(tx, v.ID)(queries.New(tx).UpdateVariableResetOnEnter(ctx,
 				queries.UpdateVariableResetOnEnterParams{ResetOnEnter: p.ResetOnEnter, UpdatedBy: by(tx),
@@ -495,11 +495,8 @@ func applySetScope(ctx context.Context, tx *commands.Tx, p scopePayload) error {
 	if err != nil {
 		return err
 	}
-	// The rule of checkReset, refused at the scope, which the payload names,
-	// rather than at reset_on_enter, which it does not.
-	if v.ResetOnEnter && !resettable(p.Scope) {
-		return commands.Refuse("scope", "is global, which a variable whose reset_on_enter is set may not be, "+
-			"because a global has no board to enter: unset reset_on_enter first", nil)
+	if err := refuse(checkReset("scope", p.Scope, v.ResetOnEnter)); err != nil {
+		return err
 	}
 	// The key is checked in the new scope, where another variable may have
 	// it, as the field that names the scope.
@@ -529,9 +526,11 @@ func applyRestore(ctx context.Context, tx *commands.Tx, p idPayload) error {
 	}
 	v := row.Variable
 	q := queries.New(tx)
+	// The variable in the trash, which nothing but its restore changes, keeps
+	// its key, so the variable that has taken it is the one to change.
 	if err := keyFree(ctx, q, v.WorkspaceID, v.ProjectID, "id", v.Key, v.BoardID, v.ID,
-		"is a variable whose key another variable of its scope has taken since it was deleted, which must be "+
-			"renamed first"); err != nil {
+		"is a variable whose key another variable of its scope, which is not in the trash, has taken since it was "+
+			"deleted: rename that variable, or delete it, first"); err != nil {
 		return err
 	}
 	if err := board.RestoreFolders(ctx, tx, q, v.WorkspaceID, v.ProjectID, v.FolderID); err != nil {
@@ -658,23 +657,33 @@ func checkScope(s, boardID string) input.FieldErrors {
 	return nil
 }
 
-// checkReset returns the problem of a reset_on_enter that a variable of the
-// scope s may not have (resettable). A create's Check refuses it, and
-// SetResetOnEnter's Apply, which reads the variable's scope, refuses it too;
-// SetScope's Apply refuses a scope by the same rule.
-func checkReset(s string, reset bool) input.FieldErrors {
-	if reset && !resettable(s) {
-		return field("reset_on_enter", "is set on a global variable, which has no board to enter, and which only "+
-			"a board's variable may be")
+// checkReset returns the problem of a variable of the scope s whose
+// reset_on_enter is reset, unless reset is false or s is a board's, at the
+// payload's field at, which is the field that the command sets: at
+// reset_on_enter for a create's and SetResetOnEnter's, and at scope for
+// SetScope's, which sets the scope of a variable whose reset_on_enter is
+// reset. Only a board's variable may have reset_on_enter set, since a global
+// has no board to enter.
+func checkReset(at, s string, reset bool) input.FieldErrors {
+	switch {
+	case !reset || s == ScopeBoard:
+		return nil
+	case at == "scope":
+		return field(at, "is global, which a variable whose reset_on_enter is set may not be, because a global "+
+			"has no board to enter: unset reset_on_enter first")
 	}
-	return nil
+	return field(at, "is set on a global variable, which has no board to enter, and which only a board's "+
+		"variable may be")
 }
 
-// resettable reports whether a variable of the scope s may have its
-// reset_on_enter set: a board's may, and a global, which has no board to
-// enter, may not.
-func resettable(s string) bool {
-	return s == ScopeBoard
+// refuse refuses the batch for the first of errs, the problems of a payload
+// that Apply finds with what the project holds, or returns nil if there are
+// none.
+func refuse(errs input.FieldErrors) error {
+	if len(errs) == 0 {
+		return nil
+	}
+	return commands.Refuse(errs[0].Field, errs[0].Message, nil)
 }
 
 // checkDefault returns the problem of def as a default of the type typ, which
