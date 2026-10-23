@@ -32,8 +32,11 @@ const (
 // Unicode's normalization form C, with its case folded, so that Quest, QUEST,
 // and quest are one tag (PRD FR-EDIT-06, plan note N43), and an accented
 // letter written as one character or as a letter and a mark is one letter.
+// The folded tag is put in form C again, since folding may leave a letter in
+// another form: ΐ folds to ι with two marks, and Ϊ́, a capital and a mark,
+// to ϊ with one, which form C writes alike, as ΐ.
 func fold(tag string) string {
-	return cases.Fold().String(norm.NFC.String(tag))
+	return norm.NFC.String(cases.Fold().String(norm.NFC.String(tag)))
 }
 
 // checkTags returns the problems of a node's tags at the field at: at most

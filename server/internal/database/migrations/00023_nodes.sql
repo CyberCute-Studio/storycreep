@@ -3,7 +3,9 @@
 -- Nodes (PRD FR-EDIT-02, FR-EDIT-05, FR-EDIT-06, §5.3, plan note N43): the
 -- elements, branches, and jumpers that a board's narrative is made of, which
 -- package node keeps. Every change of a node is a command of the pipeline
--- (package commands), which increments its rev (§5.7, ADR-006).
+-- (package commands), which increments its rev (§5.7, ADR-006), but the
+-- removal of a speaker that the trash's purge deletes, which increments it
+-- too.
 
 -- Whether tags are the tags of a node: at most 32, each of 1 to 50
 -- characters. The commands check, too, that no two are alike but for their
@@ -55,7 +57,8 @@ CREATE TABLE node (
 	is_ending boolean NOT NULL DEFAULT false,
 	target_board_id uuid,
 	target_node_id uuid,
-	-- Incremented by every command that changes the node.
+	-- Incremented by every change of the node: by each command that changes
+	-- it, and by the purge of its speaker.
 	rev bigint NOT NULL DEFAULT 1 CHECK (rev >= 1),
 	deleted_at timestamptz,
 	-- The users who created the node and changed it last, or null once their
@@ -70,7 +73,9 @@ CREATE TABLE node (
 	FOREIGN KEY (workspace_id, project_id, board_id) REFERENCES board (workspace_id, project_id, id)
 		ON DELETE CASCADE,
 	-- A speaker or a cover that is deleted for good leaves the node without
-	-- one.
+	-- one. The trash's purge of a component unsets it first, and increments
+	-- the node's revision, as every change of a node does (PurgeComponents);
+	-- an asset is deleted only with its project, whose nodes go with it.
 	FOREIGN KEY (workspace_id, project_id, speaker_component_id) REFERENCES component (workspace_id, project_id, id)
 		ON DELETE SET NULL (speaker_component_id),
 	FOREIGN KEY (workspace_id, project_id, cover_asset_id) REFERENCES asset (workspace_id, project_id, id)

@@ -118,9 +118,13 @@ func (l Length) hundredths() (int64, string) {
 
 // hundredthsWithin returns raw, a JSON number, in hundredths of a unit,
 // rounded half away from zero, if it is one from least to most, as the
-// decimal that it is written as, before it is rounded, as its schema's
-// minimum and maximum take it, or says what is wrong with it. Rounded, it is
-// within the bounds too, which are whole.
+// decimal that it is written as, before it is rounded, or says what is wrong
+// with it. Rounded, it is within the bounds too, which are whole. Its
+// schema's minimum and maximum, which the pipeline checks first, take the
+// double nearest to it: a bound is a double, so the schema refuses no number
+// that this takes, but takes one beyond a bound by less than a double tells
+// apart, as 1000000000.0000000001, which this refuses, as PRD FR-EDIT-02's
+// bounds of the decimal as written do.
 func hundredthsWithin(raw string, least, most int64) (int64, string) {
 	if !jsonNumber.MatchString(raw) {
 		return 0, "is not a number"

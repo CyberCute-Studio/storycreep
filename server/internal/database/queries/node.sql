@@ -177,10 +177,10 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id;
 
 -- name: ProjectTags :many
 -- ProjectTags returns each tag that a node of the project that is not in the
--- trash has, as it is written, with how many such nodes have it, in the
--- order of the tags' bytes.
+-- trash has, as it is written, with how many such nodes have it, in no
+-- order: package node merges the spellings of a tag, and orders what it
+-- suggests, itself.
 SELECT t.tag::text AS tag, count(*)::bigint AS uses
 FROM live_node n, unnest(n.tags) AS t (tag)
 WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id
-GROUP BY t.tag
-ORDER BY t.tag COLLATE "C";
+GROUP BY t.tag;

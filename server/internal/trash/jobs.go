@@ -50,12 +50,13 @@ func RegisterJobs(r *jobs.Registry) {
 // Purge deletes for good what has been in its project's trash for Retention:
 // the boards, with every row that refers to them, which the cascade of their
 // foreign keys deletes, as their nodes and variables, then the nodes, the
-// variables, the components, with their values, and the attribute
+// variables, the components, with their values, leaving the elements whose
+// speaker one of them is without one, at a new revision, and the attribute
 // definitions, with theirs, then the component types that hold no
 // component, in the trash or not, with their definitions, and then the
 // deleted folders that hold nothing, in the trash or not, once those that
-// they held are purged. It returns how many of
-// them it deleted, but for those that a cascade deleted. It works on each
+// they held are purged. It returns how many of them it deleted, but for
+// those that a cascade deleted. It works on each
 // workspace in transactions of the workspace (§5.4), as package sweep runs
 // them, each of one project, which it locks as a batch of the project's
 // commands does, so that the batches see none of its deletions while they

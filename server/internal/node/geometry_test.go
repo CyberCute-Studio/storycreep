@@ -54,8 +54,9 @@ func TestHundredths(t *testing.T) {
 			t.Errorf("%s is written as %s (%v), want %s", c.raw, out, err, c.out)
 		}
 	}
-	// The bounds hold the number as it is written, before it is rounded, as
-	// the schema's minimum and maximum do.
+	// The bounds hold the number as it is written, before it is rounded, even
+	// one that the schema's minimum and maximum, which take the double
+	// nearest to it, take, as 1000000000.0000000001.
 	for _, raw := range []string{"1000000000.01", "-1000000000.005", "-1000000000.004", "1000000000.0000000001",
 		"1e10", "1e999", `"1"`, "null", "true", "01", "1.", ".5", "+1", "0x10", "1e1000", "1e-1000",
 		"1e99999999999999999999", "1e-99999999999999999999", "1" + strings.Repeat("0", 327)} {
@@ -122,15 +123,17 @@ func TestNumeric(t *testing.T) {
 }
 
 // TestTags checks that a node's tags are refused when two are the same tag but
-// for their case or their normalization, and that the suggestions merge the
-// spellings of a tag, as the most of its nodes write it, the most used first.
+// for their case or their normalization, as ΐ and Ϊ́, a capital and a mark,
+// which folding leaves in different forms, are, and that the suggestions
+// merge the spellings of a tag, as the most of its nodes write it, the most
+// used first.
 func TestTags(t *testing.T) {
 	t.Parallel()
 	if errs := checkTags("tags", []string{"Quest", "Harbour", "Lighthouse"}); len(errs) != 0 {
 		t.Errorf("distinct tags: %v", errs)
 	}
 	for _, tags := range [][]string{{"Quest", "quest"}, {"Straße", "STRASSE"}, {"Café", "café"},
-		{" Quest"}, {""}, {"a‮b"}, {strings.Repeat("a", 51)}} {
+		{"\u0390", "\u03aa\u0301"}, {" Quest"}, {""}, {"a‮b"}, {strings.Repeat("a", 51)}} {
 		if errs := checkTags("tags", tags); len(errs) == 0 {
 			t.Errorf("%q are taken as a node's tags", tags)
 		}

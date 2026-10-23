@@ -73,7 +73,7 @@ type updatePayload struct {
 	Kind               *string       `json:"kind,omitempty" enum:"dialogue,narration" doc:"An element's new kind. Another type has none, and is answered with 422 validation_failed for one."`
 	Title              *string       `json:"title,omitempty" maxLength:"200" doc:"The node's new title, of at most 200 characters, which may be empty, without white space around it, and without control characters, bidirectional controls, and line separators among it"`
 	Text               *richtext.Doc `json:"text,omitempty" doc:"An element's new text, a rich-text document (PRD FR-TEXT-01), which may be an empty paragraph. Another type has none."`
-	SpeakerComponentID *string       `json:"speaker_component_id,omitempty" doc:"The ID of an element's new speaker, a component of the project, in its trash or not, or the speaker that it has, which may no longer exist, or the empty string for none. Another type has none."`
+	SpeakerComponentID *string       `json:"speaker_component_id,omitempty" doc:"The ID of an element's new speaker, a component of the project, in its trash or not, or the empty string for none. Another type has none."`
 	CoverAssetID       *string       `json:"cover_asset_id,omitempty" doc:"The ID of an element's new cover image, an asset of the project, or the empty string for none. Another type has none."`
 	Color              *string       `json:"color,omitempty" enum:"none,red,orange,yellow,green,teal,blue,purple,pink,gray" doc:"The node's new colour, none or a name of the palette that boards have"`
 	Tags               *[]string     `json:"tags,omitempty" maxItems:"32" doc:"The node's new tags, which replace its tags, as [] removes them: at most 32, each of 1 to 50 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them, and no two the same tag but for their case, which tags are compared without. They are kept as they are written."`
@@ -804,8 +804,9 @@ func movedNodes(ctx context.Context, tx *commands.Tx, p movePayload) ([]queries.
 // that a payload's Check checked, as the column of an element's speaker, or a
 // null column if id is "", for none, once it has checked that it is one of
 // the project's components, in its trash or not, or that it is kept, the
-// speaker that the element had, which may no longer exist. It refuses the
-// batch otherwise, at speaker_component_id.
+// speaker that the element had, which its foreign key holds to exist. It
+// refuses the batch otherwise, at speaker_component_id, as for a component
+// that the purge has deleted, which it leaves no element with.
 func speaker(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, id string, kept pgtype.UUID) (
 	pgtype.UUID, error) {
 	if id == "" {

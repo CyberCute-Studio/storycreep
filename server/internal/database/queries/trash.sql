@@ -121,15 +121,24 @@ WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.id IN 
 -- PurgeComponents deletes at most max_rows of the project's components that
 -- have been in its trash for retention, those that have been there longest
 -- first, with their values, by the cascade of their foreign key, and returns
--- how many it deleted.
-DELETE FROM component d
-WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.id IN (
+-- how many it deleted. It leaves each element whose speaker one of them is,
+-- in the trash or not, without one, and increments the element's revision,
+-- as every change of a node does (PRD §5.7), so that a client that expects
+-- the revision that it read finds that the element changed, which the
+-- foreign key's own action, left nothing to do, would not increment.
+WITH purged AS (
     SELECT c.id FROM component c
     WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id
         AND c.deleted_at <= now() - @retention::interval
     ORDER BY c.deleted_at, c.id
     LIMIT @max_rows
-);
+), unspoken AS (
+    UPDATE node n SET speaker_component_id = NULL, rev = n.rev + 1, updated_at = now()
+    WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id
+        AND n.speaker_component_id IN (SELECT id FROM purged)
+)
+DELETE FROM component d
+WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.id IN (SELECT id FROM purged);
 
 -- name: PurgeAttributeDefs :execrows
 -- PurgeAttributeDefs deletes at most max_rows of the project's attribute

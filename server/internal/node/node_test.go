@@ -661,7 +661,8 @@ func TestDuplicate(t *testing.T) {
 // trash with it, unlisted, and come back with it, that nothing changes them
 // meanwhile, that one deleted on its own before its board is restored only
 // once its board is, that the purge deletes a node whose time has passed,
-// and that the workspace's usage of nodes follows them all.
+// and the speaker of an element, at a new revision, and that the
+// workspace's usage of nodes follows them all.
 func TestTrash(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -738,6 +739,29 @@ func TestTrash(t *testing.T) {
 		t.Errorf("the restore of a purged node is refused at %s: %s", r.Field, r.Message)
 	}
 	check(2)
+
+	// The purge of a component leaves each element whose speaker it is, in
+	// the trash or not, without one, at a new revision, as a change of the
+	// element would, so that a client that expects the revision that it read
+	// finds that the element changed.
+	elara := f.component(t, "Elara")
+	speaking := f.newNode(t, b, node.TypeElement, payload{"speaker_component_id": elara})
+	mute := f.newNode(t, b, node.TypeElement, payload{"speaker_component_id": elara})
+	f.must(t, cmd{node.Delete, payload{"id": mute}})
+	f.must(t, cmd{component.Delete, payload{"id": elara}})
+	f.exec(t, "UPDATE component SET deleted_at = now() - interval '31 days' WHERE id = $1",
+		decode(t, ids.Component, elara))
+	if _, err := trash.Purge(ctx, f.db); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.get(t, speaking); n.SpeakerComponentID != "" || n.Rev != 2 {
+		t.Errorf("once the purge deletes its speaker, an element has the speaker %q at the revision %d, want "+
+			"none at 2", n.SpeakerComponentID, n.Rev)
+	}
+	if n := f.count(t, "SELECT count(*) FROM node WHERE id = $1 AND speaker_component_id IS NULL AND rev = 3",
+		decode(t, ids.Node, mute)); n != 1 {
+		t.Error("once the purge deletes its speaker, an element in the trash keeps it, or its revision")
+	}
 }
 
 // TestUsage checks that the workspace's usage of nodes follows its projects'
@@ -761,21 +785,24 @@ func TestUsage(t *testing.T) {
 	if got := f.used(t, usage.Nodes); got != 4 {
 		t.Errorf("the workspace uses %d nodes, want 4", got)
 	}
-	// A batch that creates a node, then deletes its project.
-	res, err := f.apply(t, other, create(newID(), ob, node.TypeElement, 0, nil), cmd{project.Delete, payload{}})
-	if err != nil {
-		t.Fatal(err)
+	// A batch that creates a node, then deletes its project, and one that
+	// deletes the project, then creates a node in it.
+	for i, batch := range [][]cmd{{create(newID(), ob, node.TypeElement, 0, nil), {project.Delete, payload{}}},
+		{{project.Delete, payload{}}, create(newID(), ob, node.TypeElement, 0, nil)}} {
+		if _, err := f.apply(t, other, batch...); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.used(t, usage.Nodes); got != 3 {
+			t.Errorf("once a project is in the trash (%d), the workspace uses %d nodes, want 3", i, got)
+		}
+		if _, err := f.apply(t, other, cmd{project.Restore, payload{}}); err != nil {
+			t.Fatal(err)
+		}
+		if got, live, want := f.used(t, usage.Nodes), f.liveNodes(t), int64(5+i); got != want || live != want {
+			t.Errorf("once the project is restored (%d), the workspace uses %d nodes, with %d, want %d", i, got,
+				live, want)
+		}
 	}
-	if got := f.used(t, usage.Nodes); got != 3 {
-		t.Errorf("once a project is in the trash, the workspace uses %d nodes, want 3", got)
-	}
-	if _, err := f.apply(t, other, cmd{project.Restore, payload{}}); err != nil {
-		t.Fatal(err)
-	}
-	if got, live := f.used(t, usage.Nodes), f.liveNodes(t); got != 5 || live != 5 {
-		t.Errorf("once the project is restored, the workspace uses %d nodes, with %d, want 5", got, live)
-	}
-	_ = res
 
 	f.exec(t, "INSERT INTO usage_delta (id, workspace_id, key, delta) VALUES ($1, $2, 'nodes', 7)", ids.New(), f.ws)
 	if _, err := usage.Reconcile(context.Background(), f.db); err != nil {

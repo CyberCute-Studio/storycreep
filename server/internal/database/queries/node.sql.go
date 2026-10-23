@@ -738,7 +738,6 @@ SELECT t.tag::text AS tag, count(*)::bigint AS uses
 FROM live_node n, unnest(n.tags) AS t (tag)
 WHERE n.workspace_id = $1 AND n.project_id = $2
 GROUP BY t.tag
-ORDER BY t.tag COLLATE "C"
 `
 
 type ProjectTagsParams struct {
@@ -752,8 +751,9 @@ type ProjectTagsRow struct {
 }
 
 // ProjectTags returns each tag that a node of the project that is not in the
-// trash has, as it is written, with how many such nodes have it, in the
-// order of the tags' bytes.
+// trash has, as it is written, with how many such nodes have it, in no
+// order: package node merges the spellings of a tag, and orders what it
+// suggests, itself.
 func (q *Queries) ProjectTags(ctx context.Context, arg ProjectTagsParams) ([]ProjectTagsRow, error) {
 	rows, err := q.db.Query(ctx, projectTags, arg.WorkspaceID, arg.ProjectID)
 	if err != nil {

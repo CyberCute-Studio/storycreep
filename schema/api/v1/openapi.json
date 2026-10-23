@@ -4093,7 +4093,7 @@
             "description": "The node's width and height, if it has a size of its own; without one, the canvas lays the node out by itself"
           },
           "speaker_component_id": {
-            "description": "The ID of an element's speaker, a component of the project, if it has one. It may be a component in the project's trash, which the validation reports.",
+            "description": "The ID of an element's speaker, a component of the project, if it has one. It may be a component in the project's trash, which the validation reports, until the purge deletes the component, which leaves the element without one.",
             "type": "string"
           },
           "tags": {
@@ -4648,7 +4648,7 @@
             "description": "The node's new width and height, or {} for no size of its own, which the canvas then lays the node out by itself for"
           },
           "speaker_component_id": {
-            "description": "The ID of an element's new speaker, a component of the project, in its trash or not, or the speaker that it has, which may no longer exist, or the empty string for none. Another type has none.",
+            "description": "The ID of an element's new speaker, a component of the project, in its trash or not, or the empty string for none. Another type has none.",
             "type": "string"
           },
           "tags": {

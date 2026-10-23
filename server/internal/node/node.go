@@ -20,21 +20,25 @@
 // entry node (board.set_entry_node), takes an entity in the trash, so that
 // the undo of a change of it from one deleted since sets it back, or keeps
 // the one that it had, which may no longer exist; the validation reports one
-// that is deleted (FR-DEP-03). A jumper's target stays as it is when the
-// node that it names is deleted, or purged, dangling (FR-EDIT-05 AC1), and so
-// do the jumpers that target a board's nodes when the board is deleted
-// (FR-PROJ-02 AC2), which package board's deletion lists and asks to
-// confirm.
+// that is deleted (FR-DEP-03). A speaker has a foreign key, so that the
+// trash's purge of a component leaves the elements whose speaker it is
+// without one, and increments their revisions (package trash), those in the
+// trash too: the one change of a node that no command makes. A jumper's
+// target stays as it is when the node that it names is deleted, or purged,
+// dangling (FR-EDIT-05 AC1), and so do the jumpers that target a board's
+// nodes when the board is deleted (FR-PROJ-02 AC2), which package board's
+// deletion lists and asks to confirm.
 //
 // A deleted node goes to the project's trash, which lists it, and from which
 // restoring it brings it back. A board's nodes are in the trash with their
-// board while it is there, unlisted, as its variables are, and nothing
-// changes them meanwhile: one of them deleted on its own, before its board,
-// is listed, and restored only once its board is. The reads of what is not
-// in the trash read the live view, live_node. Each node that is not in the
-// trash counts towards its workspace's nodes (FR-ENT-02), which the deltas
-// of its commands, and of its board's and its project's deletion and
-// restoration, keep, approximately, and the reconciliation recounts.
+// board while it is there, unlisted, as its variables are, and nothing but
+// the purge of a speaker changes them meanwhile: one of them deleted on its
+// own, before its board, is listed, and restored only once its board is.
+// The reads of what is not in the trash read the live view, live_node. Each
+// node that is not in the trash counts towards its workspace's nodes
+// (FR-ENT-02), which the deltas of its commands, and of its board's and its
+// project's deletion and restoration, keep, approximately, and the
+// reconciliation recounts.
 //
 // Every command needs project:write of an API token (FR-AUTH-04), and the
 // actor's role on the project "Edit nodes, connections, text, expressions"
@@ -107,7 +111,7 @@ type Node struct {
 	Kind               string        `json:"kind,omitempty" enum:"dialogue,narration" doc:"An element's kind: dialogue, which a speaker says, or narration. Another type has none."`
 	Title              string        `json:"title" doc:"The node's title, which may be empty"`
 	Text               *richtext.Doc `json:"text,omitempty" doc:"An element's text, a rich-text document (PRD FR-TEXT-01). Another type has none."`
-	SpeakerComponentID string        `json:"speaker_component_id,omitempty" doc:"The ID of an element's speaker, a component of the project, if it has one. It may be a component in the project's trash, which the validation reports."`
+	SpeakerComponentID string        `json:"speaker_component_id,omitempty" doc:"The ID of an element's speaker, a component of the project, if it has one. It may be a component in the project's trash, which the validation reports, until the purge deletes the component, which leaves the element without one."`
 	CoverAssetID       string        `json:"cover_asset_id,omitempty" doc:"The ID of an element's cover image, an asset of the project, if it has one"`
 	Color              string        `json:"color" enum:"none,red,orange,yellow,green,teal,blue,purple,pink,gray" doc:"The node's colour, none or a name of the palette that boards have"`
 	Tags               []string      `json:"tags" nullable:"false" doc:"The node's tags, as they are written, in their order: no two are the same tag but for their case"`

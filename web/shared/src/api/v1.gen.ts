@@ -1269,7 +1269,7 @@ export interface Node {
   rev: number;
   /** The node's width and height, if it has a size of its own; without one, the canvas lays the node out by itself */
   size?: NodeSize;
-  /** The ID of an element's speaker, a component of the project, if it has one. It may be a component in the project's trash, which the validation reports. */
+  /** The ID of an element's speaker, a component of the project, if it has one. It may be a component in the project's trash, which the validation reports, until the purge deletes the component, which leaves the element without one. */
   speaker_component_id?: string;
   /** The node's tags, as they are written, in their order: no two are the same tag but for their case */
   tags: Array<string>;
@@ -1453,7 +1453,7 @@ export interface NodeUpdatePayload {
   kind?: "dialogue" | "narration";
   /** The node's new width and height, or {} for no size of its own, which the canvas then lays the node out by itself for */
   size?: NodeSize;
-  /** The ID of an element's new speaker, a component of the project, in its trash or not, or the speaker that it has, which may no longer exist, or the empty string for none. Another type has none. */
+  /** The ID of an element's new speaker, a component of the project, in its trash or not, or the empty string for none. Another type has none. */
   speaker_component_id?: string;
   /** The node's new tags, which replace its tags, as [] removes them: at most 32, each of 1 to 50 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them, and no two the same tag but for their case, which tags are compared without. They are kept as they are written. */
   tags?: Array<string>;
