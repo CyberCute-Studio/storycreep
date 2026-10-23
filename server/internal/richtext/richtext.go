@@ -1234,11 +1234,10 @@ var mailtoFields = []string{"bcc", "body", "cc", "subject", "to"}
 // %AD a soft hyphen. The address, and the value of to, cc, or bcc, which name
 // addresses too, are as addressesProblem has them: they escape no hidden
 // character, and are addresses as RFC 6068 has them, without a display name,
-// a comment, or quotes, whose local parts' characters beyond ASCII are
-// letters, marks, and numbers, and whose domains are ASCII. A subject escapes
-// no character that text may not hold (isControl), a control character or a
-// line or paragraph separator, which a mail client could write into a header,
-// as a line break that starts another header in
+// a comment, or quotes, in ASCII. A subject escapes no character that text
+// may not hold (isControl), a control character or a line or paragraph
+// separator, which a mail client could write into a header, as a line break
+// that starts another header in
 // mailto:keeper@example.com?subject=a%0D%0ABcc:evil@example.com, or that a
 // reader of lines may take for one, as Python's str.splitlines takes NEL,
 // %C2%85, and LINE SEPARATOR, %E2%80%A8. A subject may escape white space and
@@ -1298,24 +1297,34 @@ func mailtoProblem(rest string) string {
 // (unescape), of which none is hidden, which would hide or reorder the
 // address that a mail client shows, as %E2%80%AE, U+202E RIGHT-TO-LEFT
 // OVERRIDE, would, or start another header, as %0D%0A would. Once its escapes
-// are read, it is empty, which only a to, cc, or bcc can be, or addresses
-// that commas separate, each an addr-spec as RFC 6068 has it, without a
-// quoted local part: a local part, an @, and a domain, each atoms that single
-// dots separate (RFC 5322's dot-atom-text, isAtext), or a domain that is an
-// address literal in brackets (addressLiteral). So an address has no display
-// name, comment, group, or quotes, which a mail client shows in place of the
-// address that the message goes to, as it shows
+// are read, it is ASCII, as below, and either empty, which only a to, cc, or
+// bcc can be, or addresses that commas separate, each an addr-spec as
+// RFC 6068 has it, without a quoted local part: a local part, an @, and a
+// domain, each atoms that single dots separate (RFC 5322's dot-atom-text,
+// dotAtom), or a domain that is an address literal in brackets
+// (addressLiteral). So an address has no display name, comment, group, or
+// quotes, which a mail client shows in place of the address that the message
+// goes to, as it shows
 // mailto:%22support@paypal.com%22%3Cx@evil.example%3E, which goes to
-// x@evil.example, as support@paypal.com. A local part may also hold letters,
-// marks, and numbers beyond ASCII, as an internationalized address's does
-// (RFC 6532), but no other character beyond ASCII, which may look like a
-// delimiter of an address, as U+FF20 FULLWIDTH COMMERCIAL AT looks like an
-// @, or hide the domain after it (isLocalRune); and a domain is ASCII, as an
-// http link's host is (nameProblem), since a character beyond ASCII may look
-// like another, as the Cyrillic а of mailto:support@pаypal.com looks like a
+// x@evil.example, as support@paypal.com.
+//
+// An address is ASCII, as an http link's host is (nameProblem), since a
+// character beyond ASCII may look like another: in a domain, a letter of
+// another script, as the Cyrillic а of mailto:support@pаypal.com looks like a
 // Latin a, so that a mail client shows a domain that the message does not go
-// to: an internationalized domain is written as IDNA writes it in ASCII, as
-// élodie@xn--caf-dma.example.
+// to; and in a local part, which a reader sees before the domain, a character
+// that looks like a delimiter of an address, which may be a letter, as U+02BA
+// MODIFIER LETTER DOUBLE PRIME looks like a " and U+1438 CANADIAN SYLLABICS PA
+// like a <, as well as punctuation, as U+FF20 FULLWIDTH COMMERCIAL AT looks
+// like an @, so that the address reads as a display name and another address,
+// or a blank that shows as wide as a letter does, which may be a letter too,
+// as U+13441 EGYPTIAN HIEROGLYPH FULL BLANK, so that a run of them pushes the
+// domain out of what a mail client shows. No property of Unicode's tells
+// those from the letters of an internationalized address's local part
+// (RFC 6532), which a mailto link therefore does not hold; and with its
+// addresses in ASCII, a client checks a mailto link as the server does,
+// whatever the version of its Unicode tables. An internationalized domain is
+// written as IDNA writes it in ASCII, as keeper@xn--caf-dma.example.
 func addressesProblem(s string) string {
 	decoded, ok := unescape(s)
 	switch {
@@ -1327,20 +1336,17 @@ func addressesProblem(s string) string {
 		// before, so an escape stands for it.
 		return "escapes white space, a control character, a format character, or another character that is not " +
 			"shown, which would hide or reorder the address that a mail client shows, or start another header"
+	case !onlyRunes(decoded, isASCII):
+		return "has a character beyond ASCII, which may look like another, as the Cyrillic a looks like the Latin " +
+			"a in a domain, or like a delimiter of an address, as U+FF20 FULLWIDTH COMMERCIAL AT looks like an @, " +
+			"or show as a blank that hides the domain: an address is ASCII, and an internationalized domain is " +
+			"written as IDNA writes it in ASCII (xn--)"
 	case decoded == "":
 		return ""
 	}
 	for address := range strings.SplitSeq(decoded, ",") {
 		local, domain, ok := strings.Cut(address, "@")
-		switch {
-		case ok && !onlyRunes(domain, isASCII):
-			return "has a domain, after an @, with a character beyond ASCII, which may look like another: an " +
-				"internationalized domain is written as IDNA writes it in ASCII (xn--)"
-		case ok && !onlyRunes(local, func(r rune) bool { return isASCII(r) || isLetterMarkNumber(r) }):
-			return "has a local part, before an @, with a character beyond ASCII that is not a letter, a mark, or a " +
-				"number, which may look like a delimiter of an address, as U+FF20 FULLWIDTH COMMERCIAL AT looks like " +
-				"an @, or hide the domain after it, as U+2800 BRAILLE PATTERN BLANK would"
-		case !ok || !dotAtom(local, isLocalRune) || !dotAtom(domain, isAtext) && !addressLiteral(domain):
+		if !ok || !dotAtom(local) || !dotAtom(domain) && !addressLiteral(domain) {
 			return "is not addresses that commas separate, each a local part, an @, and a domain, of letters, " +
 				"digits, and !#$%&'*+-/=?^_`{|}~ in atoms that single dots separate, without a display name, a " +
 				"comment, or quotes, which a mail client could show in place of the address that the message " +
@@ -1360,35 +1366,12 @@ func isAtext(r rune) bool {
 	return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || isDigit(r) || strings.ContainsRune("!#$%&'*+-/=?^_`{|}~", r)
 }
 
-// isLocalRune reports whether an atom of an address's local part may hold r:
-// what isAtext takes, or a letter, a mark, or a number beyond ASCII
-// (isLetterMarkNumber), as an internationalized address's local part holds
-// (RFC 6532). RFC 6532 takes any character beyond ASCII there, but one that
-// is not a letter, a mark, or a number may look like a delimiter of an
-// address, as U+FF20 FULLWIDTH COMMERCIAL AT looks like an @, U+FF02 like a
-// ", and U+FF1C like a <, so that a local part of U+FF02, support, U+FF20,
-// paypal.com, U+FF02, U+FF1C, and x, before @evil.example, reads as a display
-// name, support@paypal.com, and an address, in an address that has neither;
-// or be a blank that no property of Unicode's names, as U+2800 BRAILLE
-// PATTERN BLANK, which shows as wide as a letter does, so that a run of them
-// after support, U+FF20, and paypal.com pushes the domain after it, which the
-// message goes to, out of what a mail client shows of the address.
-func isLocalRune(r rune) bool { return isAtext(r) || !isASCII(r) && isLetterMarkNumber(r) }
-
-// isLetterMarkNumber reports whether r is a letter, a mark, or a number
-// (Unicode's L, M, and N) in package unicode's tables, of the version that
-// unicode.Version names (TestUnicodeTables). A client whose tables are newer,
-// as a JavaScript engine's are, takes the letters, marks, and numbers that
-// Unicode has assigned since too, which the server refuses in a local part;
-// and a Go whose tables are newer takes more, and none fewer, so that no
-// local part that the server took is refused once Go's tables change.
-func isLetterMarkNumber(r rune) bool { return unicode.In(r, unicode.L, unicode.M, unicode.N) }
-
 // dotAtom reports whether s is one or more atoms, each one or more characters
-// that ok takes, which single dots separate, as RFC 5322's dot-atom-text.
-func dotAtom(s string, ok func(rune) bool) bool {
+// that isAtext takes, which single dots separate, as RFC 5322's
+// dot-atom-text.
+func dotAtom(s string) bool {
 	for atom := range strings.SplitSeq(s, ".") {
-		if atom == "" || !onlyRunes(atom, ok) {
+		if atom == "" || !onlyRunes(atom, isAtext) {
 			return false
 		}
 	}
@@ -1438,8 +1421,7 @@ func addressLiteral(domain string) bool {
 // client would take a link that the server refuses; and the blanks that no
 // property of Unicode's names, as U+2800 BRAILLE PATTERN BLANK, which shows
 // as wide as a letter does, and cannot change where a link leads, whose host,
-// and a mailto link's domains, are ASCII, and which a mailto link's local
-// part, which a reader sees before the domain, does not hold (isLocalRune).
+// and a mailto link's addresses, are ASCII (addressesProblem).
 func hidden(r rune) bool {
 	return unicode.IsSpace(r) || unicode.IsControl(r) ||
 		unicode.In(r, unicode.Cf, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector)

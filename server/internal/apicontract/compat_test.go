@@ -829,6 +829,20 @@ func TestBreakingDiscriminator(t *testing.T) {
 			doc("type", "a", "A", "b", "A"), both(`"type" {"a": A, "b": B}`, `"type" {"a": A, "b": A}`)},
 		{"a discriminator no longer maps a value", doc("type", "a", "A", "b", "B"), doc("type", "a", "A"),
 			both(`"type" {"a": A, "b": B}`, `"type" {"a": A}`)},
+		// A response's oneOf may lose a member, and its discriminator the
+		// value of that member, as head then sends no object with it; a
+		// request's may not.
+		{"a oneOf loses a member and its value", doc("type", "a", "A", "b", "B"),
+			docOf([]string{"A"}, "type", "a", "A"), []string{
+				changed("request", `"type" {"a": A, "b": B}`, `"type" {"a": A}`),
+				"POST /x: the request body.oneOf[B] was removed"}},
+		// But not when a member is named as the value, which head's
+		// discriminator then reads the value as, and base's as another.
+		{"a oneOf loses a member and its value, which names a member", docOf([]string{"A", "B", "C"}, "type", "a",
+			"A", "C", "B", "c", "C"), docOf([]string{"A", "C"}, "type", "a", "A", "c", "C"), []string{
+			changed("request", `"type" {"C": B, "a": A, "c": C}`, `"type" {"a": A, "c": C}`),
+			"POST /x: the request body.oneOf[B] was removed",
+			changed("response 200", `"type" {"C": B, "a": A, "c": C}`, `"type" {"a": A, "c": C}`)}},
 	}
 	for _, tt := range tests {
 		if got := messages(Breaking(tt.base, tt.head)); !slices.Equal(got, tt.want) {

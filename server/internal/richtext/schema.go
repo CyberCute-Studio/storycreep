@@ -91,8 +91,9 @@ const defsPrefix = "#/$defs/"
 // huma's registry, which the published schema, a JSON Schema, has no keyword
 // for: huma validates a node against the definition of its type alone, and
 // refuses a document at the value that is wrong, with what is wrong with it,
-// but for the problems after a node or a mark without a type that is a
-// string, whose locations have a segment too many (discriminator).
+// but for the problems after a node or a mark without a type, or whose type
+// is neither a string nor null, whose locations have a segment too many
+// (discriminator).
 //
 // huma passes over a null in a property that a schema does not require, as
 // it does in any body, where JSON Schema checks it against the property's
@@ -262,14 +263,14 @@ func (c humaConverter) schema(v any) *huma.Schema {
 // whose type no member has against every member, as a oneOf.
 //
 // huma (v2.39.1) pushes type onto the path of the value that it validates when
-// an object has no type, or one that is not a string, and does not pop it, so
-// that it reports every later problem of the same body at a location with a
-// segment too many for each such object, as at text.content[0][1] for
-// text.content[1], or at text.title for title, though it reports those before
-// at their places. That costs less than oneOfs without discriminators, which
-// report every problem of a document at its outermost block, and only huma
-// can fix it: TestDocField holds the README to it, and fails once huma pops
-// what it pushed.
+// an object has no type, or one that is neither a string nor null, and does
+// not pop it (validateDiscriminator), so that it reports every later problem
+// of the same body at a location with a segment too many for each such
+// object, as at text.content[0][1] for text.content[1], or at text.title for
+// title, though it reports those before at their places. That costs less than
+// oneOfs without discriminators, which report every problem of a document at
+// its outermost block, and only huma can fix it: TestDocField holds the
+// README to it, and fails once huma pops what it pushed.
 func discriminator(members []any, converted []*huma.Schema) *huma.Discriminator {
 	refs := 0
 	for _, m := range members {

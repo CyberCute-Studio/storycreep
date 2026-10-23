@@ -191,16 +191,17 @@ func TestWordVectors(t *testing.T) {
 }
 
 // TestUnicodeTables checks the rules that read package unicode's tables. The
-// README states their version wherever it names the letters, marks, and
-// numbers that the server takes, of a word and of a mailto link's local part,
-// so that a client whose tables are another version, as a JavaScript engine's
-// are, knows where it differs from the server: U+2EBF0, a CJK ideograph that
-// Unicode 15.1 assigned, is no letter in Unicode 15.0's. A Go whose tables
-// are another version changes the server's word counts of text with the
-// letters and numbers that Unicode assigned between the two, which the
-// README, N40, and the exports' word counts (FR-TEXT-05) are then to be read
-// again for, and takes those letters in a local part too, refusing none that
-// it took.
+// README states their version where it names the letters and numbers that
+// the server takes in a word, so that a client whose tables are another
+// version, as a JavaScript engine's are, knows where it differs from the
+// server: U+2EBF0, a CJK ideograph that Unicode 15.1 assigned, is no letter
+// in Unicode 15.0's. A Go whose tables are another version changes the
+// server's word counts of text with the letters and numbers that Unicode
+// assigned between the two, which the README, N40, and the exports' word
+// counts (FR-TEXT-05) are then to be read again for. CI runs the Go that
+// deploy/Dockerfile builds the server with (TestCIGoVersion, in package
+// deploy), so that the tables that this checks are those that the server
+// has.
 //
 // hidden takes the characters that it takes in Unicode 15.0, which are those
 // of Unicode 17.0 too: a Go whose tables take another as hidden would refuse
@@ -216,9 +217,8 @@ func TestUnicodeTables(t *testing.T) {
 	major, rest, _ := strings.Cut(unicode.Version, ".")
 	minor, _, _ := strings.Cut(rest, ".")
 	stated := regexp.MustCompile(`as Unicode (\d+\.\d+) has them`).FindAllSubmatch(readme, -1)
-	if len(stated) < 2 {
-		t.Errorf("the README states the version of Unicode %d times, not once for a word's letters and once for "+
-			"a local part's", len(stated))
+	if len(stated) == 0 {
+		t.Errorf("the README does not state the version of Unicode of a word's letters")
 	}
 	for _, m := range stated {
 		if v := string(m[1]); v != major+"."+minor {
@@ -228,9 +228,6 @@ func TestUnicodeTables(t *testing.T) {
 	if unicode.Version == "15.0.0" {
 		if got := CountWords(string(rune(0x2EBF0))); got != 0 {
 			t.Errorf("CountWords(U+2EBF0) = %d in Unicode 15.0, which has not assigned it", got)
-		}
-		if problem := CheckHref("mailto:" + string(rune(0x2EBF0)) + "@example.com"); problem == "" {
-			t.Errorf("a local part of U+2EBF0 is taken in Unicode 15.0, which has not assigned it")
 		}
 	}
 	// The characters that hidden takes, which Node 24's

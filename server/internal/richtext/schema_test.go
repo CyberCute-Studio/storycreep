@@ -480,12 +480,14 @@ func TestDocField(t *testing.T) {
 	}
 
 	// huma (v2.39.1) pushes type onto its path at a node or a mark that has
-	// no type, or one that is not a string, and does not pop it, so that it
-	// reports the problems after it in the same body at locations with a
-	// segment too many, as the README says: here text.content[1] and title.
-	// When this fails, huma pops what it pushes: take the exception out of
-	// the README, N40, CONTRIBUTING, and discriminator's comment, and have
-	// this check that each problem is at its place.
+	// no type, or one that is neither a string nor null, and does not pop
+	// it, so that it reports the problems after it in the same body at
+	// locations with a segment too many, as the README says: here
+	// text.content[1] and title. A null type it lets through without
+	// pushing, so the problems after it are at their places. When this
+	// fails, huma pops what it pushes: take the exception out of the README,
+	// N40, CONTRIBUTING, and discriminator's comment, and have this check
+	// that each problem is at its place.
 	type titled struct {
 		Text  Doc    `json:"text"`
 		Title string `json:"title"`
@@ -502,6 +504,11 @@ func TestDocField(t *testing.T) {
 			"text.content[0].content[0].marks[0][1]", "text.title"},
 		`{"text":{"type":"doc","content":[{"type":"heading"},{"type":5}]},"title":5}`: {
 			"text.content[0]", "text.title"},
+		`{"text":{"type":"doc","content":[{"type":null},{"type":"heading"}]},"title":5}`: {
+			"text.content[1]", "title"},
+		`{"text":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a",` +
+			`"marks":[{"type":null},{"type":"underline"}]}]}]},"title":5}`: {
+			"text.content[0].content[0].marks[1]", "title"},
 	} {
 		var v any
 		if err := json.Unmarshal([]byte(body), &v); err != nil {

@@ -301,6 +301,51 @@ func TestDevComposeFile(t *testing.T) {
 	}
 }
 
+// TestCIGoVersion checks that every job of CI sets up the Go that the
+// Dockerfile builds the server with, its version without a patch, as
+// golang:1.26-alpine's 1.26: a newer Go's Unicode tables may be of another
+// version, which the rich text's word counts and link rules read, so that CI
+// would test tables that the server does not have, and TestUnicodeTables
+// would fail on a pull request that changes neither.
+func TestCIGoVersion(t *testing.T) {
+	goImage := goImageOfDockerfile(t)
+	m := regexp.MustCompile(`^golang:(\d+\.\d+)(?:-|$)`).FindStringSubmatch(goImage)
+	if m == nil {
+		t.Fatalf("the Dockerfile builds with %q, which names no minor version of Go", goImage)
+	}
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Uses string         `yaml:"uses"`
+				With map[string]any `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(b, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	var setups int
+	for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+		for _, step := range workflow.Jobs[name].Steps {
+			if !strings.HasPrefix(step.Uses, "actions/setup-go@") {
+				continue
+			}
+			setups++
+			if got, ok := step.With["go-version"].(string); !ok || got != m[1] {
+				t.Errorf("CI's job %s sets up Go %v, and the Dockerfile builds the server with %s: want %q",
+					name, step.With["go-version"], goImage, m[1])
+			}
+		}
+	}
+	if setups == 0 {
+		t.Error("no job of CI sets up Go")
+	}
+}
+
 // goImageOfDockerfile returns the image that the Dockerfile's build stage
 // runs.
 func goImageOfDockerfile(t *testing.T) string {

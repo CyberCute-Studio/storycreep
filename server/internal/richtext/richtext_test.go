@@ -640,9 +640,8 @@ func TestPlainTextBuilt(t *testing.T) {
 // set no field but to, cc, bcc, subject, and body, that escape UTF-8 alone
 // but in a body, no hidden character in an address or a to, cc, or bcc, which
 // are addresses as RFC 6068 has them, without a display name, a comment, or
-// quotes, whose local parts' characters beyond ASCII are letters, marks, and
-// numbers, and whose domains are ASCII, and no control character or line or
-// paragraph separator in a subject, and nothing that could run a script or
+// quotes, in ASCII, and no control character or line or paragraph separator
+// in a subject, and nothing that could run a script or
 // read a file; and no link that holds a hidden character, as one that a
 // renderer shows nothing of.
 //
@@ -717,21 +716,13 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com?subject=Caf%C3%A9%20%E2%80%A7&body=a%E2%80%A8b%E2%80%A9c%C2%85d%c2%9f",
 		"mailto:keeper@example.com?subject=%C2%A0%E2%80%8B%E2%80%AE%EF%BB%BF&body=%E2%80%AE%20",
 		"mailto:keeper@example.com?body=%C2%20%E2%80%20%FF%80%85",
-		// An internationalized address: its local part, raw or escaped,
-		// beyond ASCII, and its domain as IDNA writes it in ASCII, and
-		// addresses whose characters beyond ASCII are all before their first
-		// @, with a comma, raw or escaped, between them.
-		"mailto:élodie@xn--caf-dma.example",
-		"mailto:%C3%A9lodie@XN--CAF-DMA.example?to=" + string(rune(0x0430)) + "@example.com," +
-			string(rune(0x0431)) + "@example.com",
-		"mailto:ü@a.example%2Cö@b.example?cc=x@a.example,ü@c.example&bcc=ü@d.example",
+		// An internationalized domain, as IDNA writes it in ASCII, wherever an
+		// address is, and addresses with a comma, raw or escaped, between
+		// them.
+		"mailto:elodie@xn--caf-dma.example",
+		"mailto:a@XN--CAF-DMA.example%2Cb@example.com?to=c@xn--caf-dma.example,d@example.com" +
+			"&bcc=e@xn--caf-dma.example",
 		"mailto:a@[2001:db8::1]",
-		// Local parts of letters, marks, and numbers beyond ASCII, raw or
-		// escaped: Devanagari with its vowel signs, which are marks, Chinese,
-		// and Arabic-Indic digits.
-		"mailto:" + string([]rune{0x092A, 0x0942, 0x091C, 0x093E}) + "@example.com",
-		"mailto:keeper@example.com?cc=%E7%94%A8%E6%88%B7@example.com&bcc=a." + string([]rune{0x0661, 0x0662}) +
-			"@example.com",
 	} {
 		if problem := CheckHref(href); problem != "" {
 			t.Errorf("CheckHref(%q) = %q, want none", href, problem)
@@ -880,15 +871,25 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com?CC=y@evil.example(support@paypal.com)",
 		"mailto:keeper@example.com?bcc=Support%3Cy@evil.example%3E",
 		"mailto:keeper@example.com,%22support@paypal.com%22%3Cy@evil.example%3E",
-		// Or whose local part has a character beyond ASCII that is not a
-		// letter, a mark, or a number, raw or escaped, wherever an address
-		// is: one that looks like a delimiter of an address, as U+FF02
-		// FULLWIDTH QUOTATION MARK, U+FF20 FULLWIDTH COMMERCIAL AT, U+FF1C
-		// FULLWIDTH LESS-THAN SIGN, and U+FE6B SMALL COMMERCIAL AT, so that
-		// the address reads as a display name and another address; a blank,
-		// U+2800 BRAILLE PATTERN BLANK, a run of which would push the domain
-		// out of what a mail client shows; a symbol; or a private use
-		// character, which a font may draw as anything.
+		// Or whose local part has a character beyond ASCII, raw or escaped,
+		// wherever an address is: one that looks like a delimiter of an
+		// address, punctuation or a symbol, as U+FF02 FULLWIDTH QUOTATION
+		// MARK, U+FF20 FULLWIDTH COMMERCIAL AT, U+FF1C FULLWIDTH LESS-THAN
+		// SIGN, and U+FE6B SMALL COMMERCIAL AT, or a letter, as U+02BA
+		// MODIFIER LETTER DOUBLE PRIME, U+1438 CANADIAN SYLLABICS PA, U+1433
+		// CANADIAN SYLLABICS PO, U+A4F9 LISU LETTER TONE NA PO, and U+A4F8
+		// LISU LETTER TONE MYA TI, which look like ", <, >, a comma, and a
+		// dot, so that the address reads as a display name and another
+		// address; a blank, a symbol, as U+2800 BRAILLE PATTERN BLANK, or a
+		// letter, as U+13441 EGYPTIAN HIEROGLYPH FULL BLANK and U+13442
+		// EGYPTIAN HIEROGLYPH HALF BLANK, a run of which would push the domain
+		// out of what a mail client shows; another symbol; a private use
+		// character, which a font may draw as anything; and the letters,
+		// marks, and numbers of an internationalized address, which no
+		// property tells from those above: an e acute, a Cyrillic a,
+		// Devanagari with its vowel signs, which are marks, Chinese,
+		// Arabic-Indic digits, and U+2EBF0, a CJK ideograph that Unicode 15.1
+		// assigned.
 		"mailto:" + string(rune(0xFF02)) + "support" + string(rune(0xFF20)) + "paypal.com" + string(rune(0xFF02)) +
 			string(rune(0xFF1C)) + "x@evil.example",
 		"mailto:%EF%BC%82support%EF%BC%A0paypal.com%EF%BC%82%EF%BC%9Cx@evil.example",
@@ -896,8 +897,23 @@ func TestCheckHref(t *testing.T) {
 			"@evil.example",
 		"mailto:keeper@example.com?to=support%EF%B9%ABpaypal.com@evil.example",
 		"mailto:keeper@example.com?CC=y@example.com,support" + string(rune(0xFF20)) + "paypal.com@evil.example",
+		"mailto:" + string(rune(0x02BA)) + "support" + string(rune(0x02BA)) + string(rune(0x1438)) + "x@evil.example",
+		"mailto:%CA%BAsupport%CA%BA%E1%90%B8x@evil.example",
+		"mailto:keeper@example.com?to=" + string(rune(0x1438)) + "support" + string(rune(0x1433)) + "x@evil.example",
+		"mailto:keeper@example.com?cc=support" + string(rune(0xA4F9)) + "paypal" + string(rune(0xA4F8)) +
+			"com@evil.example",
+		"mailto:support.paypal.com" + strings.Repeat(string(rune(0x13441)), 40) + "@evil.example",
+		"mailto:keeper@example.com?bcc=support" + strings.Repeat("%F0%93%91%82", 3) + "@evil.example",
 		"mailto:keeper@example.com?bcc=" + string(rune(0x2605)) + "@example.com",
 		"mailto:keeper%EE%80%80@example.com",
+		"mailto:élodie@xn--caf-dma.example",
+		"mailto:%C3%A9lodie@XN--CAF-DMA.example",
+		"mailto:ü@a.example%2Cö@b.example",
+		"mailto:keeper@example.com?to=" + string(rune(0x0430)) + "@example.com",
+		"mailto:" + string([]rune{0x092A, 0x0942, 0x091C, 0x093E}) + "@example.com",
+		"mailto:keeper@example.com?cc=%E7%94%A8%E6%88%B7@example.com",
+		"mailto:keeper@example.com?bcc=a." + string([]rune{0x0661, 0x0662}) + "@example.com",
+		"mailto:" + string(rune(0x2EBF0)) + "@example.com",
 		// Or that is not a local part, an @, and a domain, each atoms of atext
 		// that single dots separate, or the domain an address literal.
 		"mailto:keeper",

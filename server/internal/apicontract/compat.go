@@ -86,11 +86,13 @@ func (c Change) String() string {
 // does not validate a response, so its discriminator changes nothing that a
 // client receives, and a client of base's reads it, if at all, only as far
 // as base's mapped, to the same members; a member that the oneOf gains is
-// compared as a member is. Any other change to a discriminator breaks a
-// client: one that maps a value to another member, or no longer maps it, or
-// reads another property, and one that a oneOf loses, which, in a request,
-// then validates an object whose property is not a string against every
-// member.
+// compared as a member is. A response's discriminator may also no longer map
+// a value whose member the oneOf loses, as a response's may, when no member
+// is named as the value, so that head sends no object with it. Any other
+// change to a discriminator breaks a client: one that maps a value to another
+// member, or no longer maps it, or reads another property, and one that a
+// oneOf loses, which, in a request, then validates an object whose property
+// is not a string against every member.
 //
 // Schemas combined with oneOf, anyOf, or allOf are compared member by
 // member. If the members of a oneOf or an anyOf all refer to named schemas,
@@ -437,21 +439,24 @@ func (c *comparer) compare(loc string, b, h *Schema, dir direction, headNull boo
 
 // discriminator reports a change from base's discriminator of the oneOf at loc
 // to head's that breaks a client: in a response, any change but one that
-// keeps what base's mapped, and in a request any change but one that widens
-// judges compatible.
+// keeps what base's mapped of the members that head's oneOf has, and in a
+// request any change but one that widens judges compatible.
 func (c *comparer) discriminator(loc string, b, h *Schema, dir direction) {
 	was, is := describeDiscriminator(b.Discriminator), describeDiscriminator(h.Discriminator)
-	if was == is || dir == request && c.widens(b, h) || dir == response && keeps(b.Discriminator, h.Discriminator) {
+	if was == is || dir == request && c.widens(b, h) ||
+		dir == response && keeps(b.Discriminator, h.Discriminator, lost(h.OneOf)) {
 		return
 	}
 	c.report("%s: the discriminator changed from %s to %s", loc, was, is)
 }
 
 // keeps reports whether head's discriminator hd reads the property that
-// base's, bd, read, and maps each value that bd mapped to the same member, or
-// whether bd is nil and hd is not: whether hd keeps what bd said of the
-// objects of the oneOf.
-func keeps(bd, hd *Discriminator) bool {
+// base's, bd, read, and maps each value that bd mapped to the same member,
+// but for a value that gone takes, which hd may no longer map, or whether bd
+// is nil and hd is not: whether hd keeps what bd said of the objects of the
+// oneOf. gone is nil, or takes a value that bd mapped, and the reference that
+// bd mapped it to.
+func keeps(bd, hd *Discriminator, gone func(value, to string) bool) bool {
 	if hd == nil || bd != nil && bd.PropertyName != hd.PropertyName {
 		return false
 	}
@@ -459,11 +464,33 @@ func keeps(bd, hd *Discriminator) bool {
 		return true
 	}
 	for value, to := range bd.Mapping {
-		if got, ok := hd.Mapping[value]; !ok || refName(got) != refName(to) {
+		got, ok := hd.Mapping[value]
+		switch {
+		case ok && refName(got) == refName(to):
+		case !ok && gone != nil && gone(value, to):
+		default:
 			return false
 		}
 	}
 	return true
+}
+
+// lost returns, for keeps, whether a response's oneOf, whose members in head
+// are members, lost the member that base's discriminator mapped a value to,
+// as a response's oneOf may lose members (union), and has no member named as
+// the value, which a discriminator reads a value that its mapping lacks as:
+// then head sends no object with the value, which base's discriminator could
+// read otherwise than head's. It returns nil, so that every value stays
+// mapped, unless every member refers to a named schema, as the members of a
+// oneOf that union compares do.
+func lost(members []*Schema) func(value, to string) bool {
+	names := memberNames(members)
+	if names == nil {
+		return nil
+	}
+	return func(value, to string) bool {
+		return !slices.Contains(names, refName(to)) && !slices.Contains(names, value)
+	}
 }
 
 // widens reports whether, in a request, head's oneOf, with its discriminator,
@@ -487,7 +514,7 @@ func keeps(bd, hd *Discriminator) bool {
 // every member, which base let through.
 func (c *comparer) widens(b, h *Schema) bool {
 	bd, hd := b.Discriminator, h.Discriminator
-	if !keeps(bd, hd) {
+	if !keeps(bd, hd, nil) {
 		return false
 	}
 	property := hd.PropertyName

@@ -1297,7 +1297,7 @@
       "hash": "sha256:cbdc6be8042546270cfd3c3396e4a1ca932575821b75d46a6069d64a7f0020dd"
     },
     {
-      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one, with an e acute and a zero width space, a format character, escaped in the subject, an internationalized address in the cc, whose domain is written as IDNA writes it in ASCII, a line break, a line separator, NEL, ?, =, ;, and a byte that is not UTF-8 escaped in the body, an address in the bcc whose local part has an apostrophe and a dot, and whose domain is an address literal, and an address in the to whose local part has letters, marks, and numbers beyond ASCII: Devanagari letters and vowel signs, which are marks, and Arabic-Indic digits",
+      "note": "links that the server takes: an IPv6 host with a port, what a browser escapes in a path, a query, or a fragment, escapes, an @ after the authority, and a mailto link's fields, in any case, and an empty one, with an e acute and a zero width space, a format character, escaped in the subject, an address in the cc whose internationalized domain is written as IDNA writes it in ASCII, a line break, a line separator, NEL, ?, =, ;, and a byte that is not UTF-8 escaped in the body, an address in the bcc whose local part has an apostrophe and a dot, and whose domain is an address literal, and an address in the to whose local part has a digit and a +",
       "doc": {
         "content": [
           {
@@ -1338,7 +1338,7 @@
                 "marks": [
                   {
                     "attrs": {
-                      "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,élodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&bcc=o'brien.lamp@[192.0.2.1]&to=पूजा.١٢@example.com&"
+                      "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,elodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&bcc=o'brien.lamp@[192.0.2.1]&to=mira.2+lamp@example.com&"
                     },
                     "type": "link"
                   }
@@ -1376,7 +1376,7 @@
           "value": " "
         },
         {
-          "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,élodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&bcc=o'brien.lamp@[192.0.2.1]&to=पूजा.١٢@example.com&",
+          "href": "mailto:keeper@example.com?subject=Light%20on%20%C3%A9%E2%80%8B&CC=mira@example.com,elodie@xn--caf-dma.example&body=Come%20up%0D%0Anow%E2%80%A8%C2%85%3F%3D%3B%FF&bcc=o'brien.lamp@[192.0.2.1]&to=mira.2+lamp@example.com&",
           "kind": "text",
           "marks": ["link"],
           "value": "three"
@@ -4939,7 +4939,7 @@
       "schema_accepts": true
     },
     {
-      "note": "a mailto link whose address's local part has U+FF02 FULLWIDTH QUOTATION MARK, U+FF20 FULLWIDTH COMMERCIAL AT, and U+FF1C FULLWIDTH LESS-THAN SIGN, characters beyond ASCII that are not letters, marks, or numbers, which look like a quote, an @, and a <, so that the address reads as a display name, support@paypal.com, and an address, x@evil.example",
+      "note": "a mailto link whose address's local part has U+FF02 FULLWIDTH QUOTATION MARK, U+FF20 FULLWIDTH COMMERCIAL AT, and U+FF1C FULLWIDTH LESS-THAN SIGN, characters beyond ASCII, which look like a quote, an @, and a <, so that the address reads as a display name, support@paypal.com, and an address, x@evil.example",
       "doc": {
         "type": "doc",
         "content": [
@@ -5010,6 +5010,118 @@
                     "type": "link",
                     "attrs": {
                       "href": "mailto:keeper@example.com?to=support%EF%B9%ABpaypal.com@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose address's local part has U+02BA MODIFIER LETTER DOUBLE PRIME and U+1438 CANADIAN SYLLABICS PA, letters beyond ASCII that look like a quote and a <, so that the address reads as a display name and an address",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:ʺsupportʺᐸx@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose to's local part has a run of U+13441 EGYPTIAN HIEROGLYPH FULL BLANK, a letter that shows as a blank as wide as a letter does, which would push the domain after it out of what a mail client shows",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?to=support.paypal.com𓑁𓑁𓑁@evil.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose address's local part has an e acute, a letter beyond ASCII, as an internationalized address's may: an address is ASCII, as no property of Unicode's tells such a letter from those that look like a delimiter of an address or show as a blank",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:élodie@xn--caf-dma.example"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "link",
+      "pointer": "/content/0/content/0/marks/0/attrs/href",
+      "schema_accepts": true
+    },
+    {
+      "note": "a mailto link whose cc escapes Chinese letters in a local part",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "x",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "mailto:keeper@example.com?cc=%E7%94%A8%E6%88%B7@example.com"
                     }
                   }
                 ]
