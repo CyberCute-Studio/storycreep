@@ -169,13 +169,15 @@ func TestVariableRefusals(t *testing.T) {
 			api.CodeInvalidRequest, "body", ""},
 		{[]wireCommand{create("far", "float", json.RawMessage("1"+strings.Repeat("0", 1000)+"e-500"))},
 			http.StatusUnprocessableEntity, api.CodeValidationFailed, "body.commands[0].payload.default", ""},
-		// A number written with more digits after its point than the operation
-		// log holds, its exponent counted, or with an exponent beyond what it
-		// reads, is refused at its default.
-		{[]wireCommand{create("near", "float", json.RawMessage("1e-16384"))}, http.StatusUnprocessableEntity,
+		// A number written with more than 64 characters, or with an exponent
+		// beyond ±999, is refused at its default, though it reads as a value of
+		// the type.
+		{[]wireCommand{create("near", "float", json.RawMessage("1e-1000"))}, http.StatusUnprocessableEntity,
 			api.CodeValidationFailed, "body.commands[0].payload.default", ""},
 		{[]wireCommand{create("zero", "int", json.RawMessage("0e1073741824"))}, http.StatusUnprocessableEntity,
 			api.CodeValidationFailed, "body.commands[0].payload.default", ""},
+		{[]wireCommand{create("long", "int", json.RawMessage("3."+strings.Repeat("0", 63)))},
+			http.StatusUnprocessableEntity, api.CodeValidationFailed, "body.commands[0].payload.default", ""},
 		{[]wireCommand{variableCommand("variable.set_scope", map[string]string{"id": taken, "scope": "board",
 			"board_id": newBoardID()})}, http.StatusUnprocessableEntity, api.CodeValidationFailed,
 			"body.commands[0].payload.board_id", ""},
