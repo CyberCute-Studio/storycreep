@@ -162,21 +162,25 @@ func TestVariableRefusals(t *testing.T) {
 		{[]wireCommand{create("count", "int", []int{3})}, http.StatusUnprocessableEntity, api.CodeValidationFailed,
 			"body.commands[0].payload.default", ""},
 		// A number beyond a double's range is refused as the API reads the
-		// body, before a command reads its default, unless it is written with
-		// so many digits that the body's reader takes it for one within the
-		// range, which its default's check reads exactly.
+		// body, before a command reads its default, as one written past the
+		// bounds' exponent is, unless it is written with so many digits, more
+		// than 327 characters, that the body's reader takes it for one within
+		// the range, which its default's check refuses as written past the
+		// bounds.
 		{[]wireCommand{create("far", "float", json.RawMessage("-1e400"))}, http.StatusBadRequest,
+			api.CodeInvalidRequest, "body", ""},
+		{[]wireCommand{create("far", "float", json.RawMessage("1e1000"))}, http.StatusBadRequest,
 			api.CodeInvalidRequest, "body", ""},
 		{[]wireCommand{create("far", "float", json.RawMessage("1"+strings.Repeat("0", 1000)+"e-500"))},
 			http.StatusUnprocessableEntity, api.CodeValidationFailed, "body.commands[0].payload.default", ""},
-		// A number written with more than 64 characters, or with an exponent
+		// A number written with more than 327 characters, or with an exponent
 		// beyond ±999, is refused at its default, though it reads as a value of
 		// the type.
 		{[]wireCommand{create("near", "float", json.RawMessage("1e-1000"))}, http.StatusUnprocessableEntity,
 			api.CodeValidationFailed, "body.commands[0].payload.default", ""},
 		{[]wireCommand{create("zero", "int", json.RawMessage("0e1073741824"))}, http.StatusUnprocessableEntity,
 			api.CodeValidationFailed, "body.commands[0].payload.default", ""},
-		{[]wireCommand{create("long", "int", json.RawMessage("3."+strings.Repeat("0", 63)))},
+		{[]wireCommand{create("long", "int", json.RawMessage("3."+strings.Repeat("0", 326)))},
 			http.StatusUnprocessableEntity, api.CodeValidationFailed, "body.commands[0].payload.default", ""},
 		{[]wireCommand{variableCommand("variable.set_scope", map[string]string{"id": taken, "scope": "board",
 			"board_id": newBoardID()})}, http.StatusUnprocessableEntity, api.CodeValidationFailed,

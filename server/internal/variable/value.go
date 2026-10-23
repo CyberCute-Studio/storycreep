@@ -46,17 +46,22 @@ const (
 // Bounds of how a default's number is written, whatever its value
 // (formProblem). No int or float needs more: the shortest form of each, as
 // JSON.stringify writes it, has 24 characters at most, and an exponent of 3
-// digits at most. Within them, every way of writing a number is read
-// exactly, by strconv.ParseFloat, which misreads an exponent of more than 5
-// digits or more than 800 digits before a point, and is held by the operation
-// log, which keeps a payload's default as the client wrote it, in jsonb,
-// whose numbers PostgreSQL's numeric holds only within an exponent of
-// ±(2^30 − 1) and 16,383 digits after the point, its exponent counted, so
-// that no spelling of a number reaches either limit.
+// digits at most, and PostgreSQL's jsonb, which holds the operation log's
+// inverses, whose steps an undo sends as they are read back, writes it back
+// as a plain decimal, without an exponent, of 327 characters at most:
+// -5e-324 as -0. and 324 digits, the most that the shortest form of a double
+// has after its point, since no two doubles are nearer than 2^-1074, about
+// 4.9e-324, and -1.7976931348623157e308 as 310. Within the bounds, every way
+// of writing a number is read exactly, by strconv.ParseFloat, which misreads
+// an exponent of more than 5 digits or more than 800 digits before a point,
+// and is held by the operation log, which keeps a payload's default as the
+// client wrote it, in jsonb, whose numbers PostgreSQL's numeric holds only
+// within an exponent of ±(2^30 − 1) and 16,383 digits after the point, its
+// exponent counted, so that no spelling of a number reaches either limit.
 const (
 	// maxNumberLength is the most characters that a number may be written
 	// with, its sign, its point, and its exponent included.
-	maxNumberLength = 64
+	maxNumberLength = 327
 	// maxExponent is the greatest exponent, either way, that a number may be
 	// written with, as 1e-999 is, past a double's range in both directions.
 	maxExponent = 999
@@ -141,19 +146,32 @@ func Zero(typ string) Value {
 // without escaping <, >, and & (PRD §6.2). None, the zero Value, is the
 // type's zero value (Zero).
 func (v Value) Of(typ string) (Value, string) {
-	return v.of(typ, true)
+	return v.of(typ, checks{text: true, length: true})
+}
+
+// checks are what of checks of a value beyond what its type takes, which a
+// command's default passes, and a stored one need not.
+type checks struct {
+	// text checks a string's characters and its length (input.CheckText).
+	text bool
+	// length checks that a number is written with at most maxNumberLength
+	// characters (formProblem).
+	length bool
 }
 
 // of returns v as a value of the type typ as Of does, but checks a string's
-// characters and its length (input.CheckText) only if checked is set. A
-// default that the database holds is read without that check (stored): the
-// database's own check holds it to the length, but not to the characters, so
-// that a change of what input.CheckText takes, or a row that the pipeline did
-// not write, leaves the project's variables readable. A command that sets a
+// characters and its length, and a number's length, only as c says. A
+// default that the database holds is read without either (stored): the
+// database's own check holds it to its type and a string to its length, but
+// not to its characters, and jsonb writes a number back without an exponent,
+// which ParseFloat and integer read exactly however long it is, a float's
+// having at most 309 digits before its point, so that a change of what
+// input.CheckText or the bounds take, or a row that the pipeline did not
+// write, leaves the project's variables readable. A command that sets a
 // default, the undo of a change of one among them, checks it whole as it
 // applies (Of); variable.retype's payload check, which the step of an undo
 // passes too, checks it without its characters.
-func (v Value) of(typ string, checked bool) (Value, string) {
+func (v Value) of(typ string, c checks) (Value, string) {
 	if v.raw == nil {
 		return Zero(typ), ""
 	}
@@ -165,11 +183,11 @@ func (v Value) of(typ string, checked bool) (Value, string) {
 	case kind == "":
 		return Value{}, "is neither a boolean, a number, nor a string"
 	case (typ == TypeInt || typ == TypeFloat) && kind == "number":
-		return number(typ, raw)
+		return number(typ, raw, c.length)
 	case typ == TypeBool && kind == "boolean":
 		return Value{raw: json.RawMessage(raw)}, ""
 	case typ == TypeString && kind == "string":
-		return text(v.raw, checked)
+		return text(v.raw, c.text)
 	case !slices.Contains(types, typ):
 		return Value{}, fmt.Sprintf("is a value of the type %q, which is no variable's type", typ)
 	}
@@ -191,9 +209,9 @@ func kindOf(raw string) string {
 }
 
 // number returns raw, a JSON number, as a value of the type typ, int or
-// float, as Of does.
-func number(typ, raw string) (Value, string) {
-	if problem := formProblem(raw); problem != "" {
+// float, as Of does, but checks its length only if length is set.
+func number(typ, raw string, length bool) (Value, string) {
+	if problem := formProblem(raw, length); problem != "" {
 		return Value{}, problem
 	}
 	if typ == TypeInt {
@@ -203,9 +221,11 @@ func number(typ, raw string) (Value, string) {
 		}
 		return Value{raw: json.RawMessage(strconv.FormatInt(n, 10))}, ""
 	}
-	// Within formProblem's bounds, ParseFloat reads the number exactly, and
-	// returns an error only for one beyond a double's range, which it reads
-	// as an infinity; one too small for a double it reads as 0.
+	// Within formProblem's bounds, or written without an exponent, as jsonb
+	// writes a stored float, of at most 309 digits before its point,
+	// ParseFloat reads the number exactly, and returns an error only for one
+	// beyond a double's range, which it reads as an infinity; one too small
+	// for a double it reads as 0.
 	f, err := strconv.ParseFloat(raw, 64)
 	if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
 		return Value{}, "is beyond the range of a float, a double, which holds no number greater than about 1.8e308"
@@ -222,26 +242,27 @@ func number(typ, raw string) (Value, string) {
 }
 
 // formProblem says why raw, a JSON number, is not written within the bounds
-// of a default's number, more than maxNumberLength characters or an exponent
-// beyond ±maxExponent, whatever its value, or returns "" if it is. The
-// exponent is read without its leading zeros, which the length bounds.
-func formProblem(raw string) string {
+// of a default's number, more than maxNumberLength characters, if length is
+// set, or an exponent beyond ±maxExponent, whatever its value, or returns ""
+// if it is. The exponent is read without its leading zeros, however many.
+func formProblem(raw string, length bool) string {
 	exponent := ""
 	if i := strings.IndexAny(raw, "eE"); i >= 0 {
 		exponent = strings.TrimLeft(strings.TrimLeft(raw[i+1:], "+-"), "0")
 	}
-	if n, err := strconv.Atoi(exponent); len(raw) > maxNumberLength || exponent != "" &&
+	if n, err := strconv.Atoi(exponent); length && len(raw) > maxNumberLength || exponent != "" &&
 		(err != nil || n > maxExponent) {
 		return fmt.Sprintf("is written with more than %d characters, or with an exponent beyond ±%d, which no int "+
-			"or float needs to be, whose shortest form has 24 characters at most", maxNumberLength, maxExponent)
+			"or float needs to be: the longest, -5e-324 written without an exponent, has %[1]d", maxNumberLength,
+			maxExponent)
 	}
 	return ""
 }
 
 // integer returns the value of raw, a JSON number that formProblem took, if
 // it is an integer from -MaxInt to MaxInt, or says why it is not one. It
-// reads raw as a decimal, exactly, so that a number that rounds to an integer
-// as a double, as 4503599627370495.5, is not one.
+// reads raw as a decimal, exactly, however long it is, so that a number that
+// rounds to an integer as a double, as 4503599627370495.5, is not one.
 func integer(raw string) (int64, string) {
 	const notInteger = "is not an integer, which an int's default is"
 	// MaxInt is converted to int64, the type that holds it on every
@@ -259,9 +280,10 @@ func integer(raw string) (int64, string) {
 		return 0, ""
 	}
 	// The value is digits times ten to the power of shift. formProblem took
-	// the exponent, which is within ±maxExponent, and the number, of at most
-	// maxNumberLength characters; Atoi reads the exponent's sign and its
-	// leading zeros, and none as 0.
+	// the exponent, which is within ±maxExponent, so that shift is bounded by
+	// the number's length, which is checked against MaxInt's before zeros are
+	// added; Atoi reads the exponent's sign and its leading zeros, and none as
+	// 0.
 	e, _ := strconv.Atoi(exponent)
 	shift := e - len(fraction)
 	for strings.HasSuffix(digits, "0") {

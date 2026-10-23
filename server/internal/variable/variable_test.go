@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -452,17 +454,17 @@ func TestDefaults(t *testing.T) {
 	_, err := f.apply(t, newVariable("refused", map[string]any{"type": "float",
 		"default": json.RawMessage("1e400")}))
 	invalidAt(t, err, "payload")
-	// A number written with more than 64 characters, or with an exponent
+	// A number written with more than 327 characters, or with an exponent
 	// beyond ±999, is refused at the default, though it reads as a value of
 	// the type; one at each bound is taken, and the operation log holds it
 	// (TestLogHoldsNumbers).
-	long := "0." + strings.Repeat("0", 63)
+	long := "0." + strings.Repeat("0", 326)
 	for _, c := range []struct{ typ, def string }{{"float", "1e-1000"}, {"int", "0e1000"}, {"int", long},
 		{"int", "0e1073741824"}, {"float", "-0.0E+99999999999"}, {"float", "1e-16384"}} {
 		_, err = f.apply(t, newVariable("refused", map[string]any{"type": c.typ, "default": json.RawMessage(c.def)}))
 		invalidAt(t, err, "payload.default")
 	}
-	for _, c := range []struct{ typ, def string }{{"float", "1e-999"}, {"int", "0e999"}, {"int", long[:64]},
+	for _, c := range []struct{ typ, def string }{{"float", "1e-999"}, {"int", "0e999"}, {"int", long[:327]},
 		{"float", "-0.0e+999"}} {
 		v := f.create(t, "v_"+strings.ReplaceAll(ids.New().String(), "-", ""),
 			map[string]any{"type": c.typ, "default": json.RawMessage(c.def)})
@@ -541,10 +543,13 @@ func TestDefaults(t *testing.T) {
 // TestLogHoldsNumbers checks, against PostgreSQL, that the operation log's
 // jsonb, which keeps a payload's default as the client wrote it, holds every
 // number that an int's or a float's default takes, however it is written:
-// the longest mantissas, of 59 characters, with the greatest exponents
+// the longest mantissas, of 322 characters, with the greatest exponents
 // either way, of ±999, as numeric's limits, an exponent within ±(2^30 − 1)
 // and at most 16,383 digits after the point, its exponent counted, are far
-// past what the bounds let a number be written with.
+// past what the bounds let a number be written with. It checks too that jsonb
+// writes a float's default back as strconv.FormatFloat writes it with the
+// format 'f', which TestPlainDecimals checks is within the bounds for
+// doubles of every binary exponent.
 //
 // Verifies: FR-VAR-01/AC2
 func TestLogHoldsNumbers(t *testing.T) {
@@ -552,8 +557,8 @@ func TestLogHoldsNumbers(t *testing.T) {
 	ctx := context.Background()
 	conn := dbtest.New(t).Admin(t)
 	mantissas := []string{"0", "-0", "0.0", "1", "-1.5", "3.000", "9007199254740991",
-		"-0." + strings.Repeat("0", 55) + "1", "1" + strings.Repeat("0", 58), "9." + strings.Repeat("9", 56),
-		"0." + strings.Repeat("0", 56)}
+		"-0." + strings.Repeat("0", 318) + "1", "1" + strings.Repeat("0", 321), "9." + strings.Repeat("9", 320),
+		"0." + strings.Repeat("0", 320)}
 	exponents := []string{"", "e0", "E+5", "e-1", "e999", "e+999", "e-999", "E-0999"}
 	for _, m := range mantissas {
 		for _, e := range exponents {
@@ -568,6 +573,67 @@ func TestLogHoldsNumbers(t *testing.T) {
 					t.Errorf("a %s's default takes %s, which jsonb does not hold: %v", typ, raw, err)
 				}
 			}
+		}
+	}
+	for _, f := range []float64{-5e-324, 2.2250738585072014e-308, -1.2345678901234567e-300, 1e-7, 0.1, 2.5,
+		9007199254740993, 1e21, 1.2345678901234567e+200, -math.MaxFloat64} {
+		var written string
+		if err := conn.QueryRow(ctx, "SELECT $1::text::jsonb::text", string(must(json.Marshal(f)))).Scan(
+			&written); err != nil {
+			t.Fatal(err)
+		}
+		if want := strconv.FormatFloat(f, 'f', -1, 64); written != want {
+			t.Errorf("jsonb writes %v back as %s, want %s", f, written, want)
+		}
+	}
+}
+
+// TestStoredNumbers checks that a float's default that PostgreSQL writes back
+// longer than its canonical form, as its jsonb writes every number without an
+// exponent, 1e+100 as 1 and 100 zeros, and -5e-324 with 327 characters, is
+// read as the default that was set, by the reads and by the state of a
+// revision_conflict, and that the undo of a change of it, whose inverse the
+// operation log writes back alike, sets it back, as does the undo of a retype.
+// A stored number that a row that the pipeline did not write holds is read
+// whatever it is written as, as a float's 1e-999, which jsonb writes with
+// 1,001 characters, and an int's 3.000.
+//
+// Verifies: FR-VAR-01/AC2
+func TestStoredNumbers(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	for _, def := range []string{"1e+100", "-1.7976931348623157e+308", "5e-324", "-5e-324",
+		"-2.2250738585072014e-308", "1.2345678901234567e-48"} {
+		key := "v_" + strings.ReplaceAll(ids.New().String(), "-", "")
+		v := f.create(t, key, map[string]any{"type": "float", "default": json.RawMessage(def)})
+		check := func(what string) {
+			t.Helper()
+			got := f.get(t, v.ID)
+			if d := string(must(json.Marshal(got.Default))); got.Type != "float" || d != def {
+				t.Errorf("%s, the float created with %s is a %s with %s", what, def, got.Type, d)
+			}
+		}
+		check("created")
+		if keys := f.list(t); !slices.Contains(keys, key) {
+			t.Errorf("with a float of %s, the project lists %v", def, keys)
+		}
+		f.undo(t, f.must(t, cmd{variable.SetDefault, map[string]any{"id": v.ID, "default": 2}}).Seq)
+		check("after the undo of a change of its default")
+		f.undo(t, f.must(t, cmd{variable.Retype, map[string]any{"id": v.ID, "type": "int", "default": 3}}).Seq)
+		check("after the undo of a retype")
+		if d := string(must(json.Marshal(f.conflictState(t, v.ID, 1).Default))); d != def {
+			t.Errorf("the state of a conflict of the float created with %s has %s", def, d)
+		}
+	}
+	for _, c := range []struct{ typ, stored, want string }{{"float", "1e-999", "0"}, {"int", "3.000", "3"},
+		{"float", "-1" + strings.Repeat("0", 308) + ".5", "-1e+308"}} {
+		v := f.create(t, "v_"+strings.ReplaceAll(ids.New().String(), "-", ""), map[string]any{"type": c.typ})
+		if _, err := f.d.Admin(t).Exec(context.Background(), "UPDATE variable SET default_value = $1::text::jsonb "+
+			"WHERE id = $2", c.stored, decodeID(t, ids.Variable, v.ID)); err != nil {
+			t.Fatal(err)
+		}
+		if got := string(must(json.Marshal(f.get(t, v.ID).Default))); got != c.want {
+			t.Errorf("a %s that holds %s is read as %s, want %s", c.typ, c.stored, got, c.want)
 		}
 	}
 }

@@ -125,11 +125,12 @@ func variableOf(v queries.Variable) (Variable, error) {
 
 // stored returns the default of the variable v, as the database holds it, in
 // its canonical form, as the API shows it and as the inverse of a change of
-// it sets it back, without checking its characters again (Value.of), or an
+// it sets it back, without checking its characters or its number's length
+// again (Value.of), since jsonb writes 1e+100 back as 1 and 100 zeros, or an
 // error if it is not a value of its type, which the database's check keeps
 // from it.
 func stored(v queries.Variable) (Value, error) {
-	def, problem := Value{raw: json.RawMessage(v.DefaultValue)}.of(v.Type, false)
+	def, problem := Value{raw: json.RawMessage(v.DefaultValue)}.of(v.Type, checks{})
 	if problem != "" {
 		return Value{}, fmt.Errorf("variable: the default of the variable %s %s", ids.Encode(ids.Variable,
 			v.ID.Bytes), problem)

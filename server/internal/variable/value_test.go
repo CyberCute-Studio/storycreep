@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"math/rand/v2"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -54,11 +56,16 @@ func TestValueOf(t *testing.T) {
 		{TypeFloat, "-0e999", "0"},
 		{TypeFloat, "4.9e-324", "5e-324"},
 		{TypeInt, "-0e-999", "0"},
-		// The longest that a number may be written with, 64 characters.
-		{TypeInt, "3." + strings.Repeat("0", 62), "3"},
-		{TypeFloat, "-0." + strings.Repeat("0", 56) + "1e57", "-1"},
+		// The longest that a number may be written with, 327 characters.
+		{TypeInt, "3." + strings.Repeat("0", 325), "3"},
+		{TypeFloat, "-0." + strings.Repeat("0", 319) + "1e320", "-1"},
 		{TypeFloat, "1e21", "1e+21"},
 		{TypeFloat, "1.7976931348623157e308", "1.7976931348623157e+308"},
+		// As PostgreSQL's jsonb writes a float's default back, without an
+		// exponent, the longest, -5e-324, with 327 characters among them.
+		{TypeFloat, "-0." + strings.Repeat("0", 323) + "5", "-5e-324"},
+		{TypeFloat, "-17976931348623157" + strings.Repeat("0", 292), "-1.7976931348623157e+308"},
+		{TypeFloat, "1" + strings.Repeat("0", 100), "1e+100"},
 		{TypeFloat, "9007199254740993", "9007199254740992"},
 		{TypeString, `""`, `""`},
 		{TypeString, `"Elara"`, `"Elara"`},
@@ -89,10 +96,11 @@ func TestValueOf(t *testing.T) {
 		{TypeFloat, "1e400"},
 		{TypeFloat, "-1e400"},
 		{TypeFloat, "1e999"},
-		// Written past the bounds, more than 64 characters or an exponent
+		// Written past the bounds, more than 327 characters or an exponent
 		// beyond ±999, though each reads as a value of its type.
-		{TypeInt, "3." + strings.Repeat("0", 63)},
-		{TypeFloat, "3." + strings.Repeat("0", 63)},
+		{TypeInt, "3." + strings.Repeat("0", 326)},
+		{TypeFloat, "3." + strings.Repeat("0", 326)},
+		{TypeFloat, "-0." + strings.Repeat("0", 324) + "5"},
 		{TypeInt, "0e1000"},
 		{TypeFloat, "0e-1000"},
 		{TypeFloat, "1E-1000"},
@@ -133,6 +141,23 @@ func TestValueOf(t *testing.T) {
 		string(got.raw) != `"\\ud800"` {
 		t.Errorf(`"\\ud800" is %s, %q`, got.raw, problem)
 	}
+	// A stored default is read without the bound of a number's length, as
+	// jsonb writes a float of 1e-999 or an int of 3.000... back, without an
+	// exponent, but not without that of its exponent, which jsonb never
+	// writes.
+	for _, c := range []struct{ typ, in, want string }{
+		{TypeFloat, "0." + strings.Repeat("0", 998) + "1", "0"},
+		{TypeFloat, "-1" + strings.Repeat("0", 308) + "." + strings.Repeat("9", 2000), "-1e+308"},
+		{TypeInt, "3." + strings.Repeat("0", 2000), "3"},
+		{TypeInt, "9007199254740991" + "." + strings.Repeat("0", 500), "9007199254740991"},
+		{TypeInt, "1" + strings.Repeat("0", 500), ""},
+		{TypeInt, "1e1000", ""},
+	} {
+		got, problem := Value{raw: json.RawMessage(c.in)}.of(c.typ, checks{})
+		if c.want == "" && problem == "" || c.want != "" && (problem != "" || string(got.raw) != c.want) {
+			t.Errorf("the stored %s %s is %s, %q; want %q", c.typ, c.in, got.raw, problem, c.want)
+		}
+	}
 }
 
 // FuzzNumberValue checks that a default's number is read exactly: a JSON
@@ -152,7 +177,7 @@ func FuzzNumberValue(f *testing.F) {
 		}
 		gotInt, intProblem := Value{raw: json.RawMessage(raw)}.Of(TypeInt)
 		gotFloat, floatProblem := Value{raw: json.RawMessage(raw)}.Of(TypeFloat)
-		if formProblem(raw) != "" {
+		if formProblem(raw, true) != "" {
 			if intProblem == "" || floatProblem == "" {
 				t.Errorf("%s, past the bounds, is taken as the int %s or the float %s", raw, gotInt.raw, gotFloat.raw)
 			}
@@ -195,7 +220,7 @@ func numberProblem(raw string, want *big.Rat, gotInt Value, intProblem string, g
 	return ""
 }
 
-// TestNumberForms checks that a number written within the bounds, at most 64
+// TestNumberForms checks that a number written within the bounds, at most 327
 // characters and an exponent within ±999, is read exactly, however it is
 // written, the longest mantissas with the greatest exponents either way
 // among them, as math/big reads it (numberProblem), and that one written past
@@ -206,11 +231,12 @@ func numberProblem(raw string, want *big.Rat, gotInt Value, intProblem string, g
 // Verifies: FR-VAR-01/AC2
 func TestNumberForms(t *testing.T) {
 	t.Parallel()
-	// The mantissas leave 5 characters of the 64 for the longest exponent,
+	// The mantissas leave 5 characters of the 327 for the longest exponent,
 	// e-999, as the longest number has them.
 	mantissas := []string{"0", "-0", "0.0", "1", "-1.5", "3.000", "9007199254740991", "9007199254740993",
-		"1.7976931348623157", "2.2250738585072011", "4.9406564584124654", "-0." + strings.Repeat("0", 55) + "1",
-		"1" + strings.Repeat("0", 58), "9." + strings.Repeat("9", 56), "4503599627370495.5"}
+		"1.7976931348623157", "2.2250738585072011", "4.9406564584124654", "-0." + strings.Repeat("0", 318) + "1",
+		"1" + strings.Repeat("0", 321), "9." + strings.Repeat("9", 320), "4503599627370495.5",
+		"0." + strings.Repeat("0", 320), "-0." + strings.Repeat("0", 318) + "5"}
 	exponents := []string{"", "e0", "E+5", "e-1", "e-15", "e15", "e16", "e308", "e309", "e-308", "e-324", "e-325",
 		"e+999", "e-999", "e0999", "e1000", "e-1000", "e99999999999"}
 	for _, m := range mantissas {
@@ -218,7 +244,7 @@ func TestNumberForms(t *testing.T) {
 			raw := m + e
 			gotInt, intProblem := Value{raw: json.RawMessage(raw)}.Of(TypeInt)
 			gotFloat, floatProblem := Value{raw: json.RawMessage(raw)}.Of(TypeFloat)
-			if formProblem(raw) != "" {
+			if formProblem(raw, true) != "" {
 				if intProblem == "" || floatProblem == "" {
 					t.Errorf("%s, past the bounds, is taken as the int %s or the float %s", raw, gotInt.raw,
 						gotFloat.raw)
@@ -234,15 +260,54 @@ func TestNumberForms(t *testing.T) {
 			}
 		}
 	}
-	// The bounds' edges: 64 characters and 999 either way are within them,
-	// 65 characters and 1000 past them.
+	// The bounds' edges: 327 characters and 999 either way are within them,
+	// 328 characters and 1000 past them.
 	for raw, within := range map[string]bool{
-		"1." + strings.Repeat("0", 62): true, "1." + strings.Repeat("0", 63): false, "1e999": true,
+		"1." + strings.Repeat("0", 325): true, "1." + strings.Repeat("0", 326): false, "1e999": true,
 		"1e-999": true, "0e+000999": true, "1e1000": false, "1e-1000": false, "1E+01000": false,
 	} {
-		if got := formProblem(raw) == ""; got != within {
+		if got := formProblem(raw, true) == ""; got != within {
 			t.Errorf("%s is within the bounds: %t, want %t", raw, got, within)
 		}
+	}
+}
+
+// TestPlainDecimals checks that a float's default, as PostgreSQL's jsonb
+// writes it back, without an exponent, as strconv.FormatFloat writes it with
+// the format 'f', which TestStoredNumbers checks against PostgreSQL, is
+// written within the bounds, and is read as the default again, for doubles of
+// every binary exponent, either sign, the least and the greatest of each, and
+// others, the longest, -5e-324, among them, so that the undo of a change of a
+// default, whose inverse the operation log writes back alike, is taken.
+//
+// Verifies: FR-VAR-01/AC2
+func TestPlainDecimals(t *testing.T) {
+	t.Parallel()
+	r := rand.New(rand.NewPCG(33, 7))
+	longest := 0
+	for exponent := range uint64(0x7FF) {
+		for i := range 64 {
+			mantissa := r.Uint64() & (1<<52 - 1)
+			if extremes := []uint64{0, 1, 1<<52 - 1}; i < len(extremes) {
+				mantissa = extremes[i]
+			}
+			for _, sign := range []uint64{0, 1 << 63} {
+				f := math.Float64frombits(sign | exponent<<52 | mantissa)
+				plain := strconv.FormatFloat(f, 'f', -1, 64)
+				longest = max(longest, len(plain))
+				if f == 0 {
+					f = 0
+				}
+				want, _ := json.Marshal(f)
+				if got, problem := (Value{raw: json.RawMessage(plain)}).Of(TypeFloat); problem != "" ||
+					string(got.raw) != string(want) {
+					t.Errorf("%s, of %s, is %s, %q", plain, want, got.raw, problem)
+				}
+			}
+		}
+	}
+	if longest != maxNumberLength {
+		t.Errorf("the longest plain decimal of a double has %d characters, want %d", longest, maxNumberLength)
 	}
 }
 
