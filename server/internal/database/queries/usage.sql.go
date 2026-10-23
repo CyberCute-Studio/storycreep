@@ -214,6 +214,27 @@ func (q *Queries) MemberDrift(ctx context.Context, workspaceID pgtype.UUID) (int
 	return drift, err
 }
 
+const nodeDrift = `-- name: NodeDrift :one
+SELECT (
+    (SELECT count(*) FROM live_node n JOIN project p ON p.workspace_id = n.workspace_id AND p.id = n.project_id
+        WHERE n.workspace_id = $1 AND p.deleted_at IS NULL)
+    - coalesce((SELECT c.value FROM usage_counter c WHERE c.workspace_id = $1 AND c.key = 'nodes'), 0)
+    - coalesce((SELECT sum(d.delta) FROM usage_delta d WHERE d.workspace_id = $1 AND d.key = 'nodes'),
+        0)
+)::bigint AS drift
+`
+
+// NodeDrift returns how many nodes the workspace's projects have that are in
+// no trash, neither their project's, deleted themselves or with their board,
+// nor, with their project, the workspace's, less its usage of nodes: what
+// reconciliation adds to its usage so that the usage is the count again.
+func (q *Queries) NodeDrift(ctx context.Context, workspaceID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, nodeDrift, workspaceID)
+	var drift int64
+	err := row.Scan(&drift)
+	return drift, err
+}
+
 const projectDrift = `-- name: ProjectDrift :one
 SELECT (
     (SELECT count(*) FROM project p

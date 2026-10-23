@@ -723,7 +723,8 @@ type Patch struct {
 // *commands.RevisionConflictError if p expects a revision that the project
 // does not have, and a *commands.RefusedError if the slug is not one, or the
 // entry names a board that the project does not have, in its trash or not,
-// and changes nothing then. A patch that names no change is
+// or a node that is not one of that board's, unless it keeps both, and
+// changes nothing then. A patch that names no change is
 // not applied, and returns the project, whatever revision it expects.
 func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID ids.UUID, p Patch) (Visible, error) {
 	var steps []commands.Step

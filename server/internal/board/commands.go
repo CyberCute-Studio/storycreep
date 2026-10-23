@@ -39,9 +39,10 @@ const (
 	// Move moves a board into a folder of boards, or to the top, at a place
 	// among the folder's children. Moving it back undoes it.
 	Move commands.Type = "board.move"
-	// Delete deletes a board to the project's trash, and Restore restores it,
-	// with the folders above it that were deleted since. Each undoes the
-	// other.
+	// Delete deletes a board to the project's trash, with its nodes, once
+	// it is confirmed if jumpers on other boards target its nodes, which it
+	// leaves dangling (FR-PROJ-02 AC2), and Restore restores it, with the
+	// folders above it that were deleted since. Each undoes the other.
 	Delete  commands.Type = "board.delete"
 	Restore commands.Type = "board.restore"
 )
@@ -94,6 +95,38 @@ type idPayload struct {
 	ID string `json:"id" doc:"The board's ID"`
 }
 
+// deletePayload is Delete's payload.
+type deletePayload struct {
+	ID      string `json:"id" doc:"The board's ID"`
+	Confirm bool   `json:"confirm,omitempty" doc:"Whether to delete the board even though jumpers on the project's other boards, which are not in its trash, target its nodes, which its deletion leaves dangling, never dropped, for the validation to report (PRD FR-PROJ-02 AC2). Without it, a board that such jumpers target is not deleted: the command is answered with 409 board_referenced, which lists them, as GET /api/v1/projects/{project_id}/boards/{board_id}/referenced-by does, for a client to warn of before it sends the command again with confirm."`
+}
+
+// MaxReferrers is the most jumpers that a refusal of a board's deletion
+// lists (ReferencedError).
+const MaxReferrers = 100
+
+// Referrer is a jumper that targets a node of a board that its deletion
+// would leave dangling, as a refusal of the deletion lists it.
+type Referrer struct {
+	ID      string `json:"id"`
+	BoardID string `json:"board_id"`
+	Title   string `json:"title"`
+}
+
+// ReferencedError is the reason of the refusal of a board's deletion that is
+// not confirmed while jumpers on the project's other boards, which are not
+// in its trash, target its nodes (FR-PROJ-02 AC2), which the API answers with
+// board_referenced: Count of them, the first MaxReferrers of which, in the
+// order of their IDs, are Jumpers.
+type ReferencedError struct {
+	Jumpers []Referrer
+	Count   int64
+}
+
+func (e *ReferencedError) Error() string {
+	return fmt.Sprintf("board: %d jumpers on other boards target the board's nodes", e.Count)
+}
+
 // registerBoards registers in r the board's commands, each of which changes
 // the project's draft, so that an API token needs project:write for it
 // (FR-AUTH-04), and its role "Create/rename/archive boards" (§5.6).
@@ -111,7 +144,7 @@ func registerBoards(r *commands.Registry) {
 			return append(errs, optionalID(ids.Folder, "folder_id", p.FolderID)...)
 		},
 		Inverse: func(_ context.Context, _ *commands.Tx, p createPayload) ([]commands.Step, error) {
-			return []commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}}, nil
+			return []commands.Step{{Type: Delete, Payload: deletePayload{ID: p.ID}}}, nil
 		},
 		Apply: applyCreate,
 	})
@@ -241,33 +274,19 @@ func registerBoards(r *commands.Registry) {
 		},
 	})
 
-	commands.Register(r, commands.Spec[idPayload]{
+	commands.Register(r, commands.Spec[deletePayload]{
 		Type: Delete, Capability: authz.ManageBoards, Scope: scope.ProjectWrite, Touches: board,
-		Check: func(p idPayload) input.FieldErrors { return entityID(ids.Board, "id", p.ID) },
+		Check: func(p deletePayload) input.FieldErrors { return entityID(ids.Board, "id", p.ID) },
 		// Deleting a board that is in the trash already does nothing, and
 		// its undo nothing either.
-		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
+		Inverse: func(ctx context.Context, tx *commands.Tx, p deletePayload) ([]commands.Step, error) {
 			b, err := anyBoard(ctx, tx, p.ID)
 			if err != nil || b.DeletedAt.Valid {
 				return []commands.Step{}, err
 			}
 			return []commands.Step{{Type: Restore, Payload: idPayload{ID: p.ID}}}, nil
 		},
-		Apply: func(ctx context.Context, tx *commands.Tx, p idPayload) error {
-			b, err := anyBoard(ctx, tx, p.ID)
-			if err != nil {
-				return err
-			}
-			rev, err := queries.New(tx).TrashBoard(ctx, queries.TrashBoardParams{UpdatedBy: by(tx),
-				WorkspaceID: b.WorkspaceID, ProjectID: b.ProjectID, ID: b.ID})
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
-			}
-			if err := changed(tx, ids.Board, b.ID)(rev, err); err != nil {
-				return err
-			}
-			return tx.AddUsage(usage.Boards, -1)
-		},
+		Apply: applyDelete,
 	})
 
 	commands.Register(r, commands.Spec[idPayload]{
@@ -297,7 +316,10 @@ func registerBoards(r *commands.Registry) {
 			if err != nil {
 				return nil, err
 			}
-			steps := []commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}}
+			// The undo returns the board to the trash that its deletion, which
+			// was confirmed if it had to be, put it in, so it confirms the
+			// deletion again.
+			steps := []commands.Step{{Type: Delete, Payload: deletePayload{ID: p.ID, Confirm: true}}}
 			return append(append(steps, DeleteFolderSteps(deleted)...), DeleteFolderSteps(above)...), nil
 		},
 		Apply: func(ctx context.Context, tx *commands.Tx, p idPayload) error {
@@ -332,9 +354,72 @@ func registerBoards(r *commands.Registry) {
 			if err := changed(tx, ids.Board, b.ID)(rev, err); err != nil {
 				return err
 			}
-			return tx.AddUsage(usage.Boards, 1)
+			if err := tx.AddUsage(usage.Boards, 1); err != nil {
+				return err
+			}
+			// The board's nodes that are not deleted themselves come back with
+			// it, and count again.
+			nodes, err := q.BoardNodeCount(ctx, queries.BoardNodeCountParams{WorkspaceID: b.WorkspaceID,
+				ProjectID: b.ProjectID, BoardID: b.ID})
+			if err != nil {
+				return fmt.Errorf("board: count the board's nodes: %w", err)
+			}
+			return tx.AddUsage(usage.Nodes, nodes)
 		},
 	})
+}
+
+// applyDelete is Delete's Apply.
+func applyDelete(ctx context.Context, tx *commands.Tx, p deletePayload) error {
+	b, err := anyBoard(ctx, tx, p.ID)
+	if err != nil || b.DeletedAt.Valid {
+		return err
+	}
+	q := queries.New(tx)
+	// The jumpers on the project's other boards that target the board's
+	// nodes stay as they are, dangling, which a client warns of before it
+	// confirms the deletion (FR-PROJ-02 AC2).
+	if !p.Confirm {
+		count, err := q.BoardReferrerCount(ctx, queries.BoardReferrerCountParams{WorkspaceID: b.WorkspaceID,
+			ProjectID: b.ProjectID, BoardID: b.ID})
+		if err != nil {
+			return fmt.Errorf("board: count the jumpers that target the board: %w", err)
+		}
+		if count > 0 {
+			rows, err := q.BoardReferrers(ctx, queries.BoardReferrersParams{WorkspaceID: b.WorkspaceID,
+				ProjectID: b.ProjectID, BoardID: b.ID, MaxRows: MaxReferrers})
+			if err != nil {
+				return fmt.Errorf("board: list the jumpers that target the board: %w", err)
+			}
+			referenced := &ReferencedError{Jumpers: make([]Referrer, len(rows)), Count: count}
+			for i, row := range rows {
+				referenced.Jumpers[i] = Referrer{ID: ids.Encode(ids.Node, row.LiveNode.ID.Bytes),
+					BoardID: ids.Encode(ids.Board, row.LiveNode.BoardID.Bytes), Title: row.LiveNode.Title}
+			}
+			return commands.Refuse("confirm", fmt.Sprintf("is not set, but %d jumpers on the project's other boards "+
+				"target the board's nodes, which its deletion leaves dangling: confirm the deletion to delete it all "+
+				"the same", count), referenced)
+		}
+	}
+	// The board's nodes that are not deleted themselves are in the trash with
+	// it, and count no longer.
+	nodes, err := q.BoardNodeCount(ctx, queries.BoardNodeCountParams{WorkspaceID: b.WorkspaceID,
+		ProjectID: b.ProjectID, BoardID: b.ID})
+	if err != nil {
+		return fmt.Errorf("board: count the board's nodes: %w", err)
+	}
+	rev, err := q.TrashBoard(ctx, queries.TrashBoardParams{UpdatedBy: by(tx), WorkspaceID: b.WorkspaceID,
+		ProjectID: b.ProjectID, ID: b.ID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err := changed(tx, ids.Board, b.ID)(rev, err); err != nil {
+		return err
+	}
+	if err := tx.AddUsage(usage.Boards, -1); err != nil {
+		return err
+	}
+	return tx.AddUsage(usage.Nodes, -nodes)
 }
 
 // applyCreate is Create's Apply.

@@ -58,6 +58,13 @@ var tokenRoutes = map[api.Route]scope.Scope{
 		"{attribute_id}/conversion"}: scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/components"}:                scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/components/{component_id}"}: scope.ProjectRead,
+	// So are its nodes, which change through its commands, and the tags
+	// that they suggest.
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/boards/{board_id}/nodes"}:         scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/boards/{board_id}/referenced-by"}: scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/nodes/{node_id}"}:                 scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/nodes/{node_id}/referenced-by"}:   scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/tags"}:                            scope.ProjectRead,
 	// So is its trash, from which its commands restore what it holds.
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/trash"}: scope.ProjectRead,
 }

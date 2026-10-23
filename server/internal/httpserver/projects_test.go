@@ -610,8 +610,16 @@ func TestProjectFields(t *testing.T) {
 		http.StatusOK); got.Rev != 1 {
 		t.Errorf("after the refused changes, the project is %+v", got)
 	}
-	// An entry that names a node has its board, and an empty one removes it.
+	// An entry that names a node has its board, of which the node is, and
+	// an empty one removes it.
 	board = createBoard(t, s.main, owner, p.ID, "Harbour")
+	other := createBoard(t, s.main, owner, p.ID, "Pier")
+	for _, n := range []string{node, createNode(t, s.main, owner, p.ID, other, "element", nil)} {
+		wantProblem(t, "an entry of a node of no board or another board", call(s.main, http.MethodPatch,
+			projectPath(p.ID), jsonBody(t, map[string]any{"entry": map[string]string{"board_id": board, "node_id": n}}),
+			owner.header(true)), "body.entry.node_id")
+	}
+	node = createNode(t, s.main, owner, p.ID, board, "element", nil)
 	for _, entry := range []map[string]string{{"board_id": board, "node_id": node}, {}} {
 		got := projectFrom(t, call(s.main, http.MethodPatch, projectPath(p.ID),
 			jsonBody(t, map[string]any{"entry": entry}), owner.header(true)), http.StatusOK)

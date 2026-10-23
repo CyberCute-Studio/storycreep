@@ -1011,17 +1011,24 @@ func TestEntryBoard(t *testing.T) {
 	}
 	// An entry that keeps a board that does not exist, as one set before the
 	// boards were checked, is not refused for it, whatever the case of the
-	// letters of its ID.
+	// letters of its ID: a change of its node is refused for the node alone,
+	// which is no node of that board (package node, N43).
 	gone := strings.ToLower(boardID())
 	if _, err := f.d.Admin(t).Exec(ctx, `UPDATE project SET settings = jsonb_set(settings, '{entry}',
-		jsonb_build_object('board_id', $1::text)) WHERE id = $2`, gone, f.project); err != nil {
+		jsonb_build_object('board_id', $1::text, 'node_id', $2::text)) WHERE id = $3`, gone,
+		ids.Encode(ids.Node, ids.New()), f.project); err != nil {
 		t.Fatal(err)
 	}
-	node := ids.Encode(ids.Node, ids.New())
+	_, err = f.projects.Update(ctx, f.actor(), f.project, project.Patch{
+		Entry: &project.ProjectEntry{BoardID: strings.ToUpper(gone), NodeID: ids.Encode(ids.Node, ids.New())},
+	})
+	if r := refused(t, err); r.Field != "entry.node_id" {
+		t.Errorf("changing the node of an entry whose board does not exist was refused at %q", r.Field)
+	}
 	if _, err := f.projects.Update(ctx, f.actor(), f.project, project.Patch{
-		Entry: &project.ProjectEntry{BoardID: strings.ToUpper(gone), NodeID: node},
+		Entry: &project.ProjectEntry{BoardID: strings.ToUpper(gone)},
 	}); err != nil {
-		t.Errorf("changing the node of an entry whose board does not exist: %v", err)
+		t.Errorf("removing the node of an entry whose board does not exist: %v", err)
 	}
 }
 

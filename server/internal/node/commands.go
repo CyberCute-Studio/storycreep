@@ -1,0 +1,1007 @@
+package node
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
+	"github.com/CyberCute-Studio/storycreep/server/internal/board"
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
+	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
+)
+
+// The types of command of a node (PRD §5.7). Each names the node that it is
+// about by its ID, id, and applies to the node of the batch's project.
+const (
+	// Create creates a node of a board, whose ID the client makes, so that
+	// it can refer to the node before the server answers (FR-EDIT-02 AC1).
+	// Deleting it to the trash undoes it.
+	Create commands.Type = "node.create"
+	// Update changes the fields of a node that its payload names, and leaves
+	// the others as they are. Changing them back undoes it.
+	Update commands.Type = "node.update"
+	// Move moves nodes, as many as a selection holds, as one command
+	// (FR-EDIT-02 AC2). Moving them back undoes it.
+	Move commands.Type = "node.move"
+	// Duplicate creates a node, whose ID the client makes, as a copy of
+	// another of the same board at another position. Deleting it undoes it.
+	Duplicate commands.Type = "node.duplicate"
+	// Delete deletes a node to the project's trash, and Restore restores it.
+	// Each undoes the other.
+	Delete  commands.Type = "node.delete"
+	Restore commands.Type = "node.restore"
+	// SetBoardEntry changes the entry node of a board, the node where the
+	// flow starts when it enters the board without one, as by the project's
+	// entry. Changing it back undoes it.
+	SetBoardEntry commands.Type = "board.set_entry_node"
+)
+
+// createPayload is Create's payload.
+type createPayload struct {
+	ID                 string        `json:"id" doc:"The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	BoardID            string        `json:"board_id" doc:"The ID of the node's board, which is not in the project's trash, and which is fixed once the node is created"`
+	Type               string        `json:"type" enum:"element,branch,jumper" doc:"The node's type, which is fixed once it is created: an element, a line of dialogue or of narration; a branch, which picks the first of its outputs whose condition holds; or a jumper, which continues the flow at its target (PRD §5.8.5)"`
+	Kind               string        `json:"kind,omitempty" enum:"dialogue,narration" doc:"An element's kind: dialogue, which a speaker says, or narration. Without it, dialogue. Another type has none, and is answered with 422 validation_failed for one."`
+	Title              string        `json:"title,omitempty" maxLength:"200" doc:"The node's title, of at most 200 characters, without white space around it, and without control characters, bidirectional controls, and line separators among it. Without it, the node has none."`
+	Text               *richtext.Doc `json:"text,omitempty" doc:"An element's text, a rich-text document (PRD FR-TEXT-01). Without it, an empty paragraph. Another type has none."`
+	SpeakerComponentID string        `json:"speaker_component_id,omitempty" doc:"The ID of an element's speaker, a component of the project, in its trash or not. Without it, none. Another type has none."`
+	CoverAssetID       string        `json:"cover_asset_id,omitempty" doc:"The ID of an element's cover image, an asset of the project. Without it, none. Another type has none."`
+	Color              string        `json:"color,omitempty" enum:"none,red,orange,yellow,green,teal,blue,purple,pink,gray" doc:"The node's colour, none or a name of the palette that boards have. Without it, none."`
+	Tags               []string      `json:"tags,omitempty" maxItems:"32" doc:"The node's tags, at most 32, each of 1 to 50 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them, and no two the same tag but for their case, which tags are compared without, as Quest and quest are one tag. They are kept as they are written. Without them, none."`
+	Position           NodePosition  `json:"position" doc:"Where the node goes on its board's canvas"`
+	Size               *NodeSize     `json:"size,omitempty" doc:"The node's width and height. Without it, or with {}, the node has no size of its own, and the canvas lays it out by itself."`
+	IsEnding           bool          `json:"is_ending,omitempty" doc:"Whether the flow ends at the element (PRD §5.8.5). Without it, false. Another type may not."`
+	Target             *NodeTarget   `json:"target,omitempty" doc:"A jumper's target: a node of the project, in its trash or not, and that node's board, which may be the jumper's own. Without it, or with {}, the jumper has none, which the validation reports. Another type has none."`
+}
+
+// updatePayload is Update's payload. A field that it leaves out stays as it
+// is.
+type updatePayload struct {
+	ID                 string        `json:"id" doc:"The node's ID"`
+	Kind               *string       `json:"kind,omitempty" enum:"dialogue,narration" doc:"An element's new kind. Another type has none, and is answered with 422 validation_failed for one."`
+	Title              *string       `json:"title,omitempty" maxLength:"200" doc:"The node's new title, of at most 200 characters, which may be empty, without white space around it, and without control characters, bidirectional controls, and line separators among it"`
+	Text               *richtext.Doc `json:"text,omitempty" doc:"An element's new text, a rich-text document (PRD FR-TEXT-01), which may be an empty paragraph. Another type has none."`
+	SpeakerComponentID *string       `json:"speaker_component_id,omitempty" doc:"The ID of an element's new speaker, a component of the project, in its trash or not, or the speaker that it has, which may no longer exist, or the empty string for none. Another type has none."`
+	CoverAssetID       *string       `json:"cover_asset_id,omitempty" doc:"The ID of an element's new cover image, an asset of the project, or the empty string for none. Another type has none."`
+	Color              *string       `json:"color,omitempty" enum:"none,red,orange,yellow,green,teal,blue,purple,pink,gray" doc:"The node's new colour, none or a name of the palette that boards have"`
+	Tags               *[]string     `json:"tags,omitempty" maxItems:"32" doc:"The node's new tags, which replace its tags, as [] removes them: at most 32, each of 1 to 50 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them, and no two the same tag but for their case, which tags are compared without. They are kept as they are written."`
+	Size               *NodeSize     `json:"size,omitempty" doc:"The node's new width and height, or {} for no size of its own, which the canvas then lays the node out by itself for"`
+	IsEnding           *bool         `json:"is_ending,omitempty" doc:"Whether the flow ends at the element (PRD §5.8.5). Another type may not."`
+	Target             *NodeTarget   `json:"target,omitempty" doc:"A jumper's new target: a node of the project, in its trash or not, and that node's board, or the target that it has, which may no longer exist, or {} for none, which the validation reports. Another type has none."`
+}
+
+// NodePlace is where node.move moves a node to.
+type NodePlace struct {
+	ID       string       `json:"id" doc:"The node's ID"`
+	Position NodePosition `json:"position" doc:"Where the node goes on its board's canvas"`
+}
+
+// movePayload is Move's payload.
+type movePayload struct {
+	Nodes []NodePlace `json:"nodes" minItems:"1" maxItems:"10000" nullable:"false" doc:"The nodes that move, each once, at most 10000, of any of the project's boards that are not in its trash, each with where it goes. One that is there already stays as it is."`
+}
+
+// duplicatePayload is Duplicate's payload.
+type duplicatePayload struct {
+	ID       string       `json:"id" doc:"The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	SourceID string       `json:"source_id" doc:"The ID of the node that the new node is a copy of, which is not in the project's trash: the new node is of the same board, and has its type and every field of it but its position, its text, speaker, and target among them"`
+	Position NodePosition `json:"position" doc:"Where the new node goes on the board's canvas"`
+}
+
+// idPayload is the payload of a command that needs nothing but its node's
+// ID.
+type idPayload struct {
+	ID string `json:"id" doc:"The node's ID"`
+}
+
+// entryPayload is SetBoardEntry's payload.
+type entryPayload struct {
+	ID     string `json:"id" doc:"The board's ID"`
+	NodeID string `json:"node_id,omitempty" doc:"The ID of the board's new entry node, a node of the board, in the project's trash or not, or the entry node that the board has, which may no longer exist. Without it, the board has none."`
+}
+
+// Register registers in r the node as an entity of the pipeline, whose
+// revisions a command expects as it does any entity's, and its commands, each
+// of which changes the project's draft, so that an API token needs
+// project:write for it (FR-AUTH-04), and its role "Edit nodes, connections,
+// text, expressions" (§5.6), but board.set_entry_node, a change of a board,
+// which needs "Create/rename/archive boards", as the board's other commands
+// do, and which Register registers here, because it refers to a node, which
+// the board's registration (board.Register) knows nothing of. The node's
+// commands refer to its board and its speaker, so r has the board and the
+// component registered already (board.Register, component.Register).
+func Register(r *commands.Registry) {
+	commands.RegisterEntity(r, commands.Entity{
+		Kind: ids.Node,
+		Revs: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]int64, error) {
+			rows, err := queries.New(tx).NodeRevs(ctx, queries.NodeRevsParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+				ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)})
+			if err != nil {
+				return nil, err
+			}
+			out := make(map[ids.UUID]int64, len(rows))
+			for _, row := range rows {
+				out[row.ID.Bytes] = row.Rev
+			}
+			return out, nil
+		},
+		States: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]any, error) {
+			rows, err := queries.New(tx).NodesByID(ctx, queries.NodesByIDParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+				ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)})
+			if err != nil {
+				return nil, err
+			}
+			out := make(map[ids.UUID]any, len(rows))
+			for _, row := range rows {
+				n, err := nodeOf(row.Node)
+				if err != nil {
+					return nil, err
+				}
+				// A node of a board in the trash is in the trash with it, which
+				// its state says, as the state of an entity in the trash does,
+				// though only its board's deletion put it there.
+				if n.DeletedAt == nil && row.BoardDeletedAt.Valid {
+					n.DeletedAt = timeOf(row.BoardDeletedAt)
+				}
+				out[row.Node.ID.Bytes] = n
+			}
+			return out, nil
+		},
+	})
+
+	node := []ids.Kind{ids.Node}
+	op, sc := authz.EditContent, scope.ProjectWrite
+
+	commands.Register(r, commands.Spec[createPayload]{
+		Type: Create, Capability: op, Scope: sc, Touches: []ids.Kind{ids.Node, ids.Board, ids.Component},
+		Check: checkCreate,
+		CheckNew: func(p createPayload) input.FieldErrors {
+			return append(field("title", checkTitle(p.Title)), checkTags("tags", p.Tags)...)
+		},
+		Inverse: func(_ context.Context, _ *commands.Tx, p createPayload) ([]commands.Step, error) {
+			return []commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}}, nil
+		},
+		Apply: applyCreate,
+	})
+
+	commands.Register(r, commands.Spec[updatePayload]{
+		Type: Update, Capability: op, Scope: sc, Touches: []ids.Kind{ids.Node, ids.Board, ids.Component},
+		Check: checkUpdate,
+		// The step of the inverse writes back the stored title and tags,
+		// which the text rules may refuse (commands.Spec.CheckNew).
+		CheckNew: func(p updatePayload) input.FieldErrors {
+			var errs input.FieldErrors
+			if p.Title != nil {
+				errs = field("title", checkTitle(*p.Title))
+			}
+			if p.Tags != nil {
+				errs = append(errs, checkTags("tags", *p.Tags)...)
+			}
+			return errs
+		},
+		Inverse: func(ctx context.Context, tx *commands.Tx, p updatePayload) ([]commands.Step, error) {
+			n, _, err := planUpdate(ctx, tx, p)
+			if err != nil {
+				return nil, err
+			}
+			back, err := updateBack(n, p)
+			if err != nil {
+				return nil, err
+			}
+			return []commands.Step{{Type: Update, Payload: back}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p updatePayload) error {
+			n, next, err := planUpdate(ctx, tx, p)
+			if err != nil {
+				return err
+			}
+			next.UpdatedBy, next.WorkspaceID, next.ProjectID, next.ID = by(tx), n.WorkspaceID, n.ProjectID, n.ID
+			return changed(tx, n.ID)(queries.New(tx).UpdateNode(ctx, next))
+		},
+	})
+
+	commands.Register(r, commands.Spec[movePayload]{
+		Type: Move, Capability: op, Scope: sc, Touches: node,
+		Check: checkMove,
+		Inverse: func(ctx context.Context, tx *commands.Tx, p movePayload) ([]commands.Step, error) {
+			before, err := movedNodes(ctx, tx, p)
+			if err != nil {
+				return nil, err
+			}
+			var back movePayload
+			for i, place := range p.Nodes {
+				x, y := position(place.Position)
+				if old := before[i]; !sameNumeric(old.X, x) || !sameNumeric(old.Y, y) {
+					pos, err := positionOf(old.X, old.Y)
+					if err != nil {
+						return nil, err
+					}
+					back.Nodes = append(back.Nodes, NodePlace{ID: place.ID, Position: pos})
+				}
+			}
+			if len(back.Nodes) == 0 {
+				return []commands.Step{}, nil
+			}
+			return []commands.Step{{Type: Move, Payload: back}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p movePayload) error {
+			if _, err := movedNodes(ctx, tx, p); err != nil {
+				return err
+			}
+			params := queries.MoveNodesParams{UpdatedBy: by(tx), WorkspaceID: nullUUID(tx.WorkspaceID()),
+				ProjectID: nullUUID(tx.ProjectID())}
+			for _, place := range p.Nodes {
+				x, y := position(place.Position)
+				params.Ids = append(params.Ids, decoded(ids.Node, place.ID))
+				params.Xs, params.Ys = append(params.Xs, x), append(params.Ys, y)
+			}
+			rows, err := queries.New(tx).MoveNodes(ctx, params)
+			if err != nil {
+				return fmt.Errorf("node: move the nodes: %w", err)
+			}
+			for _, row := range rows {
+				if err := tx.Changed(ids.Node, row.ID.Bytes, row.Rev); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	})
+
+	commands.Register(r, commands.Spec[duplicatePayload]{
+		Type: Duplicate, Capability: op, Scope: sc, Touches: node,
+		Check: func(p duplicatePayload) input.FieldErrors {
+			errs := newID(ids.Node, p.ID)
+			errs = append(errs, entityID(ids.Node, "source_id", p.SourceID)...)
+			return append(errs, checkPosition("position", p.Position)...)
+		},
+		Inverse: func(_ context.Context, _ *commands.Tx, p duplicatePayload) ([]commands.Step, error) {
+			return []commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}}, nil
+		},
+		Apply: applyDuplicate,
+	})
+
+	commands.Register(r, commands.Spec[idPayload]{
+		Type: Delete, Capability: op, Scope: sc, Touches: node,
+		Check: func(p idPayload) input.FieldErrors { return entityID(ids.Node, "id", p.ID) },
+		// Deleting a node that is in the trash already does nothing, and its
+		// undo nothing either. One of a board in the trash, in the trash with
+		// it but not deleted itself, is refused, as every command but its
+		// board's restoration refuses it, because its undo, a restore, would
+		// be refused until the board is restored, as a board's variable's is
+		// (package variable).
+		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
+			row, err := anyNode(ctx, tx, "id", p.ID)
+			if err != nil || row.Node.DeletedAt.Valid || row.BoardDeleted {
+				return []commands.Step{}, err
+			}
+			return []commands.Step{{Type: Restore, Payload: idPayload{ID: p.ID}}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p idPayload) error {
+			row, err := anyNode(ctx, tx, "id", p.ID)
+			switch {
+			case err != nil:
+				return err
+			case row.Node.DeletedAt.Valid:
+				return nil
+			case row.BoardDeleted:
+				return refuseBoardInTrash("id")
+			}
+			n := row.Node
+			rev, err := queries.New(tx).TrashNode(ctx, queries.TrashNodeParams{UpdatedBy: by(tx),
+				WorkspaceID: n.WorkspaceID, ProjectID: n.ProjectID, ID: n.ID})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			if err := changed(tx, n.ID)(rev, err); err != nil {
+				return err
+			}
+			return tx.AddUsage(usage.Nodes, -1)
+		},
+	})
+
+	commands.Register(r, commands.Spec[idPayload]{
+		Type: Restore, Capability: op, Scope: sc, Touches: node,
+		Check: func(p idPayload) input.FieldErrors { return entityID(ids.Node, "id", p.ID) },
+		// Restoring a node that is not in the trash does nothing, and its undo
+		// nothing either. A node of a board in the trash, which is in the
+		// trash with it, deleted on its own or not, is refused, since it comes
+		// back only with its board, so the inverse of its restore, which Apply
+		// refuses, reads nothing more.
+		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
+			row, err := anyNode(ctx, tx, "id", p.ID)
+			if err != nil || !row.Node.DeletedAt.Valid || row.BoardDeleted {
+				return []commands.Step{}, err
+			}
+			return []commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p idPayload) error {
+			row, err := anyNode(ctx, tx, "id", p.ID)
+			switch {
+			case err != nil:
+				return err
+			case row.BoardDeleted:
+				return commands.Refuse("id", "is a node of a board in the project's trash, which comes back only with "+
+					"its board: restore the board first", nil)
+			case !row.Node.DeletedAt.Valid:
+				return nil
+			}
+			n := row.Node
+			rev, err := queries.New(tx).RestoreNode(ctx, queries.RestoreNodeParams{UpdatedBy: by(tx),
+				WorkspaceID: n.WorkspaceID, ProjectID: n.ProjectID, ID: n.ID})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			if err := changed(tx, n.ID)(rev, err); err != nil {
+				return err
+			}
+			return tx.AddUsage(usage.Nodes, 1)
+		},
+	})
+
+	commands.Register(r, commands.Spec[entryPayload]{
+		Type: SetBoardEntry, Capability: authz.ManageBoards, Scope: sc, Touches: []ids.Kind{ids.Board, ids.Node},
+		Check: func(p entryPayload) input.FieldErrors {
+			return append(entityID(ids.Board, "id", p.ID), optionalID(ids.Node, "node_id", p.NodeID)...)
+		},
+		Inverse: func(ctx context.Context, tx *commands.Tx, p entryPayload) ([]commands.Step, error) {
+			b, err := liveBoardOf(ctx, tx, p.ID)
+			if err != nil {
+				return nil, err
+			}
+			return []commands.Step{{Type: SetBoardEntry, Payload: entryPayload{ID: p.ID,
+				NodeID: encode(ids.Node, b.EntryNodeID)}}}, nil
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p entryPayload) error {
+			b, err := liveBoardOf(ctx, tx, p.ID)
+			if err != nil {
+				return err
+			}
+			entry := pgtype.UUID{}
+			if p.NodeID != "" {
+				entry = decoded(ids.Node, p.NodeID)
+				if !sameUUID(entry, b.EntryNodeID) {
+					row, err := anyNode(ctx, tx, "node_id", p.NodeID)
+					if err != nil {
+						return err
+					}
+					if row.Node.BoardID != b.ID {
+						return commands.Refuse("node_id", "is a node of another board", nil)
+					}
+				}
+			}
+			return changedBoard(tx, b.ID)(queries.New(tx).UpdateBoardEntryNode(ctx, queries.UpdateBoardEntryNodeParams{
+				EntryNodeID: entry, UpdatedBy: by(tx), WorkspaceID: b.WorkspaceID, ProjectID: b.ProjectID, ID: b.ID}))
+		},
+	})
+}
+
+// checkCreate returns what is wrong with Create's payload p that its schema
+// cannot say, but for the text rules of its title and tags (CheckNew): its
+// IDs, its position and size, and the fields that only an element or a
+// jumper has, set on a node of another type.
+func checkCreate(p createPayload) input.FieldErrors {
+	errs := newID(ids.Node, p.ID)
+	errs = append(errs, entityID(ids.Board, "board_id", p.BoardID)...)
+	if p.Type != TypeElement {
+		for _, f := range []struct {
+			name string
+			set  bool
+		}{{"kind", p.Kind != ""}, {"text", p.Text != nil}, {"speaker_component_id", p.SpeakerComponentID != ""},
+			{"cover_asset_id", p.CoverAssetID != ""}, {"is_ending", p.IsEnding}} {
+			if f.set {
+				errs = append(errs, notOf(f.name, p.Type, TypeElement))
+			}
+		}
+	}
+	if p.Type != TypeJumper && p.Target != nil {
+		errs = append(errs, notOf("target", p.Type, TypeJumper))
+	}
+	errs = append(errs, optionalID(ids.Component, "speaker_component_id", p.SpeakerComponentID)...)
+	errs = append(errs, optionalID(ids.Asset, "cover_asset_id", p.CoverAssetID)...)
+	errs = append(errs, checkPosition("position", p.Position)...)
+	if p.Size != nil {
+		errs = append(errs, checkSize("size", *p.Size)...)
+	}
+	if p.Target != nil {
+		errs = append(errs, checkTarget("target", *p.Target)...)
+	}
+	return errs
+}
+
+// checkUpdate returns what is wrong with Update's payload p that its schema
+// cannot say, but for the text rules of its title and tags (CheckNew): its
+// IDs, and its size. Which fields its node's type takes, Apply checks.
+func checkUpdate(p updatePayload) input.FieldErrors {
+	errs := entityID(ids.Node, "id", p.ID)
+	if p.SpeakerComponentID != nil {
+		errs = append(errs, optionalID(ids.Component, "speaker_component_id", *p.SpeakerComponentID)...)
+	}
+	if p.CoverAssetID != nil {
+		errs = append(errs, optionalID(ids.Asset, "cover_asset_id", *p.CoverAssetID)...)
+	}
+	if p.Size != nil {
+		errs = append(errs, checkSize("size", *p.Size)...)
+	}
+	if p.Target != nil {
+		errs = append(errs, checkTarget("target", *p.Target)...)
+	}
+	return errs
+}
+
+// checkMove returns what is wrong with Move's payload p that its schema
+// cannot say: each node's ID, which is no other node's of the payload, and
+// its position.
+func checkMove(p movePayload) input.FieldErrors {
+	var errs input.FieldErrors
+	first := make(map[ids.UUID]int, len(p.Nodes))
+	for i, place := range p.Nodes {
+		at := fmt.Sprintf("nodes[%d]", i)
+		u, err := ids.Decode(ids.Node, place.ID)
+		if err != nil {
+			errs = append(errs, input.FieldError{Field: at + ".id", Message: fmt.Sprintf("is not a node's ID: %v", err)})
+		} else if j, dup := first[u]; dup {
+			errs = append(errs, input.FieldError{Field: at + ".id", Message: fmt.Sprintf("is the ID of nodes[%d] too, "+
+				"which moves once", j)})
+		} else {
+			first[u] = i
+		}
+		errs = append(errs, checkPosition(at+".position", place.Position)...)
+	}
+	return errs
+}
+
+// checkTarget returns the problems of a jumper's target at the field at:
+// both a board's ID and a node's, or neither.
+func checkTarget(at string, t NodeTarget) input.FieldErrors {
+	switch {
+	case t.BoardID == "" && t.NodeID == "":
+		return nil
+	case t.BoardID == "":
+		return field(at+".board_id", "is missing, which a target with a node needs")
+	case t.NodeID == "":
+		return field(at+".node_id", "is missing, which a target with a board needs")
+	}
+	return append(entityID(ids.Board, at+".board_id", t.BoardID), entityID(ids.Node, at+".node_id", t.NodeID)...)
+}
+
+// notOf returns the problem of a payload's field that only a node of the
+// type typ has, which a node of the type nodeType does not.
+func notOf(name, nodeType, typ string) input.FieldError {
+	return input.FieldError{Field: name, Message: fmt.Sprintf("is set on a node of the type %s, which has none: "+
+		"only a node of the type %s has it", nodeType, typ)}
+}
+
+// checkTitle says what is wrong with a node's title, or returns "": empty, or
+// a name of at most MaxTitleLength characters, without white space around it,
+// and without control characters (input.CheckTrimmedName).
+func checkTitle(title string) string {
+	if title == "" {
+		return ""
+	}
+	return input.CheckTrimmedName(title, MaxTitleLength)
+}
+
+// applyCreate is Create's Apply.
+func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
+	q := queries.New(tx)
+	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
+	id := decoded(ids.Node, p.ID)
+	// A node of the project with the ID is refused for its ID before anything
+	// else is checked, as a board's create is; the insert below refuses the ID
+	// of a node that this transaction does not see.
+	if _, err := q.NodeAny(ctx, queries.NodeAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
+		return commands.Refuse("id", "is the ID of a node that exists already", nil)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("node: read the node: %w", err)
+	}
+	boardID := decoded(ids.Board, p.BoardID)
+	if _, err := q.Board(ctx, queries.BoardParams{WorkspaceID: ws, ProjectID: project, ID: boardID}); errors.Is(err,
+		pgx.ErrNoRows) {
+		return commands.Refuse("board_id", "is not a board of the project, or is one in its trash", nil)
+	} else if err != nil {
+		return fmt.Errorf("node: read the board: %w", err)
+	}
+	params := queries.InsertNodeParams{ID: id, WorkspaceID: ws, ProjectID: project, BoardID: boardID, Type: p.Type,
+		Title: p.Title, Color: p.Color, Tags: p.Tags, IsEnding: p.IsEnding, CreatedBy: by(tx)}
+	if params.Color == "" {
+		params.Color = board.ColorNone
+	}
+	if params.Tags == nil {
+		params.Tags = []string{}
+	}
+	params.X, params.Y = position(p.Position)
+	if p.Size != nil {
+		params.Width, params.Height = size(*p.Size)
+	}
+	if p.Type == TypeElement {
+		kind := p.Kind
+		if kind == "" {
+			kind = KindDialogue
+		}
+		params.Kind = pgtype.Text{String: kind, Valid: true}
+		var text richtext.Doc
+		if p.Text != nil {
+			text = *p.Text
+		}
+		doc, err := json.Marshal(text)
+		if err != nil {
+			return fmt.Errorf("node: encode the text: %w", err)
+		}
+		params.Text = doc
+	}
+	var err error
+	if params.SpeakerComponentID, err = speaker(ctx, q, ws, project, p.SpeakerComponentID, pgtype.UUID{}); err != nil {
+		return err
+	}
+	if params.CoverAssetID, err = cover(ctx, q, ws, project, p.CoverAssetID, pgtype.UUID{}); err != nil {
+		return err
+	}
+	if p.Target != nil {
+		if params.TargetBoardID, params.TargetNodeID, err = target(ctx, q, ws, project, *p.Target,
+			queries.Node{}); err != nil {
+			return err
+		}
+	}
+	err = q.InsertNode(ctx, params)
+	if database.UniqueViolation(err, "node_pkey") {
+		// The ID is another workspace's, or another project's, whose rows this
+		// transaction does not see.
+		return commands.Refuse("id", "is the ID of a node that exists already", nil)
+	}
+	if err != nil {
+		return fmt.Errorf("node: add the node: %w", err)
+	}
+	if err := tx.Changed(ids.Node, id.Bytes, 1); err != nil {
+		return err
+	}
+	return tx.AddUsage(usage.Nodes, 1)
+}
+
+// applyDuplicate is Duplicate's Apply.
+func applyDuplicate(ctx context.Context, tx *commands.Tx, p duplicatePayload) error {
+	q := queries.New(tx)
+	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
+	id := decoded(ids.Node, p.ID)
+	if _, err := q.NodeAny(ctx, queries.NodeAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
+		return commands.Refuse("id", "is the ID of a node that exists already", nil)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("node: read the node: %w", err)
+	}
+	source, err := liveNodeOf(ctx, tx, "source_id", p.SourceID)
+	if err != nil {
+		return err
+	}
+	x, y := position(p.Position)
+	n, err := q.DuplicateNode(ctx, queries.DuplicateNodeParams{ID: id, X: x, Y: y, CreatedBy: by(tx),
+		WorkspaceID: ws, ProjectID: project, SourceID: source.ID})
+	switch {
+	case database.UniqueViolation(err, "node_pkey"):
+		return commands.Refuse("id", "is the ID of a node that exists already", nil)
+	case err != nil:
+		return fmt.Errorf("node: duplicate the node: %w", err)
+	case n != 1:
+		return fmt.Errorf("node: duplicating the node added %d nodes", n)
+	}
+	if err := tx.Changed(ids.Node, id.Bytes, 1); err != nil {
+		return err
+	}
+	return tx.AddUsage(usage.Nodes, 1)
+}
+
+// planUpdate returns the node of Update's payload p, as it is, and every
+// field of it that the update sets, which leaves those that p leaves out as
+// they are, once it has checked that the node is not in the trash, that it is
+// of a type that takes each field that p sets, and that each entity that p
+// refers to is one of the project's, as speaker, cover, and target check.
+// It only reads, so that Inverse, which runs before Apply, refuses the batch
+// as Apply would, rather than return a step for a field that the node does
+// not take.
+func planUpdate(ctx context.Context, tx *commands.Tx, p updatePayload) (queries.Node, queries.UpdateNodeParams,
+	error) {
+	n, err := liveNodeOf(ctx, tx, "id", p.ID)
+	if err != nil {
+		return queries.Node{}, queries.UpdateNodeParams{}, err
+	}
+	next := queries.UpdateNodeParams{Kind: n.Kind, Title: n.Title, Text: n.Text,
+		SpeakerComponentID: n.SpeakerComponentID, CoverAssetID: n.CoverAssetID, Color: n.Color, Tags: n.Tags,
+		Width: n.Width, Height: n.Height, IsEnding: n.IsEnding, TargetBoardID: n.TargetBoardID,
+		TargetNodeID: n.TargetNodeID}
+	if next.Tags == nil {
+		next.Tags = []string{}
+	}
+	if n.Type != TypeElement {
+		for _, f := range []struct {
+			name string
+			set  bool
+		}{{"kind", p.Kind != nil}, {"text", p.Text != nil}, {"speaker_component_id", p.SpeakerComponentID != nil},
+			{"cover_asset_id", p.CoverAssetID != nil}, {"is_ending", p.IsEnding != nil}} {
+			if f.set {
+				problem := notOf(f.name, n.Type, TypeElement)
+				return n, next, commands.Refuse(problem.Field, problem.Message, nil)
+			}
+		}
+	}
+	if n.Type != TypeJumper && p.Target != nil {
+		problem := notOf("target", n.Type, TypeJumper)
+		return n, next, commands.Refuse(problem.Field, problem.Message, nil)
+	}
+	if p.Kind != nil {
+		next.Kind = pgtype.Text{String: *p.Kind, Valid: true}
+	}
+	if p.Title != nil {
+		next.Title = *p.Title
+	}
+	if p.Text != nil {
+		if next.Text, err = json.Marshal(*p.Text); err != nil {
+			return n, next, fmt.Errorf("node: encode the text: %w", err)
+		}
+	}
+	if p.Color != nil {
+		next.Color = *p.Color
+	}
+	if p.Tags != nil {
+		next.Tags = *p.Tags
+		if next.Tags == nil {
+			next.Tags = []string{}
+		}
+	}
+	if p.Size != nil {
+		next.Width, next.Height = size(*p.Size)
+	}
+	if p.IsEnding != nil {
+		next.IsEnding = *p.IsEnding
+	}
+	q := queries.New(tx)
+	if p.SpeakerComponentID != nil {
+		if next.SpeakerComponentID, err = speaker(ctx, q, n.WorkspaceID, n.ProjectID, *p.SpeakerComponentID,
+			n.SpeakerComponentID); err != nil {
+			return n, next, err
+		}
+	}
+	if p.CoverAssetID != nil {
+		if next.CoverAssetID, err = cover(ctx, q, n.WorkspaceID, n.ProjectID, *p.CoverAssetID,
+			n.CoverAssetID); err != nil {
+			return n, next, err
+		}
+	}
+	if p.Target != nil {
+		if next.TargetBoardID, next.TargetNodeID, err = target(ctx, q, n.WorkspaceID, n.ProjectID, *p.Target,
+			n); err != nil {
+			return n, next, err
+		}
+	}
+	return n, next, nil
+}
+
+// updateBack returns the payload of the update that undoes Update's payload
+// p of the node n, as it is before the update: each field that p sets, set
+// back to n's.
+func updateBack(n queries.Node, p updatePayload) (updatePayload, error) {
+	back := updatePayload{ID: p.ID}
+	if p.Kind != nil {
+		back.Kind = &n.Kind.String
+	}
+	if p.Title != nil {
+		back.Title = &n.Title
+	}
+	if p.Text != nil {
+		doc, err := richtext.Parse(n.Text)
+		if err != nil {
+			return updatePayload{}, fmt.Errorf("node: the text of the node %s: %w", p.ID, err)
+		}
+		back.Text = doc
+	}
+	if p.SpeakerComponentID != nil {
+		s := encode(ids.Component, n.SpeakerComponentID)
+		back.SpeakerComponentID = &s
+	}
+	if p.CoverAssetID != nil {
+		c := encode(ids.Asset, n.CoverAssetID)
+		back.CoverAssetID = &c
+	}
+	if p.Color != nil {
+		back.Color = &n.Color
+	}
+	if p.Tags != nil {
+		tags := slices.Clone(n.Tags)
+		if tags == nil {
+			tags = []string{}
+		}
+		back.Tags = &tags
+	}
+	if p.Size != nil {
+		s, err := sizeOf(n.Width, n.Height)
+		if err != nil {
+			return updatePayload{}, err
+		}
+		if s == nil {
+			s = &NodeSize{}
+		}
+		back.Size = s
+	}
+	if p.IsEnding != nil {
+		back.IsEnding = &n.IsEnding
+	}
+	if p.Target != nil {
+		back.Target = &NodeTarget{BoardID: encode(ids.Board, n.TargetBoardID), NodeID: encode(ids.Node, n.TargetNodeID)}
+	}
+	return back, nil
+}
+
+// movedNodes returns the positions of the nodes that Move's payload p moves,
+// as they are before it moves them, in the order of p's nodes, once it has
+// checked that each is a node of the project that is not in its trash, and
+// refuses the batch otherwise, at the node's id.
+func movedNodes(ctx context.Context, tx *commands.Tx, p movePayload) ([]queries.NodePositionsRow, error) {
+	list := make([]pgtype.UUID, len(p.Nodes))
+	for i, place := range p.Nodes {
+		list[i] = decoded(ids.Node, place.ID)
+	}
+	rows, err := queries.New(tx).NodePositions(ctx, queries.NodePositionsParams{
+		WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: list})
+	if err != nil {
+		return nil, fmt.Errorf("node: read the nodes' positions: %w", err)
+	}
+	byID := make(map[ids.UUID]queries.NodePositionsRow, len(rows))
+	for _, row := range rows {
+		byID[row.ID.Bytes] = row
+	}
+	out := make([]queries.NodePositionsRow, len(p.Nodes))
+	for i, id := range list {
+		row, ok := byID[id.Bytes]
+		at := fmt.Sprintf("nodes[%d].id", i)
+		switch {
+		case !ok:
+			return nil, commands.Refuse(at, "is not a node of the project", nil)
+		case row.Deleted:
+			return nil, commands.Refuse(at, "is a node in the project's trash, itself or with its board, which only "+
+				"restoring it changes", nil)
+		}
+		out[i] = row
+	}
+	return out, nil
+}
+
+// speaker returns the UUID of the component whose ID is id, a component's ID
+// that a payload's Check checked, as the column of an element's speaker, or a
+// null column if id is "", for none, once it has checked that it is one of
+// the project's components, in its trash or not, or that it is kept, the
+// speaker that the element had, which may no longer exist. It refuses the
+// batch otherwise, at speaker_component_id.
+func speaker(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, id string, kept pgtype.UUID) (
+	pgtype.UUID, error) {
+	if id == "" {
+		return pgtype.UUID{}, nil
+	}
+	u := decoded(ids.Component, id)
+	if sameUUID(u, kept) {
+		return kept, nil
+	}
+	_, err := q.ComponentAny(ctx, queries.ComponentAnyParams{WorkspaceID: ws, ProjectID: project, ID: u})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return pgtype.UUID{}, commands.Refuse("speaker_component_id", "is not a component of the project", nil)
+	case err != nil:
+		return pgtype.UUID{}, fmt.Errorf("node: read the speaker: %w", err)
+	}
+	return u, nil
+}
+
+// cover returns the UUID of the asset whose ID is id, an asset's ID that a
+// payload's Check checked, as the column of an element's cover, or a null
+// column if id is "", for none, once it has checked that it is one of the
+// project's assets, or that it is kept, the cover that the element has. It
+// refuses the batch otherwise, at cover_asset_id.
+func cover(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, id string, kept pgtype.UUID) (
+	pgtype.UUID, error) {
+	if id == "" {
+		return pgtype.UUID{}, nil
+	}
+	u := decoded(ids.Asset, id)
+	if sameUUID(u, kept) {
+		return kept, nil
+	}
+	_, err := q.Asset(ctx, queries.AssetParams{WorkspaceID: ws, ProjectID: project, ID: u})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return pgtype.UUID{}, commands.Refuse("cover_asset_id", "is not an asset of the project", nil)
+	case err != nil:
+		return pgtype.UUID{}, fmt.Errorf("node: read the cover: %w", err)
+	}
+	return u, nil
+}
+
+// target returns the UUIDs of the board and the node of a jumper's target t,
+// which a payload's Check checked, as its columns, or null columns for none,
+// once it has checked that the node is a node of the project, in its trash or
+// not, on the board, or that the target is kept, the one that the jumper
+// jumper has, which may no longer exist. It refuses the batch otherwise, at
+// target.node_id.
+func target(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, t NodeTarget, jumper queries.Node) (
+	boardID, nodeID pgtype.UUID, err error) {
+	if t.NodeID == "" {
+		return pgtype.UUID{}, pgtype.UUID{}, nil
+	}
+	boardID, nodeID = decoded(ids.Board, t.BoardID), decoded(ids.Node, t.NodeID)
+	if sameUUID(boardID, jumper.TargetBoardID) && sameUUID(nodeID, jumper.TargetNodeID) {
+		return boardID, nodeID, nil
+	}
+	row, err := q.NodeAny(ctx, queries.NodeAnyParams{WorkspaceID: ws, ProjectID: project, ID: nodeID})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return pgtype.UUID{}, pgtype.UUID{}, commands.Refuse("target.node_id", "is not a node of the project", nil)
+	case err != nil:
+		return pgtype.UUID{}, pgtype.UUID{}, fmt.Errorf("node: read the target: %w", err)
+	case row.Node.BoardID != boardID:
+		return pgtype.UUID{}, pgtype.UUID{}, commands.Refuse("target.node_id", "is a node of another board than "+
+			"target.board_id", nil)
+	}
+	return boardID, nodeID, nil
+}
+
+// anyNode returns the node of the batch's project whose ID is id, a node's ID
+// that its payload's Check checked, whether or not it is in the trash, with
+// whether its board is, or refuses the batch, at the payload's field at, if
+// the project has no such node.
+func anyNode(ctx context.Context, tx *commands.Tx, at, id string) (queries.NodeAnyRow, error) {
+	row, err := queries.New(tx).NodeAny(ctx, queries.NodeAnyParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+		ProjectID: nullUUID(tx.ProjectID()), ID: decoded(ids.Node, id)})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return queries.NodeAnyRow{}, commands.Refuse(at, "is not a node of the project", nil)
+	case err != nil:
+		return queries.NodeAnyRow{}, fmt.Errorf("node: read the node: %w", err)
+	}
+	return row, nil
+}
+
+// liveNodeOf returns the node of the batch's project whose ID is id as
+// anyNode does, or refuses the batch if it is in the trash, where nothing but
+// restoring it changes it, or its board is, with which it comes back.
+func liveNodeOf(ctx context.Context, tx *commands.Tx, at, id string) (queries.Node, error) {
+	row, err := anyNode(ctx, tx, at, id)
+	switch {
+	case err != nil:
+		return queries.Node{}, err
+	case row.Node.DeletedAt.Valid:
+		return queries.Node{}, commands.Refuse(at, "is a node in the project's trash, which only restoring it "+
+			"changes", nil)
+	case row.BoardDeleted:
+		return queries.Node{}, refuseBoardInTrash(at)
+	}
+	return row.Node, nil
+}
+
+// refuseBoardInTrash returns the refusal, at the payload's field at, of a
+// command that would change a node of a board in the trash, which is in the
+// trash with it, and which nothing but the board's restoration changes.
+func refuseBoardInTrash(at string) error {
+	return commands.Refuse(at, "is a node of a board in the project's trash, which comes back with its board", nil)
+}
+
+// liveBoardOf returns the board of the batch's project whose ID is id, a
+// board's ID that its payload's Check checked, or refuses the batch if the
+// project has no such board, or it is in the trash, where nothing but
+// restoring it changes it.
+func liveBoardOf(ctx context.Context, tx *commands.Tx, id string) (queries.Board, error) {
+	row, err := queries.New(tx).BoardAny(ctx, queries.BoardAnyParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+		ProjectID: nullUUID(tx.ProjectID()), ID: decoded(ids.Board, id)})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return queries.Board{}, commands.Refuse("id", "is not a board of the project", nil)
+	case err != nil:
+		return queries.Board{}, fmt.Errorf("node: read the board: %w", err)
+	case row.Board.DeletedAt.Valid:
+		return queries.Board{}, commands.Refuse("id", "is a board in the project's trash, which only restoring it "+
+			"changes", nil)
+	}
+	return row.Board, nil
+}
+
+// sameUUID reports whether the columns a and b are the same: both null, or
+// both the same UUID.
+func sameUUID(a, b pgtype.UUID) bool {
+	return a.Valid == b.Valid && (!a.Valid || a.Bytes == b.Bytes)
+}
+
+// changed returns a function that reports the change of the node id, to the
+// revision that an update returned, with err, or reports nothing if the
+// update found nothing to change, which it returns as pgx.ErrNoRows.
+func changed(tx *commands.Tx, id pgtype.UUID) func(rev int64, err error) error {
+	return changedKind(tx, ids.Node, id)
+}
+
+// changedBoard returns a function that reports the change of the board id as
+// changed does of a node.
+func changedBoard(tx *commands.Tx, id pgtype.UUID) func(rev int64, err error) error {
+	return changedKind(tx, ids.Board, id)
+}
+
+// changedKind returns a function that reports the change of the entity of
+// the kind with the UUID id as changed does of a node.
+func changedKind(tx *commands.Tx, kind ids.Kind, id pgtype.UUID) func(rev int64, err error) error {
+	return func(rev int64, err error) error {
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return nil
+		case err != nil:
+			return fmt.Errorf("node: change the %s: %w", kind, err)
+		}
+		return tx.Changed(kind, id.Bytes, rev)
+	}
+}
+
+// by returns the batch's actor, as the column of who changed a row.
+func by(tx *commands.Tx) pgtype.UUID {
+	return nullUUID(tx.Actor().UserID)
+}
+
+// decoded returns the UUID of id, an ID of the kind that a payload's Check
+// checked, as a uuid column.
+func decoded(kind ids.Kind, id string) pgtype.UUID {
+	// Check refused a payload whose ID does not decode.
+	u, _ := ids.Decode(kind, id)
+	return nullUUID(u)
+}
+
+// newID returns the problem of id, the ID of an entity of the kind that a
+// command creates, unless it is an ID of the kind of a UUIDv7 (PRD §5.2).
+func newID(kind ids.Kind, id string) input.FieldErrors {
+	u, err := ids.Decode(kind, id)
+	switch {
+	case err != nil:
+		return field("id", fmt.Sprintf("is not a %s's ID: %v", kind, err))
+	case !u.IsV7():
+		return field("id", "is not the ID of a UUIDv7, which the ID of every entity is")
+	}
+	return nil
+}
+
+// entityID returns the problem of the payload's field name, unless its value
+// id is an ID of the kind.
+func entityID(kind ids.Kind, name, id string) input.FieldErrors {
+	if _, err := ids.Decode(kind, id); err != nil {
+		return field(name, fmt.Sprintf("is not a %s's ID: %v", kind, err))
+	}
+	return nil
+}
+
+// optionalID returns the problem of the payload's field name as entityID
+// does, unless its value id is "", for none.
+func optionalID(kind ids.Kind, name, id string) input.FieldErrors {
+	if id == "" {
+		return nil
+	}
+	return entityID(kind, name, id)
+}
+
+// field returns the problem msg of the payload's field name, or none if msg
+// is "".
+func field(name, msg string) input.FieldErrors {
+	if msg == "" {
+		return nil
+	}
+	return input.FieldErrors{{Field: name, Message: msg}}
+}
+
+// uuids returns entities as uuid columns.
+func uuids(entities []ids.UUID) []pgtype.UUID {
+	out := make([]pgtype.UUID, len(entities))
+	for i, id := range entities {
+		out[i] = nullUUID(id)
+	}
+	return out
+}

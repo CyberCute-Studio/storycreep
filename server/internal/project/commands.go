@@ -64,7 +64,7 @@ type describePayload struct {
 type settingsPayload struct {
 	DefaultLocale  *string       `json:"default_locale,omitempty" maxLength:"64" doc:"The locale of the project's text, as a BCP 47 tag of a language in its canonical form, such as en or cs-CZ"`
 	PublishMinRole *string       `json:"publish_min_role,omitempty" enum:"editor,admin" doc:"The least role that may publish the project's snapshots"`
-	Entry          *ProjectEntry `json:"entry,omitempty" doc:"The project's entry, which replaces its entry: without a board, the project has none. A board other than the entry's is one of the project's boards, in its trash or not, or the command is answered with 422 validation_failed; the node needs not exist yet."`
+	Entry          *ProjectEntry `json:"entry,omitempty" doc:"The project's entry, which replaces its entry: without a board, the project has none. A board other than the entry's is one of the project's boards, in its trash or not, and a node, unless the entry keeps both its board and its node, is a node of that board, in the project's trash or not, or the command is answered with 422 validation_failed. Without a node, the flow starts at the board's entry node."`
 }
 
 // emptyPayload is the payload of a command that needs nothing but its
@@ -88,10 +88,10 @@ const (
 // revision a command expects as it does any entity's, and the project's
 // commands, each of which changes its draft, so that an API token needs
 // project:write for it (FR-AUTH-04). A change of the entry's board checks
-// that the board is one of the project's, in its trash or not, and the node
-// is not checked to exist, which the nodes do once they are added (plan item
-// 35); the validation reports an entry that no longer exists, or whose board
-// is in the trash (FR-DEP-03, FR-DEP-04).
+// that the board is one of the project's, in its trash or not, and a change
+// of its node that the node is one of that board's, in the trash or not; the
+// validation reports an entry that no longer exists, or that is in the trash
+// (FR-DEP-03, FR-DEP-04).
 func Register(r *commands.Registry) {
 	commands.RegisterEntity(r, commands.Entity{
 		Kind: ids.Project,
@@ -324,8 +324,8 @@ func counted(p queries.Project) int64 {
 // deletes, or restores the batch's project with update, which returns the
 // project's new revision, or pgx.ErrNoRows if the project is as the command
 // would leave it already, and which records what the change adds to the
-// workspace's projects, or takes from them, and to its boards, and, unless
-// action is "", the event action in the audit log.
+// workspace's projects, or takes from them, and to its boards and nodes, and,
+// unless action is "", the event action in the audit log.
 func lifecycle(update func(ctx context.Context, q *queries.Queries, by queries.ArchiveProjectParams) (int64, error),
 	action audit.Action) func(ctx context.Context, tx *commands.Tx, _ emptyPayload) error {
 	return func(ctx context.Context, tx *commands.Tx, _ emptyPayload) error {
@@ -363,6 +363,7 @@ func lifecycle(update func(ctx context.Context, q *queries.Queries, by queries.A
 		// and the batch adds the same to the boards whatever the order of its
 		// commands. The batch holds the project's lock, under which its boards
 		// change, so they are as counted until it commits.
+		// So do its nodes, alike.
 		if before.DeletedAt.Valid != after.DeletedAt.Valid {
 			sign := int64(1)
 			if after.DeletedAt.Valid {
@@ -375,6 +376,16 @@ func lifecycle(update func(ctx context.Context, q *queries.Queries, by queries.A
 					return 0, fmt.Errorf("project: count the project's boards: %w", err)
 				}
 				return sign * boards, nil
+			}); err != nil {
+				return err
+			}
+			if err := tx.AddUsageOnceApplied(usage.Nodes, func(ctx context.Context) (int64, error) {
+				nodes, err := q.ProjectNodeCount(ctx, queries.ProjectNodeCountParams{
+					WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID())})
+				if err != nil {
+					return 0, fmt.Errorf("project: count the project's nodes: %w", err)
+				}
+				return sign * nodes, nil
 			}); err != nil {
 				return err
 			}
@@ -433,6 +444,9 @@ func applySettings(ctx context.Context, tx *commands.Tx, p settingsPayload) erro
 		if err := checkEntryBoard(ctx, tx, previous.Entry, *p.Entry); err != nil {
 			return err
 		}
+		if err := checkEntryNode(ctx, tx, previous.Entry, *p.Entry); err != nil {
+			return err
+		}
 		set.Entry = *p.Entry
 	}
 	doc, err := json.Marshal(set)
@@ -476,6 +490,40 @@ func checkEntryBoard(ctx context.Context, tx *commands.Tx, before, entry Project
 		return commands.Refuse("entry.board_id", "is not a board of the project", nil)
 	case err != nil:
 		return fmt.Errorf("project: read the entry's board: %w", err)
+	}
+	return nil
+}
+
+// checkEntryNode refuses the batch unless the node of the project's new entry
+// is none, the node of its entry before, on the board of its entry before,
+// which may no longer exist, so that a change that keeps them is not refused
+// for them, or a node of the project, in its trash or not, on the entry's
+// board (plan note N32), so that the undo of a change of the entry from a node
+// that was deleted since, which sets the node back, is not refused for it
+// either; the validation reports an entry whose node is deleted (FR-DEP-03's
+// ref_dangling). An ID names its entity whatever the case of its letters.
+func checkEntryNode(ctx context.Context, tx *commands.Tx, before, entry ProjectEntry) error {
+	if entry.NodeID == "" {
+		return nil
+	}
+	// Check refused an entry whose IDs do not decode, or that has a node
+	// without a board.
+	node, _ := ids.Decode(ids.Node, entry.NodeID)
+	board, _ := ids.Decode(ids.Board, entry.BoardID)
+	keptBoard, boardErr := ids.Decode(ids.Board, before.BoardID)
+	keptNode, nodeErr := ids.Decode(ids.Node, before.NodeID)
+	if boardErr == nil && nodeErr == nil && keptBoard == board && keptNode == node {
+		return nil
+	}
+	row, err := queries.New(tx).NodeAny(ctx, queries.NodeAnyParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+		ProjectID: nullUUID(tx.ProjectID()), ID: nullUUID(node)})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return commands.Refuse("entry.node_id", "is not a node of the project", nil)
+	case err != nil:
+		return fmt.Errorf("project: read the entry's node: %w", err)
+	case row.Node.BoardID.Bytes != board:
+		return commands.Refuse("entry.node_id", "is a node of another board than entry.board_id", nil)
 	}
 	return nil
 }

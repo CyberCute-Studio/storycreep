@@ -1021,6 +1021,37 @@ func (q *Queries) UpdateBoardDescription(ctx context.Context, arg UpdateBoardDes
 	return rev, err
 }
 
+const updateBoardEntryNode = `-- name: UpdateBoardEntryNode :one
+UPDATE board SET entry_node_id = $1, rev = rev + 1, updated_at = now(), updated_by = $2
+WHERE workspace_id = $3 AND project_id = $4 AND id = $5
+    AND entry_node_id IS DISTINCT FROM $1
+RETURNING rev
+`
+
+type UpdateBoardEntryNodeParams struct {
+	EntryNodeID pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	ID          pgtype.UUID
+}
+
+// UpdateBoardEntryNode changes the board's entry node, or removes it if
+// entry_node_id is null, unless the board has that entry node already, and
+// returns its new revision, or no row if it does.
+func (q *Queries) UpdateBoardEntryNode(ctx context.Context, arg UpdateBoardEntryNodeParams) (int64, error) {
+	row := q.db.QueryRow(ctx, updateBoardEntryNode,
+		arg.EntryNodeID,
+		arg.UpdatedBy,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.ID,
+	)
+	var rev int64
+	err := row.Scan(&rev)
+	return rev, err
+}
+
 const updateBoardName = `-- name: UpdateBoardName :one
 UPDATE board SET name = $1, rev = rev + 1, updated_at = now(), updated_by = $2
 WHERE workspace_id = $3 AND project_id = $4 AND id = $5 AND name <> $1

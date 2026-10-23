@@ -1,12 +1,12 @@
 // Package trash keeps a project's trash (PRD FR-PROJ-06): the boards, the
-// variables, and the components, and, once they are added, the nodes, that
-// were deleted to it, where each stays for Days days from its deletion, from which
-// the command of its kind restores it where it was, as board.restore does
-// (package board), and after which the purge deletes it for good. What
-// belongs to a board, as a board's variables, is in the trash with its board
-// while the board is there, which the list holds alone, and is purged with
-// it, even one deleted on its own, before its board, which the list holds,
-// and whose own time in the trash ends first.
+// nodes, the variables, and the components that were deleted to it, where
+// each stays for Days days from its deletion, from which the command of its
+// kind restores it where it was, as board.restore does (package board), and
+// after which the purge deletes it for good. What belongs to a board, as a
+// board's nodes and variables, is in the trash with its board while the
+// board is there, which the list holds alone, and is purged with it, even one
+// deleted on its own, before its board, which the list holds, and whose own
+// time in the trash ends first.
 //
 // A row of the project's content is in the trash while its deleted_at is
 // set. Nothing reads it there but its restoration and this package: the
@@ -22,7 +22,7 @@
 //
 // A table whose rows go to the trash is registered with it by its live view,
 // its branch of the list's query (TrashItems) if its rows are listed, and
-// its purge (PurgeBoards, PurgeVariables, PurgeComponents,
+// its purge (PurgeBoards, PurgeNodes, PurgeVariables, PurgeComponents,
 // PurgeAttributeDefs, PurgeComponentTypes, PurgeFolders), which the
 // package's tests hold every table of a project's content with a deleted_at
 // to.
@@ -57,8 +57,7 @@ const Days = project.TrashDays
 const Retention = Days * 24 * time.Hour
 
 // kinds are the kinds of entity that the trash lists, as FR-PROJ-06 names
-// them, in the order of the schema's enum (Item.Kind). Nodes do not exist
-// yet; plan item 35 adds their table, whose rows the list then holds.
+// them, in the order of the schema's enum (Item.Kind).
 var kinds = []ids.Kind{ids.Board, ids.Node, ids.Variable, ids.Component}
 
 // Kinds returns the names of the kinds of entity that the trash lists, as an
@@ -91,9 +90,9 @@ func kindNamed(name string) (ids.Kind, bool) {
 
 // Item is an entity in a project's trash, as the API lists it.
 type Item struct {
-	Kind string `json:"kind" enum:"board,node,variable,component" doc:"What the entity is: a board, a variable, or a component, and, once they exist, a node (PRD FR-PROJ-06). The command of its kind, as board.restore, restores it with its ID as id."`
+	Kind string `json:"kind" enum:"board,node,variable,component" doc:"What the entity is: a board, a node, a variable, or a component (PRD FR-PROJ-06). The command of its kind, as board.restore, restores it with its ID as id."`
 	ID   string `json:"id" doc:"The entity's ID"`
-	Name string `json:"name" doc:"The entity's name, or a variable's key"`
+	Name string `json:"name" doc:"The entity's name, a node's title, which may be empty, or a variable's key"`
 	// DeletedAt is when the entity was deleted to the trash.
 	DeletedAt time.Time `json:"deleted_at" doc:"When the entity was deleted to the trash"`
 	// PurgeAfter is DeletedAt and Retention.

@@ -54,6 +54,7 @@ const (
 	CodeFolderNotEmpty        Code = "folder_not_empty"
 	CodeKeyTaken              Code = "key_taken"
 	CodeComponentTypeInUse    Code = "component_type_in_use"
+	CodeBoardReferenced       Code = "board_referenced"
 	CodeLastOwner             Code = "last_owner"
 	CodeAlreadyMember         Code = "already_member"
 	CodeInviteExists          Code = "invite_exists"
@@ -256,6 +257,15 @@ var codes = []codeSpec{
 			"is, so nothing of its batch is applied (PRD FR-COMP-01). Delete the type's components first; a type " +
 			"goes to the trash only once each of its components is there, and restoring one of them restores it. " +
 			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeBoardReferenced, http.StatusConflict, i18n.K("error.board_referenced"),
+		"A `board.delete` command names a board that jumpers on the project's other boards, which are not in its " +
+			"trash, target the nodes of, and does not confirm the deletion, which would leave them dangling, so " +
+			"nothing of its batch is applied (PRD FR-PROJ-02 AC2). `details.jumpers` lists the first 100 of them, in " +
+			"the order of their IDs, each with its `id`, its `board_id`, and its `title`, and `details.jumper_count` " +
+			"says how many there are, which `GET /api/v1/projects/{project_id}/boards/{board_id}/referenced-by` " +
+			"lists in full. Warn of them, and send the command again with `confirm` to delete the board all the " +
+			"same: the jumpers then keep their targets, which the validation reports. `details.errors` names the " +
+			"field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeLastOwner, http.StatusConflict, i18n.K("error.last_owner"),
 		"The change would leave the workspace without an owner whose account is active, and a workspace keeps one " +
 			"(PRD FR-TEN-02 AC2): its last owner cannot be removed or demoted. An owner whose account's deletion is " +

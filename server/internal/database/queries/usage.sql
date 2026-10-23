@@ -106,6 +106,19 @@ SELECT (
         0)
 )::bigint AS drift;
 
+-- name: NodeDrift :one
+-- NodeDrift returns how many nodes the workspace's projects have that are in
+-- no trash, neither their project's, deleted themselves or with their board,
+-- nor, with their project, the workspace's, less its usage of nodes: what
+-- reconciliation adds to its usage so that the usage is the count again.
+SELECT (
+    (SELECT count(*) FROM live_node n JOIN project p ON p.workspace_id = n.workspace_id AND p.id = n.project_id
+        WHERE n.workspace_id = @workspace_id AND p.deleted_at IS NULL)
+    - coalesce((SELECT c.value FROM usage_counter c WHERE c.workspace_id = @workspace_id AND c.key = 'nodes'), 0)
+    - coalesce((SELECT sum(d.delta) FROM usage_delta d WHERE d.workspace_id = @workspace_id AND d.key = 'nodes'),
+        0)
+)::bigint AS drift;
+
 -- name: WorkspaceIDs :many
 -- WorkspaceIDs returns the IDs of the workspaces after the workspace after,
 -- or from the first if after is null, up to and including the workspace
