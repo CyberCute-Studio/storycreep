@@ -495,7 +495,8 @@ var typeNames = []string{"string", "integer", "number", "boolean", "array", "obj
 // property that s requires is one that it names, every reference names a
 // schema that exists and has beside it only the keywords that annotate it,
 // and a discriminator is beside a oneOf, names a property, and maps each
-// value to a member of the oneOf.
+// value to a member of the oneOf that refers to a schema, which huma's
+// validator resolves by the reference that the mapping holds.
 func (d *Document) checkSchema(s *Schema) error {
 	if s == nil {
 		return nil
@@ -509,8 +510,13 @@ func (d *Document) checkSchema(s *Schema) error {
 			return errors.New("its discriminator names no property")
 		}
 		for _, value := range slices.Sorted(maps.Keys(disc.Mapping)) {
+			// A member's reference names a schema of the document, which the
+			// check of the member below makes sure of.
 			ref := disc.Mapping[value]
-			if !slices.ContainsFunc(s.OneOf, func(m *Schema) bool { return m != nil && m.Ref == ref }) {
+			switch {
+			case ref == "":
+				return fmt.Errorf("its discriminator maps %q to no reference", value)
+			case !slices.ContainsFunc(s.OneOf, func(m *Schema) bool { return m != nil && m.Ref == ref }):
 				return fmt.Errorf("its discriminator maps %q to %s, which is no member of its oneOf", value, ref)
 			}
 		}

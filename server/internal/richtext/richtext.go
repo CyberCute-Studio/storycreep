@@ -69,13 +69,12 @@ const (
 // writes of them, not with reflect.DeepEqual.
 type Doc struct {
 	Blocks []Block
-	// parsed is set on a Doc that Parse returned, and sum is then the
-	// SHA-256 of the canonical form that Parse wrote of it: MarshalJSON
-	// writes what the document's nodes write without reading it again as
-	// long as it has that hash. A hash, rather than the form, so that a
-	// parsed Doc does not hold its document twice.
-	parsed bool
-	sum    [sha256.Size]byte
+	// sum is the SHA-256 of the canonical form that Parse wrote of a Doc
+	// that it returned, and zero in one that a program built, as no form's
+	// hash is: MarshalJSON writes what the document's nodes write without
+	// reading it again as long as it has that hash. A hash, rather than the
+	// form, so that a parsed Doc does not hold its document twice.
+	sum [sha256.Size]byte
 }
 
 // Block is a block of a document or of a list item: a *Paragraph or a *List.
@@ -366,7 +365,7 @@ func parse(data []byte) (*Doc, []byte, error) {
 		return nil, nil, &Error{Reason: TooLarge,
 			Message: fmt.Sprintf("the document's canonical form is longer than %d bytes", MaxBytes)}
 	}
-	doc.parsed, doc.sum = true, sha256.Sum256(canonical)
+	doc.sum = sha256.Sum256(canonical)
 	return doc, canonical, nil
 }
 
@@ -1140,7 +1139,7 @@ func (p *parser) link(mo map[string]any) (string, error) {
 // no link runs a script or reads a file when it is followed, or hides where it
 // leads (PRD NFR-SEC-08). A link is UTF-8, as every string of a document that
 // Parse reads is, and has at most MaxHrefChars characters, counted as code
-// points, none of them white space, a control character, or a format
+// points, none of them hidden: white space, a control character, or a format
 // character (Unicode's Cf, as U+200B, U+202E, or U+FEFF), which would hide or
 // reorder what a reader sees of it, and each % in it starts an escape, % and
 // two hexadecimal digits. It is a mailto URL with an address and only the
@@ -1161,9 +1160,7 @@ func CheckHref(href string) string {
 		return "is not UTF-8"
 	case utf8.RuneCountInString(href) > MaxHrefChars:
 		return fmt.Sprintf("is longer than %d characters", MaxHrefChars)
-	case strings.IndexFunc(href, func(r rune) bool {
-		return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
-	}) >= 0:
+	case strings.IndexFunc(href, hidden) >= 0:
 		return "holds white space, a control character, or a format character"
 	case !escapesValid(href):
 		return "holds a % that starts no escape of two hexadecimal digits"
@@ -1191,55 +1188,96 @@ func CheckHref(href string) string {
 var mailtoFields = []string{"bcc", "body", "cc", "subject", "to"}
 
 // mailtoProblem says what is wrong with what follows the colon of a mailto
-// link, or returns "". It has no #: RFC 6068 gives a mailto URL no fragment,
-// and a mail client that reads its fields after the first ? and between the
-// &s, without cutting a fragment off, would read a field after a #, as attach
-// in mailto:keeper@example.com#?attach=/etc/passwd. Its address, what is
-// before the first ?, is not empty, and each of the fields that & separates
-// in its query, what follows that ?, is empty or a name of mailtoFields, read
-// regardless of ASCII case, followed by = and its value. Neither the address
-// nor a value but body's escapes a character that text may not hold
-// (escapesControl), a control character or a line or paragraph separator,
-// which a mail client could write into a header, as a line break that starts
-// another header in mailto:keeper@example.com%0D%0ABcc:evil@example.com, or
-// that a reader of lines may take for one, as Python's str.splitlines takes
-// NEL, %C2%85, and LINE SEPARATOR, %E2%80%A8; a body's line breaks are
-// %0D%0A, as RFC 6068 writes them.
+// link, or returns "". Its address is what is before the first ?, and its
+// query what follows that ?, in which & separates the fields, each a name, =,
+// and a value. It holds these delimiters only where they delimit, as RFC 6068
+// has them, so that a mail client that reads the fields otherwise than at the
+// first ? and between the &s, as at the last ?, wherever an & or a ? is, or
+// at a ;, cannot read a field that the link does not set, as attach:
+//
+//   - It has no #, which RFC 6068 gives a mailto URL no use for, and after
+//     which a client that does not cut a fragment off would read a field, as
+//     in mailto:keeper@example.com#?attach=/etc/passwd.
+//   - It has no ;, which HTML 4 and Python's parse_qs, before Python 3.9.2,
+//     read as an &, as in mailto:keeper@example.com?subject=x;attach=y.
+//   - Its address is not empty, and holds no & or =, as in
+//     mailto:keeper@example.com&attach=/etc/passwd, where a client that
+//     reads a field wherever an & is reads attach.
+//   - Each of its fields is empty, or a name of mailtoFields, read regardless
+//     of ASCII case, then = and a value that holds no ? or =, as in
+//     subject=x?attach=y, where a client that reads the fields after the last
+//     ? reads attach.
+//
+// Each of these characters in an address or a value is escaped: %23, %3B,
+// %26, %3F, and %3D. And the address, and the value of to, cc, or bcc, which
+// name addresses too, escape no hidden character, which would hide or reorder
+// the address that a mail client shows, as %E2%80%AE, U+202E RIGHT-TO-LEFT
+// OVERRIDE, would, or start another header; a subject escapes no character
+// that text may not hold (isControl), a control character or a line or
+// paragraph separator, which a mail client could write into a header, as a
+// line break that starts another header in
+// mailto:keeper@example.com?subject=a%0D%0ABcc:evil@example.com, or that a
+// reader of lines may take for one, as Python's str.splitlines takes NEL,
+// %C2%85, and LINE SEPARATOR, %E2%80%A8. A subject may escape white space and
+// format characters, as text may hold them, and a body any character: its
+// line breaks are %0D%0A, as RFC 6068 writes them.
 func mailtoProblem(rest string) string {
-	if strings.Contains(rest, "#") {
+	switch {
+	case strings.Contains(rest, "#"):
 		return "has a #, which a mailto URL has no use for, and after which a mail client could read a field"
+	case strings.Contains(rest, ";"):
+		return "has a ;, which a mail client could read as an &, and then read a field after it; it is escaped, %3B"
 	}
 	address, query, _ := strings.Cut(rest, "?")
-	if address == "" {
+	switch {
+	case address == "":
 		return "has no address"
-	}
-	if escapesControl(address) {
-		return "has an address that escapes a control character or a line or paragraph separator, which a mail " +
-			"client could write into a header"
+	case strings.ContainsAny(address, "&="):
+		return "has an address with an & or an =, after which a mail client could read a field; they are " +
+			"escaped, %26 and %3D"
+	case escapes(address, hidden):
+		return "has an address that escapes white space, a control character, or a format character, which " +
+			"would hide or reorder the address that a mail client shows, or start another header"
 	}
 	for field := range strings.SplitSeq(query, "&") {
+		if field == "" {
+			continue
+		}
 		name, value, set := strings.Cut(field, "=")
 		name = asciiLower(name)
-		if field != "" && (!set || !slices.Contains(mailtoFields, name)) {
+		switch {
+		case !set || !slices.Contains(mailtoFields, name):
 			return "sets a field other than to, cc, bcc, subject, or body"
-		}
-		if name != "body" && escapesControl(value) {
-			return "has a field other than body that escapes a control character or a line or paragraph separator, " +
-				"which a mail client could write into a header"
+		case strings.ContainsAny(value, "?="):
+			return "has a field whose value holds a ? or an =, after which a mail client could read a field; " +
+				"they are escaped, %3F and %3D"
+		case name == "subject" && escapes(value, isControl):
+			return "has a subject that escapes a control character or a line or paragraph separator, which a " +
+				"mail client could write into a header"
+		case name != "subject" && name != "body" && escapes(value, hidden):
+			return "has a to, cc, or bcc that escapes white space, a control character, or a format character, " +
+				"which would hide or reorder the address that a mail client shows, or start another header"
 		}
 	}
 	return ""
 }
 
-// escapesControl reports whether s, whose every % starts an escape, escapes
-// a character that text may not hold (isControl): a control character, as
-// %0A, %7F, or, in UTF-8, %C2%85, or a line or paragraph separator, %E2%80%A8
-// or %E2%80%A9, with the escapes' digits in either case. It reads each escape
-// as the byte that it stands for, and those bytes, with the characters
-// between them, as UTF-8, in which a byte that starts or continues no
-// character is U+FFFD. A character of s itself is no control character,
-// which CheckHref refuses before.
-func escapesControl(s string) bool {
+// hidden reports whether r is a character that a link may not hold, which
+// would hide or reorder what a reader sees of it: white space (Unicode's
+// White_Space), a control character (Cc), or a format character (Cf). A line
+// or paragraph separator is white space, so every character that text may
+// not hold (isControl) is hidden.
+func hidden(r rune) bool {
+	return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+}
+
+// escapes reports whether s, whose every % starts an escape, escapes a
+// character that bad reports, as %0A, or, in UTF-8, %C2%85 or %E2%80%AE, with
+// the escapes' digits in either case. It reads each escape as the byte that
+// it stands for, and those bytes, with the characters between them, as UTF-8,
+// in which a byte that starts or continues no character is U+FFFD. A
+// character of s itself is not hidden, which CheckHref refuses before.
+func escapes(s string, bad func(rune) bool) bool {
 	if !strings.Contains(s, "%") {
 		return false
 	}
@@ -1253,7 +1291,7 @@ func escapesControl(s string) bool {
 		}
 		decoded = append(decoded, s[i])
 	}
-	return bytes.ContainsFunc(decoded, isControl)
+	return bytes.ContainsFunc(decoded, bad)
 }
 
 // maxPort is the highest port, which a browser's URL parser takes.
@@ -1444,7 +1482,7 @@ func (d Doc) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if d.parsed && sha256.Sum256(data) == d.sum {
+	if d.sum != ([sha256.Size]byte{}) && sha256.Sum256(data) == d.sum {
 		return data, nil
 	}
 	_, canonical, err := parse(data)

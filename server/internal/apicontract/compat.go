@@ -71,12 +71,21 @@ func (c Change) String() string {
 //     allow. A required property is required as huma reads it: not in a
 //     request if it is readOnly, and not in a response if it is writeOnly.
 //
-// A oneOf's discriminator, which huma's validator reads to choose the member
-// that it validates an object against, and to let through a value that is not
-// an object, breaks a client when it is added, removed, or changed in any
-// way, as when it maps a value to another member, or gains or loses one: the
-// comparison does not judge whether the members that it chooses take what the
-// oneOf took.
+// A oneOf's discriminator is what huma's validator reads to choose the
+// member that it validates an object against, by the value of a property,
+// and to let through a value that is not an object, or whose property is not
+// a string. A request's may map values that base's did not, and a request's
+// oneOf may gain one, as long as no member of base's oneOf but the one that
+// such a value is mapped to takes an object with that value, as each needs
+// the property, with a schema that does not take the value, and, for a oneOf
+// that gains one, every member of base's needs the property: then the
+// discriminator leads every object that base took to the member that took it,
+// as when a request's union of nodes gains a type of node and maps it to the
+// member that it gains. Any other change to a discriminator breaks a client:
+// one that maps a value to another member, or no longer maps it, or reads
+// another property, one that a request's oneOf loses, which then validates
+// an object whose property is not a string against every member, and any
+// change to a response's.
 //
 // Schemas combined with oneOf, anyOf, or allOf are compared member by
 // member. If the members of a oneOf or an anyOf all refer to named schemas,
@@ -413,15 +422,91 @@ func (c *comparer) compare(loc string, b, h *Schema, dir direction, headNull boo
 	if dir == request && b.Default != nil && !sameJSON(b.Default, h.Default) {
 		c.report("%s: the default changed from %s to %s", loc, jsonOrNone(b.Default), jsonOrNone(h.Default))
 	}
-	if describeDiscriminator(b.Discriminator) != describeDiscriminator(h.Discriminator) {
-		c.report("%s: the discriminator changed from %s to %s", loc, describeDiscriminator(b.Discriminator),
-			describeDiscriminator(h.Discriminator))
-	}
+	c.discriminator(loc, b, h, dir)
 	c.composition(loc, b, h, dir, headNull)
 	c.object(loc, b, h, dir)
 	if b.Items != nil || h.Items != nil {
 		c.schema(loc+"[]", b.Items, h.Items, dir)
 	}
+}
+
+// discriminator reports a change from base's discriminator of the oneOf at loc
+// to head's that breaks a client: any change in a response, and in a request
+// any change but one that widens judges compatible.
+func (c *comparer) discriminator(loc string, b, h *Schema, dir direction) {
+	was, is := describeDiscriminator(b.Discriminator), describeDiscriminator(h.Discriminator)
+	if was == is || dir == request && c.widens(b, h) {
+		return
+	}
+	c.report("%s: the discriminator changed from %s to %s", loc, was, is)
+}
+
+// widens reports whether, in a request, head's oneOf, with its discriminator,
+// takes every object that base's took, with base's discriminator or without
+// one, as far as the discriminators decide it. huma's validator validates an
+// object whose property is a string that the mapping maps against that
+// member alone, and an object whose property is another string against every
+// member, as a oneOf without a discriminator does; it refuses an object
+// without the property, and lets through a value that is not an object, or
+// whose property is not a string. So head's discriminator reads the property
+// that base's read, and maps each value that base's mapped to the same
+// member; and no member of base's oneOf but the one that head's maps a value
+// to, that base's did not, takes an object with that value, as each needs the
+// property, with a schema that does not take the value, so that such an
+// object that base took, it took by that member, which composition compares.
+// When base's oneOf had no discriminator, each of its members also needs the
+// property, so that base refused an object without it too.
+//
+// A discriminator that a request's oneOf loses breaks a client, since the
+// oneOf then validates an object whose property is not a string against
+// every member, which base let through.
+func (c *comparer) widens(b, h *Schema) bool {
+	bd, hd := b.Discriminator, h.Discriminator
+	if hd == nil || bd != nil && bd.PropertyName != hd.PropertyName {
+		return false
+	}
+	property := hd.PropertyName
+	var mapped map[string]string
+	if bd != nil {
+		mapped = bd.Mapping
+	}
+	for _, value := range slices.Sorted(maps.Keys(mapped)) {
+		if to, ok := hd.Mapping[value]; !ok || refName(to) != refName(mapped[value]) {
+			return false
+		}
+	}
+	// needs reports whether base's member m needs the property in a request,
+	// and returns the property's schema, or nil when it has none.
+	needs := func(m *Schema) (*Schema, bool) {
+		s, _ := c.base.resolve(m)
+		if s == nil || !needed(s, request)[property] {
+			return nil, false
+		}
+		p, _ := c.base.resolve(s.Properties[property])
+		return p, true
+	}
+	for _, value := range slices.Sorted(maps.Keys(hd.Mapping)) {
+		if _, ok := mapped[value]; ok {
+			continue
+		}
+		taken := &Schema{Const: json.RawMessage(strconv.Quote(value))}
+		for _, m := range b.OneOf {
+			if m != nil && m.Ref != "" && refName(m.Ref) == refName(hd.Mapping[value]) {
+				continue
+			}
+			if p, ok := needs(m); !ok || p == nil || !exclusive(p, taken) {
+				return false
+			}
+		}
+	}
+	if bd == nil {
+		for _, m := range b.OneOf {
+			if _, ok := needs(m); !ok {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // describeDiscriminator writes a oneOf's discriminator d as a change names

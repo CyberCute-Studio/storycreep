@@ -615,9 +615,11 @@ func TestPlainTextBuilt(t *testing.T) {
 // TestCheckHref checks the links' allowlist: http and https URLs with a host
 // of ASCII, a name of labels or an IPv4 or IPv6 address, a port of at most
 // 65535, and no userinfo, which could show another host, and mailto URLs
-// without a # that set no field but to, cc, bcc, subject, and body, and that
-// escape no control character or line or paragraph separator but in a body,
-// and nothing that could run a script or read a file.
+// without a # or a ;, with a ?, an &, and an = only where they delimit, that
+// set no field but to, cc, bcc, subject, and body, and that escape no hidden
+// character in an address or a to, cc, or bcc, and no control character or
+// line or paragraph separator in a subject, and nothing that could run a
+// script or read a file.
 //
 // Verifies: NFR-SEC-08
 func TestCheckHref(t *testing.T) {
@@ -663,18 +665,25 @@ func TestCheckHref(t *testing.T) {
 		"MAILTO:keeper@example.com?subject=Light",
 		"mailto:/keeper",
 		// The fields that say what a message is sent to and what it says, in
-		// any ASCII case, and empty ones.
-		"mailto:keeper@example.com?to=mira@example.com&CC=a@example.com&Bcc=b@example.com&subject=a%26b&body=x=y",
-		"mailto:keeper@example.com?&subject=&&body=a?b%23c",
+		// any ASCII case, and empty ones, with the delimiters escaped in a
+		// value, and an address that holds what an address may, as a , between
+		// two of them, a / or a :.
+		"mailto:keeper@example.com?to=mira@example.com&CC=a@example.com&Bcc=b@example.com&subject=a%26b&body=x%3Dy",
+		"mailto:keeper@example.com?&subject=&&body=a%3Fb%23c%3Bd",
+		"mailto:keeper@example.com,mira@example.com?body=https://example.com/a:b@c",
+		"mailto:a%26b%3Dc%3Bd@example.com",
 		// A body's line breaks, as RFC 6068 writes them, and a tab, in any
 		// case of the field's name and of the escape's digits.
 		"mailto:keeper@example.com?subject=Light%20on&body=Come%0D%0Aup%09now&BODY=%0d%0a%7f",
 		"mailto:keeper@example.com?subject=%7E%20%25",
 		// Escaped characters beyond ASCII, of which a body may hold the line
-		// and paragraph separators and the C1 control characters too, and
-		// escapes that are not UTF-8, which stand for no control character.
+		// and paragraph separators and the C1 control characters too, and a
+		// subject white space and format characters, as text may; and escapes
+		// that are not UTF-8, which stand for no hidden character.
 		"mailto:keeper@example.com?subject=Caf%C3%A9%20%E2%80%A7&body=a%E2%80%A8b%E2%80%A9c%C2%85d%c2%9f",
+		"mailto:keeper@example.com?subject=%C2%A0%E2%80%8B%E2%80%AE%EF%BB%BF&body=%E2%80%AE%20",
 		"mailto:keeper@example.com?subject=%C2%20%E2%80%20%FF%80",
+		"mailto:%C2%41%E2%80%41%FF%80@example.com?to=%C2%41",
 	} {
 		if problem := CheckHref(href); problem != "" {
 			t.Errorf("CheckHref(%q) = %q, want none", href, problem)
@@ -752,6 +761,29 @@ func TestCheckHref(t *testing.T) {
 		"mailto:keeper@example.com%E2%80%A9Bcc:evil@example.com",
 		"mailto:keeper@example.com?cc=a@example.com%C2%9F",
 		"mailto:keeper@example.com?to=a@example.com%c2%80",
+		// A delimiter where it delimits nothing, after which a mail client
+		// that reads the fields otherwise than at the first ? and between the
+		// &s, as at the last ?, wherever an & or a ? is, or at a ;, reads one.
+		"mailto:keeper@example.com&attach=/etc/passwd",
+		"mailto:keeper@example.com&subject=x",
+		"mailto:keeper=x@example.com",
+		"mailto:keeper@example.com?subject=Light?attach=/etc/passwd",
+		"mailto:keeper@example.com?body=a?b",
+		"mailto:keeper@example.com?subject=a=b",
+		"mailto:keeper@example.com?to=mira@example.com=attach=/etc/passwd",
+		"mailto:keeper@example.com?subject=Light;attach=/etc/passwd",
+		"mailto:keeper@example.com;attach=/etc/passwd",
+		"mailto:keeper@example.com?;attach=/etc/passwd",
+		// An address, or a to, cc, or bcc, that escapes white space or a
+		// format character, which would hide or reorder the address that a
+		// mail client shows, as U+202E RIGHT-TO-LEFT OVERRIDE does.
+		"mailto:%E2%80%AEmoc.elpmaxe@evil.example",
+		"mailto:%e2%80%8bkeeper@evil.example",
+		"mailto:keeper@example.com%20evil@example.com",
+		"mailto:keeper@example.com%C2%A0",
+		"mailto:keeper@example.com?to=%EF%BB%BFmira@evil.example",
+		"mailto:keeper@example.com?CC=mira@example.com%E3%80%80",
+		"mailto:keeper@example.com?bcc=%E2%81%A6x@evil.example",
 		// A port that no browser takes.
 		"https://example.com:65536/",
 		"https://example.com:99999999999999999999/",

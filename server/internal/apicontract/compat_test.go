@@ -729,19 +729,28 @@ func TestBreakingUnions(t *testing.T) {
 
 // TestBreakingDiscriminator checks that a oneOf's discriminator, which huma's
 // validator reads to choose the member that it validates an object against,
-// breaks a client when it is added, removed, or changed in any way, in a
-// request or a response, and that the same one breaks nothing.
+// breaks no client of a request when it maps a value that no other member of
+// base's oneOf took, as one that the oneOf gains, or when a oneOf whose
+// members all need its property gains it, and breaks a client when it is
+// removed or changed otherwise, or changed at all in a response, and that the
+// same one breaks nothing.
 func TestBreakingDiscriminator(t *testing.T) {
 	tagged := func(v string) *Schema {
 		return &Schema{Type: Types{"object"}, Required: []string{"type"}, AdditionalProperties: &Additional{},
 			Properties: map[string]*Schema{"type": {Enum: []json.RawMessage{raw(strconv.Quote(v))}}}}
 	}
-	// doc returns a document whose operation takes and answers with one of A
-	// and B, with the discriminator that maps each of mapping's values to the
-	// member named by the next, or none if mapping is nil.
-	doc := func(property string, mapping ...string) *Document {
+	// untagged takes an object of any type, which it does not need.
+	untagged := &Schema{Type: Types{"object"}, AdditionalProperties: &Additional{},
+		Properties: map[string]*Schema{"type": {Type: Types{"string"}}}}
+	// docOf returns a document whose operation takes and answers with one of
+	// the members, with the discriminator that maps each of mapping's values
+	// to the member named by the next, or none if mapping is nil.
+	docOf := func(members []string, property string, mapping ...string) *Document {
 		union := func() *Schema {
-			s := &Schema{OneOf: []*Schema{{Ref: refPrefix + "A"}, {Ref: refPrefix + "B"}}}
+			s := &Schema{}
+			for _, m := range members {
+				s.OneOf = append(s.OneOf, &Schema{Ref: refPrefix + m})
+			}
 			if mapping != nil {
 				s.Discriminator = &Discriminator{PropertyName: property, Mapping: map[string]string{}}
 				for i := 0; i < len(mapping); i += 2 {
@@ -759,14 +768,18 @@ func TestBreakingDiscriminator(t *testing.T) {
 					Schema: union(),
 				}}}},
 			}}},
-			Components: &Components{Schemas: map[string]*Schema{"A": tagged("a"), "B": tagged("b")}},
+			Components: &Components{Schemas: map[string]*Schema{"A": tagged("a"), "B": tagged("b"), "C": tagged("c"),
+				"U": untagged}},
 		}
 	}
+	doc := func(property string, mapping ...string) *Document {
+		return docOf([]string{"A", "B"}, property, mapping...)
+	}
+	changed := func(in, from, to string) string {
+		return "POST /x: the " + in + " body: the discriminator changed from " + from + " to " + to
+	}
 	both := func(from, to string) []string {
-		return []string{
-			"POST /x: the request body: the discriminator changed from " + from + " to " + to,
-			"POST /x: the response 200 body: the discriminator changed from " + from + " to " + to,
-		}
+		return []string{changed("request", from, to), changed("response 200", from, to)}
 	}
 	tests := []struct {
 		name       string
@@ -775,16 +788,36 @@ func TestBreakingDiscriminator(t *testing.T) {
 	}{
 		{"the same discriminator", doc("type", "a", "A", "b", "B"), doc("type", "b", "B", "a", "A"), nil},
 		{"no discriminator", doc(""), doc(""), nil},
+		// Base validated an object of type b against both members, of which
+		// only B takes it, and head validates it against B.
 		{"a discriminator is added", doc(""), doc("type", "a", "A", "b", "B"),
-			both("none", `"type" {"a": A, "b": B}`)},
+			[]string{changed("response 200", "none", `"type" {"a": A, "b": B}`)}},
+		{"a discriminator gains a value", doc("type", "a", "A"), doc("type", "a", "A", "b", "B"),
+			[]string{changed("response 200", `"type" {"a": A}`, `"type" {"a": A, "b": B}`)}},
+		{"a discriminator gains a value of a member that the oneOf gains", doc("type", "a", "A", "b", "B"),
+			docOf([]string{"A", "B", "C"}, "type", "a", "A", "b", "B", "c", "C"), []string{
+				changed("response 200", `"type" {"a": A, "b": B}`, `"type" {"a": A, "b": B, "c": C}`),
+				"POST /x: the response 200 body.oneOf[C] was added",
+			}},
+		// Base validated an object of type b against B, which took it, and
+		// head against A, which does not.
+		{"a discriminator gains a value that another member took", doc("type", "a", "A"),
+			doc("type", "a", "A", "b", "A"), both(`"type" {"a": A}`, `"type" {"a": A, "b": A}`)},
+		// Base took an object without a type, which U takes, and head refuses
+		// it.
+		{"a discriminator is added to a oneOf of a member that does not need its property",
+			docOf([]string{"A", "U"}, ""), docOf([]string{"A", "U"}, "type", "a", "A"),
+			both("none", `"type" {"a": A}`)},
+		// Base let through an object whose type is not a string, and head
+		// validates it against every member.
 		{"a discriminator is removed", doc("type", "a", "A", "b", "B"), doc(""),
 			both(`"type" {"a": A, "b": B}`, "none")},
 		{"a discriminator reads another property", doc("type", "a", "A"), doc("kind", "a", "A"),
 			both(`"type" {"a": A}`, `"kind" {"a": A}`)},
 		{"a discriminator maps a value to another member", doc("type", "a", "A", "b", "B"),
 			doc("type", "a", "A", "b", "A"), both(`"type" {"a": A, "b": B}`, `"type" {"a": A, "b": A}`)},
-		{"a discriminator gains a value", doc("type", "a", "A"), doc("type", "a", "A", "b", "B"),
-			both(`"type" {"a": A}`, `"type" {"a": A, "b": B}`)},
+		{"a discriminator no longer maps a value", doc("type", "a", "A", "b", "B"), doc("type", "a", "A"),
+			both(`"type" {"a": A, "b": B}`, `"type" {"a": A}`)},
 	}
 	for _, tt := range tests {
 		if got := messages(Breaking(tt.base, tt.head)); !slices.Equal(got, tt.want) {

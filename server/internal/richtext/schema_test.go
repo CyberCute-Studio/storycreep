@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"maps"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/humatest"
@@ -293,18 +291,64 @@ func humaValidator(t testing.TB, s map[string]any, strict bool) func(doc []byte)
 	}
 }
 
-// TestSchemaValidationCost checks that huma validates a document against the
-// schema in time that grows with its size, whatever it holds, so that a body
+// countingRegistry is a registry that counts the schemas that huma's
+// validator resolves by their references, which it does for each value that
+// it validates against a definition, and for each member of a oneOf that it
+// tries, and that stops the validation, panicking with errBudget, once they
+// are more than budget, so that a validation whose work grows faster than the
+// document ends, rather than holding the test binary.
+type countingRegistry struct {
+	huma.Registry
+	resolved, budget int
+}
+
+var errBudget = errors.New("huma resolved more schemas than its budget")
+
+func (r *countingRegistry) SchemaFromRef(ref string) *huma.Schema {
+	if r.resolved++; r.resolved > r.budget {
+		panic(errBudget)
+	}
+	return r.Registry.SchemaFromRef(ref)
+}
+
+// resolvesWithin reports whether huma resolves at most budget schemas to
+// validate the JSON document doc against the schema that Doc gives huma.
+func resolvesWithin(t *testing.T, doc []byte, budget int) (ok bool) {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal(doc, &v); err != nil {
+		t.Fatal(err)
+	}
+	reg := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
+	root := huma.SchemaFromType(reg, reflect.TypeFor[Doc]())
+	defer func() {
+		if p := recover(); p != nil {
+			if p != errBudget {
+				panic(p)
+			}
+			ok = false
+		}
+	}()
+	r := &countingRegistry{Registry: reg, budget: budget}
+	huma.Validate(r, root, huma.NewPathBuffer([]byte{}, 0), huma.ModeWriteToServer, v, &huma.ValidateResult{})
+	return true
+}
+
+// TestSchemaValidationCost checks that huma's work to validate a document
+// against the schema grows with its size, whatever it holds, so that a body
 // of a few kilobytes cannot hold the server's CPU (NFR-SEC-07): lists nested
 // as deep as a body nests at most, nodes of no type of the schema nested as
-// deep, and a text with thousands of marks. A oneOf of two branches that both
-// read a list's content made the time double with each depth, and the marks'
-// uniqueItems grow with the square of their number.
+// deep, and a text with thousands of marks. It counts the schemas that huma
+// resolves, which it does for each value that it validates against a
+// definition and for each member of a oneOf that it tries, rather than the
+// time that it takes, which a loaded machine would make vary: a oneOf of two
+// members that both read a list's content made their number double with each
+// depth. (An array that is uniqueItems, which huma checks in time that grows
+// with the square of its length, is no resolution, but no schema that Doc
+// gives huma has one, as its conversion takes no such keyword.)
 //
 // Verifies: NFR-SEC-07
 func TestSchemaValidationCost(t *testing.T) {
-	reg := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
-	root := huma.SchemaFromType(reg, reflect.TypeFor[Doc]())
 	// The API refuses a body nested more than 256 deep, and each list is
 	// four levels: the list, its content, an item, and the item's content.
 	const depth = 60
@@ -325,68 +369,33 @@ func TestSchemaValidationCost(t *testing.T) {
 		"marks": []byte(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a","marks":[` +
 			strings.Join(marks, ",") + `]}]}]}`),
 	} {
-		var v any
-		if err := json.Unmarshal(doc, &v); err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			huma.Validate(reg, root, huma.NewPathBuffer([]byte{}, 0), huma.ModeWriteToServer, v, &huma.ValidateResult{})
-		}()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			// The validation runs on until the test binary exits.
-			t.Errorf("%s: huma took more than 10 seconds to validate %d bytes", name, len(doc))
+		// Each of these resolves fewer schemas than a third of its bytes; a
+		// byte each is a budget that only work that grows faster than the
+		// document exceeds.
+		if !resolvesWithin(t, doc, len(doc)) {
+			t.Errorf("%s: huma resolved more than %d schemas, one for each byte, to validate it", name, len(doc))
 		}
 	}
 
 	// Each node is validated against the definition of its type alone, which
 	// a discriminator chooses, rather than against every member of a oneOf, so
-	// that a body of marked text costs huma about what a body of as many bytes
-	// of plain objects costs. Validating each inline node against each kind of
-	// inline node, and each of its marks against each kind of mark, made it
-	// cost twenty times as much: 0.9 s for the 5 MiB that the API takes.
-	type plainItem struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	type plainBody struct {
-		Items []plainItem `json:"items"`
-	}
-	const size = 2 << 20
+	// that huma resolves about one schema for each object of marked text, its
+	// nodes, its marks, and a link's attrs. Validating each inline node
+	// against each kind of inline node, and each of its marks against each
+	// kind of mark, made it resolve fifteen for each, and cost twenty times
+	// the time that as many bytes of plain objects cost: 0.9 s for the 5 MiB
+	// that the API takes.
+	const nodes = 1000
 	node := `{"type":"text","text":"a","marks":[{"type":"bold"},{"type":"italic"},{"type":"strike"},` +
 		`{"type":"link","attrs":{"href":"https://example.com/"}}]}`
-	item := `{"type":"text","text":"a"}`
-	marked := `{"type":"doc","content":[{"type":"paragraph","content":[` +
-		strings.Join(slices.Repeat([]string{node}, size/(len(node)+1)), ",") + `]}]}`
-	plain := `{"items":[` + strings.Join(slices.Repeat([]string{item}, size/(len(item)+1)), ",") + `]}`
-	// cost returns the least time of three that huma takes to validate body
-	// against the schema of type typ.
-	cost := func(typ reflect.Type, body string) time.Duration {
-		r := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
-		s := huma.SchemaFromType(r, typ)
-		var v any
-		if err := json.Unmarshal([]byte(body), &v); err != nil {
-			t.Fatal(err)
-		}
-		least := time.Duration(math.MaxInt64)
-		for range 3 {
-			res := &huma.ValidateResult{}
-			start := time.Now()
-			huma.Validate(r, s, huma.NewPathBuffer([]byte{}, 0), huma.ModeWriteToServer, v, res)
-			least = min(least, time.Since(start))
-			if res.Errors != nil {
-				t.Fatalf("%s does not validate: %v", typ, res.Errors[0])
-			}
-		}
-		return least
-	}
-	markedCost, plainCost := cost(reflect.TypeFor[Doc](), marked), cost(reflect.TypeFor[plainBody](), plain)
-	if markedCost > 5*plainCost {
-		t.Errorf("huma took %v to validate %d bytes of marked text, and %v for as many bytes of plain objects",
-			markedCost, len(marked), plainCost)
+	marked := []byte(`{"type":"doc","content":[{"type":"paragraph","content":[` +
+		strings.Join(slices.Repeat([]string{node}, nodes), ",") + `]}]}`)
+	// The document, its paragraph, and for each node, the node, its four
+	// marks, and its link's attrs.
+	objects := 2 + 6*nodes
+	if !resolvesWithin(t, marked, 2*objects) {
+		t.Errorf("huma resolved more than %d schemas, two for each object, to validate %d objects of marked text",
+			2*objects, objects)
 	}
 }
 
@@ -470,6 +479,48 @@ func TestDocField(t *testing.T) {
 		t.Errorf("null: %v, %+v", err, p.Text)
 	}
 
+	// huma (v2.39.1) pushes type onto its path at a node or a mark that has
+	// no type, or one that is not a string, and does not pop it, so that it
+	// reports the problems after it in the same body at locations with a
+	// segment too many, as the README says: here text.content[1] and title.
+	// When this fails, huma pops what it pushes: take the exception out of
+	// the README, N40, CONTRIBUTING, and discriminator's comment, and have
+	// this check that each problem is at its place.
+	type titled struct {
+		Text  Doc    `json:"text"`
+		Title string `json:"title"`
+	}
+	treg := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
+	tschema := huma.SchemaFromType(treg, reflect.TypeFor[titled]())
+	for body, want := range map[string][]string{
+		`{"text":{"type":"doc","content":[{"type":5},{"type":"heading"}]},"title":5}`: {
+			"text.content[0][1]", "text.title"},
+		`{"text":{"type":"doc","content":[{},{"type":"heading"}]},"title":5}`: {
+			"text.content[0].type", "text.content[0][1]", "text.title"},
+		`{"text":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"a",` +
+			`"marks":[{"type":["bold"]},{"type":"underline"}]}]}]},"title":5}`: {
+			"text.content[0].content[0].marks[0][1]", "text.title"},
+		`{"text":{"type":"doc","content":[{"type":"heading"},{"type":5}]},"title":5}`: {
+			"text.content[0]", "text.title"},
+	} {
+		var v any
+		if err := json.Unmarshal([]byte(body), &v); err != nil {
+			t.Fatal(err)
+		}
+		res := &huma.ValidateResult{}
+		huma.Validate(treg, tschema, huma.NewPathBuffer([]byte{}, 0), huma.ModeWriteToServer, v, res)
+		var got []string
+		for _, err := range res.Errors {
+			var detail *huma.ErrorDetail
+			if errors.As(err, &detail) {
+				got = append(got, detail.Location)
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s is refused at %q, not %q", body, got, want)
+		}
+	}
+
 	// A registry whose namer names the document's schema otherwise, as the
 	// commands' pipeline's does, names the definitions after it.
 	reg = huma.NewMapRegistry("#/components/schemas/", func(t reflect.Type, hint string) string {
@@ -480,6 +531,45 @@ func TestDocField(t *testing.T) {
 	}
 	if _, ok := reg.Map()["pkg_RichTextBlock"]; !ok {
 		t.Errorf("the registry holds no pkg_RichTextBlock, but %v", slices.Sorted(maps.Keys(reg.Map())))
+	}
+}
+
+// TestDiscriminator checks that the conversion to huma gives a oneOf of
+// references to definitions of objects that require a type of their own a
+// discriminator on type, gives none to a oneOf of schemas of their own, and
+// panics at a oneOf of references that cannot have one, rather than leave
+// huma to validate a node against every member, unnoticed.
+func TestDiscriminator(t *testing.T) {
+	ref := func(name string) any { return map[string]any{"$ref": defsPrefix + name} }
+	refs := func(n int) []*huma.Schema {
+		out := make([]*huma.Schema, n)
+		for i := range out {
+			out[i] = &huma.Schema{Ref: "#/components/schemas/M" + strconv.Itoa(i)}
+		}
+		return out
+	}
+	d := discriminator([]any{ref("paragraph"), ref("list")}, refs(2))
+	want := map[string]string{nodeParagraph: "#/components/schemas/M0", nodeBulletList: "#/components/schemas/M1",
+		nodeOrderedList: "#/components/schemas/M1"}
+	if d == nil || d.PropertyName != "type" || !maps.Equal(d.Mapping, want) {
+		t.Errorf("a block's discriminator is %+v", d)
+	}
+	if d := discriminator([]any{map[string]any{"type": "object"}, map[string]any{"type": "string"}}, refs(2)); d != nil {
+		t.Errorf("a oneOf of schemas of their own has the discriminator %+v", d)
+	}
+	for name, members := range map[string][]any{
+		"a reference to a definition without a type": {ref("paragraph"), ref("decimals")},
+		"a member that is no reference":              {ref("paragraph"), map[string]any{"type": "object"}},
+		"two members of one type":                    {ref("paragraph"), ref("paragraph")},
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s: discriminator does not panic", name)
+				}
+			}()
+			discriminator(members, refs(len(members)))
+		}()
 	}
 }
 

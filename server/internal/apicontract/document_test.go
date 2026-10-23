@@ -74,6 +74,9 @@ func TestLoadRefuses(t *testing.T) {
 			`"oneOf": [{"$ref": "#/components/schemas/Thing"}], "discriminator": {"propertyName": "kind", ` +
 				`"mapping": {"note": "#/components/schemas/ThingInput"}}`,
 			`maps "note" to #/components/schemas/ThingInput, which is no member of its oneOf`},
+		{"a discriminator that maps a value to a member that is no reference", `"$ref": "#/components/schemas/Thing"`,
+			`"oneOf": [{"type": "object"}], "discriminator": {"propertyName": "kind", "mapping": {"note": ""}}`,
+			`its discriminator maps "note" to no reference`},
 		{"an unknown keyword of a discriminator", `"$ref": "#/components/schemas/Thing"`,
 			`"oneOf": [{"$ref": "#/components/schemas/Thing"}], "discriminator": {"propertyName": "kind", "x": 1}`,
 			`unknown field "x"`},
