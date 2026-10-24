@@ -46,10 +46,10 @@ type Tx struct {
 	// own are the entities that the command that applies changed, in the
 	// order of its first change of each, and owned the same as a set, which
 	// the pipeline empties before each command's Apply, and expecting the
-	// kinds of entity that the steps of the command's inverse touch, or none
-	// for a batch that cannot be undone: the command's undo expects the
-	// revisions of those of its entities that are of these kinds (plan item
-	// 37).
+	// kinds of entity that the steps of the command's inverse touch, each
+	// once, or none for a batch that cannot be undone: the command's undo
+	// expects the revisions of those of its entities that are of these kinds
+	// (plan item 37).
 	own       []Ref
 	owned     map[Ref]struct{}
 	expecting []ids.Kind
@@ -71,8 +71,11 @@ type Tx struct {
 	checked   map[entitlements.LimitKey]int64
 	// counts are what the batch's commands add to the workspace's usage once
 	// every command of the batch has applied (AddUsageOnceApplied), in the
-	// order of their reports.
-	counts []usageCount
+	// order of their reports, and trashed says that the batch's project was in
+	// the workspace's trash before the batch, which a batch applies to only if
+	// a command of it restores the project (Spec.Restores).
+	counts  []usageCount
+	trashed bool
 	// restored are the entities that the batch's commands restored from the
 	// project's trash (Restored), by their kinds, each once, in the order of
 	// their first report, and reported the same entities as a set, which
@@ -293,9 +296,16 @@ func (t *Tx) AddUsage(key usage.Key, delta int64) error {
 // whose own deltas add them, so that the batch's deltas add up to the same
 // whatever the order of its commands. The pipeline calls count in the batch's
 // transaction, after the last command's Apply, and adds what it returns as
-// the command's AddUsage would, which may refuse the batch then. It returns
-// an error, which the command returns to refuse the batch, unless it is
-// called from the command's Apply.
+// the command's AddUsage would, which may refuse the batch then. A batch of a
+// project in the trash, which applies only because a command of it restores
+// the project (Spec.Restores), adds to a key that such a command counts so
+// what the counts return alone, and what its commands added to the key with
+// AddUsage counts for nothing: the project added nothing to the key before
+// the batch, as it was in the trash, and its restoration counts what the
+// project adds to it once the batch has applied, which those deltas, of
+// changes that they count as of a project not in the trash, are part of
+// already. It returns an error, which the command returns to refuse the
+// batch, unless it is called from the command's Apply.
 func (t *Tx) AddUsageOnceApplied(key usage.Key, count func(ctx context.Context) (int64, error)) error {
 	if t.current == nil {
 		return errors.New("commands: AddUsageOnceApplied is called outside a command's Apply")
@@ -306,8 +316,19 @@ func (t *Tx) AddUsageOnceApplied(key usage.Key, count func(ctx context.Context) 
 
 // addCounts adds to the workspace's usage what each count that the batch's
 // commands reported (AddUsageOnceApplied) returns, once every command of the
-// batch has applied, as the command that reported it would add it.
+// batch has applied, as the command that reported it would add it, and, in a
+// batch of a project in the trash, drops what the commands added with
+// AddUsage to each key that a command that restores the project counts so.
 func (t *Tx) addCounts(ctx context.Context) error {
+	if t.trashed {
+		for _, c := range t.counts {
+			// A key that no command added to has no sum, which AddUsage below
+			// takes for its first report.
+			if _, added := t.usage[c.key]; added && c.spec.restores {
+				t.usage[c.key] = 0
+			}
+		}
+	}
 	for _, c := range t.counts {
 		delta, err := c.count(ctx)
 		if err != nil {

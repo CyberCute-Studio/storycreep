@@ -803,6 +803,39 @@ func TestUsage(t *testing.T) {
 				live, want)
 		}
 	}
+	// A batch of a project in the trash that restores it, as the undo of a
+	// batch that changed its nodes and deleted it does, adds the nodes that the
+	// project has once the batch has applied, whatever its other commands do to
+	// them before the restoration or after, and one that deletes the project
+	// again adds nothing.
+	if _, err := f.apply(t, other, cmd{project.Delete, payload{}}); err != nil {
+		t.Fatal(err)
+	}
+	gull, tern := newID(), newID()
+	for i, c := range []struct {
+		batch    []cmd
+		restored bool
+	}{
+		{[]cmd{create(gull, ob, node.TypeElement, 0, nil), {project.Restore, payload{}}}, true},
+		{[]cmd{{project.Restore, payload{}}, {node.Delete, payload{"id": gull}}}, true},
+		{[]cmd{{node.Restore, payload{"id": gull}}, {project.Restore, payload{}},
+			create(tern, ob, node.TypeElement, 0, nil), {project.Delete, payload{}}}, false},
+		{[]cmd{{project.Restore, payload{}}, {node.Delete, payload{"id": tern}}, {project.Delete, payload{}},
+			{project.Restore, payload{}}}, true},
+	} {
+		if _, err := f.apply(t, other, c.batch...); err != nil {
+			t.Fatal(err)
+		}
+		if got, live := f.used(t, usage.Nodes), f.liveNodes(t); got != live {
+			t.Errorf("once a batch of the project in the trash that restores it has applied (%d), the workspace "+
+				"uses %d nodes, want %d", i, got, live)
+		}
+		if c.restored {
+			if _, err := f.apply(t, other, cmd{project.Delete, payload{}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 
 	f.exec(t, "INSERT INTO usage_delta (id, workspace_id, key, delta) VALUES ($1, $2, 'nodes', 7)", ids.New(), f.ws)
 	if _, err := usage.Reconcile(context.Background(), f.db); err != nil {

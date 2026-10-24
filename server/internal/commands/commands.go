@@ -357,7 +357,15 @@ const DefaultMaxUndoBytes = 4 << 20
 // most commands of a batch that a client sends through the API, so that the
 // batch that undoes it can be sent: one command may have an inverse of
 // several steps, as a board's restoration, whose undo deletes again the
-// folders that it brought back.
+// folders that it brought back. It holds every batch that can be undone,
+// whichever caller applies it, as DefaultMaxUndoBytes does; a batch that
+// cannot be undone, as an import (PRD FR-EDIT-08 AC1), has no undo to bound.
+// The batch that undoes another is bounded alike, by its own undo, which may
+// have more steps than the other had commands, as when the folders of the
+// boards whose deletion it undoes have gone to the trash since, which their
+// restorations bring back and their undo deletes again, so the pipeline
+// refuses it once that passes the bound, and it is sent in smaller batches,
+// as one whose undo takes more bytes than the bound is.
 const DefaultMaxUndoSteps = 1000
 
 // revisionDigits is the most digits that a revision, an int64 above 0, has.
@@ -628,7 +636,7 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		}
 		t := &Tx{tx: tx, pipeline: p, actor: actor, project: projectID, workspace: workspaceID, at: map[Ref]int{},
 			revs: map[Ref]int64{}, owned: map[Ref]struct{}{}, maxUndo: p.maxUndo, maxUndoSteps: p.maxUndoSteps,
-			usage: map[usage.Key]int64{}}
+			usage: map[usage.Key]int64{}, trashed: locked.Deleted}
 		// A batch that was sent before is answered as it was, whatever has
 		// changed since, before the project's state and the workspace's limits
 		// are checked (§10.2 step 4), so that a batch that applied is never
@@ -776,8 +784,15 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		t.current = c.spec
 		t.own, t.expecting = nil, nil
 		clear(t.owned)
+		// Each kind once, as an inverse may have many steps that touch the
+		// same kinds, as a board's restoration has, which Changed looks
+		// through at every entity's first change.
 		for _, st := range inverses[i] {
-			t.expecting = append(t.expecting, st.touches...)
+			for _, kind := range st.touches {
+				if !slices.Contains(t.expecting, kind) {
+					t.expecting = append(t.expecting, kind)
+				}
+			}
 		}
 		err := c.spec.apply(ctx, t, c.payload)
 		t.current = nil

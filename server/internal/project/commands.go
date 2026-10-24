@@ -369,8 +369,13 @@ func lifecycle(update func(ctx context.Context, q *queries.Queries, by queries.A
 		// creates, deletes, or restores, whose own delta counts it as a board
 		// of a project that is not in the trash, is counted with the others,
 		// and the batch adds the same to the boards whatever the order of its
-		// commands. The batch holds the project's lock, under which its boards
-		// change, so they are as counted until it commits.
+		// commands. A batch of the project in the trash, which applies only
+		// because it restores it, adds what the restoration counts alone,
+		// which the deltas of its other commands, before the restoration or
+		// after, are part of already, so the pipeline drops them
+		// (commands.Tx.AddUsageOnceApplied). The batch holds the project's
+		// lock, under which its boards change, so they are as counted until
+		// it commits.
 		// So do its nodes, alike.
 		if before.DeletedAt.Valid != after.DeletedAt.Valid {
 			sign := int64(1)

@@ -103,7 +103,9 @@ type Spec[P any] struct {
 	// the undo of a batch that archived or deleted the project with other
 	// commands, which unarchives or restores it, and undoes the others, which
 	// the pipeline checks against the project as it is before the batch,
-	// applies (PRD FR-EDIT-08). A command that Unarchives applies to an
+	// applies (PRD FR-EDIT-08); what a command that Restores counts of a key
+	// once such a batch has applied is all that the batch adds to the key
+	// (Tx.AddUsageOnceApplied). A command that Unarchives applies to an
 	// archived project, and one that Restores to one in the trash, so
 	// Unarchives needs Archived, and Restores Trashed.
 	Unarchives, Restores bool

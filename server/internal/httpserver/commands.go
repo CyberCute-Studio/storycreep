@@ -76,7 +76,9 @@ func revisionConflictError(err error) error {
 // which the maintainer chose: each of its batches is a transaction of its
 // own, which holds the project's lock, so they bound how long one request
 // holds a worker and the project. The pipeline's other callers, such as the
-// importer, are not bound by them.
+// importer, are not bound by them, though a batch that can be undone, whoever
+// applies it, has an undo of at most as many commands as a batch here
+// (commands.DefaultMaxUndoSteps), so that a client can send it.
 const (
 	maxBatches       = 100
 	maxBatchCommands = 1000

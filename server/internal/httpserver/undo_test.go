@@ -14,8 +14,10 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 )
@@ -176,7 +178,9 @@ func TestUndoOfArchivalAndDeletion(t *testing.T) {
 // project is then as it was, entity by entity, its revisions, timestamps, and
 // authors apart, but for what the commands created, which their undo left in
 // the trash (plan note N45). The client then redoes them all, each by sending
-// back the undo of its undo, and the project is as the batches left it.
+// back the undo of its undo, and the project is as the batches left it. At
+// each of these points the workspace's usage of projects, boards, and nodes
+// is what a recount finds.
 //
 // Verifies: FR-EDIT-08/AC2, NFR-Q-05
 func TestUndoRoundTrip(t *testing.T) {
@@ -250,6 +254,8 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 
 	c := &undoClient{t: t, send: send, store: undoRevisions(t, conn, project), open: map[*undoEntry]bool{}}
 	original := readUndoState(t, conn, project)
+	workspace := decode(t, ids.Workspace, ws)
+	wantUsageCounted(t, conn, workspace, "once the project's content is made")
 	var schedule []string
 	for range 3 {
 		round := slices.Sorted(maps.Keys(undoGenerators))
@@ -280,12 +286,14 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 		t.Errorf("only %d batches applied", len(stack))
 	}
 	forward := readUndoState(t, conn, project)
+	wantUsageCounted(t, conn, workspace, "once the batches have applied")
 
 	var redo []*undoEntry
 	for i := len(stack) - 1; i >= 0; i-- {
 		redo = append(redo, c.revert(stack[i]))
 	}
 	undone := readUndoState(t, conn, project)
+	wantUsageCounted(t, conn, workspace, "once every batch is undone")
 	for _, key := range slices.Sorted(maps.Keys(original)) {
 		if row, ok := undone[key]; !ok || !reflect.DeepEqual(row.content, original[key].content) {
 			t.Errorf("once every batch is undone, %s is %v, want %v", key, row.content, original[key].content)
@@ -302,6 +310,7 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 		c.revert(redo[i])
 	}
 	redone := readUndoState(t, conn, project)
+	wantUsageCounted(t, conn, workspace, "once every batch is redone")
 	for _, key := range slices.Sorted(maps.Keys(forward)) {
 		if row, ok := redone[key]; !ok || !reflect.DeepEqual(row.content, forward[key].content) {
 			t.Errorf("once every batch is redone, %s is %v, want %v", key, row.content, forward[key].content)
@@ -313,6 +322,29 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 		}
 	}
 	return applied
+}
+
+// wantUsageCounted fails the test unless the workspace ws's usage of
+// projects, boards, and nodes is what a recount of them finds, as every
+// batch, its undo, and its redo are to leave it (PRD FR-ENT-02), whatever
+// their commands, as one that changes the content and restores the project
+// in the trash; when says at what point of the test.
+func wantUsageCounted(t *testing.T, conn *pgx.Conn, ws ids.UUID, when string) {
+	t.Helper()
+	q := queries.New(conn)
+	for _, key := range []struct {
+		name  string
+		drift func(*queries.Queries, context.Context, pgtype.UUID) (int64, error)
+	}{{"projects", (*queries.Queries).ProjectDrift}, {"boards", (*queries.Queries).BoardDrift},
+		{"nodes", (*queries.Queries).NodeDrift}} {
+		drift, err := key.drift(q, context.Background(), pgtype.UUID{Bytes: ws, Valid: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if drift != 0 {
+			t.Errorf("%s, a recount finds %d %s more than the workspace's usage", when, drift, key.name)
+		}
+	}
 }
 
 // wantApplied reports whether the batch that res answers applied, and fails

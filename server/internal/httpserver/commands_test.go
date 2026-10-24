@@ -344,10 +344,12 @@ func TestCommandEndpointMismatch(t *testing.T) {
 // its steps' payloads and of the revisions that they expect, which one bound
 // counts, and the number of its steps, which the other bounds to what a batch
 // may have, each with its ID, type, and keys, which what the first bound
-// leaves of the body takes.
+// leaves of the body takes: each step counted with the longest type that the
+// server registers.
 func TestUndoFitsARequest(t *testing.T) {
 	t.Parallel()
-	step, err := json.Marshal(map[string]any{"command_id": ids.New().String(), "type": "attribute.set_options",
+	longest := slices.MaxFunc(newCommandRegistry().Types(), func(a, b commands.Type) int { return len(a) - len(b) })
+	step, err := json.Marshal(map[string]any{"command_id": ids.New().String(), "type": longest,
 		"payload": json.RawMessage("{}"), "expected_rev": json.RawMessage("{}")})
 	if err != nil {
 		t.Fatal(err)
