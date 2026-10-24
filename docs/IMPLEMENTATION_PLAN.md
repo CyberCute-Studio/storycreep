@@ -429,7 +429,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-EDIT-02 AC1, AC2, and AC4, FR-EDIT-05 AC2, the warn-and-confirm half of FR-PROJ-02 AC2 (references stay dangling; validation reports them in item 48), and FR-ENT-02 AC3 (16 sessions creating nodes across two projects) pass.
 
 ### 36. Connections
-**Status:** todo · **Depends on:** 35
+**Status:** done ([#41](https://github.com/CyberCute-Studio/storycreep/pull/41)) · **Depends on:** 35
 **PRD:** FR-EDIT-03 (server: AC2), FR-EDIT-02 (AC3), FR-PROJ-06 (AC1), FR-TEXT-01 (AC1)
 - `connection` of a board, from an element's output port, `out`, to a node of the board (branch outputs arrive in item 43), ordered among the connections that leave its port by a key, as a folder's children are, so that reordering changes only `order`. Rich-text labels, an empty paragraph for none (N44).
 - Commands: `connection.create`, `connection.update` (its label), `connection.reconnect` (either end), `connection.reorder`, `connection.delete`, and `connection.restore`. Routes read a board's connections and a connection (N44).
