@@ -451,7 +451,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### Milestone E — Expression engine
 
 ### 38. Unicode tables and numeric/string semantics
-**Status:** todo · **Depends on:** 1
+**Status:** done ([#43](https://github.com/CyberCute-Studio/storycreep/pull/43)) · **Depends on:** 1
 **PRD:** §5.8.9
 - A generator that builds the pinned simple case mapping and `White_Space` tables, of Unicode 18.0.0, from the Unicode Character Database's `UnicodeData.txt` and `PropList.txt`, which `/schema/unicode/ucd/` holds, into `/schema/unicode/tables.json` and the Go package's own copy, either of which CI fails on when it is out of date (N46).
 - Go primitives, in `server/internal/semantics`: safe-integer arithmetic with the multiplication pre-check, overflow and non-finite handling, the exact `to_int` / `to_float` grammars, correctly rounded parsing, shortest round-trip float formatting, rounding half away from zero, format specifiers, code-point strings, and `-0.0` normalisation. Package `value`'s conversions use them (N46).
