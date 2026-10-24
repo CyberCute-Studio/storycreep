@@ -41,12 +41,32 @@ const (
 var (
 	unicodeDir = filepath.Join("..", "..", "..", "schema", "unicode")
 	tablesFile = filepath.Join(unicodeDir, "tables.json")
+	docsDir    = filepath.Join("..", "..", "..", "docs")
 )
 
-// generated are the tables as the files of the UCD give them.
+// versionStatements are the places that state the version of Unicode of the
+// tables, each a file and a pattern whose group is the version, which
+// TestTables checks are ucdVersion, so that moving to another version
+// changes all of them.
+var versionStatements = []struct {
+	file    string
+	pattern *regexp.Regexp
+}{
+	{filepath.Join(unicodeDir, "README.md"), regexp.MustCompile(`The tables are of Unicode (\d+\.\d+\.\d+)`)},
+	{filepath.Join(unicodeDir, "README.md"), regexp.MustCompile(`unicode\.org/Public/(\d+\.\d+\.\d+)/`)},
+	{filepath.Join(unicodeDir, "README.md"), regexp.MustCompile(`"unicodeVersion": "(\d+\.\d+\.\d+)"`)},
+	{filepath.Join(unicodeDir, "README.md"), regexp.MustCompile(`The tables of this version, Unicode (\d+\.\d+\.\d+)`)},
+	{filepath.Join(docsDir, "PRD.md"), regexp.MustCompile(`one pinned Unicode version, Unicode (\d+\.\d+\.\d+)`)},
+	{filepath.Join(docsDir, "IMPLEMENTATION_PLAN.md"), regexp.MustCompile(`tables, of Unicode (\d+\.\d+\.\d+)`)},
+}
+
+// generated are the tables as the files of the UCD give them, and the code
+// points that UnicodeData.txt assigns, by code point, which
+// TestTablesAgainstGo reads.
 type generated struct {
 	upper, lower []caseMapping
 	whiteSpace   []span
+	assigned     []bool
 }
 
 // TestTables generates the tables that Upper, Lower, and Trim read from the
@@ -56,7 +76,9 @@ type generated struct {
 // run go test ./internal/semantics -run TestTables -update, in server/, to
 // rewrite both, and run the tests again, which then compile the new tables.
 // It also fails when a file of the UCD is not the one that unicode.org
-// publishes for ucdVersion, or when the README states another version.
+// publishes for ucdVersion, or when a place of versionStatements, in the
+// README, the PRD, or the plan, does not state it, or states another
+// version.
 func TestTables(t *testing.T) {
 	g := readUCD(t)
 	files := map[string][]byte{tablesFile: g.json(), "tables.go": g.goSource(t)}
@@ -79,17 +101,19 @@ func TestTables(t *testing.T) {
 		t.Errorf("tables.go is of Unicode %s, and the files of schema/unicode/ucd of %s; run go test "+
 			"./internal/semantics -run TestTables -update", UnicodeVersion, ucdVersion)
 	}
-	readme, err := os.ReadFile(filepath.Join(unicodeDir, "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	stated := regexp.MustCompile(`The tables are of Unicode (\d+\.\d+\.\d+)`).FindAllSubmatch(readme, -1)
-	if len(stated) == 0 {
-		t.Errorf("schema/unicode/README.md does not state the version of Unicode of the tables")
-	}
-	for _, m := range stated {
-		if string(m[1]) != ucdVersion {
-			t.Errorf("schema/unicode/README.md says %q, and the tables are of Unicode %s", m[0], ucdVersion)
+	for _, s := range versionStatements {
+		text, err := os.ReadFile(s.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stated := s.pattern.FindAllSubmatch(text, -1)
+		if len(stated) == 0 {
+			t.Errorf("%s does not state the version of Unicode of the tables as %s", s.file, s.pattern)
+		}
+		for _, m := range stated {
+			if string(m[1]) != ucdVersion {
+				t.Errorf("%s says %q, and the tables are of Unicode %s", s.file, m[0], ucdVersion)
+			}
 		}
 	}
 }
@@ -109,17 +133,35 @@ func readUCD(t *testing.T) generated {
 		}
 		return string(data)
 	}
-	var g generated
+	g := generated{assigned: make([]bool, unicode.MaxRune+1)}
 	unicodeData, propList := read("UnicodeData.txt", ucdUnicodeData), read("PropList.txt", ucdPropList)
 	if header := "# PropList-" + ucdVersion + ".txt\n"; !strings.HasPrefix(propList, header) {
 		t.Fatalf("schema/unicode/ucd/PropList.txt does not start with %q", header)
 	}
+	// The first code point of the range of code points that a line of
+	// <…, First> starts, as <CJK Ideograph, First>, and its line of <…,
+	// Last> ends.
+	first := rune(-1)
 	for n, line := range strings.Split(strings.TrimSuffix(unicodeData, "\n"), "\n") {
 		fields := strings.Split(line, ";")
 		if len(fields) != 15 {
 			t.Fatalf("UnicodeData.txt:%d has %d fields, not 15", n+1, len(fields))
 		}
 		from := codePoint(t, fields[0])
+		switch {
+		case strings.HasSuffix(fields[1], "First>"):
+			first = from
+		case strings.HasSuffix(fields[1], "Last>"):
+			if first < 0 || first > from {
+				t.Fatalf("UnicodeData.txt:%d ends a range that no line started", n+1)
+			}
+			for r := first; r <= from; r++ {
+				g.assigned[r] = true
+			}
+			first = -1
+		default:
+			g.assigned[from] = true
+		}
 		for _, m := range []struct {
 			table *[]caseMapping
 			field string
@@ -280,14 +322,22 @@ package semantics
 // reading the UCD's files shows: a code point's simple mappings and whether
 // it is of White_Space are the same in both, but where Unicode assigned the
 // code point, or the one that it maps to, in a version after the older of
-// the two, which Unicode's stability policy for case pairs allows. U+0264
-// LATIN SMALL LETTER RAMS HORN, which had no uppercase in Unicode 15.0, maps
-// to U+A7CB LATIN CAPITAL LETTER RAMS HORN, which Unicode 16.0 assigned.
+// the two, which Unicode's stability policy for case pairs allows, whichever
+// of the two is the older. U+0264 LATIN SMALL LETTER RAMS HORN, which had no
+// uppercase in Unicode 15.0, maps to U+A7CB LATIN CAPITAL LETTER RAMS HORN,
+// which Unicode 16.0 assigned. A code point is assigned in the older version
+// when both assign it: package unicode's tables, and UnicodeData.txt, which
+// lists every code point that its version assigns.
 func TestTablesAgainstGo(t *testing.T) {
 	t.Parallel()
-	// Whether package unicode's tables assign r: whether r is of a general
-	// category but Cn, the unassigned code points, or C, which holds Cn.
+	ours := readUCD(t).assigned
+	// Whether both assign r: whether UnicodeData.txt lists it, and it is of
+	// one of package unicode's general categories but Cn, the unassigned code
+	// points, or C, which holds Cn.
 	assigned := func(r rune) bool {
+		if !ours[r] {
+			return false
+		}
 		for name, table := range unicode.Categories {
 			if name != "Cn" && name != "C" && unicode.Is(table, r) {
 				return true

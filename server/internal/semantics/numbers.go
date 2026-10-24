@@ -104,27 +104,30 @@ func CheckFloat(f float64) (float64, RuntimeError) {
 
 // AddFloat returns a + b, SubFloat a - b, MulFloat a * b, and NegFloat -a,
 // each rounded to the nearest double and checked as CheckFloat checks it.
-// Each converts its result to float64 explicitly, which the Go specification
-// says rounds it, since a compiler may otherwise fuse an operation with the
-// next, as a multiplication with an addition into one fused multiply-add on
-// arm64, which rounds once where the TypeScript evaluator rounds twice.
+// Each converts its operands and its result to float64 explicitly, which the
+// Go specification says rounds them, since a compiler may otherwise fuse an
+// operation with another, as a multiplication with an addition into one
+// fused multiply-add on arm64, which rounds once where the TypeScript
+// evaluator rounds twice. Converting the result alone does not stop that:
+// once AddFloat is inlined, AddFloat(x*y, z) of a product that its caller
+// did not round compiles to one FMADDD, which converting a stops (§5.8.9).
 func AddFloat(a, b float64) (float64, RuntimeError) {
-	return CheckFloat(float64(a + b))
+	return CheckFloat(float64(float64(a) + float64(b)))
 }
 
 // SubFloat returns a - b, as AddFloat says.
 func SubFloat(a, b float64) (float64, RuntimeError) {
-	return CheckFloat(float64(a - b))
+	return CheckFloat(float64(float64(a) - float64(b)))
 }
 
 // MulFloat returns a * b, as AddFloat says.
 func MulFloat(a, b float64) (float64, RuntimeError) {
-	return CheckFloat(float64(a * b))
+	return CheckFloat(float64(float64(a) * float64(b)))
 }
 
 // NegFloat returns -a, as AddFloat says, so -0.0 is 0.0.
 func NegFloat(a float64) (float64, RuntimeError) {
-	return CheckFloat(-a)
+	return CheckFloat(float64(-float64(a)))
 }
 
 // DivFloat returns a / b, as AddFloat says, or DivisionByZero and 0 when b
@@ -134,7 +137,7 @@ func DivFloat(a, b float64) (float64, RuntimeError) {
 	if b == 0 {
 		return 0, DivisionByZero
 	}
-	return CheckFloat(float64(a / b))
+	return CheckFloat(float64(float64(a) / float64(b)))
 }
 
 // Trunc returns f truncated toward zero, as to_int converts a float, and
@@ -185,7 +188,8 @@ func ParseInt(s string) (int64, RuntimeError) {
 		return 0, ConversionFailed
 	}
 	digits := strings.TrimLeft(body, "0")
-	if len(digits) > len(strconv.Itoa(MaxInt)) {
+	// MaxInt as an int64, which an int is not on a 32-bit platform.
+	if len(digits) > len(strconv.FormatInt(MaxInt, 10)) {
 		return 0, IntegerOverflow
 	}
 	// At most 16 digits, which an int64 holds; none is 0.
@@ -350,9 +354,11 @@ func FormatFloat(f float64) string {
 // 1.005, whose double is a little less than 1.005, shows as 1.01 with 2
 // digits, as it was written, and as to_string writes it, rounded. An int is
 // shown as the float that it widens to, exactly: 5 with 2 digits is 5.00. A
-// negative decimals is 0.
+// decimals beyond 0 to MaxDecimals, which no format specifier has, is the
+// nearer of the two, so that no count that a caller passes makes it write
+// more than MaxDecimals digits after the point.
 func FormatFixed(f float64, decimals int) string {
-	decimals = max(decimals, 0)
+	decimals = min(max(decimals, 0), MaxDecimals)
 	// The shortest digits of |f|, the first of which stands for 10^e.
 	mantissa, exponent, _ := strings.Cut(strconv.FormatFloat(math.Abs(f), 'e', -1, 64), "e")
 	digits := strings.Replace(mantissa, ".", "", 1)

@@ -30,3 +30,33 @@ func TestCaseKeepsLength(t *testing.T) {
 		t.Errorf("Lower(%q) = %q", "A\xffB", got)
 	}
 }
+
+// TestEachCodePoint checks that Upper and Lower map each code point alone
+// as their tables map it, the ASCII code points, which they look up without
+// a search, among them, and that IsWhiteSpace, which stops at the first
+// range that ends at a code point or after it, holds a code point exactly
+// when a range of White_Space does.
+func TestEachCodePoint(t *testing.T) {
+	t.Parallel()
+	for r := rune(0); r <= utf8.MaxRune; r++ {
+		if !utf8.ValidRune(r) {
+			continue
+		}
+		for _, c := range []struct {
+			name  string
+			f     func(string) string
+			table []caseMapping
+		}{{"Upper", Upper, upperTable}, {"Lower", Lower, lowerTable}} {
+			if want, _ := caseOf(c.table, r); c.f(string(r)) != string(want) {
+				t.Errorf("%s(U+%04X) = %q, want U+%04X", c.name, r, c.f(string(r)), want)
+			}
+		}
+		in := false
+		for _, s := range whiteSpace {
+			in = in || s.first <= r && r <= s.last
+		}
+		if IsWhiteSpace(r) != in {
+			t.Errorf("IsWhiteSpace(U+%04X) = %t, want %t", r, IsWhiteSpace(r), in)
+		}
+	}
+}

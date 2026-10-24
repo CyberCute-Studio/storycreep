@@ -186,6 +186,30 @@ func TestFloatArithmetic(t *testing.T) {
 	}
 }
 
+// fusing holds operands whose exact product, 1 - 2^-60, rounds to 1, so that
+// adding -1 to the rounded product gives 0, and adding it to the exact one,
+// as a fused multiply-add does, gives -2^-60. They are a variable's, so that
+// the compiler does not fold the product as a constant.
+var fusing = struct{ x, y, one float64 }{1 + 0x1p-30, 1 - 0x1p-30, 1}
+
+// TestNoFusion checks that AddFloat and SubFloat round a product that their
+// caller passes them unrounded before they add it or subtract it (§5.8.9),
+// which a fused multiply-add, which the Go compiler emits on arm64, does
+// not, so that on arm64 it fails when an operation fuses with a product.
+func TestNoFusion(t *testing.T) {
+	t.Parallel()
+	x, y, one := fusing.x, fusing.y, fusing.one
+	for name, got := range map[string]func() (float64, RuntimeError){
+		"AddFloat(x*y, -1)": func() (float64, RuntimeError) { return AddFloat(x*y, -one) },
+		"SubFloat(x*y, 1)":  func() (float64, RuntimeError) { return SubFloat(x*y, one) },
+		"SubFloat(1, x*y)":  func() (float64, RuntimeError) { return SubFloat(one, x*y) },
+	} {
+		if f, problem := got(); f != 0 || problem != "" {
+			t.Errorf("%s = %v, %q; want 0", name, f, problem)
+		}
+	}
+}
+
 // The grammars of to_int and to_float (§5.8.9), as regular expressions, to
 // check ParseInt's and ParseFloat's own reading of them against.
 var (

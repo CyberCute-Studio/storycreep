@@ -544,12 +544,13 @@ func ordinal(i int) string {
 //     double nearest it, however many digits it is written with, and however
 //     large its exponent, as to_float reads it, 0 for one too small for a
 //     double, unless it is beyond a double's range;
-//   - to string or text, a bool as true or false, an int as a decimal, a float
-//     as to_string writes it (semantics.FormatFloat), or a string, a text, or
-//     an option as it is, each within the type's length, with its characters
-//     as they are, which the text rules checked as the value was set, so that
-//     a stored value that today's rules refuse (input.CheckText) converts as
-//     it is read (Read);
+//   - to string or text, a bool as true or false, an int or a float as
+//     to_string writes it (semantics.FormatInt, semantics.FormatFloat), or a
+//     string, a text, or an option as it is, each within the type's length,
+//     counted in code points as len counts them (semantics.Len), with its
+//     characters as they are, which the text rules checked as the value was
+//     set, so that a stored value that today's rules refuse (input.CheckText)
+//     converts as it is read (Read);
 //   - to enum, a value whose string, as above, is one of toOptions.
 //
 // A value of another type than from, or of no type, does not convert.
@@ -580,7 +581,7 @@ func Convert(v Value, from string, fromOptions []string, to string, toOptions []
 		case Int, Float:
 			return v, true
 		}
-		s = strconv.FormatInt(n, 10)
+		s = semantics.FormatInt(n)
 	case Float:
 		f, _ := strconv.ParseFloat(string(v.raw), 64)
 		switch to {
@@ -654,7 +655,7 @@ func fromString(s, to string, options []string) (Value, bool) {
 // characters, with its characters as they are, and whether it is within the
 // length.
 func stringOf(s string, maxChars int) (Value, bool) {
-	if utf8.RuneCountInString(s) > maxChars {
+	if semantics.Len(s) > maxChars {
 		return Value{}, false
 	}
 	return stringValue(s), true

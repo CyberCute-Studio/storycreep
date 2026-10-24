@@ -16,10 +16,11 @@ func Len(s string) int {
 
 // Compare returns -1, 0, or +1 as a is before, equal to, or after b, in the
 // lexicographic order of their code points, as <, <=, >, and >= compare
-// strings (§5.8.3, §5.8.9), which the order of their UTF-8 bytes is: "￿"
-// is before "😀", U+1F600, which JavaScript's < on UTF-16 code units puts
-// after it. Neither string is normalised, so "é" as one code point and "é" as
-// e and a combining accent are not equal.
+// strings (§5.8.3, §5.8.9), which the order of their UTF-8 bytes is: the
+// string of U+FFFF is before "😀", U+1F600, though JavaScript's < on UTF-16
+// code units puts "😀" first, comparing its high surrogate, U+D83D, with
+// U+FFFF. Neither string is normalised, so "é", U+00E9, and e followed by
+// U+0301 COMBINING ACUTE ACCENT are not equal.
 func Compare(a, b string) int {
 	return strings.Compare(a, b)
 }
@@ -52,33 +53,65 @@ func EndsWith(s, suffix string) bool {
 // would be "SS". It maps no code point by locale: upper("i") is "I", in
 // Turkish too.
 func Upper(s string) string {
-	return mapCase(s, upperTable)
+	return mapCase(s, upperTable, upperASCII)
 }
 
 // Lower returns s with each code point mapped to its simple lowercase
 // mapping, as lower does, as Upper says: lower("İ") is "i", one code point,
 // and lower("Σ") is "σ", wherever it is in a word.
 func Lower(s string) string {
-	return mapCase(s, lowerTable)
+	return mapCase(s, lowerTable, lowerASCII)
 }
 
-// mapCase returns s with each code point that table maps mapped. A byte of s
-// that is not UTF-8, which no string of the language holds, is kept as it
-// is.
-func mapCase(s string, table []caseMapping) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); {
-		r, size := utf8.DecodeRuneInString(s[i:])
-		// A byte that is not UTF-8 is read as U+FFFD, which no table maps.
-		if to, mapped := caseOf(table, r); mapped {
-			b.WriteRune(to)
-		} else {
-			b.WriteString(s[i : i+size])
-		}
-		i += size
+// upperASCII and lowerASCII hold what upperTable and lowerTable map each
+// ASCII code point to, itself when they do not map it, by code point, so
+// that mapCase looks those up without a search.
+var (
+	upperASCII = asciiOf(upperTable)
+	lowerASCII = asciiOf(lowerTable)
+)
+
+// asciiOf returns what table maps each ASCII code point to, as upperASCII
+// holds it.
+func asciiOf(table []caseMapping) *[utf8.RuneSelf]rune {
+	var a [utf8.RuneSelf]rune
+	for r := range a {
+		a[r], _ = caseOf(table, rune(r))
 	}
-	return b.String()
+	return &a
+}
+
+// mapCase returns s with each code point that table maps mapped, ascii
+// being what table maps the ASCII code points to, and s itself when it maps
+// none of them. A byte of s that is not UTF-8, which no string of the
+// language holds, is kept as it is.
+func mapCase(s string, table []caseMapping, ascii *[utf8.RuneSelf]rune) string {
+	mapRune := func(r rune) (rune, bool) {
+		if r < utf8.RuneSelf {
+			return ascii[r], ascii[r] != r
+		}
+		return caseOf(table, r)
+	}
+	// A byte that is not UTF-8 is read as U+FFFD, which no table maps.
+	for first, r := range s {
+		if _, mapped := mapRune(r); !mapped {
+			continue
+		}
+		var b strings.Builder
+		b.Grow(len(s))
+		b.WriteString(s[:first])
+		for i := first; i < len(s); {
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if to, mapped := mapRune(r); mapped {
+				b.WriteRune(to)
+			} else {
+				b.WriteString(s[i : i+size])
+			}
+			i += size
+		}
+		return b.String()
+	}
+	return s
 }
 
 // caseOf returns the code point that table maps r to, and whether it maps r.
@@ -102,11 +135,12 @@ func Trim(s string) string {
 }
 
 // IsWhiteSpace reports whether r is a code point of White_Space, of the
-// tables of UnicodeVersion.
+// tables of UnicodeVersion. The ranges are in their order, so it stops at
+// the first that ends at r or after it.
 func IsWhiteSpace(r rune) bool {
 	for _, s := range whiteSpace {
-		if s.first <= r && r <= s.last {
-			return true
+		if r <= s.last {
+			return s.first <= r
 		}
 	}
 	return false

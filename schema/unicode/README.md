@@ -41,5 +41,5 @@ A new version of Unicode changes what `upper`, `lower`, and `trim` compute for t
 
 1. Replace `ucd/UnicodeData.txt` and `ucd/PropList.txt` with that version's, from `https://www.unicode.org/Public/<version>/ucd/`, and `ucd/LICENSE.txt` with `https://www.unicode.org/license.txt`.
 2. In `server/internal/semantics/tables_test.go`, set `ucdVersion` to the version and `ucdUnicodeData` and `ucdPropList` to the SHA-256 of the new files.
-3. Run `go test ./internal/semantics -run TestTables -update` in `server/`, and change the version that this README states.
+3. Run `go test ./internal/semantics -run TestTables -update` in `server/`, and change the version that this README, PRD §5.8.9, and plan item 38 state, each place of which the test checks (`versionStatements`).
 4. Introduce the new `ast_version` for `upper`, `lower`, and `trim`, and add corpus cases of what the version changes.

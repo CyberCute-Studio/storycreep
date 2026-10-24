@@ -31,6 +31,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/semantics"
 )
 
 // The limits of a document (PRD NFR-SEC-07). The JSON Schema states those
@@ -58,8 +59,8 @@ const (
 	// MaxStart is the highest number that an ordered list starts at.
 	MaxStart = 999_999
 	// MaxDecimals is the most digits after the point that a value reference
-	// shows a number with.
-	MaxDecimals = 6
+	// shows a number with, a format specifier's (semantics.MaxDecimals).
+	MaxDecimals = semantics.MaxDecimals
 )
 
 // Doc is a document: its blocks, of which Parse returns at least one. The

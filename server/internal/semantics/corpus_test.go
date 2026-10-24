@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"unicode/utf8"
 )
 
 // corpusFiles are the files of the expression corpus whose cases apply one
@@ -87,6 +88,10 @@ func TestCorpus(t *testing.T) {
 			if c.Decimals != nil && c.Op != "interpolate" {
 				t.Errorf("%s: only interpolate has decimals", where)
 			}
+			if c.Decimals != nil && (*c.Decimals < 0 || *c.Decimals > MaxDecimals) {
+				t.Errorf("%s: decimals is %d, not from 0 to %d, as a format specifier's is", where, *c.Decimals,
+					MaxDecimals)
+			}
 			got, problem, ok := apply(c.Op, args, c.Decimals)
 			switch {
 			case !ok:
@@ -99,7 +104,11 @@ func TestCorpus(t *testing.T) {
 }
 
 // read returns the value that v writes, as its type says, and fails the test
-// when it is not a value of that type.
+// when it is not a value of that type. It reads a float with ParseFloat, as
+// to_float reads a string, which the corpus's README says that a runner
+// does, and a string only when it is of code points: UTF-8, and without an
+// escape of a lone surrogate, which json.Unmarshal reads as U+FFFD rather
+// than refusing it.
 func read(t *testing.T, where string, v typedValue) value {
 	t.Helper()
 	out := value{typ: v.Type}
@@ -111,12 +120,22 @@ func read(t *testing.T, where string, v typedValue) value {
 			err = fmt.Errorf("beyond ±%d", int64(MaxInt))
 		}
 	case "float":
-		out.f, err = strconv.ParseFloat(string(v.Value), 64)
-		if err == nil && (math.IsInf(out.f, 0) || math.IsNaN(out.f) || math.Signbit(out.f) && out.f == 0) {
-			err = fmt.Errorf("not finite, or -0")
+		// A JSON number is of to_float's grammar, which a JSON string, or
+		// any other value, is not. ParseFloat reads -0 as 0, so the sign is
+		// checked on the number as it is written.
+		var problem RuntimeError
+		out.f, problem = ParseFloat(string(v.Value))
+		switch {
+		case problem != "":
+			err = fmt.Errorf("to_float reports %s", problem)
+		case out.f == 0 && bytes.HasPrefix(v.Value, []byte("-")):
+			err = fmt.Errorf("-0")
 		}
 	case "string":
 		err = json.Unmarshal(v.Value, &out.s)
+		if err == nil && (!utf8.Valid(v.Value) || loneSurrogate(string(v.Value))) {
+			err = fmt.Errorf("not of code points")
+		}
 	case "bool":
 		err = json.Unmarshal(v.Value, &out.b)
 	default:
@@ -126,6 +145,46 @@ func read(t *testing.T, where string, v typedValue) value {
 		t.Fatalf("%s: %s is no value of the type %q: %v", where, v.Value, v.Type, err)
 	}
 	return out
+}
+
+// loneSurrogate reports whether raw, a JSON string, escapes a UTF-16
+// surrogate other than as a high one followed at once by a low one, which is
+// how JSON escapes a code point beyond U+FFFF.
+func loneSurrogate(raw string) bool {
+	// Whether the escape just read is of a high surrogate, which the next
+	// escape must be of a low one after.
+	high := false
+	for i := 0; i < len(raw); i++ {
+		var escaped uint64
+		isEscape := raw[i] == '\\' && i+5 < len(raw) && raw[i+1] == 'u'
+		if isEscape {
+			// raw is JSON, so four hexadecimal digits follow \u.
+			escaped, _ = strconv.ParseUint(raw[i+2:i+6], 16, 32)
+		}
+		switch {
+		case isEscape && escaped >= 0xD800 && escaped < 0xDC00:
+			if high {
+				return true
+			}
+			high = true
+		case isEscape && escaped >= 0xDC00 && escaped < 0xE000:
+			if !high {
+				return true
+			}
+			high = false
+		case high:
+			return true
+		}
+		switch {
+		case isEscape:
+			i += 5
+		case raw[i] == '\\':
+			// An escape of one character, as \" or \\, whose second
+			// character starts no escape.
+			i++
+		}
+	}
+	return high
 }
 
 // same reports whether a and b, of one type, are the same value: a float's

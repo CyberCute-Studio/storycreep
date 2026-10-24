@@ -26,6 +26,11 @@ package semantics
 // int, and every int widens to a float exactly (PRD §5.8.1, §5.8.9).
 const MaxInt = 1<<53 - 1
 
+// MaxDecimals is the most digits after the point that an interpolation
+// format specifier shows a number with (FR-TEXT-02), as a text value
+// reference's decimals, from 0 to MaxDecimals, does (FormatFixed).
+const MaxDecimals = 6
+
 // A RuntimeError is the code of the runtime error that an operation reports
 // (PRD §5.8.3, §5.8.7), or "" for none.
 type RuntimeError string
