@@ -181,9 +181,11 @@ type Limit[P any] struct {
 
 // Step is a command of an inverse: its type and its payload, which encodes as
 // the type's payload does. The pipeline gives it the revisions that it
-// expects, those of the entities that its command changed, as the batch left
-// them, each once in its command's undo (Result.Undo), and the client that
-// sends the undo gives it its command ID (plan item 37).
+// expects, those of the entities of the kinds that its type touches that its
+// command changed, as the batch left them, each once, as it gives them to
+// every other step of the command's inverse whose type touches their kinds
+// (Result.Undo), and the client that sends the undo gives it its command ID
+// (plan item 37).
 type Step struct {
 	Type    Type
 	Payload any

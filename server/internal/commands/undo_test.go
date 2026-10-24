@@ -347,8 +347,9 @@ func TestUndoSteps(t *testing.T) {
 	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{
 		command(t, noteUpdate, notePayload{ID: aID, Body: "x"}, nil),
 		command(t, noteUpdate, notePayload{ID: bID, Body: "x"}, nil),
-	}); !errors.As(err, &r) || r.Command != 1 || r.Field != "" || r.Reason != nil {
-		t.Errorf("a batch whose undo would have two steps: %v, want a refusal of command 1 at the payload", err)
+	}); !errors.As(err, &r) || r.Command != 1 || r.Field != "" || !errors.Is(r.Reason, ErrUndoTooLarge) {
+		t.Errorf("a batch whose undo would have two steps: %v, want a refusal of command 1 at the payload, for its "+
+			"undo", err)
 	}
 	if after := w.written(t); after != before {
 		t.Errorf("the refused batch wrote %+v, where there was %+v", after, before)

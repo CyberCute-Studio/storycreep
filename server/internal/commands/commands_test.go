@@ -1130,8 +1130,10 @@ func TestUndoBound(t *testing.T) {
 	before := w.written(t)
 	var r *RefusedError
 	if _, err := bounded(2*one-1).Apply(ctx, w.as(ownerUser), w.project, []Command{update(xID),
-		update(yID)}); !errors.As(err, &r) || r.Command != 1 || r.Field != "body" || r.Reason != nil {
-		t.Errorf("a batch whose undo would take the bound by a byte: %v, want a refusal of command 1 at body", err)
+		update(yID)}); !errors.As(err, &r) || r.Command != 1 || r.Field != "body" ||
+		!errors.Is(r.Reason, ErrUndoTooLarge) {
+		t.Errorf("a batch whose undo would take the bound by a byte: %v, want a refusal of command 1 at body, for "+
+			"its undo", err)
 	}
 	room := func(n int) Command {
 		return command(t, noteBadInverse, badInversePayload{ID: xID, Step: noteDelete, Room: n}, nil)
@@ -1144,12 +1146,14 @@ func TestUndoBound(t *testing.T) {
 	// once the update has applied, before the next command's inverse.
 	expected := ExpectedRevBytes(noteRef(x))
 	if _, err := bounded(one+expected-1).Apply(ctx, w.as(ownerUser), w.project,
-		[]Command{update(xID)}); !errors.As(err, &r) || r.Command != 0 || r.Field != "body" {
+		[]Command{update(xID)}); !errors.As(err, &r) || r.Command != 0 || r.Field != "body" ||
+		!errors.Is(r.Reason, ErrUndoTooLarge) {
 		t.Errorf("a batch whose undo's expected revision would take the bound by a byte: %v, want a refusal of "+
 			"command 0 at body", err)
 	}
 	if _, err := bounded(one+expected+len(deletion)).Apply(ctx, w.as(ownerUser), w.project, []Command{update(xID),
-		room(len(deletion) + 1)}); !errors.As(err, &r) || r.Command != 1 || r.Field != "" {
+		room(len(deletion) + 1)}); !errors.As(err, &r) || r.Command != 1 || r.Field != "" ||
+		!errors.Is(r.Reason, ErrUndoTooLarge) {
 		t.Errorf("a batch whose second command's inverse stops for want of room: %v, want a refusal of command 1 "+
 			"at the payload", err)
 	}

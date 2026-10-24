@@ -348,8 +348,10 @@ var codes = []codeSpec{
 			"range; or a field's value is not one that the route takes, such as a registration's email address " +
 			"that is not one, or, for a batch of commands, one that the project's state does not take, or one " +
 			"that would take the batch's undo, which a client sends back as a batch to undo it, past what a " +
-			"request can hold (`POST /api/v1/projects/{project_id}/commands`). `details.errors` lists each " +
-			"problem with its `location`, such as `body.name` or `query.limit`, and a `message`."},
+			"request can hold (`POST /api/v1/projects/{project_id}/commands`), whose `details.reason` is then " +
+			"`undo_too_large`, the one reason that it gives, so that a client sends an undo refused so in smaller " +
+			"batches. `details.errors` lists each problem with its `location`, such as `body.name` or " +
+			"`query.limit`, and a `message`."},
 	{CodeIdempotencyMismatch, http.StatusUnprocessableEntity, i18n.K("error.idempotency_mismatch"),
 		"A batch of commands holds commands that were applied already, in another batch, and commands that were " +
 			"not, so nothing of it is applied (PRD FR-API-03). A batch applies whole or not at all, so only a client " +

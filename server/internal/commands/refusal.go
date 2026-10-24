@@ -52,7 +52,9 @@ type RefusedError struct {
 	// "" for the payload itself, and Message says what is wrong with it.
 	Field, Message string
 	// Reason is the refusal's reason, or nil for a value that the project's
-	// state does not take.
+	// state does not take. It is ErrUndoTooLarge for a command whose inverse
+	// would take the batch's undo past the pipeline's bounds, which a client
+	// that sent the batch as an undo sends in smaller batches (Result.Undo).
 	Reason error
 }
 
@@ -81,10 +83,22 @@ func refusedBy(err error, i int, c decoded) (*RefusedError, bool) {
 		Reason: r.reason}, true
 }
 
+// boundRefusal returns the refusal of the command c, the batch's command i,
+// whose Apply stopped with ErrUndoTooLarge once the batch's undo in t was past
+// one of the pipeline's bounds (Tx.Changed): undoStepsRefusal if the undo has
+// more steps than its bound of steps, and is within its bound of bytes, and
+// undoRefusal otherwise.
+func boundRefusal(i int, c decoded, t *Tx) *RefusedError {
+	if t.undoBytes <= t.maxUndo && t.undoSteps > t.maxUndoSteps {
+		return undoStepsRefusal(i, c, t.maxUndoSteps)
+	}
+	return undoRefusal(i, c, t.maxUndo)
+}
+
 // undoRefusal returns the refusal of the command c, the batch's command i,
 // whose inverse would take the batch's undo past maxUndo bytes, which the
-// pipeline answers at the payload's field that its Spec.UndoField names, as
-// a value that the project's state does not take.
+// pipeline answers at the payload's field that its Spec.UndoField names, for
+// the reason ErrUndoTooLarge.
 func undoRefusal(i int, c decoded, maxUndo int) *RefusedError {
 	size := fmt.Sprintf("%d bytes", maxUndo)
 	if maxUndo%(1<<20) == 0 {
@@ -93,13 +107,13 @@ func undoRefusal(i int, c decoded, maxUndo int) *RefusedError {
 	return &RefusedError{Command: i, CommandID: c.ID, Type: c.spec.typ, Field: c.spec.undoField,
 		Message: "would take the batch's undo, the inverses of its commands as the operation log keeps them, past " +
 			size + ", which a batch that undoes it could not send: send the commands in smaller batches, or make a " +
-			"change whose undo holds less"}
+			"change whose undo holds less", Reason: ErrUndoTooLarge}
 }
 
 // undoStepsRefusal returns the refusal of the command c, the batch's command
 // i, whose inverse would give the batch's undo more than maxSteps steps,
 // which a batch that undoes it could not send, which the pipeline answers at
-// the payload, as a value that the project's state does not take. A command
+// the payload, for the reason ErrUndoTooLarge. A command
 // whose own inverse has that many steps, as the restore of a board under
 // more folders in the trash than that, which its undo deletes again, applies
 // once what its inverse undoes is changed first, in batches of fewer steps,
@@ -109,5 +123,5 @@ func undoStepsRefusal(i int, c decoded, maxSteps int) *RefusedError {
 		Message: fmt.Sprintf("would give the batch's undo, the inverses of its commands as the operation log keeps "+
 			"them, more than %d commands, which a batch that undoes it could not send: send the commands in smaller "+
 			"batches, or make a change whose undo has fewer commands, as restoring first the folders in the trash "+
-			"that a restore would bring back", maxSteps)}
+			"that a restore would bring back", maxSteps), Reason: ErrUndoTooLarge}
 }

@@ -366,6 +366,34 @@ func TestUndoFitsARequest(t *testing.T) {
 	}
 }
 
+// TestUndoTooLargeAnswer checks that a batch that the pipeline refuses because
+// its undo would take more than a request can hold is answered with 422
+// validation_failed at its command's field, whose details.reason is
+// undo_too_large, so that a client tells an undo that it then sends in smaller
+// batches from one refused for a value that the project's state does not
+// take, whose answer has no reason.
+func TestUndoTooLargeAnswer(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		reason error
+		want   any
+	}{{commands.ErrUndoTooLarge, "undo_too_large"}, {nil, nil}} {
+		err := fmt.Errorf("apply: %w", &commands.RefusedError{Command: 3, CommandID: ids.New(),
+			Type: "attribute.retype", Field: "type", Message: "would take the batch's undo past 4 MiB",
+			Reason: c.reason})
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/projects/prj_01HQ8Z3XK4F7NAWR5TCQ9M2BVD/commands", nil)
+		w := httptest.NewRecorder()
+		api.WriteError(w, r, commandError(err, "body.commands"))
+		res := response{status: w.Code, header: w.Header(), body: w.Body.Bytes()}
+		if got := problems(t, res); !slices.Equal(got, []string{"body.commands[3].payload.type"}) {
+			t.Errorf("the refusal for %v is located at %v, want body.commands[3].payload.type", c.reason, got)
+		}
+		if got := res.details(t)["reason"]; got != c.want {
+			t.Errorf("the refusal for %v has the reason %v, want %v", c.reason, got, c.want)
+		}
+	}
+}
+
 // TestCommandEndpointBody checks that a body that is neither form, or that
 // holds more batches or commands than the endpoint takes, is answered with
 // 422 validation_failed, and that every problem of a batch's commands is
