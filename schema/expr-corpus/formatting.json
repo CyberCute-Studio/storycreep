@@ -1,0 +1,370 @@
+{
+  "cases": [
+    {
+      "note": "to_string of zero",
+      "op": "to_string",
+      "args": [{ "type": "int", "value": 0 }],
+      "result": { "type": "string", "value": "0" }
+    },
+    {
+      "note": "to_string of an int is its plain decimal",
+      "op": "to_string",
+      "args": [{ "type": "int", "value": 42 }],
+      "result": { "type": "string", "value": "42" }
+    },
+    {
+      "note": "to_string of a negative int has a leading -",
+      "op": "to_string",
+      "args": [{ "type": "int", "value": -42 }],
+      "result": { "type": "string", "value": "-42" }
+    },
+    {
+      "note": "to_string of the greatest int, without an exponent",
+      "op": "to_string",
+      "args": [{ "type": "int", "value": 9007199254740991 }],
+      "result": { "type": "string", "value": "9007199254740991" }
+    },
+    {
+      "note": "to_string of the least int",
+      "op": "to_string",
+      "args": [{ "type": "int", "value": -9007199254740991 }],
+      "result": { "type": "string", "value": "-9007199254740991" }
+    },
+    {
+      "note": "PRD §5.8.9: an integral float keeps one digit after its point",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 2.0 }],
+      "result": { "type": "string", "value": "2.0" }
+    },
+    {
+      "note": "to_string of the float zero",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 0.0 }],
+      "result": { "type": "string", "value": "0.0" }
+    },
+    {
+      "note": "to_string of a negative float",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": -2.5 }],
+      "result": { "type": "string", "value": "-2.5" }
+    },
+    {
+      "note": "to_string writes the shortest decimal that reads as the double again",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 0.1 }],
+      "result": { "type": "string", "value": "0.1" }
+    },
+    {
+      "note": "to_string writes as many digits as the double needs",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 0.30000000000000004 }],
+      "result": { "type": "string", "value": "0.30000000000000004" }
+    },
+    {
+      "note": "to_string of 1e20, positional",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 1e20 }],
+      "result": { "type": "string", "value": "100000000000000000000.0" }
+    },
+    {
+      "note": "to_string of the double just below 1e21, positional, with zeros past its shortest digits",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 999999999999999900000.0 }],
+      "result": { "type": "string", "value": "999999999999999900000.0" }
+    },
+    {
+      "note": "to_string of 1e21, with an exponent, its mantissa without a point",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 1e21 }],
+      "result": { "type": "string", "value": "1e+21" }
+    },
+    {
+      "note": "to_string of -1.5e21, with an exponent",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": -1.5e21 }],
+      "result": { "type": "string", "value": "-1.5e+21" }
+    },
+    {
+      "note": "to_string of 1e-6, positional",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 1e-6 }],
+      "result": { "type": "string", "value": "0.000001" }
+    },
+    {
+      "note": "to_string of 1.5e-6, positional",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 1.5e-6 }],
+      "result": { "type": "string", "value": "0.0000015" }
+    },
+    {
+      "note": "to_string of the double just below 1e-6, with an exponent without leading zeros",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 9.999999999999997e-7 }],
+      "result": { "type": "string", "value": "9.999999999999997e-7" }
+    },
+    {
+      "note": "to_string of 1e-7, with an exponent",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 1e-7 }],
+      "result": { "type": "string", "value": "1e-7" }
+    },
+    {
+      "note": "to_string of -1.5e-7, with an exponent",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": -1.5e-7 }],
+      "result": { "type": "string", "value": "-1.5e-7" }
+    },
+    {
+      "note": "to_string of the least subnormal",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 5e-324 }],
+      "result": { "type": "string", "value": "5e-324" }
+    },
+    {
+      "note": "to_string of the greatest double",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 1.7976931348623157e308 }],
+      "result": { "type": "string", "value": "1.7976931348623157e+308" }
+    },
+    {
+      "note": "to_string of 2^53 as a float",
+      "op": "to_string",
+      "args": [{ "type": "float", "value": 9007199254740992.0 }],
+      "result": { "type": "string", "value": "9007199254740992.0" }
+    },
+    {
+      "note": "to_string of true",
+      "op": "to_string",
+      "args": [{ "type": "bool", "value": true }],
+      "result": { "type": "string", "value": "true" }
+    },
+    {
+      "note": "to_string of false",
+      "op": "to_string",
+      "args": [{ "type": "bool", "value": false }],
+      "result": { "type": "string", "value": "false" }
+    },
+    {
+      "note": "to_string of a string is the string",
+      "op": "to_string",
+      "args": [{ "type": "string", "value": "é" }],
+      "result": { "type": "string", "value": "é" }
+    },
+    {
+      "note": "a value reference without a format specifier shows a float as to_string writes it",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 2.0 }],
+      "result": { "type": "string", "value": "2.0" }
+    },
+    {
+      "note": "a value reference without a format specifier shows a float with an exponent as to_string writes it",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 1e21 }],
+      "result": { "type": "string", "value": "1e+21" }
+    },
+    {
+      "note": "a value reference without a format specifier shows an int as to_string writes it",
+      "op": "interpolate",
+      "args": [{ "type": "int", "value": -5 }],
+      "result": { "type": "string", "value": "-5" }
+    },
+    {
+      "note": "a value reference shows a bool as to_string writes it",
+      "op": "interpolate",
+      "args": [{ "type": "bool", "value": true }],
+      "result": { "type": "string", "value": "true" }
+    },
+    {
+      "note": "a format specifier rounds the decimal that to_string writes, 1.005, half away from zero, to 1.01, where JavaScript's toFixed rounds the double, a little less than 1.005, to 1.00",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 1.005 }],
+      "decimals": 2,
+      "result": { "type": "string", "value": "1.01" }
+    },
+    {
+      "note": "a format specifier rounds 2.675, whose double is a little less, to 2.68",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 2.675 }],
+      "decimals": 2,
+      "result": { "type": "string", "value": "2.68" }
+    },
+    {
+      "note": "a format specifier rounds 0.045, whose double is a little less, to 0.05",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 0.045 }],
+      "decimals": 2,
+      "result": { "type": "string", "value": "0.05" }
+    },
+    {
+      "note": "a format specifier rounds 1.45, whose double is a little less, to 1.5",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 1.45 }],
+      "decimals": 1,
+      "result": { "type": "string", "value": "1.5" }
+    },
+    {
+      "note": "a format specifier rounds 0.125, which the double is exactly, half away from zero, not to the even 0.12",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 0.125 }],
+      "decimals": 2,
+      "result": { "type": "string", "value": "0.13" }
+    },
+    {
+      "note": "a format specifier of 0 digits rounds half away from zero and writes no point",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 2.5 }],
+      "decimals": 0,
+      "result": { "type": "string", "value": "3" }
+    },
+    {
+      "note": "a format specifier rounds a negative half away from zero",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": -2.5 }],
+      "decimals": 0,
+      "result": { "type": "string", "value": "-3" }
+    },
+    {
+      "note": "a format specifier of 0 digits rounds 0.5 to 1",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 0.5 }],
+      "decimals": 0,
+      "result": { "type": "string", "value": "1" }
+    },
+    {
+      "note": "a format specifier of 0 digits rounds -0.4 to 0, without a sign",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": -0.4 }],
+      "decimals": 0,
+      "result": { "type": "string", "value": "0" }
+    },
+    {
+      "note": "a negative value that rounds to zero is shown without a sign",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": -0.001 }],
+      "decimals": 2,
+      "result": { "type": "string", "value": "0.00" }
+    },
+    {
+      "note": "a value whose first digit is the rounding digit rounds up when it is 5",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 0.005 }],
+      "decimals": 2,
+      "result": { "type": "string", "value": "0.01" }
+    },
+    {
+      "note": "a negative value whose first digit is the rounding digit rounds away from zero",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": -5e-7 }],
+      "decimals": 6,
+      "result": { "type": "string", "value": "-0.000001" }
+    },
+    {
+      "note": "a value less than half of the last digit shown is zero",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 0.0005 }],
+      "decimals": 2,
+      "result": { "type": "string", "value": "0.00" }
+    },
+    {
+      "note": "a value that is written with an exponent rounds to zero, positional",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 1.5e-7 }],
+      "decimals": 6,
+      "result": { "type": "string", "value": "0.000000" }
+    },
+    {
+      "note": "rounding carries into a new digit before the point",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 9.9999995 }],
+      "decimals": 6,
+      "result": { "type": "string", "value": "10.000000" }
+    },
+    {
+      "note": "rounding carries through every digit",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 999.5 }],
+      "decimals": 0,
+      "result": { "type": "string", "value": "1000" }
+    },
+    {
+      "note": "a format specifier pads with zeros to its digits",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 3.14159 }],
+      "decimals": 6,
+      "result": { "type": "string", "value": "3.141590" }
+    },
+    {
+      "note": "a format specifier shows the float zero with its digits",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 0.0 }],
+      "decimals": 2,
+      "result": { "type": "string", "value": "0.00" }
+    },
+    {
+      "note": "a format specifier writes 1e21, which to_string writes with an exponent, positional",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 1e21 }],
+      "decimals": 1,
+      "result": { "type": "string", "value": "1000000000000000000000.0" }
+    },
+    {
+      "note": "a format specifier writes the greatest double positional, its shortest digits followed by zeros",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 1.7976931348623157e308 }],
+      "decimals": 0,
+      "result": {
+        "type": "string",
+        "value": "179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "note": "a format specifier shows the least subnormal as zero",
+      "op": "interpolate",
+      "args": [{ "type": "float", "value": 5e-324 }],
+      "decimals": 6,
+      "result": { "type": "string", "value": "0.000000" }
+    },
+    {
+      "note": "a format specifier shows an int with its digits",
+      "op": "interpolate",
+      "args": [{ "type": "int", "value": 5 }],
+      "decimals": 2,
+      "result": { "type": "string", "value": "5.00" }
+    },
+    {
+      "note": "a format specifier of 0 digits shows a negative int as it is",
+      "op": "interpolate",
+      "args": [{ "type": "int", "value": -5 }],
+      "decimals": 0,
+      "result": { "type": "string", "value": "-5" }
+    },
+    {
+      "note": "a format specifier shows the greatest int exactly",
+      "op": "interpolate",
+      "args": [{ "type": "int", "value": 9007199254740991 }],
+      "decimals": 2,
+      "result": { "type": "string", "value": "9007199254740991.00" }
+    },
+    {
+      "note": "a format specifier shows the int zero with its digits",
+      "op": "interpolate",
+      "args": [{ "type": "int", "value": 0 }],
+      "decimals": 3,
+      "result": { "type": "string", "value": "0.000" }
+    },
+    {
+      "note": "a format specifier shows a value that is not a number as it is",
+      "op": "interpolate",
+      "args": [{ "type": "bool", "value": false }],
+      "decimals": 2,
+      "result": { "type": "string", "value": "false" }
+    },
+    {
+      "note": "a format specifier shows a string as it is",
+      "op": "interpolate",
+      "args": [{ "type": "string", "value": "3.14159" }],
+      "decimals": 2,
+      "result": { "type": "string", "value": "3.14159" }
+    }
+  ]
+}
