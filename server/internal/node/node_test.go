@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -1069,8 +1070,7 @@ func TestConcurrentCreation(t *testing.T) {
 
 	// The monitor samples, as the superuser, the sessions of the test's
 	// database that wait for a lock, and keeps those whose wait is the
-	// usage's: for a lock of its tables, or of its advisory locks, or while
-	// writing one of its rows.
+	// usage's (lockWaits).
 	monitor := f.d.Admin(t)
 	stop := make(chan struct{})
 	var mu sync.Mutex
@@ -1084,36 +1084,19 @@ func TestConcurrentCreation(t *testing.T) {
 				return
 			default:
 			}
-			rows, err := monitor.Query(ctx, `SELECT a.query, coalesce(l.relation::regclass::text, l.locktype),
-					coalesce(l.locktype = 'advisory' AND l.classid::int = $1
-						OR l.relation IN ('usage_delta'::regclass, 'usage_counter'::regclass)
-						OR a.query LIKE '%usage_delta%' OR a.query LIKE '%usage_counter%', false)
-				FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
-				WHERE NOT l.granted AND a.datname = current_database()`, database.UsageLock)
+			sampled, err := lockWaits(ctx, monitor)
 			if err != nil {
 				done <- err
 				return
 			}
-			for rows.Next() {
-				var query, lock string
-				var isUsage bool
-				if err := rows.Scan(&query, &lock, &isUsage); err != nil {
-					rows.Close()
-					done <- err
-					return
+			mu.Lock()
+			for _, w := range sampled {
+				waits = append(waits, w.lock)
+				if w.usage {
+					usageWaits = append(usageWaits, w.lock+": "+w.query)
 				}
-				mu.Lock()
-				waits = append(waits, lock)
-				if isUsage {
-					usageWaits = append(usageWaits, lock+": "+query)
-				}
-				mu.Unlock()
 			}
-			rows.Close()
-			if err := rows.Err(); err != nil {
-				done <- err
-				return
-			}
+			mu.Unlock()
 		}
 	}()
 
@@ -1151,6 +1134,173 @@ func TestConcurrentCreation(t *testing.T) {
 	t.Logf("the sessions waited %d times for a lock, none of them the usage's", len(waits))
 	if got, want := f.used(t, usage.Nodes)-before, int64(sessions*batches); got != want {
 		t.Errorf("the 16 sessions added %d nodes to the usage, want %d", got, want)
+	}
+}
+
+// lockWait is a lock that a session waits for: what lock it is, the
+// statement that waits for it, if it is known, and whether the lock is the
+// usage's.
+type lockWait struct {
+	lock, query string
+	usage       bool
+}
+
+// lockWaits returns the locks that the sessions of the test's database wait
+// for, as conn, the superuser's, reads them. A wait is the usage's if it is
+// for the usage's advisory lock, or for a lock of one of its tables, or for a
+// row or a key of one of them.
+//
+// What a lock is for is read from pg_locks, which PostgreSQL reads in one
+// snapshot of its lock table. A session that waits for a row that another
+// transaction locked or changed waits for that transaction (transactionid),
+// holding the row's tuple lock, whose table is the row's. A session that
+// waits for another transaction without a tuple lock, as an upsert does for a
+// key that the other is writing to a unique index, is told by its statement:
+// the wait is the usage's if the statement writes one of the usage's tables.
+// The statement is read from pg_stat_activity once pg_locks has been read, so
+// only a statement that began before then is the one that waited, and any
+// other is not known. The test once read pg_stat_activity in the same query as
+// pg_locks, a moment after it, by which time a session that pg_locks showed
+// waiting for its project's row could be writing the usage delta of the batch
+// that the row's lock let it apply, and it took that for a wait of the usage.
+// Nor is a wait for a table's extension lock the usage's: a session holds
+// that lock only while it adds pages to the table, as for any table that
+// sessions insert into at once, and not until its transaction ends.
+func lockWaits(ctx context.Context, conn *pgx.Conn) ([]lockWait, error) {
+	type wait struct {
+		lockWait
+		pid int32
+		// byStatement is set if the wait is told by its statement.
+		byStatement bool
+	}
+	var locksRead time.Time
+	rows, err := conn.Query(ctx, `WITH l AS MATERIALIZED (SELECT * FROM pg_locks)
+		SELECT w.pid, w.locktype || coalesce(' of ' || coalesce(w.relation, r.relation)::regclass::text, ''),
+			coalesce(w.locktype = 'advisory' AND w.classid::int = $1
+				OR w.locktype <> 'extend'
+					AND coalesce(w.relation, r.relation) IN ('usage_delta'::regclass, 'usage_counter'::regclass),
+				false),
+			w.locktype IN ('transactionid', 'spectoken') AND r.pid IS NULL, statement_timestamp()
+		FROM l w
+		LEFT JOIN l r ON w.locktype = 'transactionid' AND r.pid = w.pid AND r.locktype = 'tuple' AND r.granted
+		WHERE NOT w.granted AND w.pid IN (SELECT pid FROM pg_stat_activity WHERE datname = current_database())`,
+		database.UsageLock)
+	if err != nil {
+		return nil, err
+	}
+	waits, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (wait, error) {
+		var w wait
+		err := row.Scan(&w.pid, &w.lock, &w.usage, &w.byStatement, &locksRead)
+		return w, err
+	})
+	if err != nil || len(waits) == 0 {
+		return nil, err
+	}
+	pids := make([]int32, len(waits))
+	for i, w := range waits {
+		pids[i] = w.pid
+	}
+	rows, err = conn.Query(ctx, "SELECT pid, query FROM pg_stat_activity WHERE pid = ANY($1) AND query_start < $2",
+		pids, locksRead)
+	if err != nil {
+		return nil, err
+	}
+	statements := map[int32]string{}
+	for rows.Next() {
+		var pid int32
+		var query string
+		if err := rows.Scan(&pid, &query); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		statements[pid] = query
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sampled := make([]lockWait, len(waits))
+	for i, w := range waits {
+		w.query = statements[w.pid]
+		if w.byStatement && (strings.Contains(w.query, "usage_delta") || strings.Contains(w.query, "usage_counter")) {
+			w.usage = true
+		}
+		sampled[i] = w.lockWait
+	}
+	return sampled, nil
+}
+
+// TestLockWaits checks that TestConcurrentCreation's monitor (lockWaits)
+// sees the waits of the usage, for a row of usage_counter that another
+// transaction changed, for a key of it that another transaction inserted,
+// and for the usage's advisory lock, and tells them from the waits for a
+// project's row and for a key of a workspace, which are not the usage's.
+func TestLockWaits(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	f.exec(t, "INSERT INTO usage_counter (id, workspace_id, key, value) VALUES ($1, $2, 'nodes', 0)", ids.New(), f.ws)
+	ws := ids.New()
+	statements := []struct {
+		lock, sql string
+		args      []any
+		usage     bool
+	}{
+		{"transactionid of usage_counter", "UPDATE usage_counter SET value = value + 1 WHERE workspace_id = $1",
+			[]any{f.ws}, true},
+		{"transactionid", "INSERT INTO usage_counter (id, workspace_id, key, value) " +
+			"VALUES (gen_random_uuid(), $1, 'boards', 1)", []any{f.ws}, true},
+		{"advisory", "SELECT pg_advisory_xact_lock($1, 1)", []any{database.UsageLock}, true},
+		{"transactionid of project", "SELECT FROM project WHERE id = $1 FOR NO KEY UPDATE", []any{f.project}, false},
+		{"transactionid", "INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Pier', $2, 'unlimited')",
+			[]any{ws, "pier-" + ws.String()}, false},
+	}
+	// The holder runs each statement, and then a session of each runs it
+	// again, which waits until the holder rolls back.
+	holder, err := f.d.Admin(t).Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range statements {
+		if _, err := holder.Exec(ctx, s.sql, s.args...); err != nil {
+			t.Fatalf("%s: %v", s.sql, err)
+		}
+	}
+	errs := make(chan error, len(statements))
+	want := map[string]string{}
+	for _, s := range statements {
+		want[s.sql] = fmt.Sprintf("%s, the usage's: %t", s.lock, s.usage)
+		waiter := f.d.Admin(t)
+		go func() {
+			_, err := waiter.Exec(ctx, s.sql, s.args...)
+			errs <- err
+		}()
+	}
+	monitor := f.d.Admin(t)
+	got := map[string]string{}
+	for deadline := time.Now().Add(10 * time.Second); len(got) < len(want) && time.Now().Before(deadline); {
+		waits, err := lockWaits(ctx, monitor)
+		if err != nil {
+			t.Error(err)
+			break
+		}
+		for _, w := range waits {
+			if w.query != "" {
+				got[w.query] = fmt.Sprintf("%s, the usage's: %t", w.lock, w.usage)
+			}
+		}
+	}
+	// A failed rollback closes the holder's connection, which ends its
+	// transaction too.
+	if err := holder.Rollback(ctx); err != nil {
+		t.Error(err)
+	}
+	for range statements {
+		if err := <-errs; err != nil {
+			t.Error(err)
+		}
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("the monitor saw the waits of the statements %v, want %v", got, want)
 	}
 }
 
