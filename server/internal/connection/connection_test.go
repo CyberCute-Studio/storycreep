@@ -1,6 +1,7 @@
 package connection_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -752,6 +753,55 @@ func TestReconnection(t *testing.T) {
 	if res := f.must(t, cmd{node.Restore, payload{"id": keeper}}, cmd{node.Delete, payload{"id": keeper}}); len(
 		res.NotReconnected) != 0 {
 		t.Errorf("restoring a node and deleting it again leaves %v unreconnected", res.NotReconnected)
+	}
+}
+
+// TestBoardReconnection checks that restoring a board brings back the
+// connections of the nodes that come back with it whose other node is not
+// deleted on its own, and that its batch's answer lists the others, each with
+// the node that it waits for, but not one neither of whose nodes comes back,
+// and each once, when the batch restores one of their nodes too.
+//
+// Verifies: FR-PROJ-06/AC1
+func TestBoardReconnection(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	b := f.newBoard(t, "Harbour")
+	keeper, elara, mira, gull := f.newNode(t, b, node.TypeElement), f.newNode(t, b, node.TypeElement),
+		f.newNode(t, b, node.TypeElement), f.newNode(t, b, node.TypeElement)
+	toElara, toMira := f.connect(t, keeper, elara, nil), f.connect(t, keeper, mira, nil)
+	fromMira, between := f.connect(t, mira, gull, nil), f.connect(t, elara, mira, nil)
+	f.must(t, cmd{node.Delete, payload{"id": elara}}, cmd{node.Delete, payload{"id": mira}})
+	f.must(t, cmd{board.Delete, payload{"id": b}})
+
+	waiting := func(pairs ...string) []commands.Unreconnected {
+		var out []commands.Unreconnected
+		for i := 0; i < len(pairs); i += 2 {
+			out = append(out, commands.Unreconnected{
+				Ref:        commands.Ref{Kind: ids.Connection, ID: decode(t, ids.Connection, pairs[i])},
+				WaitingFor: []commands.Ref{{Kind: ids.Node, ID: decode(t, ids.Node, pairs[i+1])}}})
+		}
+		slices.SortFunc(out, func(a, b commands.Unreconnected) int { return bytes.Compare(a.ID[:], b.ID[:]) })
+		return out
+	}
+	res := f.must(t, cmd{board.Restore, payload{"id": b}})
+	if want := waiting(toElara, elara, toMira, mira, fromMira, mira); !reflect.DeepEqual(res.NotReconnected,
+		want) {
+		t.Errorf("the board's restoration leaves %v unreconnected, want %v", res.NotReconnected, want)
+	}
+	if f.live(t, toElara) || f.live(t, toMira) || f.live(t, fromMira) || f.live(t, between) {
+		t.Error("the board's restoration brought back a connection of a node deleted on its own")
+	}
+
+	// A batch that restores the board and one of the nodes lists a
+	// connection that both leave once.
+	f.must(t, cmd{board.Delete, payload{"id": b}})
+	res = f.must(t, cmd{board.Restore, payload{"id": b}}, cmd{node.Restore, payload{"id": mira}})
+	if want := waiting(toElara, elara, between, elara); !reflect.DeepEqual(res.NotReconnected, want) {
+		t.Errorf("restoring the board and a node leaves %v unreconnected, want %v", res.NotReconnected, want)
+	}
+	if !f.live(t, toMira) || !f.live(t, fromMira) || f.live(t, toElara) || f.live(t, between) {
+		t.Error("restoring the board and a node did not bring back the connections whose nodes are back alone")
 	}
 }
 

@@ -618,6 +618,13 @@ var permissionMatrix = []struct {
 					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
 						Type: "connection.delete", Payload: map[string]string{"id": f.connection(t, p)}}), si.header(true))
 				}},
+			{name: "restore a connection", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "connection.restore", Payload: map[string]string{"id": f.deletedConnection(t, p)}}),
+						si.header(true))
+				}},
 		},
 	},
 	{

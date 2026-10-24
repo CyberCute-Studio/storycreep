@@ -86,9 +86,10 @@ type idPayload struct {
 // each of which changes the project's draft, so that an API token needs
 // project:write for it (FR-AUTH-04), and its role "Edit nodes, connections,
 // text, expressions" (§5.6), and the reconnection of a node's connections
-// when the node is restored from the trash (commands.RegisterReconnection,
-// FR-PROJ-06 AC1). The connection's commands refer to its nodes, so r has
-// the node registered already (node.Register).
+// when the node, or its board, is restored from the trash
+// (commands.RegisterReconnection, FR-PROJ-06 AC1). The connection's commands
+// refer to its nodes and its board, so r has them registered already
+// (board.Register, node.Register).
 func Register(r *commands.Registry) {
 	commands.RegisterEntity(r, commands.Entity{
 		Kind: ids.Connection,
@@ -188,8 +189,11 @@ func Register(r *commands.Registry) {
 			errs = append(errs, optionalID(ids.Node, "from_node_id", p.FromNodeID)...)
 			return append(errs, optionalID(ids.Node, "to_node_id", p.ToNodeID)...)
 		},
+		// The inverse reconnects the connection as it is, which is all that
+		// it reads: Apply checks the nodes that the payload sets, and refuses
+		// the batch for them.
 		Inverse: func(ctx context.Context, tx *commands.Tx, p reconnectPayload) ([]commands.Step, error) {
-			c, _, err := planReconnect(ctx, tx, p)
+			c, err := liveConnectionOf(ctx, tx, p.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -267,7 +271,7 @@ func Register(r *commands.Registry) {
 			case row.Connection.DeletedAt.Valid:
 				return nil
 			case row.EndsDeleted:
-				return refuseEndsInTrash()
+				return refuseEndsInTrash(row)
 			}
 			c := row.Connection
 			return changed(tx, c.ID)(queries.New(tx).TrashConnection(ctx, queries.TrashConnectionParams{
@@ -281,8 +285,9 @@ func Register(r *commands.Registry) {
 		// Restoring a connection that is not in the trash does nothing, and its
 		// undo nothing either. A connection of a node or a board in the trash,
 		// which is in the trash with it, deleted on its own or not, is
-		// refused, since it comes back only once its nodes do, so the inverse
-		// of its restore, which Apply refuses, reads nothing more.
+		// refused, since it comes back only once its nodes and its board do,
+		// so the inverse of its restore, which Apply refuses, reads nothing
+		// more.
 		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
 			row, err := anyConnection(ctx, tx, p.ID)
 			if err != nil || !row.Connection.DeletedAt.Valid || row.EndsDeleted {
@@ -295,9 +300,12 @@ func Register(r *commands.Registry) {
 			switch {
 			case err != nil:
 				return err
+			case row.BoardDeleted:
+				return commands.Refuse("id", "is a connection of a board in the project's trash, which comes back "+
+					"only with its board: restore the board first", nil)
 			case row.EndsDeleted:
-				return commands.Refuse("id", "is a connection of a node in the project's trash, itself or with its "+
-					"board, which comes back only once its nodes do: restore them first", nil)
+				return commands.Refuse("id", "is a connection of a node in the project's trash, which comes back "+
+					"only once its nodes do: restore them first", nil)
 			case !row.Connection.DeletedAt.Valid:
 				return nil
 			}
@@ -307,10 +315,10 @@ func Register(r *commands.Registry) {
 		},
 	})
 
-	// A node's connections are in the trash with it, and come back with it
-	// where their other nodes are not in the trash, which the view of what is
-	// live says by itself; what a restoration leaves is what the batch's
-	// answer lists.
+	// A node's connections are in the trash with it, and with its board, and
+	// come back with it where their other nodes are not in the trash, which
+	// the view of what is live says by itself; what a restoration of nodes,
+	// or of boards with their nodes, leaves is what the batch's answer lists.
 	commands.RegisterReconnection(r, commands.Reconnection{
 		Restored: ids.Node, Kind: ids.Connection,
 		Left: func(ctx context.Context, tx *commands.Tx, restored []ids.UUID) ([]commands.Unreconnected, error) {
@@ -321,12 +329,34 @@ func Register(r *commands.Registry) {
 			}
 			out := make([]commands.Unreconnected, len(rows))
 			for i, row := range rows {
-				out[i] = commands.Unreconnected{Ref: commands.Ref{Kind: ids.Connection, ID: row.ID.Bytes},
-					WaitingFor: []commands.Ref{{Kind: ids.Node, ID: row.WaitingFor.Bytes}}}
+				out[i] = unreconnected(row.ID, row.WaitingFor)
 			}
 			return out, nil
 		},
 	})
+	commands.RegisterReconnection(r, commands.Reconnection{
+		Restored: ids.Board, Kind: ids.Connection,
+		Left: func(ctx context.Context, tx *commands.Tx, restored []ids.UUID) ([]commands.Unreconnected, error) {
+			rows, err := queries.New(tx).BoardUnreconnectedConnections(ctx,
+				queries.BoardUnreconnectedConnectionsParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+					ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(restored)})
+			if err != nil {
+				return nil, fmt.Errorf("connection: read the boards' connections that wait for their nodes: %w", err)
+			}
+			out := make([]commands.Unreconnected, len(rows))
+			for i, row := range rows {
+				out[i] = unreconnected(row.ID, row.WaitingFor)
+			}
+			return out, nil
+		},
+	})
+}
+
+// unreconnected returns the connection id, which a restoration could not
+// reconnect, waiting for the node waitingFor, which is in the trash.
+func unreconnected(id, waitingFor pgtype.UUID) commands.Unreconnected {
+	return commands.Unreconnected{Ref: commands.Ref{Kind: ids.Connection, ID: id.Bytes},
+		WaitingFor: []commands.Ref{{Kind: ids.Node, ID: waitingFor.Bytes}}}
 }
 
 // applyCreate is Create's Apply.
@@ -377,8 +407,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 // has checked that the connection is not in the trash, and that each node
 // that p sets is one of the connection's board that is not in the trash
 // either, and one that a connection may leave for the node that it leaves.
-// It only reads, so that Inverse, which runs before Apply, refuses the batch
-// as Apply would.
+// It only reads.
 func planReconnect(ctx context.Context, tx *commands.Tx, p reconnectPayload) (queries.Connection,
 	queries.ReconnectConnectionParams, error) {
 	c, err := liveConnectionOf(ctx, tx, p.ID)
@@ -544,17 +573,22 @@ func liveConnectionOf(ctx context.Context, tx *commands.Tx, id string) (queries.
 		return queries.Connection{}, commands.Refuse("id", "is a connection in the project's trash, which only "+
 			"restoring it changes", nil)
 	case row.EndsDeleted:
-		return queries.Connection{}, refuseEndsInTrash()
+		return queries.Connection{}, refuseEndsInTrash(row)
 	}
 	return row.Connection, nil
 }
 
 // refuseEndsInTrash returns the refusal, at id, of a command that would
-// change a connection of a node or a board in the trash, which is in the
-// trash with it, and which nothing changes until its nodes are restored.
-func refuseEndsInTrash() error {
-	return commands.Refuse("id", "is a connection of a node in the project's trash, itself or with its board, "+
-		"which comes back with its nodes", nil)
+// change the connection of row, of a node or a board in the trash, which is
+// in the trash with it, and which nothing changes until its nodes, or its
+// board, are restored.
+func refuseEndsInTrash(row queries.ConnectionAnyRow) error {
+	if row.BoardDeleted {
+		return commands.Refuse("id", "is a connection of a board in the project's trash, which comes back with "+
+			"its board", nil)
+	}
+	return commands.Refuse("id", "is a connection of a node in the project's trash, which comes back with its "+
+		"nodes", nil)
 }
 
 // sameUUID reports whether the columns a and b are the same: both null, or

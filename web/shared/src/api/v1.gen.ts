@@ -529,7 +529,7 @@ export interface CommandOutcomeBody {
 }
 
 export interface CommandResultBody {
-  /** What refers to the entities that the batch restored from the project's trash that the batch could not reconnect, once all of its commands applied, each with what it waits for: the connections of a restored node whose node at the other end is in the trash still, which come back once that node is restored too (PRD FR-PROJ-06 AC1). Empty for a batch that restored nothing that left any, and for a batch already applied. */
+  /** What refers to the entities that the batch restored from the project's trash that the batch could not reconnect, once all of its commands applied, each once, with what it waits for: the connections of a restored node, or of a node of a restored board, whose node at the other end is in the trash still, deleted on its own, which come back once that node is restored too (PRD FR-PROJ-06 AC1). Empty for a batch that restored nothing that left any, and for a batch already applied. */
   not_reconnected: Array<UnreconnectedBody>;
   /** The entities that the batch changed, each with its revision after the batch, in the order of their first change. Those of a batch already applied are the entities that the batches that applied its commands changed, each with its current revision, without those that no longer exist. */
   revisions: Array<EntityRevisionBody> | null;
@@ -2238,9 +2238,9 @@ export interface Unconvertible {
 }
 
 export interface UnreconnectedBody {
-  /** The entity's ID, as cn_… */
+  /** The entity's ID, as a connection's, cn_…, the one kind of entity so far that a restoration leaves */
   id: string;
-  /** The IDs of the entities in the project's trash that it refers to, as nd_…, which bring it back once they are restored too */
+  /** The IDs of the entities in the project's trash that it refers to, as a connection's node, nd_…, which bring it back once they are restored too */
   waiting_for: Array<string>;
 }
 

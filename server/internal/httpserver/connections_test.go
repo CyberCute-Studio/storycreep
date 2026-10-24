@@ -53,6 +53,18 @@ func (f *rolesFixture) boardConnection(t *testing.T, project string) (connection
 	return ids.Encode(ids.Connection, id), board
 }
 
+// deletedConnection adds a connection as connection does, deleted to the
+// project's trash on its own, and returns its ID.
+func (f *rolesFixture) deletedConnection(t *testing.T, project string) string {
+	t.Helper()
+	c := f.connection(t, project)
+	if _, err := f.admin.Exec(context.Background(), "UPDATE connection SET deleted_at = now() WHERE id = $1",
+		decode(t, ids.Connection, c)); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
 // createConnection creates a connection from the node from to the node to of
 // the project, with the fields of extra, as si, through the command
 // endpoint, and returns its ID.

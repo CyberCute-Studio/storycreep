@@ -17,10 +17,11 @@ VALUES (@id, @workspace_id, @project_id, @board_id, @from_node_id, @to_node_id, 
 -- name: ConnectionAny :one
 -- ConnectionAny returns a connection of the project, whether or not it is in
 -- the trash, and whether it is in the trash with one of its nodes or its
--- board, which ends_deleted says, and no row if the project has no such
--- connection.
+-- board, which ends_deleted says, and with its board, which board_deleted
+-- says, and no row if the project has no such connection.
 SELECT sqlc.embed(connection),
-    (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL OR b.deleted_at IS NOT NULL)::boolean AS ends_deleted
+    (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL OR b.deleted_at IS NOT NULL)::boolean AS ends_deleted,
+    (b.deleted_at IS NOT NULL)::boolean AS board_deleted
 FROM connection
 JOIN node f ON f.workspace_id = connection.workspace_id AND f.project_id = connection.project_id
     AND f.id = connection.from_node_id
@@ -151,4 +152,23 @@ WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id AND c.delete
         OR c.to_node_id = ANY(@ids::uuid[]) AND t.deleted_at IS NULL AND f.deleted_at IS NOT NULL)
     AND NOT EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = c.workspace_id AND b.project_id = c.project_id
         AND b.id = c.board_id AND b.deleted_at IS NOT NULL)
+ORDER BY c.id;
+
+-- name: BoardUnreconnectedConnections :many
+-- BoardUnreconnectedConnections returns the connections, not deleted
+-- themselves, of the project's boards whose IDs are among ids, which are not
+-- in the trash, of which one node is not in the trash and the other is, by
+-- its own deletion, each with that node's ID as waiting_for, in the order of
+-- their IDs: those that the restoration of the boards ids could not bring
+-- back with the nodes that came back with them, which come back once that
+-- node does (FR-PROJ-06 AC1). One whose nodes are both in the trash, as a
+-- connection that enters the node that it leaves in the trash is, has
+-- neither of them back, and is left out.
+SELECT c.id, (CASE WHEN f.deleted_at IS NULL THEN c.to_node_id ELSE c.from_node_id END)::uuid AS waiting_for
+FROM connection c
+JOIN node f ON f.workspace_id = c.workspace_id AND f.project_id = c.project_id AND f.id = c.from_node_id
+JOIN node t ON t.workspace_id = c.workspace_id AND t.project_id = c.project_id AND t.id = c.to_node_id
+JOIN board b ON b.workspace_id = c.workspace_id AND b.project_id = c.project_id AND b.id = c.board_id
+WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id AND c.board_id = ANY(@ids::uuid[])
+    AND c.deleted_at IS NULL AND b.deleted_at IS NULL AND (f.deleted_at IS NULL) <> (t.deleted_at IS NULL)
 ORDER BY c.id;

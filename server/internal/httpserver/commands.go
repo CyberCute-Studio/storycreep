@@ -128,8 +128,8 @@ type entityRevisionBody struct {
 // unreconnectedBody is an entity that refers to what a batch restored from
 // the project's trash, which the batch could not reconnect.
 type unreconnectedBody struct {
-	ID         string   `json:"id" doc:"The entity's ID, as cn_…"`
-	WaitingFor []string `json:"waiting_for" nullable:"false" doc:"The IDs of the entities in the project's trash that it refers to, as nd_…, which bring it back once they are restored too"`
+	ID         string   `json:"id" doc:"The entity's ID, as a connection's, cn_…, the one kind of entity so far that a restoration leaves"`
+	WaitingFor []string `json:"waiting_for" nullable:"false" doc:"The IDs of the entities in the project's trash that it refers to, as a connection's node, nd_…, which bring it back once they are restored too"`
 }
 
 // commandResultBody is what a batch of commands did.
@@ -137,7 +137,7 @@ type commandResultBody struct {
 	Status         string               `json:"status" enum:"applied,already_applied" doc:"applied for a batch that applied, or that was sent before, while its idempotency record is kept, for at least 24 hours, which is answered as it was then; already_applied for a batch whose commands were all applied before, once that record is pruned, or by batches grouped otherwise"`
 	Seq            int64                `json:"seq" doc:"The project's sequence number after the batch: the seq of its operation in the project's operation log. That of a batch already applied is the latest seq of the batches that applied its commands."`
 	Revisions      []entityRevisionBody `json:"revisions" doc:"The entities that the batch changed, each with its revision after the batch, in the order of their first change. Those of a batch already applied are the entities that the batches that applied its commands changed, each with its current revision, without those that no longer exist."`
-	NotReconnected []unreconnectedBody  `json:"not_reconnected" nullable:"false" doc:"What refers to the entities that the batch restored from the project's trash that the batch could not reconnect, once all of its commands applied, each with what it waits for: the connections of a restored node whose node at the other end is in the trash still, which come back once that node is restored too (PRD FR-PROJ-06 AC1). Empty for a batch that restored nothing that left any, and for a batch already applied."`
+	NotReconnected []unreconnectedBody  `json:"not_reconnected" nullable:"false" doc:"What refers to the entities that the batch restored from the project's trash that the batch could not reconnect, once all of its commands applied, each once, with what it waits for: the connections of a restored node, or of a node of a restored board, whose node at the other end is in the trash still, deleted on its own, which come back once that node is restored too (PRD FR-PROJ-06 AC1). Empty for a batch that restored nothing that left any, and for a batch already applied."`
 }
 
 // commandOutcomeBody is what a batch of a list of batches did, or why it

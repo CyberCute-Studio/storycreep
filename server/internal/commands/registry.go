@@ -193,7 +193,9 @@ type Entity struct {
 // (Tx.Restored), and once every command of its batch has applied, the
 // pipeline asks the reconnection of each kind that refers to it which of its
 // entities are still not reconnected, which the batch's Result lists
-// (Result.NotReconnected, AC1).
+// (Result.NotReconnected, AC1), each once, however many reconnections leave
+// it, as a connection of a node that the batch restores with the node's
+// board.
 type Reconnection struct {
 	// Restored is the kind of entity whose restoration reconnects what refers
 	// to it, and Kind the kind of entity that refers to it.

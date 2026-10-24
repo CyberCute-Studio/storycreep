@@ -1876,7 +1876,7 @@
         "additionalProperties": false,
         "properties": {
           "not_reconnected": {
-            "description": "What refers to the entities that the batch restored from the project's trash that the batch could not reconnect, once all of its commands applied, each with what it waits for: the connections of a restored node whose node at the other end is in the trash still, which come back once that node is restored too (PRD FR-PROJ-06 AC1). Empty for a batch that restored nothing that left any, and for a batch already applied.",
+            "description": "What refers to the entities that the batch restored from the project's trash that the batch could not reconnect, once all of its commands applied, each once, with what it waits for: the connections of a restored node, or of a node of a restored board, whose node at the other end is in the trash still, deleted on its own, which come back once that node is restored too (PRD FR-PROJ-06 AC1). Empty for a batch that restored nothing that left any, and for a batch already applied.",
             "items": {
               "$ref": "#/components/schemas/UnreconnectedBody"
             },
@@ -7065,11 +7065,11 @@
         "additionalProperties": false,
         "properties": {
           "id": {
-            "description": "The entity's ID, as cn_…",
+            "description": "The entity's ID, as a connection's, cn_…, the one kind of entity so far that a restoration leaves",
             "type": "string"
           },
           "waiting_for": {
-            "description": "The IDs of the entities in the project's trash that it refers to, as nd_…, which bring it back once they are restored too",
+            "description": "The IDs of the entities in the project's trash that it refers to, as a connection's node, nd_…, which bring it back once they are restored too",
             "items": {
               "type": "string"
             },

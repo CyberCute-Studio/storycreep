@@ -22,10 +22,11 @@
 // which restoring it, as its undo does, brings it back. A node's connections
 // are in the trash with it while it is there, and with its board, and
 // nothing changes them meanwhile: one comes back once neither of its nodes is
-// in the trash, so that restoring a node reconnects each of its connections
-// whose node at the other end is not, and the batch's answer lists the
-// others, each with the node that it waits for, which brings it back once it
-// is restored too (FR-PROJ-06 AC1). The trash's purge of a node deletes its
+// in the trash, so that restoring a node, or its board, with the nodes that
+// are in the trash with it, reconnects each of their connections whose node
+// at the other end is not, and the batch's answer lists the others, each
+// once, with the node that it waits for, which brings it back once it is
+// restored too (FR-PROJ-06 AC1). The trash's purge of a node deletes its
 // connections, by the cascade of their foreign keys. The reads of what is not
 // in the trash read the live view, live_connection.
 //

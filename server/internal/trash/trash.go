@@ -21,10 +21,10 @@
 // no component either. So does a connection deleted on its own (package
 // connection), which its undo restores. A node's connections are in the
 // trash with it, as its nodes are with a board, and come back once neither
-// of their nodes is in the trash: restoring a node reconnects them where
-// they can be, and its batch's answer lists those that it could not
-// reconnect, through the reconnection that package connection registers with
-// the pipeline (commands.RegisterReconnection, AC1).
+// of their nodes is in the trash: restoring a node, or its board, reconnects
+// them where they can be, and its batch's answer lists those that it could
+// not reconnect, through the reconnections that package connection registers
+// with the pipeline (commands.RegisterReconnection, AC1).
 //
 // A table whose rows go to the trash is registered with it by its live view,
 // its branch of the list's query (TrashItems) if its rows are listed, and

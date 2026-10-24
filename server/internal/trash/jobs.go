@@ -27,11 +27,10 @@ const purgeInterval = time.Hour
 // trash expires at once. The rows that refer to one of them, as a board's
 // nodes and variables, a node's connections, a component's values, or a
 // definition's values, one for each component of its type, go with it by the
-// cascade of their foreign
-// keys, uncounted, so that it is purged whole, in one transaction, and a
-// restoration between two of the purge's transactions never brings it back
-// without some of them, as a definition whose restore would give its default
-// to each component that it found without a value.
+// cascade of their foreign keys, uncounted, so that it is purged whole, in one
+// transaction, and a restoration between two of the purge's transactions
+// never brings it back without some of them, as a definition whose restore
+// would give its default to each component that it found without a value.
 const purgeRows = 1000
 
 // purge is the job that purges the projects' trash (FR-JOBS-01, FR-PROJ-06).
@@ -52,13 +51,12 @@ func RegisterJobs(r *jobs.Registry) {
 // the boards, with every row that refers to them, which the cascade of their
 // foreign keys deletes, as their nodes and variables, then the nodes, with
 // their connections, the connections, the variables, the components, with
-// their values, leaving the elements whose
-// speaker one of them is without one, at a new revision, and the attribute
-// definitions, with theirs, then the component types that hold no
-// component, in the trash or not, with their definitions, and then the
-// deleted folders that hold nothing, in the trash or not, once those that
-// they held are purged. It returns how many of them it deleted, but for
-// those that a cascade deleted. It works on each
+// their values, leaving the elements whose speaker one of them is without
+// one, at a new revision, and the attribute definitions, with theirs, then
+// the component types that hold no component, in the trash or not, with their
+// definitions, and then the deleted folders that hold nothing, in the trash
+// or not, once those that they held are purged. It returns how many of them
+// it deleted, but for those that a cascade deleted. It works on each
 // workspace in transactions of the workspace (§5.4), as package sweep runs
 // them, each of one project, which it locks as a batch of the project's
 // commands does, so that the batches see none of its deletions while they
@@ -68,8 +66,8 @@ func RegisterJobs(r *jobs.Registry) {
 // project whose purge keeps failing keeps no other's trash from its purge,
 // and returns the errors of all of them, and stops once it has run for
 // sweep.Budget, which leaves the projects that it does not reach for its next
-// run. So it is safe to repeat. It records no operation: an undo
-// that would restore a purged entity finds that it no longer exists (§5.7).
+// run. So it is safe to repeat. It records no operation: an undo that would
+// restore a purged entity finds that it no longer exists (§5.7).
 func Purge(ctx context.Context, db sweep.DB) (int64, error) {
 	more := sweep.Within(sweep.Budget)
 	retention := database.Interval(Retention)
@@ -128,9 +126,9 @@ func purgeWorkspace(ctx context.Context, db sweep.DB, more func() bool, workspac
 // the attribute definitions, the folders, and the component types of the
 // project that have been in its trash for retention, the boards, the nodes,
 // the connections, the variables, and the components first, which may leave
-// a folder or a type empty for the
-// purge of the folders and of the types that follows, and returns how many it
-// deleted, or none if a transaction holds the project's lock.
+// a folder or a type empty for the purge of the folders and of the types that
+// follows, and returns how many it deleted, or none if a transaction holds the
+// project's lock.
 func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, project pgtype.UUID,
 	retention pgtype.Interval) (int64, error) {
 	var n int64

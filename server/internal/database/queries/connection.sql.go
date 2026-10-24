@@ -76,6 +76,57 @@ func (q *Queries) BoardConnections(ctx context.Context, arg BoardConnectionsPara
 	return items, nil
 }
 
+const boardUnreconnectedConnections = `-- name: BoardUnreconnectedConnections :many
+SELECT c.id, (CASE WHEN f.deleted_at IS NULL THEN c.to_node_id ELSE c.from_node_id END)::uuid AS waiting_for
+FROM connection c
+JOIN node f ON f.workspace_id = c.workspace_id AND f.project_id = c.project_id AND f.id = c.from_node_id
+JOIN node t ON t.workspace_id = c.workspace_id AND t.project_id = c.project_id AND t.id = c.to_node_id
+JOIN board b ON b.workspace_id = c.workspace_id AND b.project_id = c.project_id AND b.id = c.board_id
+WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.board_id = ANY($3::uuid[])
+    AND c.deleted_at IS NULL AND b.deleted_at IS NULL AND (f.deleted_at IS NULL) <> (t.deleted_at IS NULL)
+ORDER BY c.id
+`
+
+type BoardUnreconnectedConnectionsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+type BoardUnreconnectedConnectionsRow struct {
+	ID         pgtype.UUID
+	WaitingFor pgtype.UUID
+}
+
+// BoardUnreconnectedConnections returns the connections, not deleted
+// themselves, of the project's boards whose IDs are among ids, which are not
+// in the trash, of which one node is not in the trash and the other is, by
+// its own deletion, each with that node's ID as waiting_for, in the order of
+// their IDs: those that the restoration of the boards ids could not bring
+// back with the nodes that came back with them, which come back once that
+// node does (FR-PROJ-06 AC1). One whose nodes are both in the trash, as a
+// connection that enters the node that it leaves in the trash is, has
+// neither of them back, and is left out.
+func (q *Queries) BoardUnreconnectedConnections(ctx context.Context, arg BoardUnreconnectedConnectionsParams) ([]BoardUnreconnectedConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, boardUnreconnectedConnections, arg.WorkspaceID, arg.ProjectID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BoardUnreconnectedConnectionsRow
+	for rows.Next() {
+		var i BoardUnreconnectedConnectionsRow
+		if err := rows.Scan(&i.ID, &i.WaitingFor); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const connection = `-- name: Connection :one
 SELECT live_connection.id, live_connection.workspace_id, live_connection.project_id, live_connection.board_id, live_connection.from_node_id, live_connection.to_node_id, live_connection."order", live_connection.label, live_connection.rev, live_connection.deleted_at, live_connection.created_by, live_connection.updated_by, live_connection.created_at, live_connection.updated_at
 FROM live_connection
@@ -119,7 +170,8 @@ func (q *Queries) Connection(ctx context.Context, arg ConnectionParams) (Connect
 
 const connectionAny = `-- name: ConnectionAny :one
 SELECT connection.id, connection.workspace_id, connection.project_id, connection.board_id, connection.from_node_id, connection.to_node_id, connection."order", connection.label, connection.rev, connection.deleted_at, connection.created_by, connection.updated_by, connection.created_at, connection.updated_at,
-    (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL OR b.deleted_at IS NOT NULL)::boolean AS ends_deleted
+    (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL OR b.deleted_at IS NOT NULL)::boolean AS ends_deleted,
+    (b.deleted_at IS NOT NULL)::boolean AS board_deleted
 FROM connection
 JOIN node f ON f.workspace_id = connection.workspace_id AND f.project_id = connection.project_id
     AND f.id = connection.from_node_id
@@ -137,14 +189,15 @@ type ConnectionAnyParams struct {
 }
 
 type ConnectionAnyRow struct {
-	Connection  Connection
-	EndsDeleted bool
+	Connection   Connection
+	EndsDeleted  bool
+	BoardDeleted bool
 }
 
 // ConnectionAny returns a connection of the project, whether or not it is in
 // the trash, and whether it is in the trash with one of its nodes or its
-// board, which ends_deleted says, and no row if the project has no such
-// connection.
+// board, which ends_deleted says, and with its board, which board_deleted
+// says, and no row if the project has no such connection.
 func (q *Queries) ConnectionAny(ctx context.Context, arg ConnectionAnyParams) (ConnectionAnyRow, error) {
 	row := q.db.QueryRow(ctx, connectionAny, arg.WorkspaceID, arg.ProjectID, arg.ID)
 	var i ConnectionAnyRow
@@ -164,6 +217,7 @@ func (q *Queries) ConnectionAny(ctx context.Context, arg ConnectionAnyParams) (C
 		&i.Connection.CreatedAt,
 		&i.Connection.UpdatedAt,
 		&i.EndsDeleted,
+		&i.BoardDeleted,
 	)
 	return i, err
 }

@@ -206,9 +206,10 @@ type Result struct {
 	// NotReconnected are the entities that refer to what the batch restored
 	// from the project's trash that it could not reconnect, because what else
 	// they refer to is in the trash still, as the connections of a restored
-	// node whose node at the other end is (PRD FR-PROJ-06 AC1): once every
-	// command of the batch has applied, so that a batch that restores both of
-	// a connection's nodes leaves it out. A batch AlreadyApplied has none,
+	// node, or of a node of a restored board, whose node at the other end is
+	// (PRD FR-PROJ-06 AC1): once every command of the batch has applied, so
+	// that a batch that restores both of a connection's nodes leaves it out,
+	// each once. A batch AlreadyApplied has none,
 	// since the record of what the batches that applied its commands left is
 	// pruned with their answers.
 	NotReconnected []Unreconnected
