@@ -49,10 +49,14 @@ type Tx struct {
 	// before the command's Apply: the command's undo expects the revision
 	// of each entity of those kinds that the command changes, which Changed
 	// gives to that step, and expected holds those entities, so that it
-	// gives each once (plan item 37).
+	// gives each once (plan item 37). changes is how many changes the
+	// command has reported (Changed): the pipeline leaves out of the batch's
+	// undo the steps of a command that reported none, which changed nothing,
+	// and has nothing to undo.
 	steps     []logStep
 	expecting map[ids.Kind]int
 	expected  map[Ref]struct{}
+	changes   int
 	// undoBytes is how many bytes the inverses that the pipeline has computed
 	// of the batch's commands take, as the operation log keeps them: the
 	// payloads of their steps (LogBytes), and the revisions that they expect
@@ -154,7 +158,9 @@ func (t *Tx) UndoRoom() int {
 // undo expects, takes the batch's undo past the pipeline's bound
 // (Options.MaxUndoBytes), so that a command that changes more entities than
 // its undo could expect stops there, rather than change all of them only to
-// be refused.
+// be refused. The pipeline leaves out of the batch's undo the inverse of a
+// command that reports no change, as one that changed nothing (Result.Undo),
+// so a command reports every change that it makes.
 func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 	ref := Ref{Kind: kind, ID: id}
 	switch {
@@ -171,6 +177,7 @@ func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 			encodeRef(ref), rev, seen)
 	}
 	t.revs[ref] = rev
+	t.changes++
 	if j, ok := t.expecting[kind]; ok {
 		if _, ok := t.expected[ref]; !ok {
 			t.expected[ref] = struct{}{}

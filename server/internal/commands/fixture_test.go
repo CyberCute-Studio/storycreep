@@ -74,7 +74,8 @@ const (
 	// to be called.
 	noteMisreport Type = "note.misreport"
 	// noteBadInverse is undone by a step that cannot be applied, or has an
-	// inverse that reports a change.
+	// inverse that reports a change. It changes nothing, so a batch's undo
+	// holds none of its steps once it applies.
 	noteBadInverse Type = "note.bad_inverse"
 	// noteMeter adds to a key of the workspace's usage what its payload
 	// says, as creating a note would add to nodes. It declares the projects
@@ -89,8 +90,9 @@ const (
 	// noteUnarchive changes nothing, and is taken for a command that
 	// unarchives the project, as unarchiving one is, and noteUntrash for one
 	// that restores it from the trash, as restoring one is, so that a batch
-	// of an archived project, or of one in the trash, with one of them applies
-	// whatever its other commands.
+	// of an archived project with the first, or of one in the trash with the
+	// second, applies whatever its other commands, and one of a project that
+	// is both with both.
 	noteUnarchive Type = "note.unarchive"
 	noteUntrash   Type = "note.untrash"
 	// notePublish changes nothing, and needs snapshot:write rather than

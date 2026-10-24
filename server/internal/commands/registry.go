@@ -97,15 +97,19 @@ type Spec[P any] struct {
 	// Unarchives says that the command takes the project out of its archive,
 	// as unarchiving it does, and Restores that it takes it out of the
 	// trash, as restoring it does. A batch of an archived project with a
-	// command that Unarchives, or of one in the trash with a command that
-	// Restores, applies whatever its other commands, as a batch of its own
-	// that unarchived or restored the project first would let them, so that
-	// the undo of a batch that archived or deleted the project with other
-	// commands, which unarchives or restores it, and undoes the others, which
-	// the pipeline checks against the project as it is before the batch,
-	// applies (PRD FR-EDIT-08); what a command that Restores counts of a key
-	// once such a batch has applied is all that the batch adds to the key
-	// (Tx.AddUsageOnceApplied). A command that Unarchives applies to an
+	// command that Unarchives is not refused for the project's archival, and
+	// one of a project in the trash with a command that Restores not for the
+	// trash, whatever their other commands, as a batch of its own that
+	// unarchived or restored the project first would not be, so that the undo
+	// of a batch that archived or deleted the project with other commands,
+	// which unarchives or restores it, and undoes the others, which the
+	// pipeline checks against the project as it is before the batch, applies
+	// (PRD FR-EDIT-08). A project both archived and in the trash is archived
+	// still once restored, so a batch of it that restores it applies other
+	// commands only if it unarchives it too, or they apply to an archived
+	// project (Archived). What a command that Restores counts of a key once
+	// a batch of a project in the trash has applied is all that the batch
+	// adds to the key (Tx.AddUsageOnceApplied). A command that Unarchives applies to an
 	// archived project, and one that Restores to one in the trash, so
 	// Unarchives needs Archived, and Restores Trashed.
 	Unarchives, Restores bool
@@ -154,7 +158,9 @@ type Spec[P any] struct {
 	// Apply applies the command in the batch's transaction, and reports each
 	// entity that it changes with Tx.Changed, and what it adds to the
 	// workspace's usage with Tx.AddUsage. An error refuses the whole batch,
-	// which then changes nothing.
+	// which then changes nothing. A command whose Apply reports no change
+	// changed nothing, and the batch's undo holds none of its inverse's
+	// steps (Result.Undo).
 	Apply func(ctx context.Context, tx *Tx, p P) error
 }
 

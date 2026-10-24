@@ -122,13 +122,53 @@ func TestUndoRefusedOverNewerWork(t *testing.T) {
 	}
 }
 
+// TestUndoOfNoChange checks that a batch's undo holds nothing of a command
+// that changed nothing, as a board's rename to the name that it has, which
+// would expect no revision of the board, so that the undo, sent back once
+// another user has renamed the board, applies, and leaves the board as that
+// user named it, rather than rename it back over their work.
+//
+// Verifies: FR-EDIT-08/AC4
+func TestUndoOfNoChange(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	owner, editor := f.as["owner"], f.as["editor"]
+	p := f.project(t, "")
+	board := createBoard(t, f.s.main, owner, p, "Harbour")
+	node := createNode(t, f.s.main, owner, p, board, "element", map[string]any{"title": "Keeper"})
+	same := wireCommand{Type: "board.rename", Payload: map[string]any{"id": board, "name": "Harbour"}}
+	if alone := resultFrom(t, call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, same),
+		owner.header(true))); alone.Undo == nil || len(alone.Undo) != 0 {
+		t.Errorf("the undo of a rename of the board to its name is %+v, want empty", alone.Undo)
+	}
+	mine := resultFrom(t, call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, same,
+		wireCommand{Type: "node.update", Payload: map[string]any{"id": node, "title": "Mine"}}), owner.header(true)))
+	if len(mine.Undo) != 1 || mine.Undo[0].Type != "node.update" {
+		t.Fatalf("the batch's undo is %+v, want the node's update alone", mine.Undo)
+	}
+	resultFrom(t, call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t,
+		wireCommand{Type: "board.rename", Payload: map[string]any{"id": board, "name": "Port"}}), editor.header(true)))
+	resultFrom(t, call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, undoCommands(mine.Undo)...),
+		owner.header(true)))
+	var name, title string
+	if err := f.admin.QueryRow(context.Background(), `SELECT b.name, n.title FROM board b, node n
+		WHERE b.id = $1 AND n.id = $2`, decode(t, ids.Board, board), decode(t, ids.Node, node)).Scan(&name,
+		&title); err != nil {
+		t.Fatal(err)
+	}
+	if name != "Port" || title != "Keeper" {
+		t.Errorf("once the batch is undone, the board is %q and the node %q, want Port and Keeper", name, title)
+	}
+}
+
 // TestUndoOfArchivalAndDeletion checks that the undo of a batch that changes
 // the project's content and then archives the project, deletes it, or both,
 // which unarchives or restores the project and then sets the content back,
 // applies, though the project is archived, or in the trash, when it is sent,
 // as a batch that unarchives or restores the project does whatever its other
-// commands, so that the undo that the batch's answer held is one that a
-// client can send back.
+// commands, and one that does both a project both archived and in the trash,
+// so that the undo that the batch's answer held is one that a client can send
+// back.
 func TestUndoOfArchivalAndDeletion(t *testing.T) {
 	t.Parallel()
 	f := newRolesFixture(t)

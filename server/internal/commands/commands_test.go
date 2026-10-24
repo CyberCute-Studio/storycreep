@@ -1158,9 +1158,11 @@ func TestUndoBound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a batch whose undo takes the bound exactly: %v", err)
 	}
-	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, `[{"type": "note.delete", "payload": {"id": "`+xID+
-		`"}}, {"type": "note.update", "payload": {"id": "`+xID+`", "body": "`+body+`"}, "expected_rev": {"`+xID+
-		`": 2}}]`) {
+	// The second command changed nothing, so the undo holds none of its
+	// steps, which the bound counted all the same while it applied
+	// (TestUndoOfNoChange).
+	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, `[{"type": "note.update", "payload": {"id": "`+xID+
+		`", "body": "`+body+`"}, "expected_rev": {"`+xID+`": 2}}]`) {
 		t.Errorf("the batch's inverse is %s", o.inverse)
 	}
 

@@ -279,6 +279,55 @@ func TestUndoSteps(t *testing.T) {
 	}
 }
 
+// TestUndoOfNoChange checks that a batch's undo holds none of the steps of a
+// command that changed nothing, which would expect no revision, and so write
+// back what the command found over what another user has changed since; that
+// the undo of a batch whose commands changed nothing is empty; and that the
+// bounds give back the room that such a command's steps took, so that the
+// next command's inverse has it.
+func TestUndoOfNoChange(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	x, xID := newNote()
+	if _, err := w.pipeline(t, nil).Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteCreate, notePayload{ID: xID, Body: "x"}, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	deletion, err := json.Marshal(noteIDPayload{ID: xID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// noteBadInverse changes nothing, and its inverse is the note's deletion,
+	// whose step takes all of the bound, and is all that it allows.
+	nothing := func() Command {
+		return command(t, noteBadInverse, badInversePayload{ID: xID, Step: noteDelete, Room: len(deletion)}, nil)
+	}
+	p := w.pipeline(t, func(o *Options) { o.MaxUndoBytes, o.MaxUndoSteps = len(deletion), 1 })
+	res, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{nothing(), nothing()})
+	if err != nil || res.Undo == nil || len(res.Undo) != 0 {
+		t.Fatalf("a batch whose commands changed nothing: %+v, %v, want an empty undo", res, err)
+	}
+	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, `[]`) {
+		t.Errorf("the inverse of a batch whose commands changed nothing is %s, want []", o.inverse)
+	}
+	res, err = w.pipeline(t, nil).Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, noteUpdate, notePayload{ID: xID, Body: "y"}, nil), nothing()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(wireUndo(res.Undo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `[{"type": "note.update", "payload": {"id": "` + xID + `", "body": "x"}, "expected_rev": {"` + xID +
+		`": 2}}]`; !sameJSON(t, got, want) {
+		t.Errorf("the undo of a change and a command that changed nothing is %s, want %s", got, want)
+	}
+	if _, rev := w.body(t, x); rev != 2 {
+		t.Errorf("the note is at %d, want 2", rev)
+	}
+}
+
 // TestExpectedRevBytes checks that the bound counts an expected revision of
 // an entity of each kind as no fewer bytes than JSON encodes it in a step's
 // expected_rev with the largest revision, its key and its comma.

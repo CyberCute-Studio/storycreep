@@ -15,9 +15,10 @@
 // so that the project's batches are applied one at a time; a batch of an
 // archived project, which is read-only, or of one in the trash, is refused
 // unless each of its commands applies there, as unarchiving and restoring
-// the project do (FR-PROJ-01), or one of them unarchives or restores it,
-// which lets the others apply too, as the undo of a batch that archived or
-// deleted the project with others needs; the workspace's limits are checked
+// the project do (FR-PROJ-01), or one of them unarchives it, or restores it,
+// respectively, which lets the others apply too, as the undo of a batch that
+// archived or deleted the project with others needs (a project both archived
+// and in the trash needs both); the workspace's limits are checked
 // for what the batch adds (FR-ENT-01); every expected
 // revision of the batch's commands is checked against the project as it is
 // before the batch, which is what the client authored the batch against, and
@@ -225,6 +226,11 @@ type Result struct {
 	// the operation log keeps it, the commands that undo its commands, from its
 	// last command's to its first's, each with the revisions that it expects,
 	// those of the entities that its command changed, as the batch left them.
+	// A command of the batch that changed nothing (Tx.Changed) has nothing to
+	// undo, and none of its inverse's steps is in the undo: they would expect
+	// no revision, and write back what the command found over what another
+	// user has changed since, as the undo of a board's rename to the name
+	// that it has would rename it back over another user's rename.
 	// A client undoes the batch by sending them back as a batch, each with a
 	// command ID of its own, which applies only if none of those entities has
 	// changed since, and is refused whole with a *RevisionConflictError
@@ -249,7 +255,8 @@ type Result struct {
 	// log no longer holds its operation, as one that compaction dropped (PRD
 	// FR-GDPR-03), and for a batch AlreadyApplied, whose commands' batches each
 	// have an undo of their own, and empty for a batch whose commands'
-	// inverses have no steps, which undoes nothing.
+	// inverses have no steps, or whose commands changed nothing, which undoes
+	// nothing.
 	Undo []UndoCommand
 }
 
@@ -802,7 +809,7 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		// may report a change of a kind that its type does not touch, so none
 		// of them expects it. t.steps is inverses[i] itself, not a copy, so
 		// what Changed gives its steps is what record writes to the log.
-		t.current, t.steps = c.spec, inverses[i]
+		t.current, t.steps, t.changes = c.spec, inverses[i], 0
 		clear(t.expecting)
 		clear(t.expected)
 		for j, st := range inverses[i] {
@@ -822,6 +829,21 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		}
 		if err != nil {
 			return Result{}, fmt.Errorf("commands: command %d (%s): %w", i, c.spec.typ, err)
+		}
+		// A command that reported no change changed nothing, and has nothing
+		// to undo. Its inverse's steps would write back what the command
+		// found, which it left as it was, and expect no revision, as it
+		// changed none, so that, sent back once another user had changed
+		// what they write, they would overwrite that newer work, as the undo
+		// of a board's rename to the name that it has would rename it back
+		// over another user's rename since (PRD FR-EDIT-08). The batch's undo
+		// leaves them out, and the bounds give back the room that they took.
+		if t.changes == 0 && len(inverses[i]) > 0 {
+			for _, st := range inverses[i] {
+				t.undoBytes -= LogBytes(st.Payload)
+			}
+			t.undoSteps -= len(inverses[i])
+			inverses[i] = []logStep{}
 		}
 	}
 	if err := t.addCounts(ctx); err != nil {
