@@ -175,12 +175,19 @@ func (t *Tx) UndoRoom() int {
 // the pipeline's bound (Options.MaxUndoBytes), or has more steps than its
 // bound of steps (Options.MaxUndoSteps), so that a command whose inverse
 // takes the undo past either, or that changes more entities than its undo
-// could expect, stops there, rather than change all of them only to be
-// refused. Changed is where the pipeline holds the bounds: nothing adds to
-// the batch's undo once the command's last change, and the pipeline leaves
-// out of it the inverse of a command that reports no change, as one that
-// changed nothing (Result.Undo), so a command reports every change that it
-// makes.
+// could expect, stops there, rather than change the rest of them only to be
+// refused. A command that changes many entities in one statement, as package
+// component's touchType increments the revisions of every component of a
+// type whose attribute definitions change, has changed all of them before it
+// reports the first, and is refused all the same once it reports the one
+// that takes the undo past a bound, its changes rolled back with the batch,
+// so it reports first what it changes alone, as those commands report the
+// definition, whose report is where the bounds refuse an inverse that is too
+// large by itself, before that statement runs. Changed is where the pipeline
+// holds the bounds: nothing adds to the batch's undo once the command's last
+// change, and the pipeline leaves out of it the inverse of a command that
+// reports no change, as one that changed nothing (Result.Undo), so a command
+// reports every change that it makes.
 func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 	ref := Ref{Kind: kind, ID: id}
 	switch {

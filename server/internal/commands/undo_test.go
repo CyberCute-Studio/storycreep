@@ -256,8 +256,10 @@ func TestUndoConflict(t *testing.T) {
 // changes of a note, which undoes the second, is refused, and changes
 // nothing, once another user has changed the note since, rather than write
 // it back over their change; and that the parts of an undo that nobody came
-// between apply in order, the second once it expects what the first left, as
-// the client moves its stacks.
+// between apply in order, the second once what it expects of the note is
+// moved from the revision that the batch left to the one that the first
+// left, as a client moves the parts of an undo, and not from the revision
+// that the note had before the batch, as it moves its stacks (Result.Undo).
 //
 // Verifies: FR-EDIT-08/AC4
 func TestUndoInParts(t *testing.T) {

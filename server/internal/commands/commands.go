@@ -265,13 +265,18 @@ type Result struct {
 	// would then overwrite it. An undo that the pipeline refuses for its own
 	// undo, which would pass the bounds (DefaultMaxUndoBytes,
 	// DefaultMaxUndoSteps), with a *RefusedError whose Reason is
-	// ErrUndoTooLarge, is sent in smaller batches, in its order, each
-	// once the one before it has applied, with what it expects of each entity
-	// that those before it brought back moved as the client moves its stacks:
-	// each applies only if none of the entities that the commands that it
-	// undoes changed has changed since, and is refused whole otherwise,
-	// though those before it stay applied, and the client holds their undos,
-	// which redo them. Undo is nil for a batch that cannot be undone,
+	// ErrUndoTooLarge, is sent in smaller batches, in its order, each once
+	// the one before it has applied, with what it expects of each entity that
+	// those before it brought back moved from the revision that the batch
+	// left, which the undo expects, to the one that the answer of the last of
+	// them that changed the entity gives (Revisions), and not from the
+	// revision that the entity had before the batch, which the undo does not
+	// expect, as the client moves its stacks, so that no part is refused for
+	// what the parts before it changed: each applies only if none of the
+	// entities that the commands that it undoes changed has changed since, and
+	// is refused whole otherwise, though those before it stay applied, and the
+	// client holds their undos, which redo them. Undo is nil for a batch that
+	// cannot be undone,
 	// with a command of a type that is NonUndoable, or answered from its
 	// idempotency record once the operation log no longer holds its
 	// operation, as one that compaction dropped (PRD FR-GDPR-03), and for a
