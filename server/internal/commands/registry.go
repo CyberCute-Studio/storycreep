@@ -140,9 +140,12 @@ type Spec[P any] struct {
 	// batch is NonUndoable, which leaves the batch without an inverse. It
 	// only reads, so it reports no change (Tx.Changed). The pipeline refuses
 	// the command, at UndoField, once its steps would take the batch's undo
-	// past the pipeline's bound (Options.MaxUndoBytes), which an Inverse
-	// whose steps grow with the project stops before (Tx.UndoRoom,
-	// ErrUndoTooLarge). Exactly one of Inverse and NonUndoable is set.
+	// past the pipeline's bound (Options.MaxUndoBytes), unless it changes
+	// nothing, whose steps the batch's undo leaves out (Result.Undo). An
+	// Inverse whose steps grow with the project stops before (Tx.UndoRoom,
+	// ErrUndoTooLarge), once they hold some of a part of the project that the
+	// command changes, so that it does not refuse a command that changes
+	// nothing either. Exactly one of Inverse and NonUndoable is set.
 	Inverse func(ctx context.Context, tx *Tx, p P) ([]Step, error)
 	// UndoField is the field of the payload, named as in its JSON, at which
 	// the pipeline refuses the command when its inverse would take the

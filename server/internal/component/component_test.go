@@ -793,8 +793,10 @@ func TestAttributeChecks(t *testing.T) {
 // hold more of the values that it loses than the bound leaves, one that loses
 // no value but whose undo's old default takes it past, and one whose undo
 // fits but would take its batch's past it, with the undos of the batch's
-// commands before it; and that a command of another type whose undo would, as
-// a description's, is refused at its payload.
+// commands before it; that a change of the options that changes nothing is
+// not refused for its undo, which the batch's undo leaves out; and that a
+// command of another type whose undo would, as a description's, is refused at
+// its payload.
 func TestUndoLimit(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -848,6 +850,16 @@ func TestUndoLimit(t *testing.T) {
 	optionsUndo := func(id string) map[string]any {
 		return map[string]any{"id": id, "options": options, "default": "calm"}
 	}
+	// A change of the options to those that the definition has, which keeps
+	// its default, changes nothing, so the batch's undo leaves its undo out,
+	// and the bound does not refuse it for that undo, which would take it past.
+	same := cmd{component.SetAttributeOptions, map[string]any{"id": mood, "options": options}}
+	f.maxUndo(size(optionsUndo(mood), nil) - 1)
+	if res, err := f.apply(t, same); err != nil || res.Undo == nil || len(res.Undo) != 0 {
+		t.Errorf("a change of the options to those that the definition has, whose undo would take the bound past: "+
+			"%+v, %v, want an empty undo", res.Undo, err)
+	}
+	f.maxUndo(0)
 	// Each change loses both components' values, and its undo would hold one
 	// of them, but not two.
 	for _, c := range []struct {

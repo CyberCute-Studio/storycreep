@@ -403,9 +403,14 @@ const revisionDigits = 19
 // ExpectedRevBytes returns how many bytes the bound of a batch's undo
 // (Options.MaxUndoBytes) counts for a revision of the entity ref that a step
 // of the undo expects: the most that it takes as JSON encodes it in the
-// step's expected_rev, its ID, as a key, and the revision, with a comma.
+// step's expected_rev, its ID, as a key, and the revision, with a comma. It
+// counts the ID as ids.Encode writes it, its kind's prefix, an underscore,
+// and its body, without encoding it, as Tx.Changed counts one for each entity
+// that a command changes, which may be every component of a type. The kind
+// of ref is an entity type, as every kind that a command touches is
+// (ids.Kind.Prefix).
 func ExpectedRevBytes(ref Ref) int {
-	return len(encodeRef(ref)) + len(`"":,`) + revisionDigits
+	return len(ref.Kind.Prefix()) + len("_") + ids.BodyLength + len(`"":,`) + revisionDigits
 }
 
 // LogBytes returns how many bytes the bound of a batch's undo

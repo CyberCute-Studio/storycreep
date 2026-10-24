@@ -356,8 +356,9 @@ func TestUndoOfNoChange(t *testing.T) {
 }
 
 // TestExpectedRevBytes checks that the bound counts an expected revision of
-// an entity of each kind as no fewer bytes than JSON encodes it in a step's
-// expected_rev with the largest revision, its key and its comma.
+// an entity of each kind as the bytes that JSON encodes it in, in a step's
+// expected_rev, with the largest revision, its key and its comma, which it
+// counts without encoding the entity's ID.
 func TestExpectedRevBytes(t *testing.T) {
 	for _, kind := range ids.Kinds() {
 		ref := Ref{Kind: kind, ID: ids.New()}
@@ -365,8 +366,8 @@ func TestExpectedRevBytes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := ExpectedRevBytes(ref), len(raw)-len(`{}`)+len(`,`); got < want {
-			t.Errorf("ExpectedRevBytes(%v) = %d, want at least %d, as %s takes", kind, got, want, raw)
+		if got, want := ExpectedRevBytes(ref), len(raw)-len(`{}`)+len(`,`); got != want {
+			t.Errorf("ExpectedRevBytes(%v) = %d, want %d, as %s takes", kind, got, want, raw)
 		}
 	}
 }

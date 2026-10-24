@@ -145,7 +145,10 @@ func (t *Tx) WorkspaceID() ids.UUID {
 // Inverse whose steps hold a part of the project that grows with it, as the
 // values that an attribute's retype loses, reads it to stop with
 // ErrUndoTooLarge once what it holds takes more, rather than hold all of it
-// only to be refused.
+// only to be refused, and only once it holds some of that part, which the
+// command changes: the steps of a command that changes nothing hold none of
+// it, and the batch's undo leaves them out, however much they take, so an
+// Inverse that stopped for them would refuse what the pipeline does not.
 func (t *Tx) UndoRoom() int {
 	return t.maxUndo - t.undoBytes
 }

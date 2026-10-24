@@ -759,6 +759,13 @@ func (plan *valuesPlan) each(ctx context.Context, tx *commands.Tx, fn func(u ids
 // writes it, a float without an exponent, with its component's ID, quoted,
 // and a colon, and a comma between two, so that it never holds more of them
 // than the pipeline would keep, whatever the definition's components hold.
+// It does not stop for undo alone, without a value: a change that loses no
+// value may change nothing, as one of an enum's options to those that it has
+// already, whose undo the batch's undo leaves out, and which the pipeline
+// does not refuse for it, and the pipeline refuses one that changes anything
+// for an undo past the bound as soon as it reports a change
+// (commands.Tx.Changed), at the same field. A change that loses a value
+// changes that value, so lost stops for it.
 func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, undo any,
 	back func(value.Value) (value.Value, bool)) (map[string]value.Value, error) {
 	base, err := json.Marshal(undo)
@@ -766,9 +773,6 @@ func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, undo any,
 		return nil, fmt.Errorf("component: encode the undo: %w", err)
 	}
 	room, size := tx.UndoRoom(), commands.LogBytes(base)
-	if size > room {
-		return nil, commands.ErrUndoTooLarge
-	}
 	out := map[string]value.Value{}
 	err = plan.each(ctx, tx, func(u ids.UUID, old, to value.Value) error {
 		again, ok := back(to)
