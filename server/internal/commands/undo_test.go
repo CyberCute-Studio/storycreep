@@ -185,7 +185,8 @@ func TestUndoAndRedo(t *testing.T) {
 // has changed since is refused with a revision conflict that names the entity
 // and the undo's command that expects it, with its current state, and
 // changes nothing, not even the entities that nobody changed since, so that
-// an undo never overwrites newer work, nor applies in part.
+// an undo never overwrites newer work on what its batch changed, nor applies
+// in part.
 //
 // Verifies: FR-EDIT-08/AC4
 func TestUndoConflict(t *testing.T) {

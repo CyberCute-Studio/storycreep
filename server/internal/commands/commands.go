@@ -228,8 +228,14 @@ type Result struct {
 	// A client undoes the batch by sending them back as a batch, each with a
 	// command ID of its own, which applies only if none of those entities has
 	// changed since, and is refused whole with a *RevisionConflictError
-	// otherwise, so that an undo never overwrites newer work. The batch that
-	// undoes another has an undo too, which redoes it. An entity that the
+	// otherwise, so that an undo never overwrites newer work on what the batch
+	// changed. It may still change what the batch did not, whose revisions it
+	// does not expect: the undo of a change of an enum's options or of an
+	// attribute definition's type gives the default to a value that a
+	// component was given since, of an option or a type that the undo takes
+	// away, as those commands do to any value that they cannot keep, and its
+	// own undo gives the value back (plan note N45). The batch that undoes
+	// another has an undo too, which redoes it. An entity that the
 	// client's own undo brings back is at a new revision, so the client moves
 	// the expectations of the rest of its stack from the revision that the
 	// entity had before the batch that it undid to that one. Undo is nil for a
