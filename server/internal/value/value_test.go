@@ -305,8 +305,8 @@ func TestPlainDecimals(t *testing.T) {
 			}
 		}
 	}
-	if longest != maxNumberLength {
-		t.Errorf("the longest plain decimal of a double has %d characters, want %d", longest, maxNumberLength)
+	if longest != MaxNumberLength {
+		t.Errorf("the longest plain decimal of a double has %d characters, want %d", longest, MaxNumberLength)
 	}
 }
 

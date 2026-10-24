@@ -247,8 +247,9 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			"slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, " +
 			"variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute " +
 			"definition, or a component that is not an identifier, 409 key_taken for a key that another entity of " +
-			"its scope has, or 409 component_type_in_use for a component type to delete of which a component that " +
-			"is not in the trash is." +
+			"its scope has, 409 component_type_in_use for a component type to delete of which a component that " +
+			"is not in the trash is, or 409 board_referenced for a board to delete whose nodes jumpers on other " +
+			"boards target, which the command does not confirm, whose details list them." +
 			fmt.Sprintf(" A batch whose undo, the inverses of its commands as the operation log keeps them, "+
 				"would take more than %d MiB, so that the batch that undoes it would not fit in a request, is "+
 				"refused with 422 validation_failed at the command that takes it past: at its payload, as "+
@@ -476,7 +477,10 @@ func pipelineError(err error) error {
 // type, an attribute definition, or a component that is not an identifier,
 // 409 key_taken for a key that another entity of its scope has
 // (ident.ErrTaken), 409 component_type_in_use for a component type to delete
-// of which a component that is not in the trash is, and 422 validation_failed
+// of which a component that is not in the trash is, 409 board_referenced, with
+// the jumpers that target the board as details.jumpers and how many there are
+// as details.jumper_count, for a board to delete whose nodes jumpers on other
+// boards target, which the command does not confirm, and 422 validation_failed
 // for any other value that the project's state does not take, as an ID of a
 // board that the project does not have, each with the field's problem in
 // details.errors.
@@ -484,6 +488,7 @@ func refusalError(r *commands.RefusedError, loc string) *api.Error {
 	problems := []api.Problem{{Location: loc, Message: r.Message}}
 	var invalid *slug.Error
 	var key *ident.Error
+	var referenced *board.ReferencedError
 	switch {
 	case errors.As(r.Reason, &invalid):
 		return &api.Error{Code: api.CodeSlugInvalid, Details: map[string]any{"reason": invalid.Reason,
@@ -499,6 +504,9 @@ func refusalError(r *commands.RefusedError, loc string) *api.Error {
 		return &api.Error{Code: api.CodeKeyTaken, Details: map[string]any{"errors": problems}}
 	case errors.Is(r.Reason, component.ErrTypeInUse):
 		return &api.Error{Code: api.CodeComponentTypeInUse, Details: map[string]any{"errors": problems}}
+	case errors.As(r.Reason, &referenced):
+		return &api.Error{Code: api.CodeBoardReferenced, Details: map[string]any{"errors": problems,
+			"jumpers": referenced.Jumpers, "jumper_count": referenced.Count}}
 	}
 	return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
 }

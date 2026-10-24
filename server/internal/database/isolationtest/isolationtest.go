@@ -167,6 +167,15 @@ var Tables = []Table{
 		return Statement{id, `INSERT INTO board (id, workspace_id, project_id, folder_id, "order", name, slug) ` +
 			"VALUES ($1, $2, $3, $4, 'V', 'Harbour', $5)", args}, nil
 	}},
+	{Name: "node", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A node is of the workspace's board, with which it is in the trash
+		// while the board is, so the trash's tests delete it before they
+		// delete the board.
+		id := ids.New()
+		return Statement{id, "INSERT INTO node (id, workspace_id, project_id, board_id, type, kind, text, x, y) " +
+			`VALUES ($1, $2, $3, $4, 'element', 'dialogue', '{"type": "doc", "content": [{"type": "paragraph"}]}', ` +
+			"240, 120)", []any{id, w.ID, w.Rows["project"], w.Rows["board"]}}, nil
+	}},
 	{Name: "variable", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A global variable's key is unique within its project, which its ID
 		// makes. It belongs to no board, so that the trash's tests delete it

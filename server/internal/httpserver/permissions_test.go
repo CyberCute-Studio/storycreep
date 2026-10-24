@@ -479,6 +479,31 @@ var permissionMatrix = []struct {
 					return call(f.s.main, http.MethodGet, componentPath(p, f.component(t, p, f.componentType(t, p))), nil,
 						si.header(false))
 				}},
+			{name: "list a board's nodes", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, boardNodesPath(p, f.board(t, p)), nil, si.header(false))
+				}},
+			{name: "read a node", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, nodePath(p, f.node(t, p)), nil, si.header(false))
+				}},
+			{name: "list the jumpers that target a node", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, nodePath(p, f.node(t, p))+"/referenced-by", nil, si.header(false))
+				}},
+			{name: "list the jumpers that target a board's nodes", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, boardPath(p, f.board(t, p))+"/referenced-by", nil,
+						si.header(false))
+				}},
+			{name: "suggest a project's tags", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, tagsPath(f.project(t, ""))+"?prefix=q", nil, si.header(false))
+				}},
 		},
 	},
 	{
@@ -504,6 +529,48 @@ var permissionMatrix = []struct {
 					p := f.project(t, "")
 					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
 						Type: "board.delete", Payload: map[string]string{"id": f.board(t, p)}}), si.header(true))
+				}},
+			{name: "set a board's entry node", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					b := f.board(t, p)
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "board.set_entry_node", Payload: map[string]string{"id": b, "node_id": f.boardNode(t, p, b)}}),
+						si.header(true))
+				}},
+		},
+	},
+	{
+		row:     "Edit nodes, connections, text, expressions",
+		op:      authz.EditContent,
+		allowed: [5]bool{true, true, true, false, false},
+		ops: []matrixOp{
+			{name: "create a node", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "node.create", Payload: map[string]any{"id": newNodeID(), "board_id": f.board(t, p),
+							"type": "element", "position": map[string]int{"x": 0, "y": 0}}}), si.header(true))
+				}},
+			{name: "change a node", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "node.update", Payload: map[string]any{"id": f.node(t, p), "title": "Greeting"}}),
+						si.header(true))
+				}},
+			{name: "move a node", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "node.move", Payload: map[string]any{"nodes": []map[string]any{{"id": f.node(t, p),
+							"position": map[string]int{"x": 8, "y": 8}}}}}), si.header(true))
+				}},
+			{name: "delete a node", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "node.delete", Payload: map[string]string{"id": f.node(t, p)}}), si.header(true))
 				}},
 		},
 	},
@@ -990,8 +1057,8 @@ func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []a
 // fixture's routes: its workspace, and a membership, an invitation, a
 // project, the owner's API token narrowed to the project, an asset of the
 // project, which the owner uploads, and a board, a variable, a component
-// type with an int attribute definition, and a component of it, of the
-// project, which the fixture adds.
+// type with an int attribute definition, a component of it, and a node, of
+// the project, which the fixture adds.
 func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 	t.Helper()
 	p := f.project(t, "")
@@ -1008,6 +1075,7 @@ func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 		"component_type_id": ct,
 		"attribute_id":      f.attribute(t, p, ct),
 		"component_id":      f.component(t, p, ct),
+		"node_id":           f.node(t, p),
 	}
 }
 

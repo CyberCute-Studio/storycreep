@@ -173,9 +173,15 @@ func TestUndo(t *testing.T) {
 	f := newFixture(t)
 	p := f.create(t, "Harbour")
 	board, node := ids.Encode(ids.Board, ids.New()), ids.Encode(ids.Node, ids.New())
-	// The entry's board is one of the project's (package board, N32).
+	// The entry's board is one of the project's (package board, N32), and its
+	// node one of the board's (package node, N43).
 	if _, err := f.d.Admin(t).Exec(ctx, `INSERT INTO board (id, workspace_id, project_id, "order", name, slug)
 		VALUES ($1, $2, $3, 'V', 'Harbour', 'harbour')`, decodeAs(t, ids.Board, board), f.ws, decode(t, p.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.d.Admin(t).Exec(ctx, `INSERT INTO node (id, workspace_id, project_id, board_id, type, x, y)
+		VALUES ($1, $2, $3, $4, 'branch', 0, 0)`, decodeAs(t, ids.Node, node), f.ws, decode(t, p.ID),
+		decodeAs(t, ids.Board, board)); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range []struct {

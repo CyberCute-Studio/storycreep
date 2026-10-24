@@ -76,6 +76,11 @@ const (
 	// project's folders, of boards, variables, and components alike (P,
 	// "Create, rename, move, and delete folders", FR-PROJ-02).
 	ManageFolders Operation = "project.folders"
+	// EditContent is creating, changing, moving, duplicating, deleting, and
+	// restoring a project's nodes (P, "Edit nodes, connections, text,
+	// expressions", FR-EDIT-02), which its connections (plan item 36), the
+	// text of either, and their expressions join.
+	EditContent Operation = "project.content"
 	// ManageVariablesAndComponents is creating a project's variables, and
 	// renaming, describing, retyping, rescoping, moving, deleting, and
 	// restoring them, and changing their defaults (P, "Manage variables,
@@ -148,6 +153,7 @@ var matrix = map[Operation]rule{
 	ChangeProjectSettings:        {scope: Project, least: role.Admin, denied: ErrInsufficientRole},
 	ManageBoards:                 {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	ManageFolders:                {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
+	EditContent:                  {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	ManageVariablesAndComponents: {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	ManageOwnProjectTokens:       {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	// The workspace's own tokens and the others' are rows of their own.

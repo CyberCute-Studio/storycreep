@@ -267,6 +267,15 @@ UPDATE board SET color = @color, rev = rev + 1, updated_at = now(), updated_by =
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND color <> @color
 RETURNING rev;
 
+-- name: UpdateBoardEntryNode :one
+-- UpdateBoardEntryNode changes the board's entry node, or removes it if
+-- entry_node_id is null, unless the board has that entry node already, and
+-- returns its new revision, or no row if it does.
+UPDATE board SET entry_node_id = @entry_node_id, rev = rev + 1, updated_at = now(), updated_by = @updated_by
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id
+    AND entry_node_id IS DISTINCT FROM @entry_node_id
+RETURNING rev;
+
 -- name: UpdateBoardSlug :one
 -- UpdateBoardSlug changes the board's slug, unless it has the slug already,
 -- and returns its new revision, or no row if it does.

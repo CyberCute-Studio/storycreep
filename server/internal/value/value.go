@@ -75,13 +75,15 @@ const (
 // client wrote it, in jsonb, whose numbers PostgreSQL's numeric holds only
 // within an exponent of ±(2^30 − 1) and 16,383 digits after the point, its
 // exponent counted, so that no spelling of a number reaches either limit.
+// Package node bounds how a node's position and size are written by them
+// too (plan note N43).
 const (
-	// maxNumberLength is the most characters that a number may be written
+	// MaxNumberLength is the most characters that a number may be written
 	// with, its sign, its point, and its exponent included.
-	maxNumberLength = 327
-	// maxExponent is the greatest exponent, either way, that a number may be
+	MaxNumberLength = 327
+	// MaxExponent is the greatest exponent, either way, that a number may be
 	// written with, as 1e-999 is, past a double's range in both directions.
-	maxExponent = 999
+	MaxExponent = 999
 )
 
 // Value is a typed value, as JSON: a boolean, a number, or a string, which its
@@ -175,7 +177,7 @@ type Checks struct {
 	// Text checks a string's or a text's characters and its length
 	// (input.CheckText).
 	Text bool
-	// Length checks that a number is written with at most maxNumberLength
+	// Length checks that a number is written with at most MaxNumberLength
 	// characters (formProblem).
 	Length bool
 }
@@ -192,8 +194,8 @@ var All = Checks{Text: true, Length: true}
 // for float, a number that a double holds without overflowing to an
 // infinity, read as the double nearest it, as JSON.parse reads it, and
 // written as the shortest number that reads as that double again, -0 as 0,
-// each written with at most maxNumberLength characters and an exponent
-// within ±maxExponent (formProblem), so that 0e1000 is neither, though it is
+// each written with at most MaxNumberLength characters and an exponent
+// within ±MaxExponent (formProblem), so that 0e1000 is neither, though it is
 // 0; for string, a string of at most MaxStringLength characters, and for
 // text one of at most MaxTextLength, without control characters but line
 // feeds and tabs (input.CheckText), and without an escape of a lone
@@ -302,19 +304,19 @@ func floatValue(f float64) Value {
 }
 
 // formProblem says why raw, a JSON number, is not written within the bounds
-// of a value's number, more than maxNumberLength characters, if length is
-// set, or an exponent beyond ±maxExponent, whatever its value, or returns ""
+// of a value's number, more than MaxNumberLength characters, if length is
+// set, or an exponent beyond ±MaxExponent, whatever its value, or returns ""
 // if it is. The exponent is read without its leading zeros, however many.
 func formProblem(raw string, length bool) string {
 	exponent := ""
 	if i := strings.IndexAny(raw, "eE"); i >= 0 {
 		exponent = strings.TrimLeft(strings.TrimLeft(raw[i+1:], "+-"), "0")
 	}
-	if n, err := strconv.Atoi(exponent); length && len(raw) > maxNumberLength || exponent != "" &&
-		(err != nil || n > maxExponent) {
+	if n, err := strconv.Atoi(exponent); length && len(raw) > MaxNumberLength || exponent != "" &&
+		(err != nil || n > MaxExponent) {
 		return fmt.Sprintf("is written with more than %d characters, or with an exponent beyond ±%d, which no int "+
-			"or float needs to be: the longest, -5e-324 written without an exponent, has %[1]d", maxNumberLength,
-			maxExponent)
+			"or float needs to be: the longest, -5e-324 written without an exponent, has %[1]d", MaxNumberLength,
+			MaxExponent)
 	}
 	return ""
 }
@@ -340,7 +342,7 @@ func integer(raw string) (int64, string) {
 		return 0, ""
 	}
 	// The value is digits times ten to the power of shift. formProblem took
-	// the exponent, which is within ±maxExponent, so that shift is bounded by
+	// the exponent, which is within ±MaxExponent, so that shift is bounded by
 	// the number's length, which is checked against MaxInt's before zeros are
 	// added; Atoi reads the exponent's sign and its leading zeros, and none as
 	// 0.

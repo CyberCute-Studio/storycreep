@@ -356,6 +356,8 @@ export interface BoardDeleteCommand {
 
 /** The payload of a command of the type board.delete. */
 export interface BoardDeletePayload {
+  /** Whether to delete the board even though jumpers on the project's other boards, which are not in its trash, target its nodes that are not deleted themselves, which its deletion leaves dangling, never dropped, for the validation to report (PRD FR-PROJ-02 AC2). Without it, a board that such jumpers target is not deleted: the command is answered with 409 board_referenced, which lists them, as GET /api/v1/projects/{project_id}/boards/{board_id}/referenced-by does, for a client to warn of before it sends the command again with confirm. */
+  confirm?: boolean;
   /** The board's ID */
   id: string;
 }
@@ -455,6 +457,25 @@ export interface BoardSetColorPayload {
   id: string;
 }
 
+/** A command of the type board.set_entry_node. */
+export interface BoardSetEntryNodeCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BoardSetEntryNodePayload;
+  /** The command's type. */
+  type: "board.set_entry_node";
+}
+
+/** The payload of a command of the type board.set_entry_node. */
+export interface BoardSetEntryNodePayload {
+  /** The board's ID */
+  id: string;
+  /** The ID of the board's new entry node, a node of the board, in the project's trash or not, or the entry node that the board has, which may no longer exist. Without it, the board has none. */
+  node_id?: string;
+}
+
 /** A command of the type board.set_slug. */
 export interface BoardSetSlugCommand {
   /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
@@ -492,7 +513,7 @@ export interface CommandBatchesBody {
 }
 
 /** A command of the batch: its ID, its type, its payload, as the type's schema says, and the revisions that it expects (PRD FR-API-03). */
-export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetSlugCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
+export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeUpdateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
 
 export interface CommandOutcomeBody {
   /** Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it */
@@ -1223,6 +1244,227 @@ export interface MeteredUsageBody {
   used: number;
 }
 
+export interface Node {
+  /** The ID of the node's board, which is fixed once the node is created */
+  board_id: string;
+  /** The node's colour, none or a name of the palette that boards have */
+  color: "none" | "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink" | "gray";
+  /** The ID of an element's cover image, an asset of the project, if it has one */
+  cover_asset_id?: string;
+  /** When the node was created */
+  created_at: string;
+  /** When the node went to the project's trash, if it is there: when it was deleted, or, if it was not, but its board is in the trash, with which it is in the trash too, when the board was deleted */
+  deleted_at?: string;
+  /** The node's ID */
+  id: string;
+  /** Whether the flow ends at the element, which only an element may (PRD §5.8.5) */
+  is_ending: boolean;
+  /** An element's kind: dialogue, which a speaker says, or narration. Another type has none. */
+  kind?: "dialogue" | "narration";
+  /** Where the node is on its board's canvas */
+  position: NodePosition;
+  /** The ID of the node's project */
+  project_id: string;
+  /** The node's revision, which every change of it increments, and which a change expects with expected_rev */
+  rev: number;
+  /** The node's width and height, if it has a size of its own; without one, the canvas lays the node out by itself */
+  size?: NodeSize;
+  /** The ID of an element's speaker, a component of the project, if it has one. It may be a component in the project's trash, which the validation reports, until the purge deletes the component, which leaves the element without one. */
+  speaker_component_id?: string;
+  /** The node's tags, as they are written, in their order: no two are the same tag but for their case */
+  tags: Array<string>;
+  /** A jumper's target, if it has one: the node that it continues the flow at, which may since have been deleted, or purged, which the validation reports (PRD FR-EDIT-05 AC1) */
+  target?: NodeTarget;
+  /** An element's text, a rich-text document (PRD FR-TEXT-01). Another type has none. */
+  text?: RichTextDoc;
+  /** The node's title, which may be empty */
+  title: string;
+  /** The node's type, which is fixed once it is created: an element, a line of dialogue or of narration; a branch, which picks the first of its outputs whose condition holds; or a jumper, which continues the flow at its target (PRD §5.8.5) */
+  type: "element" | "branch" | "jumper";
+  /** When the node last changed */
+  updated_at: string;
+}
+
+/** A command of the type node.create. */
+export interface NodeCreateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: NodeCreatePayload;
+  /** The command's type. */
+  type: "node.create";
+}
+
+/** The payload of a command of the type node.create. */
+export interface NodeCreatePayload {
+  /** The ID of the node's board, which is not in the project's trash, and which is fixed once the node is created */
+  board_id: string;
+  /** The node's colour, none or a name of the palette that boards have. Without it, none. */
+  color?: "none" | "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink" | "gray";
+  /** The ID of an element's cover image, an asset of the project. Without it, none. Another type has none. */
+  cover_asset_id?: string;
+  /** The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  id: string;
+  /** Whether the flow ends at the element (PRD §5.8.5). Without it, false. Another type may not. */
+  is_ending?: boolean;
+  /** An element's kind: dialogue, which a speaker says, or narration. Without it, dialogue. Another type has none, and is answered with 422 validation_failed for one. */
+  kind?: "dialogue" | "narration";
+  /** Where the node goes on its board's canvas */
+  position: NodePosition;
+  /** The node's width and height. Without it, or with {}, the node has no size of its own, and the canvas lays it out by itself. */
+  size?: NodeSize;
+  /** The ID of an element's speaker, a component of the project, in its trash or not. Without it, none. Another type has none. */
+  speaker_component_id?: string;
+  /** The node's tags, at most 32, each of 1 to 50 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them, and no two the same tag but for their case, which tags are compared without, as Quest and quest are one tag. They are kept as they are written. Without them, none. */
+  tags?: Array<string> | null;
+  /** A jumper's target: a node of the project, in its trash or not, and that node's board, which may be the jumper's own. Without it, or with {}, the jumper has none, which the validation reports. Another type has none. */
+  target?: NodeTarget;
+  /** An element's text, a rich-text document (PRD FR-TEXT-01). Without it, an empty paragraph. Another type has none. */
+  text?: RichTextDoc;
+  /** The node's title, of at most 200 characters, without white space around it, and without control characters, bidirectional controls, and line separators among it. Without it, the node has none. */
+  title?: string;
+  /** The node's type, which is fixed once it is created: an element, a line of dialogue or of narration; a branch, which picks the first of its outputs whose condition holds; or a jumper, which continues the flow at its target (PRD §5.8.5) */
+  type: "element" | "branch" | "jumper";
+}
+
+/** A command of the type node.delete. */
+export interface NodeDeleteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: NodeDeletePayload;
+  /** The command's type. */
+  type: "node.delete";
+}
+
+/** The payload of a command of the type node.delete. */
+export interface NodeDeletePayload {
+  /** The node's ID */
+  id: string;
+}
+
+/** A command of the type node.duplicate. */
+export interface NodeDuplicateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: NodeDuplicatePayload;
+  /** The command's type. */
+  type: "node.duplicate";
+}
+
+/** The payload of a command of the type node.duplicate. */
+export interface NodeDuplicatePayload {
+  /** The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  id: string;
+  /** Where the new node goes on the board's canvas */
+  position: NodePosition;
+  /** The ID of the node that the new node is a copy of, which is not in the project's trash: the new node is of the same board, and has its type and every field of it but its position, its text, speaker, and target among them */
+  source_id: string;
+}
+
+/** A command of the type node.move. */
+export interface NodeMoveCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: NodeMovePayload;
+  /** The command's type. */
+  type: "node.move";
+}
+
+/** The payload of a command of the type node.move. */
+export interface NodeMovePayload {
+  /** The nodes that move, each once, at most 10000, of any of the project's boards that are not in its trash, each with where it goes. One that is there already stays as it is. */
+  nodes: Array<NodePlace>;
+}
+
+export interface NodePlace {
+  /** The node's ID */
+  id: string;
+  /** Where the node goes on its board's canvas */
+  position: NodePosition;
+}
+
+export interface NodePosition {
+  /** The node's position across its board's canvas, rightward, in units of the canvas: a number from -1000000000 to 1000000000, read as the decimal that it is written as, and kept to 2 decimal places, rounded half away from zero, as 0.125 is 0.13 (PRD FR-EDIT-02 AC4). The node is shown with it written without trailing zeros, as 240 or 120.5. */
+  x: number;
+  /** The node's position down its board's canvas, downward, in units of the canvas: a number from -1000000000 to 1000000000, read and kept as x is. */
+  y: number;
+}
+
+/** A command of the type node.restore. */
+export interface NodeRestoreCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: NodeRestorePayload;
+  /** The command's type. */
+  type: "node.restore";
+}
+
+/** The payload of a command of the type node.restore. */
+export interface NodeRestorePayload {
+  /** The node's ID */
+  id: string;
+}
+
+export interface NodeSize {
+  /** The node's height, in units of its board's canvas: a number from 1 to 100000, read and kept as a position's x is. With width, or neither of them, for none. */
+  height?: number;
+  /** The node's width, in units of its board's canvas: a number from 1 to 100000, read and kept as a position's x is. With height, or neither of them, for none. */
+  width?: number;
+}
+
+export interface NodeTarget {
+  /** The ID of the board of the node that the jumper targets, which may be the jumper's own. With node_id, or neither of them, for none. */
+  board_id?: string;
+  /** The ID of the node that the jumper targets, a node of the board board_id. With board_id, or neither of them, for none. */
+  node_id?: string;
+}
+
+/** A command of the type node.update. */
+export interface NodeUpdateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: NodeUpdatePayload;
+  /** The command's type. */
+  type: "node.update";
+}
+
+/** The payload of a command of the type node.update. */
+export interface NodeUpdatePayload {
+  /** The node's new colour, none or a name of the palette that boards have */
+  color?: "none" | "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink" | "gray";
+  /** The ID of an element's new cover image, an asset of the project, or the empty string for none. Another type has none. */
+  cover_asset_id?: string;
+  /** The node's ID */
+  id: string;
+  /** Whether the flow ends at the element (PRD §5.8.5). Another type may not. */
+  is_ending?: boolean;
+  /** An element's new kind. Another type has none, and is answered with 422 validation_failed for one. */
+  kind?: "dialogue" | "narration";
+  /** The node's new width and height, or {} for no size of its own, which the canvas then lays the node out by itself for */
+  size?: NodeSize;
+  /** The ID of an element's new speaker, a component of the project, in its trash or not, or the empty string for none. Another type has none. */
+  speaker_component_id?: string;
+  /** The node's new tags, which replace its tags, as [] removes them: at most 32, each of 1 to 50 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them, and no two the same tag but for their case, which tags are compared without. They are kept as they are written. */
+  tags?: Array<string>;
+  /** A jumper's new target: a node of the project, in its trash or not, and that node's board, or the target that it has, which may no longer exist, or {} for none, which the validation reports. Another type has none. */
+  target?: NodeTarget;
+  /** An element's new text, a rich-text document (PRD FR-TEXT-01), which may be an empty paragraph. Another type has none. */
+  text?: RichTextDoc;
+  /** The node's new title, of at most 200 characters, which may be empty, without white space around it, and without control characters, bidirectional controls, and line separators among it */
+  title?: string;
+}
+
 export interface PageAPITokenBody {
   items: Array<APITokenBody>;
   /** The cursor of the next page, or null if this is the last page */
@@ -1267,6 +1509,12 @@ export interface PageMemberBody {
 
 export interface PageMembershipBody {
   items: Array<MembershipBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
+export interface PageNode {
+  items: Array<Node>;
   /** The cursor of the next page, or null if this is the last page */
   next_cursor: string | null;
 }
@@ -1522,7 +1770,7 @@ export interface ProjectUpdateSettingsCommand {
 export interface ProjectUpdateSettingsPayload {
   /** The locale of the project's text, as a BCP 47 tag of a language in its canonical form, such as en or cs-CZ */
   default_locale?: string;
-  /** The project's entry, which replaces its entry: without a board, the project has none. A board other than the entry's is one of the project's boards, in its trash or not, or the command is answered with 422 validation_failed; the node needs not exist yet. */
+  /** The project's entry, which replaces its entry: without a board, the project has none. A board other than the entry's is one of the project's boards, in its trash or not, and a node, unless the entry keeps both its board and its node, is a node of that board, in the project's trash or not, or the command is answered with 422 validation_failed. Without a node, the flow starts at the board's entry node. */
   entry?: ProjectEntry;
   /** The least role that may publish the project's snapshots */
   publish_min_role?: "editor" | "admin";
@@ -1796,14 +2044,26 @@ export interface Summary {
   updated_at: string;
 }
 
+export interface Tag {
+  /** How many of the project's nodes that are not in its trash have the tag, whatever its case */
+  nodes: number;
+  /** The tag, as the most of the nodes that have it write it, or, of the spellings that as many write, the first in the order of their bytes */
+  tag: string;
+}
+
+export interface TagsBody {
+  /** The tags, the most used first, then in the order of their folded spellings */
+  items: Array<Tag>;
+}
+
 export interface TrashItemBody {
   /** When the entity was deleted to the trash */
   deleted_at: string;
   /** The entity's ID */
   id: string;
-  /** What the entity is: a board, a variable, or a component, and, once they exist, a node (PRD FR-PROJ-06). The command of its kind, as board.restore, restores it with its ID as id. */
+  /** What the entity is: a board, a node, a variable, or a component (PRD FR-PROJ-06). The command of its kind, as board.restore, restores it with its ID as id. */
   kind: "board" | "node" | "variable" | "component";
-  /** The entity's name, or a variable's key */
+  /** The entity's name, a node's title, which may be empty, or a variable's key */
   name: string;
   /** When the entity's time in the trash ends. The purge, which runs every hour, deletes it for good then; until it does, the entity can be restored. */
   purge_after: string;
@@ -1825,7 +2085,7 @@ export interface UpdateProjectBody {
   default_locale?: string;
   /** The project's new description, as for POST /api/v1/workspaces/{workspace_id}/projects; empty for none */
   description?: string;
-  /** The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. A board other than the entry's is one of the project's boards, in its trash or not, or the answer is 422 validation_failed; the node needs not exist yet. */
+  /** The project's new entry, which replaces its entry: an object without board_id removes it. node_id needs board_id. A board other than the entry's is one of the project's boards, in its trash or not, and a node, unless the entry keeps both its board and its node, is a node of that board, in the project's trash or not, or the answer is 422 validation_failed. Without a node, the flow starts at the board's entry node. */
   entry?: ProjectEntry;
   /** The project's revision that the change was made against. If the project has another, the answer is 409 revision_conflict, and nothing changes. Without it, the change is made whatever the revision. A body that names no field to change changes nothing, so it is answered with the project, whatever its revision. */
   expected_rev?: number;
@@ -2174,7 +2434,7 @@ export interface Operations {
   /**
    * Apply batches of commands to a project
    *
-   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo. Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, or 409 component_type_in_use for a component type to delete of which a component that is not in the trash is. A batch whose undo, the inverses of its commands as the operation log keeps them, would take more than 4 MiB, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches.
+   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo. Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, or 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, would take more than 4 MiB, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches.
    *
    * A command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.
    *
@@ -2529,6 +2789,24 @@ export interface Operations {
     };
   };
   /**
+   * Get a node
+   *
+   * Returns a node of the project, an element with its text. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type node.* create, change, move, duplicate, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A node that the project does not have, or that is in its trash, itself or with its board, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getNode: {
+    input: {
+      path: {
+        /** The node's ID */
+        node_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: Node;
+    };
+  };
+  /**
    * Get the API's OpenAPI document
    *
    * The OpenAPI 3.1 document of the server's operations, this one included. It is the same for every server of a release, and is committed to the repository as schema/api/v1/openapi.json. Requests that read share a rate limit of 1,200 a minute for each IP address. The RateLimit headers say how much is left of the limit of the IP address, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
@@ -2683,6 +2961,54 @@ export interface Operations {
     };
     responses: {
       201: LinkBody;
+    };
+  };
+  /**
+   * List a board's nodes
+   *
+   * Lists the board's nodes that are not in the project's trash, each whole, an element with its text, in the order of their IDs, oldest first: what the board's canvas shows. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type node.* create, change, move, duplicate, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listBoardNodes: {
+    input: {
+      path: {
+        /** The board's ID */
+        board_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageNode;
+    };
+  };
+  /**
+   * List the jumpers that target a board's nodes
+   *
+   * Lists the jumpers on the project's other boards, which are not in its trash, that target a node of the board that is not in its trash either, in the order of their IDs, oldest first: those that deleting the board would leave dangling, which a client warns of before it deletes the board, as the command board.delete, which refuses an unconfirmed deletion of such a board with 409 board_referenced, asks it to (PRD FR-PROJ-02 AC2). A jumper whose target is deleted already, or purged, dangles already, and is not listed. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type node.* create, change, move, duplicate, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listBoardReferrers: {
+    input: {
+      path: {
+        /** The board's ID */
+        board_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageNode;
     };
   };
   /**
@@ -2848,6 +3174,30 @@ export interface Operations {
     };
   };
   /**
+   * List the jumpers that target a node
+   *
+   * Lists the jumpers of the project that target the node, on any of its boards, the node's own among them, that are not in its trash, in the order of their IDs, oldest first: what the node is referenced by (PRD FR-EDIT-05 AC2). They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type node.* create, change, move, duplicate, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A node that the project does not have, or that is in its trash, itself or with its board, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listNodeReferrers: {
+    input: {
+      path: {
+        /** The node's ID */
+        node_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageNode;
+    };
+  };
+  /**
    * List a project's grants
    *
    * Lists the members' grants on a project, in the order of their memberships' IDs, oldest first. A member with a grant acts on the project with its role instead of their role in the workspace, and a guest acts only on the projects that they have one on. Only an owner or an admin of the project's workspace may, and anyone else with a role on the project, as a viewer or a guest with an admin grant on it, is answered with 403 insufficient_role: a grant never authorises an operation of the workspace (PRD FR-TEN-04 AC4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
@@ -2929,6 +3279,28 @@ export interface Operations {
     };
     responses: {
       200: PageSessionBody;
+    };
+  };
+  /**
+   * Suggest a project's tags
+   *
+   * Lists the tags of the project's nodes that are not in its trash that start with the prefix, compared without regard to case, as tags are, each once, as the most of the nodes that have it write it, with how many nodes have it, the most used first, so that a client suggests the spelling that the project uses as a tag is typed (PRD FR-EDIT-06). They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type node.* create, change, move, duplicate, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listTags: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** How many tags the answer holds at most */
+        limit?: number;
+        /** What the tags start with, compared without regard to case, of at most 50 characters, without control characters. Without it, every tag. */
+        prefix?: string;
+      };
+    };
+    responses: {
+      200: TagsBody;
     };
   };
   /**
@@ -3510,6 +3882,7 @@ export const routes = {
   getComponentType: { method: "GET", path: "/api/v1/projects/{project_id}/component-types/{component_type_id}" },
   getHealth: { method: "GET", path: "/healthz" },
   getInstance: { method: "GET", path: "/api/v1/instance" },
+  getNode: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}" },
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
   getProject: { method: "GET", path: "/api/v1/projects/{project_id}" },
   getReadiness: { method: "GET", path: "/readyz" },
@@ -3521,6 +3894,8 @@ export const routes = {
   getWorkspaceUsage: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/usage" },
   issuePasswordResetLink: { method: "POST", path: "/api/v1/admin/password-reset-links" },
   issueVerificationLink: { method: "POST", path: "/api/v1/admin/verification-links" },
+  listBoardNodes: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}/nodes" },
+  listBoardReferrers: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}/referenced-by" },
   listBoards: { method: "GET", path: "/api/v1/projects/{project_id}/boards" },
   listComponentTypes: { method: "GET", path: "/api/v1/projects/{project_id}/component-types" },
   listComponents: { method: "GET", path: "/api/v1/projects/{project_id}/components" },
@@ -3528,10 +3903,12 @@ export const routes = {
   listInvites: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/invites" },
   listMemberGrants: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}/grants" },
   listMembers: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members" },
+  listNodeReferrers: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}/referenced-by" },
   listProjectGrants: { method: "GET", path: "/api/v1/projects/{project_id}/grants" },
   listProjectTokens: { method: "GET", path: "/api/v1/projects/{project_id}/tokens" },
   listProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/projects" },
   listSessions: { method: "GET", path: "/api/v1/auth/sessions" },
+  listTags: { method: "GET", path: "/api/v1/projects/{project_id}/tags" },
   listTrash: { method: "GET", path: "/api/v1/projects/{project_id}/trash" },
   listTrashedProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/trash/projects" },
   listUnconvertibleValues: { method: "GET", path: "/api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/conversion" },

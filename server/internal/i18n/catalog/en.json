@@ -11,6 +11,7 @@
   "email.password_reset.body": "Hello,\n\nSomeone asked to reset the password of your Storycreep account at {site}. To choose a new password, open this link within {minutes, plural, one {# minute} other {# minutes}}. It works once, and signs your account out everywhere:\n\n{url}\n\nIf it was not you, you can ignore this email, and your password stays as it is.\n",
   "email.password_reset.subject": "Reset your Storycreep password",
   "error.already_member": "This account is a member of the workspace already.",
+  "error.board_referenced": "Jumpers on other boards lead to this board. Confirm to delete it all the same, and leave them broken.",
   "error.component_type_in_use": "Components of this type are not all in the trash. Delete them first.",
   "error.csrf_failed": "The request lacks the session's CSRF token, or came from another origin.",
   "error.email_configured": "This server emails its links to each account's own address, so it gives none as text.",

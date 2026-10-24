@@ -205,6 +205,34 @@ type LiveFolder struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type LiveNode struct {
+	ID                 pgtype.UUID
+	WorkspaceID        pgtype.UUID
+	ProjectID          pgtype.UUID
+	BoardID            pgtype.UUID
+	Type               string
+	Kind               pgtype.Text
+	Title              string
+	Text               []byte
+	SpeakerComponentID pgtype.UUID
+	CoverAssetID       pgtype.UUID
+	Color              string
+	Tags               []string
+	X                  pgtype.Numeric
+	Y                  pgtype.Numeric
+	Width              pgtype.Numeric
+	Height             pgtype.Numeric
+	IsEnding           bool
+	TargetBoardID      pgtype.UUID
+	TargetNodeID       pgtype.UUID
+	Rev                int64
+	DeletedAt          pgtype.Timestamptz
+	CreatedBy          pgtype.UUID
+	UpdatedBy          pgtype.UUID
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type LiveVariable struct {
 	ID           pgtype.UUID
 	WorkspaceID  pgtype.UUID
@@ -225,6 +253,34 @@ type LiveVariable struct {
 	UpdatedBy    pgtype.UUID
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type Node struct {
+	ID                 pgtype.UUID
+	WorkspaceID        pgtype.UUID
+	ProjectID          pgtype.UUID
+	BoardID            pgtype.UUID
+	Type               string
+	Kind               pgtype.Text
+	Title              string
+	Text               []byte
+	SpeakerComponentID pgtype.UUID
+	CoverAssetID       pgtype.UUID
+	Color              string
+	Tags               []string
+	X                  pgtype.Numeric
+	Y                  pgtype.Numeric
+	Width              pgtype.Numeric
+	Height             pgtype.Numeric
+	IsEnding           bool
+	TargetBoardID      pgtype.UUID
+	TargetNodeID       pgtype.UUID
+	Rev                int64
+	DeletedAt          pgtype.Timestamptz
+	CreatedBy          pgtype.UUID
+	UpdatedBy          pgtype.UUID
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
 }
 
 type Project struct {

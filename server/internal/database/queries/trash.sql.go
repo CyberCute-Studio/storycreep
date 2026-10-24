@@ -40,6 +40,8 @@ SELECT p.id FROM project p
 WHERE p.workspace_id = $1 AND (
     EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = p.workspace_id AND b.project_id = p.id
         AND b.deleted_at <= now() - $2::interval)
+    OR EXISTS (SELECT 1 FROM node n WHERE n.workspace_id = p.workspace_id AND n.project_id = p.id
+        AND n.deleted_at <= now() - $2::interval)
     OR EXISTS (SELECT 1 FROM variable v WHERE v.workspace_id = p.workspace_id AND v.project_id = p.id
         AND v.deleted_at <= now() - $2::interval)
     OR EXISTS (SELECT 1 FROM folder f WHERE f.workspace_id = p.workspace_id AND f.project_id = p.id
@@ -195,14 +197,19 @@ func (q *Queries) PurgeComponentTypes(ctx context.Context, arg PurgeComponentTyp
 }
 
 const purgeComponents = `-- name: PurgeComponents :execrows
-DELETE FROM component d
-WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
+WITH purged AS (
     SELECT c.id FROM component c
     WHERE c.workspace_id = $1 AND c.project_id = $2
         AND c.deleted_at <= now() - $3::interval
     ORDER BY c.deleted_at, c.id
     LIMIT $4
+), unspoken AS (
+    UPDATE node n SET speaker_component_id = NULL, rev = n.rev + 1, updated_at = now()
+    WHERE n.workspace_id = $1 AND n.project_id = $2
+        AND n.speaker_component_id IN (SELECT id FROM purged)
 )
+DELETE FROM component d
+WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (SELECT id FROM purged)
 `
 
 type PurgeComponentsParams struct {
@@ -215,7 +222,11 @@ type PurgeComponentsParams struct {
 // PurgeComponents deletes at most max_rows of the project's components that
 // have been in its trash for retention, those that have been there longest
 // first, with their values, by the cascade of their foreign key, and returns
-// how many it deleted.
+// how many it deleted. It leaves each element whose speaker one of them is,
+// in the trash or not, without one, and increments the element's revision,
+// as every change of a node does (PRD §5.7), so that a client that expects
+// the revision that it read finds that the element changed, which the
+// foreign key's own action, left nothing to do, would not increment.
 func (q *Queries) PurgeComponents(ctx context.Context, arg PurgeComponentsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, purgeComponents,
 		arg.WorkspaceID,
@@ -276,6 +287,43 @@ func (q *Queries) PurgeFolders(ctx context.Context, arg PurgeFoldersParams) (int
 	return result.RowsAffected(), nil
 }
 
+const purgeNodes = `-- name: PurgeNodes :execrows
+DELETE FROM node d
+WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
+    SELECT n.id FROM node n
+    WHERE n.workspace_id = $1 AND n.project_id = $2
+        AND n.deleted_at <= now() - $3::interval
+    ORDER BY n.deleted_at, n.id
+    LIMIT $4
+)
+`
+
+type PurgeNodesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Retention   pgtype.Interval
+	MaxRows     int32
+}
+
+// PurgeNodes deletes at most max_rows of the project's nodes that have been
+// in its trash for retention, those that have been there longest first, and
+// returns how many it deleted. A node of a board in the trash, which is in
+// the trash with it, is purged with its board, by the cascade of its foreign
+// key; one deleted on its own, before its board, once its own time has
+// passed.
+func (q *Queries) PurgeNodes(ctx context.Context, arg PurgeNodesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeNodes,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Retention,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const purgeVariables = `-- name: PurgeVariables :execrows
 DELETE FROM variable d
 WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
@@ -317,6 +365,9 @@ FROM (
     SELECT 'board' AS kind, b.id, b.name, b.deleted_at FROM board b
     WHERE b.workspace_id = $1 AND b.project_id = $2 AND b.deleted_at IS NOT NULL
     UNION ALL
+    SELECT 'node' AS kind, n.id, n.title, n.deleted_at FROM node n
+    WHERE n.workspace_id = $1 AND n.project_id = $2 AND n.deleted_at IS NOT NULL
+    UNION ALL
     SELECT 'variable' AS kind, v.id, v.key::text, v.deleted_at FROM variable v
     WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.deleted_at IS NOT NULL
     UNION ALL
@@ -349,20 +400,21 @@ type TrashItemsRow struct {
 
 // A project's trash (package trash, PRD FR-PROJ-06): the rows of its content
 // with deleted_at, which the live views leave out (migration 00019). The
-// tables whose rows the trash lists are its boards', its variables', and its
-// components', and, once it is added, its nodes'; its folders', its
-// component types', and its attribute definitions' rows go to the trash too,
-// but are not listed. Each such table has a branch here, in the
-// list and in the purge, which package trash's tests hold it to. A row that
-// belongs to a board, as a board's variable, is in the trash with its board
-// too, which lists the board alone, and is purged with it, by the cascade of
-// its foreign key to the board, even one deleted on its own, before its
-// board, which the list holds, and whose own time in the trash ends first.
+// tables whose rows the trash lists are its boards', its nodes', its
+// variables', and its components'; its folders', its component types', and
+// its attribute definitions' rows go to the trash too, but are not listed.
+// Each such table has a branch here, in the list and in the purge, which
+// package trash's tests hold it to. A row that belongs to a board, as a
+// board's node or variable, is in the trash with its board too, which lists
+// the board alone, and is purged with it, by the cascade of its foreign key
+// to the board, even one deleted on its own, before its board, which the
+// list holds, and whose own time in the trash ends first.
 // TrashItems returns the entities in the project's trash that it lists, the
 // most recently deleted first, then by their kinds and their IDs, after the
 // entity whose deletion, kind, and ID are after_deleted_at, after_kind, and
 // after_id, or from the first if after_deleted_at is null, each with its
-// kind, its ID, its name, a variable's key, and when it was deleted. The
+// kind, its ID, its name, a node's title, which may be empty, or a
+// variable's key, and when it was deleted. The
 // bound on deleted_at alone, which the infinite time leaves open for the
 // first page, lets the index of each table's trash start where the page
 // does, rather than read every row that the pages before it held.
