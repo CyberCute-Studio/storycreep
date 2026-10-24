@@ -182,7 +182,7 @@ type Limit[P any] struct {
 // Step is a command of an inverse: its type and its payload, which encodes as
 // the type's payload does. The pipeline gives it the revisions that it
 // expects, those of the entities that its command changed, as the batch left
-// them, each once in the batch's undo (Result.Undo), and the client that
+// them, each once in its command's undo (Result.Undo), and the client that
 // sends the undo gives it its command ID (plan item 37).
 type Step struct {
 	Type    Type
@@ -842,8 +842,7 @@ func nulAt(v any, at string) (where string, ok bool) {
 }
 
 // checkSteps returns the steps of an inverse as the operation log keeps
-// them, each with its payload encoded once, and the kinds of entity that its
-// type touches, of which it may expect revisions, or an error unless every step
+// them, each with its payload encoded once, or an error unless every step
 // is a registered type of command whose payload its schema and Check allow,
 // so that an undo can apply it. It does not ask a step's CheckNew, whose
 // rules the stored value that the step writes back may break: the undo that
@@ -870,7 +869,7 @@ func (r *Registry) checkSteps(steps []Step) ([]logStep, error) {
 		if len(problems) > 0 {
 			return nil, fmt.Errorf("step %d (%s) is not valid: %v", i, st.Type, problems)
 		}
-		out[i] = logStep{Type: st.Type, Payload: raw, touches: s.touches}
+		out[i] = logStep{Type: st.Type, Payload: raw}
 	}
 	return out, nil
 }

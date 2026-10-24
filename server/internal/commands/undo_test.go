@@ -62,8 +62,8 @@ func (w *world) body(t *testing.T, id ids.UUID) (string, int64) {
 
 // TestUndoAndRedo checks that a batch's Result holds its undo, the operation
 // log's inverse, each step expecting the revisions that the batch left of
-// what its command changed, each entity once, by the step of the first
-// command that changed it, which, sent back as a batch, undoes the batch, and
+// what its command changed, though another command of the batch changed it
+// too, which, sent back as a batch, undoes the batch, and
 // whose own Result holds the undo that redoes it; that a replay of the batch
 // answers the same undo, which it reads from the log; that a batch answered as
 // AlreadyApplied, and one that cannot be undone, have none; and that a
@@ -86,10 +86,11 @@ func TestUndoAndRedo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Both commands change the note, which the undo, checked whole against
-	// the note as it is before it, expects once, by the undo of the first.
+	// Both commands change the note, which the undo of each expects, so that
+	// either, sent alone, expects what it writes back (TestUndoInParts).
 	want := []wireStep{
-		{Type: noteUpdate, Payload: json.RawMessage(`{"id":"` + aID + `","body":"second"}`)},
+		{Type: noteUpdate, Payload: json.RawMessage(`{"id":"` + aID + `","body":"second"}`),
+			ExpectedRev: map[string]int64{aID: 3}},
 		{Type: noteUpdate, Payload: json.RawMessage(`{"id":"` + aID + `","body":"first"}`),
 			ExpectedRev: map[string]int64{aID: 3}},
 	}
@@ -141,8 +142,9 @@ func TestUndoAndRedo(t *testing.T) {
 	if body, rev := w.body(t, a); body != "third" || rev != 7 {
 		t.Errorf("once redone, the note is %q at %d, want third at 7", body, rev)
 	}
-	if len(redone.Undo) != 2 || len(redone.Undo[0].ExpectedRev) != 0 || redone.Undo[1].ExpectedRev[noteRef(a)] != 7 {
-		t.Errorf("the redo's undo is %+v, want two steps, the second of which expects the note at 7", redone.Undo)
+	if len(redone.Undo) != 2 || redone.Undo[0].ExpectedRev[noteRef(a)] != 7 ||
+		redone.Undo[1].ExpectedRev[noteRef(a)] != 7 {
+		t.Errorf("the redo's undo is %+v, want two steps, each of which expects the note at 7", redone.Undo)
 	}
 
 	// The note's creation is undone by its deletion, which cannot be undone,
@@ -248,10 +250,86 @@ func TestUndoConflict(t *testing.T) {
 	}
 }
 
+// TestUndoInParts checks that each part of a batch's undo, sent as a batch of
+// its own, as a client sends an undo whose own undo would pass the bounds,
+// expects every entity that it writes back: the first part of the undo of two
+// changes of a note, which undoes the second, is refused, and changes
+// nothing, once another user has changed the note since, rather than write
+// it back over their change; and that the parts of an undo that nobody came
+// between apply in order, the second once it expects what the first left, as
+// the client moves its stacks.
+//
+// Verifies: FR-EDIT-08/AC4
+func TestUndoInParts(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	p := w.pipeline(t, nil)
+	a, aID := newNote()
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteCreate, notePayload{ID: aID, Body: "first"}, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	twice := func(one, two string) Result {
+		t.Helper()
+		res, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{
+			command(t, noteUpdate, notePayload{ID: aID, Body: one}, nil),
+			command(t, noteUpdate, notePayload{ID: aID, Body: two}, nil),
+		})
+		if err != nil || len(res.Undo) != 2 {
+			t.Fatalf("a batch of two changes of the note: %+v, %v", res, err)
+		}
+		return res
+	}
+	res := twice("second", "third")
+	// Another user changes the note.
+	if _, err := p.Apply(ctx, w.as(editorUser), w.project,
+		[]Command{command(t, noteUpdate, notePayload{ID: aID, Body: "theirs"}, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	before := w.written(t)
+	var conflict *RevisionConflictError
+	_, err := p.Apply(ctx, w.as(ownerUser), w.project, undoBatch(res.Undo[:1]))
+	if !errors.As(err, &conflict) || len(conflict.Conflicts) != 1 {
+		t.Fatalf("the first part of the undo, once another user changed the note: %v, want a revision conflict", err)
+	}
+	if c := conflict.Conflicts[0]; c.Command != 0 || c.Ref != noteRef(a) || c.Expected != 3 || c.Current != 4 {
+		t.Errorf("the conflict: %+v", c)
+	}
+	if after := w.written(t); after != before {
+		t.Errorf("the refused part wrote %+v, where there was %+v", after, before)
+	}
+	if body, _ := w.body(t, a); body != "theirs" {
+		t.Errorf("after the refused part, the note is %q, want theirs", body)
+	}
+
+	// Nobody comes between the parts of the next batch's undo.
+	res = twice("fourth", "fifth")
+	first, err := p.Apply(ctx, w.as(ownerUser), w.project, undoBatch(res.Undo[:1]))
+	if err != nil {
+		t.Fatalf("the first part of the undo: %v", err)
+	}
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, undoBatch(res.Undo[1:])); !errors.As(err, &conflict) {
+		t.Errorf("the second part, unmoved: %v, want a revision conflict", err)
+	}
+	moved := undoBatch(res.Undo[1:])
+	if moved[0].ExpectedRev[noteRef(a)] != 6 || !slices.Equal(first.Revisions, []Revision{{noteRef(a), 7}}) {
+		t.Fatalf("the second part expects %v, and the first left %v", moved[0].ExpectedRev, first.Revisions)
+	}
+	moved[0].ExpectedRev = map[Ref]int64{noteRef(a): 7}
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, moved); err != nil {
+		t.Errorf("the second part, moved to the revision that the first left: %v", err)
+	}
+	if body, _ := w.body(t, a); body != "theirs" {
+		t.Errorf("once both parts are undone, the note is %q, want theirs", body)
+	}
+}
+
 // TestUndoSteps checks that the pipeline refuses a command whose inverse
 // would give its batch's undo more steps than the pipeline's bound, which a
-// batch that undoes it could not send, at its payload, and that a batch whose
-// undo has as many steps as the bound applies.
+// batch that undoes it could not send, at its payload, that Tx.Changed stops
+// such a command at its first change, rather than let it change everything
+// only to be refused, and that a batch whose undo has as many steps as the
+// bound applies.
 func TestUndoSteps(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -278,6 +356,13 @@ func TestUndoSteps(t *testing.T) {
 	if res, err := p.Apply(ctx, w.as(ownerUser), w.project,
 		[]Command{command(t, noteUpdate, notePayload{ID: aID, Body: "x"}, nil)}); err != nil || len(res.Undo) != 1 {
 		t.Errorf("a batch whose undo has one step: %+v, %v", res, err)
+	}
+	// The command whose steps take the undo past the bound stops at its first
+	// change, as one whose steps take it past the bound of bytes does.
+	tx := &Tx{current: &spec{typ: noteUpdate, touches: []ids.Kind{ids.Node}}, at: map[Ref]int{},
+		revs: map[Ref]int64{}, maxUndo: DefaultMaxUndoBytes, undoSteps: 2, maxUndoSteps: 1}
+	if err := tx.Changed(ids.Node, ids.New(), 1); !errors.Is(err, ErrUndoTooLarge) {
+		t.Errorf("a change once the undo has more steps than the bound: %v, want ErrUndoTooLarge", err)
 	}
 }
 

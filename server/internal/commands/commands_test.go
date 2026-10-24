@@ -141,10 +141,10 @@ func TestApplyAppendsTheOperation(t *testing.T) {
 	}
 	// The inverse undoes the last command first, each from the state that it
 	// changed, and expects the revisions that the batch left of what its
-	// command changed, each entity's once, by the undo of the first command
-	// that changed it, which the batch's answer holds as its undo.
+	// command changed, though another command changed it too, which the
+	// batch's answer holds as its undo.
 	wantInverse := fmt.Sprintf(`[
-		{"type": "note.update", "payload": {"id": %q, "body": "second"}},
+		{"type": "note.update", "payload": {"id": %q, "body": "second"}, "expected_rev": {%[1]q: 3}},
 		{"type": "note.delete", "payload": {"id": %q}, "expected_rev": {%[2]q: 1}},
 		{"type": "note.update", "payload": {"id": %[1]q, "body": "first"}, "expected_rev": {%[1]q: 3}}]`, aID, bID)
 	if !sameJSON(t, second.inverse, wantInverse) {
@@ -1104,9 +1104,9 @@ func TestUndo(t *testing.T) {
 // alike, once Tx.UndoRoom tells it the room that the inverses of the commands
 // before it leave, with what they expect, that a batch whose undo takes the
 // bound exactly applies, that the undo expects, and the bound counts, the
-// revision of an entity that several of the batch's commands change once,
-// and that the batch that undoes another is bounded alike, by its own
-// inverse.
+// revision of an entity that several of the batch's commands change once for
+// each of them, and that the batch that undoes another is bounded alike, by
+// its own inverse.
 func TestUndoBound(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -1170,7 +1170,8 @@ func TestUndoBound(t *testing.T) {
 	}
 
 	// The undo of a batch whose commands both change the note expects its
-	// revision once, by the undo of the first, which the bound counts once.
+	// revision by the undo of each, which the bound counts for each, so that
+	// either, sent alone, expects what it writes back (TestUndoInParts).
 	small, err := json.Marshal(notePayload{ID: xID, Body: "y"})
 	if err != nil {
 		t.Fatal(err)
@@ -1178,17 +1179,17 @@ func TestUndoBound(t *testing.T) {
 	twice := func() []Command {
 		return []Command{command(t, noteUpdate, notePayload{ID: xID, Body: "z"}, nil), update(xID)}
 	}
-	if _, err := bounded(2*len(small)+expected-1).Apply(ctx, w.as(ownerUser), w.project,
+	if _, err := bounded(2*len(small)+2*expected-1).Apply(ctx, w.as(ownerUser), w.project,
 		twice()); !errors.As(err, &r) || r.Command != 1 || r.Field != "body" {
 		t.Errorf("a batch of two changes of the note whose undo would take the bound by a byte: %v, want a "+
 			"refusal of command 1 at body", err)
 	}
-	if res, err = bounded(2*len(small)+expected).Apply(ctx, w.as(ownerUser), w.project, twice()); err != nil {
+	if res, err = bounded(2*len(small)+2*expected).Apply(ctx, w.as(ownerUser), w.project, twice()); err != nil {
 		t.Fatalf("a batch of two changes of the note whose undo takes the bound exactly: %v", err)
 	}
 	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, `[{"type": "note.update", "payload": {"id": "`+xID+
-		`", "body": "z"}}, {"type": "note.update", "payload": {"id": "`+xID+`", "body": "y"}, "expected_rev": {"`+
-		xID+`": 4}}]`) {
+		`", "body": "z"}, "expected_rev": {"`+xID+`": 4}}, {"type": "note.update", "payload": {"id": "`+xID+
+		`", "body": "y"}, "expected_rev": {"`+xID+`": 4}}]`) {
 		t.Errorf("the inverse of a batch of two changes of the note is %s", o.inverse)
 	}
 
