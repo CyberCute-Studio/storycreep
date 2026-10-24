@@ -176,6 +176,16 @@ var Tables = []Table{
 			`VALUES ($1, $2, $3, $4, 'element', 'dialogue', '{"type": "doc", "content": [{"type": "paragraph"}]}', ` +
 			"240, 120)", []any{id, w.ID, w.Rows["project"], w.Rows["board"]}}, nil
 	}},
+	{Name: "connection", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A connection from the workspace's node to itself, as many as the
+		// harness adds, which is in the trash with the node while the node
+		// is, so the trash's tests delete it before they delete the node.
+		id := ids.New()
+		return Statement{id, "INSERT INTO connection (id, workspace_id, project_id, board_id, from_node_id, " +
+			`to_node_id, "order", label) VALUES ($1, $2, $3, $4, $5, $5, 'V', ` +
+			`'{"type": "doc", "content": [{"type": "paragraph"}]}')`,
+			[]any{id, w.ID, w.Rows["project"], w.Rows["board"], w.Rows["node"]}}, nil
+	}},
 	{Name: "variable", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A global variable's key is unique within its project, which its ID
 		// makes. It belongs to no board, so that the trash's tests delete it

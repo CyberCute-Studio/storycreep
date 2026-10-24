@@ -49,9 +49,22 @@ type (
 	// answer is a batch's answer: the Result of a batch that applied, or what
 	// refused one.
 	answer struct {
-		Seq       int64    `json:"seq,omitempty"`
-		Revisions []logRef `json:"revisions,omitempty"`
-		Refusal   *refusal `json:"refusal,omitempty"`
+		Seq            int64                 `json:"seq,omitempty"`
+		Revisions      []logRef              `json:"revisions,omitempty"`
+		NotReconnected []storedUnreconnected `json:"not_reconnected,omitempty"`
+		Refusal        *refusal              `json:"refusal,omitempty"`
+	}
+	// storedUnreconnected is an Unreconnected: an entity that the batch could
+	// not reconnect, with the entities that it waits for.
+	storedUnreconnected struct {
+		Kind       string      `json:"kind"`
+		ID         string      `json:"id"`
+		WaitingFor []storedRef `json:"waiting_for"`
+	}
+	// storedRef is an entity, by its kind and its UUID.
+	storedRef struct {
+		Kind string `json:"kind"`
+		ID   string `json:"id"`
 	}
 	// refusal is the refusal of a batch that the batch and the state of its
 	// project decided (remembered): its reason, with the conflicts of a
@@ -307,7 +320,8 @@ func stored(response []byte) (*replay, error) {
 		}
 		return &replay{err: err}, nil
 	}
-	res := Result{Status: Applied, Seq: a.Seq, Revisions: make([]Revision, len(a.Revisions))}
+	res := Result{Status: Applied, Seq: a.Seq, Revisions: make([]Revision, len(a.Revisions)),
+		NotReconnected: make([]Unreconnected, len(a.NotReconnected))}
 	for i, r := range a.Revisions {
 		ref, err := parseRef(r.Kind, r.ID)
 		if err != nil {
@@ -315,7 +329,33 @@ func stored(response []byte) (*replay, error) {
 		}
 		res.Revisions[i] = Revision{Ref: ref, Rev: r.Rev}
 	}
+	for i, u := range a.NotReconnected {
+		ref, err := parseRef(u.Kind, u.ID)
+		if err != nil {
+			return nil, fmt.Errorf("the entity not reconnected %d: %w", i, err)
+		}
+		res.NotReconnected[i] = Unreconnected{Ref: ref, WaitingFor: make([]Ref, len(u.WaitingFor))}
+		for j, w := range u.WaitingFor {
+			if res.NotReconnected[i].WaitingFor[j], err = parseRef(w.Kind, w.ID); err != nil {
+				return nil, fmt.Errorf("what the entity not reconnected %d waits for: %w", i, err)
+			}
+		}
+	}
 	return &replay{res: res}, nil
+}
+
+// storedUnreconnectedOf returns the entities that a batch could not
+// reconnect, as its idempotency record keeps them.
+func storedUnreconnectedOf(left []Unreconnected) []storedUnreconnected {
+	out := make([]storedUnreconnected, len(left))
+	for i, u := range left {
+		out[i] = storedUnreconnected{Kind: u.Kind.String(), ID: u.ID.String(),
+			WaitingFor: make([]storedRef, len(u.WaitingFor))}
+		for j, w := range u.WaitingFor {
+			out[i].WaitingFor[j] = storedRef{Kind: w.Kind.String(), ID: w.ID.String()}
+		}
+	}
+	return out
 }
 
 // alreadyApplied returns the answer to a batch whose commands were all
@@ -373,7 +413,8 @@ func (p *Pipeline) alreadyApplied(ctx context.Context, q *queries.Queries, t *Tx
 			}
 		}
 	}
-	res := Result{Status: AlreadyApplied, Seq: batches[len(batches)-1], Revisions: []Revision{}}
+	res := Result{Status: AlreadyApplied, Seq: batches[len(batches)-1], Revisions: []Revision{},
+		NotReconnected: []Unreconnected{}}
 	for _, ref := range refs {
 		if rev, ok := current[ref]; ok {
 			res.Revisions = append(res.Revisions, Revision{Ref: ref, Rev: rev})

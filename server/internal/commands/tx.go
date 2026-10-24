@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 
@@ -58,6 +59,12 @@ type Tx struct {
 	// every command of the batch has applied (AddUsageOnceApplied), in the
 	// order of their reports.
 	counts []usageCount
+	// restored are the entities that the batch's commands restored from the
+	// project's trash (Restored), by their kinds, each once, in the order of
+	// their first report, and reported the same entities as a set, which
+	// keeps each once however many the batch restores.
+	restored map[ids.Kind][]ids.UUID
+	reported map[Ref]struct{}
 }
 
 // usageCount is what the command spec adds to the workspace's usage of key
@@ -145,6 +152,71 @@ func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 	t.at[ref] = len(t.changed)
 	t.changed = append(t.changed, Revision{Ref: ref, Rev: rev})
 	return nil
+}
+
+// Restored reports that the command restored the entity of the kind with the
+// ID from the project's trash, as node.restore does a node, and board.restore
+// a board, so that once every command of the batch has applied, the pipeline
+// asks the reconnections of the kinds that refer to the kind
+// (RegisterReconnection) which of what refers to it are still not
+// reconnected (Result.NotReconnected). An entity that several commands of the
+// batch restore is asked about once. It returns an error, which the command
+// returns to refuse the batch, unless it is called from the command's Apply,
+// and the command touches the kind (Spec.Touches), as Changed does.
+func (t *Tx) Restored(kind ids.Kind, id ids.UUID) error {
+	switch {
+	case t.current == nil:
+		return errors.New("commands: Restored is called outside a command's Apply")
+	case !slices.Contains(t.current.touches, kind):
+		return fmt.Errorf("commands: %s restored a %s, which it does not touch", t.current.typ, kind)
+	}
+	ref := Ref{Kind: kind, ID: id}
+	if _, ok := t.reported[ref]; ok {
+		return nil
+	}
+	if t.restored == nil {
+		t.restored, t.reported = map[ids.Kind][]ids.UUID{}, map[Ref]struct{}{}
+	}
+	t.reported[ref] = struct{}{}
+	t.restored[kind] = append(t.restored[kind], id)
+	return nil
+}
+
+// notReconnected returns what refers to the entities that the batch's
+// commands restored (Restored) that the batch could not reconnect, once every
+// command of the batch has applied, as each reconnection of a kind that
+// refers to a restored kind finds it (Reconnection.Left): in the order of the
+// restored kinds, and of the reconnections of each kind's referrers, as they
+// were registered, each entity once, as the first reconnection that leaves it
+// leaves it, so that a connection of a node that a batch restores with the
+// node's board is listed once. It is never nil, as the Result of a batch
+// answered from its record is not.
+func (t *Tx) notReconnected(ctx context.Context) ([]Unreconnected, error) {
+	out := []Unreconnected{}
+	listed := map[Ref]struct{}{}
+	for _, kind := range slices.Sorted(maps.Keys(t.restored)) {
+		for _, rc := range t.pipeline.registry.reconnections {
+			if rc.Restored != kind {
+				continue
+			}
+			left, err := rc.Left(ctx, t, t.restored[kind])
+			if err != nil {
+				return nil, fmt.Errorf("commands: what the restored %s entities leave of %s: %w", kind, rc.Kind, err)
+			}
+			for _, u := range left {
+				if u.Kind != rc.Kind {
+					return nil, fmt.Errorf("commands: the reconnection of %s to %s left %s, which is not of its kind",
+						rc.Kind, kind, encodeRef(u.Ref))
+				}
+				if _, ok := listed[u.Ref]; ok {
+					continue
+				}
+				listed[u.Ref] = struct{}{}
+				out = append(out, u)
+			}
+		}
+	}
+	return out, nil
 }
 
 // AddUsage reports that the command adds delta to the workspace's usage of

@@ -50,9 +50,12 @@ func sentCommand(t *testing.T, typ Type, p any, revs map[Ref]int64) Command {
 }
 
 // sameResult reports whether a and b are the same Result, nil and empty
-// revisions apart.
+// lists apart.
 func sameResult(a, b Result) bool {
-	return a.Status == b.Status && a.Seq == b.Seq && slices.Equal(a.Revisions, b.Revisions)
+	return a.Status == b.Status && a.Seq == b.Seq && slices.Equal(a.Revisions, b.Revisions) &&
+		slices.EqualFunc(a.NotReconnected, b.NotReconnected, func(x, y Unreconnected) bool {
+			return x.Ref == y.Ref && slices.Equal(x.WaitingFor, y.WaitingFor)
+		})
 }
 
 // TestReplay checks that a batch sent again while its idempotency record is

@@ -42,6 +42,8 @@ WHERE p.workspace_id = $1 AND (
         AND b.deleted_at <= now() - $2::interval)
     OR EXISTS (SELECT 1 FROM node n WHERE n.workspace_id = p.workspace_id AND n.project_id = p.id
         AND n.deleted_at <= now() - $2::interval)
+    OR EXISTS (SELECT 1 FROM connection c WHERE c.workspace_id = p.workspace_id AND c.project_id = p.id
+        AND c.deleted_at <= now() - $2::interval)
     OR EXISTS (SELECT 1 FROM variable v WHERE v.workspace_id = p.workspace_id AND v.project_id = p.id
         AND v.deleted_at <= now() - $2::interval)
     OR EXISTS (SELECT 1 FROM folder f WHERE f.workspace_id = p.workspace_id AND f.project_id = p.id
@@ -240,6 +242,43 @@ func (q *Queries) PurgeComponents(ctx context.Context, arg PurgeComponentsParams
 	return result.RowsAffected(), nil
 }
 
+const purgeConnections = `-- name: PurgeConnections :execrows
+DELETE FROM connection d
+WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
+    SELECT c.id FROM connection c
+    WHERE c.workspace_id = $1 AND c.project_id = $2
+        AND c.deleted_at <= now() - $3::interval
+    ORDER BY c.deleted_at, c.id
+    LIMIT $4
+)
+`
+
+type PurgeConnectionsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Retention   pgtype.Interval
+	MaxRows     int32
+}
+
+// PurgeConnections deletes at most max_rows of the project's connections that
+// have been in its trash for retention, those that have been there longest
+// first, and returns how many it deleted. A connection of a node in the
+// trash, which is in the trash with it, is purged with its node, by the
+// cascade of its foreign key; one deleted on its own, before its node, once
+// its own time has passed.
+func (q *Queries) PurgeConnections(ctx context.Context, arg PurgeConnectionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeConnections,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Retention,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const purgeFolders = `-- name: PurgeFolders :execrows
 DELETE FROM folder d
 WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
@@ -401,14 +440,16 @@ type TrashItemsRow struct {
 // A project's trash (package trash, PRD FR-PROJ-06): the rows of its content
 // with deleted_at, which the live views leave out (migration 00019). The
 // tables whose rows the trash lists are its boards', its nodes', its
-// variables', and its components'; its folders', its component types', and
-// its attribute definitions' rows go to the trash too, but are not listed.
-// Each such table has a branch here, in the list and in the purge, which
-// package trash's tests hold it to. A row that belongs to a board, as a
-// board's node or variable, is in the trash with its board too, which lists
-// the board alone, and is purged with it, by the cascade of its foreign key
-// to the board, even one deleted on its own, before its board, which the
-// list holds, and whose own time in the trash ends first.
+// variables', and its components'; its folders', its component types', its
+// attribute definitions', and its connections' rows go to the trash too, but
+// are not listed. Each such table has a branch here, in the list and in the
+// purge, which package trash's tests hold it to. A row that belongs to a
+// board, as a board's node or variable, is in the trash with its board too,
+// which lists the board alone, and is purged with it, by the cascade of its
+// foreign key to the board, even one deleted on its own, before its board,
+// which the list holds, and whose own time in the trash ends first. A
+// connection is in the trash with either of its nodes alike, and is purged
+// with it.
 // TrashItems returns the entities in the project's trash that it lists, the
 // most recently deleted first, then by their kinds and their IDs, after the
 // entity whose deletion, kind, and ID are after_deleted_at, after_kind, and

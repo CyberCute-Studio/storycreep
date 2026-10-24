@@ -20,6 +20,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/component"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
@@ -69,6 +70,9 @@ type server struct {
 	// nodes reads the projects' nodes, which their commands change (package
 	// node).
 	nodes *node.Service
+	// connections reads the projects' connections, which their commands
+	// change (package connection).
+	connections *connection.Service
 	// trash lists the projects' trash, from which their commands restore
 	// what it holds (package trash).
 	trash *trash.Service
@@ -112,6 +116,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	variable.Register(registry)
 	component.Register(registry)
 	node.Register(registry)
+	connection.Register(registry)
 	s.queue = &queueRef{}
 	s.commands = commands.New(readyDB{s.ready}, commands.Options{
 		Registry:     registry,
@@ -130,6 +135,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s.variables = variable.New(readyDB{s.ready}, variable.Options{Projects: s.projects})
 	s.components = component.New(readyDB{s.ready}, component.Options{Projects: s.projects})
 	s.nodes = node.New(readyDB{s.ready}, node.Options{Projects: s.projects})
+	s.connections = connection.New(readyDB{s.ready}, connection.Options{Projects: s.projects})
 	s.trash = trash.New(readyDB{s.ready}, trash.Options{Projects: s.projects})
 	s.assets = asset.New(readyDB{s.ready}, asset.Options{
 		Projects:     s.projects,
@@ -215,6 +221,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerVariables(s.main, s.variables)
 	registerComponents(s.main, s.components)
 	registerNodes(s.main, s.nodes)
+	registerConnections(s.main, s.connections)
 	registerTrash(s.main, s.trash)
 	registerAssets(s.main, s.assets)
 	registerGrants(s.main, s.projects)

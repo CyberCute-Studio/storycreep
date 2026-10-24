@@ -30,7 +30,10 @@
 // deletion lists and asks to confirm.
 //
 // A deleted node goes to the project's trash, which lists it, and from which
-// restoring it brings it back. A board's nodes are in the trash with their
+// restoring it brings it back, and its connections with it, which are in the
+// trash with it meanwhile, but for those whose node at the other end is in
+// the trash still, which the batch's answer lists (package connection,
+// FR-PROJ-06 AC1). A board's nodes are in the trash with their
 // board while it is there, unlisted, as its variables are, and nothing but
 // the purge of a speaker changes them meanwhile: one of them deleted on its
 // own, before its board, is listed, and restored only once its board is.

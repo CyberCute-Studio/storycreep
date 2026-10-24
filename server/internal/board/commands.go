@@ -42,7 +42,10 @@ const (
 	// Delete deletes a board to the project's trash, with its nodes, once
 	// it is confirmed if jumpers on other boards target its nodes, which it
 	// leaves dangling (FR-PROJ-02 AC2), and Restore restores it, with the
-	// folders above it that were deleted since. Each undoes the other.
+	// folders above it that were deleted since, and its nodes, with their
+	// connections, but for those whose node at the other end is deleted on
+	// its own, which the batch's answer lists (package connection). Each
+	// undoes the other.
 	Delete  commands.Type = "board.delete"
 	Restore commands.Type = "board.restore"
 )
@@ -355,6 +358,13 @@ func registerBoards(r *commands.Registry) {
 				return err
 			}
 			if err := tx.AddUsage(usage.Boards, 1); err != nil {
+				return err
+			}
+			// The connections of the nodes that come back with it come back
+			// too where their nodes at the other end are not in the trash,
+			// deleted on their own, and the batch's answer lists the others
+			// (package connection, FR-PROJ-06 AC1).
+			if err := tx.Restored(ids.Board, b.ID.Bytes); err != nil {
 				return err
 			}
 			// The board's nodes that are not deleted themselves come back with

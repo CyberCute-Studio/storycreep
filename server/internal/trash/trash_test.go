@@ -492,9 +492,12 @@ func TestRestorePurged(t *testing.T) {
 // trash, with the kind of entity that the trash lists each row as, or "" for
 // a table whose rows it does not list. A table of a project's content with a
 // deleted_at must be one of them (TestTrashTables). A node of the
-// workspace's board is in the trash with it, so it is deleted before it.
-var trashTables = []struct{ name, kind string }{{"folder", ""}, {"node", "node"}, {"board", "board"},
-	{"variable", "variable"}, {"attribute_def", ""}, {"component_type", ""}, {"component", "component"}}
+// workspace's board is in the trash with it, so it is deleted before it, and
+// a connection of the node is in the trash with the node, so it is deleted
+// before the node.
+var trashTables = []struct{ name, kind string }{{"folder", ""}, {"connection", ""}, {"node", "node"},
+	{"board", "board"}, {"variable", "variable"}, {"attribute_def", ""}, {"component_type", ""},
+	{"component", "component"}}
 
 // TestTrashTables checks that every table of a project's content with a
 // deleted_at is registered with the trash, and holds each to what that
@@ -695,6 +698,17 @@ func TestTrashIsolation(t *testing.T) {
 			}
 			return out, err
 		}},
+		{Name: "a board's live connections", Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			rows, err := queries.New(tx).BoardConnections(ctx, queries.BoardConnectionsParams{
+				WorkspaceID: uuid(target.ID), ProjectID: uuid(target.Rows["project"]),
+				BoardID: uuid(target.Rows["board"]), MaxRows: 10})
+			var out []ids.UUID
+			for _, r := range rows {
+				out = append(out, r.LiveConnection.ID.Bytes)
+			}
+			return out, err
+		}},
 		{Name: "a project's live variables", Run: func(ctx context.Context, tx pgx.Tx,
 			target *isolationtest.Workspace) ([]ids.UUID, error) {
 			rows, err := queries.New(tx).Variables(ctx, queries.VariablesParams{WorkspaceID: uuid(target.ID),
@@ -740,8 +754,8 @@ func TestTrashIsolation(t *testing.T) {
 		f.Check(t, op)
 	}
 	for _, w := range []*isolationtest.Workspace{f.A, f.B} {
-		for _, table := range []string{"board", "node", "folder", "variable", "component_type", "attribute_def",
-			"component"} {
+		for _, table := range []string{"board", "node", "connection", "folder", "variable", "component_type",
+			"attribute_def", "component"} {
 			if _, err := f.Admin().Exec(ctx, "UPDATE "+table+" SET deleted_at = now() - interval '31 days' "+
 				"WHERE id = $1", w.Rows[table]); err != nil {
 				t.Fatal(err)
@@ -786,6 +800,10 @@ func TestTrashIsolation(t *testing.T) {
 				return nil, err
 			}
 			if _, err := q.PurgeNodes(ctx, queries.PurgeNodesParams{WorkspaceID: uuid(target.ID),
+				ProjectID: uuid(target.Rows["project"]), Retention: retention, MaxRows: 10}); err != nil {
+				return nil, err
+			}
+			if _, err := q.PurgeConnections(ctx, queries.PurgeConnectionsParams{WorkspaceID: uuid(target.ID),
 				ProjectID: uuid(target.Rows["project"]), Retention: retention, MaxRows: 10}); err != nil {
 				return nil, err
 			}

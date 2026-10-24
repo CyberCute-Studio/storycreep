@@ -39,7 +39,9 @@ const (
 	// another of the same board at another position. Deleting it undoes it.
 	Duplicate commands.Type = "node.duplicate"
 	// Delete deletes a node to the project's trash, and Restore restores it.
-	// Each undoes the other.
+	// Each undoes the other. The node's connections are in the trash with it,
+	// and come back with it where their other nodes are not in the trash
+	// (package connection).
 	Delete  commands.Type = "node.delete"
 	Restore commands.Type = "node.restore"
 	// SetBoardEntry changes the entry node of a board, the node where the
@@ -345,6 +347,12 @@ func Register(r *commands.Registry) {
 				return nil
 			}
 			if err := changed(tx, n.ID)(rev, err); err != nil {
+				return err
+			}
+			// Its connections whose other node is not in the trash come back
+			// with it, and the batch's answer lists the others (package
+			// connection, FR-PROJ-06 AC1).
+			if err := tx.Restored(ids.Node, n.ID.Bytes); err != nil {
 				return err
 			}
 			return tx.AddUsage(usage.Nodes, 1)
