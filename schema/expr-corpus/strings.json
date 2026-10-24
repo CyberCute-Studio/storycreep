@@ -1,0 +1,501 @@
+{
+  "cases": [
+    {
+      "note": "len of the empty string",
+      "op": "len",
+      "args": [{ "type": "string", "value": "" }],
+      "result": { "type": "int", "value": 0 }
+    },
+    {
+      "note": "len counts code points",
+      "op": "len",
+      "args": [{ "type": "string", "value": "abc" }],
+      "result": { "type": "int", "value": 3 }
+    },
+    {
+      "note": "len of U+00E9, é as one code point, which is two bytes of UTF-8",
+      "op": "len",
+      "args": [{ "type": "string", "value": "é" }],
+      "result": { "type": "int", "value": 1 }
+    },
+    {
+      "note": "len of e and U+0301 COMBINING ACUTE ACCENT, é as two code points, which no normalisation joins",
+      "op": "len",
+      "args": [{ "type": "string", "value": "é" }],
+      "result": { "type": "int", "value": 2 }
+    },
+    {
+      "note": "len of U+1F600, one code point, which is two UTF-16 code units, as JavaScript's length counts them",
+      "op": "len",
+      "args": [{ "type": "string", "value": "😀" }],
+      "result": { "type": "int", "value": 1 }
+    },
+    {
+      "note": "len of a thumbs up with a skin tone, two code points that show as one",
+      "op": "len",
+      "args": [{ "type": "string", "value": "👍🏽" }],
+      "result": { "type": "int", "value": 2 }
+    },
+    {
+      "note": "strings are ordered by code point",
+      "op": "<",
+      "args": [
+        { "type": "string", "value": "a" },
+        { "type": "string", "value": "b" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "an uppercase ASCII letter is before every lowercase one, without regard to any locale",
+      "op": "<",
+      "args": [
+        { "type": "string", "value": "B" },
+        { "type": "string", "value": "a" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "a letter beyond ASCII is after every ASCII letter",
+      "op": ">",
+      "args": [
+        { "type": "string", "value": "ä" },
+        { "type": "string", "value": "z" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "U+FFFF is before U+1F600, which a comparison of UTF-16 code units, as JavaScript's <, puts before it, at its high surrogate U+D83D",
+      "op": "<",
+      "args": [
+        { "type": "string", "value": "￿" },
+        { "type": "string", "value": "😀" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "U+E000 is before U+10000, which a comparison of UTF-16 code units puts before it",
+      "op": "<",
+      "args": [
+        { "type": "string", "value": "" },
+        { "type": "string", "value": "𐀀" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "U+10000 is after U+E000, as a code point",
+      "op": ">=",
+      "args": [
+        { "type": "string", "value": "𐀀" },
+        { "type": "string", "value": "" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "a string is before the longer strings that start with it",
+      "op": "<",
+      "args": [
+        { "type": "string", "value": "abc" },
+        { "type": "string", "value": "abcd" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "the empty string is before every other",
+      "op": "<",
+      "args": [
+        { "type": "string", "value": "" },
+        { "type": "string", "value": "a" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "a string is not before itself",
+      "op": "<",
+      "args": [
+        { "type": "string", "value": "a" },
+        { "type": "string", "value": "a" }
+      ],
+      "result": { "type": "bool", "value": false }
+    },
+    {
+      "note": "a string is at most itself",
+      "op": "<=",
+      "args": [
+        { "type": "string", "value": "a" },
+        { "type": "string", "value": "a" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "strings are equal when their code points are",
+      "op": "==",
+      "args": [
+        { "type": "string", "value": "é" },
+        { "type": "string", "value": "é" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "é as one code point is not é as two, since strings are not normalised",
+      "op": "==",
+      "args": [
+        { "type": "string", "value": "é" },
+        { "type": "string", "value": "é" }
+      ],
+      "result": { "type": "bool", "value": false }
+    },
+    {
+      "note": "equality compares case",
+      "op": "!=",
+      "args": [
+        { "type": "string", "value": "a" },
+        { "type": "string", "value": "A" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "+ concatenates strings, code point after code point",
+      "op": "+",
+      "args": [
+        { "type": "string", "value": "e" },
+        { "type": "string", "value": "́😀" }
+      ],
+      "result": { "type": "string", "value": "é😀" }
+    },
+    {
+      "note": "every string contains the empty string",
+      "op": "contains",
+      "args": [
+        { "type": "string", "value": "abc" },
+        { "type": "string", "value": "" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "the empty string contains the empty string",
+      "op": "contains",
+      "args": [
+        { "type": "string", "value": "" },
+        { "type": "string", "value": "" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "the empty string contains no other",
+      "op": "contains",
+      "args": [
+        { "type": "string", "value": "" },
+        { "type": "string", "value": "a" }
+      ],
+      "result": { "type": "bool", "value": false }
+    },
+    {
+      "note": "é as two code points contains its e",
+      "op": "contains",
+      "args": [
+        { "type": "string", "value": "é" },
+        { "type": "string", "value": "e" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "é as one code point contains no e",
+      "op": "contains",
+      "args": [
+        { "type": "string", "value": "é" },
+        { "type": "string", "value": "e" }
+      ],
+      "result": { "type": "bool", "value": false }
+    },
+    {
+      "note": "contains compares case, and folds no ß to SS",
+      "op": "contains",
+      "args": [
+        { "type": "string", "value": "Straße" },
+        { "type": "string", "value": "SS" }
+      ],
+      "result": { "type": "bool", "value": false }
+    },
+    {
+      "note": "contains finds a code point beyond the Basic Multilingual Plane",
+      "op": "contains",
+      "args": [
+        { "type": "string", "value": "a😀b" },
+        { "type": "string", "value": "😀" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "starts_with of a code point beyond the Basic Multilingual Plane",
+      "op": "starts_with",
+      "args": [
+        { "type": "string", "value": "😀x" },
+        { "type": "string", "value": "😀" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "é as one code point does not start with e",
+      "op": "starts_with",
+      "args": [
+        { "type": "string", "value": "é" },
+        { "type": "string", "value": "e" }
+      ],
+      "result": { "type": "bool", "value": false }
+    },
+    {
+      "note": "every string starts with the empty string",
+      "op": "starts_with",
+      "args": [
+        { "type": "string", "value": "abc" },
+        { "type": "string", "value": "" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "a string does not start with a longer one",
+      "op": "starts_with",
+      "args": [
+        { "type": "string", "value": "a" },
+        { "type": "string", "value": "ab" }
+      ],
+      "result": { "type": "bool", "value": false }
+    },
+    {
+      "note": "ends_with of a code point beyond the Basic Multilingual Plane",
+      "op": "ends_with",
+      "args": [
+        { "type": "string", "value": "x😀" },
+        { "type": "string", "value": "😀" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "é as two code points ends with its combining accent",
+      "op": "ends_with",
+      "args": [
+        { "type": "string", "value": "é" },
+        { "type": "string", "value": "́" }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "ends_with compares case",
+      "op": "ends_with",
+      "args": [
+        { "type": "string", "value": "abc" },
+        { "type": "string", "value": "C" }
+      ],
+      "result": { "type": "bool", "value": false }
+    },
+    {
+      "note": "upper of ASCII, which leaves digits and punctuation",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "abc 123!" }],
+      "result": { "type": "string", "value": "ABC 123!" }
+    },
+    {
+      "note": "PRD §5.8.4: upper(\"ß\") is \"ß\", which has no simple uppercase mapping; its full one, SS, would change the length",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "straße" }],
+      "result": { "type": "string", "value": "STRAßE" }
+    },
+    {
+      "note": "upper(\"i\") is \"I\", in no locale's way, as Turkish would make it U+0130",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "i" }],
+      "result": { "type": "string", "value": "I" }
+    },
+    {
+      "note": "upper of U+0131 LATIN SMALL LETTER DOTLESS I is I",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "ı" }],
+      "result": { "type": "string", "value": "I" }
+    },
+    {
+      "note": "upper of U+01C5, the title case of the digraph DZ with caron, is U+01C4",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "ǅǆ" }],
+      "result": { "type": "string", "value": "ǄǄ" }
+    },
+    {
+      "note": "upper of U+03C2 GREEK SMALL LETTER FINAL SIGMA is U+03A3",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "ς" }],
+      "result": { "type": "string", "value": "Σ" }
+    },
+    {
+      "note": "upper of U+0345 COMBINING GREEK YPOGEGRAMMENI is U+0399 GREEK CAPITAL LETTER IOTA",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "ͅ" }],
+      "result": { "type": "string", "value": "Ι" }
+    },
+    {
+      "note": "upper of U+00B5 MICRO SIGN is U+039C GREEK CAPITAL LETTER MU",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "µ" }],
+      "result": { "type": "string", "value": "Μ" }
+    },
+    {
+      "note": "upper of U+00FF is U+0178, beyond Latin-1",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "ÿ" }],
+      "result": { "type": "string", "value": "Ÿ" }
+    },
+    {
+      "note": "upper of U+FB00 LATIN SMALL LIGATURE FF, U+0149, and U+01F0, which have only full uppercase mappings, leaves them",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "ﬀŉǰ" }],
+      "result": { "type": "string", "value": "ﬀŉǰ" }
+    },
+    {
+      "note": "upper of U+10428 DESERET SMALL LETTER LONG I, beyond the Basic Multilingual Plane, is U+10400",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "𐐨" }],
+      "result": { "type": "string", "value": "𐐀" }
+    },
+    {
+      "note": "upper of U+0264 LATIN SMALL LETTER RAMS HORN is U+A7CB, which Unicode 16.0 assigned; Go's tables, of Unicode 15.0, leave it",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "ɤ" }],
+      "result": { "type": "string", "value": "Ɤ" }
+    },
+    {
+      "note": "upper of U+16EBB BERIA ERFE SMALL LETTER ARKAB, which Unicode 17.0 assigned, is U+16EA0",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "𖺻" }],
+      "result": { "type": "string", "value": "𖺠" }
+    },
+    {
+      "note": "upper of U+AB4B LATIN SMALL LETTER SCRIPT R is U+AB6C, which Unicode 18.0 assigned, so that tables of an older version leave it",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "ꭋ" }],
+      "result": { "type": "string", "value": "꭬" }
+    },
+    {
+      "note": "upper of the empty string",
+      "op": "upper",
+      "args": [{ "type": "string", "value": "" }],
+      "result": { "type": "string", "value": "" }
+    },
+    {
+      "note": "lower of U+1E9E LATIN CAPITAL LETTER SHARP S is ß",
+      "op": "lower",
+      "args": [{ "type": "string", "value": "ẞ" }],
+      "result": { "type": "string", "value": "ß" }
+    },
+    {
+      "note": "lower of U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE is i, one code point; its full mapping, i and U+0307, would change the length",
+      "op": "lower",
+      "args": [{ "type": "string", "value": "İ" }],
+      "result": { "type": "string", "value": "i" }
+    },
+    {
+      "note": "lower(\"I\") is \"i\", in no locale's way, as Turkish would make it U+0131",
+      "op": "lower",
+      "args": [{ "type": "string", "value": "I" }],
+      "result": { "type": "string", "value": "i" }
+    },
+    {
+      "note": "lower of U+03A3 is U+03C3 wherever it is in a word, never the final sigma U+03C2, which the context-sensitive full mapping would make the last one",
+      "op": "lower",
+      "args": [{ "type": "string", "value": "ΣΑΣ" }],
+      "result": { "type": "string", "value": "σασ" }
+    },
+    {
+      "note": "lower of U+2126 OHM SIGN, U+212A KELVIN SIGN, and U+212B ANGSTROM SIGN is ω, k, and å",
+      "op": "lower",
+      "args": [{ "type": "string", "value": "ΩKÅ" }],
+      "result": { "type": "string", "value": "ωkå" }
+    },
+    {
+      "note": "lower of U+01C4 and U+01C5, the digraph DZ with caron, is U+01C6",
+      "op": "lower",
+      "args": [{ "type": "string", "value": "Ǆǅ" }],
+      "result": { "type": "string", "value": "ǆǆ" }
+    },
+    {
+      "note": "lower of U+10400 DESERET CAPITAL LETTER LONG I is U+10428",
+      "op": "lower",
+      "args": [{ "type": "string", "value": "𐐀" }],
+      "result": { "type": "string", "value": "𐐨" }
+    },
+    {
+      "note": "lower of U+1DF40 LATIN CAPITAL LETTER BARRED A, which Unicode 18.0 assigned, is U+1DF41",
+      "op": "lower",
+      "args": [{ "type": "string", "value": "𝽀" }],
+      "result": { "type": "string", "value": "𝽁" }
+    },
+    {
+      "note": "lower of Latin-1 letters with accents",
+      "op": "lower",
+      "args": [{ "type": "string", "value": "ÀÉÎ" }],
+      "result": { "type": "string", "value": "àéî" }
+    },
+    {
+      "note": "trim removes spaces at both ends",
+      "op": "trim",
+      "args": [{ "type": "string", "value": "  a  " }],
+      "result": { "type": "string", "value": "a" }
+    },
+    {
+      "note": "trim keeps the white space between other code points",
+      "op": "trim",
+      "args": [{ "type": "string", "value": " a b " }],
+      "result": { "type": "string", "value": "a b" }
+    },
+    {
+      "note": "trim removes the ASCII white space: tab, line feed, line tabulation, form feed, carriage return, and space",
+      "op": "trim",
+      "args": [{ "type": "string", "value": "\t\n\u000b\u000c\r a\r\n" }],
+      "result": { "type": "string", "value": "a" }
+    },
+    {
+      "note": "trim removes U+0085 NEXT LINE, U+00A0 NO-BREAK SPACE, U+1680 OGHAM SPACE MARK, and U+3000 IDEOGRAPHIC SPACE",
+      "op": "trim",
+      "args": [{ "type": "string", "value": "\u0085  a　" }],
+      "result": { "type": "string", "value": "a" }
+    },
+    {
+      "note": "trim removes U+2000 to U+200A, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR, U+202F NARROW NO-BREAK SPACE, and U+205F MEDIUM MATHEMATICAL SPACE",
+      "op": "trim",
+      "args": [
+        {
+          "type": "string",
+          "value": "           a    "
+        }
+      ],
+      "result": { "type": "string", "value": "a" }
+    },
+    {
+      "note": "trim keeps U+200B ZERO WIDTH SPACE, which is no White_Space",
+      "op": "trim",
+      "args": [{ "type": "string", "value": "​a​" }],
+      "result": { "type": "string", "value": "​a​" }
+    },
+    {
+      "note": "trim keeps U+FEFF ZERO WIDTH NO-BREAK SPACE, which is no White_Space, though JavaScript's trim removes it",
+      "op": "trim",
+      "args": [{ "type": "string", "value": "﻿a﻿" }],
+      "result": { "type": "string", "value": "﻿a﻿" }
+    },
+    {
+      "note": "trim keeps U+180E MONGOLIAN VOWEL SEPARATOR, which Unicode 6.3 took out of White_Space",
+      "op": "trim",
+      "args": [{ "type": "string", "value": "᠎a" }],
+      "result": { "type": "string", "value": "᠎a" }
+    },
+    {
+      "note": "trim of white space alone is the empty string",
+      "op": "trim",
+      "args": [{ "type": "string", "value": " \t　 " }],
+      "result": { "type": "string", "value": "" }
+    },
+    {
+      "note": "trim of the empty string",
+      "op": "trim",
+      "args": [{ "type": "string", "value": "" }],
+      "result": { "type": "string", "value": "" }
+    }
+  ]
+}

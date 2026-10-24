@@ -1,0 +1,125 @@
+package semantics
+
+import (
+	"cmp"
+	"slices"
+	"strings"
+	"unicode/utf8"
+)
+
+// Len returns the number of code points of s, as len counts them (§5.8.4,
+// §5.8.9), not its bytes, as Go's len does, nor its UTF-16 code units, as
+// JavaScript's length does: len("😀") is 1.
+func Len(s string) int {
+	return utf8.RuneCountInString(s)
+}
+
+// Compare returns -1, 0, or +1 as a is before, equal to, or after b, in the
+// lexicographic order of their code points, as <, <=, >, and >= compare
+// strings (§5.8.3, §5.8.9), which the order of their UTF-8 bytes is: "￿"
+// is before "😀", U+1F600, which JavaScript's < on UTF-16 code units puts
+// after it. Neither string is normalised, so "é" as one code point and "é" as
+// e and a combining accent are not equal.
+func Compare(a, b string) int {
+	return strings.Compare(a, b)
+}
+
+// Contains, StartsWith, and EndsWith report whether s holds sub, starts with
+// prefix, or ends with suffix, as contains, starts_with, and ends_with do
+// (§5.8.4), comparing code points: since UTF-8 holds no code point's bytes
+// within another's, comparing the bytes is comparing the code points.
+// Neither string is normalised, as Compare says.
+func Contains(s, sub string) bool {
+	return strings.Contains(s, sub)
+}
+
+// StartsWith reports whether s starts with prefix, as Contains says.
+func StartsWith(s, prefix string) bool {
+	return strings.HasPrefix(s, prefix)
+}
+
+// EndsWith reports whether s ends with suffix, as Contains says.
+func EndsWith(s, suffix string) bool {
+	return strings.HasSuffix(s, suffix)
+}
+
+// Upper returns s with each code point mapped to its simple uppercase
+// mapping, as upper does (§5.8.4, §5.8.9), from the tables of
+// UnicodeVersion rather than from package unicode's, which are of the
+// version of Unicode that the Go toolchain has. A simple mapping maps one
+// code point to one, so the result has as many code points as s: upper("ß")
+// is "ß", where the full mapping, which strings.ToUpper does not use either,
+// would be "SS". It maps no code point by locale: upper("i") is "I", in
+// Turkish too.
+func Upper(s string) string {
+	return mapCase(s, upperTable)
+}
+
+// Lower returns s with each code point mapped to its simple lowercase
+// mapping, as lower does, as Upper says: lower("İ") is "i", one code point,
+// and lower("Σ") is "σ", wherever it is in a word.
+func Lower(s string) string {
+	return mapCase(s, lowerTable)
+}
+
+// mapCase returns s with each code point that table maps mapped. A byte of s
+// that is not UTF-8, which no string of the language holds, is kept as it
+// is.
+func mapCase(s string, table []caseMapping) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		// A byte that is not UTF-8 is read as U+FFFD, which no table maps.
+		if to, mapped := caseOf(table, r); mapped {
+			b.WriteRune(to)
+		} else {
+			b.WriteString(s[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
+}
+
+// caseOf returns the code point that table maps r to, and whether it maps r.
+func caseOf(table []caseMapping, r rune) (rune, bool) {
+	i, found := slices.BinarySearchFunc(table, r, func(m caseMapping, r rune) int {
+		return cmp.Compare(m.from, r)
+	})
+	if !found {
+		return r, false
+	}
+	return table[i].to, true
+}
+
+// Trim returns s without the code points of White_Space, of the tables of
+// UnicodeVersion, that it starts or ends with, as trim does (§5.8.4,
+// §5.8.9). White_Space holds no U+FEFF ZERO WIDTH NO-BREAK SPACE, which
+// JavaScript's trim removes, no U+200B ZERO WIDTH SPACE, and no U+180E
+// MONGOLIAN VOWEL SEPARATOR, which Unicode took out of it in 6.3.
+func Trim(s string) string {
+	return strings.TrimFunc(s, IsWhiteSpace)
+}
+
+// IsWhiteSpace reports whether r is a code point of White_Space, of the
+// tables of UnicodeVersion.
+func IsWhiteSpace(r rune) bool {
+	for _, s := range whiteSpace {
+		if s.first <= r && r <= s.last {
+			return true
+		}
+	}
+	return false
+}
+
+// A caseMapping maps the code point from to the code point to, as a line of
+// UnicodeData.txt maps a code point to its simple uppercase or lowercase
+// mapping. A table of them is in the order of from.
+type caseMapping struct {
+	from, to rune
+}
+
+// A span is the code points from first to last, both of them included.
+type span struct {
+	first, last rune
+}

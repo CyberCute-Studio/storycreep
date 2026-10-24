@@ -1,0 +1,959 @@
+{
+  "cases": [
+    {
+      "note": "the greatest int plus zero",
+      "op": "+",
+      "args": [
+        { "type": "int", "value": 9007199254740991 },
+        { "type": "int", "value": 0 }
+      ],
+      "result": { "type": "int", "value": 9007199254740991 }
+    },
+    {
+      "note": "an int sum one past the greatest int overflows",
+      "op": "+",
+      "args": [
+        { "type": "int", "value": 9007199254740991 },
+        { "type": "int", "value": 1 }
+      ],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "an int difference one past the least int overflows",
+      "op": "-",
+      "args": [
+        { "type": "int", "value": -9007199254740991 },
+        { "type": "int", "value": 1 }
+      ],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "the greatest int minus the least, twice the greatest, overflows",
+      "op": "-",
+      "args": [
+        { "type": "int", "value": 9007199254740991 },
+        { "type": "int", "value": -9007199254740991 }
+      ],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "the negation of the least int is the greatest",
+      "op": "-",
+      "args": [{ "type": "int", "value": -9007199254740991 }],
+      "result": { "type": "int", "value": 9007199254740991 }
+    },
+    {
+      "note": "PRD §5.8.9: 4294967297 * 4294967296 is 2^64 + 2^32, which an int64 product wraps back into range, to 4294967296, so the pre-check must catch it",
+      "op": "*",
+      "args": [
+        { "type": "int", "value": 4294967297 },
+        { "type": "int", "value": 4294967296 }
+      ],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "PRD §5.8.9: MAX * -1 is -MAX, which is an int",
+      "op": "*",
+      "args": [
+        { "type": "int", "value": 9007199254740991 },
+        { "type": "int", "value": -1 }
+      ],
+      "result": { "type": "int", "value": -9007199254740991 }
+    },
+    {
+      "note": "PRD §5.8.9: -MAX * 2 overflows",
+      "op": "*",
+      "args": [
+        { "type": "int", "value": -9007199254740991 },
+        { "type": "int", "value": 2 }
+      ],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "-1 * -MAX is MAX",
+      "op": "*",
+      "args": [
+        { "type": "int", "value": -1 },
+        { "type": "int", "value": -9007199254740991 }
+      ],
+      "result": { "type": "int", "value": 9007199254740991 }
+    },
+    {
+      "note": "the greatest square that is an int: 94906265^2",
+      "op": "*",
+      "args": [
+        { "type": "int", "value": 94906265 },
+        { "type": "int", "value": 94906265 }
+      ],
+      "result": { "type": "int", "value": 9007199136250225 }
+    },
+    {
+      "note": "94906266^2 is past the greatest int",
+      "op": "*",
+      "args": [
+        { "type": "int", "value": 94906266 },
+        { "type": "int", "value": 94906266 }
+      ],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "the pre-check's bound: |b| equal to floor(MAX / |a|) is an int",
+      "op": "*",
+      "args": [
+        { "type": "int", "value": 3 },
+        { "type": "int", "value": 3002399751580330 }
+      ],
+      "result": { "type": "int", "value": 9007199254740990 }
+    },
+    {
+      "note": "the pre-check's bound: |b| one past floor(MAX / |a|) overflows, though a double would round the product, 9007199254740993, to 9007199254740992",
+      "op": "*",
+      "args": [
+        { "type": "int", "value": -3 },
+        { "type": "int", "value": 3002399751580331 }
+      ],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "zero times the greatest int",
+      "op": "*",
+      "args": [
+        { "type": "int", "value": 0 },
+        { "type": "int", "value": 9007199254740991 }
+      ],
+      "result": { "type": "int", "value": 0 }
+    },
+    {
+      "note": "the greatest int times zero",
+      "op": "*",
+      "args": [
+        { "type": "int", "value": 9007199254740991 },
+        { "type": "int", "value": 0 }
+      ],
+      "result": { "type": "int", "value": 0 }
+    },
+    {
+      "note": "int division truncates toward zero",
+      "op": "/",
+      "args": [{ "type": "int", "value": 7 }, { "type": "int", "value": 2 }],
+      "result": { "type": "int", "value": 3 }
+    },
+    {
+      "note": "int division truncates toward zero, not down",
+      "op": "/",
+      "args": [{ "type": "int", "value": -7 }, { "type": "int", "value": 2 }],
+      "result": { "type": "int", "value": -3 }
+    },
+    {
+      "note": "int division by a negative divisor truncates toward zero",
+      "op": "/",
+      "args": [{ "type": "int", "value": 7 }, { "type": "int", "value": -2 }],
+      "result": { "type": "int", "value": -3 }
+    },
+    {
+      "note": "the least int divided by -1 is the greatest",
+      "op": "/",
+      "args": [
+        { "type": "int", "value": -9007199254740991 },
+        { "type": "int", "value": -1 }
+      ],
+      "result": { "type": "int", "value": 9007199254740991 }
+    },
+    {
+      "note": "int division by zero",
+      "op": "/",
+      "args": [{ "type": "int", "value": 5 }, { "type": "int", "value": 0 }],
+      "result": { "type": "int", "value": 0 },
+      "error": "division_by_zero"
+    },
+    {
+      "note": "zero divided by zero",
+      "op": "/",
+      "args": [{ "type": "int", "value": 0 }, { "type": "int", "value": 0 }],
+      "result": { "type": "int", "value": 0 },
+      "error": "division_by_zero"
+    },
+    {
+      "note": "the remainder of positive ints",
+      "op": "%",
+      "args": [{ "type": "int", "value": 7 }, { "type": "int", "value": 2 }],
+      "result": { "type": "int", "value": 1 }
+    },
+    {
+      "note": "the remainder takes the sign of the dividend",
+      "op": "%",
+      "args": [{ "type": "int", "value": -7 }, { "type": "int", "value": 2 }],
+      "result": { "type": "int", "value": -1 }
+    },
+    {
+      "note": "the remainder takes the sign of the dividend, not of the divisor",
+      "op": "%",
+      "args": [{ "type": "int", "value": 7 }, { "type": "int", "value": -2 }],
+      "result": { "type": "int", "value": 1 }
+    },
+    {
+      "note": "the remainder of negative ints",
+      "op": "%",
+      "args": [{ "type": "int", "value": -7 }, { "type": "int", "value": -2 }],
+      "result": { "type": "int", "value": -1 }
+    },
+    {
+      "note": "modulo by zero",
+      "op": "%",
+      "args": [{ "type": "int", "value": 5 }, { "type": "int", "value": 0 }],
+      "result": { "type": "int", "value": 0 },
+      "error": "division_by_zero"
+    },
+    {
+      "note": "a float sum is the double nearest it",
+      "op": "+",
+      "args": [
+        { "type": "float", "value": 0.1 },
+        { "type": "float", "value": 0.2 }
+      ],
+      "result": { "type": "float", "value": 0.30000000000000004 }
+    },
+    {
+      "note": "a float product past the greatest double is not finite",
+      "op": "*",
+      "args": [
+        { "type": "float", "value": 1e308 },
+        { "type": "float", "value": 10.0 }
+      ],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "float_not_finite"
+    },
+    {
+      "note": "a float sum past the greatest double is not finite",
+      "op": "+",
+      "args": [
+        { "type": "float", "value": 1.7976931348623157e308 },
+        { "type": "float", "value": 1.7976931348623157e308 }
+      ],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "float_not_finite"
+    },
+    {
+      "note": "a float difference past the least double is not finite",
+      "op": "-",
+      "args": [
+        { "type": "float", "value": -1.7976931348623157e308 },
+        { "type": "float", "value": 1.7976931348623157e308 }
+      ],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "float_not_finite"
+    },
+    {
+      "note": "a float quotient past the greatest double is not finite",
+      "op": "/",
+      "args": [
+        { "type": "float", "value": 1.0 },
+        { "type": "float", "value": 5e-324 }
+      ],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "float_not_finite"
+    },
+    {
+      "note": "a float divided by zero is division_by_zero, not the infinity of IEEE 754",
+      "op": "/",
+      "args": [
+        { "type": "float", "value": 1.0 },
+        { "type": "float", "value": 0.0 }
+      ],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "division_by_zero"
+    },
+    {
+      "note": "a negative float divided by zero",
+      "op": "/",
+      "args": [
+        { "type": "float", "value": -1.0 },
+        { "type": "float", "value": 0.0 }
+      ],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "division_by_zero"
+    },
+    {
+      "note": "zero divided by zero is division_by_zero, not the NaN of IEEE 754",
+      "op": "/",
+      "args": [
+        { "type": "float", "value": 0.0 },
+        { "type": "float", "value": 0.0 }
+      ],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "division_by_zero"
+    },
+    {
+      "note": "a float quotient is the double nearest it",
+      "op": "/",
+      "args": [
+        { "type": "float", "value": 1.0 },
+        { "type": "float", "value": 3.0 }
+      ],
+      "result": { "type": "float", "value": 0.3333333333333333 }
+    },
+    {
+      "note": "the negation of 0.0 is 0.0, not -0.0",
+      "op": "-",
+      "args": [{ "type": "float", "value": 0.0 }],
+      "result": { "type": "float", "value": 0.0 }
+    },
+    {
+      "note": "0.0 * -1.0 is 0.0, not -0.0",
+      "op": "*",
+      "args": [
+        { "type": "float", "value": 0.0 },
+        { "type": "float", "value": -1.0 }
+      ],
+      "result": { "type": "float", "value": 0.0 }
+    },
+    {
+      "note": "a negative product that underflows to -0.0 is 0.0, without an error",
+      "op": "*",
+      "args": [
+        { "type": "float", "value": -5e-324 },
+        { "type": "float", "value": 0.5 }
+      ],
+      "result": { "type": "float", "value": 0.0 }
+    },
+    {
+      "note": "a product that underflows to a subnormal keeps it, without an error",
+      "op": "*",
+      "args": [
+        { "type": "float", "value": 2.2250738585072014e-308 },
+        { "type": "float", "value": 0.5 }
+      ],
+      "result": { "type": "float", "value": 1.1125369292536007e-308 }
+    },
+    {
+      "note": "an int is widened to a float beside a float",
+      "op": "+",
+      "args": [
+        { "type": "int", "value": 1 },
+        { "type": "float", "value": 0.5 }
+      ],
+      "result": { "type": "float", "value": 1.5 }
+    },
+    {
+      "note": "the greatest int widens exactly",
+      "op": "*",
+      "args": [
+        { "type": "int", "value": 9007199254740991 },
+        { "type": "float", "value": 1.0 }
+      ],
+      "result": { "type": "float", "value": 9007199254740991.0 }
+    },
+    {
+      "note": "a float sum past the greatest int is a float, rounded half to even: 2^53 + 1 is 2^53",
+      "op": "+",
+      "args": [
+        { "type": "int", "value": 9007199254740991 },
+        { "type": "float", "value": 2.0 }
+      ],
+      "result": { "type": "float", "value": 9007199254740992.0 }
+    },
+    {
+      "note": "an int divided by a float is a float quotient",
+      "op": "/",
+      "args": [
+        { "type": "int", "value": 7 },
+        { "type": "float", "value": 2.0 }
+      ],
+      "result": { "type": "float", "value": 3.5 }
+    },
+    {
+      "note": "an int divided by a float zero is a float's division by zero",
+      "op": "/",
+      "args": [
+        { "type": "int", "value": 1 },
+        { "type": "float", "value": 0.0 }
+      ],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "division_by_zero"
+    },
+    {
+      "note": "the greatest int equals its widened float",
+      "op": "==",
+      "args": [
+        { "type": "int", "value": 9007199254740991 },
+        { "type": "float", "value": 9007199254740991.0 }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "the greatest int is less than 2^53 as a float",
+      "op": "<",
+      "args": [
+        { "type": "int", "value": 9007199254740991 },
+        { "type": "float", "value": 9007199254740992.0 }
+      ],
+      "result": { "type": "bool", "value": true }
+    },
+    {
+      "note": "PRD §5.8.9: to_int(1e300) is compared with ±MAX as a double before it converts",
+      "op": "to_int",
+      "args": [{ "type": "float", "value": 1e300 }],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "to_int truncates toward zero",
+      "op": "to_int",
+      "args": [{ "type": "float", "value": 2.9 }],
+      "result": { "type": "int", "value": 2 }
+    },
+    {
+      "note": "to_int truncates a negative float toward zero",
+      "op": "to_int",
+      "args": [{ "type": "float", "value": -2.9 }],
+      "result": { "type": "int", "value": -2 }
+    },
+    {
+      "note": "to_int of the greatest int as a float",
+      "op": "to_int",
+      "args": [{ "type": "float", "value": 9007199254740991.0 }],
+      "result": { "type": "int", "value": 9007199254740991 }
+    },
+    {
+      "note": "to_int of 2^53 as a float overflows",
+      "op": "to_int",
+      "args": [{ "type": "float", "value": 9007199254740992.0 }],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "to_int of -2^53 as a float overflows",
+      "op": "to_int",
+      "args": [{ "type": "float", "value": -9007199254740992.0 }],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "to_float widens an int exactly",
+      "op": "to_float",
+      "args": [{ "type": "int", "value": -9007199254740991 }],
+      "result": { "type": "float", "value": -9007199254740991.0 }
+    },
+    {
+      "note": "floor rounds down",
+      "op": "floor",
+      "args": [{ "type": "float", "value": -2.5 }],
+      "result": { "type": "int", "value": -3 }
+    },
+    {
+      "note": "floor of a positive float",
+      "op": "floor",
+      "args": [{ "type": "float", "value": 2.5 }],
+      "result": { "type": "int", "value": 2 }
+    },
+    {
+      "note": "floor of a tiny negative float",
+      "op": "floor",
+      "args": [{ "type": "float", "value": -1e-300 }],
+      "result": { "type": "int", "value": -1 }
+    },
+    {
+      "note": "ceil rounds up",
+      "op": "ceil",
+      "args": [{ "type": "float", "value": -2.5 }],
+      "result": { "type": "int", "value": -2 }
+    },
+    {
+      "note": "ceil of a tiny positive float",
+      "op": "ceil",
+      "args": [{ "type": "float", "value": 1e-300 }],
+      "result": { "type": "int", "value": 1 }
+    },
+    {
+      "note": "ceil of 1e300 overflows",
+      "op": "ceil",
+      "args": [{ "type": "float", "value": 1e300 }],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "floor of the least int as a float",
+      "op": "floor",
+      "args": [{ "type": "float", "value": -9007199254740991.0 }],
+      "result": { "type": "int", "value": -9007199254740991 }
+    },
+    {
+      "note": "PRD §5.8.4: round rounds half away from zero, round(-2.5) = -3, which Math.round makes -2",
+      "op": "round",
+      "args": [{ "type": "float", "value": -2.5 }],
+      "result": { "type": "int", "value": -3 }
+    },
+    {
+      "note": "round rounds a positive half away from zero",
+      "op": "round",
+      "args": [{ "type": "float", "value": 2.5 }],
+      "result": { "type": "int", "value": 3 }
+    },
+    {
+      "note": "round(0.5) is 1",
+      "op": "round",
+      "args": [{ "type": "float", "value": 0.5 }],
+      "result": { "type": "int", "value": 1 }
+    },
+    {
+      "note": "round(-0.5) is -1, which Math.round makes -0",
+      "op": "round",
+      "args": [{ "type": "float", "value": -0.5 }],
+      "result": { "type": "int", "value": -1 }
+    },
+    {
+      "note": "round(-1.5) is -2, which Math.round makes -1",
+      "op": "round",
+      "args": [{ "type": "float", "value": -1.5 }],
+      "result": { "type": "int", "value": -2 }
+    },
+    {
+      "note": "round of the double just below 0.5 is 0, which floor(x + 0.5) makes 1",
+      "op": "round",
+      "args": [{ "type": "float", "value": 0.49999999999999994 }],
+      "result": { "type": "int", "value": 0 }
+    },
+    {
+      "note": "round of a small negative float is 0",
+      "op": "round",
+      "args": [{ "type": "float", "value": -0.4 }],
+      "result": { "type": "int", "value": 0 }
+    },
+    {
+      "note": "round of an integral float past 2^52 is itself, which floor(x + 0.5) rounds to the even 4503599627370498",
+      "op": "round",
+      "args": [{ "type": "float", "value": 4503599627370497.0 }],
+      "result": { "type": "int", "value": 4503599627370497 }
+    },
+    {
+      "note": "round of 2^53 overflows",
+      "op": "round",
+      "args": [{ "type": "float", "value": 9007199254740992.0 }],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "to_int reads a decimal integer",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "42" }],
+      "result": { "type": "int", "value": 42 }
+    },
+    {
+      "note": "to_int reads a leading +",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "+42" }],
+      "result": { "type": "int", "value": 42 }
+    },
+    {
+      "note": "to_int reads a leading -",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "-42" }],
+      "result": { "type": "int", "value": -42 }
+    },
+    {
+      "note": "PRD §5.8.9: to_int(\"-0\") is 0",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "-0" }],
+      "result": { "type": "int", "value": 0 }
+    },
+    {
+      "note": "to_int reads leading zeros, however many",
+      "op": "to_int",
+      "args": [
+        { "type": "string", "value": "000000000000000000000009007199254740991" }
+      ],
+      "result": { "type": "int", "value": 9007199254740991 }
+    },
+    {
+      "note": "to_int of the least int",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "-9007199254740991" }],
+      "result": { "type": "int", "value": -9007199254740991 }
+    },
+    {
+      "note": "to_int of the string of 2^53 overflows",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "9007199254740992" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "to_int of more digits than an int64 holds overflows",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "-99999999999999999999999" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "integer_overflow"
+    },
+    {
+      "note": "PRD §5.8.9: to_int(\"3abc\") has trailing characters",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "3abc" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "PRD §5.8.9: to_int(\" 3\") has leading white space",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": " 3" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_int(\"3 \") has trailing white space",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "3 " }],
+      "result": { "type": "int", "value": 0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_int of the empty string",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_int of a sign alone",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "-" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_int of two signs",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "+-1" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_int does not read a point",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "4.0" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_int does not read an exponent",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "1e3" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_int does not read hexadecimal",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "0x10" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_int does not read _ between digits",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "1_000" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_int reads ASCII digits only, not U+0663 ARABIC-INDIC DIGIT THREE",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "٣" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_int reads ASCII digits only, not U+FF13 FULLWIDTH DIGIT THREE",
+      "op": "to_int",
+      "args": [{ "type": "string", "value": "３" }],
+      "result": { "type": "int", "value": 0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float reads a decimal",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "0.1" }],
+      "result": { "type": "float", "value": 0.1 }
+    },
+    {
+      "note": "to_float reads an integer",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "42" }],
+      "result": { "type": "float", "value": 42.0 }
+    },
+    {
+      "note": "to_float reads an exponent, in either case",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "1E2" }],
+      "result": { "type": "float", "value": 100.0 }
+    },
+    {
+      "note": "to_float reads an exponent's sign",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "12.5e-1" }],
+      "result": { "type": "float", "value": 1.25 }
+    },
+    {
+      "note": "to_float reads a leading + and leading zeros",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "+007.50" }],
+      "result": { "type": "float", "value": 7.5 }
+    },
+    {
+      "note": "PRD §5.8.9: to_float(\"-0\") is 0.0, not -0.0",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "-0" }],
+      "result": { "type": "float", "value": 0.0 }
+    },
+    {
+      "note": "to_float(\"-0.0e10\") is 0.0",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "-0.0e10" }],
+      "result": { "type": "float", "value": 0.0 }
+    },
+    {
+      "note": "PRD §5.8.9: to_float(\"1e400\") overflows a double",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "1e400" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "float_not_finite"
+    },
+    {
+      "note": "to_float(\"-1e400\") overflows a double",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "-1e400" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "float_not_finite"
+    },
+    {
+      "note": "to_float of a value too small for a double is 0.0, without an error",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "1e-400" }],
+      "result": { "type": "float", "value": 0.0 }
+    },
+    {
+      "note": "to_float of a negative value too small for a double is 0.0, not -0.0",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "-1e-400" }],
+      "result": { "type": "float", "value": 0.0 }
+    },
+    {
+      "note": "PRD §5.8.9: \"2.2250738585072011e-308\", which hung parsers that are not correctly rounded, is the greatest subnormal",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "2.2250738585072011e-308" }],
+      "result": { "type": "float", "value": 2.225073858507201e-308 }
+    },
+    {
+      "note": "PRD §5.8.9: \"9007199254740993\" is halfway between two doubles, and rounds to the even one",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "9007199254740993" }],
+      "result": { "type": "float", "value": 9007199254740992.0 }
+    },
+    {
+      "note": "\"9007199254740995\" is halfway between two doubles, and rounds to the even one, up",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "9007199254740995" }],
+      "result": { "type": "float", "value": 9007199254740996.0 }
+    },
+    {
+      "note": "a digit far past the halfway point rounds up",
+      "op": "to_float",
+      "args": [
+        { "type": "string", "value": "9007199254740993.000000000000000000001" }
+      ],
+      "result": { "type": "float", "value": 9007199254740994.0 }
+    },
+    {
+      "note": "the exact value of the double nearest 0.1, written in full, is 0.1",
+      "op": "to_float",
+      "args": [
+        {
+          "type": "string",
+          "value": "0.1000000000000000055511151231257827021181583404541015625"
+        }
+      ],
+      "result": { "type": "float", "value": 0.1 }
+    },
+    {
+      "note": "1 followed by 400 zeros, times 1e-400, is 1.0",
+      "op": "to_float",
+      "args": [
+        {
+          "type": "string",
+          "value": "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e-400"
+        }
+      ],
+      "result": { "type": "float", "value": 1.0 }
+    },
+    {
+      "note": "the least subnormal, written with more digits",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "4.9406564584124654e-324" }],
+      "result": { "type": "float", "value": 5e-324 }
+    },
+    {
+      "note": "just below half of the least subnormal rounds to 0.0",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "2.4703282292062327e-324" }],
+      "result": { "type": "float", "value": 0.0 }
+    },
+    {
+      "note": "just above half of the least subnormal rounds to it",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "2.4703282292062328e-324" }],
+      "result": { "type": "float", "value": 5e-324 }
+    },
+    {
+      "note": "below the halfway point past the greatest double rounds to it",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "1.7976931348623158e308" }],
+      "result": { "type": "float", "value": 1.7976931348623157e308 }
+    },
+    {
+      "note": "above the halfway point past the greatest double overflows",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "1.7976931348623159e308" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "float_not_finite"
+    },
+    {
+      "note": "PRD §5.8.9: to_float(\"3abc\") has trailing characters, which GDScript's to_float reads as 3.0",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "3abc" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "PRD §5.8.9: to_float(\" 3\") has leading white space, which JavaScript's Number reads",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": " 3" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float(\"3 \") has trailing white space",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "3 " }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "PRD §5.8.9: to_float(\"inf\"), which Go's strconv.ParseFloat reads",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "inf" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float(\"Infinity\"), which JavaScript's Number reads",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "Infinity" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float(\"-inf\")",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "-inf" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "PRD §5.8.9: to_float(\"NaN\")",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "NaN" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "PRD §5.8.9: to_float(\"0x1p-2\"), a hexadecimal float, which Go's strconv.ParseFloat reads",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "0x1p-2" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float(\"0x10\"), hexadecimal, which JavaScript's Number reads",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "0x10" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "PRD §5.8.9: to_float(\".5\") has no digit before its point",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": ".5" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "PRD §5.8.9: to_float(\"5.\") has no digit after its point",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "5." }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float(\"5.e3\") has no digit after its point",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "5.e3" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float(\"1e\") has an exponent without digits",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "1e" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float(\"1e+\") has an exponent's sign without digits",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "1e+" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float(\"e5\") has no digits before its exponent",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "e5" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float(\"1.5e2.5\") has a point in its exponent",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "1.5e2.5" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float does not read _ between digits",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "1_000.5" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float does not read a comma as a point, in any locale",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "1,5" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    },
+    {
+      "note": "to_float of the empty string",
+      "op": "to_float",
+      "args": [{ "type": "string", "value": "" }],
+      "result": { "type": "float", "value": 0.0 },
+      "error": "conversion_failed"
+    }
+  ]
+}

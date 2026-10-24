@@ -244,20 +244,3 @@ func TestConvertFloat(t *testing.T) {
 		}
 	}
 }
-
-// TestFormatFloat checks that a float is written as to_string writes it
-// (§5.8.9): the shortest decimal that reads as it again, positional from
-// 1e-6 to below 1e21, with one digit after the point for an integral value,
-// and with an exponent otherwise, and that it reads as the same double.
-func TestFormatFloat(t *testing.T) {
-	t.Parallel()
-	for f, want := range map[float64]string{0: "0.0", math.Copysign(0, -1): "0.0", 2: "2.0", -2.5: "-2.5",
-		0.1: "0.1", 1e20: "100000000000000000000.0", 1e21: "1e+21", 1e-6: "0.000001", 1e-7: "1e-7",
-		123456789.125: "123456789.125", math.MaxFloat64: "1.7976931348623157e+308", 5e-324: "5e-324"} {
-		got := FormatFloat(f)
-		var back float64
-		if got != want || json.Unmarshal([]byte(got), &back) != nil || back != f {
-			t.Errorf("%v is written %s, want %s", f, got, want)
-		}
-	}
-}

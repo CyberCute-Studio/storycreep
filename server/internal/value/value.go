@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/semantics"
 )
 
 // The types of a value: a variable's (PRD FR-VAR-01, §5.8.3), and an
@@ -45,10 +45,9 @@ func Types() []string {
 
 // Limits of a value (§5.8.1, §5.8.9).
 const (
-	// MaxInt is the greatest int, and -MaxInt the least: 2^53 − 1, which
-	// every evaluator, the TypeScript one's doubles among them, represents
-	// exactly.
-	MaxInt = 1<<53 - 1
+	// MaxInt is the greatest int, and -MaxInt the least: 2^53 − 1, the
+	// expression language's (semantics.MaxInt).
+	MaxInt = semantics.MaxInt
 	// MaxStringLength is the most characters that a string may have, as a
 	// string literal of the expression language may.
 	MaxStringLength = 4096
@@ -527,13 +526,6 @@ func ordinal(i int) string {
 	return strconv.Itoa(n) + suffix
 }
 
-// Grammars of a string that converts to a number, as the expression
-// language's to_int and to_float read one (§5.8.9).
-var (
-	intForm   = regexp.MustCompile(`^[+-]?[0-9]+$`)
-	floatForm = regexp.MustCompile(`^[+-]?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
-)
-
 // Convert returns v, a value of the type from, whose options are fromOptions
 // for an enum, as Of returned it, as a value of the type to, whose options
 // are toOptions for an enum, in its canonical form, and whether it converts
@@ -553,11 +545,11 @@ var (
 //     large its exponent, as to_float reads it, 0 for one too small for a
 //     double, unless it is beyond a double's range;
 //   - to string or text, a bool as true or false, an int as a decimal, a float
-//     as to_string writes it (FormatFloat), or a string, a text, or an option
-//     as it is, each within the type's length, with its characters as they
-//     are, which the text rules checked as the value was set, so that a
-//     stored value that today's rules refuse (input.CheckText) converts as it
-//     is read (Read);
+//     as to_string writes it (semantics.FormatFloat), or a string, a text, or
+//     an option as it is, each within the type's length, with its characters
+//     as they are, which the text rules checked as the value was set, so that
+//     a stored value that today's rules refuse (input.CheckText) converts as
+//     it is read (Read);
 //   - to enum, a value whose string, as above, is one of toOptions.
 //
 // A value of another type than from, or of no type, does not convert.
@@ -595,17 +587,17 @@ func Convert(v Value, from string, fromOptions []string, to string, toOptions []
 		case Bool:
 			return boolOf(f)
 		case Int:
-			// The truncated value is compared with ±MaxInt as a double before
-			// it is converted, as to_int does (§5.8.9).
-			t := math.Trunc(f)
-			if math.Abs(t) > MaxInt {
+			// Truncated, and compared with ±MaxInt before it is converted, as
+			// to_int converts it (§5.8.9).
+			n, problem := semantics.Trunc(f)
+			if problem != "" {
 				return Value{}, false
 			}
-			return Value{raw: json.RawMessage(strconv.FormatInt(int64(t), 10))}, true
+			return Value{raw: json.RawMessage(strconv.FormatInt(n, 10))}, true
 		case Float:
 			return v, true
 		}
-		s = FormatFloat(f)
+		s = semantics.FormatFloat(f)
 	default:
 		// A string, a text, or an option, which Read took.
 		s, _ = decodeString(v.raw)
@@ -636,20 +628,14 @@ func fromString(s, to string, options []string) (Value, bool) {
 		}
 		return Value{}, false
 	case Int:
-		if !intForm.MatchString(s) {
-			return Value{}, false
-		}
-		n, problem := integer(strings.TrimPrefix(s, "+"))
+		n, problem := semantics.ParseInt(s)
 		if problem != "" {
 			return Value{}, false
 		}
 		return Value{raw: json.RawMessage(strconv.FormatInt(n, 10))}, true
 	case Float:
-		if !floatForm.MatchString(s) {
-			return Value{}, false
-		}
-		f, ok := decimal(s)
-		if !ok {
+		f, problem := semantics.ParseFloat(s)
+		if problem != "" {
 			return Value{}, false
 		}
 		return floatValue(f), true
@@ -672,81 +658,4 @@ func stringOf(s string, maxChars int) (Value, bool) {
 		return Value{}, false
 	}
 	return stringValue(s), true
-}
-
-// hugeExponent stands for an exponent of more than 9 digits, either way, as a
-// string that converts to a float may have, which no digits that a text holds
-// (MaxTextLength) bring back within a double's range.
-const hugeExponent = 1_000_000_000
-
-// decimal returns s, a string of floatForm, as the double nearest it, as
-// to_float reads it (§5.8.9), 0 for one too small for a double, and whether
-// it is within a double's range, however many digits s has, and however
-// large its exponent, which the bounds of a payload's number (formProblem)
-// would refuse, and which ParseFloat misreads past 800 digits before a point
-// or 5 digits of exponent. It writes s's digits without the zeros around them
-// as 0.ddd, with the exponent that gives s's value, which ParseFloat reads
-// exactly however many digits follow the point, once it has told that
-// exponent from one beyond a double's range, either way.
-func decimal(s string) (float64, bool) {
-	negative := strings.HasPrefix(s, "-")
-	mantissa, exponent, _ := strings.Cut(strings.ToLower(strings.TrimLeft(s, "+-")), "e")
-	whole, fraction, _ := strings.Cut(mantissa, ".")
-	digits := strings.TrimLeft(whole+fraction, "0")
-	significant := strings.TrimRight(digits, "0")
-	if significant == "" {
-		return 0, true
-	}
-	e := int64(0)
-	if exponent != "" {
-		magnitude := strings.TrimLeft(strings.TrimLeft(exponent, "+-"), "0")
-		if len(magnitude) > 9 {
-			e = hugeExponent
-		} else if magnitude != "" {
-			n, _ := strconv.ParseInt(magnitude, 10, 64)
-			e = n
-		}
-		if strings.HasPrefix(exponent, "-") {
-			e = -e
-		}
-	}
-	// The value is 0.significant times ten to the power of point: at least
-	// 1e310, past a double's range, if point is more than 310, and less than
-	// 1e-400, which rounds to 0, if it is less than -400.
-	point := int64(len(digits)) - int64(len(fraction)) + e
-	switch {
-	case point > 310:
-		return 0, false
-	case point < -400:
-		return 0, true
-	}
-	f, err := strconv.ParseFloat("0."+significant+"e"+strconv.FormatInt(point, 10), 64)
-	if err != nil || math.IsInf(f, 0) {
-		return 0, false
-	}
-	if negative {
-		f = -f
-	}
-	return f, true
-}
-
-// FormatFloat returns f, a finite double, as the expression language's
-// to_string writes it (§5.8.9): the shortest decimal that reads as it again,
-// with . as its point, in positional notation for a magnitude from 1e-6 to
-// less than 1e21, with one digit after the point for an integral value, as
-// 2.0, and otherwise as a mantissa, e, a sign, and the exponent without
-// leading zeros, as 1e+21 or 1.5e-7, as JavaScript writes them; -0 as 0.0.
-func FormatFloat(f float64) string {
-	if a := math.Abs(f); a == 0 || a >= 1e-6 && a < 1e21 {
-		s := strconv.FormatFloat(f+0, 'f', -1, 64)
-		if f == 0 {
-			s = "0"
-		}
-		if !strings.Contains(s, ".") {
-			s += ".0"
-		}
-		return s
-	}
-	mantissa, exponent, _ := strings.Cut(strconv.FormatFloat(f, 'e', -1, 64), "e")
-	return mantissa + "e" + exponent[:1] + strings.TrimLeft(exponent[1:], "0")
 }
