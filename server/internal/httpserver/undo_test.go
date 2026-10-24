@@ -218,6 +218,11 @@ func TestUndoOfArchivalAndDeletion(t *testing.T) {
 //
 // Verifies: FR-EDIT-08/AC2, NFR-Q-05
 func TestUndoRoundTrip(t *testing.T) {
+	// The seeds' subtests need PostgreSQL, and skip without it, so that the
+	// check of what they covered below would find nothing covered.
+	if testing.Short() {
+		t.Skip("skipped with -short: needs PostgreSQL, which the tests run in Docker")
+	}
 	t.Parallel()
 	var mu sync.Mutex
 	covered := map[string]bool{}
