@@ -72,11 +72,18 @@ func revisionConflictError(err error) error {
 		"states": states}}
 }
 
+// undoTooLarge is the details.reason of the answer of 422 validation_failed to
+// a batch refused because its undo would take more than a request can hold
+// (commands.ErrUndoTooLarge), the one reason that validation_failed gives.
+const undoTooLarge = "undo_too_large"
+
 // The most that a request of the command endpoint may hold (PRD FR-API-03),
 // which the maintainer chose: each of its batches is a transaction of its
 // own, which holds the project's lock, so they bound how long one request
 // holds a worker and the project. The pipeline's other callers, such as the
-// importer, are not bound by them.
+// importer, are not bound by them, though a batch that can be undone, whoever
+// applies it, has an undo of at most as many commands as a batch here
+// (commands.DefaultMaxUndoSteps), so that a client can send it.
 const (
 	maxBatches       = 100
 	maxBatchCommands = 1000
@@ -132,12 +139,41 @@ type unreconnectedBody struct {
 	WaitingFor []string `json:"waiting_for" nullable:"false" doc:"The IDs of the entities in the project's trash that it refers to, as a connection's node, nd_…, which bring it back once they are restored too"`
 }
 
+// undoCommandBody is a command of a batch's undo, as a client sends it back
+// but for its command_id.
+type undoCommandBody struct {
+	Type        string           `json:"type" doc:"The command's type"`
+	Payload     undoPayload      `json:"payload" doc:"The command's payload, as the schema of its type's command in the endpoint's body describes it"`
+	ExpectedRev map[string]int64 `json:"expected_rev" nullable:"false" doc:"The revision that the command expects of each entity of a kind that its type touches that the batch's command that it undoes changed, by the entity's ID, as nd_…: the one that the batch left it at, so that the undo is refused with 409 revision_conflict, and applies nothing, if the entity has changed since. An entity that several of the batch's commands changed is expected by the command that undoes each of them, and one that a command whose undo is several commands changed by each of them whose type touches it, as each folder.delete of the undo of a restore expects every folder that the restore brought back, so that a part of the undo sent as a batch of its own, wherever the undo is split, expects every entity that it writes back. Empty for a command that expects none."`
+}
+
+// undoPayload is the payload of a command of a batch's undo, as the operation
+// log keeps it, which the API answers as it is, an object.
+type undoPayload json.RawMessage
+
+// MarshalJSON returns the payload as it is.
+func (p undoPayload) MarshalJSON() ([]byte, error) {
+	return json.RawMessage(p).MarshalJSON()
+}
+
+// UnmarshalJSON keeps a copy of data, as json.RawMessage does.
+func (p *undoPayload) UnmarshalJSON(data []byte) error {
+	return (*json.RawMessage)(p).UnmarshalJSON(data)
+}
+
+// Schema describes the payload as an object, whose properties are those of
+// its type's payload.
+func (undoPayload) Schema(huma.Registry) *huma.Schema {
+	return &huma.Schema{Type: huma.TypeObject}
+}
+
 // commandResultBody is what a batch of commands did.
 type commandResultBody struct {
 	Status         string               `json:"status" enum:"applied,already_applied" doc:"applied for a batch that applied, or that was sent before, while its idempotency record is kept, for at least 24 hours, which is answered as it was then; already_applied for a batch whose commands were all applied before, once that record is pruned, or by batches grouped otherwise"`
 	Seq            int64                `json:"seq" doc:"The project's sequence number after the batch: the seq of its operation in the project's operation log. That of a batch already applied is the latest seq of the batches that applied its commands."`
 	Revisions      []entityRevisionBody `json:"revisions" doc:"The entities that the batch changed, each with its revision after the batch, in the order of their first change. Those of a batch already applied are the entities that the batches that applied its commands changed, each with its current revision, without those that no longer exist."`
 	NotReconnected []unreconnectedBody  `json:"not_reconnected" nullable:"false" doc:"What refers to the entities that the batch restored from the project's trash that the batch could not reconnect, once all of its commands applied, each once, with what it waits for: the connections of a restored node, or of a node of a restored board, whose node at the other end is in the trash still, deleted on its own, which come back once that node is restored too (PRD FR-PROJ-06 AC1). Empty for a batch that restored nothing that left any, and for a batch already applied."`
+	Undo           []undoCommandBody    `json:"undo" doc:"The batch's undo (PRD FR-EDIT-08): the commands that undo its commands, from its last command's to its first's, each with the revisions that it expects. A command of the batch that changed nothing, as a board's rename to the name that it has, has nothing to undo, and no command here, which would expect no revision, and so write back what the command found over what another user changed since. A client undoes the batch by sending them back as a batch, each with a command_id of its own, which is refused with 409 revision_conflict, and applies nothing, if an entity that the batch changed has changed since, so that an undo never overwrites newer work on what the batch changed. It may still change what the batch did not, as its commands would at any time: the undo of a creation, a deletion, takes to the trash with what it deletes what has been put in it since, as the nodes that another user added to a board that the batch created; the undo of a deletion, a restore, brings back the folders that what it restores is in, and a component's type, which may have gone to the trash since; and the undo of attribute.set_options or attribute.retype gives the default to a value that a component was given since, of an option or a type that the undo takes away. The undo's own undo sets each of them back. The answer to that batch holds the undo that redoes the batch. A client's own undo leaves an entity that it brings back at a new revision, so the client moves what the rest of its undo and redo stacks expect of the entity, from the revision that it had before the batch that the undo undid, to that one: the revision that the client's store holds once it has every operation of the project before that batch's seq, so that another user's change that came between, which the store had not yet heard of when the answer came, is not taken for the batch's. An undo that is refused for its own undo, which would not fit in a request, with 422 validation_failed whose details.reason is undo_too_large, is sent in smaller batches, split wherever the client chooses, in its order, each once the one before it has applied, with what it expects of an entity that those before it brought back moved from the revision that the batch left, which the undo expects, to the one that the answer of the last of them that changed the entity gives in its revisions, and not from the revision that the entity had before the batch, which the undo does not expect, as the stacks move: each is refused, applying nothing, if what it writes back has changed since, though those before it stay applied. null for a batch that cannot be undone, for a batch already applied, and for one answered again once compaction has dropped its operation from the log, and empty for a batch whose commands have nothing to undo, as one that changed nothing."`
 }
 
 // commandOutcomeBody is what a batch of a list of batches did, or why it
@@ -147,6 +183,7 @@ type commandOutcomeBody struct {
 	Seq            int64                 `json:"seq,omitempty" doc:"The project's sequence number after the batch, as for a request of one batch; not for a batch that was rejected"`
 	Revisions      *[]entityRevisionBody `json:"revisions,omitempty" doc:"The entities that the batch changed, as for a request of one batch; not for a batch that was rejected"`
 	NotReconnected *[]unreconnectedBody  `json:"not_reconnected,omitempty" doc:"What the batch could not reconnect of what refers to the entities that it restored, as for a request of one batch; not for a batch that was rejected"`
+	Undo           *[]undoCommandBody    `json:"undo,omitempty" nullable:"true" doc:"The batch's undo, as for a request of one batch, null for a batch that cannot be undone, that was already applied, or whose operation compaction has dropped; not for a batch that was rejected"`
 	Error          *api.ErrorBody        `json:"error,omitempty" doc:"Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it"`
 }
 
@@ -178,6 +215,16 @@ func newCommandResult(res commands.Result) commandResultBody {
 			WaitingFor: make([]string, len(u.WaitingFor))}
 		for j, w := range u.WaitingFor {
 			body.NotReconnected[i].WaitingFor[j] = ids.Encode(w.Kind, w.ID)
+		}
+	}
+	if res.Undo != nil {
+		body.Undo = make([]undoCommandBody, len(res.Undo))
+		for i, c := range res.Undo {
+			body.Undo[i] = undoCommandBody{Type: string(c.Type), Payload: undoPayload(c.Payload),
+				ExpectedRev: make(map[string]int64, len(c.ExpectedRev))}
+			for ref, rev := range c.ExpectedRev {
+				body.Undo[i].ExpectedRev[ids.Encode(ref.Kind, ref.ID)] = rev
+			}
 		}
 	}
 	return body
@@ -245,7 +292,11 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 		Description: "Applies a batch of commands to a project, every change of whose content is a command of a " +
 			"type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, " +
 			"{\"commands\": [...]}, or a list of batches, {\"batches\": [{\"commands\": [...]}, ...]}. A batch " +
-			"applies whole, in one transaction, or not at all, and is one step of undo. Each command is authorised " +
+			"applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, " +
+			"the commands that undo it, each with the revisions that it expects, which a client sends back as a " +
+			"batch, each with a command_id of its own, to undo it, and which is refused with 409 " +
+			"revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). " +
+			"Each command is authorised " +
 			"by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and " +
 			"a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A " +
 			"batch with a command that only a session may apply, as deleting or restoring the project, which an " +
@@ -253,11 +304,16 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			projectNotFoundDoc + tokenNotFoundDoc + " Every expected_rev of a batch is checked against the " +
 			"entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose " +
 			"details hold the entities' current revisions and states. An archived project refuses a batch with " +
-			"409 project_archived, unless each of its commands applies to an archived project, and a batch that " +
-			"would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that " +
+			"409 project_archived, unless each of its commands applies to an archived project, as unarchiving, " +
+			"deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan " +
+			"is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its " +
+			"other commands, as does one that restores it from the trash, unless the project is archived too, " +
+			"which it still is once restored, so that such a batch applies other commands only if it unarchives " +
+			"the project too, or they apply to an archived project; so the undo of a batch that archived or " +
+			"deleted the project with others applies. A batch that " +
 			"its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose " +
-			"details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch " +
-			"for what the project's state makes of its payload, at the payload's field, as " +
+			"details locate each problem, as body.commands[2].payload.name. A command may also " +
+			"refuse its batch for what the project's state makes of its payload, at the payload's field, as " +
 			"body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not " +
 			"take, as the ID of a folder that the project does not have, or that is deleted, or with the code that " +
 			"the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a " +
@@ -268,14 +324,17 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			"is not in the trash is, or 409 board_referenced for a board to delete whose nodes jumpers on other " +
 			"boards target, which the command does not confirm, whose details list them." +
 			fmt.Sprintf(" A batch whose undo, the inverses of its commands as the operation log keeps them, "+
-				"would take more than %d MiB, so that the batch that undoes it would not fit in a request, is "+
-				"refused with 422 validation_failed at the command that takes it past: at its payload, as "+
+				"each number without an exponent, would take more than %d MiB, with the revisions that they "+
+				"expect, or would have more than %d commands, so that the batch that undoes it would not fit in a "+
+				"request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the "+
+				"command that takes it past: at its payload, as "+
 				"body.commands[3].payload, or at the field whose change the undo holds the values of, as "+
 				"body.commands[3].payload.type for an attribute.retype that would lose too much. The batch "+
 				"that undoes another is bounded alike, by its own undo, which writes again what the other's "+
 				"commands wrote, so the undo of a batch whose commands wrote more than %[1]d MiB, as several "+
-				"large descriptions over small ones, is refused so too, and is sent in smaller batches.",
-				commands.DefaultMaxUndoBytes>>20) +
+				"large descriptions over small ones, is refused so too, and is sent in smaller batches, each of "+
+				"which expects what it writes back, as the undo field describes.",
+				commands.DefaultMaxUndoBytes>>20, commands.DefaultMaxUndoSteps) +
 			"\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch " +
 			"sent again, as when its answer was lost, is answered as it was the first time and applies nothing " +
 			"again, before the project's state and the workspace's limits are checked: the same batch, with the " +
@@ -352,7 +411,7 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			}
 			body := newCommandResult(res)
 			results.Results[i] = commandOutcomeBody{Status: body.Status, Seq: body.Seq, Revisions: &body.Revisions,
-				NotReconnected: &body.NotReconnected}
+				NotReconnected: &body.NotReconnected, Undo: &body.Undo}
 		}
 		out.Body = results
 		return out, nil
@@ -501,13 +560,19 @@ func pipelineError(err error) error {
 // boards target, which the command does not confirm, and 422 validation_failed
 // for any other value that the project's state does not take, as an ID of a
 // board that the project does not have, each with the field's problem in
-// details.errors.
+// details.errors, and with undo_too_large as details.reason for a command
+// whose inverse would take the batch's undo past the pipeline's bounds
+// (commands.ErrUndoTooLarge), so that a client tells an undo that it sends in
+// smaller batches from one that would be refused however it is sent.
 func refusalError(r *commands.RefusedError, loc string) *api.Error {
 	problems := []api.Problem{{Location: loc, Message: r.Message}}
 	var invalid *slug.Error
 	var key *ident.Error
 	var referenced *board.ReferencedError
 	switch {
+	case errors.Is(r.Reason, commands.ErrUndoTooLarge):
+		return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"reason": undoTooLarge,
+			"errors": problems}}
 	case errors.As(r.Reason, &invalid):
 		return &api.Error{Code: api.CodeSlugInvalid, Details: map[string]any{"reason": invalid.Reason,
 			"errors": problems}}

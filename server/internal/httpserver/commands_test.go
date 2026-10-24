@@ -339,26 +339,58 @@ func TestCommandEndpointMismatch(t *testing.T) {
 }
 
 // TestUndoFitsARequest checks that the batch that undoes another, which a
-// client sends as the operation's inverse (plan item 37), fits in the
-// endpoint's body however much the inverse holds within the pipeline's
-// bound, which counts its steps' payloads: what the bound leaves of the body
-// takes the batch's most commands, each with its ID and type, and the
-// expected revisions of ten thousand entities.
+// client sends as the operation's undo (plan item 37), fits in the endpoint's
+// body however much the undo holds within the pipeline's bounds: the bytes of
+// its steps' payloads and of the revisions that they expect, which one bound
+// counts, and the number of its steps, which the other bounds to what a batch
+// may have, each with its ID, type, and keys, which what the first bound
+// leaves of the body takes: each step counted with the longest type that the
+// server registers.
 func TestUndoFitsARequest(t *testing.T) {
 	t.Parallel()
-	step, err := json.Marshal(wireCommand{ID: ids.New().String(), Type: "attribute.set_options",
-		Payload: json.RawMessage("{}")})
+	longest := slices.MaxFunc(newCommandRegistry().Types(), func(a, b commands.Type) int { return len(a) - len(b) })
+	step, err := json.Marshal(map[string]any{"command_id": ids.New().String(), "type": longest,
+		"payload": json.RawMessage("{}"), "expected_rev": json.RawMessage("{}")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rev, err := json.Marshal(map[string]int64{ids.Encode(ids.Component, ids.New()): 1 << 40})
-	if err != nil {
-		t.Fatal(err)
+	if commands.DefaultMaxUndoSteps > maxBatchCommands {
+		t.Errorf("an undo may have %d commands, more than the %d of a batch", commands.DefaultMaxUndoSteps,
+			maxBatchCommands)
 	}
-	rest := len(`{"commands":[]}`) + maxBatchCommands*(len(step)+len(`,`)) + 10_000*len(rev)
+	rest := len(`{"commands":[]}`) + commands.DefaultMaxUndoSteps*(len(step)+len(`,`))
 	if commands.DefaultMaxUndoBytes+rest > api.DefaultMaxBodyBytes {
-		t.Errorf("an undo of %d bytes of payloads, with %d bytes of the rest of its commands, would not fit in a "+
-			"body of %d bytes", commands.DefaultMaxUndoBytes, rest, api.DefaultMaxBodyBytes)
+		t.Errorf("an undo of %d bytes of payloads and expected revisions, with %d bytes of the rest of its "+
+			"commands, would not fit in a body of %d bytes", commands.DefaultMaxUndoBytes, rest,
+			api.DefaultMaxBodyBytes)
+	}
+}
+
+// TestUndoTooLargeAnswer checks that a batch that the pipeline refuses because
+// its undo would take more than a request can hold is answered with 422
+// validation_failed at its command's field, whose details.reason is
+// undo_too_large, so that a client tells an undo that it then sends in smaller
+// batches from one refused for a value that the project's state does not
+// take, whose answer has no reason.
+func TestUndoTooLargeAnswer(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		reason error
+		want   any
+	}{{commands.ErrUndoTooLarge, "undo_too_large"}, {nil, nil}} {
+		err := fmt.Errorf("apply: %w", &commands.RefusedError{Command: 3, CommandID: ids.New(),
+			Type: "attribute.retype", Field: "type", Message: "would take the batch's undo past 4 MiB",
+			Reason: c.reason})
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/projects/prj_01HQ8Z3XK4F7NAWR5TCQ9M2BVD/commands", nil)
+		w := httptest.NewRecorder()
+		api.WriteError(w, r, commandError(err, "body.commands"))
+		res := response{status: w.Code, header: w.Header(), body: w.Body.Bytes()}
+		if got := problems(t, res); !slices.Equal(got, []string{"body.commands[3].payload.type"}) {
+			t.Errorf("the refusal for %v is located at %v, want body.commands[3].payload.type", c.reason, got)
+		}
+		if got := res.details(t)["reason"]; got != c.want {
+			t.Errorf("the refusal for %v has the reason %v, want %v", c.reason, got, c.want)
+		}
 	}
 }
 

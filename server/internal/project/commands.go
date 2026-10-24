@@ -222,13 +222,19 @@ func Register(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[emptyPayload]{
 		Type: Unarchive, Capability: authz.ChangeProjectSettings, Scope: scope.ProjectWrite, Touches: touches,
-		Archived: true,
+		// A batch that unarchives the project may change its content too, as
+		// the undo of a batch that archived it with other commands does.
+		Archived: true, Unarchives: true,
 		// Only an archived project, which counts towards none, adds to the
-		// projects. Unarchiving one that is not undoes nothing.
+		// projects. Unarchiving one that is not undoes nothing. One in the
+		// trash too is unarchived only by a batch that restores it (Restores),
+		// which then counts it, but whose restoration, which the project's
+		// archival keeps from adding to the projects, declares nothing, so the
+		// unarchival declares it.
 		Limits: []commands.Limit[emptyPayload]{{Key: entitlements.Projects, Adds: func(ctx context.Context,
 			tx *commands.Tx, _ emptyPayload) (int64, error) {
 			p, err := read(ctx, tx)
-			if err != nil || !p.ArchivedAt.Valid || p.DeletedAt.Valid {
+			if err != nil || !p.ArchivedAt.Valid {
 				return 0, err
 			}
 			return 1, nil
@@ -261,7 +267,9 @@ func Register(r *commands.Registry) {
 
 	commands.Register(r, commands.Spec[emptyPayload]{
 		Type: Restore, Capability: authz.ManageProjects, Scope: scope.ProjectWrite, Touches: touches,
-		SessionOnly: true, Archived: true, Trashed: true,
+		// A batch that restores the project may change its content too, as
+		// the undo of a batch that deleted it with other commands does.
+		SessionOnly: true, Archived: true, Trashed: true, Restores: true,
 		// Only a project in the trash that is not archived adds to the
 		// projects. Restoring one that is not in the trash undoes nothing.
 		Limits: []commands.Limit[emptyPayload]{{Key: entitlements.Projects, Adds: func(ctx context.Context,
@@ -361,8 +369,13 @@ func lifecycle(update func(ctx context.Context, q *queries.Queries, by queries.A
 		// creates, deletes, or restores, whose own delta counts it as a board
 		// of a project that is not in the trash, is counted with the others,
 		// and the batch adds the same to the boards whatever the order of its
-		// commands. The batch holds the project's lock, under which its boards
-		// change, so they are as counted until it commits.
+		// commands. A batch of the project in the trash, which applies only
+		// because it restores it, adds what the restoration counts alone,
+		// which the deltas of its other commands, before the restoration or
+		// after, are part of already, so the pipeline drops them
+		// (commands.Tx.AddUsageOnceApplied). The batch holds the project's
+		// lock, under which its boards change, so they are as counted until
+		// it commits.
 		// So do its nodes, alike.
 		if before.DeletedAt.Valid != after.DeletedAt.Valid {
 			sign := int64(1)

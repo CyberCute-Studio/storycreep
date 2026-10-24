@@ -766,6 +766,77 @@ func TestUndo(t *testing.T) {
 	}
 }
 
+// TestUndoOfRestoreInParts checks that each command of the undo of a folder's
+// restore, which deletes again the folder and the folder above it that the
+// restore brought back, expects both folders as the restore left them, so
+// that the undo, sent in parts, as a client sends one whose own undo would
+// pass the pipeline's bounds, and split between those deletions, which it
+// does not tell apart from the undos of other commands, refuses the part that
+// deletes the folder above once it has changed since, and changes nothing,
+// rather than delete it over that change (plan note N45).
+//
+// Verifies: FR-EDIT-08/AC4
+func TestUndoOfRestoreInParts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	outer, inner := folderID(), folderID()
+	f.must(t, cmd{board.CreateFolder, map[string]any{"id": outer, "kind": "board", "name": "Act 1"}},
+		cmd{board.CreateFolder, map[string]any{"id": inner, "kind": "board", "name": "Harbour", "parent_id": outer}})
+	f.must(t, cmd{board.DeleteFolder, map[string]any{"id": inner}}, cmd{board.DeleteFolder, map[string]any{"id": outer}})
+	res := f.must(t, cmd{board.RestoreFolder, map[string]any{"id": inner}})
+	innerRef := commands.Ref{Kind: ids.Folder, ID: decodeID(t, ids.Folder, inner)}
+	outerRef := commands.Ref{Kind: ids.Folder, ID: decodeID(t, ids.Folder, outer)}
+	left := map[commands.Ref]int64{}
+	for _, r := range res.Revisions {
+		left[r.Ref] = r.Rev
+	}
+	if len(res.Undo) != 2 || len(left) != 2 || left[innerRef] == 0 || left[outerRef] == 0 {
+		t.Fatalf("the restore changed %v, and its undo is %+v, want both folders, and two deletions", res.Revisions,
+			res.Undo)
+	}
+	for i, c := range res.Undo {
+		if c.Type != board.DeleteFolder || len(c.ExpectedRev) != 2 || c.ExpectedRev[innerRef] != left[innerRef] ||
+			c.ExpectedRev[outerRef] != left[outerRef] {
+			t.Errorf("the undo's command %d is %s, expecting %v, want a folder's deletion expecting %v", i, c.Type,
+				c.ExpectedRev, left)
+		}
+	}
+	send := func(c commands.UndoCommand) (commands.Result, error) {
+		return f.pipeline.Apply(ctx, f.actor(), f.project, []commands.Command{{ID: ids.New(), Type: c.Type,
+			Payload: c.Payload, ExpectedRev: c.ExpectedRev}})
+	}
+	first, err := send(res.Undo[0])
+	if err != nil {
+		t.Fatalf("the first part of the undo: %v", err)
+	}
+	// Another user renames the folder above, which the second part deletes.
+	f.must(t, cmd{board.RenameFolder, map[string]any{"id": outer, "name": "Act One"}})
+	before := f.state(t)
+	// The client moves what the second part expects of the folder that the
+	// first part deleted again to the revision that the first part left.
+	if len(first.Revisions) != 1 || first.Revisions[0].Ref != innerRef {
+		t.Fatalf("the first part changed %v, want the folder that it deleted alone", first.Revisions)
+	}
+	second := res.Undo[1]
+	second.ExpectedRev = map[commands.Ref]int64{}
+	for ref, rev := range res.Undo[1].ExpectedRev {
+		if ref == innerRef {
+			rev = first.Revisions[0].Rev
+		}
+		second.ExpectedRev[ref] = rev
+	}
+	_, err = send(second)
+	var conflict *commands.RevisionConflictError
+	if !errors.As(err, &conflict) || len(conflict.Conflicts) != 1 || conflict.Conflicts[0].Ref != outerRef {
+		t.Fatalf("the second part, once another user renamed the folder that it deletes: %v, want a revision "+
+			"conflict of that folder", err)
+	}
+	if got := f.state(t); got != before {
+		t.Errorf("the refused part left %s, want %s", got, before)
+	}
+}
+
 // TestStoredText checks that a board's name or description, or a folder's
 // name, that is stored but that the rules of a new one refuse, as a row that
 // the pipeline did not write may hold, or one that a later change of

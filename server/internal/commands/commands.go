@@ -15,15 +15,19 @@
 // so that the project's batches are applied one at a time; a batch of an
 // archived project, which is read-only, or of one in the trash, is refused
 // unless each of its commands applies there, as unarchiving and restoring
-// the project do (FR-PROJ-01); the workspace's limits are checked for what
-// the batch adds (FR-ENT-01); every expected
+// the project do (FR-PROJ-01), or one of them unarchives it, or restores it,
+// respectively, which lets the others apply too, as the undo of a batch that
+// archived or deleted the project with others needs (a project both archived
+// and in the trash needs both); the workspace's limits are checked
+// for what the batch adds (FR-ENT-01); every expected
 // revision of the batch's commands is checked against the project as it is
 // before the batch, which is what the client authored the batch against, and
 // a stale one refuses the whole batch with the entities' current state
 // (FR-API-03 AC3); and the commands are applied, in order, in one
 // transaction. A batch that applies is appended to the project's operation
-// log with the project's next seq, its inverse, and the entities that it
-// changed, and each of its commands is recorded in applied_command, which
+// log with the project's next seq, its inverse, which its Result holds as its
+// undo (Result.Undo), and the entities that it changed, and each of its
+// commands is recorded in applied_command, which
 // keeps it recognised for as long as the project exists. The audit entries
 // and the jobs of its commands, and what they add to the workspace's usage,
 // are written in the same transaction (Tx.Audit, Tx.Enqueue, Tx.AddUsage),
@@ -71,6 +75,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -78,6 +83,8 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -102,13 +109,15 @@ var (
 	// is not a member of its workspace, or a guest without a grant on it
 	// (§5.5), so that nothing tells them that it exists (FR-TEN-04 AC6), for
 	// one of a project in the trash with a command that does not apply there
-	// (Spec.Trashed), and for one of a project whose workspace's deletion is
+	// (Spec.Trashed), unless the batch restores the project (Spec.Restores),
+	// and for one of a project whose workspace's deletion is
 	// pending, which blocks every access to the workspace at once (FR-TEN-05
 	// AC1).
 	ErrNotFound = errors.New("commands: no such project, or the user has no role on it")
 	// ErrProjectArchived is returned for a batch of an archived project with
 	// a command that does not apply to an archived project (Spec.Archived),
-	// which is read-only (FR-PROJ-01 AC2).
+	// which is read-only (FR-PROJ-01 AC2), unless the batch unarchives the
+	// project (Spec.Unarchives).
 	ErrProjectArchived = errors.New("commands: the project is archived")
 	// ErrInsufficientRole is returned for a batch with a command whose
 	// operation the actor's role does not allow (§5.6), and ErrOwnerRequired
@@ -213,6 +222,77 @@ type Result struct {
 	// since the record of what the batches that applied its commands left is
 	// pruned with their answers.
 	NotReconnected []Unreconnected
+	// Undo is the batch's undo (PRD FR-EDIT-08, plan item 37): its inverse as
+	// the operation log keeps it, the commands that undo its commands, from its
+	// last command's to its first's, each with the revisions that it expects,
+	// those of the entities of the kinds that its type touches that its
+	// command changed, as the batch left them: one that several of the batch's
+	// commands changed is expected by the undo of each of them, and one that a
+	// command whose undo has several commands changed by each of them whose
+	// type touches its kind, as each deletion of the folders that a restore
+	// brought back expects all of them, so that a part of the undo sent as a
+	// batch of its own, wherever the undo is split, expects every entity that
+	// it writes back, as the whole undo does.
+	// A command of the batch that changed nothing (Tx.Changed) has nothing to
+	// undo, and none of its inverse's steps is in the undo: they would expect
+	// no revision, and write back what the command found over what another
+	// user has changed since, as the undo of a board's rename to the name
+	// that it has would rename it back over another user's rename.
+	// A client undoes the batch by sending them back as a batch, each with a
+	// command ID of its own, which applies only if none of those entities has
+	// changed since, and is refused whole with a *RevisionConflictError
+	// otherwise, so that an undo never overwrites newer work on what the batch
+	// changed. It may still change what the batch did not, whose revisions it
+	// does not expect, as its commands would at any time: the undo of a
+	// creation, a deletion, takes to the trash with what it deletes what has
+	// been put in it since, as the nodes that another user added to a board
+	// that the batch created; the undo of a deletion, a restore, brings back
+	// the folders that what it restores is in, and a component's type, which
+	// may have gone to the trash since; and the undo of a change of an enum's
+	// options or of an attribute definition's type gives the default to a
+	// value that a component was given since, of an option or a type that the
+	// undo takes away, as those commands do to any value that they cannot
+	// keep. Its own undo sets each of them back (plan note N45). The batch
+	// that undoes another has an undo too, which redoes it. An entity that the
+	// client's own undo brings back is at a new revision, so the client moves
+	// the expectations of the rest of its stack from the revision that the
+	// entity had before the batch that it undid to that one: the revision that
+	// the client's store holds once it has every batch of the project before
+	// that one's Seq, so that a store that had not yet heard of another
+	// user's batch that came between, when the answer came, catches up
+	// first, rather than move to the new revision an entry of its stack that
+	// expects the entity as it was before that user's change, whose undo
+	// would then overwrite it. An undo that the pipeline refuses for its own
+	// undo, which would pass the bounds (DefaultMaxUndoBytes,
+	// DefaultMaxUndoSteps), with a *RefusedError whose Reason is
+	// ErrUndoTooLarge, is sent in smaller batches, in its order, each once
+	// the one before it has applied, with what it expects of each entity that
+	// those before it brought back moved from the revision that the batch
+	// left, which the undo expects, to the one that the answer of the last of
+	// them that changed the entity gives (Revisions), and not from the
+	// revision that the entity had before the batch, which the undo does not
+	// expect, as the client moves its stacks, so that no part is refused for
+	// what the parts before it changed: each applies only if none of the
+	// entities that the commands that it undoes changed has changed since, and
+	// is refused whole otherwise, though those before it stay applied, and the
+	// client holds their undos, which redo them. Undo is nil for a batch that
+	// cannot be undone,
+	// with a command of a type that is NonUndoable, or answered from its
+	// idempotency record once the operation log no longer holds its
+	// operation, as one that compaction dropped (PRD FR-GDPR-03), and for a
+	// batch AlreadyApplied, whose commands' batches each have an undo of
+	// their own, and empty for a batch whose commands' inverses have no
+	// steps, or whose commands changed nothing, which undoes nothing.
+	Undo []UndoCommand
+}
+
+// UndoCommand is a command of a batch's undo (Result.Undo): its type, its
+// payload, as the operation log keeps it, and the revisions that it expects,
+// as a Command's ExpectedRev.
+type UndoCommand struct {
+	Type        Type
+	Payload     json.RawMessage
+	ExpectedRev map[Ref]int64
 }
 
 // RevisionConflictError is a batch with commands whose expected revisions
@@ -288,31 +368,156 @@ type Options struct {
 	Jobs Enqueuer
 	// Notifier is told of the batches that apply, or nil for nothing.
 	Notifier Notifier
-	// MaxUndoBytes is the most bytes that the payloads of the steps of a
-	// batch's inverse may take, as JSON encodes them for the operation log, or
-	// 0 for DefaultMaxUndoBytes, which a test lowers.
+	// MaxUndoBytes is the most bytes that a batch's inverse may take, the
+	// payloads of its steps as the operation log writes them (LogBytes) and
+	// the revisions that they expect (ExpectedRevBytes), or 0 for
+	// DefaultMaxUndoBytes, which a test lowers.
 	MaxUndoBytes int
+	// MaxUndoSteps is the most steps that a batch's inverse may have, or 0 for
+	// DefaultMaxUndoSteps, which a test lowers.
+	MaxUndoSteps int
 }
 
-// DefaultMaxUndoBytes is the most bytes that the payloads of the steps of a
-// batch's inverse may take, as JSON encodes them for the operation log: 4 MiB,
-// so that the batch that undoes it, which a client sends as the inverse's
-// commands, each with its command ID and its expected revisions (plan item
-// 37), fits in a request's body, of at most 5 MiB (api.DefaultMaxBodyBytes),
-// with a mebibyte for the rest of the commands: their IDs and types, and the
-// expected revisions of some ten thousand entities. The pipeline refuses a
-// command whose inverse would take its batch's undo past it, whatever its
-// commands' inverses hold. The batch that undoes another is a batch as any
-// other, whose own inverse writes again what the other's commands wrote, so
-// the pipeline refuses it alike once that passes the bound: a batch whose
-// commands write more than the bound, as several large descriptions over
-// small ones, applies, but is undone only in smaller batches.
+// DefaultMaxUndoBytes is the most bytes that a batch's inverse may take, as
+// the operation log keeps it and a batch's answer holds it (Result.Undo): the
+// payloads of its steps, each as the log writes it (LogBytes), and the
+// revisions that they expect, each counted as its entity's ID and as many
+// digits as a revision can have (ExpectedRevBytes). It is 4 MiB, so that the
+// batch that undoes it, which a client sends as the inverse's commands, each
+// with its command ID and its expected revisions (plan item 37), fits in a
+// request's body, of at most 5 MiB (api.DefaultMaxBodyBytes), with a mebibyte
+// for the rest of the commands: their IDs, types, and keys. The pipeline
+// refuses a command whose inverse, or the revisions that it expects of what
+// the command changes, as its Apply reports them, would take its batch's undo
+// past it, whatever its commands' inverses hold, but for a command that
+// changes nothing, whose inverse the undo leaves out, and the bound does not
+// count once it has applied. Each revision is counted as often as the undo
+// expects it, once for each step whose type touches its kind of the undo of
+// each of the batch's commands that changes its entity, so that a batch of
+// many changes of the attribute definitions of a type of many components,
+// each of which changes every component, is refused once those pass the
+// bound, and is sent in smaller batches, each with an undo of its own, and so
+// is a restore of what is under hundreds of nested folders in the trash, each
+// of whose deletions in its undo expects every folder that it brought back,
+// which then applies once those folders are restored first, from the top
+// down. The batch that undoes another is a batch as any other, whose own
+// inverse writes again what the other's commands wrote, so the pipeline
+// refuses it alike once that passes the bound: a batch whose commands write
+// more than the bound, as several large descriptions over small ones,
+// applies, but is undone only in smaller batches, each of which expects what
+// it writes back (Result.Undo).
 const DefaultMaxUndoBytes = 4 << 20
 
+// DefaultMaxUndoSteps is the most steps that a batch's inverse may have, the
+// most commands of a batch that a client sends through the API, so that the
+// batch that undoes it can be sent: one command may have an inverse of
+// several steps, as a board's restoration, whose undo deletes again the
+// folders that it brought back. It holds every batch that can be undone,
+// whichever caller applies it, as DefaultMaxUndoBytes does; a batch that
+// cannot be undone, as an import (PRD FR-EDIT-08 AC1), has no undo to bound.
+// The batch that undoes another is bounded alike, by its own undo, which may
+// have more steps than the other had commands, as when the folders of the
+// boards whose deletion it undoes have gone to the trash since, which their
+// restorations bring back and their undo deletes again, so the pipeline
+// refuses it once that passes the bound, and it is sent in smaller batches,
+// as one whose undo takes more bytes than the bound is.
+const DefaultMaxUndoSteps = 1000
+
+// revisionDigits is the most digits that a revision, an int64 above 0, has.
+const revisionDigits = 19
+
+// ExpectedRevBytes returns how many bytes the bound of a batch's undo
+// (Options.MaxUndoBytes) counts for a revision of the entity ref that a step
+// of the undo expects: the most that it takes as JSON encodes it in the
+// step's expected_rev, its ID, as a key, and the revision, with a comma. It
+// counts the ID as ids.Encode writes it, its kind's prefix, an underscore,
+// and its body, without encoding it, as Tx.Changed counts one for each entity
+// that a command changes, which may be every component of a type. The kind
+// of ref is an entity type, as every kind that a command touches is
+// (ids.Kind.Prefix).
+func ExpectedRevBytes(ref Ref) int {
+	return len(ref.Kind.Prefix()) + len("_") + ids.BodyLength + len(`"":,`) + revisionDigits
+}
+
+// LogBytes returns how many bytes the bound of a batch's undo
+// (Options.MaxUndoBytes) counts for raw, the payload of a step of the undo as
+// encoding/json encodes it: at least as many as the payload takes as the
+// operation log's jsonb writes it, compact, which is what the batch's answer,
+// and a replay of it, hold (Result.Undo). jsonb keeps a number as a numeric,
+// which it writes without an exponent, with every digit of its value, so a
+// float that encoding/json writes with one, below 1e-6 or from 1e21, takes
+// more there, as 1e+300, of 301 digits, or 5e-324, of 326 characters, which
+// LogBytes counts. jsonb writes nothing else longer than encoding/json does,
+// which escapes some characters of a string, as <, that jsonb writes as they
+// are.
+func LogBytes(raw []byte) int {
+	n := len(raw)
+	for i := 0; i < len(raw); i++ {
+		switch c := raw[i]; {
+		case c == '"':
+			// A string ends at the first quote that no backslash escapes.
+			for i++; i < len(raw) && raw[i] != '"'; i++ {
+				if raw[i] == '\\' {
+					i++
+				}
+			}
+		case c == '-' || '0' <= c && c <= '9':
+			j := i + 1
+			for j < len(raw) && strings.IndexByte("+-.0123456789Ee", raw[j]) >= 0 {
+				j++
+			}
+			n += positionalLen(raw[i:j]) - (j - i)
+			i = j - 1
+		}
+	}
+	return n
+}
+
+// positionalLen returns how many characters the JSON number num takes once
+// jsonb has written it without an exponent: its sign, and its digits, with the
+// zeros that its exponent stands for, and its point, if it has a fraction, or
+// as many as it takes already if it has no exponent.
+func positionalLen(num []byte) int {
+	at := bytes.IndexAny(num, "Ee")
+	if at < 0 {
+		return len(num)
+	}
+	exp, err := strconv.Atoi(string(num[at+1:]))
+	if err != nil {
+		// No exponent that a double has, which encoding/json writes.
+		return len(num)
+	}
+	mantissa, sign := num[:at], 0
+	if mantissa[0] == '-' {
+		mantissa, sign = mantissa[1:], 1
+	}
+	whole, fraction, _ := bytes.Cut(mantissa, []byte("."))
+	digits := len(whole) + len(fraction)
+	// point is how many digits the number has before its point, once it is
+	// written without an exponent.
+	switch point := len(whole) + exp; {
+	case point >= digits:
+		return sign + point
+	case point > 0:
+		return sign + digits + len(".")
+	default:
+		return sign + len("0.") - point + digits
+	}
+}
+
 // ErrUndoTooLarge is the error of an Inverse that stops before its steps take
-// more than Tx.UndoRoom leaves, which the pipeline refuses the command for
-// as it refuses one whose inverse's steps it finds take more: at the
-// payload's field that the command's Spec.UndoField names.
+// more than Tx.UndoRoom leaves, and of Tx.Changed once the command's inverse,
+// or the revisions that its undo expects, take more, which an Apply returns
+// as it returns Changed's every error, which the pipeline refuses the command
+// for at the payload's field that the command's Spec.UndoField names.
+// Tx.Changed returns it too once the batch's undo, with the command's
+// inverse, has more steps than the pipeline's bound of steps
+// (Options.MaxUndoSteps), which the pipeline refuses the command for at its
+// payload. The refusal, a *RefusedError, has it as its Reason, so that a
+// client tells a batch refused for its undo, whose commands it sends in
+// smaller batches (Result.Undo), from one refused for anything else, which
+// the API answers with 422 validation_failed whose details.reason is
+// undo_too_large.
 var ErrUndoTooLarge = errors.New("commands: the inverse would take its batch's undo past the pipeline's bound")
 
 // Pipeline applies batches of commands.
@@ -324,8 +529,9 @@ type Pipeline struct {
 	jobs     Enqueuer
 	notifier Notifier
 	metrics  *metrics
-	// maxUndo is Options.MaxUndoBytes, or DefaultMaxUndoBytes.
-	maxUndo int
+	// maxUndo is Options.MaxUndoBytes, or DefaultMaxUndoBytes, and
+	// maxUndoSteps Options.MaxUndoSteps, or DefaultMaxUndoSteps.
+	maxUndo, maxUndoSteps int
 }
 
 // New returns a Pipeline that applies the commands of opts.Registry in db. It
@@ -342,8 +548,12 @@ func New(db DB, opts Options) *Pipeline {
 	if maxUndo <= 0 {
 		maxUndo = DefaultMaxUndoBytes
 	}
+	maxUndoSteps := opts.MaxUndoSteps
+	if maxUndoSteps <= 0 {
+		maxUndoSteps = DefaultMaxUndoSteps
+	}
 	return &Pipeline{db: db, registry: reg, policy: opts.Policy, ent: opts.Entitlements, jobs: opts.Jobs,
-		notifier: opts.Notifier, metrics: newMetrics(reg.Types()), maxUndo: maxUndo}
+		notifier: opts.Notifier, metrics: newMetrics(reg.Types()), maxUndo: maxUndo, maxUndoSteps: maxUndoSteps}
 }
 
 // Collector returns the pipeline's metrics (PRD NFR-OBS-02).
@@ -357,7 +567,8 @@ func (p *Pipeline) Collector() prometheus.Collector {
 // revision of another project; ErrNotFound if the project does not
 // exist, its workspace's deletion is pending, the actor's effective role on
 // it is none, or it is in the trash and a command does not apply there
-// (Spec.Trashed), or the actor's API token does not cover the project;
+// (Spec.Trashed) and none restores it (Spec.Restores), or the actor's API
+// token does not cover the project;
 // ErrSessionRequired if the actor acts with an API token, and a command is
 // one that only a session may apply (Spec.SessionOnly); ErrInsufficientScope,
 // as a *scope.InsufficientError, if the token does not hold a command's
@@ -365,7 +576,8 @@ func (p *Pipeline) Collector() prometheus.Collector {
 // role does not allow a command's operation; an *IdempotencyMismatchError if
 // some of the batch's commands were applied before, and others were not;
 // ErrProjectArchived if the project is archived and a command does not apply
-// to it then (Spec.Archived); an *entitlements.LimitError if the batch would
+// to it then (Spec.Archived) and none unarchives it (Spec.Unarchives); an
+// *entitlements.LimitError if the batch would
 // take the workspace past a limit of its plan; a *RevisionConflictError if a
 // command's expected revision is stale; a *RefusedError if a command refuses
 // the batch for what the project's state makes of its payload (Refuse); and
@@ -440,7 +652,7 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 			return ErrNotFound
 		case err != nil:
 			return fmt.Errorf("commands: read the project: %w", err)
-		case deleted && !allApply(cmds, trashed):
+		case deleted && !admitted(cmds, trashed, restores):
 			return ErrNotFound
 		}
 		roles, err := p.roles(ctx, q, actor.UserID, workspaceID, projectID)
@@ -486,11 +698,12 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		// The project may have changed while the batch waited for the lock,
 		// as when a batch before it deleted it. A project in the trash is not
 		// found even by a batch that was sent before (FR-PROJ-01 AC3).
-		if locked.Deleted && !allApply(cmds, trashed) {
+		if locked.Deleted && !admitted(cmds, trashed, restores) {
 			return ErrNotFound
 		}
 		t := &Tx{tx: tx, pipeline: p, actor: actor, project: projectID, workspace: workspaceID, at: map[Ref]int{},
-			revs: map[Ref]int64{}, maxUndo: p.maxUndo, usage: map[usage.Key]int64{}}
+			revs: map[Ref]int64{}, expecting: map[ids.Kind][]int{}, expected: map[Ref]struct{}{}, maxUndo: p.maxUndo,
+			maxUndoSteps: p.maxUndoSteps, usage: map[usage.Key]int64{}, trashed: locked.Deleted}
 		// A batch that was sent before is answered as it was, whatever has
 		// changed since, before the project's state and the workspace's limits
 		// are checked (§10.2 step 4), so that a batch that applied is never
@@ -604,16 +817,17 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 			if err == nil {
 				inverses[i], err = p.registry.checkSteps(steps)
 			}
-			// The batch's undo is its commands' inverses, which the bound
-			// holds whole, whatever a command's inverse holds: each command's
-			// steps add to what those of the commands before it take.
+			// The batch's undo is its commands' inverses, which the bounds
+			// hold whole, whatever a command's inverse holds: each command's
+			// steps add to what those of the commands before it take. The
+			// bounds are checked as the command's Apply reports its changes
+			// (Tx.Changed), below, so that a command that changes nothing,
+			// whose steps the undo leaves out, is never refused for them.
 			if err == nil {
 				for _, st := range inverses[i] {
-					t.undoBytes += len(st.Payload)
+					t.undoBytes += LogBytes(st.Payload)
 				}
-				if t.undoBytes > t.maxUndo {
-					err = ErrUndoTooLarge
-				}
+				t.undoSteps += len(inverses[i])
 			}
 			if errors.Is(err, ErrUndoTooLarge) {
 				return Result{}, undoRefusal(i, c, t.maxUndo)
@@ -626,16 +840,76 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 			}
 		}
 		// Only Apply reports changes (Tx.Changed): neither the reads of the
-		// revisions nor an inverse, which only reads.
-		t.current = c.spec
+		// revisions nor an inverse, which only reads. The command's undo
+		// expects the revisions of what it changes of the kinds that the
+		// steps of its inverse touch, which the bound holds too, as a client
+		// sends them back, so Changed counts each as Apply reports it, and
+		// stops Apply as soon as the undo is past either bound.
+		// The revision of each entity that the command changes is expected by
+		// every step of its inverse whose type touches the entity's kind, as a
+		// command may expect a revision only of an entity that it touches
+		// (Tx.Changed), each once, however many times the command reports it
+		// (t.expected, which holds the command's). An entity that several of
+		// the batch's commands change is expected by the undo of each, and an
+		// inverse of several steps of a kind, as the deletions of the folders
+		// that a restore brought back, expects each such entity in each of
+		// them, and the bound counts it as often: the whole undo is checked
+		// against the entities as they are before it, where once would do, but
+		// a part of it sent as a batch of its own, as when its own undo would
+		// pass the bounds, is checked for what its own steps expect alone, and
+		// the undo does not say where one command's steps end, so a part that
+		// did not expect an entity that a part after it writes would let that
+		// part write it back over another user's change since (Result.Undo).
+		// An entity of a kind that none of the steps touches is one that the
+		// undo of the command does not write, as no step's Apply may report a
+		// change of a kind that its type does not touch, so none of them
+		// expects it. t.steps is inverses[i] itself, not a copy, so what
+		// Changed gives its steps is what record writes to the log.
+		t.current, t.steps, t.changes = c.spec, inverses[i], 0
+		clear(t.expecting)
+		clear(t.expected)
+		for j, st := range inverses[i] {
+			for _, kind := range p.registry.specs[st.Type].touches {
+				t.expecting[kind] = append(t.expecting[kind], j)
+			}
+		}
 		err := c.spec.apply(ctx, t, c.payload)
-		t.current = nil
+		t.current, t.steps = nil, nil
+		if errors.Is(err, ErrUndoTooLarge) {
+			// Changed stops a command that changes something as soon as the
+			// undo is past either bound.
+			return Result{}, boundRefusal(i, c, t)
+		}
 		if refused, ok := refusedBy(err, i, c); ok {
 			return Result{}, refused
 		}
 		if err != nil {
 			return Result{}, fmt.Errorf("commands: command %d (%s): %w", i, c.spec.typ, err)
 		}
+		// A command that reported no change changed nothing, and has nothing
+		// to undo. Its inverse's steps would write back what the command
+		// found, which it left as it was, and expect no revision, as it
+		// changed none, so that, sent back once another user had changed
+		// what they write, they would overwrite that newer work, as the undo
+		// of a board's rename to the name that it has would rename it back
+		// over another user's rename since (PRD FR-EDIT-08). The batch's undo
+		// leaves them out, and the bounds give back the room that they took.
+		// Only Changed gives a step a revision to expect, so those steps
+		// expect none.
+		if t.changes == 0 && len(inverses[i]) > 0 {
+			for _, st := range inverses[i] {
+				t.undoBytes -= LogBytes(st.Payload)
+			}
+			t.undoSteps -= len(inverses[i])
+			inverses[i] = []logStep{}
+		}
+		// The batch's undo is within both bounds here, as the command has
+		// left it, with nothing to check again: Changed held them with each
+		// of the command's changes, the last one included, after which
+		// nothing adds to the undo, and the undo of a command that reported
+		// none is as the command before it left it, so that a batch is not
+		// refused for the steps of a command that changed nothing, which its
+		// undo leaves out, wherever the command is in the batch.
 	}
 	if err := t.addCounts(ctx); err != nil {
 		return Result{}, err
@@ -651,7 +925,7 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 	// not, so that the batch's answer is the same either way.
 	res := Result{Status: Applied, Seq: seq + 1, Revisions: append([]Revision{}, t.changed...),
 		NotReconnected: notReconnected}
-	if err := p.record(ctx, q, t, cmds, commandIDs, sent, res, inverses, undoable); err != nil {
+	if res.Undo, err = p.record(ctx, q, t, cmds, commandIDs, sent, res, inverses, undoable); err != nil {
 		return Result{}, err
 	}
 	return res, nil
@@ -663,7 +937,7 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 // none of its limits, and that every revision that its commands expect is
 // the entity's. It reads, and writes nothing.
 func (p *Pipeline) check(ctx context.Context, t *Tx, cmds []decoded, archivedProject bool) error {
-	if archivedProject && !allApply(cmds, archived) {
+	if archivedProject && !admitted(cmds, archived, unarchives) {
 		return ErrProjectArchived
 	}
 	checked, err := p.checkLimits(ctx, t, cmds)
@@ -675,13 +949,22 @@ func (p *Pipeline) check(ctx context.Context, t *Tx, cmds []decoded, archivedPro
 }
 
 // trashed and archived report whether a command applies to a project in the
-// trash, and to an archived one (Spec.Trashed, Spec.Archived).
-func trashed(c decoded) bool  { return c.spec.trashed }
-func archived(c decoded) bool { return c.spec.archived }
+// trash, and to an archived one (Spec.Trashed, Spec.Archived), and restores
+// and unarchives whether it takes the project out of the trash, and out of
+// its archive (Spec.Restores, Spec.Unarchives).
+func trashed(c decoded) bool    { return c.spec.trashed }
+func archived(c decoded) bool   { return c.spec.archived }
+func restores(c decoded) bool   { return c.spec.restores }
+func unarchives(c decoded) bool { return c.spec.unarchives }
 
-// allApply reports whether every command of cmds applies, as applies says.
-func allApply(cmds []decoded, applies func(decoded) bool) bool {
-	return !slices.ContainsFunc(cmds, func(c decoded) bool { return !applies(c) })
+// admitted reports whether the batch of the commands cmds applies to a
+// project in the trash, or to an archived one: whether every command of it
+// applies there, as applies says, or one of them takes the project out of
+// there, as out says, which lets the others apply as a batch of its own that
+// took the project out first would, as the undo of a batch that deleted or
+// archived the project with other commands needs (PRD FR-EDIT-08).
+func admitted(cmds []decoded, applies, out func(decoded) bool) bool {
+	return !slices.ContainsFunc(cmds, func(c decoded) bool { return !applies(c) }) || slices.ContainsFunc(cmds, out)
 }
 
 // actorWorkspace returns the workspace that the actor acts in on the
@@ -938,10 +1221,16 @@ type (
 		Payload   json.RawMessage `json:"payload"`
 	}
 	// logStep is a command of the operation's inverse, with its payload as
-	// checkSteps encoded it to check it.
+	// checkSteps encoded it to check it, and the revisions that it expects,
+	// by the public IDs of their entities, as a client sends them (plan item
+	// 37), if it expects any.
 	logStep struct {
-		Type    Type            `json:"type"`
-		Payload json.RawMessage `json:"payload"`
+		Type        Type             `json:"type"`
+		Payload     json.RawMessage  `json:"payload"`
+		ExpectedRev map[string]int64 `json:"expected_rev,omitempty"`
+		// expects are the entities whose revisions after the batch the step
+		// expects, which Tx.Changed gives it as its command reports them.
+		expects []Ref
 	}
 	// logRef is an entity of the operation's entity_refs, with its revision
 	// after the batch.
@@ -955,11 +1244,13 @@ type (
 // record appends the batch of the commands cmds, whose IDs are commandIDs,
 // which res says what they did, to the project's operation log, records each
 // command as applied, and, if a client sent the batch (sent), what the batch
-// was answered with as its idempotency record, and sets the project's seq.
+// was answered with as its idempotency record, and sets the project's seq. It
+// returns the batch's undo (Result.Undo), as the log keeps it, so that a
+// replay of the batch, which reads it from the log, answers it alike.
 // inverses are the commands' inverses, and undoable says whether every
 // command has one.
 func (p *Pipeline) record(ctx context.Context, q *queries.Queries, t *Tx, cmds []decoded, commandIDs []pgtype.UUID,
-	sent bool, res Result, inverses [][]logStep, undoable bool) error {
+	sent bool, res Result, inverses [][]logStep, undoable bool) ([]UndoCommand, error) {
 	payload := make([]logCommand, len(cmds))
 	for i, c := range cmds {
 		payload[i] = logCommand{CommandID: c.ID.String(), Type: c.spec.typ, Payload: c.encoded}
@@ -968,16 +1259,25 @@ func (p *Pipeline) record(ctx context.Context, q *queries.Queries, t *Tx, cmds [
 	if len(cmds) == 1 {
 		typ = string(cmds[0].spec.typ)
 	}
-	// Undoing the batch undoes its commands from the last to the first.
+	// Undoing the batch undoes its commands from the last to the first, each
+	// step expecting the revisions that the batch left of what it expects.
 	var inverse []byte
 	if undoable {
 		steps := []logStep{}
 		for i := len(inverses) - 1; i >= 0; i-- {
-			steps = append(steps, inverses[i]...)
+			for _, st := range inverses[i] {
+				if len(st.expects) > 0 {
+					st.ExpectedRev = make(map[string]int64, len(st.expects))
+					for _, ref := range st.expects {
+						st.ExpectedRev[encodeRef(ref)] = t.revs[ref]
+					}
+				}
+				steps = append(steps, st)
+			}
 		}
 		var err error
 		if inverse, err = json.Marshal(steps); err != nil {
-			return fmt.Errorf("commands: encode the inverse: %w", err)
+			return nil, fmt.Errorf("commands: encode the inverse: %w", err)
 		}
 	}
 	refs := make([]logRef, len(res.Revisions))
@@ -986,36 +1286,97 @@ func (p *Pipeline) record(ctx context.Context, q *queries.Queries, t *Tx, cmds [
 	}
 	encodedPayload, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("commands: encode the payload: %w", err)
+		return nil, fmt.Errorf("commands: encode the payload: %w", err)
 	}
 	encodedRefs, err := json.Marshal(refs)
 	if err != nil {
-		return fmt.Errorf("commands: encode the entity refs: %w", err)
+		return nil, fmt.Errorf("commands: encode the entity refs: %w", err)
 	}
 	ws, project := nullUUID(t.workspace), nullUUID(t.project)
-	if err := q.InsertOperation(ctx, queries.InsertOperationParams{ID: nullUUID(ids.New()), WorkspaceID: ws,
+	stored, err := q.InsertOperation(ctx, queries.InsertOperationParams{ID: nullUUID(ids.New()), WorkspaceID: ws,
 		ProjectID: project, Seq: res.Seq, CommandIds: commandIDs, ActorUserID: nullUUID(t.actor.UserID),
 		ActorTokenID: nullUUID(t.actor.Token.TokenID()), Type: typ, Payload: encodedPayload, Inverse: inverse,
-		EntityRefs: encodedRefs}); err != nil {
-		return fmt.Errorf("commands: append the operation: %w", err)
+		EntityRefs: encodedRefs})
+	if err != nil {
+		return nil, fmt.Errorf("commands: append the operation: %w", err)
+	}
+	undo, err := undoOf(stored)
+	if err != nil {
+		return nil, fmt.Errorf("commands: the operation's inverse: %w", err)
 	}
 	if err := q.InsertAppliedCommands(ctx, queries.InsertAppliedCommandsParams{WorkspaceID: ws, ProjectID: project,
 		Seq: res.Seq, CommandIds: commandIDs}); err != nil {
-		return fmt.Errorf("commands: record the applied commands: %w", err)
+		return nil, fmt.Errorf("commands: record the applied commands: %w", err)
 	}
 	// A batch of the server's own, which nobody sends again, is recognised
-	// by its applied commands alone.
+	// by its applied commands alone. The record keeps the batch's seq, whose
+	// operation keeps its undo, which a replay reads from there (undoAt).
 	if sent {
 		if err := remember(ctx, q, t, commandIDs, answer{Seq: res.Seq, Revisions: refs,
 			NotReconnected: storedUnreconnectedOf(res.NotReconnected)}); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := q.SetProjectSeq(ctx, queries.SetProjectSeqParams{Seq: res.Seq, WorkspaceID: ws,
 		ID: project}); err != nil {
-		return fmt.Errorf("commands: set the project's seq: %w", err)
+		return nil, fmt.Errorf("commands: set the project's seq: %w", err)
 	}
-	return nil
+	return undo, nil
+}
+
+// undoOf returns the undo (Result.Undo) that inverse, an operation's inverse
+// as the operation log keeps it, holds, or nil if it is null, as for a batch
+// that cannot be undone. The log's jsonb keeps an object's keys in an order of
+// its own, so a payload read from it is the same whenever it is read, which a
+// batch's answer and a replay of it both read, and which a client sends back as
+// it is. jsonb writes a space after each colon and comma, which undoOf drops,
+// so that each payload is compact, as LogBytes counts it.
+func undoOf(inverse []byte) ([]UndoCommand, error) {
+	if inverse == nil {
+		return nil, nil
+	}
+	var steps []logStep
+	if err := json.Unmarshal(inverse, &steps); err != nil {
+		return nil, err
+	}
+	undo := make([]UndoCommand, len(steps))
+	for i, st := range steps {
+		var payload bytes.Buffer
+		payload.Grow(len(st.Payload))
+		if err := json.Compact(&payload, st.Payload); err != nil {
+			return nil, fmt.Errorf("step %d's payload: %w", i, err)
+		}
+		undo[i] = UndoCommand{Type: st.Type, Payload: payload.Bytes(),
+			ExpectedRev: make(map[Ref]int64, len(st.ExpectedRev))}
+		for key, rev := range st.ExpectedRev {
+			kind, id, err := ids.DecodeAny(key)
+			if err != nil {
+				return nil, fmt.Errorf("step %d expects the revision of %q: %w", i, key, err)
+			}
+			undo[i].ExpectedRev[Ref{Kind: kind, ID: id}] = rev
+		}
+	}
+	return undo, nil
+}
+
+// undoAt returns the undo of the project's operation of the seq, which t, its
+// transaction, reads from the operation log, as the batch that the operation
+// applied was answered with. An operation that the log no longer holds, as
+// one that compaction dropped (PRD FR-GDPR-03), has none.
+func undoAt(ctx context.Context, q *queries.Queries, t *Tx, seq int64) ([]UndoCommand, error) {
+	inverse, err := q.OperationInverse(ctx, queries.OperationInverseParams{WorkspaceID: nullUUID(t.workspace),
+		ProjectID: nullUUID(t.project), Seq: seq})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("commands: read the batch's undo: %w", err)
+	}
+	undo, err := undoOf(inverse)
+	if err != nil {
+		return nil, fmt.Errorf("commands: the inverse of the operation %d: %w", seq, err)
+	}
+	return undo, nil
 }
 
 // nullUUID returns id as a uuid column, null if id is zero.

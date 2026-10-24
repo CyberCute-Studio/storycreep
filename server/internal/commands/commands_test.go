@@ -120,7 +120,8 @@ func TestApplyAppendsTheOperation(t *testing.T) {
 		first.actor == nil || *first.actor != w.users[ownerUser] || first.token != nil {
 		t.Errorf("the first operation: %s of %v by %v with %v", first.typ, first.commandIDs, first.actor, first.token)
 	}
-	if !sameJSON(t, first.inverse, fmt.Sprintf(`[{"type": "note.delete", "payload": {"id": %q}}]`, aID)) {
+	if !sameJSON(t, first.inverse, fmt.Sprintf(`[{"type": "note.delete", "payload": {"id": %q},
+		"expected_rev": {%[1]q: 1}}]`, aID)) {
 		t.Errorf("the first operation's inverse: %s", first.inverse)
 	}
 	second := w.operation(t, 2)
@@ -139,13 +140,18 @@ func TestApplyAppendsTheOperation(t *testing.T) {
 		t.Errorf("the second operation's payload: %s, want %s", second.payload, wantPayload)
 	}
 	// The inverse undoes the last command first, each from the state that it
-	// changed.
+	// changed, and expects the revisions that the batch left of what its
+	// command changed, though another command changed it too, which the
+	// batch's answer holds as its undo.
 	wantInverse := fmt.Sprintf(`[
-		{"type": "note.update", "payload": {"id": %q, "body": "second"}},
-		{"type": "note.delete", "payload": {"id": %q}},
-		{"type": "note.update", "payload": {"id": %q, "body": "first"}}]`, aID, bID, aID)
+		{"type": "note.update", "payload": {"id": %q, "body": "second"}, "expected_rev": {%[1]q: 3}},
+		{"type": "note.delete", "payload": {"id": %q}, "expected_rev": {%[2]q: 1}},
+		{"type": "note.update", "payload": {"id": %[1]q, "body": "first"}, "expected_rev": {%[1]q: 3}}]`, aID, bID)
 	if !sameJSON(t, second.inverse, wantInverse) {
 		t.Errorf("the second operation's inverse: %s, want %s", second.inverse, wantInverse)
+	}
+	if undo, err := json.Marshal(wireUndo(res.Undo)); err != nil || !sameJSON(t, undo, wantInverse) {
+		t.Errorf("the second batch's undo: %s, want %s", undo, wantInverse)
 	}
 	wantRefs := fmt.Sprintf(`[{"kind": "node", "id": %q, "rev": 3}, {"kind": "node", "id": %q, "rev": 1}]`, a, b)
 	if !sameJSON(t, second.entityRef, wantRefs) {
@@ -715,8 +721,10 @@ func TestNotFound(t *testing.T) {
 // ErrProjectArchived, to a role that its operation allows, and a project in
 // the trash refuses every batch with a command that does not apply there as
 // one that does not exist, whatever the actor's role, so that a refusal of
-// the role does not tell that it exists; a project whose time in the trash
-// has passed refuses every batch so; and a batch that waits for the lock of
+// the role does not tell that it exists, but either applies a batch with a
+// command that unarchives the project, or restores it, whatever its other
+// commands; a project whose time in the trash has passed refuses every batch
+// as one that does not exist; and a batch that waits for the lock of
 // a project that another transaction archives, or deletes to the trash,
 // meanwhile is refused too.
 //
@@ -754,6 +762,14 @@ func TestProjectStates(t *testing.T) {
 		t.Errorf("the refused batches wrote %+v, where there was %+v", after, before)
 	}
 	try("touch an archived project", viewerUser, nil, touch)
+	// A batch that unarchives the project applies whatever its other
+	// commands, as the undo of one that archived it with them does.
+	try("change and unarchive an archived project", ownerUser, nil, update,
+		command(t, noteUnarchive, noteIDPayload{ID: note}, nil))
+	if after := w.written(t); after.seq != before.seq+2 {
+		t.Errorf("the batches of an archived project wrote %+v, where there was %+v: want two, the touch and the "+
+			"change", after, before)
+	}
 
 	w.exec(t, "UPDATE project SET deleted_at = now(), hard_delete_after = now() + interval '1 day' WHERE id = $1",
 		w.project)
@@ -767,6 +783,17 @@ func TestProjectStates(t *testing.T) {
 	}
 	try("revive a project in the trash", ownerUser, nil, revive)
 	try("revive a project in the trash", outsiderUser, ErrNotFound, revive)
+	// A batch that restores the project applies whatever its other commands,
+	// as the undo of one that deleted it with them does, but for the
+	// project's archival: this one is archived too, so a batch that changes
+	// it also unarchives it.
+	restore := command(t, noteUntrash, noteIDPayload{ID: note}, nil)
+	unarchive := command(t, noteUnarchive, noteIDPayload{ID: note}, nil)
+	try("change and restore an archived project in the trash", ownerUser, ErrProjectArchived, update, restore)
+	try("change, restore, and unarchive an archived project in the trash", outsiderUser, ErrNotFound, update,
+		restore, unarchive)
+	try("change, restore, and unarchive an archived project in the trash", ownerUser, nil, update, restore,
+		unarchive)
 
 	w.exec(t, "UPDATE project SET hard_delete_after = now() - interval '1 second' WHERE id = $1", w.project)
 	try("revive a project whose time in the trash has passed", ownerUser, ErrNotFound, revive)
@@ -925,10 +952,11 @@ func TestIsolation(t *testing.T) {
 		Denied: true,
 		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
 			id := ids.New()
-			return []ids.UUID{id}, queries.New(tx).InsertOperation(ctx, queries.InsertOperationParams{ID: nullUUID(id),
+			_, err := queries.New(tx).InsertOperation(ctx, queries.InsertOperationParams{ID: nullUUID(id),
 				WorkspaceID: nullUUID(target.ID), ProjectID: nullUUID(target.Rows["project"]), Seq: 1,
 				CommandIds: []pgtype.UUID{nullUUID(ids.New())}, ActorUserID: nullUUID(target.UserID),
 				Type: string(noteCreate), Payload: []byte("[]"), EntityRefs: []byte("[]")})
+			return []ids.UUID{id}, err
 		},
 	})
 	f.Check(t, isolationtest.Op{
@@ -1070,16 +1098,19 @@ func TestUndo(t *testing.T) {
 // TestUndoBound checks that the pipeline refuses a command whose inverse
 // would take its batch's undo past the pipeline's bound, the payloads of its
 // commands' inverses' steps as JSON encodes them for the operation log,
-// escapes and all, at the field that its type's UndoField names, or at the
-// payload, though the command's own inverse fits, and that it refuses one
-// whose Inverse stops with ErrUndoTooLarge alike, once Tx.UndoRoom tells it
-// the room that the inverses of the commands before it leave, that a batch
-// whose undo takes the bound exactly applies, and that the batch that undoes
-// another is bounded alike, by its own inverse.
+// escapes and all, and the revisions that they expect, at the field that its
+// type's UndoField names, or at the payload, though the command's own inverse
+// fits, and that it refuses one whose Inverse stops with ErrUndoTooLarge
+// alike, once Tx.UndoRoom tells it the room that the inverses of the commands
+// before it leave, with what they expect, that a batch whose undo takes the
+// bound exactly applies, that the undo expects, and the bound counts, the
+// revision of an entity that several of the batch's commands change once for
+// each of them, and that the batch that undoes another is bounded alike, by
+// its own inverse.
 func TestUndoBound(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
-	_, xID := newNote()
+	x, xID := newNote()
 	_, yID := newNote()
 	// The log escapes <, as \u003c, which then takes six bytes.
 	body := strings.Repeat("<", 50)
@@ -1099,8 +1130,10 @@ func TestUndoBound(t *testing.T) {
 	before := w.written(t)
 	var r *RefusedError
 	if _, err := bounded(2*one-1).Apply(ctx, w.as(ownerUser), w.project, []Command{update(xID),
-		update(yID)}); !errors.As(err, &r) || r.Command != 1 || r.Field != "body" || r.Reason != nil {
-		t.Errorf("a batch whose undo would take the bound by a byte: %v, want a refusal of command 1 at body", err)
+		update(yID)}); !errors.As(err, &r) || r.Command != 1 || r.Field != "body" ||
+		!errors.Is(r.Reason, ErrUndoTooLarge) {
+		t.Errorf("a batch whose undo would take the bound by a byte: %v, want a refusal of command 1 at body, for "+
+			"its undo", err)
 	}
 	room := func(n int) Command {
 		return command(t, noteBadInverse, badInversePayload{ID: xID, Step: noteDelete, Room: n}, nil)
@@ -1109,22 +1142,59 @@ func TestUndoBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bounded(one+len(deletion)).Apply(ctx, w.as(ownerUser), w.project, []Command{update(xID),
-		room(len(deletion) + 1)}); !errors.As(err, &r) || r.Command != 1 || r.Field != "" {
+	// The update's undo expects the note's revision, which the bound counts
+	// once the update has applied, before the next command's inverse.
+	expected := ExpectedRevBytes(noteRef(x))
+	if _, err := bounded(one+expected-1).Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{update(xID)}); !errors.As(err, &r) || r.Command != 0 || r.Field != "body" ||
+		!errors.Is(r.Reason, ErrUndoTooLarge) {
+		t.Errorf("a batch whose undo's expected revision would take the bound by a byte: %v, want a refusal of "+
+			"command 0 at body", err)
+	}
+	if _, err := bounded(one+expected+len(deletion)).Apply(ctx, w.as(ownerUser), w.project, []Command{update(xID),
+		room(len(deletion) + 1)}); !errors.As(err, &r) || r.Command != 1 || r.Field != "" ||
+		!errors.Is(r.Reason, ErrUndoTooLarge) {
 		t.Errorf("a batch whose second command's inverse stops for want of room: %v, want a refusal of command 1 "+
 			"at the payload", err)
 	}
 	if after := w.written(t); after != before {
 		t.Errorf("the refused batches wrote %+v, where there was %+v", after, before)
 	}
-	res, err := bounded(one+len(deletion)).Apply(ctx, w.as(ownerUser), w.project,
+	res, err := bounded(one+expected+len(deletion)).Apply(ctx, w.as(ownerUser), w.project,
 		[]Command{update(xID), room(len(deletion))})
 	if err != nil {
 		t.Fatalf("a batch whose undo takes the bound exactly: %v", err)
 	}
-	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, `[{"type": "note.delete", "payload": {"id": "`+xID+
-		`"}}, {"type": "note.update", "payload": {"id": "`+xID+`", "body": "`+body+`"}}]`) {
+	// The second command changed nothing, so the undo holds none of its
+	// steps, which the bound counted all the same while it applied
+	// (TestUndoOfNoChange).
+	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, `[{"type": "note.update", "payload": {"id": "`+xID+
+		`", "body": "`+body+`"}, "expected_rev": {"`+xID+`": 2}}]`) {
 		t.Errorf("the batch's inverse is %s", o.inverse)
+	}
+
+	// The undo of a batch whose commands both change the note expects its
+	// revision by the undo of each, which the bound counts for each, so that
+	// either, sent alone, expects what it writes back (TestUndoInParts).
+	small, err := json.Marshal(notePayload{ID: xID, Body: "y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	twice := func() []Command {
+		return []Command{command(t, noteUpdate, notePayload{ID: xID, Body: "z"}, nil), update(xID)}
+	}
+	if _, err := bounded(2*len(small)+2*expected-1).Apply(ctx, w.as(ownerUser), w.project,
+		twice()); !errors.As(err, &r) || r.Command != 1 || r.Field != "body" {
+		t.Errorf("a batch of two changes of the note whose undo would take the bound by a byte: %v, want a "+
+			"refusal of command 1 at body", err)
+	}
+	if res, err = bounded(2*len(small)+2*expected).Apply(ctx, w.as(ownerUser), w.project, twice()); err != nil {
+		t.Fatalf("a batch of two changes of the note whose undo takes the bound exactly: %v", err)
+	}
+	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, `[{"type": "note.update", "payload": {"id": "`+xID+
+		`", "body": "z"}, "expected_rev": {"`+xID+`": 4}}, {"type": "note.update", "payload": {"id": "`+xID+
+		`", "body": "y"}, "expected_rev": {"`+xID+`": 4}}]`) {
+		t.Errorf("the inverse of a batch of two changes of the note is %s", o.inverse)
 	}
 
 	// The batch that undoes another is bounded alike, by its own inverse,
@@ -1184,7 +1254,8 @@ func TestUndoOfAStoredValue(t *testing.T) {
 		t.Fatalf("a change of a stored body that CheckNew refuses: %v", err)
 	}
 	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse,
-		`[{"type": "note.update", "payload": {"id": "`+xID+`", "body": "bell\u0007"}}]`) {
+		`[{"type": "note.update", "payload": {"id": "`+xID+`", "body": "bell\u0007"}, "expected_rev": {"`+xID+
+			`": 2}}]`) {
 		t.Errorf("the change's inverse is %s", o.inverse)
 	}
 	var steps []struct {

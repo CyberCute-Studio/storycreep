@@ -161,11 +161,12 @@ func (q *Queries) InsertBatchRecord(ctx context.Context, arg InsertBatchRecordPa
 	return err
 }
 
-const insertOperation = `-- name: InsertOperation :exec
+const insertOperation = `-- name: InsertOperation :one
 INSERT INTO operation (id, workspace_id, project_id, seq, command_ids, actor_user_id, actor_token_id, type,
     payload, inverse, entity_refs)
 VALUES ($1, $2, $3, $4, $5::uuid[], $6, $7, $8,
     $9, $10, $11)
+RETURNING inverse
 `
 
 type InsertOperationParams struct {
@@ -182,9 +183,11 @@ type InsertOperationParams struct {
 	EntityRefs   []byte
 }
 
-// InsertOperation appends a batch of commands to the project's operation log.
-func (q *Queries) InsertOperation(ctx context.Context, arg InsertOperationParams) error {
-	_, err := q.db.Exec(ctx, insertOperation,
+// InsertOperation appends a batch of commands to the project's operation log,
+// and returns its inverse as the log keeps it, so that the batch's answer
+// holds the undo that a replay of it reads again (OperationInverse).
+func (q *Queries) InsertOperation(ctx context.Context, arg InsertOperationParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, insertOperation,
 		arg.ID,
 		arg.WorkspaceID,
 		arg.ProjectID,
@@ -197,7 +200,9 @@ func (q *Queries) InsertOperation(ctx context.Context, arg InsertOperationParams
 		arg.Inverse,
 		arg.EntityRefs,
 	)
-	return err
+	var inverse []byte
+	err := row.Scan(&inverse)
+	return inverse, err
 }
 
 const lockProjectSeq = `-- name: LockProjectSeq :one
@@ -264,6 +269,25 @@ func (q *Queries) OperationEntityRefs(ctx context.Context, arg OperationEntityRe
 		return nil, err
 	}
 	return items, nil
+}
+
+const operationInverse = `-- name: OperationInverse :one
+SELECT inverse FROM operation WHERE workspace_id = $1 AND project_id = $2 AND seq = $3
+`
+
+type OperationInverseParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Seq         int64
+}
+
+// OperationInverse returns the inverse of the project's operation of the seq,
+// or null for one that cannot be undone.
+func (q *Queries) OperationInverse(ctx context.Context, arg OperationInverseParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, operationInverse, arg.WorkspaceID, arg.ProjectID, arg.Seq)
+	var inverse []byte
+	err := row.Scan(&inverse)
+	return inverse, err
 }
 
 const projectGrantRole = `-- name: ProjectGrantRole :one

@@ -702,6 +702,22 @@ func TestIdempotencyIsolation(t *testing.T) {
 		},
 	})
 	f.Check(t, isolationtest.Op{
+		Name: "the inverse of an operation",
+		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
+			var seq int64
+			if err := f.Admin().QueryRow(ctx, "SELECT seq FROM operation WHERE id = $1",
+				target.Rows["operation"]).Scan(&seq); err != nil {
+				return nil, err
+			}
+			_, err := queries.New(tx).OperationInverse(ctx, queries.OperationInverseParams{
+				WorkspaceID: nullUUID(target.ID), ProjectID: nullUUID(target.Rows["project"]), Seq: seq})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, nil
+			}
+			return []ids.UUID{target.Rows["operation"]}, err
+		},
+	})
+	f.Check(t, isolationtest.Op{
 		Name:   "a new idempotency record",
 		Denied: true,
 		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {

@@ -84,14 +84,35 @@ type Spec[P any] struct {
 	// Archived says that the command applies to an archived project too, as
 	// unarchiving, deleting, and restoring it do. The pipeline refuses a batch
 	// of an archived project with any other command with ErrProjectArchived,
-	// because an archived project is read-only (PRD FR-PROJ-01 AC2).
+	// because an archived project is read-only (PRD FR-PROJ-01 AC2), unless
+	// one of its commands unarchives the project (Unarchives).
 	Archived bool
 	// Trashed says that the command applies to a project in the trash too, as
 	// restoring it does. The pipeline refuses a batch of a project in the
 	// trash with any other command with ErrNotFound, as one of a project that
-	// does not exist, whoever sends it (FR-PROJ-01 AC3). A project in the
-	// trash may be archived too, so a command with Trashed needs Archived.
+	// does not exist, whoever sends it (FR-PROJ-01 AC3), unless one of its
+	// commands restores the project (Restores). A project in the trash may be
+	// archived too, so a command with Trashed needs Archived.
 	Trashed bool
+	// Unarchives says that the command takes the project out of its archive,
+	// as unarchiving it does, and Restores that it takes it out of the
+	// trash, as restoring it does. A batch of an archived project with a
+	// command that Unarchives is not refused for the project's archival, and
+	// one of a project in the trash with a command that Restores not for the
+	// trash, whatever their other commands, as a batch of its own that
+	// unarchived or restored the project first would not be, so that the undo
+	// of a batch that archived or deleted the project with other commands,
+	// which unarchives or restores it, and undoes the others, which the
+	// pipeline checks against the project as it is before the batch, applies
+	// (PRD FR-EDIT-08). A project both archived and in the trash is archived
+	// still once restored, so a batch of it that restores it applies other
+	// commands only if it unarchives it too, or they apply to an archived
+	// project (Archived). What a command that Restores counts of a key once
+	// a batch of a project in the trash has applied is all that the batch
+	// adds to the key (Tx.AddUsageOnceApplied). A command that Unarchives applies to an
+	// archived project, and one that Restores to one in the trash, so
+	// Unarchives needs Archived, and Restores Trashed.
+	Unarchives, Restores bool
 	// Check returns what is wrong with a payload that its schema cannot say,
 	// such as an identifier of the wrong type, with each field's name in the
 	// payload, as name or items[2].id, or nil. It reads nothing but p. The
@@ -119,9 +140,12 @@ type Spec[P any] struct {
 	// batch is NonUndoable, which leaves the batch without an inverse. It
 	// only reads, so it reports no change (Tx.Changed). The pipeline refuses
 	// the command, at UndoField, once its steps would take the batch's undo
-	// past the pipeline's bound (Options.MaxUndoBytes), which an Inverse
-	// whose steps grow with the project stops before (Tx.UndoRoom,
-	// ErrUndoTooLarge). Exactly one of Inverse and NonUndoable is set.
+	// past the pipeline's bound (Options.MaxUndoBytes), unless it changes
+	// nothing, whose steps the batch's undo leaves out (Result.Undo). An
+	// Inverse whose steps grow with the project stops before (Tx.UndoRoom,
+	// ErrUndoTooLarge), once they hold some of a part of the project that the
+	// command changes, so that it does not refuse a command that changes
+	// nothing either. Exactly one of Inverse and NonUndoable is set.
 	Inverse func(ctx context.Context, tx *Tx, p P) ([]Step, error)
 	// UndoField is the field of the payload, named as in its JSON, at which
 	// the pipeline refuses the command when its inverse would take the
@@ -137,7 +161,9 @@ type Spec[P any] struct {
 	// Apply applies the command in the batch's transaction, and reports each
 	// entity that it changes with Tx.Changed, and what it adds to the
 	// workspace's usage with Tx.AddUsage. An error refuses the whole batch,
-	// which then changes nothing.
+	// which then changes nothing. A command whose Apply reports no change
+	// changed nothing, and the batch's undo holds none of its inverse's
+	// steps (Result.Undo).
 	Apply func(ctx context.Context, tx *Tx, p P) error
 }
 
@@ -154,8 +180,12 @@ type Limit[P any] struct {
 }
 
 // Step is a command of an inverse: its type and its payload, which encodes as
-// the type's payload does. The command ID and the revisions are the undo's
-// to give (plan item 37).
+// the type's payload does. The pipeline gives it the revisions that it
+// expects, those of the entities of the kinds that its type touches that its
+// command changed, as the batch left them, each once, as it gives them to
+// every other step of the command's inverse whose type touches their kinds
+// (Result.Undo), and the client that sends the undo gives it its command ID
+// (plan item 37).
 type Step struct {
 	Type    Type
 	Payload any
@@ -271,6 +301,14 @@ func (r *Registry) Types() []Type {
 	return types
 }
 
+// Undoable returns the registered types of command that have an inverse
+// (Spec.Inverse), in order. Each of the others is marked as having none
+// (Spec.NonUndoable), as Register makes sure, and its batches cannot be
+// undone (PRD FR-EDIT-08 AC1).
+func (r *Registry) Undoable() []Type {
+	return slices.DeleteFunc(r.Types(), func(t Type) bool { return r.specs[t].inverse == nil })
+}
+
 // RegisterEntity registers the kind of entity e. It panics if e lacks a
 // function, or if its kind is not one or is registered already.
 func RegisterEntity(r *Registry, e Entity) {
@@ -322,10 +360,11 @@ type spec struct {
 	limits  []entitlements.LimitKey
 	// adds return how much the command adds to each of limits, or nil for 1.
 	adds []func(ctx context.Context, tx *Tx, payload any) (int64, error)
-	// archived, trashed, and sessionOnly are Spec.Archived, Spec.Trashed, and
+	// archived, trashed, unarchives, restores, and sessionOnly are
+	// Spec.Archived, Spec.Trashed, Spec.Unarchives, Spec.Restores, and
 	// Spec.SessionOnly, and undoField is Spec.UndoField.
-	archived, trashed, sessionOnly bool
-	undoField                      string
+	archived, trashed, unarchives, restores, sessionOnly bool
+	undoField                                            string
 	// decode decodes a payload that its schema allows, checks it, and
 	// returns it: with Check, and with CheckNew too unless it is a step's.
 	decode func(raw []byte, step bool) (payload any, problems input.FieldErrors)
@@ -367,6 +406,10 @@ func Register[P any](r *Registry, s Spec[P]) {
 		// refuse a batch of it with ErrProjectArchived, which tells that the
 		// project exists, where any other batch of it is not found.
 		fail("a command that applies to a project in the trash applies to an archived one too (Archived)")
+	case s.Unarchives && !s.Archived:
+		fail("a command that unarchives the project applies to an archived one (Archived)")
+	case s.Restores && !s.Trashed:
+		fail("a command that restores the project applies to one in the trash (Trashed)")
 	case s.Apply == nil:
 		fail("the command has no Apply")
 	case pt.Kind() != reflect.Struct:
@@ -406,7 +449,8 @@ func Register[P any](r *Registry, s Spec[P]) {
 	sp := &spec{typ: s.Type, capability: s.Capability, scope: s.Scope, touches: slices.Clone(s.Touches),
 		payload: pt, schema: r.schemas.Schema(pt, true, ""), limits: keys,
 		adds: make([]func(context.Context, *Tx, any) (int64, error), len(s.Limits)), archived: s.Archived,
-		trashed: s.Trashed, sessionOnly: s.SessionOnly, undoField: s.UndoField}
+		trashed: s.Trashed, unarchives: s.Unarchives, restores: s.Restores, sessionOnly: s.SessionOnly,
+		undoField: s.UndoField}
 	for i, l := range s.Limits {
 		if l.Adds != nil {
 			sp.adds[i] = func(ctx context.Context, tx *Tx, payload any) (int64, error) {
