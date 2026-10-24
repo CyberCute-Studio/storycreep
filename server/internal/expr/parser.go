@@ -9,10 +9,13 @@ import (
 // descent, and stops at the first token that it cannot read, with the error
 // that it fails with (fail).
 type parser struct {
-	ctx   Context
-	toks  []token
-	pos   int // the current token's index
-	depth int // how many parentheses are open
+	ctx Context
+	lex *lexer
+	tok token // the current token
+	// ahead is the token after the current one, once peek has read it.
+	ahead    token
+	hasAhead bool
+	depth    int // how many parentheses are open
 }
 
 // bailout carries the parser's error up from where it fails to parse, which
@@ -35,26 +38,33 @@ func (p *parser) parse() (n Node, err error) {
 			n, err = nil, b.err
 		}
 	}()
+	p.next()
 	if p.ctx == ContextScript {
 		return p.script(), nil
 	}
 	n, _ = p.expression()
-	if p.tok().kind != tEOF {
+	if p.tok.kind != tEOF {
 		p.unexpected()
 	}
 	return n, nil
 }
 
-// tok returns the current token.
-func (p *parser) tok() token {
-	return p.toks[p.pos]
+// next steps past the current token, to the one after it, which is a tEOF
+// again once the current one is the tEOF.
+func (p *parser) next() {
+	if p.hasAhead {
+		p.tok, p.hasAhead = p.ahead, false
+		return
+	}
+	p.tok = p.lex.next()
 }
 
-// next steps past the current token, unless it is the last, the tEOF.
-func (p *parser) next() {
-	if p.pos < len(p.toks)-1 {
-		p.pos++
+// peek returns the kind of the token after the current one.
+func (p *parser) peek() tokenKind {
+	if !p.hasAhead {
+		p.ahead, p.hasAhead = p.lex.next(), true
 	}
+	return p.ahead.kind
 }
 
 // unexpected fails at the current token, which nothing that the parser has
@@ -63,7 +73,7 @@ func (p *parser) next() {
 // ConditionMustBePure for an assignment operator in a condition, wherever it
 // is, as in a + (x = 1); and otherwise UnexpectedToken.
 func (p *parser) unexpected() {
-	t := p.tok()
+	t := &p.tok
 	switch {
 	case t.kind == tError:
 		panic(bailout{t.err})
@@ -76,50 +86,52 @@ func (p *parser) unexpected() {
 }
 
 // script reads a script: statements, each ended by a ;, a line break that
-// ends it (lex), or the end of the source, with as many ; and line breaks as
-// a writer likes before, between, and after them.
+// ends it (lexer.next), or the end of the source, with as many ; and line
+// breaks as a writer likes before, between, and after them.
 func (p *parser) script() *Script {
 	s := &Script{Statements: []Node{}}
 	for {
-		for k := p.tok().kind; k == tSemicolon || k == tNewline; k = p.tok().kind {
+		for p.tok.kind == tSemicolon || p.tok.kind == tNewline {
 			p.next()
 		}
-		if p.tok().kind == tEOF {
-			s.Src = Range{0, p.tok().End}
+		if p.tok.kind == tEOF {
+			s.Src = Range{0, p.tok.End}
 			return s
 		}
 		s.Statements = append(s.Statements, p.statement())
-		if k := p.tok().kind; k != tSemicolon && k != tNewline && k != tEOF {
-			p.unexpected()
-		}
 	}
 }
 
-// assignOps are the assignment operators, by their tokens.
-var assignOps = map[tokenKind]AssignOp{
+// assignOps are the assignment operators, by their tokens, and "" for every
+// other token.
+var assignOps = [tokenKinds]AssignOp{
 	tAssign: OpAssign, tAddAssign: OpAddAssign, tSubAssign: OpSubAssign, tMulAssign: OpMulAssign,
 	tDivAssign: OpDivAssign, tModAssign: OpModAssign,
 }
 
-// statement reads a statement of a script: an assignment to a variable or an
-// attribute, or a call. It reads an expression first, so that a statement
-// that is neither is InvalidStatement, and an assignment to anything else
-// InvalidAssignmentTarget, over the whole expression as written, parentheses
-// and all.
+// statement reads a statement of a script, to the token that ends it: an
+// assignment to a variable or an attribute, or a call. It reads an expression
+// first, so that an assignment to anything but a variable or an attribute is
+// InvalidAssignmentTarget, and a statement that is neither an assignment nor
+// a call InvalidStatement, over the whole expression as written, parentheses
+// and all, once the token after it ends it; any other token after it is that
+// token's error, as in a condition.
 func (p *parser) statement() Node {
 	e, written := p.expression()
-	if op := assignOps[p.tok().kind]; op != "" {
+	if op := assignOps[p.tok.kind]; op != "" {
 		switch e.(type) {
 		case *Var, *Attr:
 			// A name in parentheses is written over more than its range.
 			if written == e.Range() {
 				p.next()
 				v, rest := p.expression()
+				p.end()
 				return &Assign{Op: op, Target: e, Value: v, Src: Range{written.Start, rest.End}}
 			}
 		}
 		p.fail(InvalidAssignmentTarget, written)
 	}
+	p.end()
 	if c, ok := e.(*Call); ok && written == c.Src {
 		return c
 	}
@@ -127,9 +139,18 @@ func (p *parser) statement() Node {
 	return nil
 }
 
+// end fails unless the current token ends a statement: a ;, a line break that
+// ends it, or the end of the source.
+func (p *parser) end() {
+	if k := p.tok.kind; k != tSemicolon && k != tNewline && k != tEOF {
+		p.unexpected()
+	}
+}
+
 // levels are the binary operators by their tokens, by precedence, from the
-// lowest (§5.8.2). Each level's operators are left-associative.
-var levels = [...]map[tokenKind]BinaryOp{
+// lowest (§5.8.2), each level's "" for a token that is none of its operators.
+// Each level's operators are left-associative.
+var levels = [...][tokenKinds]BinaryOp{
 	{tOr: OpOr},
 	{tAnd: OpAnd},
 	{tEq: OpEq, tNe: OpNe},
@@ -152,7 +173,7 @@ func (p *parser) binary(level int) (Node, Range) {
 	}
 	left, written := p.binary(level + 1)
 	for {
-		op := levels[level][p.tok().kind]
+		op := levels[level][p.tok.kind]
 		if op == "" {
 			return left, written
 		}
@@ -167,9 +188,8 @@ func (p *parser) binary(level int) (Node, Range) {
 // applies to a primary, so that --x is UnexpectedToken at its second -, and
 // -(-x) is read.
 func (p *parser) unary() (Node, Range) {
-	t := p.tok()
 	var op UnaryOp
-	switch t.kind {
+	switch p.tok.kind {
 	case tNot:
 		op = OpNot
 	case tMinus:
@@ -177,16 +197,17 @@ func (p *parser) unary() (Node, Range) {
 	default:
 		return p.primary()
 	}
+	start := p.tok.Start
 	p.next()
 	operand, written := p.primary()
-	n := &Unary{Op: op, Operand: operand, Src: Range{t.Start, written.End}}
+	n := &Unary{Op: op, Operand: operand, Src: Range{start, written.End}}
 	return n, n.Src
 }
 
 // primary reads a literal, a name, a call, a node reference, or an expression
 // in parentheses.
 func (p *parser) primary() (Node, Range) {
-	t := p.tok()
+	t := &p.tok
 	var n Node
 	switch t.kind {
 	case tInt:
@@ -204,10 +225,11 @@ func (p *parser) primary() (Node, Range) {
 	case tReserved:
 		p.fail(ReservedWord, t.Range)
 	case tLParen:
+		start := t.Start
 		p.open()
 		e, _ := p.expression()
 		end := p.close()
-		return e, Range{t.Start, end}
+		return e, Range{start, end}
 	default:
 		p.unexpected()
 	}
@@ -220,7 +242,7 @@ func (p *parser) primary() (Node, Range) {
 // open already.
 func (p *parser) open() {
 	if p.depth == MaxDepth {
-		p.fail(ASTTooDeep, p.tok().Range)
+		p.fail(ASTTooDeep, p.tok.Range)
 	}
 	p.depth++
 	p.next()
@@ -229,22 +251,22 @@ func (p *parser) open() {
 // close steps past the closing parenthesis that the current token must be,
 // and returns where it ends.
 func (p *parser) close() int {
-	t := p.tok()
-	if t.kind != tRParen {
+	if p.tok.kind != tRParen {
 		p.unexpected()
 	}
+	end := p.tok.End
 	p.depth--
 	p.next()
-	return t.End
+	return end
 }
 
 // nameOrCall reads what starts with an identifier: a call or a node reference,
 // when a parenthesis follows it, and otherwise a variable, by its key, or an
 // attribute, as <component>.<attribute> or cmp.<component>.<attribute>.
 func (p *parser) nameOrCall() (Node, Range) {
-	first := p.tok()
+	first := p.tok
 	p.next()
-	if p.tok().kind == tLParen {
+	if p.tok.kind == tLParen {
 		if first.text == "node" {
 			return p.nodeRef(first)
 		}
@@ -272,9 +294,9 @@ func (p *parser) nameOrCall() (Node, Range) {
 // board.<key>. The qualifier without a dot after it is ReservedWord, and with
 // more than one part after it, InvalidName.
 func (p *parser) scoped() (Node, Range) {
-	q := p.tok()
+	q := p.tok
 	p.next()
-	if p.tok().kind != tDot {
+	if p.tok.kind != tDot {
 		p.fail(ReservedWord, q.Range)
 	}
 	parts := p.parts(q)
@@ -295,12 +317,12 @@ func (p *parser) scoped() (Node, Range) {
 // word after a dot is ReservedWord.
 func (p *parser) parts(first token) []token {
 	parts := []token{first}
-	for p.tok().kind == tDot {
+	for p.tok.kind == tDot {
 		p.next()
-		t := p.tok()
+		t := &p.tok
 		switch {
 		case t.kind == tIdent:
-			parts = append(parts, t)
+			parts = append(parts, *t)
 			p.next()
 		case t.keyword:
 			p.fail(ReservedWord, t.Range)
@@ -325,13 +347,13 @@ func (p *parser) call(name token) (Node, Range) {
 // its closing parenthesis, which it leaves.
 func (p *parser) arguments() []Node {
 	args := []Node{}
-	if p.tok().kind == tRParen {
+	if p.tok.kind == tRParen {
 		return args
 	}
 	for {
 		a, _ := p.expression()
 		args = append(args, a)
-		if p.tok().kind != tComma {
+		if p.tok.kind != tComma {
 			return args
 		}
 		p.next()
@@ -344,7 +366,8 @@ func (p *parser) arguments() []Node {
 // anything else, once the parser has read it to its closing parenthesis.
 func (p *parser) nodeRef(name token) (Node, Range) {
 	p.open()
-	if arg := p.tok(); arg.kind == tString && p.toks[p.pos+1].kind == tRParen {
+	if p.tok.kind == tString && p.peek() == tRParen {
+		arg := p.tok
 		p.next()
 		end := p.close()
 		u, err := ids.Decode(ids.Node, arg.text)

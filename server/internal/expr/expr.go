@@ -58,10 +58,17 @@ const (
 // always an *Error: the first problem that it meets reading the source from
 // left to right. It panics if ctx is neither ContextCondition nor
 // ContextScript.
+//
+// Parse never recurses deeper than parentheses nest, but its AST may be deeper
+// than MaxDepth, as a long chain of binary operators, which nest without
+// parentheses, makes it, until the AST depth of §5.8.6 is checked of it (plan
+// item 40). Encode writes an AST of any depth; any other walk of an AST that
+// has not been checked so must not recurse once per level either, since a
+// stack that it exhausts is a fatal error, which nothing recovers from.
 func Parse(source string, ctx Context) (Node, error) {
 	if ctx != ContextCondition && ctx != ContextScript {
 		panic(fmt.Sprintf("expr: %q is no context of a source", ctx))
 	}
-	p := &parser{ctx: ctx, toks: lex(source, ctx)}
+	p := &parser{ctx: ctx, lex: &lexer{src: source, ctx: ctx}}
 	return p.parse()
 }

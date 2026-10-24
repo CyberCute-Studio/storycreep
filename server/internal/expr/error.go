@@ -12,7 +12,7 @@ const (
 	// InvalidCharacter is a character that starts no token: outside a string
 	// or a comment, one that is not ASCII, or ASCII that the language does
 	// not use, as @ or a single &, and anywhere, a NUL, which no text holds,
-	// or a byte that is not UTF-8.
+	// or a byte that is not UTF-8, right after a string's backslash too.
 	InvalidCharacter Code = "invalid_character"
 	// UnterminatedString is a string literal whose closing quote does not
 	// come before the end of its line or of the source.
@@ -50,13 +50,13 @@ const (
 	// that holds a node's ID.
 	InvalidNodeRef Code = "invalid_node_ref"
 	// InvalidStatement is a statement of a script that is neither an
-	// assignment nor a call.
+	// assignment nor a call, once the token after it ends it.
 	InvalidStatement Code = "invalid_statement"
 	// InvalidAssignmentTarget is an assignment to something other than a
 	// variable or an attribute, or to one in parentheses.
 	InvalidAssignmentTarget Code = "invalid_assignment_target"
-	// ConditionMustBePure is an assignment operator in a condition
-	// (FR-EXPR-02 AC3).
+	// ConditionMustBePure is an assignment operator in a condition, wherever
+	// the parser stops at it (FR-EXPR-02 AC3).
 	ConditionMustBePure Code = "condition_must_be_pure"
 	// ASTTooDeep is a parenthesis, of a group or of a call's arguments, that
 	// opens one more than MaxDepth of them.
@@ -81,7 +81,7 @@ var problems = map[Code]string{
 	InvalidNodeRef:          "a node(…) that does not hold one string literal of a node's ID",
 	InvalidStatement:        "a statement that is neither an assignment nor a call",
 	InvalidAssignmentTarget: "an assignment to something other than a variable or an attribute",
-	ConditionMustBePure:     "an assignment in a condition",
+	ConditionMustBePure:     "an assignment operator in a condition",
 	ASTTooDeep:              fmt.Sprintf("parentheses nested more than %d deep", MaxDepth),
 }
 

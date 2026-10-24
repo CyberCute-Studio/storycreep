@@ -51,6 +51,9 @@ const (
 	tMulAssign
 	tDivAssign
 	tModAssign
+	// tokenKinds is the number of kinds of token, which a table by kind is as
+	// long as.
+	tokenKinds
 )
 
 // token is a token of a source.
@@ -72,78 +75,112 @@ func errorToken(code Code, r Range) token {
 	return token{kind: tError, Range: r, err: &Error{Code: code, Range: r}}
 }
 
-// lex splits src into tokens, the last of which is a tEOF, read as the source
-// of ctx. It stops at the first token that it cannot read, a tError, and ends
-// the tokens there, since the parser stops there at the latest.
+// lexer reads a source's tokens, one at a time, as the parser asks for them
+// (next), so that a source that the parser stops in early costs no more than
+// what it read of it. It counts the source's characters in code points.
+type lexer struct {
+	src string
+	ctx Context
+	i   int // the byte offset of the next character
+	at  int // the code point offset of the next character
+	// prev is the kind of the last token that next returned, or tEOF before
+	// the first.
+	prev  tokenKind
+	depth int // how many parentheses are open
+	// pending is the token that next read after a line break that ends a
+	// statement, which it returns after the line break's tNewline.
+	pending    token
+	hasPending bool
+	// done is set once next has returned a tError or the tEOF, after which
+	// it returns a tEOF at eof.
+	done bool
+	eof  int
+}
+
+// next returns the source's next token, read as the source of l.ctx. Once it
+// has returned a token that it could not read, a tError, or the tEOF, which
+// the parser stops at at the latest, it returns a tEOF at its end.
 //
-// In a script, a line break outside parentheses after a name, a literal, or a
-// ), the tokens that an expression ends with, ends the statement before it,
-// and lex writes it as a tNewline: one for each run of line breaks, comments,
-// and white space. Every other line break, and every line break of a
-// condition, is white space, so that an expression can go on on the next line
-// after an operator, a comma, or an opening parenthesis.
-func lex(src string, ctx Context) []token {
-	l := &lexer{src: src}
-	var toks []token
-	prev := tEOF // the kind of the last token, or tEOF before the first
-	depth := 0   // how many parentheses are open
+// In a script, a line break outside parentheses after an identifier, a
+// literal, or a ), the tokens that an expression ends with, ends the
+// statement before it, and next returns it as a tNewline: one for each run of
+// line breaks, comments, and white space, before the token after the run, or
+// the error of a comment in the run. Every other line break, and every line
+// break of a condition, is white space, so that an expression can go on on
+// the next line after an operator, a comma, or an opening parenthesis.
+func (l *lexer) next() token {
+	switch {
+	case l.hasPending:
+		l.hasPending = false
+		return l.emit(l.pending)
+	case l.done:
+		return token{kind: tEOF, Range: Range{l.eof, l.eof}}
+	}
+	brk, t, bad := l.space()
+	switch {
+	case bad:
+	case l.i == len(l.src):
+		t = token{kind: tEOF, Range: Range{l.at, l.at}}
+	default:
+		t = l.token()
+	}
+	if brk >= 0 && l.ctx == ContextScript && l.depth == 0 && endsExpression(l.prev) {
+		l.pending, l.hasPending = t, true
+		return l.emit(token{kind: tNewline, Range: Range{brk, brk + 1}})
+	}
+	return l.emit(t)
+}
+
+// emit returns t, the token that next returns, once it has noted what t
+// changes of how the tokens after it are read.
+func (l *lexer) emit(t token) token {
+	switch t.kind {
+	case tError, tEOF:
+		l.done, l.eof = true, t.End
+	case tLParen:
+		l.depth++
+	case tRParen:
+		l.depth = max(l.depth-1, 0)
+	}
+	l.prev = t.kind
+	return t
+}
+
+// space steps past the white space and the comments at the next character,
+// and returns where the first line break among them is, or -1, and, with bad
+// set, the error of a comment among them that holds a forbidden character,
+// which it stops at.
+func (l *lexer) space() (brk int, t token, bad bool) {
+	brk = -1
 	for {
-		brk := -1 // where the first line break since the last token is, or -1
-	space:
-		for {
-			r, n := l.peek()
-			switch {
-			case r == ' ' || r == '\t':
-				l.step(n)
-			case r == '\n' || r == '\r':
-				if brk < 0 {
-					brk = l.at
-				}
-				l.step(n)
-			case r == '/' && strings.HasPrefix(l.src[l.i:], "//"):
-				if t, ok := l.comment(); !ok {
-					return append(toks, t, token{kind: tEOF, Range: Range{t.End, t.End}})
-				}
-			default:
-				break space
+		r, n := l.peek()
+		switch {
+		case r == ' ' || r == '\t':
+			l.step(n)
+		case r == '\n' || r == '\r':
+			if brk < 0 {
+				brk = l.at
 			}
+			l.step(n)
+		case r == '/' && strings.HasPrefix(l.src[l.i:], "//"):
+			if t, ok := l.comment(); !ok {
+				return brk, t, true
+			}
+		default:
+			return brk, token{}, false
 		}
-		if brk >= 0 && ctx == ContextScript && depth == 0 && endsExpression(prev) {
-			toks = append(toks, token{kind: tNewline, Range: Range{brk, brk + 1}})
-			prev = tNewline
-		}
-		if l.i == len(l.src) {
-			return append(toks, token{kind: tEOF, Range: Range{l.at, l.at}})
-		}
-		t := l.token()
-		toks = append(toks, t)
-		switch t.kind {
-		case tError:
-			return append(toks, token{kind: tEOF, Range: Range{t.End, t.End}})
-		case tLParen:
-			depth++
-		case tRParen:
-			depth = max(depth-1, 0)
-		}
-		prev = t.kind
 	}
 }
 
 // endsExpression reports whether an expression can end with a token of kind
-// k: a name, a literal, or a ).
+// k: an identifier, a literal, or a ). A qualifier, global or board, is not
+// one, since a dot and a key follow it.
 func endsExpression(k tokenKind) bool {
 	switch k {
 	case tIdent, tInt, tFloat, tString, tTrue, tFalse, tRParen:
 		return true
 	}
 	return false
-}
-
-// lexer reads a source's characters, counting them in code points.
-type lexer struct {
-	src string
-	i   int // the byte offset of the next character
-	at  int // the code point offset of the next character
 }
 
 // peek returns the next character and its length in bytes, or -1 and 0 at the
@@ -192,7 +229,7 @@ func (l *lexer) token() token {
 	start := l.at
 	r, n := l.peek()
 	switch {
-	case isWordStart(r):
+	case r < utf8.RuneSelf && ident.IsStart(byte(r)):
 		return l.word()
 	case '0' <= r && r <= '9':
 		return l.number()
@@ -254,23 +291,11 @@ func (l *lexer) token() token {
 	return errorToken(InvalidCharacter, Range{start, start + 1})
 }
 
-// isWordStart reports whether r starts an identifier: an ASCII letter or an
-// underscore.
-func isWordStart(r rune) bool {
-	return 'A' <= r && r <= 'Z' || 'a' <= r && r <= 'z' || r == '_'
-}
-
-// isWordByte reports whether c is a character of an identifier after its
-// first: an ASCII letter, digit, or underscore.
-func isWordByte(c byte) bool {
-	return isWordStart(rune(c)) || '0' <= c && c <= '9'
-}
-
 // word reads an identifier, [A-Za-z_][A-Za-z0-9_]*, or the reserved word of
 // that form.
 func (l *lexer) word() token {
 	start, from := l.at, l.i
-	for l.i < len(l.src) && isWordByte(l.src[l.i]) {
+	for l.i < len(l.src) && ident.IsPart(l.src[l.i]) {
 		l.step(1)
 	}
 	t := token{Range: Range{start, l.at}, text: l.src[from:l.i], keyword: true}
@@ -311,7 +336,7 @@ func (l *lexer) number() token {
 	for l.i < len(l.src) {
 		c := l.src[l.i]
 		sign := (c == '+' || c == '-') && (l.src[l.i-1] == 'e' || l.src[l.i-1] == 'E')
-		if !isWordByte(c) && c != '.' && !sign {
+		if !ident.IsPart(c) && c != '.' && !sign {
 			break
 		}
 		l.step(1)
@@ -407,13 +432,19 @@ func (l *lexer) string() token {
 // escape reads the escape at the next character, a backslash in the string
 // literal that opens at open, and returns the character that it stands for.
 // The range of an InvalidEscape is the backslash and the character after it,
-// or, after \u, the hexadecimal digits that follow, up to four, so that \u12
-// of \u12G4 is, and \uD800, a high surrogate without a low one's escape after
-// it, is.
+// or, after \u, the hexadecimal digits that follow, up to four, whatever ends
+// them, a line break or the end of the source too, so that \u12 of \u12G4 is,
+// and \uD800, a high surrogate without a low one's escape after it, is. A line
+// break or the end of the source right after the backslash is
+// UnterminatedString, and a forbidden character there InvalidCharacter, at
+// it, as anywhere else.
 func (l *lexer) escape(open int) (rune, *Error) {
 	at := l.at
 	l.step(1)
 	r, n := l.peek()
+	if forbidden(r, n) {
+		return 0, &Error{Code: InvalidCharacter, Range: Range{l.at, l.at + 1}}
+	}
 	switch r {
 	case -1, '\n', '\r':
 		return 0, &Error{Code: UnterminatedString, Range: Range{open, l.at}}
@@ -451,18 +482,15 @@ func (l *lexer) escape(open int) (rune, *Error) {
 // and returns their value, and whether there are four.
 func (l *lexer) hex4() (rune, bool) {
 	var u rune
-	for k := range 4 {
+	for range 4 {
 		v, ok := hexDigit(l.src, l.i)
 		if !ok {
 			return 0, false
 		}
 		u = u<<4 | v
 		l.step(1)
-		if k == 3 {
-			return u, true
-		}
 	}
-	return 0, false
+	return u, true
 }
 
 // lowSurrogate steps past a \uXXXX of a low surrogate at the next character,

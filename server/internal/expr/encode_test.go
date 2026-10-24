@@ -2,6 +2,8 @@ package expr
 
 import (
 	"math"
+	"runtime/debug"
+	"strings"
 	"testing"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/semantics"
@@ -118,10 +120,14 @@ func TestEncodeCanonical(t *testing.T) {
 }
 
 // TestEncodeRefuses checks that Encode refuses a node that is not one of an
-// AST, rather than write what no AST is.
+// AST, rather than write what no AST is: of what is no value, operator, or
+// string of the language, or of a kind that its place cannot be of.
 func TestEncodeRefuses(t *testing.T) {
 	t.Parallel()
 	lit := &Lit{Type: value.Int, Int: 1}
+	x := &Var{Name: "x"}
+	assign := &Assign{Op: OpAssign, Target: x, Value: lit}
+	script := func(statements ...Node) *Script { return &Script{Statements: statements} }
 	for _, n := range []Node{
 		nil,
 		(*Lit)(nil),
@@ -133,13 +139,46 @@ func TestEncodeRefuses(t *testing.T) {
 		&Lit{Type: value.Float, Float: math.NaN()},
 		&Lit{Type: value.String, Str: "\xff"},
 		&Lit{Type: value.Enum},
-		&Assign{Op: OpAssign, Target: lit, Value: lit},
-		&Assign{Op: "^=", Target: &Var{Name: "x"}, Value: lit},
-		&Script{Statements: []Node{lit}},
+		&Var{Name: "x\xff"},
+		&Var{Name: "x", Ref: "var_\xff"},
+		&Attr{Name: "a.b", Attribute: "atr_\xff"},
+		&NodeRef{Ref: "nd_\xff"},
+		&Call{Function: "f\xff"},
+		script(&Assign{Op: OpAssign, Target: lit, Value: lit}),
+		script(&Assign{Op: OpAssign, Target: &Call{Function: "f"}, Value: lit}),
+		script(&Assign{Op: "^=", Target: x, Value: lit}),
+		script(&Assign{Op: OpAssign, Target: x, Value: assign}),
+		script(lit),
+		script(x),
+		script(script()),
+		assign,
+		&Binary{Op: OpAdd, Left: assign, Right: lit},
 		&Call{Function: "f", Args: []Node{nil}},
+		&Call{Function: "f", Args: []Node{script()}},
+		&Unary{Op: OpNot, Operand: script(assign)},
 	} {
 		if b, err := Encode(n); err == nil {
 			t.Errorf("Encode(%#v) = %s; want an error", n, b)
 		}
+	}
+}
+
+// TestEncodeDeep checks that Encode writes an AST far deeper than the stack
+// that it is given would hold were it to recurse once per level, as a sum of
+// 100,001 ones is, which Parse reads, so that no AST that Parse returns can
+// exhaust the stack. It does not run in parallel, since the stack's limit is
+// the program's.
+func TestEncodeDeep(t *testing.T) {
+	defer debug.SetMaxStack(debug.SetMaxStack(1 << 20))
+	n, err := Parse("1"+strings.Repeat("+1", 100_000), ContextCondition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Encode(n)
+	one := `{"kind":"lit","type":"int","value":1}`
+	want := strings.Repeat(`{"kind":"binary","left":`, 100_000) + one +
+		strings.Repeat(`,"op":"add","right":`+one+"}", 100_000)
+	if err != nil || string(b) != want {
+		t.Errorf("Encode of a sum of 100,001 ones = %.80s…, %v; want %.80s…", b, err, want)
 	}
 }

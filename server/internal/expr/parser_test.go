@@ -1,8 +1,8 @@
 package expr
 
 import (
-	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -149,7 +149,8 @@ func TestFirstError(t *testing.T) {
 }
 
 // TestNotUTF8 checks that a byte that is not UTF-8 is InvalidCharacter
-// wherever it is, one character long, as a NUL is.
+// wherever it is, one character long, as a NUL is, right after a backslash
+// too, which the corpus, a file of UTF-8, cannot hold.
 func TestNotUTF8(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -159,14 +160,12 @@ func TestNotUTF8(t *testing.T) {
 		{"x == \xff", Range{5, 6}},
 		{"\"é\xffb\"", Range{2, 3}},
 		{"x // \xff", Range{5, 6}},
-		{"\"\\\xff\"", Range{1, 3}},
+		{"\"\\\xff\"", Range{2, 3}},
 	} {
 		_, err := Parse(c.source, ContextCondition)
-		var e *Error
-		if !errors.As(err, &e) || e.Range != c.want ||
-			e.Code != InvalidCharacter && !(e.Code == InvalidEscape && c.want.End-c.want.Start == 2) {
-			t.Errorf("Parse(%q) = %v; want an InvalidCharacter, or an InvalidEscape of the backslash, at %v",
-				c.source, err, c.want)
+		want := &Error{Code: InvalidCharacter, Range: c.want}
+		if fmt.Sprint(err) != fmt.Sprint(want) {
+			t.Errorf("Parse(%q) = %v; want %v", c.source, err, want)
 		}
 	}
 }
@@ -206,6 +205,32 @@ func TestDeepSource(t *testing.T) {
 	n, err := Parse(source, ContextCondition)
 	if err != nil || n.Kind() != KindBinary || n.Range() != (Range{0, len(source)}) {
 		t.Errorf("a sum of 100,001 ones = %v, %v; want a binary over the whole source", n, err)
+	}
+}
+
+// TestEarlyError checks that a source that Parse stops in early costs no more
+// than what it read of it, however long the rest of it is, since the lexer
+// reads tokens as the parser asks for them, rather than all of them first. It
+// does not run in parallel, so that what other tests allocate is not counted.
+func TestEarlyError(t *testing.T) {
+	for _, c := range []struct {
+		source string
+		want   *Error
+	}{
+		{") " + strings.Repeat("a ", 1<<20), &Error{Code: UnexpectedToken, Range: Range{0, 1}}},
+		{strings.Repeat("(", 2<<20), &Error{Code: ASTTooDeep, Range: Range{MaxDepth, MaxDepth + 1}}},
+	} {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		_, err := Parse(c.source, ContextCondition)
+		runtime.ReadMemStats(&after)
+		if fmt.Sprint(err) != fmt.Sprint(c.want) {
+			t.Errorf("Parse(%.20q…) = %v; want %v", c.source, err, c.want)
+		}
+		if n := after.TotalAlloc - before.TotalAlloc; n > 64<<10 {
+			t.Errorf("Parse(%.20q…) allocated %d bytes, of a source of %d; want at most 64 KiB", c.source, n,
+				len(c.source))
+		}
 	}
 }
 
