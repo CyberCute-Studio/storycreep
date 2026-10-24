@@ -339,26 +339,28 @@ func TestCommandEndpointMismatch(t *testing.T) {
 }
 
 // TestUndoFitsARequest checks that the batch that undoes another, which a
-// client sends as the operation's inverse (plan item 37), fits in the
-// endpoint's body however much the inverse holds within the pipeline's
-// bound, which counts its steps' payloads: what the bound leaves of the body
-// takes the batch's most commands, each with its ID and type, and the
-// expected revisions of ten thousand entities.
+// client sends as the operation's undo (plan item 37), fits in the endpoint's
+// body however much the undo holds within the pipeline's bounds: the bytes of
+// its steps' payloads and of the revisions that they expect, which one bound
+// counts, and the number of its steps, which the other bounds to what a batch
+// may have, each with its ID, type, and keys, which what the first bound
+// leaves of the body takes.
 func TestUndoFitsARequest(t *testing.T) {
 	t.Parallel()
-	step, err := json.Marshal(wireCommand{ID: ids.New().String(), Type: "attribute.set_options",
-		Payload: json.RawMessage("{}")})
+	step, err := json.Marshal(map[string]any{"command_id": ids.New().String(), "type": "attribute.set_options",
+		"payload": json.RawMessage("{}"), "expected_rev": json.RawMessage("{}")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rev, err := json.Marshal(map[string]int64{ids.Encode(ids.Component, ids.New()): 1 << 40})
-	if err != nil {
-		t.Fatal(err)
+	if commands.DefaultMaxUndoSteps > maxBatchCommands {
+		t.Errorf("an undo may have %d commands, more than the %d of a batch", commands.DefaultMaxUndoSteps,
+			maxBatchCommands)
 	}
-	rest := len(`{"commands":[]}`) + maxBatchCommands*(len(step)+len(`,`)) + 10_000*len(rev)
+	rest := len(`{"commands":[]}`) + commands.DefaultMaxUndoSteps*(len(step)+len(`,`))
 	if commands.DefaultMaxUndoBytes+rest > api.DefaultMaxBodyBytes {
-		t.Errorf("an undo of %d bytes of payloads, with %d bytes of the rest of its commands, would not fit in a "+
-			"body of %d bytes", commands.DefaultMaxUndoBytes, rest, api.DefaultMaxBodyBytes)
+		t.Errorf("an undo of %d bytes of payloads and expected revisions, with %d bytes of the rest of its "+
+			"commands, would not fit in a body of %d bytes", commands.DefaultMaxUndoBytes, rest,
+			api.DefaultMaxBodyBytes)
 	}
 }
 

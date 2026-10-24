@@ -43,11 +43,20 @@ type Tx struct {
 	changed []Revision
 	at      map[Ref]int
 	revs    map[Ref]int64
-	// undoBytes is how many bytes the payloads of the steps of the inverses
-	// that the pipeline has computed of the batch's commands take, as JSON
-	// encodes them for the operation log, which the pipeline refuses a
-	// command for once it is more than maxUndo (UndoRoom).
-	undoBytes, maxUndo int
+	// own are the entities that the command that applies changed, in the
+	// order of its first change of each, and owned the same as a set, which
+	// the pipeline empties before each command's Apply: what the command's
+	// undo expects the revisions of (plan item 37).
+	own   []Ref
+	owned map[Ref]struct{}
+	// undoBytes is how many bytes the inverses that the pipeline has computed
+	// of the batch's commands take, as JSON encodes them for the operation
+	// log: the payloads of their steps, and the revisions that they expect,
+	// which the pipeline refuses a command for once it is more than maxUndo
+	// (UndoRoom). undoSteps is how many steps they have, which the pipeline
+	// refuses a command for once it is more than maxUndoSteps.
+	undoBytes, maxUndo      int
+	undoSteps, maxUndoSteps int
 	// usage is what the batch's commands add to each key of the workspace's
 	// usage, and usageKeys the keys in the order of their first report.
 	// checked is what the batch's commands declared that they add to each
@@ -111,11 +120,13 @@ func (t *Tx) WorkspaceID() ids.UUID {
 // UndoRoom returns how many bytes the payloads of the steps of the inverse
 // that the pipeline computes may take, as JSON encodes them for the operation
 // log, before they take the batch's undo, with the inverses of its commands
-// before, past the pipeline's bound (Options.MaxUndoBytes), which the
-// pipeline refuses the command for once the inverse returns. An Inverse whose
-// steps hold a part of the project that grows with it, as the values that an
-// attribute's retype loses, reads it to stop with ErrUndoTooLarge once what
-// it holds takes more, rather than hold all of it only to be refused.
+// before and the revisions that those expect, past the pipeline's bound
+// (Options.MaxUndoBytes), which the pipeline refuses the command for once the
+// inverse returns, or once the command has applied and the revisions that its
+// own undo expects take it past. An Inverse whose steps hold a part of the
+// project that grows with it, as the values that an attribute's retype loses,
+// reads it to stop with ErrUndoTooLarge once what it holds takes more, rather
+// than hold all of it only to be refused.
 func (t *Tx) UndoRoom() int {
 	return t.maxUndo - t.undoBytes
 }
@@ -145,6 +156,10 @@ func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 			encodeRef(ref), rev, seen)
 	}
 	t.revs[ref] = rev
+	if _, ok := t.owned[ref]; !ok {
+		t.owned[ref] = struct{}{}
+		t.own = append(t.own, ref)
+	}
 	if i, ok := t.at[ref]; ok {
 		t.changed[i].Rev = rev
 		return nil

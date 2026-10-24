@@ -788,12 +788,13 @@ func TestAttributeChecks(t *testing.T) {
 // TestUndoLimit checks that a change of an enum's options or of a
 // definition's type whose undo would take its batch's undo past the
 // pipeline's bound is refused at the field that it changes, its undo counted
-// as JSON encodes it for the operation log, escapes and all: one whose undo
-// would hold more of the values that it loses than the bound leaves, one that
-// loses no value but whose undo's old default takes it past, and one whose
-// undo fits but would take its batch's past it, with the undos of the
-// batch's commands before it; and that a command of another type whose undo
-// would, as a description's, is refused at its payload.
+// as JSON encodes it for the operation log, escapes and all, with the
+// revisions that it expects of what the change changes: one whose undo would
+// hold more of the values that it loses than the bound leaves, one that loses
+// no value but whose undo's old default takes it past, and one whose undo
+// fits but would take its batch's past it, with the undos of the batch's
+// commands before it; and that a command of another type whose undo would, as
+// a description's, is refused at its payload.
 func TestUndoLimit(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -829,6 +830,21 @@ func TestUndoLimit(t *testing.T) {
 		_, err := f.apply(t, c)
 		return err
 	}
+	// expects returns how many bytes the bound counts of the revisions that
+	// the undo of c expects, those of the entities that c changes, which it
+	// finds by applying c and then its undo.
+	expects := func(c cmd) int {
+		t.Helper()
+		res := f.must(t, c)
+		if err := f.undo(t, res.Seq); err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, r := range res.Revisions {
+			n += commands.ExpectedRevBytes(r.Ref)
+		}
+		return n
+	}
 	optionsUndo := func(id string) map[string]any {
 		return map[string]any{"id": id, "options": options, "default": "calm"}
 	}
@@ -856,7 +872,7 @@ func TestUndoLimit(t *testing.T) {
 	if r := refused(t, try(size(stringUndo, nil)-1, toString)); r.Field != "type" {
 		t.Errorf("a retype whose undo's default takes it past the bound was refused at %s, want type", r.Field)
 	}
-	if err := try(size(stringUndo, nil), toString); err != nil {
+	if err := try(size(stringUndo, nil)+expects(toString), toString); err != nil {
 		t.Fatalf("a retype whose undo takes the bound exactly: %v", err)
 	}
 	// A reset of the string loses both values, which its undo gives back,
@@ -867,7 +883,7 @@ func TestUndoLimit(t *testing.T) {
 	if r := refused(t, try(size(resetUndo, both)-1, reset)); r.Field != "type" {
 		t.Errorf("a reset whose undo's values take it past the bound was refused at %s, want type", r.Field)
 	}
-	if err := try(size(resetUndo, both), reset); err != nil {
+	if err := try(size(resetUndo, both)+expects(reset), reset); err != nil {
 		t.Errorf("a reset whose undo's values take the bound exactly: %v", err)
 	}
 
@@ -876,7 +892,7 @@ func TestUndoLimit(t *testing.T) {
 	f.must(t, cmd{component.SetAttribute, map[string]any{"id": miraID, "attribute_id": mood, "value": "calm"}})
 	moodOptions := cmd{component.SetAttributeOptions, map[string]any{"id": mood, "options": []string{"calm"}}}
 	toneOptions := cmd{component.SetAttributeOptions, map[string]any{"id": tone, "options": []string{"calm"}}}
-	f.maxUndo(size(optionsUndo(mood), map[string]any{elaraID: "angry"}))
+	f.maxUndo(size(optionsUndo(mood), map[string]any{elaraID: "angry"}) + expects(moodOptions))
 	if r := refused(t, func() error { _, err := f.apply(t, moodOptions, toneOptions); return err }()); r.Command != 1 ||
 		r.Field != "options" {
 		t.Errorf("a batch whose undo would hold too much was refused by command %d at %s, want 1 at options",
@@ -904,7 +920,7 @@ func TestUndoLimit(t *testing.T) {
 		return cmd{component.Describe, map[string]any{"id": id, "description": doc(text)}}
 	}
 	f.must(t, describe(elaraID, text), describe(miraID, text))
-	f.maxUndo(len(doc(text)) + 100)
+	f.maxUndo(len(doc(text)) + 100 + expects(describe(elaraID, "Keeper")))
 	if r := refused(t, func() error {
 		_, err := f.apply(t, describe(elaraID, "Keeper"), describe(miraID, "Keeper"))
 		return err

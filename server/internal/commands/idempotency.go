@@ -279,6 +279,13 @@ func (p *Pipeline) idempotent(ctx context.Context, q *queries.Queries, t *Tx, cm
 			if err != nil {
 				return nil, fmt.Errorf("commands: the idempotency record of the batch of %s: %w", cmds[0].ID, err)
 			}
+			// The record keeps the seq of a batch that applied, whose
+			// operation keeps the batch's undo.
+			if r.err == nil {
+				if r.res.Undo, err = undoAt(ctx, q, t, r.res.Seq); err != nil {
+					return nil, err
+				}
+			}
 			return r, nil
 		}
 	}

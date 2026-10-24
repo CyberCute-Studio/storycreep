@@ -154,8 +154,10 @@ type Limit[P any] struct {
 }
 
 // Step is a command of an inverse: its type and its payload, which encodes as
-// the type's payload does. The command ID and the revisions are the undo's
-// to give (plan item 37).
+// the type's payload does. The pipeline gives it the revisions that it
+// expects, those of the entities that its command changed, as the batch left
+// them (Result.Undo), and the client that sends the undo gives it its command
+// ID (plan item 37).
 type Step struct {
 	Type    Type
 	Payload any
@@ -271,6 +273,26 @@ func (r *Registry) Types() []Type {
 	return types
 }
 
+// Undoable returns the registered types of command that have an inverse
+// (Spec.Inverse), in order, and NonUndoable those that are marked as having
+// none (Spec.NonUndoable), whose batches cannot be undone (PRD FR-EDIT-08
+// AC1).
+func (r *Registry) Undoable() []Type {
+	return r.typesWhere(func(s *spec) bool { return s.inverse != nil })
+}
+
+// NonUndoable returns the registered types of command that are marked as
+// having no inverse (Spec.NonUndoable), in order.
+func (r *Registry) NonUndoable() []Type {
+	return r.typesWhere(func(s *spec) bool { return s.nonUndoable })
+}
+
+// typesWhere returns the registered types of command whose specs keep says
+// to, in order.
+func (r *Registry) typesWhere(keep func(*spec) bool) []Type {
+	return slices.DeleteFunc(r.Types(), func(t Type) bool { return !keep(r.specs[t]) })
+}
+
 // RegisterEntity registers the kind of entity e. It panics if e lacks a
 // function, or if its kind is not one or is registered already.
 func RegisterEntity(r *Registry, e Entity) {
@@ -322,10 +344,11 @@ type spec struct {
 	limits  []entitlements.LimitKey
 	// adds return how much the command adds to each of limits, or nil for 1.
 	adds []func(ctx context.Context, tx *Tx, payload any) (int64, error)
-	// archived, trashed, and sessionOnly are Spec.Archived, Spec.Trashed, and
-	// Spec.SessionOnly, and undoField is Spec.UndoField.
-	archived, trashed, sessionOnly bool
-	undoField                      string
+	// archived, trashed, sessionOnly, and nonUndoable are Spec.Archived,
+	// Spec.Trashed, Spec.SessionOnly, and Spec.NonUndoable, and undoField is
+	// Spec.UndoField.
+	archived, trashed, sessionOnly, nonUndoable bool
+	undoField                                   string
 	// decode decodes a payload that its schema allows, checks it, and
 	// returns it: with Check, and with CheckNew too unless it is a step's.
 	decode func(raw []byte, step bool) (payload any, problems input.FieldErrors)
@@ -406,7 +429,7 @@ func Register[P any](r *Registry, s Spec[P]) {
 	sp := &spec{typ: s.Type, capability: s.Capability, scope: s.Scope, touches: slices.Clone(s.Touches),
 		payload: pt, schema: r.schemas.Schema(pt, true, ""), limits: keys,
 		adds: make([]func(context.Context, *Tx, any) (int64, error), len(s.Limits)), archived: s.Archived,
-		trashed: s.Trashed, sessionOnly: s.SessionOnly, undoField: s.UndoField}
+		trashed: s.Trashed, sessionOnly: s.SessionOnly, nonUndoable: s.NonUndoable, undoField: s.UndoField}
 	for i, l := range s.Limits {
 		if l.Adds != nil {
 			sp.adds[i] = func(ctx context.Context, tx *Tx, payload any) (int64, error) {
@@ -800,7 +823,8 @@ func nulAt(v any, at string) (where string, ok bool) {
 }
 
 // checkSteps returns the steps of an inverse as the operation log keeps
-// them, each with its payload encoded once, or an error unless every step
+// them, each with its payload encoded once, and the kinds of entity that its
+// type touches, of which it may expect revisions, or an error unless every step
 // is a registered type of command whose payload its schema and Check allow,
 // so that an undo can apply it. It does not ask a step's CheckNew, whose
 // rules the stored value that the step writes back may break: the undo that
@@ -827,7 +851,7 @@ func (r *Registry) checkSteps(steps []Step) ([]logStep, error) {
 		if len(problems) > 0 {
 			return nil, fmt.Errorf("step %d (%s) is not valid: %v", i, st.Type, problems)
 		}
-		out[i] = logStep{Type: st.Type, Payload: raw}
+		out[i] = logStep{Type: st.Type, Payload: raw, touches: s.touches}
 	}
 	return out, nil
 }

@@ -95,3 +95,14 @@ func undoRefusal(i int, c decoded, maxUndo int) *RefusedError {
 			size + ", which a batch that undoes it could not send: send the commands in smaller batches, or make a " +
 			"change whose undo holds less"}
 }
+
+// undoStepsRefusal returns the refusal of the command c, the batch's command
+// i, whose inverse would give the batch's undo more than maxSteps steps,
+// which a batch that undoes it could not send, which the pipeline answers at
+// the payload, as a value that the project's state does not take.
+func undoStepsRefusal(i int, c decoded, maxSteps int) *RefusedError {
+	return &RefusedError{Command: i, CommandID: c.ID, Type: c.spec.typ,
+		Message: fmt.Sprintf("would give the batch's undo, the inverses of its commands as the operation log keeps "+
+			"them, more than %d commands, which a batch that undoes it could not send: send the commands in smaller "+
+			"batches", maxSteps)}
+}

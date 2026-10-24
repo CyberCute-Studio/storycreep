@@ -120,7 +120,8 @@ func TestApplyAppendsTheOperation(t *testing.T) {
 		first.actor == nil || *first.actor != w.users[ownerUser] || first.token != nil {
 		t.Errorf("the first operation: %s of %v by %v with %v", first.typ, first.commandIDs, first.actor, first.token)
 	}
-	if !sameJSON(t, first.inverse, fmt.Sprintf(`[{"type": "note.delete", "payload": {"id": %q}}]`, aID)) {
+	if !sameJSON(t, first.inverse, fmt.Sprintf(`[{"type": "note.delete", "payload": {"id": %q},
+		"expected_rev": {%[1]q: 1}}]`, aID)) {
 		t.Errorf("the first operation's inverse: %s", first.inverse)
 	}
 	second := w.operation(t, 2)
@@ -139,13 +140,17 @@ func TestApplyAppendsTheOperation(t *testing.T) {
 		t.Errorf("the second operation's payload: %s, want %s", second.payload, wantPayload)
 	}
 	// The inverse undoes the last command first, each from the state that it
-	// changed.
+	// changed, and expects the revisions that the batch left of what its
+	// command changed, which the batch's answer holds as its undo.
 	wantInverse := fmt.Sprintf(`[
-		{"type": "note.update", "payload": {"id": %q, "body": "second"}},
-		{"type": "note.delete", "payload": {"id": %q}},
-		{"type": "note.update", "payload": {"id": %q, "body": "first"}}]`, aID, bID, aID)
+		{"type": "note.update", "payload": {"id": %q, "body": "second"}, "expected_rev": {%[1]q: 3}},
+		{"type": "note.delete", "payload": {"id": %q}, "expected_rev": {%[2]q: 1}},
+		{"type": "note.update", "payload": {"id": %[1]q, "body": "first"}, "expected_rev": {%[1]q: 3}}]`, aID, bID)
 	if !sameJSON(t, second.inverse, wantInverse) {
 		t.Errorf("the second operation's inverse: %s, want %s", second.inverse, wantInverse)
+	}
+	if undo, err := json.Marshal(wireUndo(res.Undo)); err != nil || !sameJSON(t, undo, wantInverse) {
+		t.Errorf("the second batch's undo: %s, want %s", undo, wantInverse)
 	}
 	wantRefs := fmt.Sprintf(`[{"kind": "node", "id": %q, "rev": 3}, {"kind": "node", "id": %q, "rev": 1}]`, a, b)
 	if !sameJSON(t, second.entityRef, wantRefs) {
@@ -925,10 +930,11 @@ func TestIsolation(t *testing.T) {
 		Denied: true,
 		Run: func(ctx context.Context, tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
 			id := ids.New()
-			return []ids.UUID{id}, queries.New(tx).InsertOperation(ctx, queries.InsertOperationParams{ID: nullUUID(id),
+			_, err := queries.New(tx).InsertOperation(ctx, queries.InsertOperationParams{ID: nullUUID(id),
 				WorkspaceID: nullUUID(target.ID), ProjectID: nullUUID(target.Rows["project"]), Seq: 1,
 				CommandIds: []pgtype.UUID{nullUUID(ids.New())}, ActorUserID: nullUUID(target.UserID),
 				Type: string(noteCreate), Payload: []byte("[]"), EntityRefs: []byte("[]")})
+			return []ids.UUID{id}, err
 		},
 	})
 	f.Check(t, isolationtest.Op{
@@ -1070,16 +1076,17 @@ func TestUndo(t *testing.T) {
 // TestUndoBound checks that the pipeline refuses a command whose inverse
 // would take its batch's undo past the pipeline's bound, the payloads of its
 // commands' inverses' steps as JSON encodes them for the operation log,
-// escapes and all, at the field that its type's UndoField names, or at the
-// payload, though the command's own inverse fits, and that it refuses one
-// whose Inverse stops with ErrUndoTooLarge alike, once Tx.UndoRoom tells it
-// the room that the inverses of the commands before it leave, that a batch
-// whose undo takes the bound exactly applies, and that the batch that undoes
-// another is bounded alike, by its own inverse.
+// escapes and all, and the revisions that they expect, at the field that its
+// type's UndoField names, or at the payload, though the command's own inverse
+// fits, and that it refuses one whose Inverse stops with ErrUndoTooLarge
+// alike, once Tx.UndoRoom tells it the room that the inverses of the commands
+// before it leave, with what they expect, that a batch whose undo takes the
+// bound exactly applies, and that the batch that undoes another is bounded
+// alike, by its own inverse.
 func TestUndoBound(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
-	_, xID := newNote()
+	x, xID := newNote()
 	_, yID := newNote()
 	// The log escapes <, as \u003c, which then takes six bytes.
 	body := strings.Repeat("<", 50)
@@ -1109,7 +1116,15 @@ func TestUndoBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bounded(one+len(deletion)).Apply(ctx, w.as(ownerUser), w.project, []Command{update(xID),
+	// The update's undo expects the note's revision, which the bound counts
+	// once the update has applied, before the next command's inverse.
+	expected := ExpectedRevBytes(noteRef(x))
+	if _, err := bounded(one+expected-1).Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{update(xID)}); !errors.As(err, &r) || r.Command != 0 || r.Field != "body" {
+		t.Errorf("a batch whose undo's expected revision would take the bound by a byte: %v, want a refusal of "+
+			"command 0 at body", err)
+	}
+	if _, err := bounded(one+expected+len(deletion)).Apply(ctx, w.as(ownerUser), w.project, []Command{update(xID),
 		room(len(deletion) + 1)}); !errors.As(err, &r) || r.Command != 1 || r.Field != "" {
 		t.Errorf("a batch whose second command's inverse stops for want of room: %v, want a refusal of command 1 "+
 			"at the payload", err)
@@ -1117,13 +1132,14 @@ func TestUndoBound(t *testing.T) {
 	if after := w.written(t); after != before {
 		t.Errorf("the refused batches wrote %+v, where there was %+v", after, before)
 	}
-	res, err := bounded(one+len(deletion)).Apply(ctx, w.as(ownerUser), w.project,
+	res, err := bounded(one+expected+len(deletion)).Apply(ctx, w.as(ownerUser), w.project,
 		[]Command{update(xID), room(len(deletion))})
 	if err != nil {
 		t.Fatalf("a batch whose undo takes the bound exactly: %v", err)
 	}
 	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, `[{"type": "note.delete", "payload": {"id": "`+xID+
-		`"}}, {"type": "note.update", "payload": {"id": "`+xID+`", "body": "`+body+`"}}]`) {
+		`"}}, {"type": "note.update", "payload": {"id": "`+xID+`", "body": "`+body+`"}, "expected_rev": {"`+xID+
+		`": 2}}]`) {
 		t.Errorf("the batch's inverse is %s", o.inverse)
 	}
 
@@ -1184,7 +1200,8 @@ func TestUndoOfAStoredValue(t *testing.T) {
 		t.Fatalf("a change of a stored body that CheckNew refuses: %v", err)
 	}
 	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse,
-		`[{"type": "note.update", "payload": {"id": "`+xID+`", "body": "bell\u0007"}}]`) {
+		`[{"type": "note.update", "payload": {"id": "`+xID+`", "body": "bell\u0007"}, "expected_rev": {"`+xID+
+			`": 2}}]`) {
 		t.Errorf("the change's inverse is %s", o.inverse)
 	}
 	var steps []struct {

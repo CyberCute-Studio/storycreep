@@ -1,0 +1,300 @@
+package commands
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"math"
+	"reflect"
+	"slices"
+	"testing"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+)
+
+// wireStep is a command of a batch's undo as the API answers it, which a
+// test compares with the operation log's inverse.
+type wireStep struct {
+	Type        Type             `json:"type"`
+	Payload     json.RawMessage  `json:"payload"`
+	ExpectedRev map[string]int64 `json:"expected_rev,omitempty"`
+}
+
+// wireUndo returns the undo as the operation log keeps it.
+func wireUndo(undo []UndoCommand) []wireStep {
+	out := make([]wireStep, len(undo))
+	for i, c := range undo {
+		out[i] = wireStep{Type: c.Type, Payload: c.Payload}
+		for ref, rev := range c.ExpectedRev {
+			if out[i].ExpectedRev == nil {
+				out[i].ExpectedRev = map[string]int64{}
+			}
+			out[i].ExpectedRev[encodeRef(ref)] = rev
+		}
+	}
+	return out
+}
+
+// undoBatch returns the batch that sends the undo back, as a client sends it:
+// each command with an ID of its own, which a client may send again, and the
+// revisions that the undo expects.
+func undoBatch(undo []UndoCommand) []Command {
+	out := make([]Command, len(undo))
+	for i, c := range undo {
+		out[i] = Command{ID: ids.New(), Type: c.Type, Payload: c.Payload, ExpectedRev: c.ExpectedRev, sent: true}
+	}
+	return out
+}
+
+// body returns the body and the revision of the note id, as the superuser
+// reads them.
+func (w *world) body(t *testing.T, id ids.UUID) (string, int64) {
+	t.Helper()
+	var body string
+	var rev int64
+	if err := w.admin.QueryRow(context.Background(), "SELECT body, rev FROM note WHERE id = $1", id).Scan(&body,
+		&rev); err != nil {
+		t.Fatal(err)
+	}
+	return body, rev
+}
+
+// TestUndoAndRedo checks that a batch's Result holds its undo, the operation
+// log's inverse, each step expecting the revisions that the batch left of
+// what its command changed, which, sent back as a batch, undoes the batch, and
+// whose own Result holds the undo that redoes it; that a replay of the batch
+// answers the same undo, which it reads from the log; that a batch answered as
+// AlreadyApplied, and one that cannot be undone, have none; and that a
+// client's own undo moves an entity that it brings back to a new revision, so
+// that the next undo of its stack expects that one instead (FR-EDIT-08).
+func TestUndoAndRedo(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	p := w.pipeline(t, nil)
+	a, aID := newNote()
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteCreate, notePayload{ID: aID, Body: "first"}, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	batch := []Command{
+		sentCommand(t, noteUpdate, notePayload{ID: aID, Body: "second"}, map[Ref]int64{noteRef(a): 1}),
+		sentCommand(t, noteUpdate, notePayload{ID: aID, Body: "third"}, nil),
+	}
+	res, err := p.Apply(ctx, w.as(ownerUser), w.project, batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []wireStep{
+		{Type: noteUpdate, Payload: json.RawMessage(`{"id":"` + aID + `","body":"second"}`),
+			ExpectedRev: map[string]int64{aID: 3}},
+		{Type: noteUpdate, Payload: json.RawMessage(`{"id":"` + aID + `","body":"first"}`),
+			ExpectedRev: map[string]int64{aID: 3}},
+	}
+	got, err := json.Marshal(wireUndo(res.Undo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wantJSON, _ := json.Marshal(want); !sameJSON(t, got, string(wantJSON)) {
+		t.Errorf("the batch's undo is %s, want %s", got, wantJSON)
+	}
+	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, string(got)) {
+		t.Errorf("the batch's undo is %s, but the operation log's inverse is %s", got, o.inverse)
+	}
+
+	// The replay reads the undo from the operation log, as it was answered.
+	again, err := p.Apply(ctx, w.as(ownerUser), w.project, batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(again.Undo, res.Undo) {
+		t.Errorf("the replay's undo is %+v, want %+v", again.Undo, res.Undo)
+	}
+	// A batch of the commands grouped otherwise was applied by a batch that
+	// has an undo of its own.
+	if regrouped, err := p.Apply(ctx, w.as(ownerUser), w.project, batch[1:]); err != nil ||
+		regrouped.Status != AlreadyApplied || regrouped.Undo != nil {
+		t.Errorf("a batch of one of the applied commands: %+v, %v, want AlreadyApplied without an undo", regrouped, err)
+	}
+
+	undone, err := p.Apply(ctx, w.as(ownerUser), w.project, undoBatch(res.Undo))
+	if err != nil {
+		t.Fatalf("the undo: %v", err)
+	}
+	if body, rev := w.body(t, a); body != "first" || rev != 5 {
+		t.Errorf("once undone, the note is %q at %d, want first at 5", body, rev)
+	}
+	redone, err := p.Apply(ctx, w.as(ownerUser), w.project, undoBatch(undone.Undo))
+	if err != nil {
+		t.Fatalf("the redo: %v", err)
+	}
+	if body, rev := w.body(t, a); body != "third" || rev != 7 {
+		t.Errorf("once redone, the note is %q at %d, want third at 7", body, rev)
+	}
+	if len(redone.Undo) != 2 || redone.Undo[0].ExpectedRev[noteRef(a)] != 7 {
+		t.Errorf("the redo's undo is %+v, want two steps that expect the note at 7", redone.Undo)
+	}
+
+	// The note's creation is undone by its deletion, which cannot be undone,
+	// so the batch of the deletion has no undo.
+	created, err := p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteCreate, notePayload{ID: ids.Encode(ids.Node, ids.New()), Body: "x"}, nil)})
+	if err != nil || len(created.Undo) != 1 || created.Undo[0].Type != noteDelete {
+		t.Fatalf("a creation: %+v, %v", created, err)
+	}
+	if deleted, err := p.Apply(ctx, w.as(ownerUser), w.project, undoBatch(created.Undo)); err != nil ||
+		deleted.Undo != nil {
+		t.Errorf("the undo of the creation: %+v, %v, want no undo of its own", deleted, err)
+	}
+
+	// Two batches of the client's stack change the note: once the second is
+	// undone, the note is as the first left it, at a new revision, which the
+	// first's undo then expects.
+	one, err := p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteUpdate, notePayload{ID: aID, Body: "fourth"}, map[Ref]int64{noteRef(a): 7})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteUpdate, notePayload{ID: aID, Body: "fifth"}, map[Ref]int64{noteRef(a): 8})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := p.Apply(ctx, w.as(ownerUser), w.project, undoBatch(two.Undo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conflict *RevisionConflictError
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, undoBatch(one.Undo)); !errors.As(err, &conflict) {
+		t.Errorf("the first undo, unmoved: %v, want a revision conflict", err)
+	}
+	moved := undoBatch(one.Undo)
+	if moved[0].ExpectedRev[noteRef(a)] != 8 || !slices.Equal(back.Revisions, []Revision{{noteRef(a), 10}}) {
+		t.Fatalf("the first undo expects %v, and the second's undo left %v", moved[0].ExpectedRev, back.Revisions)
+	}
+	moved[0].ExpectedRev = map[Ref]int64{noteRef(a): 10}
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, moved); err != nil {
+		t.Errorf("the first undo, moved to the revision that the second's undo left: %v", err)
+	}
+	if body, _ := w.body(t, a); body != "third" {
+		t.Errorf("once both are undone, the note is %q, want third", body)
+	}
+}
+
+// TestUndoConflict checks that the undo of a batch whose entity another user
+// has changed since is refused with a revision conflict that names the entity
+// and the undo's command that expects it, with its current state, and
+// changes nothing, not even the entities that nobody changed since, so that
+// an undo never overwrites newer work, nor applies in part.
+//
+// Verifies: FR-EDIT-08/AC4
+func TestUndoConflict(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	p := w.pipeline(t, nil)
+	a, aID := newNote()
+	b, bID := newNote()
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, noteCreate, notePayload{ID: aID, Body: "a"}, nil),
+		command(t, noteCreate, notePayload{ID: bID, Body: "b"}, nil),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, noteUpdate, notePayload{ID: aID, Body: "mine"}, nil),
+		command(t, noteUpdate, notePayload{ID: bID, Body: "mine"}, nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another user changes b.
+	if _, err := p.Apply(ctx, w.as(editorUser), w.project,
+		[]Command{command(t, noteUpdate, notePayload{ID: bID, Body: "theirs"}, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	before := w.written(t)
+	undo := undoBatch(res.Undo)
+	_, err = p.Apply(ctx, w.as(ownerUser), w.project, undo)
+	var conflict *RevisionConflictError
+	if !errors.As(err, &conflict) || len(conflict.Conflicts) != 1 {
+		t.Fatalf("the undo: %v, want a revision conflict of b", err)
+	}
+	// The undo undoes b's change first, so its first command expects b.
+	c := conflict.Conflicts[0]
+	var state noteState
+	if c.Command != 0 || c.CommandID != undo[0].ID || c.Ref != noteRef(b) || c.Expected != 2 || !c.Exists ||
+		c.Current != 3 || json.Unmarshal(c.State, &state) != nil || state.Body != "theirs" {
+		t.Errorf("the conflict: %+v, %s", c, c.State)
+	}
+	if after := w.written(t); after != before {
+		t.Errorf("the refused undo wrote %+v, where there was %+v", after, before)
+	}
+	if body, rev := w.body(t, a); body != "mine" || rev != 2 {
+		t.Errorf("after the refused undo, a is %q at %d, want mine at 2", body, rev)
+	}
+	if body, rev := w.body(t, b); body != "theirs" || rev != 3 {
+		t.Errorf("after the refused undo, b is %q at %d, want theirs at 3", body, rev)
+	}
+}
+
+// TestUndoSteps checks that the pipeline refuses a command whose inverse
+// would give its batch's undo more steps than the pipeline's bound, which a
+// batch that undoes it could not send, at its payload, and that a batch whose
+// undo has as many steps as the bound applies.
+func TestUndoSteps(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	_, aID := newNote()
+	_, bID := newNote()
+	if _, err := w.pipeline(t, nil).Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, noteCreate, notePayload{ID: aID, Body: "a"}, nil),
+		command(t, noteCreate, notePayload{ID: bID, Body: "b"}, nil),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p := w.pipeline(t, func(o *Options) { o.MaxUndoSteps = 1 })
+	before := w.written(t)
+	var r *RefusedError
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, noteUpdate, notePayload{ID: aID, Body: "x"}, nil),
+		command(t, noteUpdate, notePayload{ID: bID, Body: "x"}, nil),
+	}); !errors.As(err, &r) || r.Command != 1 || r.Field != "" || r.Reason != nil {
+		t.Errorf("a batch whose undo would have two steps: %v, want a refusal of command 1 at the payload", err)
+	}
+	if after := w.written(t); after != before {
+		t.Errorf("the refused batch wrote %+v, where there was %+v", after, before)
+	}
+	if res, err := p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteUpdate, notePayload{ID: aID, Body: "x"}, nil)}); err != nil || len(res.Undo) != 1 {
+		t.Errorf("a batch whose undo has one step: %+v, %v", res, err)
+	}
+}
+
+// TestExpectedRevBytes checks that the bound counts an expected revision of
+// an entity of each kind as no fewer bytes than JSON encodes it in a step's
+// expected_rev with the largest revision, its key and its comma.
+func TestExpectedRevBytes(t *testing.T) {
+	for _, kind := range ids.Kinds() {
+		ref := Ref{Kind: kind, ID: ids.New()}
+		raw, err := json.Marshal(map[string]int64{encodeRef(ref): math.MaxInt64})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := ExpectedRevBytes(ref), len(raw)-len(`{}`)+len(`,`); got < want {
+			t.Errorf("ExpectedRevBytes(%v) = %d, want at least %d, as %s takes", kind, got, want, raw)
+		}
+	}
+}
+
+// TestUndoable checks that the registry tells the types of command with an
+// inverse from those marked as having none, which TestEveryCommandUndoable
+// (package httpserver) reads of the server's registry.
+func TestUndoable(t *testing.T) {
+	r := noteRegistry()
+	if got, want := r.Undoable(), []Type{noteBadInverse, noteCreate, noteUpdate}; !slices.Equal(got, want) {
+		t.Errorf("Undoable() = %v, want %v", got, want)
+	}
+	want := []Type{noteDelete, noteFail, noteMeter, noteMisreport, notePublish, noteRevive, noteTouch}
+	if got := r.NonUndoable(); !slices.Equal(got, want) {
+		t.Errorf("NonUndoable() = %v, want %v", got, want)
+	}
+}

@@ -48,12 +48,20 @@ FOR NO KEY UPDATE;
 -- SetProjectSeq sets the seq of the project's latest operation.
 UPDATE project SET seq = @seq WHERE workspace_id = @workspace_id AND id = @id;
 
--- name: InsertOperation :exec
--- InsertOperation appends a batch of commands to the project's operation log.
+-- name: InsertOperation :one
+-- InsertOperation appends a batch of commands to the project's operation log,
+-- and returns its inverse as the log keeps it, so that the batch's answer
+-- holds the undo that a replay of it reads again (OperationInverse).
 INSERT INTO operation (id, workspace_id, project_id, seq, command_ids, actor_user_id, actor_token_id, type,
     payload, inverse, entity_refs)
 VALUES (@id, @workspace_id, @project_id, @seq, @command_ids::uuid[], @actor_user_id, @actor_token_id, @type,
-    @payload, @inverse, @entity_refs);
+    @payload, @inverse, @entity_refs)
+RETURNING inverse;
+
+-- name: OperationInverse :one
+-- OperationInverse returns the inverse of the project's operation of the seq,
+-- or null for one that cannot be undone.
+SELECT inverse FROM operation WHERE workspace_id = @workspace_id AND project_id = @project_id AND seq = @seq;
 
 -- name: InsertAppliedCommands :exec
 -- InsertAppliedCommands records the commands of an applied batch, with its
