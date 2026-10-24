@@ -20,13 +20,14 @@ import (
 // within this long once its time in the trash has passed.
 const purgeInterval = time.Hour
 
-// purgeRows is how many boards, nodes, variables, components, attribute
-// definitions, component types, and folders the purge deletes in a
+// purgeRows is how many boards, nodes, connections, variables, components,
+// attribute definitions, component types, and folders the purge deletes in a
 // transaction at most, so that a transaction, which holds its project's lock,
 // keeps the project's batches waiting for about as long however much of its
 // trash expires at once. The rows that refer to one of them, as a board's
-// nodes and variables, a component's values, or a definition's values, one
-// for each component of its type, go with it by the cascade of their foreign
+// nodes and variables, a node's connections, a component's values, or a
+// definition's values, one for each component of its type, go with it by the
+// cascade of their foreign
 // keys, uncounted, so that it is purged whole, in one transaction, and a
 // restoration between two of the purge's transactions never brings it back
 // without some of them, as a definition whose restore would give its default
@@ -49,8 +50,9 @@ func RegisterJobs(r *jobs.Registry) {
 
 // Purge deletes for good what has been in its project's trash for Retention:
 // the boards, with every row that refers to them, which the cascade of their
-// foreign keys deletes, as their nodes and variables, then the nodes, the
-// variables, the components, with their values, leaving the elements whose
+// foreign keys deletes, as their nodes and variables, then the nodes, with
+// their connections, the connections, the variables, the components, with
+// their values, leaving the elements whose
 // speaker one of them is without one, at a new revision, and the attribute
 // definitions, with theirs, then the component types that hold no
 // component, in the trash or not, with their definitions, and then the
@@ -122,10 +124,11 @@ func purgeWorkspace(ctx context.Context, db sweep.DB, more func() bool, workspac
 }
 
 // purgeProject deletes, in a transaction of the workspace, at most purgeRows
-// of the boards, the nodes, the variables, the components, the attribute
-// definitions, the folders, and the component types of the project that have
-// been in its trash for retention, the boards, the nodes, the variables, and
-// the components first, which may leave a folder or a type empty for the
+// of the boards, the nodes, the connections, the variables, the components,
+// the attribute definitions, the folders, and the component types of the
+// project that have been in its trash for retention, the boards, the nodes,
+// the connections, the variables, and the components first, which may leave
+// a folder or a type empty for the
 // purge of the folders and of the types that follows, and returns how many it
 // deleted, or none if a transaction holds the project's lock.
 func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, project pgtype.UUID,
@@ -152,6 +155,12 @@ func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, projec
 			return fmt.Errorf("purge the nodes: %w", err)
 		}
 		n += nodes
+		connections, err := q.PurgeConnections(ctx, queries.PurgeConnectionsParams{WorkspaceID: ws,
+			ProjectID: project, Retention: retention, MaxRows: int32(purgeRows - n)})
+		if err != nil {
+			return fmt.Errorf("purge the connections: %w", err)
+		}
+		n += connections
 		variables, err := q.PurgeVariables(ctx, queries.PurgeVariablesParams{WorkspaceID: ws, ProjectID: project,
 			Retention: retention, MaxRows: int32(purgeRows - n)})
 		if err != nil {

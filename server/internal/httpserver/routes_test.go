@@ -65,6 +65,9 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/nodes/{node_id}"}:                 scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/nodes/{node_id}/referenced-by"}:   scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/tags"}:                            scope.ProjectRead,
+	// So are its connections, which change through its commands.
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/boards/{board_id}/connections"}: scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/connections/{connection_id}"}:   scope.ProjectRead,
 	// So is its trash, from which its commands restore what it holds.
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/trash"}: scope.ProjectRead,
 }

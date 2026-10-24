@@ -1725,6 +1725,24 @@
             "$ref": "#/components/schemas/ComponentTypeSetKeyCommand"
           },
           {
+            "$ref": "#/components/schemas/ConnectionCreateCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ConnectionDeleteCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ConnectionReconnectCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ConnectionReorderCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ConnectionRestoreCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ConnectionUpdateCommand"
+          },
+          {
             "$ref": "#/components/schemas/FolderCreateCommand"
           },
           {
@@ -1820,6 +1838,13 @@
             "$ref": "#/components/schemas/ErrorBody",
             "description": "Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it"
           },
+          "not_reconnected": {
+            "description": "What the batch could not reconnect of what refers to the entities that it restored, as for a request of one batch; not for a batch that was rejected",
+            "items": {
+              "$ref": "#/components/schemas/UnreconnectedBody"
+            },
+            "type": "array"
+          },
           "revisions": {
             "description": "The entities that the batch changed, as for a request of one batch; not for a batch that was rejected",
             "items": {
@@ -1850,6 +1875,13 @@
       "CommandResultBody": {
         "additionalProperties": false,
         "properties": {
+          "not_reconnected": {
+            "description": "What refers to the entities that the batch restored from the project's trash that the batch could not reconnect, once all of its commands applied, each with what it waits for: the connections of a restored node whose node at the other end is in the trash still, which come back once that node is restored too (PRD FR-PROJ-06 AC1). Empty for a batch that restored nothing that left any, and for a batch already applied.",
+            "items": {
+              "$ref": "#/components/schemas/UnreconnectedBody"
+            },
+            "type": "array"
+          },
           "revisions": {
             "description": "The entities that the batch changed, each with its revision after the batch, in the order of their first change. Those of a batch already applied are the entities that the batches that applied its commands changed, each with its current revision, without those that no longer exist.",
             "items": {
@@ -1877,7 +1909,8 @@
         "required": [
           "status",
           "seq",
-          "revisions"
+          "revisions",
+          "not_reconnected"
         ],
         "type": "object"
       },
@@ -3040,6 +3073,421 @@
         "required": [
           "id",
           "key"
+        ],
+        "type": "object"
+      },
+      "Connection": {
+        "additionalProperties": false,
+        "properties": {
+          "board_id": {
+            "description": "The ID of the connection's board, the board of both of its nodes, which is fixed once the connection is created",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the connection was created",
+            "format": "date-time",
+            "type": "string"
+          },
+          "deleted_at": {
+            "description": "When the connection went to the project's trash, if it is there: when it was deleted, or, if it was not, but one of its nodes, or its board, is in the trash, with which it is in the trash too, when the first of them went there",
+            "format": "date-time",
+            "type": "string"
+          },
+          "from_node_id": {
+            "description": "The ID of the node that the connection leaves, a node of its board",
+            "type": "string"
+          },
+          "from_port": {
+            "description": "The port of the node that the connection leaves: out, an element's one port, which every connection leaves for now. A branch's ports are its outputs (PRD FR-EDIT-04), which a branch output's ID will name.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The connection's ID",
+            "type": "string"
+          },
+          "label": {
+            "$ref": "#/components/schemas/RichTextDoc",
+            "description": "The connection's label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered, or an empty paragraph for none"
+          },
+          "order": {
+            "description": "The connection's place among the connections that leave its port, the choices that its node offers, in their order (PRD FR-EDIT-03 AC1): a key of base-62 digits, 0-9, A-Z, and a-z, which orders them by its bytes, and those with the same key by their IDs without the prefix, cn_, compared by their bytes too",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "The ID of the connection's project",
+            "type": "string"
+          },
+          "rev": {
+            "description": "The connection's revision, which every change of it increments, and which a change expects with expected_rev",
+            "format": "int64",
+            "type": "integer"
+          },
+          "to_node_id": {
+            "description": "The ID of the node that the connection enters, a node of its board, which may be the node that it leaves",
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "When the connection last changed",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "board_id",
+          "from_node_id",
+          "from_port",
+          "to_node_id",
+          "order",
+          "label",
+          "rev",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ConnectionCreateCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type connection.create.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ConnectionCreatePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "connection.create"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ConnectionCreatePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type connection.create.",
+        "properties": {
+          "from_node_id": {
+            "description": "The ID of the node that the connection leaves, by its port out: an element of the project that is not in its trash. A jumper has no connections out, because the flow continues at its target (PRD §5.8.5), and a branch's connections leave its outputs (PRD FR-EDIT-04), so either is answered with 422 validation_failed.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The new connection's ID, a cn_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "type": "string"
+          },
+          "label": {
+            "$ref": "#/components/schemas/RichTextDoc",
+            "description": "The connection's label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered. Without it, an empty paragraph, for none."
+          },
+          "order": {
+            "description": "The connection's place among the connections that leave from_node_id, the choices that it offers. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the connections that leave a node by its bytes, and those with the same key by their IDs without the prefix, cn_, compared by their bytes too: pick one between the keys of the connections that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the connection goes after the node's last.",
+            "maxLength": 128,
+            "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
+            "type": "string"
+          },
+          "to_node_id": {
+            "description": "The ID of the node that the connection enters: a node of the board of from_node_id, of any type, that is not in the project's trash, which may be from_node_id itself, and which other connections of from_node_id may enter too",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "from_node_id",
+          "to_node_id"
+        ],
+        "type": "object"
+      },
+      "ConnectionDeleteCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type connection.delete.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ConnectionDeletePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "connection.delete"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ConnectionDeletePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type connection.delete.",
+        "properties": {
+          "id": {
+            "description": "The connection's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ConnectionReconnectCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type connection.reconnect.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ConnectionReconnectPayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "connection.reconnect"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ConnectionReconnectPayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type connection.reconnect.",
+        "properties": {
+          "from_node_id": {
+            "description": "The ID of the node that the connection leaves from now on, by its port out: an element of the connection's board that is not in the project's trash, or the node that it leaves. A jumper or a branch is answered with 422 validation_failed, as by connection.create.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The connection's ID",
+            "type": "string"
+          },
+          "order": {
+            "description": "The connection's place among the connections that leave the node that it leaves once it is reconnected, a key as connection.create's order is. Without it, the connection goes after the node's last if it leaves another node than it did, or keeps its place.",
+            "maxLength": 128,
+            "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
+            "type": "string"
+          },
+          "to_node_id": {
+            "description": "The ID of the node that the connection enters from now on: a node of the connection's board, of any type, that is not in the project's trash, or the node that it enters",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ConnectionReorderCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type connection.reorder.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ConnectionReorderPayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "connection.reorder"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ConnectionReorderPayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type connection.reorder.",
+        "properties": {
+          "id": {
+            "description": "The connection's ID",
+            "type": "string"
+          },
+          "order": {
+            "description": "The connection's place among the connections that leave its node, the choices that the node offers, a key as connection.create's order is. Without it, the connection goes after the node's last, or stays where it is if it is the last already that is not in the trash.",
+            "maxLength": 128,
+            "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ConnectionRestoreCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type connection.restore.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ConnectionRestorePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "connection.restore"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ConnectionRestorePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type connection.restore.",
+        "properties": {
+          "id": {
+            "description": "The connection's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ConnectionUpdateCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type connection.update.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ConnectionUpdatePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "connection.update"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ConnectionUpdatePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type connection.update.",
+        "properties": {
+          "id": {
+            "description": "The connection's ID",
+            "type": "string"
+          },
+          "label": {
+            "$ref": "#/components/schemas/RichTextDoc",
+            "description": "The connection's new label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered, or an empty paragraph for none"
+          }
+        },
+        "required": [
+          "id"
         ],
         "type": "object"
       },
@@ -4730,6 +5178,29 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/ComponentType"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "PageConnection": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Connection"
             },
             "type": "array"
           },
@@ -6587,6 +7058,27 @@
           "component_id",
           "key",
           "name"
+        ],
+        "type": "object"
+      },
+      "UnreconnectedBody": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The entity's ID, as cn_…",
+            "type": "string"
+          },
+          "waiting_for": {
+            "description": "The IDs of the entities in the project's trash that it refers to, as nd_…, which bring it back once they are restored too",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "waiting_for"
         ],
         "type": "object"
       },
@@ -11147,6 +11639,146 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/boards/{board_id}/connections": {
+      "get": {
+        "description": "Lists the board's connections that are not in the project's trash, each with its label, in the order of their IDs, oldest first: the arrows that the board's canvas shows between its nodes. A connection of a node in the trash is in the trash with it, and is not listed until the node is restored. The connections that leave a node are the choices that it offers, in the order of their order, then of their IDs without the prefix, cn_, each compared by its bytes. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type connection.* create, relabel, reconnect, reorder, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listBoardConnections",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The board's ID",
+            "in": "path",
+            "name": "board_id",
+            "required": true,
+            "schema": {
+              "description": "The board's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageConnection"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List a board's connections",
+        "tags": [
+          "Connections"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/boards/{board_id}/nodes": {
       "get": {
         "description": "Lists the board's nodes that are not in the project's trash, each whole, an element with its text, in the order of their IDs, oldest first: what the board's canvas shows. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type node.* create, change, move, duplicate, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
@@ -12265,6 +12897,121 @@
         "summary": "Get a component",
         "tags": [
           "Components"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/connections/{connection_id}": {
+      "get": {
+        "description": "Returns a connection of the project, with its label. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type connection.* create, relabel, reconnect, reorder, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A connection that the project does not have, or that is in its trash, itself or with one of its nodes or its board, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "getConnection",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The connection's ID",
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "description": "The connection's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Connection"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get a connection",
+        "tags": [
+          "Connections"
         ]
       }
     },

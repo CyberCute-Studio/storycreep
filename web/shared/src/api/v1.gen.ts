@@ -513,11 +513,13 @@ export interface CommandBatchesBody {
 }
 
 /** A command of the batch: its ID, its type, its payload, as the type's schema says, and the revisions that it expects (PRD FR-API-03). */
-export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeUpdateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
+export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | ConnectionCreateCommand | ConnectionDeleteCommand | ConnectionReconnectCommand | ConnectionReorderCommand | ConnectionRestoreCommand | ConnectionUpdateCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeUpdateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
 
 export interface CommandOutcomeBody {
   /** Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it */
   error?: ErrorBody;
+  /** What the batch could not reconnect of what refers to the entities that it restored, as for a request of one batch; not for a batch that was rejected */
+  not_reconnected?: Array<UnreconnectedBody>;
   /** The entities that the batch changed, as for a request of one batch; not for a batch that was rejected */
   revisions?: Array<EntityRevisionBody>;
   /** The project's sequence number after the batch, as for a request of one batch; not for a batch that was rejected */
@@ -527,6 +529,8 @@ export interface CommandOutcomeBody {
 }
 
 export interface CommandResultBody {
+  /** What refers to the entities that the batch restored from the project's trash that the batch could not reconnect, once all of its commands applied, each with what it waits for: the connections of a restored node whose node at the other end is in the trash still, which come back once that node is restored too (PRD FR-PROJ-06 AC1). Empty for a batch that restored nothing that left any, and for a batch already applied. */
+  not_reconnected: Array<UnreconnectedBody>;
   /** The entities that the batch changed, each with its revision after the batch, in the order of their first change. Those of a batch already applied are the entities that the batches that applied its commands changed, each with its current revision, without those that no longer exist. */
   revisions: Array<EntityRevisionBody> | null;
   /** The project's sequence number after the batch: the seq of its operation in the project's operation log. That of a batch already applied is the latest seq of the batches that applied its commands. */
@@ -913,6 +917,153 @@ export interface ComponentTypeSetKeyPayload {
   id: string;
   /** The type's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as character, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other type of the project has, of those that are not in its trash, which is answered with 409 key_taken. */
   key: string;
+}
+
+export interface Connection {
+  /** The ID of the connection's board, the board of both of its nodes, which is fixed once the connection is created */
+  board_id: string;
+  /** When the connection was created */
+  created_at: string;
+  /** When the connection went to the project's trash, if it is there: when it was deleted, or, if it was not, but one of its nodes, or its board, is in the trash, with which it is in the trash too, when the first of them went there */
+  deleted_at?: string;
+  /** The ID of the node that the connection leaves, a node of its board */
+  from_node_id: string;
+  /** The port of the node that the connection leaves: out, an element's one port, which every connection leaves for now. A branch's ports are its outputs (PRD FR-EDIT-04), which a branch output's ID will name. */
+  from_port: string;
+  /** The connection's ID */
+  id: string;
+  /** The connection's label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered, or an empty paragraph for none */
+  label: RichTextDoc;
+  /** The connection's place among the connections that leave its port, the choices that its node offers, in their order (PRD FR-EDIT-03 AC1): a key of base-62 digits, 0-9, A-Z, and a-z, which orders them by its bytes, and those with the same key by their IDs without the prefix, cn_, compared by their bytes too */
+  order: string;
+  /** The ID of the connection's project */
+  project_id: string;
+  /** The connection's revision, which every change of it increments, and which a change expects with expected_rev */
+  rev: number;
+  /** The ID of the node that the connection enters, a node of its board, which may be the node that it leaves */
+  to_node_id: string;
+  /** When the connection last changed */
+  updated_at: string;
+}
+
+/** A command of the type connection.create. */
+export interface ConnectionCreateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ConnectionCreatePayload;
+  /** The command's type. */
+  type: "connection.create";
+}
+
+/** The payload of a command of the type connection.create. */
+export interface ConnectionCreatePayload {
+  /** The ID of the node that the connection leaves, by its port out: an element of the project that is not in its trash. A jumper has no connections out, because the flow continues at its target (PRD §5.8.5), and a branch's connections leave its outputs (PRD FR-EDIT-04), so either is answered with 422 validation_failed. */
+  from_node_id: string;
+  /** The new connection's ID, a cn_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  id: string;
+  /** The connection's label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered. Without it, an empty paragraph, for none. */
+  label?: RichTextDoc;
+  /** The connection's place among the connections that leave from_node_id, the choices that it offers. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the connections that leave a node by its bytes, and those with the same key by their IDs without the prefix, cn_, compared by their bytes too: pick one between the keys of the connections that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the connection goes after the node's last. */
+  order?: string;
+  /** The ID of the node that the connection enters: a node of the board of from_node_id, of any type, that is not in the project's trash, which may be from_node_id itself, and which other connections of from_node_id may enter too */
+  to_node_id: string;
+}
+
+/** A command of the type connection.delete. */
+export interface ConnectionDeleteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ConnectionDeletePayload;
+  /** The command's type. */
+  type: "connection.delete";
+}
+
+/** The payload of a command of the type connection.delete. */
+export interface ConnectionDeletePayload {
+  /** The connection's ID */
+  id: string;
+}
+
+/** A command of the type connection.reconnect. */
+export interface ConnectionReconnectCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ConnectionReconnectPayload;
+  /** The command's type. */
+  type: "connection.reconnect";
+}
+
+/** The payload of a command of the type connection.reconnect. */
+export interface ConnectionReconnectPayload {
+  /** The ID of the node that the connection leaves from now on, by its port out: an element of the connection's board that is not in the project's trash, or the node that it leaves. A jumper or a branch is answered with 422 validation_failed, as by connection.create. */
+  from_node_id?: string;
+  /** The connection's ID */
+  id: string;
+  /** The connection's place among the connections that leave the node that it leaves once it is reconnected, a key as connection.create's order is. Without it, the connection goes after the node's last if it leaves another node than it did, or keeps its place. */
+  order?: string;
+  /** The ID of the node that the connection enters from now on: a node of the connection's board, of any type, that is not in the project's trash, or the node that it enters */
+  to_node_id?: string;
+}
+
+/** A command of the type connection.reorder. */
+export interface ConnectionReorderCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ConnectionReorderPayload;
+  /** The command's type. */
+  type: "connection.reorder";
+}
+
+/** The payload of a command of the type connection.reorder. */
+export interface ConnectionReorderPayload {
+  /** The connection's ID */
+  id: string;
+  /** The connection's place among the connections that leave its node, the choices that the node offers, a key as connection.create's order is. Without it, the connection goes after the node's last, or stays where it is if it is the last already that is not in the trash. */
+  order?: string;
+}
+
+/** A command of the type connection.restore. */
+export interface ConnectionRestoreCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ConnectionRestorePayload;
+  /** The command's type. */
+  type: "connection.restore";
+}
+
+/** The payload of a command of the type connection.restore. */
+export interface ConnectionRestorePayload {
+  /** The connection's ID */
+  id: string;
+}
+
+/** A command of the type connection.update. */
+export interface ConnectionUpdateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ConnectionUpdatePayload;
+  /** The command's type. */
+  type: "connection.update";
+}
+
+/** The payload of a command of the type connection.update. */
+export interface ConnectionUpdatePayload {
+  /** The connection's ID */
+  id: string;
+  /** The connection's new label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered, or an empty paragraph for none */
+  label?: RichTextDoc;
 }
 
 export interface CreateInviteBody {
@@ -1479,6 +1630,12 @@ export interface PageBoard {
 
 export interface PageComponentType {
   items: Array<ComponentType>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
+export interface PageConnection {
+  items: Array<Connection>;
   /** The cursor of the next page, or null if this is the last page */
   next_cursor: string | null;
 }
@@ -2078,6 +2235,13 @@ export interface Unconvertible {
   key: string;
   /** The component's name */
   name: string;
+}
+
+export interface UnreconnectedBody {
+  /** The entity's ID, as cn_… */
+  id: string;
+  /** The IDs of the entities in the project's trash that it refers to, as nd_…, which bring it back once they are restored too */
+  waiting_for: Array<string>;
 }
 
 export interface UpdateProjectBody {
@@ -2770,6 +2934,24 @@ export interface Operations {
       200: ComponentType;
     };
   };
+  /**
+   * Get a connection
+   *
+   * Returns a connection of the project, with its label. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type connection.* create, relabel, reconnect, reorder, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A connection that the project does not have, or that is in its trash, itself or with one of its nodes or its board, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getConnection: {
+    input: {
+      path: {
+        /** The connection's ID */
+        connection_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: Connection;
+    };
+  };
   /** Report that the process is alive */
   getHealth: {
     input: Record<string, never>;
@@ -2961,6 +3143,30 @@ export interface Operations {
     };
     responses: {
       201: LinkBody;
+    };
+  };
+  /**
+   * List a board's connections
+   *
+   * Lists the board's connections that are not in the project's trash, each with its label, in the order of their IDs, oldest first: the arrows that the board's canvas shows between its nodes. A connection of a node in the trash is in the trash with it, and is not listed until the node is restored. The connections that leave a node are the choices that it offers, in the order of their order, then of their IDs without the prefix, cn_, each compared by its bytes. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type connection.* create, relabel, reconnect, reorder, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listBoardConnections: {
+    input: {
+      path: {
+        /** The board's ID */
+        board_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageConnection;
     };
   };
   /**
@@ -3880,6 +4086,7 @@ export const routes = {
   getBoard: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}" },
   getComponent: { method: "GET", path: "/api/v1/projects/{project_id}/components/{component_id}" },
   getComponentType: { method: "GET", path: "/api/v1/projects/{project_id}/component-types/{component_type_id}" },
+  getConnection: { method: "GET", path: "/api/v1/projects/{project_id}/connections/{connection_id}" },
   getHealth: { method: "GET", path: "/healthz" },
   getInstance: { method: "GET", path: "/api/v1/instance" },
   getNode: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}" },
@@ -3894,6 +4101,7 @@ export const routes = {
   getWorkspaceUsage: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/usage" },
   issuePasswordResetLink: { method: "POST", path: "/api/v1/admin/password-reset-links" },
   issueVerificationLink: { method: "POST", path: "/api/v1/admin/verification-links" },
+  listBoardConnections: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}/connections" },
   listBoardNodes: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}/nodes" },
   listBoardReferrers: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}/referenced-by" },
   listBoards: { method: "GET", path: "/api/v1/projects/{project_id}/boards" },

@@ -98,6 +98,23 @@ type ComponentType struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type Connection struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	BoardID     pgtype.UUID
+	FromNodeID  pgtype.UUID
+	ToNodeID    pgtype.UUID
+	Order       string
+	Label       []byte
+	Rev         int64
+	DeletedAt   pgtype.Timestamptz
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type Folder struct {
 	ID          pgtype.UUID
 	WorkspaceID pgtype.UUID
@@ -181,6 +198,23 @@ type LiveComponentType struct {
 	Key         string
 	Name        string
 	Icon        string
+	Rev         int64
+	DeletedAt   pgtype.Timestamptz
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type LiveConnection struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	BoardID     pgtype.UUID
+	FromNodeID  pgtype.UUID
+	ToNodeID    pgtype.UUID
+	Order       string
+	Label       []byte
 	Rev         int64
 	DeletedAt   pgtype.Timestamptz
 	CreatedBy   pgtype.UUID

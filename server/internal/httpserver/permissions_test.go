@@ -504,6 +504,16 @@ var permissionMatrix = []struct {
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, tagsPath(f.project(t, ""))+"?prefix=q", nil, si.header(false))
 				}},
+			{name: "list a board's connections", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, boardConnectionsPath(p, f.board(t, p)), nil, si.header(false))
+				}},
+			{name: "read a connection", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, connectionPath(p, f.connection(t, p)), nil, si.header(false))
+				}},
 		},
 	},
 	{
@@ -571,6 +581,42 @@ var permissionMatrix = []struct {
 					p := f.project(t, "")
 					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
 						Type: "node.delete", Payload: map[string]string{"id": f.node(t, p)}}), si.header(true))
+				}},
+			{name: "create a connection", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					n := f.node(t, p)
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "connection.create", Payload: map[string]any{"id": newConnectionID(), "from_node_id": n,
+							"to_node_id": n}}), si.header(true))
+				}},
+			{name: "change a connection's label", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "connection.update", Payload: map[string]any{"id": f.connection(t, p),
+							"label": paragraph("Ask about the lighthouse")}}), si.header(true))
+				}},
+			{name: "reconnect a connection", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					c, b := f.boardConnection(t, p)
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "connection.reconnect", Payload: map[string]any{"id": c,
+							"to_node_id": f.boardNode(t, p, b)}}), si.header(true))
+				}},
+			{name: "reorder a connection", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "connection.reorder", Payload: map[string]any{"id": f.connection(t, p), "order": "W"}}),
+						si.header(true))
+				}},
+			{name: "delete a connection", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "connection.delete", Payload: map[string]string{"id": f.connection(t, p)}}), si.header(true))
 				}},
 		},
 	},
@@ -1057,8 +1103,8 @@ func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []a
 // fixture's routes: its workspace, and a membership, an invitation, a
 // project, the owner's API token narrowed to the project, an asset of the
 // project, which the owner uploads, and a board, a variable, a component
-// type with an int attribute definition, a component of it, and a node, of
-// the project, which the fixture adds.
+// type with an int attribute definition, a component of it, a node, and a
+// connection, of the project, which the fixture adds.
 func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 	t.Helper()
 	p := f.project(t, "")
@@ -1076,6 +1122,7 @@ func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 		"attribute_id":      f.attribute(t, p, ct),
 		"component_id":      f.component(t, p, ct),
 		"node_id":           f.node(t, p),
+		"connection_id":     f.connection(t, p),
 	}
 }
 

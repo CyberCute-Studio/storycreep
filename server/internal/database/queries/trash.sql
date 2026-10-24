@@ -1,14 +1,16 @@
 -- A project's trash (package trash, PRD FR-PROJ-06): the rows of its content
 -- with deleted_at, which the live views leave out (migration 00019). The
 -- tables whose rows the trash lists are its boards', its nodes', its
--- variables', and its components'; its folders', its component types', and
--- its attribute definitions' rows go to the trash too, but are not listed.
--- Each such table has a branch here, in the list and in the purge, which
--- package trash's tests hold it to. A row that belongs to a board, as a
--- board's node or variable, is in the trash with its board too, which lists
--- the board alone, and is purged with it, by the cascade of its foreign key
--- to the board, even one deleted on its own, before its board, which the
--- list holds, and whose own time in the trash ends first.
+-- variables', and its components'; its folders', its component types', its
+-- attribute definitions', and its connections' rows go to the trash too, but
+-- are not listed. Each such table has a branch here, in the list and in the
+-- purge, which package trash's tests hold it to. A row that belongs to a
+-- board, as a board's node or variable, is in the trash with its board too,
+-- which lists the board alone, and is purged with it, by the cascade of its
+-- foreign key to the board, even one deleted on its own, before its board,
+-- which the list holds, and whose own time in the trash ends first. A
+-- connection is in the trash with either of its nodes alike, and is purged
+-- with it.
 
 -- name: TrashItems :many
 -- TrashItems returns the entities in the project's trash that it lists, the
@@ -52,6 +54,8 @@ WHERE p.workspace_id = @workspace_id AND (
         AND b.deleted_at <= now() - @retention::interval)
     OR EXISTS (SELECT 1 FROM node n WHERE n.workspace_id = p.workspace_id AND n.project_id = p.id
         AND n.deleted_at <= now() - @retention::interval)
+    OR EXISTS (SELECT 1 FROM connection c WHERE c.workspace_id = p.workspace_id AND c.project_id = p.id
+        AND c.deleted_at <= now() - @retention::interval)
     OR EXISTS (SELECT 1 FROM variable v WHERE v.workspace_id = p.workspace_id AND v.project_id = p.id
         AND v.deleted_at <= now() - @retention::interval)
     OR EXISTS (SELECT 1 FROM folder f WHERE f.workspace_id = p.workspace_id AND f.project_id = p.id
@@ -101,6 +105,22 @@ WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.id IN 
     WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id
         AND n.deleted_at <= now() - @retention::interval
     ORDER BY n.deleted_at, n.id
+    LIMIT @max_rows
+);
+
+-- name: PurgeConnections :execrows
+-- PurgeConnections deletes at most max_rows of the project's connections that
+-- have been in its trash for retention, those that have been there longest
+-- first, and returns how many it deleted. A connection of a node in the
+-- trash, which is in the trash with it, is purged with its node, by the
+-- cascade of its foreign key; one deleted on its own, before its node, once
+-- its own time has passed.
+DELETE FROM connection d
+WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.id IN (
+    SELECT c.id FROM connection c
+    WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id
+        AND c.deleted_at <= now() - @retention::interval
+    ORDER BY c.deleted_at, c.id
     LIMIT @max_rows
 );
 

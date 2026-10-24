@@ -203,6 +203,15 @@ type Result struct {
 	// commands changed, with their current revisions, but for those that no
 	// longer exist.
 	Revisions []Revision
+	// NotReconnected are the entities that refer to what the batch restored
+	// from the project's trash that it could not reconnect, because what else
+	// they refer to is in the trash still, as the connections of a restored
+	// node whose node at the other end is (PRD FR-PROJ-06 AC1): once every
+	// command of the batch has applied, so that a batch that restores both of
+	// a connection's nodes leaves it out. A batch AlreadyApplied has none,
+	// since the record of what the batches that applied its commands left is
+	// pruned with their answers.
+	NotReconnected []Unreconnected
 }
 
 // RevisionConflictError is a batch with commands whose expected revisions
@@ -633,9 +642,14 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 	if err := t.recordUsage(ctx); err != nil {
 		return Result{}, err
 	}
+	notReconnected, err := t.notReconnected(ctx)
+	if err != nil {
+		return Result{}, err
+	}
 	// Revisions is never nil, as that of a batch answered from its record is
 	// not, so that the batch's answer is the same either way.
-	res := Result{Status: Applied, Seq: seq + 1, Revisions: append([]Revision{}, t.changed...)}
+	res := Result{Status: Applied, Seq: seq + 1, Revisions: append([]Revision{}, t.changed...),
+		NotReconnected: notReconnected}
 	if err := p.record(ctx, q, t, cmds, commandIDs, sent, res, inverses, undoable); err != nil {
 		return Result{}, err
 	}
@@ -991,7 +1005,8 @@ func (p *Pipeline) record(ctx context.Context, q *queries.Queries, t *Tx, cmds [
 	// A batch of the server's own, which nobody sends again, is recognised
 	// by its applied commands alone.
 	if sent {
-		if err := remember(ctx, q, t, commandIDs, answer{Seq: res.Seq, Revisions: refs}); err != nil {
+		if err := remember(ctx, q, t, commandIDs, answer{Seq: res.Seq, Revisions: refs,
+			NotReconnected: storedUnreconnectedOf(res.NotReconnected)}); err != nil {
 			return err
 		}
 	}

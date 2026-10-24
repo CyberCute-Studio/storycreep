@@ -185,12 +185,47 @@ type Entity struct {
 	States func(ctx context.Context, tx *Tx, entities []ids.UUID) (map[ids.UUID]any, error)
 }
 
+// Reconnection registers how the entities of a kind that refer to entities of
+// another, as a connection refers to its nodes, come back when what they
+// refer to is restored from the project's trash, "reconnecting references
+// where targets still exist" (PRD FR-PROJ-06): the trash's
+// reference-reconnection hook. A command that restores an entity reports it
+// (Tx.Restored), and once every command of its batch has applied, the
+// pipeline asks the reconnection of each kind that refers to it which of its
+// entities are still not reconnected, which the batch's Result lists
+// (Result.NotReconnected, AC1).
+type Reconnection struct {
+	// Restored is the kind of entity whose restoration reconnects what refers
+	// to it, and Kind the kind of entity that refers to it.
+	Restored, Kind ids.Kind
+	// Left returns the entities of Kind that refer to the entities of Restored
+	// whose IDs are among restored, which the batch restored, and that are
+	// still not reconnected once every command of the batch has applied, each
+	// with the entities that it waits for, in the order of their IDs. An
+	// entity restored and deleted again by the batch refers to nothing that
+	// came back, so it leaves nothing. It runs in the batch's transaction, and
+	// only reads.
+	Left func(ctx context.Context, tx *Tx, restored []ids.UUID) ([]Unreconnected, error)
+}
+
+// Unreconnected is an entity that refers to what a batch restored from the
+// project's trash, which the batch could not reconnect, because it refers to
+// other entities that are in the trash still, WaitingFor, as a connection of
+// a restored node whose node at the other end is. It comes back once they do.
+type Unreconnected struct {
+	Ref
+	WaitingFor []Ref
+}
+
 // Registry holds the types of command, and the kinds of entity that they
 // change (PRD §10.4): the one write path of a project's content. Register
-// the kinds of entity and the types before New.
+// the kinds of entity, the types, and the reconnections before New.
 type Registry struct {
 	specs    map[Type]*spec
 	entities map[ids.Kind]Entity
+	// reconnections are the reconnections of the kinds of entity that refer
+	// to others, in the order of their registration.
+	reconnections []Reconnection
 	// schemas are the payloads' schemas, as the API's OpenAPI document writes
 	// them, which validate the payloads.
 	schemas huma.Registry
@@ -247,6 +282,28 @@ func RegisterEntity(r *Registry, e Entity) {
 		panic(fmt.Sprintf("commands: the entity %s is registered already", e.Kind))
 	}
 	r.entities[e.Kind] = e
+}
+
+// RegisterReconnection registers the reconnection rc of the entities of its
+// kind that refer to its restored kind. It panics if rc lacks Left, if either
+// of its kinds is not registered (RegisterEntity), or if the reconnection of
+// its kind to its restored kind is registered already.
+func RegisterReconnection(r *Registry, rc Reconnection) {
+	for _, k := range []ids.Kind{rc.Restored, rc.Kind} {
+		if _, ok := r.entities[k]; !ok {
+			panic(fmt.Sprintf("commands: the reconnection of %s to %s: the entity %s is not registered", rc.Kind,
+				rc.Restored, k))
+		}
+	}
+	switch {
+	case rc.Left == nil:
+		panic(fmt.Sprintf("commands: the reconnection of %s to %s has no Left", rc.Kind, rc.Restored))
+	case slices.ContainsFunc(r.reconnections, func(o Reconnection) bool {
+		return o.Restored == rc.Restored && o.Kind == rc.Kind
+	}):
+		panic(fmt.Sprintf("commands: the reconnection of %s to %s is registered already", rc.Kind, rc.Restored))
+	}
+	r.reconnections = append(r.reconnections, rc)
 }
 
 // spec is a registered type of command, whose payload's Go type the
