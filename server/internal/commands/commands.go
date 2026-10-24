@@ -230,12 +230,17 @@ type Result struct {
 	// changed since, and is refused whole with a *RevisionConflictError
 	// otherwise, so that an undo never overwrites newer work on what the batch
 	// changed. It may still change what the batch did not, whose revisions it
-	// does not expect: the undo of a change of an enum's options or of an
-	// attribute definition's type gives the default to a value that a
-	// component was given since, of an option or a type that the undo takes
-	// away, as those commands do to any value that they cannot keep, and its
-	// own undo gives the value back (plan note N45). The batch that undoes
-	// another has an undo too, which redoes it. An entity that the
+	// does not expect, as its commands would at any time: the undo of a
+	// creation, a deletion, takes to the trash with what it deletes what has
+	// been put in it since, as the nodes that another user added to a board
+	// that the batch created; the undo of a deletion, a restore, brings back
+	// the folders that what it restores is in, and a component's type, which
+	// may have gone to the trash since; and the undo of a change of an enum's
+	// options or of an attribute definition's type gives the default to a
+	// value that a component was given since, of an option or a type that the
+	// undo takes away, as those commands do to any value that they cannot
+	// keep. Its own undo sets each of them back (plan note N45). The batch
+	// that undoes another has an undo too, which redoes it. An entity that the
 	// client's own undo brings back is at a new revision, so the client moves
 	// the expectations of the rest of its stack from the revision that the
 	// entity had before the batch that it undid to that one. Undo is nil for a
@@ -387,8 +392,8 @@ func ExpectedRevBytes(ref Ref) int {
 
 // LogBytes returns how many bytes the bound of a batch's undo
 // (Options.MaxUndoBytes) counts for raw, the payload of a step of the undo as
-// encoding/json encodes it: at least as many as the payload takes, compact,
-// as the operation log's jsonb writes it, which is what the batch's answer,
+// encoding/json encodes it: at least as many as the payload takes as the
+// operation log's jsonb writes it, compact, which is what the batch's answer,
 // and a replay of it, hold (Result.Undo). jsonb keeps a number as a numeric,
 // which it writes without an exponent, with every digit of its value, so a
 // float that encoding/json writes with one, below 1e-6 or from 1e21, takes
@@ -641,8 +646,8 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 			return ErrNotFound
 		}
 		t := &Tx{tx: tx, pipeline: p, actor: actor, project: projectID, workspace: workspaceID, at: map[Ref]int{},
-			revs: map[Ref]int64{}, owned: map[Ref]struct{}{}, maxUndo: p.maxUndo, maxUndoSteps: p.maxUndoSteps,
-			usage: map[usage.Key]int64{}, trashed: locked.Deleted}
+			revs: map[Ref]int64{}, expecting: map[ids.Kind]int{}, expected: map[Ref]struct{}{}, maxUndo: p.maxUndo,
+			maxUndoSteps: p.maxUndoSteps, usage: map[usage.Key]int64{}, trashed: locked.Deleted}
 		// A batch that was sent before is answered as it was, whatever has
 		// changed since, before the project's state and the workspace's limits
 		// are checked (§10.2 step 4), so that a batch that applied is never
@@ -787,21 +792,28 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		// steps of its inverse touch, which the bound holds too, as a client
 		// sends them back, so Changed counts each as Apply reports it, and
 		// stops Apply as soon as they take the undo past the bound.
-		t.current = c.spec
-		t.own, t.expecting = nil, nil
-		clear(t.owned)
-		// Each kind once, as an inverse may have many steps that touch the
-		// same kinds, as a board's restoration has, which Changed looks
-		// through at every entity's first change.
-		for _, st := range inverses[i] {
+		// The revision of each entity that the command changes is expected by
+		// the first step of its inverse whose type touches the entity's kind,
+		// as a command may expect a revision only of an entity that it
+		// touches (Tx.Changed). The check of an undo's revisions is the
+		// batch's, so the step that expects one matters only to the conflict
+		// that names it. An entity of a kind that none of the steps touches is
+		// one that the undo of the command does not write, as no step's Apply
+		// may report a change of a kind that its type does not touch, so none
+		// of them expects it. t.steps is inverses[i] itself, not a copy, so
+		// what Changed gives its steps is what record writes to the log.
+		t.current, t.steps = c.spec, inverses[i]
+		clear(t.expecting)
+		clear(t.expected)
+		for j, st := range inverses[i] {
 			for _, kind := range st.touches {
-				if !slices.Contains(t.expecting, kind) {
-					t.expecting = append(t.expecting, kind)
+				if _, ok := t.expecting[kind]; !ok {
+					t.expecting[kind] = j
 				}
 			}
 		}
 		err := c.spec.apply(ctx, t, c.payload)
-		t.current = nil
+		t.current, t.steps = nil, nil
 		if errors.Is(err, ErrUndoTooLarge) || (err == nil && t.undoBytes > t.maxUndo) {
 			return Result{}, undoRefusal(i, c, t.maxUndo)
 		}
@@ -811,7 +823,6 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		if err != nil {
 			return Result{}, fmt.Errorf("commands: command %d (%s): %w", i, c.spec.typ, err)
 		}
-		expect(inverses[i], t.own)
 	}
 	if err := t.addCounts(ctx); err != nil {
 		return Result{}, err
@@ -831,27 +842,6 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		return Result{}, err
 	}
 	return res, nil
-}
-
-// expect gives the steps of a command's inverse the entities that the command
-// changed, own, whose revisions the undo expects, each to the first of them
-// whose type touches its kind, as a command may expect a revision only of an
-// entity that it touches, whose bytes the bound has counted as the command
-// reported them (Tx.Changed). The check of an undo's revisions is the
-// batch's, so the step that expects one matters only to the conflict that
-// names it. An entity of a kind that none of the steps touches is one that
-// the undo of the command does not write, as no step's Apply may report a
-// change of a kind that its type does not touch, whose newer work the undo
-// cannot overwrite, so none of them expects it.
-func expect(steps []logStep, own []Ref) {
-	for _, ref := range own {
-		for j := range steps {
-			if slices.Contains(steps[j].touches, ref.Kind) {
-				steps[j].expects = append(steps[j].expects, ref)
-				break
-			}
-		}
-	}
 }
 
 // check checks, in t, the batch's transaction, before any of its commands
@@ -1152,8 +1142,8 @@ type (
 		Payload     json.RawMessage  `json:"payload"`
 		ExpectedRev map[string]int64 `json:"expected_rev,omitempty"`
 		// touches are the kinds of entity that the step's type touches, and
-		// expects the entities whose revisions after the batch it expects
-		// (expect).
+		// expects the entities whose revisions after the batch it expects,
+		// which Tx.Changed gives it as its command reports them.
 		touches []ids.Kind
 		expects []Ref
 	}
@@ -1254,7 +1244,8 @@ func (p *Pipeline) record(ctx context.Context, q *queries.Queries, t *Tx, cmds [
 // that cannot be undone. The log's jsonb keeps an object's keys in an order of
 // its own, so a payload read from it is the same whenever it is read, which a
 // batch's answer and a replay of it both read, and which a client sends back as
-// it is.
+// it is. jsonb writes a space after each colon and comma, which undoOf drops,
+// so that each payload is compact, as LogBytes counts it.
 func undoOf(inverse []byte) ([]UndoCommand, error) {
 	if inverse == nil {
 		return nil, nil
@@ -1265,7 +1256,13 @@ func undoOf(inverse []byte) ([]UndoCommand, error) {
 	}
 	undo := make([]UndoCommand, len(steps))
 	for i, st := range steps {
-		undo[i] = UndoCommand{Type: st.Type, Payload: st.Payload, ExpectedRev: make(map[Ref]int64, len(st.ExpectedRev))}
+		var payload bytes.Buffer
+		payload.Grow(len(st.Payload))
+		if err := json.Compact(&payload, st.Payload); err != nil {
+			return nil, fmt.Errorf("step %d's payload: %w", i, err)
+		}
+		undo[i] = UndoCommand{Type: st.Type, Payload: payload.Bytes(),
+			ExpectedRev: make(map[Ref]int64, len(st.ExpectedRev))}
 		for key, rev := range st.ExpectedRev {
 			kind, id, err := ids.DecodeAny(key)
 			if err != nil {

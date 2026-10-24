@@ -101,6 +101,14 @@ func TestUndoAndRedo(t *testing.T) {
 	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, string(got)) {
 		t.Errorf("the batch's undo is %s, but the operation log's inverse is %s", got, o.inverse)
 	}
+	// Each payload is compact, as the bound counts it (LogBytes), though the
+	// log's jsonb writes a space after each colon and comma.
+	for i, c := range res.Undo {
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, c.Payload); err != nil || !bytes.Equal(compact.Bytes(), c.Payload) {
+			t.Errorf("the undo's command %d has the payload %s, which is not compact", i, c.Payload)
+		}
+	}
 
 	// The replay reads the undo from the operation log, as it was answered.
 	again, err := p.Apply(ctx, w.as(ownerUser), w.project, batch)

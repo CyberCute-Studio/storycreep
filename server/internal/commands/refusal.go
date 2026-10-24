@@ -99,10 +99,15 @@ func undoRefusal(i int, c decoded, maxUndo int) *RefusedError {
 // undoStepsRefusal returns the refusal of the command c, the batch's command
 // i, whose inverse would give the batch's undo more than maxSteps steps,
 // which a batch that undoes it could not send, which the pipeline answers at
-// the payload, as a value that the project's state does not take.
+// the payload, as a value that the project's state does not take. A command
+// whose own inverse has that many steps, as the restore of a board under
+// more folders in the trash than that, which its undo deletes again, applies
+// once what its inverse undoes is changed first, in batches of fewer steps,
+// as those folders restored from the top down.
 func undoStepsRefusal(i int, c decoded, maxSteps int) *RefusedError {
 	return &RefusedError{Command: i, CommandID: c.ID, Type: c.spec.typ,
 		Message: fmt.Sprintf("would give the batch's undo, the inverses of its commands as the operation log keeps "+
 			"them, more than %d commands, which a batch that undoes it could not send: send the commands in smaller "+
-			"batches", maxSteps)}
+			"batches, or make a change whose undo has fewer commands, as restoring first the folders in the trash "+
+			"that a restore would bring back", maxSteps)}
 }

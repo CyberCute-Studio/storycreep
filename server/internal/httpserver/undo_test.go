@@ -89,11 +89,8 @@ func TestUndoRefusedOverNewerWork(t *testing.T) {
 	resultFrom(t, call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t,
 		wireCommand{Type: "node.update", Payload: map[string]any{"id": node, "title": "Theirs"}}), editor.header(true)))
 
-	undo := make([]wireCommand, len(mine.Undo))
-	for i, c := range mine.Undo {
-		undo[i] = wireCommand{Type: c.Type, Payload: json.RawMessage(c.Payload), ExpectedRev: c.ExpectedRev}
-	}
-	res := call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, undo...), owner.header(true))
+	res := call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, undoCommands(mine.Undo)...),
+		owner.header(true))
 	wantCode(t, "the undo", res, http.StatusConflict, api.CodeRevisionConflict)
 	var env struct {
 		Error api.ErrorBody `json:"error"`
@@ -146,10 +143,7 @@ func TestUndoOfArchivalAndDeletion(t *testing.T) {
 		}
 		done := resultFrom(t, call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, batch...),
 			owner.header(true)))
-		undo := make([]wireCommand, len(done.Undo))
-		for i, c := range done.Undo {
-			undo[i] = wireCommand{Type: c.Type, Payload: json.RawMessage(c.Payload), ExpectedRev: c.ExpectedRev}
-		}
+		undo := undoCommands(done.Undo)
 		res := call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, undo...), owner.header(true))
 		if res.status != http.StatusOK {
 			t.Fatalf("the undo of a change and %s, %s: %d %s", last, undoTypes(undo), res.status, res.body)
@@ -365,6 +359,17 @@ func wantApplied(t *testing.T, res response, must bool) bool {
 	return false
 }
 
+// undoCommands returns the commands of the undo that a batch's answer held,
+// as a client sends them back, each of which commandBatch gives a command_id
+// of its own.
+func undoCommands(undo []undoCommandBody) []wireCommand {
+	cmds := make([]wireCommand, len(undo))
+	for i, u := range undo {
+		cmds[i] = wireCommand{Type: u.Type, Payload: json.RawMessage(u.Payload), ExpectedRev: u.ExpectedRev}
+	}
+	return cmds
+}
+
 // undoTypes returns the types of the commands cmds, joined.
 func undoTypes(cmds []wireCommand) string {
 	types := make([]string, len(cmds))
@@ -430,10 +435,7 @@ func (c *undoClient) revert(e *undoEntry) *undoEntry {
 	if len(e.undo) == 0 {
 		return &undoEntry{undo: []undoCommandBody{}, before: map[string]int64{}}
 	}
-	cmds := make([]wireCommand, len(e.undo))
-	for i, u := range e.undo {
-		cmds[i] = wireCommand{Type: u.Type, Payload: json.RawMessage(u.Payload), ExpectedRev: u.ExpectedRev}
-	}
+	cmds := undoCommands(e.undo)
 	res, next := c.apply(cmds)
 	if res.status != http.StatusOK || next == nil {
 		c.t.Fatalf("the undo %s: %d %s", undoTypes(cmds), res.status, res.body)

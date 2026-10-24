@@ -43,16 +43,16 @@ type Tx struct {
 	changed []Revision
 	at      map[Ref]int
 	revs    map[Ref]int64
-	// own are the entities that the command that applies changed, in the
-	// order of its first change of each, and owned the same as a set, which
-	// the pipeline empties before each command's Apply, and expecting the
-	// kinds of entity that the steps of the command's inverse touch, each
-	// once, or none for a batch that cannot be undone: the command's undo
-	// expects the revisions of those of its entities that are of these kinds
-	// (plan item 37).
-	own       []Ref
-	owned     map[Ref]struct{}
-	expecting []ids.Kind
+	// steps are the steps of the inverse of the command that applies, none
+	// for a batch that cannot be undone, and expecting the index of the
+	// first of them whose type touches each kind, which the pipeline sets
+	// before the command's Apply: the command's undo expects the revision
+	// of each entity of those kinds that the command changes, which Changed
+	// gives to that step, and expected holds those entities, so that it
+	// gives each once (plan item 37).
+	steps     []logStep
+	expecting map[ids.Kind]int
+	expected  map[Ref]struct{}
 	// undoBytes is how many bytes the inverses that the pipeline has computed
 	// of the batch's commands take, as the operation log keeps them: the
 	// payloads of their steps (LogBytes), and the revisions that they expect
@@ -171,10 +171,10 @@ func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 			encodeRef(ref), rev, seen)
 	}
 	t.revs[ref] = rev
-	if _, ok := t.owned[ref]; !ok {
-		t.owned[ref] = struct{}{}
-		t.own = append(t.own, ref)
-		if slices.Contains(t.expecting, kind) {
+	if j, ok := t.expecting[kind]; ok {
+		if _, ok := t.expected[ref]; !ok {
+			t.expected[ref] = struct{}{}
+			t.steps[j].expects = append(t.steps[j].expects, ref)
 			if t.undoBytes += ExpectedRevBytes(ref); t.undoBytes > t.maxUndo {
 				return ErrUndoTooLarge
 			}
