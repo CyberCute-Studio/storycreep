@@ -421,8 +421,8 @@ func undoTypes(cmds []wireCommand) string {
 
 // undoEntry is an entry of a client's undo or redo stack: the undo that a
 // batch's answer held, and the revisions that the entities that the batch
-// changed had before it, as the client knew them, but for those that it
-// created.
+// changed had before it, as the client's store held them once it had every
+// batch before the batch's seq, but for those that it created.
 type undoEntry struct {
 	undo   []undoCommandBody
 	before map[string]int64
@@ -434,7 +434,10 @@ type undoEntry struct {
 // has undone a batch, which brings back each entity that the batch changed as
 // it was before the batch, at a new revision, it moves what the other entries
 // of its stacks expect of the entity, from the revision that it had before
-// the batch to the new one (plan note N45).
+// the batch to the new one (plan note N45). It is the project's only writer,
+// so what it knows when a batch's answer comes is the project as every batch
+// before that one's seq left it; a client among others knows that only once
+// its store has caught up with the operations before that seq.
 type undoClient struct {
 	t     *testing.T
 	send  func(cmds []wireCommand) response

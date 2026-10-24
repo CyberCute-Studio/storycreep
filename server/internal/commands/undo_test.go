@@ -62,7 +62,8 @@ func (w *world) body(t *testing.T, id ids.UUID) (string, int64) {
 
 // TestUndoAndRedo checks that a batch's Result holds its undo, the operation
 // log's inverse, each step expecting the revisions that the batch left of
-// what its command changed, which, sent back as a batch, undoes the batch, and
+// what its command changed, each entity once, by the step of the first
+// command that changed it, which, sent back as a batch, undoes the batch, and
 // whose own Result holds the undo that redoes it; that a replay of the batch
 // answers the same undo, which it reads from the log; that a batch answered as
 // AlreadyApplied, and one that cannot be undone, have none; and that a
@@ -85,9 +86,10 @@ func TestUndoAndRedo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Both commands change the note, which the undo, checked whole against
+	// the note as it is before it, expects once, by the undo of the first.
 	want := []wireStep{
-		{Type: noteUpdate, Payload: json.RawMessage(`{"id":"` + aID + `","body":"second"}`),
-			ExpectedRev: map[string]int64{aID: 3}},
+		{Type: noteUpdate, Payload: json.RawMessage(`{"id":"` + aID + `","body":"second"}`)},
 		{Type: noteUpdate, Payload: json.RawMessage(`{"id":"` + aID + `","body":"first"}`),
 			ExpectedRev: map[string]int64{aID: 3}},
 	}
@@ -139,8 +141,8 @@ func TestUndoAndRedo(t *testing.T) {
 	if body, rev := w.body(t, a); body != "third" || rev != 7 {
 		t.Errorf("once redone, the note is %q at %d, want third at 7", body, rev)
 	}
-	if len(redone.Undo) != 2 || redone.Undo[0].ExpectedRev[noteRef(a)] != 7 {
-		t.Errorf("the redo's undo is %+v, want two steps that expect the note at 7", redone.Undo)
+	if len(redone.Undo) != 2 || len(redone.Undo[0].ExpectedRev) != 0 || redone.Undo[1].ExpectedRev[noteRef(a)] != 7 {
+		t.Errorf("the redo's undo is %+v, want two steps, the second of which expects the note at 7", redone.Undo)
 	}
 
 	// The note's creation is undone by its deletion, which cannot be undone,
@@ -282,9 +284,11 @@ func TestUndoSteps(t *testing.T) {
 // TestUndoOfNoChange checks that a batch's undo holds none of the steps of a
 // command that changed nothing, which would expect no revision, and so write
 // back what the command found over what another user has changed since; that
-// the undo of a batch whose commands changed nothing is empty; and that the
+// the undo of a batch whose commands changed nothing is empty; that the
 // bounds give back the room that such a command's steps took, so that the
-// next command's inverse has it.
+// next command's inverse has it; and that they do not refuse such a command
+// for steps that would take the undo past them after a command whose own
+// steps the undo holds, as the undo leaves them out.
 func TestUndoOfNoChange(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -298,33 +302,56 @@ func TestUndoOfNoChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	// noteBadInverse changes nothing, and its inverse is the note's deletion,
-	// whose step takes all of the bound, and is all that it allows.
-	nothing := func() Command {
-		return command(t, noteBadInverse, badInversePayload{ID: xID, Step: noteDelete, Room: len(deletion)}, nil)
+	// once the undo has the room that its payload says.
+	nothing := func(room int) Command {
+		return command(t, noteBadInverse, badInversePayload{ID: xID, Step: noteDelete, Room: room}, nil)
 	}
+	// The deletion's step takes all of the bound, and is all that it allows.
 	p := w.pipeline(t, func(o *Options) { o.MaxUndoBytes, o.MaxUndoSteps = len(deletion), 1 })
-	res, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{nothing(), nothing()})
+	res, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{nothing(len(deletion)), nothing(len(deletion))})
 	if err != nil || res.Undo == nil || len(res.Undo) != 0 {
 		t.Fatalf("a batch whose commands changed nothing: %+v, %v, want an empty undo", res, err)
 	}
 	if o := w.operation(t, res.Seq); !sameJSON(t, o.inverse, `[]`) {
 		t.Errorf("the inverse of a batch whose commands changed nothing is %s, want []", o.inverse)
 	}
-	res, err = w.pipeline(t, nil).Apply(ctx, w.as(ownerUser), w.project, []Command{
-		command(t, noteUpdate, notePayload{ID: xID, Body: "y"}, nil), nothing()})
+
+	// After a change whose undo takes all of a bound, the deletion's step
+	// would take it past, but the undo leaves it out, so the batch applies.
+	change, err := json.Marshal(notePayload{ID: xID, Body: "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := json.Marshal(wireUndo(res.Undo))
-	if err != nil {
-		t.Fatal(err)
+	undoBytes := len(change) + ExpectedRevBytes(noteRef(x))
+	for i, bound := range []func(o *Options){
+		func(o *Options) { o.MaxUndoBytes = undoBytes + len(deletion) - 1 },
+		func(o *Options) { o.MaxUndoSteps = 1 },
+	} {
+		body := []string{"y", "z"}[i]
+		res, err = w.pipeline(t, bound).Apply(ctx, w.as(ownerUser), w.project, []Command{
+			command(t, noteUpdate, notePayload{ID: xID, Body: body}, nil), nothing(1)})
+		if err != nil {
+			t.Fatalf("a change and a command that changed nothing, whose steps would take the undo past bound %d: %v",
+				i, err)
+		}
+		if len(res.Undo) != 1 || res.Undo[0].Type != noteUpdate {
+			t.Errorf("the undo of a change and a command that changed nothing is %+v, want the change's alone",
+				res.Undo)
+		}
+		if i > 0 {
+			continue
+		}
+		got, err := json.Marshal(wireUndo(res.Undo))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := `[{"type": "note.update", "payload": {"id": "` + xID + `", "body": "x"}, "expected_rev": {"` +
+			xID + `": 2}}]`; !sameJSON(t, got, want) {
+			t.Errorf("the undo of a change and a command that changed nothing is %s, want %s", got, want)
+		}
 	}
-	if want := `[{"type": "note.update", "payload": {"id": "` + xID + `", "body": "x"}, "expected_rev": {"` + xID +
-		`": 2}}]`; !sameJSON(t, got, want) {
-		t.Errorf("the undo of a change and a command that changed nothing is %s, want %s", got, want)
-	}
-	if _, rev := w.body(t, x); rev != 2 {
-		t.Errorf("the note is at %d, want 2", rev)
+	if _, rev := w.body(t, x); rev != 3 {
+		t.Errorf("the note is at %d, want 3", rev)
 	}
 }
 

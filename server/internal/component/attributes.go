@@ -690,7 +690,11 @@ func (plan *valuesPlan) give(given map[string]value.Value) error {
 // that the command gives a value but that holds none of the definition, one
 // of another type, and passes over one that the project does not have, as
 // one that the purge has deleted since the change whose undo gives it back
-// its value, so that the undo still applies.
+// its value, which is not refused for it here. The undo that the change's
+// batch answers is refused then all the same, with a revision conflict, as
+// it expects the revision that the change left of each component whose
+// value it changed, those in the trash included, and so of that one, which
+// no longer exists (commands.Result.Undo).
 func (plan *valuesPlan) each(ctx context.Context, tx *commands.Tx, fn func(u ids.UUID, old, to value.Value) error) error {
 	found := make(map[ids.UUID]bool, len(plan.given))
 	q := queries.New(tx)

@@ -225,7 +225,10 @@ type Result struct {
 	// Undo is the batch's undo (PRD FR-EDIT-08, plan item 37): its inverse as
 	// the operation log keeps it, the commands that undo its commands, from its
 	// last command's to its first's, each with the revisions that it expects,
-	// those of the entities that its command changed, as the batch left them.
+	// those of the entities that its command changed, as the batch left them,
+	// each entity once: one that several of the batch's commands changed is
+	// expected by the undo of the first of them alone, as the batch that
+	// undoes it is checked whole against the entities as they are before it.
 	// A command of the batch that changed nothing (Tx.Changed) has nothing to
 	// undo, and none of its inverse's steps is in the undo: they would expect
 	// no revision, and write back what the command found over what another
@@ -249,14 +252,19 @@ type Result struct {
 	// that undoes another has an undo too, which redoes it. An entity that the
 	// client's own undo brings back is at a new revision, so the client moves
 	// the expectations of the rest of its stack from the revision that the
-	// entity had before the batch that it undid to that one. Undo is nil for a
-	// batch that cannot be undone, with a command of a type that is
-	// NonUndoable, or answered from its idempotency record once the operation
-	// log no longer holds its operation, as one that compaction dropped (PRD
-	// FR-GDPR-03), and for a batch AlreadyApplied, whose commands' batches each
-	// have an undo of their own, and empty for a batch whose commands'
-	// inverses have no steps, or whose commands changed nothing, which undoes
-	// nothing.
+	// entity had before the batch that it undid to that one: the revision that
+	// the client's store holds once it has every batch of the project before
+	// that one's Seq, so that a store that had not yet heard of another
+	// user's batch that came between, when the answer came, catches up
+	// first, rather than move to the new revision an entry of its stack that
+	// expects the entity as it was before that user's change, whose undo
+	// would then overwrite it. Undo is nil for a batch that cannot be undone,
+	// with a command of a type that is NonUndoable, or answered from its
+	// idempotency record once the operation log no longer holds its
+	// operation, as one that compaction dropped (PRD FR-GDPR-03), and for a
+	// batch AlreadyApplied, whose commands' batches each have an undo of
+	// their own, and empty for a batch whose commands' inverses have no
+	// steps, or whose commands changed nothing, which undoes nothing.
 	Undo []UndoCommand
 }
 
@@ -363,12 +371,15 @@ type Options struct {
 // for the rest of the commands: their IDs, types, and keys. The pipeline
 // refuses a command whose inverse, or the revisions that it expects of what
 // the command changes, as its Apply reports them, would take its batch's undo
-// past it, whatever its commands' inverses hold. The batch that undoes
-// another is a batch as any other, whose own inverse writes again what the
-// other's commands wrote, so the pipeline refuses it alike once that passes
-// the bound: a batch whose commands write more than the bound, as several
-// large descriptions over small ones, applies, but is undone only in smaller
-// batches.
+// past it, whatever its commands' inverses hold, but for a command that
+// changes nothing, whose inverse the undo leaves out, and the bound does not
+// count once it has applied. Each revision is counted once, however many of
+// the batch's commands change its entity, as the undo expects it once. The
+// batch that undoes another is a batch as any other, whose own inverse writes
+// again what the other's commands wrote, so the pipeline refuses it alike
+// once that passes the bound: a batch whose commands write more than the
+// bound, as several large descriptions over small ones, applies, but is
+// undone only in smaller batches.
 const DefaultMaxUndoBytes = 4 << 20
 
 // DefaultMaxUndoSteps is the most steps that a batch's inverse may have, the
@@ -464,11 +475,11 @@ func positionalLen(num []byte) int {
 }
 
 // ErrUndoTooLarge is the error of an Inverse that stops before its steps take
-// more than Tx.UndoRoom leaves, and of Tx.Changed once the revisions that the
-// command's undo expects take more, which an Apply returns as it returns
-// Changed's every error, which the pipeline refuses the command for as it
-// refuses one whose inverse's steps it finds take more: at the payload's
-// field that the command's Spec.UndoField names.
+// more than Tx.UndoRoom leaves, and of Tx.Changed once the command's inverse,
+// or the revisions that its undo expects, take more, which an Apply returns
+// as it returns Changed's every error, which the pipeline refuses the command
+// for as it refuses one whose inverse's steps it finds take more: at the
+// payload's field that the command's Spec.UndoField names.
 var ErrUndoTooLarge = errors.New("commands: the inverse would take its batch's undo past the pipeline's bound")
 
 // Pipeline applies batches of commands.
@@ -770,21 +781,17 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 			}
 			// The batch's undo is its commands' inverses, which the bounds
 			// hold whole, whatever a command's inverse holds: each command's
-			// steps add to what those of the commands before it take.
+			// steps add to what those of the commands before it take. The
+			// bounds are checked once the command has applied, below, when
+			// the pipeline knows whether the undo holds its steps.
 			if err == nil {
 				for _, st := range inverses[i] {
 					t.undoBytes += LogBytes(st.Payload)
 				}
 				t.undoSteps += len(inverses[i])
-				if t.undoBytes > t.maxUndo {
-					err = ErrUndoTooLarge
-				}
 			}
 			if errors.Is(err, ErrUndoTooLarge) {
 				return Result{}, undoRefusal(i, c, t.maxUndo)
-			}
-			if err == nil && t.undoSteps > t.maxUndoSteps {
-				return Result{}, undoStepsRefusal(i, c, t.maxUndoSteps)
 			}
 			if refused, ok := refusedBy(err, i, c); ok {
 				return Result{}, refused
@@ -798,20 +805,23 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		// expects the revisions of what it changes of the kinds that the
 		// steps of its inverse touch, which the bound holds too, as a client
 		// sends them back, so Changed counts each as Apply reports it, and
-		// stops Apply as soon as they take the undo past the bound.
+		// stops Apply as soon as the undo is past the bound.
 		// The revision of each entity that the command changes is expected by
 		// the first step of its inverse whose type touches the entity's kind,
 		// as a command may expect a revision only of an entity that it
-		// touches (Tx.Changed). The check of an undo's revisions is the
-		// batch's, so the step that expects one matters only to the conflict
-		// that names it. An entity of a kind that none of the steps touches is
-		// one that the undo of the command does not write, as no step's Apply
-		// may report a change of a kind that its type does not touch, so none
-		// of them expects it. t.steps is inverses[i] itself, not a copy, so
-		// what Changed gives its steps is what record writes to the log.
+		// touches (Tx.Changed), unless the undo of a command before it in the
+		// batch expects it already (t.expected, which spans the batch). The
+		// check of an undo's revisions is the batch's, against the entities
+		// as they are before it, so an entity is expected once, however many
+		// of the batch's commands change it, and the bound counts it once, and
+		// the step that expects one matters only to the conflict that names
+		// it. An entity of a kind that none of the steps touches is one that
+		// the undo of the command does not write, as no step's Apply may
+		// report a change of a kind that its type does not touch, so none of
+		// them expects it. t.steps is inverses[i] itself, not a copy, so what
+		// Changed gives its steps is what record writes to the log.
 		t.current, t.steps, t.changes = c.spec, inverses[i], 0
 		clear(t.expecting)
-		clear(t.expected)
 		for j, st := range inverses[i] {
 			for _, kind := range st.touches {
 				if _, ok := t.expecting[kind]; !ok {
@@ -821,7 +831,7 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		}
 		err := c.spec.apply(ctx, t, c.payload)
 		t.current, t.steps = nil, nil
-		if errors.Is(err, ErrUndoTooLarge) || (err == nil && t.undoBytes > t.maxUndo) {
+		if errors.Is(err, ErrUndoTooLarge) {
 			return Result{}, undoRefusal(i, c, t.maxUndo)
 		}
 		if refused, ok := refusedBy(err, i, c); ok {
@@ -838,12 +848,25 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		// of a board's rename to the name that it has would rename it back
 		// over another user's rename since (PRD FR-EDIT-08). The batch's undo
 		// leaves them out, and the bounds give back the room that they took.
+		// Only Changed gives a step a revision to expect, so those steps
+		// expect none, and every entity that the batch's undo expects
+		// (t.expected) is expected by a step that the undo holds.
 		if t.changes == 0 && len(inverses[i]) > 0 {
 			for _, st := range inverses[i] {
 				t.undoBytes -= LogBytes(st.Payload)
 			}
 			t.undoSteps -= len(inverses[i])
 			inverses[i] = []logStep{}
+		}
+		// The bounds hold the batch's undo as the command has left it, so
+		// that a batch is not refused for the steps of a command that
+		// changed nothing, which its undo leaves out, wherever the command
+		// is in the batch.
+		if t.undoBytes > t.maxUndo {
+			return Result{}, undoRefusal(i, c, t.maxUndo)
+		}
+		if t.undoSteps > t.maxUndoSteps {
+			return Result{}, undoStepsRefusal(i, c, t.maxUndoSteps)
 		}
 	}
 	if err := t.addCounts(ctx); err != nil {
@@ -1165,7 +1188,8 @@ type (
 		ExpectedRev map[string]int64 `json:"expected_rev,omitempty"`
 		// touches are the kinds of entity that the step's type touches, and
 		// expects the entities whose revisions after the batch it expects,
-		// which Tx.Changed gives it as its command reports them.
+		// which Tx.Changed gives it as its command reports them, but for
+		// those that a step of a command before it in the batch expects.
 		touches []ids.Kind
 		expects []Ref
 	}

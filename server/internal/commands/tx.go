@@ -48,11 +48,14 @@ type Tx struct {
 	// first of them whose type touches each kind, which the pipeline sets
 	// before the command's Apply: the command's undo expects the revision
 	// of each entity of those kinds that the command changes, which Changed
-	// gives to that step, and expected holds those entities, so that it
-	// gives each once (plan item 37). changes is how many changes the
-	// command has reported (Changed): the pipeline leaves out of the batch's
-	// undo the steps of a command that reported none, which changed nothing,
-	// and has nothing to undo.
+	// gives to that step, unless the undo of a command before it in the
+	// batch expects it already, and expected holds the entities that the
+	// batch's undo expects, so that it expects each once, however many of
+	// the batch's commands change it, as the batch that undoes it is checked
+	// whole against the entities as they are before it (plan item 37).
+	// changes is how many changes the command has reported (Changed): the
+	// pipeline leaves out of the batch's undo the steps of a command that
+	// reported none, which changed nothing, and has nothing to undo.
 	steps     []logStep
 	expecting map[ids.Kind]int
 	expected  map[Ref]struct{}
@@ -62,8 +65,11 @@ type Tx struct {
 	// payloads of their steps (LogBytes), and the revisions that they expect
 	// (ExpectedRevBytes), which Changed counts as the commands report them,
 	// and the pipeline refuses a command for once it is more than maxUndo
-	// (UndoRoom). undoSteps is how many steps they have, which the pipeline
-	// refuses a command for once it is more than maxUndoSteps.
+	// (UndoRoom) once the command has applied, as Changed does as soon as
+	// the command reports a change then. undoSteps is how many steps they
+	// have, which the pipeline refuses a command for once it is more than
+	// maxUndoSteps once the command has applied. Both leave out the inverse
+	// of a command that changed nothing, which the batch's undo leaves out.
 	undoBytes, maxUndo      int
 	undoSteps, maxUndoSteps int
 	// usage is what the batch's commands add to each key of the workspace's
@@ -134,12 +140,12 @@ func (t *Tx) WorkspaceID() ids.UUID {
 // (LogBytes), before they take the batch's undo, with the inverses of its
 // commands before and the revisions that those expect, past the pipeline's
 // bound (Options.MaxUndoBytes), which the pipeline refuses the command for
-// once the inverse returns, or once the command's Apply reports a change of
-// an entity whose revision its own undo expects past it (Changed). An Inverse
-// whose steps hold a part of the project that grows with it, as the values
-// that an attribute's retype loses, reads it to stop with ErrUndoTooLarge
-// once what it holds takes more, rather than hold all of it only to be
-// refused.
+// once it has applied, unless it changed nothing, whose inverse the batch's
+// undo leaves out, or as soon as its Apply reports a change (Changed). An
+// Inverse whose steps hold a part of the project that grows with it, as the
+// values that an attribute's retype loses, reads it to stop with
+// ErrUndoTooLarge once what it holds takes more, rather than hold all of it
+// only to be refused.
 func (t *Tx) UndoRoom() int {
 	return t.maxUndo - t.undoBytes
 }
@@ -154,13 +160,16 @@ func (t *Tx) UndoRoom() int {
 // (Spec.Touches), and rev is above every revision of the entity that the
 // batch has seen, as it is when the command incremented it; and it returns
 // ErrUndoTooLarge, which the pipeline refuses the command for as one whose
-// inverse is too large, once the revision of the entity, which the command's
-// undo expects, takes the batch's undo past the pipeline's bound
-// (Options.MaxUndoBytes), so that a command that changes more entities than
-// its undo could expect stops there, rather than change all of them only to
-// be refused. The pipeline leaves out of the batch's undo the inverse of a
-// command that reports no change, as one that changed nothing (Result.Undo),
-// so a command reports every change that it makes.
+// inverse is too large, once the batch's undo, with the command's inverse,
+// whose steps it holds as the command changes something, and the revision
+// of the entity, which it expects once, however many of the batch's
+// commands change the entity, is past the pipeline's bound
+// (Options.MaxUndoBytes), so that a command whose inverse takes the undo
+// past it, or that changes more entities than its undo could expect, stops
+// there, rather than change all of them only to be refused. The pipeline
+// leaves out of the batch's undo the inverse of a command that reports no
+// change, as one that changed nothing (Result.Undo), so a command reports
+// every change that it makes.
 func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 	ref := Ref{Kind: kind, ID: id}
 	switch {
@@ -182,10 +191,11 @@ func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 		if _, ok := t.expected[ref]; !ok {
 			t.expected[ref] = struct{}{}
 			t.steps[j].expects = append(t.steps[j].expects, ref)
-			if t.undoBytes += ExpectedRevBytes(ref); t.undoBytes > t.maxUndo {
-				return ErrUndoTooLarge
-			}
+			t.undoBytes += ExpectedRevBytes(ref)
 		}
+	}
+	if t.undoBytes > t.maxUndo {
+		return ErrUndoTooLarge
 	}
 	if i, ok := t.at[ref]; ok {
 		t.changed[i].Rev = rev
