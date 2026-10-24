@@ -440,7 +440,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-EDIT-03 AC2, FR-EDIT-02 AC3, FR-PROJ-06 AC1, and FR-TEXT-01 AC1 (a document with an unknown mark or node is rejected by each of the three endpoints) pass. FR-EDIT-03 AC1 needs play mode and the serializer and lands in items 71 and 76.
 
 ### 37. Undo/redo contract
-**Status:** todo · **Depends on:** 28, 36
+**Status:** done ([#42](https://github.com/CyberCute-Studio/storycreep/pull/42)) · **Depends on:** 28, 36
 **PRD:** FR-EDIT-08 (AC1, AC2, AC4), NFR-Q-05
 - A registry test that every command type has an inverse or is explicitly non-undoable.
 - Undo and redo are sent as inverse commands with expected revisions, the operation's inverse from its last command to its first (N30). They are refused with an explanation, and no partial change, when they would overwrite newer work. A batch's answer holds its undo, each command expecting the revisions that the batch left of what its command changed, so that an undo sent in smaller batches, as one whose own undo would not fit in a request, expects in each what it writes back, wherever it is split, and a client moves what its stacks expect of an entity that its own undo brings back (N45).
