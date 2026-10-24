@@ -297,11 +297,14 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			projectNotFoundDoc + tokenNotFoundDoc + " Every expected_rev of a batch is checked against the " +
 			"entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose " +
 			"details hold the entities' current revisions and states. An archived project refuses a batch with " +
-			"409 project_archived, unless each of its commands applies to an archived project, and a batch that " +
-			"would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that " +
+			"409 project_archived, unless each of its commands applies to an archived project, as unarchiving, " +
+			"deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan " +
+			"is refused with 409 limit_exceeded. A batch that unarchives the project, or restores it from the " +
+			"trash, applies to it whatever its other commands, as the undo of a batch that archived or deleted " +
+			"it with others does. A batch that " +
 			"its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose " +
-			"details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch " +
-			"for what the project's state makes of its payload, at the payload's field, as " +
+			"details locate each problem, as body.commands[2].payload.name. A command may also " +
+			"refuse its batch for what the project's state makes of its payload, at the payload's field, as " +
 			"body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not " +
 			"take, as the ID of a folder that the project does not have, or that is deleted, or with the code that " +
 			"the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a " +
@@ -312,9 +315,9 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			"is not in the trash is, or 409 board_referenced for a board to delete whose nodes jumpers on other " +
 			"boards target, which the command does not confirm, whose details list them." +
 			fmt.Sprintf(" A batch whose undo, the inverses of its commands as the operation log keeps them, "+
-				"would take more than %d MiB, with the revisions that they expect, or would have more than %d "+
-				"commands, so that the batch that undoes it would not fit in a request, is refused with 422 "+
-				"validation_failed at the command that takes it past: at its payload, as "+
+				"each number without an exponent, would take more than %d MiB, with the revisions that they "+
+				"expect, or would have more than %d commands, so that the batch that undoes it would not fit in a "+
+				"request, is refused with 422 validation_failed at the command that takes it past: at its payload, as "+
 				"body.commands[3].payload, or at the field whose change the undo holds the values of, as "+
 				"body.commands[3].payload.type for an attribute.retype that would lose too much. The batch "+
 				"that undoes another is bounded alike, by its own undo, which writes again what the other's "+

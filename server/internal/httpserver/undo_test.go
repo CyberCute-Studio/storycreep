@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"maps"
 	"math/rand/v2"
 	"net/http"
@@ -21,23 +20,38 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 )
 
+// nonUndoable are the types of command that the server applies that have no
+// inverse, as Register makes sure each is marked (commands.Spec.NonUndoable),
+// whose batches cannot be undone, each with why it has none, as PRD
+// FR-EDIT-08 AC1 names publishing, importing, and deleting past the trash's
+// grace: none so far. A type that is marked so joins it, so that a type's
+// having no undo is a choice that this list records, not one that a
+// declaration makes in passing.
+var nonUndoable = map[string]string{}
+
 // TestEveryCommandUndoable checks that every type of command that the server
-// applies has an inverse, or is marked as having none, so that a batch of it
-// cannot be undone, and that the property test of undo, TestUndoRoundTrip,
-// covers every type that has one.
+// applies has an inverse, or is one that nonUndoable lists as having none, so
+// that a batch of it cannot be undone, and that the property test of undo,
+// TestUndoRoundTrip, covers every type that has one.
 //
 // Verifies: FR-EDIT-08/AC1
 func TestEveryCommandUndoable(t *testing.T) {
-	s := newServer(loadConfig(t, nil), slog.New(slog.DiscardHandler))
-	t.Cleanup(func() { _ = s.assets.Storage().Close() })
-	reg := s.commands.Registry()
-	undoable, marked := reg.Undoable(), reg.NonUndoable()
+	reg := newCommandRegistry()
+	undoable := reg.Undoable()
+	registered := map[string]bool{}
 	for _, typ := range reg.Types() {
-		switch inverse, none := slices.Contains(undoable, typ), slices.Contains(marked, typ); {
-		case inverse && none:
-			t.Errorf("%s has an inverse and is marked as having none", typ)
-		case !inverse && !none:
-			t.Errorf("%s has no inverse, and is not marked as having none", typ)
+		registered[string(typ)] = true
+		_, listed := nonUndoable[string(typ)]
+		switch inverse := slices.Contains(undoable, typ); {
+		case inverse && listed:
+			t.Errorf("%s has an inverse, but nonUndoable lists it as having none", typ)
+		case !inverse && !listed:
+			t.Errorf("%s has no inverse: give it one, or list it in nonUndoable, with why it has none", typ)
+		}
+	}
+	for _, typ := range slices.Sorted(maps.Keys(nonUndoable)) {
+		if !registered[typ] {
+			t.Errorf("nonUndoable lists %s, which is not a type of command that the server applies", typ)
 		}
 	}
 	for _, typ := range undoable {
@@ -109,6 +123,49 @@ func TestUndoRefusedOverNewerWork(t *testing.T) {
 	}
 }
 
+// TestUndoOfArchivalAndDeletion checks that the undo of a batch that changes
+// the project's content and then archives the project, deletes it, or both,
+// which unarchives or restores the project and then sets the content back,
+// applies, though the project is archived, or in the trash, when it is sent,
+// as a batch that unarchives or restores the project does whatever its other
+// commands, so that the undo that the batch's answer held is one that a
+// client can send back.
+func TestUndoOfArchivalAndDeletion(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	owner := f.as["owner"]
+	p := f.project(t, "")
+	board := createBoard(t, f.s.main, owner, p, "Harbour")
+	node := createNode(t, f.s.main, owner, p, board, "element", map[string]any{"title": "Keeper"})
+	for _, last := range [][]string{{"project.archive"}, {"project.delete"}, {"project.archive", "project.delete"}} {
+		batch := []wireCommand{{Type: "node.update", Payload: map[string]any{"id": node, "title": "Changed"}}}
+		for _, typ := range last {
+			batch = append(batch, wireCommand{Type: typ})
+		}
+		done := resultFrom(t, call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, batch...),
+			owner.header(true)))
+		undo := make([]wireCommand, len(done.Undo))
+		for i, c := range done.Undo {
+			undo[i] = wireCommand{Type: c.Type, Payload: json.RawMessage(c.Payload), ExpectedRev: c.ExpectedRev}
+		}
+		res := call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, undo...), owner.header(true))
+		if res.status != http.StatusOK {
+			t.Fatalf("the undo of a change and %s, %s: %d %s", last, undoTypes(undo), res.status, res.body)
+		}
+		var title string
+		var archived, deleted bool
+		if err := f.admin.QueryRow(context.Background(), `SELECT n.title, p.archived_at IS NOT NULL,
+			p.deleted_at IS NOT NULL FROM node n, project p WHERE n.id = $1 AND p.id = $2`,
+			decode(t, ids.Node, node), decode(t, ids.Project, p)).Scan(&title, &archived, &deleted); err != nil {
+			t.Fatal(err)
+		}
+		if title != "Keeper" || archived || deleted {
+			t.Errorf("once the change and %s are undone, the node is %q, and the project archived %t and deleted %t, "+
+				"want Keeper, and neither", last, title, archived, deleted)
+		}
+	}
+}
+
 // TestUndoRoundTrip is the property test of undo (PRD FR-EDIT-08 AC2, NFR-Q-05):
 // for each of a few seeds, a project with random content, some of it in its
 // trash, takes random batches of commands of every type that has an inverse,
@@ -157,7 +214,7 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 	policy.Rates[ratelimit.Write].Limits[ratelimit.User] = 100_000
 	s.limits = ratelimit.New(readyDB{s.ready}, policy)
 	p := createProject(t, s.main, owner, ws, "Harbour").ID
-	g := &undoGen{r: rand.New(rand.NewPCG(seed, 0x37)),
+	g := &undoGen{r: rand.New(rand.NewPCG(seed, 0x37)), ms: 1_700_000_000_000,
 		asset: upload(t, s.main, owner, p, testPNG(t, 8, 8), http.StatusCreated).ID}
 	conn := d.Admin(t)
 	project := decode(t, ids.Project, p)
@@ -566,10 +623,15 @@ func (e *encodedID) Scan(src any) error {
 }
 
 // undoGen makes random commands for a project's content as the model says it
-// is, with r.
+// is, with r, and the IDs of the entities that they create with r too
+// (undoGen.id), so that a seed makes the same batches whenever it runs, and a
+// seed that fails the test fails it again.
 type undoGen struct {
 	r *rand.Rand
-	m *undoModel
+	// ms is the time, in milliseconds since 1970, of the last ID that id
+	// made.
+	ms uint64
+	m  *undoModel
 	// asset is an asset of the project, which a node's cover and a
 	// component's image name.
 	asset string
@@ -582,17 +644,21 @@ func (g *undoGen) anyType() string {
 }
 
 // batch returns a batch of a command of the type typ, and in some batches one
-// or two more of random types, or false if the model has nothing that a
-// command of the type could change. A project in the trash takes a batch of
-// its restoration alone, and an archived one a batch of its unarchiving
-// alone, whatever typ is; and so does typ "", which takes no other batch.
+// or two more of random types, the project's own among them, or false if the
+// model has nothing that a command of the type could change. A project in the
+// trash takes a batch that restores it, and an archived one a batch that
+// unarchives it, whatever typ is, which applies whatever its other commands,
+// but for one that is both, whose restoration has no other command, which
+// it would refuse as one of an archived project; and so does typ "", which
+// takes no other batch, and no other command, so that it must apply.
 func (g *undoGen) batch(typ string) ([]wireCommand, bool) {
+	must := typ == ""
 	switch {
 	case g.m.deleted:
 		typ = "project.restore"
 	case g.m.archived:
 		typ = "project.unarchive"
-	case typ == "":
+	case must:
 		return nil, false
 	}
 	cmd, ok := g.command(typ)
@@ -600,15 +666,11 @@ func (g *undoGen) batch(typ string) ([]wireCommand, bool) {
 		return nil, false
 	}
 	cmds := []wireCommand{cmd}
-	if strings.HasPrefix(typ, "project.") || g.r.IntN(4) != 0 {
+	if must || g.m.deleted && g.m.archived || g.r.IntN(4) != 0 {
 		return cmds, true
 	}
 	for range 1 + g.r.IntN(2) {
-		other := g.anyType()
-		if strings.HasPrefix(other, "project.") {
-			continue
-		}
-		if c, ok := g.command(other); ok {
+		if c, ok := g.command(g.anyType()); ok {
 			cmds = append(cmds, c)
 		}
 	}
@@ -657,7 +719,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 
 	"folder.create": func(g *undoGen) (map[string]any, bool) {
 		kind := []string{"board", "variable", "component"}[g.r.IntN(3)]
-		p := obj("id", newID(ids.Folder), "kind", kind, "name", g.name())
+		p := obj("id", g.id(ids.Folder), "kind", kind, "name", g.name())
 		g.maybeFolder(p, "parent_id", kind)
 		g.maybeOrder(p)
 		return p, true
@@ -681,7 +743,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 	"folder.restore": func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.folders, false) },
 
 	"board.create": func(g *undoGen) (map[string]any, bool) {
-		p := obj("id", newID(ids.Board), "name", g.name())
+		p := obj("id", g.id(ids.Board), "name", g.name())
 		if g.coin() {
 			p["slug"] = g.slug()
 		}
@@ -733,7 +795,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 
 	"variable.create": func(g *undoGen) (map[string]any, bool) {
 		typ := g.variableType()
-		p := obj("id", newID(ids.Variable), "key", g.key(), "type", typ, "scope", "global")
+		p := obj("id", g.id(ids.Variable), "key", g.key(), "type", typ, "scope", "global")
 		if b, ok := g.live(g.m.boards); ok && g.coin() {
 			p["scope"], p["board_id"] = "board", b.id
 			if g.coin() {
@@ -800,7 +862,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 	"variable.restore": func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.variables, false) },
 
 	"component_type.create": func(g *undoGen) (map[string]any, bool) {
-		p := obj("id", newID(ids.ComponentType), "name", g.name())
+		p := obj("id", g.id(ids.ComponentType), "name", g.name())
 		if g.coin() {
 			p["key"] = g.key()
 		}
@@ -832,7 +894,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 	"attribute.create": func(g *undoGen) (map[string]any, bool) {
 		return g.onLive(g.m.types, func(c undoEntity) map[string]any {
 			typ := []string{"bool", "int", "float", "string", "text", "enum"}[g.r.IntN(6)]
-			p := obj("id", newID(ids.AttributeDef), "component_type_id", c.id, "name", g.name(), "type", typ)
+			p := obj("id", g.id(ids.AttributeDef), "component_type_id", c.id, "name", g.name(), "type", typ)
 			var options []string
 			if typ == "enum" {
 				options = g.options()
@@ -905,7 +967,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 
 	"component.create": func(g *undoGen) (map[string]any, bool) {
 		return g.onLive(g.m.types, func(c undoEntity) map[string]any {
-			p := obj("id", newID(ids.Component), "component_type_id", c.id, "name", g.name())
+			p := obj("id", g.id(ids.Component), "component_type_id", c.id, "name", g.name())
 			if g.coin() {
 				p["key"] = g.key()
 			}
@@ -971,7 +1033,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 	"node.create": func(g *undoGen) (map[string]any, bool) {
 		return g.onLive(g.m.boards, func(b undoEntity) map[string]any {
 			typ := []string{"element", "element", "branch", "jumper"}[g.r.IntN(4)]
-			p := obj("id", newID(ids.Node), "board_id", b.id, "type", typ, "position", g.position())
+			p := obj("id", g.id(ids.Node), "board_id", b.id, "type", typ, "position", g.position())
 			g.nodeFields(p, typ)
 			return p
 		})
@@ -988,7 +1050,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 	},
 	"node.duplicate": func(g *undoGen) (map[string]any, bool) {
 		return g.onLive(g.m.nodes, func(n undoEntity) map[string]any {
-			return obj("id", newID(ids.Node), "source_id", n.id, "position", g.position())
+			return obj("id", g.id(ids.Node), "source_id", n.id, "position", g.position())
 		})
 	},
 	"node.move": func(g *undoGen) (map[string]any, bool) {
@@ -1009,7 +1071,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 			return nil, false
 		}
 		to, _ := g.pick(g.m.nodes, func(n undoEntity) bool { return n.live && n.board == from.board })
-		p := obj("id", newID(ids.Connection), "from_node_id", from.id, "to_node_id", to.id)
+		p := obj("id", g.id(ids.Connection), "from_node_id", from.id, "to_node_id", to.id)
 		if g.coin() {
 			p["label"] = paragraph(g.text())
 		}
@@ -1059,8 +1121,24 @@ func obj(kv ...any) map[string]any {
 	return p
 }
 
-// newID returns the public ID of a new entity of the kind.
-func newID(kind ids.Kind) string { return ids.Encode(kind, ids.New()) }
+// id returns the public ID of a new entity of the kind: a UUIDv7, as a client
+// makes one, of a millisecond after the last ID's, and of random bits that r
+// makes, so that the IDs, by which the model orders the entities that the
+// generators pick from, are the seed's alone, where ids.New's are the clock's
+// and the system's random source's.
+func (g *undoGen) id(kind ids.Kind) string {
+	g.ms++
+	var u ids.UUID
+	for i := range 6 {
+		u[i] = byte(g.ms >> (40 - 8*i))
+	}
+	for i := 6; i < len(u); i++ {
+		u[i] = byte(g.r.UintN(256))
+	}
+	u[6] = 0x70 | u[6]&0x0F
+	u[8] = 0x80 | u[8]&0x3F
+	return ids.Encode(kind, u)
+}
 
 // coin returns true half of the time.
 func (g *undoGen) coin() bool { return g.r.IntN(2) == 0 }

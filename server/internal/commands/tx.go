@@ -45,14 +45,19 @@ type Tx struct {
 	revs    map[Ref]int64
 	// own are the entities that the command that applies changed, in the
 	// order of its first change of each, and owned the same as a set, which
-	// the pipeline empties before each command's Apply: what the command's
-	// undo expects the revisions of (plan item 37).
-	own   []Ref
-	owned map[Ref]struct{}
+	// the pipeline empties before each command's Apply, and expecting the
+	// kinds of entity that the steps of the command's inverse touch, or none
+	// for a batch that cannot be undone: the command's undo expects the
+	// revisions of those of its entities that are of these kinds (plan item
+	// 37).
+	own       []Ref
+	owned     map[Ref]struct{}
+	expecting []ids.Kind
 	// undoBytes is how many bytes the inverses that the pipeline has computed
-	// of the batch's commands take, as JSON encodes them for the operation
-	// log: the payloads of their steps, and the revisions that they expect,
-	// which the pipeline refuses a command for once it is more than maxUndo
+	// of the batch's commands take, as the operation log keeps them: the
+	// payloads of their steps (LogBytes), and the revisions that they expect
+	// (ExpectedRevBytes), which Changed counts as the commands report them,
+	// and the pipeline refuses a command for once it is more than maxUndo
 	// (UndoRoom). undoSteps is how many steps they have, which the pipeline
 	// refuses a command for once it is more than maxUndoSteps.
 	undoBytes, maxUndo      int
@@ -118,15 +123,16 @@ func (t *Tx) WorkspaceID() ids.UUID {
 }
 
 // UndoRoom returns how many bytes the payloads of the steps of the inverse
-// that the pipeline computes may take, as JSON encodes them for the operation
-// log, before they take the batch's undo, with the inverses of its commands
-// before and the revisions that those expect, past the pipeline's bound
-// (Options.MaxUndoBytes), which the pipeline refuses the command for once the
-// inverse returns, or once the command has applied and the revisions that its
-// own undo expects take it past. An Inverse whose steps hold a part of the
-// project that grows with it, as the values that an attribute's retype loses,
-// reads it to stop with ErrUndoTooLarge once what it holds takes more, rather
-// than hold all of it only to be refused.
+// that the pipeline computes may take, as the operation log writes them
+// (LogBytes), before they take the batch's undo, with the inverses of its
+// commands before and the revisions that those expect, past the pipeline's
+// bound (Options.MaxUndoBytes), which the pipeline refuses the command for
+// once the inverse returns, or once the command's Apply reports a change of
+// an entity whose revision its own undo expects past it (Changed). An Inverse
+// whose steps hold a part of the project that grows with it, as the values
+// that an attribute's retype loses, reads it to stop with ErrUndoTooLarge
+// once what it holds takes more, rather than hold all of it only to be
+// refused.
 func (t *Tx) UndoRoom() int {
 	return t.maxUndo - t.undoBytes
 }
@@ -139,7 +145,13 @@ func (t *Tx) UndoRoom() int {
 // is called from the command's Apply, which alone changes anything (not from
 // an Inverse, nor from an Entity's functions), the command touches the kind
 // (Spec.Touches), and rev is above every revision of the entity that the
-// batch has seen, as it is when the command incremented it.
+// batch has seen, as it is when the command incremented it; and it returns
+// ErrUndoTooLarge, which the pipeline refuses the command for as one whose
+// inverse is too large, once the revision of the entity, which the command's
+// undo expects, takes the batch's undo past the pipeline's bound
+// (Options.MaxUndoBytes), so that a command that changes more entities than
+// its undo could expect stops there, rather than change all of them only to
+// be refused.
 func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 	ref := Ref{Kind: kind, ID: id}
 	switch {
@@ -159,6 +171,11 @@ func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 	if _, ok := t.owned[ref]; !ok {
 		t.owned[ref] = struct{}{}
 		t.own = append(t.own, ref)
+		if slices.Contains(t.expecting, kind) {
+			if t.undoBytes += ExpectedRevBytes(ref); t.undoBytes > t.maxUndo {
+				return ErrUndoTooLarge
+			}
+		}
 	}
 	if i, ok := t.at[ref]; ok {
 		t.changed[i].Rev = rev

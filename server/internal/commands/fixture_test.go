@@ -86,6 +86,13 @@ const (
 	// one does.
 	noteTouch  Type = "note.touch"
 	noteRevive Type = "note.revive"
+	// noteUnarchive changes nothing, and is taken for a command that
+	// unarchives the project, as unarchiving one is, and noteUntrash for one
+	// that restores it from the trash, as restoring one is, so that a batch
+	// of an archived project, or of one in the trash, with one of them applies
+	// whatever its other commands.
+	noteUnarchive Type = "note.unarchive"
+	noteUntrash   Type = "note.untrash"
 	// notePublish changes nothing, and needs snapshot:write rather than
 	// project:write of an API token, as publishing a snapshot would.
 	notePublish Type = "note.publish"
@@ -381,6 +388,16 @@ func noteRegistry() *Registry {
 		NonUndoable: true, Archived: true,
 		Trashed: true,
 		Apply:   func(context.Context, *Tx, noteIDPayload) error { return nil },
+	})
+	Register(r, Spec[noteIDPayload]{
+		Type: noteUnarchive, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
+		NonUndoable: true, Archived: true, Unarchives: true,
+		Apply: func(context.Context, *Tx, noteIDPayload) error { return nil },
+	})
+	Register(r, Spec[noteIDPayload]{
+		Type: noteUntrash, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
+		NonUndoable: true, Archived: true, Trashed: true, Restores: true,
+		Apply: func(context.Context, *Tx, noteIDPayload) error { return nil },
 	})
 	return r
 }

@@ -720,8 +720,10 @@ func TestNotFound(t *testing.T) {
 // ErrProjectArchived, to a role that its operation allows, and a project in
 // the trash refuses every batch with a command that does not apply there as
 // one that does not exist, whatever the actor's role, so that a refusal of
-// the role does not tell that it exists; a project whose time in the trash
-// has passed refuses every batch so; and a batch that waits for the lock of
+// the role does not tell that it exists, but either applies a batch with a
+// command that unarchives the project, or restores it, whatever its other
+// commands; a project whose time in the trash has passed refuses every batch
+// as one that does not exist; and a batch that waits for the lock of
 // a project that another transaction archives, or deletes to the trash,
 // meanwhile is refused too.
 //
@@ -759,6 +761,14 @@ func TestProjectStates(t *testing.T) {
 		t.Errorf("the refused batches wrote %+v, where there was %+v", after, before)
 	}
 	try("touch an archived project", viewerUser, nil, touch)
+	// A batch that unarchives the project applies whatever its other
+	// commands, as the undo of one that archived it with them does.
+	try("change and unarchive an archived project", ownerUser, nil, update,
+		command(t, noteUnarchive, noteIDPayload{ID: note}, nil))
+	if after := w.written(t); after.seq != before.seq+2 {
+		t.Errorf("the batches of an archived project wrote %+v, where there was %+v: want two, the touch and the "+
+			"change", after, before)
+	}
 
 	w.exec(t, "UPDATE project SET deleted_at = now(), hard_delete_after = now() + interval '1 day' WHERE id = $1",
 		w.project)
@@ -772,6 +782,17 @@ func TestProjectStates(t *testing.T) {
 	}
 	try("revive a project in the trash", ownerUser, nil, revive)
 	try("revive a project in the trash", outsiderUser, ErrNotFound, revive)
+	// A batch that restores the project applies whatever its other commands,
+	// as the undo of one that deleted it with them does, but for the
+	// project's archival: this one is archived too, so a batch that changes
+	// it also unarchives it.
+	restore := command(t, noteUntrash, noteIDPayload{ID: note}, nil)
+	unarchive := command(t, noteUnarchive, noteIDPayload{ID: note}, nil)
+	try("change and restore an archived project in the trash", ownerUser, ErrProjectArchived, update, restore)
+	try("change, restore, and unarchive an archived project in the trash", outsiderUser, ErrNotFound, update,
+		restore, unarchive)
+	try("change, restore, and unarchive an archived project in the trash", ownerUser, nil, update, restore,
+		unarchive)
 
 	w.exec(t, "UPDATE project SET hard_delete_after = now() - interval '1 second' WHERE id = $1", w.project)
 	try("revive a project whose time in the trash has passed", ownerUser, ErrNotFound, revive)

@@ -188,6 +188,12 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 		{"both inverse and non-undoable", func(s *Spec[notePayload]) { s.NonUndoable = true }},
 		{"neither inverse nor non-undoable", func(s *Spec[notePayload]) { s.Inverse = nil }},
 		{"in the trash but not archived", func(s *Spec[notePayload]) { s.Trashed = true }},
+		{"an unarchival that does not apply to an archived project", func(s *Spec[notePayload]) {
+			s.Unarchives = true
+		}},
+		{"a restoration that does not apply in the trash", func(s *Spec[notePayload]) {
+			s.Archived, s.Restores = true, true
+		}},
 		{"no apply", func(s *Spec[notePayload]) { s.Apply = nil }},
 		{"an undo field without an inverse", func(s *Spec[notePayload]) {
 			s.Inverse, s.NonUndoable, s.UndoField = nil, true, "body"

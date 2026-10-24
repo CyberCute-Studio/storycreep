@@ -748,20 +748,20 @@ func (plan *valuesPlan) each(ctx context.Context, tx *commands.Tx, fn func(u ids
 // does not convert it, so lost holds each old value that that is not. It
 // stops with commands.ErrUndoTooLarge, which the pipeline refuses the change
 // for, at the field that it changes (commands.Spec.UndoField), as soon as
-// undo with them would take more bytes, as JSON encodes it for the operation
-// log, than the batch's undo has room for (commands.Tx.UndoRoom): undo as it
-// encodes, its old default and options among it, and then the field that
-// holds them, and each value, as JSON encodes it, with its component's ID,
-// quoted, and a colon, and a comma between two, so that it never holds more
-// of them than the pipeline would keep, whatever the definition's components
-// hold.
+// undo with them would take more bytes, as the operation log writes it
+// (commands.LogBytes), than the batch's undo has room for
+// (commands.Tx.UndoRoom): undo as it encodes, its old default and options
+// among it, and then the field that holds them, and each value, as the log
+// writes it, a float without an exponent, with its component's ID, quoted,
+// and a colon, and a comma between two, so that it never holds more of them
+// than the pipeline would keep, whatever the definition's components hold.
 func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, undo any,
 	back func(value.Value) (value.Value, bool)) (map[string]value.Value, error) {
 	base, err := json.Marshal(undo)
 	if err != nil {
 		return nil, fmt.Errorf("component: encode the undo: %w", err)
 	}
-	room, size := tx.UndoRoom(), len(base)
+	room, size := tx.UndoRoom(), commands.LogBytes(base)
 	if size > room {
 		return nil, commands.ErrUndoTooLarge
 	}
@@ -786,7 +786,7 @@ func (plan *valuesPlan) lost(ctx context.Context, tx *commands.Tx, undo any,
 		} else {
 			size += len(`,`)
 		}
-		if size += len(`"":`) + len(id) + len(enc); size > room {
+		if size += len(`"":`) + len(id) + commands.LogBytes(enc); size > room {
 			return commands.ErrUndoTooLarge
 		}
 		out[id] = old

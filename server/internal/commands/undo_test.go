@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -293,8 +294,41 @@ func TestUndoable(t *testing.T) {
 	if got, want := r.Undoable(), []Type{noteBadInverse, noteCreate, noteUpdate}; !slices.Equal(got, want) {
 		t.Errorf("Undoable() = %v, want %v", got, want)
 	}
-	want := []Type{noteDelete, noteFail, noteMeter, noteMisreport, notePublish, noteRevive, noteTouch}
-	if got := r.NonUndoable(); !slices.Equal(got, want) {
-		t.Errorf("NonUndoable() = %v, want %v", got, want)
+}
+
+// TestLogBytes checks that the bound of a batch's undo counts a payload as
+// many bytes as the operation log's jsonb writes it, compact, as a batch's
+// answer holds it, or more: a float with an exponent as many as its digits
+// take without one, and a string as encoding/json escapes it, which jsonb
+// writes as long or shorter.
+func TestLogBytes(t *testing.T) {
+	w := newWorld(t)
+	for _, v := range []any{
+		map[string]any{"x": 1e300, "y": -5e-324, "z": 1.5e-7},
+		[]any{1e21, -1.2345e+22, 1e-6, 1e-7, 123456789.125, 0, -0.5, math.MaxFloat64, math.SmallestNonzeroFloat64},
+		map[string]any{"text": `"1e+300" <a> & \ é`, "n": int64(math.MaxInt64), "e": []any{}, "o": map[string]any{}},
+		map[string]any{"nested": map[string]any{"values": map[string]any{"co_1": 2.5e-300, "co_2": true}}},
+	} {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var text string
+		if err := w.admin.QueryRow(context.Background(), "SELECT $1::jsonb::text", string(raw)).
+			Scan(&text); err != nil {
+			t.Fatal(err)
+		}
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, []byte(text)); err != nil {
+			t.Fatal(err)
+		}
+		if got := LogBytes(raw); got < compact.Len() {
+			t.Errorf("LogBytes(%s) = %d, but the log writes %s, of %d", raw, got, compact.Bytes(), compact.Len())
+		}
+		// Of numbers alone, the count is exact.
+		if _, ok := v.([]any); ok && LogBytes(raw) != compact.Len() {
+			t.Errorf("LogBytes(%s) = %d, want %d, as the log writes %s", raw, LogBytes(raw), compact.Len(),
+				compact.Bytes())
+		}
 	}
 }

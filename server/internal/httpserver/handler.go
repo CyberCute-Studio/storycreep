@@ -94,6 +94,19 @@ type server struct {
 	queue *queueRef
 }
 
+// newCommandRegistry returns the registry of every type of command that the
+// server applies, and of the kinds of entity that they change.
+func newCommandRegistry() *commands.Registry {
+	registry := commands.NewRegistry()
+	project.Register(registry)
+	board.Register(registry)
+	variable.Register(registry)
+	component.Register(registry)
+	node.Register(registry)
+	connection.Register(registry)
+	return registry
+}
+
 func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s := &server{
 		log:     log,
@@ -110,16 +123,9 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		// address (FR-AUTH-03).
 		RequireVerifiedEmail: cfg.Capabilities.EmailRequired,
 	})
-	registry := commands.NewRegistry()
-	project.Register(registry)
-	board.Register(registry)
-	variable.Register(registry)
-	component.Register(registry)
-	node.Register(registry)
-	connection.Register(registry)
 	s.queue = &queueRef{}
 	s.commands = commands.New(readyDB{s.ready}, commands.Options{
-		Registry:     registry,
+		Registry:     newCommandRegistry(),
 		Policy:       role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
 		Entitlements: s.entitlements,
 		Jobs:         s.queue,
