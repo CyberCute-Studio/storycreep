@@ -2,8 +2,8 @@
 
 | Field | Value |
 | --- | --- |
-| Document version | 1.30 |
-| Date | 2026-10-24 |
+| Document version | 1.31 |
+| Date | 2026-10-25 |
 | Status | Approved for implementation |
 | Product | Storycreep — branching narrative design tool for games |
 | License | AGPL-3.0-only (see ADR-011) |
@@ -1632,21 +1632,23 @@ A deliberately small, total, sandboxed language. It exists to gate choices and u
 
 #### 5.8.1 Lexical structure
 
-- Identifiers: `[A-Za-z_][A-Za-z0-9_]*`, maximum 64 characters, case-sensitive. Reserved: `true`, `false`, `and`, `or`, `not`, `global`, `board`, `null`, `if`, `else`, `elseif`.
-- Integer literals: decimal, limited to the safe-integer range ±(2^53 − 1) so that all three evaluators represent them exactly (§5.8.9); a literal outside it is a compile error. Float literals: decimal with a point, optional exponent, IEEE-754 double.
-- String literals: double-quoted, with escapes `\" \\ \n \t \r \uXXXX`. Maximum 4,096 characters.
+- Identifiers: `[A-Za-z_][A-Za-z0-9_]*`, maximum 64 characters (`identifier_too_long`), case-sensitive. Reserved: `true`, `false`, `and`, `or`, `not`, `global`, `board`, `null`, `if`, `else`, `elseif`; a reserved word where a name is read is `reserved_word`.
+- Integer literals: decimal, `[0-9]+`, limited to the safe-integer range ±(2^53 − 1) so that all three evaluators represent them exactly (§5.8.9); a literal outside it is a compile error (`integer_out_of_range`). A negative number is the unary `-` of a literal. Float literals: decimal with a point and digits on both sides of it, and an optional exponent, `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?`, read as the nearest IEEE-754 double, as `to_float` reads a string (§5.8.9); a literal beyond a double's range is a compile error (`float_out_of_range`), and one too small for a double is `0.0` or the nearest subnormal. A number of neither form, as `1.`, `1e5`, or `3abc`, is `invalid_number`.
+- String literals: double-quoted, on one line, with escapes `\" \\ \n \t \r \uXXXX`. A `\uXXXX` names a character other than U+0000, which no text holds; a character beyond U+FFFF is written as itself, or as a high surrogate's `\uXXXX` followed at once by a low one's. Maximum 4,096 characters of the value, an escape counted as the one character that it stands for (`string_too_long`).
 - Comments: `//` to end of line.
-- Whitespace is insignificant except as a statement separator (newline).
+- Whitespace is a space, a tab, a CR, or an LF, and is insignificant except as a statement separator (newline). In a script, a line break (a CR or an LF) outside parentheses ends the statement before it when the token before it is a name, a literal, or `)`, so that a statement goes on onto the next line after an operator, a `,`, or an opening parenthesis; every other line break, and every line break of a condition, is white space. Any other character outside a string literal or a comment, a character that is not ASCII among them, is `invalid_character`, and so is a NUL, or a byte that is not UTF-8, anywhere.
+- A compile error has a stable code and the range of characters that it covers, counted in code points from 0: the offset of its first character, and of the character after its last. The parser reports the first error that it meets reading the source from left to right; `/schema/expr-corpus/README.md` lists the parser's codes, the range of each, and which comes first where a source has several.
 
 #### 5.8.2 Grammar (EBNF sketch)
 
 ```ebnf
-script          = [ statement { terminator statement } ] [ terminator ] ;
-terminator      = ";" | NEWLINE ;
+script          = { terminator | statement terminator } [ statement ] ;
+terminator      = ";" | NEWLINE ;                  (* a line break that ends a statement, §5.8.1 *)
 statement       = assignment | call_statement ;
 assignment      = lvalue assign_op expression ;
 assign_op       = "=" | "+=" | "-=" | "*=" | "/=" | "%=" ;
 lvalue          = qualified_name ;
+call_statement  = call ;
 
 condition       = expression ;                     (* must be pure and of type bool *)
 
@@ -1658,13 +1660,17 @@ comparison      = additive { ( "<" | "<=" | ">" | ">=" ) additive } ;
 additive        = multiplicative { ( "+" | "-" ) multiplicative } ;
 multiplicative  = unary { ( "*" | "/" | "%" ) unary } ;
 unary           = [ "!" | "not" | "-" ] primary ;
-primary         = literal | call | qualified_name | "(" expression ")" ;
+primary         = literal | node_ref | call | qualified_name | "(" expression ")" ;
 call            = IDENT "(" [ expression { "," expression } ] ")" ;
-qualified_name  = IDENT { "." IDENT } ;            (* 1-3 segments, see resolution *)
+node_ref        = "node" "(" STRING ")" ;          (* the STRING holds a node's ID *)
+qualified_name  = IDENT [ "." IDENT ] | "cmp" "." IDENT "." IDENT
+                | ( "global" | "board" ) "." IDENT ;   (* see resolution *)
 literal         = INT | FLOAT | STRING | "true" | "false" ;
 ```
 
 Operator precedence, lowest to highest: `||` → `&&` → equality → comparison → additive → multiplicative → unary → call/primary. `&&` and `||` short-circuit. `and`/`or`/`not` are exact synonyms for `&&`/`||`/`!`, provided because writers prefer words; the editor normalises to one form on display according to a project setting.
+
+Terminators may repeat, so that a script may hold blank lines and `;;`, and start and end with either. A unary operator applies to a primary, so `--x` and `!!x` are refused and `-(-x)` is read. `node(…)` is a node reference literal, not a call (§5.8.4): its one argument is a string literal that holds a node's ID, in any case, or else it is `invalid_node_ref`; `node` is otherwise a name like any other. A qualified name of three parts that does not start with `cmp`, or of more, is `invalid_name`. A statement that is neither an assignment nor a call is `invalid_statement`, an assignment to anything but a variable or an attribute, or to one in parentheses, is `invalid_assignment_target`, and an assignment operator in a condition is `condition_must_be_pure` (FR-EXPR-02 AC3).
 
 #### 5.8.3 Name resolution and types
 
@@ -1750,6 +1756,8 @@ Enforced at compile time by the server (and the client), so a published project 
 
 The language is total: without loops or recursion, every expression terminates in time linear in its AST size. The step budget exists as a defence-in-depth check, not as a practical constraint.
 
+The parser checks the lengths of identifiers and string literals as it reads them (§5.8.1), and that parentheses, of a group or of a call's arguments, nest at most 64 deep, the AST depth, so that it never recurses deeper than an AST may be: the parenthesis that opens a 65th level is `ast_too_deep`. The other limits are checked of the AST that it returns.
+
 #### 5.8.7 Runtime error handling
 
 A runtime error (division by zero, failed conversion, unregistered host function, node reference to a deleted node) never aborts the game. The expression yields the zero value for its type (`false`, `0`, `0.0`, `""`), and the runtime reports the error through `runtime_error` (Godot) or the play-mode error panel, with code, message, board, node, and expression source. In strict mode (default in Godot debug builds and always in play mode) the flow halts at the error so it is noticed during development.
@@ -1757,6 +1765,20 @@ A runtime error (division by zero, failed conversion, unregistered host function
 #### 5.8.8 AST encoding
 
 The AST is JSON with these node kinds: `lit`, `var`, `attr`, `node_ref`, `unary`, `binary`, `call`, `assign`, `script`. Identifier references carry the entity `id` plus a non-normative `name` for readability in diffs. Encoding rules are in §6.2; an example is in §6.5.
+
+| Kind | Fields |
+| --- | --- |
+| `lit` | `type`, `bool`, `int`, `float`, or `string`, and `value`, of that type (§5.8.9) |
+| `var` | `ref`, the variable's ID, and `name`, its key |
+| `attr` | `ref`, the component's ID, `attribute`, the attribute definition's ID, and `name`, `<component_key>.<attribute_key>` |
+| `node_ref` | `ref`, the node's ID |
+| `unary` | `op`, `not` or `neg`, and `operand` |
+| `binary` | `op`, one of `or`, `and`, `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `add`, `sub`, `mul`, `div`, and `mod`, for `\|\|`, `&&`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `+`, `-`, `*`, `/`, and `%`; and `left` and `right` |
+| `call` | `function`, the built-in's name, and `args`, in order, `[]` for none |
+| `assign` | `op`, as written: `=`, `+=`, `-=`, `*=`, `/=`, or `%=`; `target`, a `var` or an `attr`; and `value` |
+| `script` | `statements`, each an `assign` or a `call`, in order, `[]` for none |
+
+A condition's AST is its expression's node, and a script's is a `script`. The AST keeps nothing of how its source is written: `and` and `&&` are both `and`, `not` and `!` both `not`, and parentheses, white space, comments, and terminators leave no node, so that sources that differ only in them have one AST. A literal keeps the value that it writes, so that `2.0` and `2.00` are one `float`, and `-3` is the `unary` `neg` of the `int` `3`. Every ID is in its canonical spelling (§5.2). The AST's canonical form, which makes its serialisation deterministic (FR-EXPR-03 AC3), is its JSON without white space, with each object's keys sorted, its numbers and strings written as §6.2 writes them, and the fields that it does not set left out; a file of the published format lays it out as it lays out the rest of its JSON (§6.2).
 
 #### 5.8.9 Cross-implementation numeric and string semantics
 
@@ -1811,9 +1833,9 @@ The Go, TypeScript, and GDScript evaluators must produce identical results. Each
 
 - UTF-8 without BOM, LF line endings, trailing newline, 2-space indentation.
 - Object keys sorted ascending by Unicode code point.
-- HTML-unsafe characters (`<`, `>`, `&`) are **not** escaped (Go's default `SetEscapeHTML(false)`); `/` is not escaped.
+- HTML-unsafe characters (`<`, `>`, `&`) are **not** escaped (Go's default `SetEscapeHTML(false)`); `/` is not escaped. In a string, `"`, `\`, and the control characters U+0000 to U+001F are escaped, as `\"`, `\\`, `\b`, `\f`, `\n`, `\r`, `\t`, or `\u00XX` with lowercase hexadecimal digits, and so are U+2028 and U+2029, as their `\u` escapes, as Go's `encoding/json` writes them; no other character is escaped.
 - Arrays are ordered semantically where order is meaningful (choices by author order, branch outputs, text segments, script statements) and otherwise sorted ascending by `id`.
-- Integers serialise without a decimal point; floats use the shortest representation that round-trips, never exponent notation for values in ±1e9, and node positions are rounded to 2 decimal places before serialisation. As a result, an integral `float` and an `int` look the same in JSON. Consumers must type every number by its declaration, never by its lexical form (§5.8.9).
+- Integers serialise without a decimal point; floats use the shortest representation that round-trips, as JavaScript's `JSON.stringify` writes it: in positional notation for a magnitude from 1e-6 to less than 1e21, which takes in every value within ±1e9 but those nearer 0 than 1e-6, and otherwise as `d.ddde±X`, as `1e+21` and `1e-7`, with `-0` written as `0`. Node positions are rounded to 2 decimal places before serialisation. As a result, an integral `float` and an `int` look the same in JSON. Consumers must type every number by its declaration, never by its lexical form (§5.8.9).
 - Optional fields are omitted when unset rather than emitted as `null`. `null` never appears in the published format: every JSON Schema forbids it, and both the runtime loader and `Validate` treat a `null` anywhere in published data as `schema_invalid`. Examples: a global variable has no `boardId` key, and a draft manifest has no `snapshot.version` key (§7.8).
 - No timestamps, hostnames, or random values appear anywhere except the manifest's `snapshot` and `generator` blocks.
 - **No personal data appears in any published file**, including the manifest. There are no user names, emails, or user IDs. Published snapshots are immutable and get copied into game repositories, so anything personal in them could never be erased (FR-GDPR-02). The publisher is a property of the `snapshot` row (`published_by`, a user ID) and is resolved to a display name, or to the tombstone identity, only when the API is read.
@@ -3266,3 +3288,4 @@ No metric below depends on telemetry from running instances (ADR-026); every one
 | 1.28 | 2026-10-24 | **Connections** (plan note N44): FR-EDIT-03 did not say which nodes a connection may leave or enter, what its order is, what a connection without a label has, or which commands change it; FR-EDIT-02 and FR-PROJ-06 did not say how a node's deletion takes its connections, whether one comes back once the node at its other end is restored later, what becomes of a connection deleted on its own, or where the restoration's report of what it could not reconnect goes; FR-API-03 did not say that a batch's result holds that report; §5.3 did not say what a connection's ends, order, and label may be; and §5.6 did not say which row covers a connection's commands. A connection is of the board of both of its nodes, leaves an element by its port `out`, never a jumper, nor a branch, whose connections leave its outputs, and enters a node of the board of any type; the connections that leave a port are ordered by a key, as a folder's children are; a label is a rich-text document, an empty paragraph for none; and creating, relabelling, reconnecting, reordering, deleting, and restoring one are each one command (FR-EDIT-03). A node's connections are in the trash with it, and come back once neither of their nodes is, and a connection deleted on its own goes to the trash unlisted (FR-EDIT-02, FR-PROJ-06). A batch's result lists, as `not_reconnected`, what refers to what it restored that it could not reconnect, each with what it waits for (FR-API-03, FR-PROJ-06 AC1). The connection row of §5.3 says the above, and a connection's commands belong to "Edit nodes, connections, text, expressions" (§5.6). |
 | 1.29 | 2026-10-24 | **Undo and redo** (plan note N45): FR-EDIT-08 did not say how a client gets the inverse of a batch that it sent, which revisions an undo expects, how a user's consecutive undos of one entity pass the check of the revisions that the first of them moves, what a refused undo answers, or what "the project state equals the original" makes of an entity that a command created, whose undo sends it to the trash; FR-API-03 did not say that a batch's result holds its undo; and §5.3 did not say what an operation's inverse holds. A batch's result holds its undo, `undo`, the inverse as the operation log keeps it, each command with the revisions that the batch left of what its command changed of the kinds that it touches, though another command changed it too, or another command of the same command's undo expects it too, and nothing of a command that changed nothing, which the client sends back with `command_id`s of its own, refused whole with `revision_conflict` if any of them has changed since, or, if its own undo would not fit in a request, which `validation_failed` tells with `details.reason` `undo_too_large`, in smaller batches, split anywhere, each of which expects what it writes back, with what it expects of an entity that those before it brought back moved from the revision that the batch left to the one that the last of them that changed it left; the undo's own answer holds the redo; and the client moves what its stacks expect of an entity that its own undo brought back, from the revision that its store held of it once it had every operation before the undone batch, to the entity's new revision (FR-EDIT-08). `undo` is `null` for a batch that cannot be undone, for one `already_applied`, and for one answered again once compaction dropped its operation, a batch whose undo would not fit in a request is rejected, and a batch that unarchives the project, or restores it, applies whatever its other commands, as the undo of one that archived or deleted it with others does, but for a project both archived and in the trash, which needs both (FR-API-03). An undo may still change what the batch did not, as the undo of a board's creation takes to the trash with it the nodes that another user added since, the undo of a deletion brings back the folders, deleted since, that what it restores is in, and the undo of a change of an enum's options gives the default to a value that a component was given since of an option that the undo takes away (FR-EDIT-08). FR-EDIT-08 AC2's equality ignores timestamps and authors too, and lets an entity that the commands created stay in the trash, where its undo sends it. The operation row of §5.3 says what the inverse holds. |
 | 1.30 | 2026-10-24 | **Numeric and string semantics** (plan note N46): §5.8.9 did not say which version of Unicode its tables are of, what in the Unicode Character Database they are generated from, or where its files are kept; how a `float` is written with an exponent; what a format specifier rounds, the double or the decimal that `to_string` writes, or how it writes a large value, a value that rounds to zero, or an `int`; or whether an implementation may fuse two `float` operations; and §5.8.3 did not say whether a `float` divided by zero is `division_by_zero` or `float_not_finite`, nor whether a result that underflows is an error. The tables are of Unicode 18.0.0, generated from the simple mappings of `UnicodeData.txt` and the `White_Space` of `PropList.txt`, which `/schema/unicode/ucd/` holds with Unicode's licence, into `/schema/unicode/tables.json`; a `float` with an exponent is written as JavaScript's `String` writes it; a format specifier rounds the decimal that `to_string` writes, half away from zero, and writes it in positional notation, without a sign when it rounds to zero, an `int` as its widened `float`; each `float` operation rounds once, and none is fused; a division by `0.0` is `division_by_zero`; and an underflow is `0.0` or a subnormal, without an error (§5.8.3, §5.8.9). The maintainer chose Unicode 18.0.0, the database's files kept in the repository, and the rounding of the decimal that `to_string` writes. The expression corpus's format is in `/schema/expr-corpus/README.md`. |
+| 1.31 | 2026-10-25 | **Expression parser** (plan note N47): §5.8.1 did not say what a number of neither literal's form is, whether a float literal beyond a double's range is an error, which characters are white space and which line breaks end a statement, what a `\uXXXX` may name, or how an error's range is counted; §5.8.2 did not say how terminators repeat, what a node reference literal or a call statement is in the grammar, or which forms a qualified name has; §5.8.6 did not say how deeply parentheses nest; §5.8.8 did not name each node kind's fields and operators, nor say what the AST keeps of how its source is written; and §6.2 did not say how a float nearer 0 than 1e-6 is written, nor which characters of a string are escaped. A number of neither form is `invalid_number`, and a float literal beyond a double's range `float_out_of_range`; white space is a space, a tab, a CR, or an LF, and in a script a line break outside parentheses after a name, a literal, or `)` ends a statement; a `\uXXXX` names a character other than NUL, and the escapes of a surrogate pair one character beyond U+FFFF; a compile error's range is counted in code points, and the parser reports the first error that it meets from left to right (§5.8.1). Terminators repeat, `node("nd_…")` is a literal of its own, and a qualified name has one or two parts, three after `cmp`, or one after `global` or `board` (§5.8.2). Parentheses nest at most 64 deep, the AST depth (§5.8.6). Each node kind has its fields and its operators their names, after the example of §6.5, and the AST keeps nothing of its source's spelling, in a canonical form of its own (§5.8.8). A float is written as JavaScript's `JSON.stringify` writes it, and a string as Go's `encoding/json` writes it (§6.2). The parser's codes, the range of each, and the format of its cases are in `/schema/expr-corpus/README.md`. |

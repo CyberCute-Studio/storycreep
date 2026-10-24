@@ -69,6 +69,12 @@ func ReservedWords() []string {
 	return slices.Clone(reserved)
 }
 
+// IsReserved reports whether s is one of the words of the expression language
+// (ReservedWords), compared case by case.
+func IsReserved(s string) bool {
+	return slices.Contains(reserved, s)
+}
+
 // Check returns nil if s is an identifier, and otherwise an *Error that says
 // why it is not: Format for one that is not of the form, and Reserved for a
 // word of the language.
@@ -83,7 +89,7 @@ func Check(s string) error {
 			return &Error{Reason: Format}
 		}
 	}
-	if slices.Contains(reserved, s) {
+	if IsReserved(s) {
 		return &Error{Reason: Reserved}
 	}
 	return nil
