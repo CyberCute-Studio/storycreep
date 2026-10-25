@@ -489,7 +489,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-DATA-04 AC2–AC3 pass and the §6.5 examples validate.
 
 ### 42. Reference evaluator, flow semantics, and conformance suite (Go)
-**Status:** todo · **Depends on:** 40, 41
+**Status:** done ([#48](https://github.com/CyberCute-Studio/storycreep/pull/48)) · **Depends on:** 40, 41
 **PRD:** §5.8.4–§5.8.7, §8.6, FR-PLAY-06 (Go side: AC1, AC3), FR-EXPR-04 (AC1, Go)
 - An AST evaluator, in `server/internal/expr` (`Condition`, `Run`), with the built-ins, a step budget, and runtime errors that yield the type's zero value, a string's bound among them (`semantics.Concat`), and `CheckResolved`, which checks a published AST against a snapshot's declarations by its refs (N50).
 - A flow engine, the Go reference runtime, in `server/internal/flow`, that loads a snapshot (`Load`) and follows the normative order in §5.8.5: on-exit and on-traverse, transparent jumpers, board entry with `reset_on_enter`, flow-end reasons, branches that pass through, `start`, `goto`, `reset`, `load_state` of a state of its own snapshot, visit counts, and strict mode's halt (N50).
