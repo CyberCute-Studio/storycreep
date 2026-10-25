@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document version | 1.32 |
+| Document version | 1.33 |
 | Date | 2026-10-25 |
 | Status | Approved for implementation |
 | Product | Storycreep — branching narrative design tool for games |
@@ -1906,20 +1906,20 @@ Rationale: the board slug keeps file names meaningful and stable (slugs do not c
   "counts": { "boards": 3, "components": 4, "connections": 58, "nodes": 42, "variables": 6 },
   "entry": { "boardId": "bd_01HQ8Z3XK4F7NAWR5TCQ9M2BVD", "nodeId": "nd_01HQ8Z41M9D2PK7VW3RB6XGHTY" },
   "files": {
-    "boards/elara-first-meeting.json": "sha256:7b1e…",
-    "boards/harbour-intro.json": "sha256:0ac9…",
-    "boards/harbourmaster.json": "sha256:31f4…",
-    "project/component_types.json": "sha256:a902…",
-    "project/components.json": "sha256:c771…",
-    "project/settings.json": "sha256:4e0d…",
-    "project/variables.json": "sha256:9d3a…"
+    "boards/elara-first-meeting.json": "sha256:7b1e84cc413fe273e190ecee734b4c6021588589e8445ce6b7575406f5a11671",
+    "boards/harbour-intro.json": "sha256:0ac9d71fa2c808777b7b27a17e20f7940d7ffa2f67251f9ef86d32e6b6a8ca1c",
+    "boards/harbourmaster.json": "sha256:31f4a75bae9af1993eed5e17762ae6f8469f874fc5352dc61bd5c3465dcfd141",
+    "project/component_types.json": "sha256:a9021a2cc974b32d40c775d432206eaf8502d205b05cee1d2035d68e711c09e0",
+    "project/components.json": "sha256:c7710aa17083079d59b058cb5cc1bdd9d151edf60ab244f6b599126917401517",
+    "project/settings.json": "sha256:4e0d5d8cdcc789e42b0ec2f60affb1940e2a76385581b8b468734f9c3a1d660b",
+    "project/variables.json": "sha256:9d3acc5d88a51aca0a50d5cc3dc65c0ee46853e8f5dc44c8e20eb779d31747f9"
   },
   "generator": { "name": "storycreep", "version": "0.9.0" },
   "project": { "id": "prj_01HQ8Z2YV0C4E8M1T6RN5KQJWP", "name": "Harbour", "slug": "harbour" },
   "schemaVersion": 1,
   "snapshot": {
     "channel": "release",
-    "contentHash": "sha256:5f2c…",
+    "contentHash": "sha256:5f2ced7002b439e9ac845f22357d822bac1444730fbdb6016d3ec9432297b9ec",
     "id": "snp_01HQ9A7TBE5N2WQX8K4YJ3MDCR",
     "note": "Harbour intro + keeper gate",
     "publishedAt": "2026-10-12T18:04:31Z",
@@ -1954,6 +1954,77 @@ The `boards` index (sorted by `id`, per §6.2) maps every board ID to its slug, 
   ]
 }
 ```
+
+**`project/settings.json`**
+
+```json
+{
+  "entry": { "boardId": "bd_01HQ8Z3XK4F7NAWR5TCQ9M2BVD", "nodeId": "nd_01HQ8Z41M9D2PK7VW3RB6XGHTY" },
+  "schemaVersion": 1,
+  "signals": ["lighthouse_lit"]
+}
+```
+
+`signals` names the signals that the project's scripts emit with `signal()`, sorted, which `list_signals()` returns (§8.4.1). A project-level flag, and a declared host function (FR-EXPR-05, v1), are optional fields, added when they exist.
+
+**`project/component_types.json`**
+
+```json
+{
+  "componentTypes": [
+    {
+      "attributes": [
+        { "default": 0, "id": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF", "key": "trust", "name": "Trust", "runtime": true, "type": "int" },
+        { "default": "calm", "id": "atr_01HQ8Z8N5K2R7W4XTVNPQ6DCBG", "key": "mood", "name": "Mood", "options": ["calm", "wary", "angry"], "runtime": true, "type": "enum" },
+        { "default": "", "id": "atr_01HQ8Z8P6M3R8W5XTVNPQ7DCBH", "key": "title", "name": "Title", "runtime": false, "type": "string" },
+        { "default": "", "id": "atr_01HQ8Z8Q7N4R9W6XTVNPQ8DCBJ", "key": "bio", "name": "Biography", "runtime": false, "type": "text" }
+      ],
+      "id": "ct_01HQ8Z6T2M5K9W3XRVNPQ7DCBA",
+      "key": "character",
+      "name": "Character"
+    },
+    {
+      "attributes": [],
+      "id": "ct_01HQ8Z6V3N6K0W4XRVNPQ8DCBB",
+      "key": "item",
+      "name": "Item"
+    }
+  ],
+  "schemaVersion": 1
+}
+```
+
+**`project/components.json`**
+
+```json
+{
+  "components": [
+    {
+      "attributes": {
+        "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF": 1,
+        "atr_01HQ8Z8N5K2R7W4XTVNPQ6DCBG": "wary",
+        "atr_01HQ8Z8P6M3R8W5XTVNPQ7DCBH": "Keeper of the Lighthouse",
+        "atr_01HQ8Z8Q7N4R9W6XTVNPQ8DCBJ": "Raised on the rock.\nKnows every ship by its lamp."
+      },
+      "componentTypeId": "ct_01HQ8Z6T2M5K9W3XRVNPQ7DCBA",
+      "id": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+      "image": "ast_01HQ8ZG2K5M8W1R4XTVNPQ6DCB",
+      "key": "elara",
+      "name": "Elara"
+    },
+    {
+      "attributes": {},
+      "componentTypeId": "ct_01HQ8Z6V3N6K0W4XRVNPQ8DCBB",
+      "id": "cmp_01HQ8Z7M5E4N1Q3W6YSVPR5CDG",
+      "key": "brass_key",
+      "name": "Brass Key"
+    }
+  ],
+  "schemaVersion": 1
+}
+```
+
+A component holds a value of every attribute definition of its type, runtime or not, by the definition's ID, each of the definition's type: one that is not `runtime` is static data that a game may show, as a character's title, which expressions do not read (FR-COMP-03). A component's rich-text description is for its authors, and is in the authoring export alone (FR-DATA-01). A component's `image`, as an element's `cover`, is an asset's ID, whose file is `assets/<the ID's body>.<its extension>` when the snapshot includes assets.
 
 **`boards/harbourmaster.json`** (abridged — one element, one gated choice, one branch)
 
@@ -2042,7 +2113,9 @@ The `boards` index (sorted by `id`, per §6.2) maps every board ID to its slug, 
 }
 ```
 
-A node's `text` and a connection's `label` ship rich text as its `segments` (ADR-020): its texts, values (`value`, with the variable or the component and attribute that it reads), and mentions (`mention`, with the component's name), in order, each with its `marks`, and the segments where its paragraphs (`paragraph`), list items (`item`, with its depth, its list's kind, and an ordered list's number), and line breaks (`break`) begin. A document of one paragraph has only inline segments, as above. A node's text also has a `preview`, its plain text cut to 100 characters. `/schema/rich-text/README.md` describes each kind, the plain text, and the preview.
+A node's `text` and a connection's `label` ship rich text as its `segments` (ADR-020): its texts, values (`value`, with the variable or the component and attribute that it reads), and mentions (`mention`, with the component's name), in order, each with its `marks`, and the segments where its paragraphs (`paragraph`), list items (`item`, with its depth, its list's kind, and an ordered list's number), and line breaks (`break`) begin. A document of one paragraph has only inline segments, as above. A node's text also has a `preview`, its plain text cut to 100 characters. `/schema/rich-text/README.md` describes each kind, the plain text, and the preview. An element's empty text, a connection's empty label, an empty title, and a node without tags leave the field out (§6.2), and an element always has `isEnding`.
+
+Each file's JSON Schema is in `/schema/published/v1/`, with one of an expression's AST, which the server generates from its Go types, and from which the web app's TypeScript types are generated (FR-DATA-04); each schema's `$id` is the URL of its file, which names the format's version. Every example of this section is one of the schemas' examples. `/schema/published/README.md` describes every file's fields, the rules that a consumer reads them by, and what a consumer checks beyond the schemas, as that every reference resolves. Every object may hold a key that its schema does not define, of any value but `null`, which a consumer ignores (§6.4). A node is an element, a branch, or a jumper by its `type`, and a manifest's snapshot a release or a draft by its `channel`, and each of these variants takes no key that another variant of its kind defines, so that a jumper has no `text` and a draft no `version` (§7.8): a field that one variant has is added to another only with a new `schemaVersion`.
 
 **Jumper node**
 
@@ -2369,14 +2442,14 @@ func bbcode() -> String
 ```json
 {
   "stateVersion": 1,
-  "projectId": "prj_01HQ…",
-  "snapshotId": "snp_01HQ…",
+  "projectId": "prj_01HQ8Z2YV0C4E8M1T6RN5KQJWP",
+  "snapshotId": "snp_01HQ9A7TBE5N2WQX8K4YJ3MDCR",
   "snapshotVersion": "1.4.0",
   "schemaVersion": 1,
-  "cursor": { "boardId": "bd_01HQ…", "nodeId": "nd_01HQ…", "phase": "awaiting_choice" },
-  "variables": { "var_01HQA…": true, "var_01HQB…": 2 },
-  "attributes": { "cmp_01HQ…": { "atr_01HQ…": 3 } },
-  "visits": { "nd_01HQA…": 1, "nd_01HQB…": 2 }
+  "cursor": { "boardId": "bd_01HQ8ZAX6P3R9T1K7MWVND2CQJ", "nodeId": "nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF", "phase": "awaiting_choice" },
+  "variables": { "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA": true, "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE": 2 },
+  "attributes": { "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF": { "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF": 3 } },
+  "visits": { "nd_01HQ8Z41M9D2PK7VW3RB6XGHTY": 1, "nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF": 2 }
 }
 ```
 
@@ -2391,6 +2464,8 @@ Loading rules (FR-GODOT-07), all reported in `StorycreepStateResult`:
 | Cursor node missing | `cursor_invalid` reported; runtime positions at the board entry if the board exists, otherwise the project entry, and emits `state_loaded` with the fallback used |
 | `stateVersion` newer than the runtime | load refused with `runtime_error(state_version_unsupported)`; nothing is applied |
 | `projectId` mismatch | load refused unless `allow_cross_project` is explicitly set |
+
+The cursor's `phase` is `awaiting_choice` when its node's choices are built and the game chooses one, or advances by its one unconditional connection, and `ended` when the flow ended at its node, after the node's on-exit ran (§5.8.5), so that a loaded state neither rebuilds the choices of a node that the flow left by ending there nor runs its on-exit again; a state saved before `start()` has no `cursor`. A game may read a state back with every number a float, as Godot's `JSON.parse_string` does, so a state's integers, `stateVersion`, `schemaVersion`, and the visit counts, are read as integers when they are integral, as its values are typed by their declarations (§5.8.9). The state's JSON Schema is `/schema/save-state/v1/save-state.schema.json`, which `/schema/save-state/README.md` describes, and the example above is one of its examples.
 
 Visit counts are keyed by node ID so renaming and moving nodes does not reset them. State never contains text, only IDs and values, so it stays small (a 5,000-node project with 500 tracked variables is well under 100 KB).
 
@@ -3304,3 +3379,4 @@ No metric below depends on telemetry from running instances (ADR-026); every one
 | 1.30 | 2026-10-24 | **Numeric and string semantics** (plan note N46): §5.8.9 did not say which version of Unicode its tables are of, what in the Unicode Character Database they are generated from, or where its files are kept; how a `float` is written with an exponent; what a format specifier rounds, the double or the decimal that `to_string` writes, or how it writes a large value, a value that rounds to zero, or an `int`; or whether an implementation may fuse two `float` operations; and §5.8.3 did not say whether a `float` divided by zero is `division_by_zero` or `float_not_finite`, nor whether a result that underflows is an error. The tables are of Unicode 18.0.0, generated from the simple mappings of `UnicodeData.txt` and the `White_Space` of `PropList.txt`, which `/schema/unicode/ucd/` holds with Unicode's licence, into `/schema/unicode/tables.json`; a `float` with an exponent is written as JavaScript's `String` writes it; a format specifier rounds the decimal that `to_string` writes, half away from zero, and writes it in positional notation, without a sign when it rounds to zero, an `int` as its widened `float`; each `float` operation rounds once, and none is fused; a division by `0.0` is `division_by_zero`; and an underflow is `0.0` or a subnormal, without an error (§5.8.3, §5.8.9). The maintainer chose Unicode 18.0.0, the database's files kept in the repository, and the rounding of the decimal that `to_string` writes. The expression corpus's format is in `/schema/expr-corpus/README.md`. |
 | 1.31 | 2026-10-25 | **Expression parser** (plan note N47): §5.8.1 did not say what a number of neither literal's form is, whether a float literal beyond a double's range is an error, which characters are white space and which line breaks end a statement, what a `\uXXXX` may name, or how an error's range is counted; §5.8.2 did not say how terminators repeat, what a node reference literal or a call statement is in the grammar, or which forms a qualified name has; §5.8.6 did not say how deeply parentheses nest, nor when an AST's node count is checked; §5.8.8 did not name each node kind's fields and operators, nor say what the AST keeps of how its source is written; §6.2 did not say how a float nearer 0 than 1e-6 is written, nor which characters of a string are escaped; and §6.5's example wrote a connection's on-traverse script as its statements alone, without the `script` node that §5.8.8 makes a script's AST, nor the source that a runtime error reports (§5.8.7). A number of neither form is `invalid_number`, and a float literal beyond a double's range `float_out_of_range`; white space is a space, a tab, a CR, or an LF, and in a script a line break outside parentheses after an identifier, a literal, or `)` ends a statement; a `\uXXXX` names a character other than NUL, and the escapes of a surrogate pair one character beyond U+FFFF; a compile error's range is counted in code points, and the parser reports the first error that it meets from left to right (§5.8.1). Terminators repeat, `node("nd_…")` is a literal of its own, and a qualified name has one or two parts, three after `cmp`, or one after `global` or `board` (§5.8.2). Parentheses, a group's, a call's, or a node reference's, nest at most 64 deep, the AST depth, and the parser counts an AST's nodes as it reads the tokens that make them, so that the token that makes the 513th is `ast_too_large` (§5.8.6). Each node kind has its fields and its operators their names, after the example of §6.5, and the AST keeps nothing of its source's spelling, in a canonical form of its own (§5.8.8). A float is written as JavaScript's `JSON.stringify` writes it, and a string as Go's `encoding/json` writes it (§6.2). The example writes a script as it writes a condition, its `ast`, a `script`, beside its `source` (§6.5). The parser's codes, the range of each, and the format of its cases are in `/schema/expr-corpus/README.md`. |
 | 1.32 | 2026-10-25 | **Name resolution and type checking** (plan note N48): §5.8.3 did not say what `global.x` and `board.x` name when nothing of their scope has `x`, what a bare identifier that names a component is, whether a variable shadows a component in `<component_key>.<attribute_key>`, what a board-scoped variable of another board, an attribute that its component does not have, or a node reference to a node that the project does not have is, how a runtime `enum` attribute is read and written, which near matches an unknown name suggests, which operand a type error names, or how an assignment's operator is typed; §5.8.4 did not give each built-in's types, nor say what a call of an unknown function or of the wrong number of arguments is, where `signal` may be called, what its name may be, or whether a pure call may be a statement; and §5.8.6 did not say how the AST's depth is counted, nor which node each limit that the checker checks is reported at. A name resolves at its expression's board: `global.x` and `board.x` name their scope's variable alone, a bare identifier of a component is `component_not_value`, a variable of the component's key shadows the component, `variable_not_component`, which `cmp.` avoids, another board's variable is `board_variable_out_of_scope`, and an unknown attribute `unknown_attribute`; a node reference is to a node of the project, or `unknown_node`; a runtime `enum` attribute is read as a `string` and assigned only with `=` and a string literal of one of its options, `invalid_enum_value`; and an unknown name or function suggests at most three near matches (§5.8.3). A type error is `type_mismatch` over the operand that does not fit, the right one of a binary operator whose operands do not go together, with its type and the types that its place takes, and `op=` is typed as `op` is (§5.8.3). The built-ins' types are given, a call of an unknown function is `unknown_function` and one of the wrong number of arguments `wrong_argument_count`, `signal` is a script's statement, `condition_must_be_pure` in a condition and `signal_not_statement` elsewhere, its name a string literal of a character or more, `invalid_signal_name`, and a pure call as a statement `invalid_statement` (§5.8.4). The checker checks the AST's depth, its root 1 deep, and the counts of statements, arguments, and signals before it resolves a name, each at the first node beyond it (§5.8.6). Each construct of the MVP is of `ast_version` 1 (FR-EXPR-04), and FR-COMP-03 says how an `enum` attribute is read and written. The maintainer chose that a variable shadows a component of its key, that an `enum` attribute is written only a literal of one of its options, that a pure call is no statement, and that a signal's name is any string literal but the empty one. The rule of near matches, the compile errors' codes and ranges, which comes first, and the format of the corpus's cases of the checker are in `/schema/expr-corpus/README.md`. |
+| 1.33 | 2026-10-25 | **Published format types and JSON Schemas** (plan note N49): §6.3 and §6.5 did not give the fields of `project/settings.json`, `project/component_types.json`, and `project/components.json`, nor say whether a component's attributes that are not runtime, and its description, are published, whether an element's empty text, a connection's empty label, an empty title, or no tags are written, whether a node's or a snapshot's variant takes another's keys, or where the schemas are; §6.5's manifest wrote its hashes, and §8.5's save state its IDs, cut short, which no schema takes; and §8.5 did not say what a cursor's phase may be, whether a state saved before the flow starts has a cursor, or how a state's integers are read once a game read them back as floats. §6.5 gives the three project files' examples: the settings hold the entry and the signals that scripts emit, a component holds a value of every attribute of its type, runtime or not, while its description is in the authoring export alone, and an image is an asset's ID, whose file is under `assets/`. An empty text, label, or title and no tags are left out, every object may hold a key that its schema does not define, of any value but `null`, and a node's or a snapshot's variant takes no key that another defines, so that a field that one has is added to another only with a new `schemaVersion` (§6.5). The examples' hashes and IDs are written in full, and every JSON example of §6.5 and §8.5 is one of the schemas' examples. A cursor's phase is `awaiting_choice` or `ended`, a state saved before `start()` has none, and a state's integers are read as integers when they are integral (§8.5). The maintainer chose that a component's static attributes are published and its description is not. The schemas are in `/schema/published/v1/` and `/schema/save-state/v1/`, whose READMEs give each file's fields and what a consumer checks beyond them. |

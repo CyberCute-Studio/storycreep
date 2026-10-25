@@ -329,6 +329,43 @@ func TestPattern(t *testing.T) {
 	}
 }
 
+// TestCanonicalPattern checks that each kind's canonical pattern matches
+// exactly the identifiers that Decode accepts and that Encode writes as they
+// are, as the published format holds them.
+func TestCanonicalPattern(t *testing.T) {
+	v := readVectors(t)
+	for _, k := range Kinds() {
+		re := regexp.MustCompile(k.CanonicalPattern())
+		check := func(id string) {
+			t.Helper()
+			u, err := Decode(k, id)
+			canonical := err == nil && Encode(k, u) == id
+			if matched := re.MatchString(id); matched != canonical {
+				t.Errorf("%v's canonical pattern %s matches %q: %v, but its canonical spelling is %v", k,
+					k.CanonicalPattern(), id, matched, canonical)
+			}
+		}
+		for _, tc := range v.Encode {
+			check(tc.ID)
+		}
+		for _, tc := range v.Decode {
+			check(tc.ID)
+		}
+		for _, tc := range v.DecodeErrors {
+			check(tc.ID)
+		}
+		id := Encode(k, New())
+		check(id)
+		check(strings.ToUpper(id))
+		check(strings.ToLower(id))
+		for c := range 128 {
+			for _, at := range []int{0, len(k.Prefix()) + 1, len(id) - 1} {
+				check(id[:at] + string(rune(c)) + id[at+1:])
+			}
+		}
+	}
+}
+
 func TestInvalidKind(t *testing.T) {
 	if got := Kind(0).String(); got != "Kind(0)" {
 		t.Errorf("Kind(0).String() = %q", got)

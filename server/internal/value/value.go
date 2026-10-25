@@ -404,7 +404,7 @@ func decodeString(raw json.RawMessage) (string, string) {
 	switch {
 	case !utf8.Valid(raw):
 		return "", "is not UTF-8"
-	case loneSurrogate(raw):
+	case EscapesLoneSurrogate(raw):
 		return "", "escapes a lone surrogate, which is not a character"
 	case json.Unmarshal(raw, &s) != nil:
 		return "", "is not a JSON string"
@@ -424,9 +424,12 @@ func stringValue(s string) Value {
 	return Value{raw: bytes.TrimSuffix(out.Bytes(), []byte("\n"))}
 }
 
-// loneSurrogate reports whether raw, a JSON string, escapes a UTF-16
-// surrogate that is not one of a pair, as "\ud800".
-func loneSurrogate(raw []byte) bool {
+// EscapesLoneSurrogate reports whether raw, a JSON text, escapes a UTF-16
+// surrogate that is not one of a pair in one of its strings, as "\ud800",
+// which is no character, and which encoding/json reads as U+FFFD, where
+// JSON.parse keeps it. Every backslash of a JSON text is in a string, so raw
+// may be one string or a whole document.
+func EscapesLoneSurrogate(raw []byte) bool {
 	for i := 0; i < len(raw); i++ {
 		if raw[i] != '\\' {
 			continue

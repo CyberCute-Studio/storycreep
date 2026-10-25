@@ -1,0 +1,107 @@
+{
+  "$defs": {
+    "AnyValue": {
+      "description": "Any JSON value but null, at any depth: what an object may hold of a property that this version of the format does not define, which a consumer ignores (PRD §6.4).",
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "BoardId": {
+      "description": "A board's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^bd_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Entry": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "Where the flow starts: a node, and its board.",
+      "properties": {
+        "boardId": {
+          "$ref": "#/$defs/BoardId"
+        },
+        "nodeId": {
+          "$ref": "#/$defs/NodeId",
+          "description": "A node of the board."
+        }
+      },
+      "required": [
+        "boardId",
+        "nodeId"
+      ],
+      "type": "object"
+    },
+    "NodeId": {
+      "description": "A node's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^nd_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Settings": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A snapshot's project/settings.json: the project's entry and the signals that its scripts emit (PRD §6.3).",
+      "properties": {
+        "entry": {
+          "$ref": "#/$defs/Entry",
+          "description": "Where the flow starts, as the manifest's entry. Without it, the project has none, which only a draft may lack."
+        },
+        "schemaVersion": {
+          "const": 1,
+          "description": "The version of the published format, 1.",
+          "type": "integer"
+        },
+        "signals": {
+          "description": "The names of the signals that the project's scripts emit with signal(), each once, sorted by their code points, [] for none (FR-EXPR-04).",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "signals"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/published/v1/settings.schema.json",
+  "$ref": "#/$defs/Settings",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A snapshot's project/settings.json (PRD §6.3). schema/published/README.md describes the format.",
+  "examples": [
+    {
+      "entry": {
+        "boardId": "bd_01HQ8Z3XK4F7NAWR5TCQ9M2BVD",
+        "nodeId": "nd_01HQ8Z41M9D2PK7VW3RB6XGHTY"
+      },
+      "schemaVersion": 1,
+      "signals": [
+        "lighthouse_lit"
+      ]
+    }
+  ],
+  "title": "Storycreep published format, version 1: project/settings.json"
+}

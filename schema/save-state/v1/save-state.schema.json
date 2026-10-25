@@ -1,0 +1,252 @@
+{
+  "$defs": {
+    "AnyValue": {
+      "description": "Any JSON value but null, at any depth: what an object may hold of a property that this version of the format does not define, which a consumer ignores (PRD §6.4).",
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "AttributeDefId": {
+      "description": "An attribute definition's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^atr_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "AttributeValues": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Value"
+      },
+      "description": "Values of attributes, by their attribute definitions' IDs, each of its definition's type.",
+      "propertyNames": {
+        "$ref": "#/$defs/AttributeDefId"
+      },
+      "type": "object"
+    },
+    "BoardId": {
+      "description": "A board's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^bd_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "ComponentId": {
+      "description": "A component's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^cmp_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Cursor": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "Where the flow is: its current node, and its phase.",
+      "properties": {
+        "boardId": {
+          "$ref": "#/$defs/BoardId"
+        },
+        "nodeId": {
+          "$ref": "#/$defs/NodeId",
+          "description": "The current node, a node of the board that is no jumper."
+        },
+        "phase": {
+          "description": "awaiting_choice when the node's choices are built and the game chooses one, or advances; ended when the flow ended at the node, after its on-exit ran (PRD §5.8.5).",
+          "enum": [
+            "awaiting_choice",
+            "ended"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "boardId",
+        "nodeId",
+        "phase"
+      ],
+      "type": "object"
+    },
+    "NodeId": {
+      "description": "A node's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^nd_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "ProjectId": {
+      "description": "A project's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^prj_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "SaveState": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "The narrative state that a runtime saves and loads (PRD §8.5, FR-GODOT-07): where the flow is, and the values of the variables and the runtime attributes, and the nodes' visit counts, by ID, never by key.",
+      "properties": {
+        "attributes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/AttributeValues"
+          },
+          "description": "The values of the components' runtime attributes, by the component's ID and the attribute definition's.",
+          "propertyNames": {
+            "$ref": "#/$defs/ComponentId"
+          },
+          "type": "object"
+        },
+        "cursor": {
+          "$ref": "#/$defs/Cursor",
+          "description": "Where the flow is. Without it, the flow has not started."
+        },
+        "projectId": {
+          "$ref": "#/$defs/ProjectId"
+        },
+        "schemaVersion": {
+          "description": "The version of the published format of the snapshot that the state was saved against.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "snapshotId": {
+          "$ref": "#/$defs/SnapshotId",
+          "description": "The snapshot that the state was saved against. Without it, the state was saved against a draft (PRD §7.8)."
+        },
+        "snapshotVersion": {
+          "description": "The snapshot's version. Without it, the state was saved against a draft.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "stateVersion": {
+          "const": 1,
+          "description": "The version of the save-state format, 1, which a runtime of an older one refuses (PRD §8.5).",
+          "type": "integer"
+        },
+        "variables": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          },
+          "description": "The values of the variables, global and of each board, by their IDs, each of its variable's type.",
+          "propertyNames": {
+            "$ref": "#/$defs/VariableId"
+          },
+          "type": "object"
+        },
+        "visits": {
+          "$ref": "#/$defs/Visits",
+          "description": "How many times the flow has entered each node that it has entered, by the node's ID; a node that it has not entered has none."
+        }
+      },
+      "required": [
+        "attributes",
+        "projectId",
+        "schemaVersion",
+        "stateVersion",
+        "variables",
+        "visits"
+      ],
+      "type": "object"
+    },
+    "SnapshotId": {
+      "description": "A snapshot's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^snp_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Value": {
+      "description": "A value, which its declaration's type says how to read, never its JSON form (PRD §5.8.9): a boolean, a number, or a string.",
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "VariableId": {
+      "description": "A variable's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^var_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Visits": {
+      "additionalProperties": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "description": "How many times the flow has entered each node that it has entered, by the node's ID.",
+      "propertyNames": {
+        "$ref": "#/$defs/NodeId"
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/save-state/v1/save-state.schema.json",
+  "$ref": "#/$defs/SaveState",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The narrative state that a runtime's save_state() returns and load_state() reads (PRD §8.5, FR-GODOT-07). schema/save-state/README.md describes the format.",
+  "examples": [
+    {
+      "attributes": {
+        "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF": {
+          "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF": 3
+        }
+      },
+      "cursor": {
+        "boardId": "bd_01HQ8ZAX6P3R9T1K7MWVND2CQJ",
+        "nodeId": "nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF",
+        "phase": "awaiting_choice"
+      },
+      "projectId": "prj_01HQ8Z2YV0C4E8M1T6RN5KQJWP",
+      "schemaVersion": 1,
+      "snapshotId": "snp_01HQ9A7TBE5N2WQX8K4YJ3MDCR",
+      "snapshotVersion": "1.4.0",
+      "stateVersion": 1,
+      "variables": {
+        "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA": true,
+        "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE": 2
+      },
+      "visits": {
+        "nd_01HQ8Z41M9D2PK7VW3RB6XGHTY": 1,
+        "nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF": 2
+      }
+    },
+    {
+      "attributes": {
+        "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF": {
+          "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF": 4.0,
+          "atr_01HQ8Z8N5K2R7W4XTVNPQ6DCBG": "calm"
+        }
+      },
+      "cursor": {
+        "boardId": "bd_01HQ8Z9N4T7K2W5XRVNPQ8DCBE",
+        "nodeId": "nd_01HQ8Z9R2M5K8W3XTVNPQ7DCBA",
+        "phase": "ended"
+      },
+      "projectId": "prj_01HQ8Z2YV0C4E8M1T6RN5KQJWP",
+      "schemaVersion": 1.0,
+      "stateVersion": 1.0,
+      "variables": {
+        "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA": true,
+        "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE": 3.0,
+        "var_01HQ8Z5D3M9X2E6K0PVRT5ZCGF": 0.5
+      },
+      "visits": {
+        "nd_01HQ8Z9R2M5K8W3XTVNPQ7DCBA": 2.0
+      }
+    }
+  ],
+  "title": "Storycreep save state, version 1"
+}

@@ -1,0 +1,539 @@
+{
+  "$defs": {
+    "AST": {
+      "description": "The AST of an expression: a condition's, an expression, or a script's, a script node, whose names are resolved to the IDs of what they name (PRD §5.8.8).",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ASTExpression"
+        },
+        {
+          "$ref": "#/$defs/ASTScript"
+        }
+      ]
+    },
+    "ASTAssign": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "An assignment, with its operator as its source writes it.",
+      "properties": {
+        "kind": {
+          "const": "assign"
+        },
+        "op": {
+          "enum": [
+            "%=",
+            "*=",
+            "+=",
+            "-=",
+            "/=",
+            "="
+          ],
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/ASTTarget"
+        },
+        "value": {
+          "$ref": "#/$defs/ASTExpression"
+        }
+      },
+      "required": [
+        "kind",
+        "op",
+        "target",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ASTAttr": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A component's runtime attribute.",
+      "properties": {
+        "attribute": {
+          "$ref": "#/$defs/AttributeDefId"
+        },
+        "kind": {
+          "const": "attr"
+        },
+        "name": {
+          "description": "<component_key>.<attribute_key>, for readability: the AST names the attribute by its ref, the component's ID, and its attribute, the attribute definition's.",
+          "maxLength": 129,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "#/$defs/ComponentId"
+        }
+      },
+      "required": [
+        "attribute",
+        "kind",
+        "name",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "ASTBinary": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A binary operator applied to its operands, left and right.",
+      "properties": {
+        "kind": {
+          "const": "binary"
+        },
+        "left": {
+          "$ref": "#/$defs/ASTExpression"
+        },
+        "op": {
+          "enum": [
+            "add",
+            "and",
+            "div",
+            "eq",
+            "gt",
+            "gte",
+            "lt",
+            "lte",
+            "mod",
+            "mul",
+            "ne",
+            "or",
+            "sub"
+          ],
+          "type": "string"
+        },
+        "right": {
+          "$ref": "#/$defs/ASTExpression"
+        }
+      },
+      "required": [
+        "kind",
+        "left",
+        "op",
+        "right"
+      ],
+      "type": "object"
+    },
+    "ASTBool": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A literal of the type bool.",
+      "properties": {
+        "kind": {
+          "const": "lit"
+        },
+        "type": {
+          "const": "bool"
+        },
+        "value": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "type",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ASTCall": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A call of a function.",
+      "properties": {
+        "args": {
+          "description": "The arguments, in order, [] for none.",
+          "items": {
+            "$ref": "#/$defs/ASTExpression"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "function": {
+          "description": "The function's name. A runtime refuses at load a name that it does not know (PRD §6.4).",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "kind": {
+          "const": "call"
+        }
+      },
+      "required": [
+        "args",
+        "function",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ASTExpression": {
+      "description": "The AST of an expression: a condition's, an operand, a call's argument, or an assignment's value.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ASTBool"
+        },
+        {
+          "$ref": "#/$defs/ASTInt"
+        },
+        {
+          "$ref": "#/$defs/ASTFloat"
+        },
+        {
+          "$ref": "#/$defs/ASTString"
+        },
+        {
+          "$ref": "#/$defs/ASTVar"
+        },
+        {
+          "$ref": "#/$defs/ASTAttr"
+        },
+        {
+          "$ref": "#/$defs/ASTNodeRef"
+        },
+        {
+          "$ref": "#/$defs/ASTUnary"
+        },
+        {
+          "$ref": "#/$defs/ASTBinary"
+        },
+        {
+          "$ref": "#/$defs/ASTCall"
+        }
+      ]
+    },
+    "ASTFloat": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A literal of the type float.",
+      "properties": {
+        "kind": {
+          "const": "lit"
+        },
+        "type": {
+          "const": "float"
+        },
+        "value": {
+          "maximum": 1.7976931348623157e+308,
+          "minimum": -1.7976931348623157e+308,
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "type",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ASTInt": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A literal of the type int.",
+      "properties": {
+        "kind": {
+          "const": "lit"
+        },
+        "type": {
+          "const": "int"
+        },
+        "value": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "type",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ASTNodeRef": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A node reference literal, node(\"nd_…\") (§5.8.4).",
+      "properties": {
+        "kind": {
+          "const": "node_ref"
+        },
+        "ref": {
+          "$ref": "#/$defs/NodeId"
+        }
+      },
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "ASTScript": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "The AST of a script: its statements, in order.",
+      "properties": {
+        "kind": {
+          "const": "script"
+        },
+        "statements": {
+          "description": "The script's statements, in order, [] for none.",
+          "items": {
+            "$ref": "#/$defs/ASTStatement"
+          },
+          "maxItems": 64,
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "statements"
+      ],
+      "type": "object"
+    },
+    "ASTStatement": {
+      "description": "A statement of a script: an assignment or a call.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ASTAssign"
+        },
+        {
+          "$ref": "#/$defs/ASTCall"
+        }
+      ]
+    },
+    "ASTString": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A literal of the type string.",
+      "properties": {
+        "kind": {
+          "const": "lit"
+        },
+        "type": {
+          "const": "string"
+        },
+        "value": {
+          "maxLength": 4096,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "type",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ASTTarget": {
+      "description": "What an assignment assigns to: a variable or a component's runtime attribute.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ASTVar"
+        },
+        {
+          "$ref": "#/$defs/ASTAttr"
+        }
+      ]
+    },
+    "ASTUnary": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A unary operator, not (!) or neg (-), applied to its operand.",
+      "properties": {
+        "kind": {
+          "const": "unary"
+        },
+        "op": {
+          "enum": [
+            "neg",
+            "not"
+          ],
+          "type": "string"
+        },
+        "operand": {
+          "$ref": "#/$defs/ASTExpression"
+        }
+      },
+      "required": [
+        "kind",
+        "op",
+        "operand"
+      ],
+      "type": "object"
+    },
+    "ASTVar": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A variable.",
+      "properties": {
+        "kind": {
+          "const": "var"
+        },
+        "name": {
+          "description": "The variable's key, for readability: the AST names the variable by its ref.",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "#/$defs/VariableId"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "AnyValue": {
+      "description": "Any JSON value but null, at any depth: what an object may hold of a property that this version of the format does not define, which a consumer ignores (PRD §6.4).",
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "AttributeDefId": {
+      "description": "An attribute definition's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^atr_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "ComponentId": {
+      "description": "A component's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^cmp_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "NodeId": {
+      "description": "A node's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^nd_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "VariableId": {
+      "description": "A variable's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^var_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/published/v1/ast.schema.json",
+  "$ref": "#/$defs/AST",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The AST of an expression, a condition's or a script's, as the published format holds it beside its source (PRD §5.8.8). schema/published/README.md describes the format.",
+  "examples": [
+    {
+      "kind": "binary",
+      "left": {
+        "kind": "var",
+        "name": "met_elara",
+        "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
+      },
+      "op": "eq",
+      "right": {
+        "kind": "lit",
+        "type": "bool",
+        "value": true
+      }
+    },
+    {
+      "kind": "binary",
+      "left": {
+        "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
+        "kind": "attr",
+        "name": "elara.trust",
+        "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+      },
+      "op": "gte",
+      "right": {
+        "kind": "lit",
+        "type": "int",
+        "value": 3
+      }
+    },
+    {
+      "kind": "script",
+      "statements": [
+        {
+          "kind": "assign",
+          "op": "+=",
+          "target": {
+            "kind": "var",
+            "name": "harbour_rumours",
+            "ref": "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"
+          },
+          "value": {
+            "kind": "lit",
+            "type": "int",
+            "value": 1
+          }
+        }
+      ]
+    },
+    {
+      "kind": "script",
+      "statements": [
+        {
+          "kind": "assign",
+          "op": "=",
+          "target": {
+            "kind": "var",
+            "name": "met_elara",
+            "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
+          },
+          "value": {
+            "kind": "lit",
+            "type": "bool",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "kind": "script",
+      "statements": [
+        {
+          "args": [
+            {
+              "kind": "lit",
+              "type": "string",
+              "value": "lighthouse_lit"
+            }
+          ],
+          "function": "signal",
+          "kind": "call"
+        }
+      ]
+    }
+  ],
+  "title": "Storycreep published format, version 1: an expression's AST"
+}

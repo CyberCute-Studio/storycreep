@@ -5,7 +5,9 @@ Everything that must agree between Go, TypeScript, and GDScript: the published J
 - [`api/v1/openapi.json`](api/v1/openapi.json) is the OpenAPI document of the REST API, which the server generates from its routes and serves at `/api/v1/openapi.json`. The TypeScript client's types are generated from it; see "The API contract" in [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 - [`expr-corpus/`](expr-corpus/) holds the expression corpus: cases of the expression language's operations, as of its numbers and strings, which every evaluator runs, and of its parser, the AST or the error that each source gives, which every parser runs.
 - [`ids/`](ids/) holds the vectors of the identifier encoding.
+- [`published/`](published/) holds the JSON Schemas of the published game format, one of each file of a snapshot and one of an expression's AST, by the format's version, which the server generates from its Go types, and the web app's TypeScript types are generated from (PRD §6, FR-DATA-04).
 - [`i18n/`](i18n/) holds the vectors of the message format, which the web app's i18next and the server's formatter both run.
+- [`save-state/`](save-state/) holds the JSON Schema of the save state that a runtime saves and loads (PRD §8.5), which the server generates alike.
 - [`rich-text/`](rich-text/) holds the JSON Schema of the rich-text documents of node bodies, connection labels, and component descriptions, which the server generates, and the vectors of their validation and of the segments, plain text, preview, word count, and hash derived from them.
 - [`unicode/`](unicode/) holds the tables of Unicode that the expression language's `upper`, `lower`, and `trim` read, which the server generates from the files of the Unicode Character Database that it holds too.
 

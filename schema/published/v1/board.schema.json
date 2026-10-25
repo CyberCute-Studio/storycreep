@@ -1,0 +1,1549 @@
+{
+  "$defs": {
+    "ASTAssign": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "An assignment, with its operator as its source writes it.",
+      "properties": {
+        "kind": {
+          "const": "assign"
+        },
+        "op": {
+          "enum": [
+            "%=",
+            "*=",
+            "+=",
+            "-=",
+            "/=",
+            "="
+          ],
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/ASTTarget"
+        },
+        "value": {
+          "$ref": "#/$defs/ASTExpression"
+        }
+      },
+      "required": [
+        "kind",
+        "op",
+        "target",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ASTAttr": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A component's runtime attribute.",
+      "properties": {
+        "attribute": {
+          "$ref": "#/$defs/AttributeDefId"
+        },
+        "kind": {
+          "const": "attr"
+        },
+        "name": {
+          "description": "<component_key>.<attribute_key>, for readability: the AST names the attribute by its ref, the component's ID, and its attribute, the attribute definition's.",
+          "maxLength": 129,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "#/$defs/ComponentId"
+        }
+      },
+      "required": [
+        "attribute",
+        "kind",
+        "name",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "ASTBinary": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A binary operator applied to its operands, left and right.",
+      "properties": {
+        "kind": {
+          "const": "binary"
+        },
+        "left": {
+          "$ref": "#/$defs/ASTExpression"
+        },
+        "op": {
+          "enum": [
+            "add",
+            "and",
+            "div",
+            "eq",
+            "gt",
+            "gte",
+            "lt",
+            "lte",
+            "mod",
+            "mul",
+            "ne",
+            "or",
+            "sub"
+          ],
+          "type": "string"
+        },
+        "right": {
+          "$ref": "#/$defs/ASTExpression"
+        }
+      },
+      "required": [
+        "kind",
+        "left",
+        "op",
+        "right"
+      ],
+      "type": "object"
+    },
+    "ASTBool": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A literal of the type bool.",
+      "properties": {
+        "kind": {
+          "const": "lit"
+        },
+        "type": {
+          "const": "bool"
+        },
+        "value": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "type",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ASTCall": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A call of a function.",
+      "properties": {
+        "args": {
+          "description": "The arguments, in order, [] for none.",
+          "items": {
+            "$ref": "#/$defs/ASTExpression"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "function": {
+          "description": "The function's name. A runtime refuses at load a name that it does not know (PRD §6.4).",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "kind": {
+          "const": "call"
+        }
+      },
+      "required": [
+        "args",
+        "function",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ASTExpression": {
+      "description": "The AST of an expression: a condition's, an operand, a call's argument, or an assignment's value.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ASTBool"
+        },
+        {
+          "$ref": "#/$defs/ASTInt"
+        },
+        {
+          "$ref": "#/$defs/ASTFloat"
+        },
+        {
+          "$ref": "#/$defs/ASTString"
+        },
+        {
+          "$ref": "#/$defs/ASTVar"
+        },
+        {
+          "$ref": "#/$defs/ASTAttr"
+        },
+        {
+          "$ref": "#/$defs/ASTNodeRef"
+        },
+        {
+          "$ref": "#/$defs/ASTUnary"
+        },
+        {
+          "$ref": "#/$defs/ASTBinary"
+        },
+        {
+          "$ref": "#/$defs/ASTCall"
+        }
+      ]
+    },
+    "ASTFloat": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A literal of the type float.",
+      "properties": {
+        "kind": {
+          "const": "lit"
+        },
+        "type": {
+          "const": "float"
+        },
+        "value": {
+          "maximum": 1.7976931348623157e+308,
+          "minimum": -1.7976931348623157e+308,
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "type",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ASTInt": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A literal of the type int.",
+      "properties": {
+        "kind": {
+          "const": "lit"
+        },
+        "type": {
+          "const": "int"
+        },
+        "value": {
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "type",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ASTNodeRef": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A node reference literal, node(\"nd_…\") (§5.8.4).",
+      "properties": {
+        "kind": {
+          "const": "node_ref"
+        },
+        "ref": {
+          "$ref": "#/$defs/NodeId"
+        }
+      },
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "ASTScript": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "The AST of a script: its statements, in order.",
+      "properties": {
+        "kind": {
+          "const": "script"
+        },
+        "statements": {
+          "description": "The script's statements, in order, [] for none.",
+          "items": {
+            "$ref": "#/$defs/ASTStatement"
+          },
+          "maxItems": 64,
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "statements"
+      ],
+      "type": "object"
+    },
+    "ASTStatement": {
+      "description": "A statement of a script: an assignment or a call.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ASTAssign"
+        },
+        {
+          "$ref": "#/$defs/ASTCall"
+        }
+      ]
+    },
+    "ASTString": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A literal of the type string.",
+      "properties": {
+        "kind": {
+          "const": "lit"
+        },
+        "type": {
+          "const": "string"
+        },
+        "value": {
+          "maxLength": 4096,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "type",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ASTTarget": {
+      "description": "What an assignment assigns to: a variable or a component's runtime attribute.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ASTVar"
+        },
+        {
+          "$ref": "#/$defs/ASTAttr"
+        }
+      ]
+    },
+    "ASTUnary": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A unary operator, not (!) or neg (-), applied to its operand.",
+      "properties": {
+        "kind": {
+          "const": "unary"
+        },
+        "op": {
+          "enum": [
+            "neg",
+            "not"
+          ],
+          "type": "string"
+        },
+        "operand": {
+          "$ref": "#/$defs/ASTExpression"
+        }
+      },
+      "required": [
+        "kind",
+        "op",
+        "operand"
+      ],
+      "type": "object"
+    },
+    "ASTVar": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A variable.",
+      "properties": {
+        "kind": {
+          "const": "var"
+        },
+        "name": {
+          "description": "The variable's key, for readability: the AST names the variable by its ref.",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "#/$defs/VariableId"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "AnyValue": {
+      "description": "Any JSON value but null, at any depth: what an object may hold of a property that this version of the format does not define, which a consumer ignores (PRD §6.4).",
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "AssetId": {
+      "description": "An asset's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^ast_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "AttributeDefId": {
+      "description": "An attribute definition's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^atr_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Board": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A snapshot's file of one board, boards/<slug>.json: the board, its nodes, and its connections (PRD §6.3, §6.5).",
+      "properties": {
+        "board": {
+          "$ref": "#/$defs/BoardInfo"
+        },
+        "connections": {
+          "description": "The board's connections, sorted by ID.",
+          "items": {
+            "$ref": "#/$defs/Connection"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "description": "The board's nodes, sorted by ID.",
+          "items": {
+            "$ref": "#/$defs/Node"
+          },
+          "type": "array"
+        },
+        "schemaVersion": {
+          "const": 1,
+          "description": "The version of the published format, 1.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "board",
+        "connections",
+        "nodes",
+        "schemaVersion"
+      ],
+      "type": "object"
+    },
+    "BoardId": {
+      "description": "A board's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^bd_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "BoardInfo": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "The board: its ID, name, slug, and entry node, as the manifest's index has them.",
+      "properties": {
+        "entryNodeId": {
+          "$ref": "#/$defs/NodeId",
+          "description": "The board's entry node. Without it, the board has none, which only a draft may lack."
+        },
+        "id": {
+          "$ref": "#/$defs/BoardId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "slug": {
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "slug"
+      ],
+      "type": "object"
+    },
+    "Branch": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A branch, which picks the first of its outputs whose condition holds (FR-EDIT-04).",
+      "properties": {
+        "cover": false,
+        "id": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "isEnding": false,
+        "kind": false,
+        "onEnter": {
+          "$ref": "#/$defs/Script",
+          "description": "The script that runs when the flow enters the branch. Without it, none."
+        },
+        "onExit": {
+          "$ref": "#/$defs/Script",
+          "description": "The script that runs when the flow leaves the branch. Without it, none."
+        },
+        "outputs": {
+          "description": "The branch's outputs, in their author's order, which is the order in which their conditions are evaluated, [] for none.",
+          "items": {
+            "$ref": "#/$defs/BranchOutput"
+          },
+          "type": "array"
+        },
+        "position": {
+          "$ref": "#/$defs/Position"
+        },
+        "speaker": false,
+        "tags": false,
+        "target": false,
+        "text": false,
+        "title": {
+          "description": "The branch's title. Without it, the branch has none.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "const": "branch"
+        }
+      },
+      "required": [
+        "id",
+        "outputs",
+        "position",
+        "type"
+      ],
+      "type": "object"
+    },
+    "BranchOutput": {
+      "description": "An output of a branch: if or elseif, with a condition, or else, without one (FR-EDIT-04). The connections that leave it name it as their fromPort.",
+      "oneOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "condition": {
+              "$ref": "#/$defs/Condition",
+              "description": "The condition that picks the output."
+            },
+            "id": {
+              "$ref": "#/$defs/BranchOutputId"
+            },
+            "kind": {
+              "const": "if"
+            },
+            "order": {
+              "description": "The output's place among its branch's, from 0.",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "condition",
+            "id",
+            "kind",
+            "order"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "condition": {
+              "$ref": "#/$defs/Condition",
+              "description": "The condition that picks the output."
+            },
+            "id": {
+              "$ref": "#/$defs/BranchOutputId"
+            },
+            "kind": {
+              "const": "elseif"
+            },
+            "order": {
+              "description": "The output's place among its branch's, from 0.",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "condition",
+            "id",
+            "kind",
+            "order"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "condition": false,
+            "id": {
+              "$ref": "#/$defs/BranchOutputId"
+            },
+            "kind": {
+              "const": "else"
+            },
+            "order": {
+              "description": "The output's place among its branch's, from 0.",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "order"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "BranchOutputId": {
+      "description": "A branch output's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^bo_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "ComponentId": {
+      "description": "A component's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^cmp_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Condition": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A condition: its source, and its AST, an expression, whose names are resolved to the IDs of what they name (PRD §5.8.5, §5.8.8).",
+      "properties": {
+        "ast": {
+          "$ref": "#/$defs/ASTExpression"
+        },
+        "source": {
+          "description": "The source, as its author wrote it, for debugging: a runtime evaluates the AST, and parses no source (PRD §6.1).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ast",
+        "source"
+      ],
+      "type": "object"
+    },
+    "Connection": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A connection of a board, from a node's port to a node of the board (FR-EDIT-03).",
+      "properties": {
+        "condition": {
+          "$ref": "#/$defs/Condition",
+          "description": "The condition that makes the connection a choice. Without it, the connection always is."
+        },
+        "from": {
+          "$ref": "#/$defs/NodeId",
+          "description": "The node that the connection leaves: an element, or a branch by one of its outputs."
+        },
+        "fromPort": {
+          "description": "The port that the connection leaves its node by: an element's out, or the ID of a branch's output.",
+          "pattern": "^(?:out|bo_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25})$",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/ConnectionId"
+        },
+        "label": {
+          "$ref": "#/$defs/Label",
+          "description": "The connection's label, the text of its choice. Without it, the connection has none."
+        },
+        "onTraverse": {
+          "$ref": "#/$defs/Script",
+          "description": "The script that runs when the flow traverses the connection. Without it, none."
+        },
+        "order": {
+          "description": "The connection's place among those that leave its port, from 0, the order of its choice.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "to": {
+          "$ref": "#/$defs/NodeId",
+          "description": "The node of the board that the connection leads to."
+        }
+      },
+      "required": [
+        "from",
+        "fromPort",
+        "id",
+        "order",
+        "to"
+      ],
+      "type": "object"
+    },
+    "ConnectionId": {
+      "description": "A connection's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^cn_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Element": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "An element: a line of dialogue or of narration (FR-EDIT-02).",
+      "properties": {
+        "cover": {
+          "$ref": "#/$defs/AssetId",
+          "description": "The element's cover image. Its file is the snapshot's assets/<the ID's body>.<its extension> when the snapshot includes assets. Without it, the element has none."
+        },
+        "id": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "isEnding": {
+          "description": "Whether the flow ends at the element (PRD §5.8.5).",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "Dialogue, which its speaker says, or narration.",
+          "enum": [
+            "dialogue",
+            "narration"
+          ],
+          "type": "string"
+        },
+        "onEnter": {
+          "$ref": "#/$defs/Script",
+          "description": "The script that runs when the flow enters the element. Without it, none."
+        },
+        "onExit": {
+          "$ref": "#/$defs/Script",
+          "description": "The script that runs when the flow leaves the element, by a connection or by ending there. Without it, none."
+        },
+        "outputs": false,
+        "position": {
+          "$ref": "#/$defs/Position"
+        },
+        "speaker": {
+          "$ref": "#/$defs/ComponentId",
+          "description": "The component that says a line of dialogue. Without it, the element has none."
+        },
+        "tags": {
+          "description": "The element's tags, as their author wrote them, in their order, no two the same but for their case. Without them, none.",
+          "items": {
+            "maxLength": 50,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "target": false,
+        "text": {
+          "$ref": "#/$defs/Text",
+          "description": "The element's text. Without it, the element's text is empty."
+        },
+        "title": {
+          "description": "The element's title. Without it, the element has none.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "const": "element"
+        }
+      },
+      "required": [
+        "id",
+        "isEnding",
+        "kind",
+        "position",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Jumper": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A jumper, which continues the flow at its target, as if the flow had reached the target itself (PRD §5.8.5).",
+      "properties": {
+        "cover": false,
+        "id": {
+          "$ref": "#/$defs/NodeId"
+        },
+        "isEnding": false,
+        "kind": false,
+        "onEnter": false,
+        "onExit": false,
+        "outputs": false,
+        "position": {
+          "$ref": "#/$defs/Position"
+        },
+        "speaker": false,
+        "tags": false,
+        "target": {
+          "$ref": "#/$defs/JumperTarget",
+          "description": "The node that the jumper continues the flow at. Without it, the jumper has none, which only a draft may lack."
+        },
+        "text": false,
+        "title": {
+          "description": "The jumper's title. Without it, the jumper has none.",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "const": "jumper"
+        }
+      },
+      "required": [
+        "id",
+        "position",
+        "type"
+      ],
+      "type": "object"
+    },
+    "JumperTarget": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "The node that a jumper continues the flow at, and its board.",
+      "properties": {
+        "boardId": {
+          "$ref": "#/$defs/BoardId",
+          "description": "The node's board, which may be the jumper's own."
+        },
+        "nodeId": {
+          "$ref": "#/$defs/NodeId",
+          "description": "A node of the board, which is no jumper."
+        }
+      },
+      "required": [
+        "boardId",
+        "nodeId"
+      ],
+      "type": "object"
+    },
+    "Label": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A connection's label, the text of its choice: its segments, at least one.",
+      "properties": {
+        "segments": {
+          "description": "The rich text's segments, in order, at least one: an empty rich text is left out.",
+          "items": {
+            "$ref": "#/$defs/Segment"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "segments"
+      ],
+      "type": "object"
+    },
+    "Node": {
+      "description": "A node of a board: an element, a branch, or a jumper, which its type tells (FR-EDIT-02).",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Element"
+        },
+        {
+          "$ref": "#/$defs/Branch"
+        },
+        {
+          "$ref": "#/$defs/Jumper"
+        }
+      ]
+    },
+    "NodeId": {
+      "description": "A node's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^nd_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Position": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "Where the node is on its board's canvas, to 2 decimal places (PRD §6.2).",
+      "properties": {
+        "x": {
+          "description": "Rightward, in units of the canvas.",
+          "maximum": 1000000000,
+          "minimum": -1000000000,
+          "type": "number"
+        },
+        "y": {
+          "description": "Downward, in units of the canvas.",
+          "maximum": 1000000000,
+          "minimum": -1000000000,
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "type": "object"
+    },
+    "Script": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A script: its source, and its AST, a script node, whose names are resolved to the IDs of what they name (PRD §5.8.5, §5.8.8).",
+      "properties": {
+        "ast": {
+          "$ref": "#/$defs/ASTScript"
+        },
+        "source": {
+          "description": "The source, as its author wrote it, for debugging: a runtime evaluates the AST, and parses no source (PRD §6.1).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ast",
+        "source"
+      ],
+      "type": "object"
+    },
+    "Segment": {
+      "description": "A segment of a rich text.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SegmentText"
+        },
+        {
+          "$ref": "#/$defs/SegmentMention"
+        },
+        {
+          "$ref": "#/$defs/SegmentVariable"
+        },
+        {
+          "$ref": "#/$defs/SegmentAttribute"
+        },
+        {
+          "$ref": "#/$defs/SegmentBreak"
+        },
+        {
+          "$ref": "#/$defs/SegmentParagraph"
+        },
+        {
+          "$ref": "#/$defs/SegmentBulletItem"
+        },
+        {
+          "$ref": "#/$defs/SegmentOrderedItem"
+        }
+      ]
+    },
+    "SegmentAttribute": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A component's runtime attribute's value, which the text shows as the runtime renders it (FR-TEXT-02).",
+      "properties": {
+        "attribute": {
+          "$ref": "#/$defs/AttributeDefId"
+        },
+        "decimals": {
+          "description": "The number of digits after the point that a number is shown with, rounded half away from zero. A value that is not a number is shown as it is.",
+          "maximum": 6,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "href": {
+          "description": "The URL of the link that the segment is part of.",
+          "maxLength": 2048,
+          "minLength": 1,
+          "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss]?://[^\\x00-\\x20\\x7f-\\x9f/?#][^\\x00-\\x20\\x7f-\\x9f]*|[Mm][Aa][Ii][Ll][Tt][Oo]:[A-Za-z0-9_+-]+(?:\\.[A-Za-z0-9_+-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)*(?:[0-9]*[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?|[0-9]+-[A-Za-z0-9-]*[A-Za-z0-9]))$",
+          "type": "string"
+        },
+        "kind": {
+          "const": "value"
+        },
+        "marks": {
+          "$ref": "#/$defs/SegmentMarks"
+        },
+        "name": {
+          "description": "The value's name as an expression names it, as met_elara or elara.trust, for debugging: the segment reads the value by its ref.",
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "#/$defs/ComponentId"
+        }
+      },
+      "required": [
+        "attribute",
+        "kind",
+        "marks",
+        "name",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "SegmentBreak": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A line break.",
+      "properties": {
+        "kind": {
+          "const": "break"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "SegmentBulletItem": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "An item of a bulleted list begins.",
+      "properties": {
+        "depth": {
+          "description": "The item's depth, 1 for an item of a list that no list holds.",
+          "maximum": 5,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "item"
+        },
+        "list": {
+          "const": "bullet"
+        },
+        "number": false
+      },
+      "required": [
+        "depth",
+        "kind",
+        "list"
+      ],
+      "type": "object"
+    },
+    "SegmentMarks": {
+      "description": "An inline segment's marks, each at most once, in alphabetical order, [] for none. link is there exactly when href is.",
+      "items": {
+        "enum": [
+          "bold",
+          "code",
+          "italic",
+          "link",
+          "strike"
+        ],
+        "type": "string"
+      },
+      "maxItems": 5,
+      "type": "array"
+    },
+    "SegmentMention": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A mention of a component.",
+      "properties": {
+        "href": {
+          "description": "The URL of the link that the segment is part of.",
+          "maxLength": 2048,
+          "minLength": 1,
+          "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss]?://[^\\x00-\\x20\\x7f-\\x9f/?#][^\\x00-\\x20\\x7f-\\x9f]*|[Mm][Aa][Ii][Ll][Tt][Oo]:[A-Za-z0-9_+-]+(?:\\.[A-Za-z0-9_+-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)*(?:[0-9]*[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?|[0-9]+-[A-Za-z0-9-]*[A-Za-z0-9]))$",
+          "type": "string"
+        },
+        "kind": {
+          "const": "mention"
+        },
+        "marks": {
+          "$ref": "#/$defs/SegmentMarks"
+        },
+        "ref": {
+          "$ref": "#/$defs/ComponentId"
+        },
+        "value": {
+          "description": "The component's name when the snapshot was published.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "marks",
+        "ref",
+        "value"
+      ],
+      "type": "object"
+    },
+    "SegmentOrderedItem": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "An item of a numbered list begins.",
+      "properties": {
+        "depth": {
+          "description": "The item's depth, 1 for an item of a list that no list holds.",
+          "maximum": 5,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "item"
+        },
+        "list": {
+          "const": "ordered"
+        },
+        "number": {
+          "description": "The item's number.",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "depth",
+        "kind",
+        "list",
+        "number"
+      ],
+      "type": "object"
+    },
+    "SegmentParagraph": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A paragraph begins.",
+      "properties": {
+        "depth": {
+          "description": "The depth of the list item that the paragraph belongs to, or none for a paragraph of no item.",
+          "maximum": 5,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "paragraph"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "SegmentText": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "Text.",
+      "properties": {
+        "href": {
+          "description": "The URL of the link that the segment is part of.",
+          "maxLength": 2048,
+          "minLength": 1,
+          "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss]?://[^\\x00-\\x20\\x7f-\\x9f/?#][^\\x00-\\x20\\x7f-\\x9f]*|[Mm][Aa][Ii][Ll][Tt][Oo]:[A-Za-z0-9_+-]+(?:\\.[A-Za-z0-9_+-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)*(?:[0-9]*[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?|[0-9]+-[A-Za-z0-9-]*[A-Za-z0-9]))$",
+          "type": "string"
+        },
+        "kind": {
+          "const": "text"
+        },
+        "marks": {
+          "$ref": "#/$defs/SegmentMarks"
+        },
+        "value": {
+          "description": "The text.",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "marks",
+        "value"
+      ],
+      "type": "object"
+    },
+    "SegmentVariable": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A variable's value, which the text shows as the runtime renders it (FR-TEXT-02).",
+      "properties": {
+        "attribute": false,
+        "decimals": {
+          "description": "The number of digits after the point that a number is shown with, rounded half away from zero. A value that is not a number is shown as it is.",
+          "maximum": 6,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "href": {
+          "description": "The URL of the link that the segment is part of.",
+          "maxLength": 2048,
+          "minLength": 1,
+          "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss]?://[^\\x00-\\x20\\x7f-\\x9f/?#][^\\x00-\\x20\\x7f-\\x9f]*|[Mm][Aa][Ii][Ll][Tt][Oo]:[A-Za-z0-9_+-]+(?:\\.[A-Za-z0-9_+-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)*(?:[0-9]*[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?|[0-9]+-[A-Za-z0-9-]*[A-Za-z0-9]))$",
+          "type": "string"
+        },
+        "kind": {
+          "const": "value"
+        },
+        "marks": {
+          "$ref": "#/$defs/SegmentMarks"
+        },
+        "name": {
+          "description": "The value's name as an expression names it, as met_elara or elara.trust, for debugging: the segment reads the value by its ref.",
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "#/$defs/VariableId"
+        }
+      },
+      "required": [
+        "kind",
+        "marks",
+        "name",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "Text": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "An element's text: its segments, at least one, and its preview (PRD §6.5).",
+      "properties": {
+        "preview": {
+          "description": "The text's plain text as one line, cut after 100 characters with an ellipsis, as schema/rich-text/README.md says.",
+          "type": "string"
+        },
+        "segments": {
+          "description": "The rich text's segments, in order, at least one: an empty rich text is left out.",
+          "items": {
+            "$ref": "#/$defs/Segment"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "preview",
+        "segments"
+      ],
+      "type": "object"
+    },
+    "VariableId": {
+      "description": "A variable's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^var_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/published/v1/board.schema.json",
+  "$ref": "#/$defs/Board",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A snapshot's file of one board, boards/<slug>.json (PRD §6.3, §6.5). schema/published/README.md describes the format.",
+  "examples": [
+    {
+      "board": {
+        "entryNodeId": "nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF",
+        "id": "bd_01HQ8ZAX6P3R9T1K7MWVND2CQJ",
+        "name": "Harbourmaster",
+        "slug": "harbourmaster"
+      },
+      "connections": [
+        {
+          "condition": {
+            "ast": {
+              "kind": "binary",
+              "left": {
+                "kind": "var",
+                "name": "met_elara",
+                "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
+              },
+              "op": "eq",
+              "right": {
+                "kind": "lit",
+                "type": "bool",
+                "value": true
+              }
+            },
+            "source": "met_elara == true"
+          },
+          "from": "nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF",
+          "fromPort": "out",
+          "id": "cn_01HQ8ZC4M7D1F8K3NRTQW9XJVB",
+          "label": {
+            "segments": [
+              {
+                "kind": "text",
+                "marks": [],
+                "value": "The keeper sent me."
+              }
+            ]
+          },
+          "onTraverse": {
+            "ast": {
+              "kind": "script",
+              "statements": [
+                {
+                  "kind": "assign",
+                  "op": "+=",
+                  "target": {
+                    "kind": "var",
+                    "name": "harbour_rumours",
+                    "ref": "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"
+                  },
+                  "value": {
+                    "kind": "lit",
+                    "type": "int",
+                    "value": 1
+                  }
+                }
+              ]
+            },
+            "source": "harbour_rumours += 1"
+          },
+          "order": 0,
+          "to": "nd_01HQ8ZB9W2K5R8T4MCXVND7QPJ"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF",
+          "isEnding": false,
+          "kind": "dialogue",
+          "position": {
+            "x": 240,
+            "y": 120
+          },
+          "speaker": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+          "text": {
+            "preview": "Harbour's closed to strangers. State your business.",
+            "segments": [
+              {
+                "kind": "text",
+                "marks": [],
+                "value": "Harbour's closed to strangers. State your business."
+              }
+            ]
+          },
+          "title": "Harbourmaster greets you",
+          "type": "element"
+        },
+        {
+          "id": "nd_01HQ8ZD2P5K8W1M4RTXVNQ9CBJ",
+          "outputs": [
+            {
+              "condition": {
+                "ast": {
+                  "kind": "binary",
+                  "left": {
+                    "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
+                    "kind": "attr",
+                    "name": "elara.trust",
+                    "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                  },
+                  "op": "gte",
+                  "right": {
+                    "kind": "lit",
+                    "type": "int",
+                    "value": 3
+                  }
+                },
+                "source": "elara.trust >= 3"
+              },
+              "id": "bo_01HQ8ZE5R8K2M7W4XTVNPQ3DCB",
+              "kind": "if",
+              "order": 0
+            },
+            {
+              "id": "bo_01HQ8ZE6T9M3K8W2XRVNPQ4DCB",
+              "kind": "else",
+              "order": 1
+            }
+          ],
+          "position": {
+            "x": 640,
+            "y": 120
+          },
+          "title": "Does he trust the keeper?",
+          "type": "branch"
+        }
+      ],
+      "schemaVersion": 1
+    },
+    {
+      "board": {
+        "entryNodeId": "nd_01HQ8Z9R2M5K8W3XTVNPQ7DCBA",
+        "id": "bd_01HQ8Z9N4T7K2W5XRVNPQ8DCBE",
+        "name": "Elara — First Meeting",
+        "slug": "elara-first-meeting"
+      },
+      "connections": [
+        {
+          "from": "nd_01HQ8Z9R2M5K8W3XTVNPQ7DCBA",
+          "fromPort": "out",
+          "id": "cn_01HQ8ZH3M6K9W2R5XTVNPQ7DCB",
+          "label": {
+            "segments": [
+              {
+                "kind": "text",
+                "marks": [],
+                "value": "Ask about the dark light."
+              }
+            ]
+          },
+          "order": 0,
+          "to": "nd_01HQ8ZF7K2M9W4R8XTVNPQ5DCB"
+        }
+      ],
+      "nodes": [
+        {
+          "cover": "ast_01HQ8ZG3M6N9W2R5XTVNPQ7DCB",
+          "id": "nd_01HQ8Z9R2M5K8W3XTVNPQ7DCBA",
+          "isEnding": false,
+          "kind": "dialogue",
+          "onEnter": {
+            "ast": {
+              "kind": "script",
+              "statements": [
+                {
+                  "kind": "assign",
+                  "op": "=",
+                  "target": {
+                    "kind": "var",
+                    "name": "met_elara",
+                    "ref": "var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"
+                  },
+                  "value": {
+                    "kind": "lit",
+                    "type": "bool",
+                    "value": true
+                  }
+                }
+              ]
+            },
+            "source": "met_elara = true"
+          },
+          "onExit": {
+            "ast": {
+              "kind": "script",
+              "statements": [
+                {
+                  "args": [
+                    {
+                      "kind": "lit",
+                      "type": "string",
+                      "value": "lighthouse_lit"
+                    }
+                  ],
+                  "function": "signal",
+                  "kind": "call"
+                }
+              ]
+            },
+            "source": "signal(\"lighthouse_lit\")"
+          },
+          "position": {
+            "x": 120.5,
+            "y": -40
+          },
+          "speaker": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+          "tags": [
+            "lighthouse",
+            "Quest"
+          ],
+          "text": {
+            "preview": "Elara has heard {harbour_rumours} rumours. Trust: {elara.trust}",
+            "segments": [
+              {
+                "kind": "mention",
+                "marks": [],
+                "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+                "value": "Elara"
+              },
+              {
+                "kind": "text",
+                "marks": [],
+                "value": " has heard "
+              },
+              {
+                "kind": "value",
+                "marks": [],
+                "name": "harbour_rumours",
+                "ref": "var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"
+              },
+              {
+                "kind": "text",
+                "marks": [],
+                "value": " rumours."
+              },
+              {
+                "kind": "break"
+              },
+              {
+                "kind": "text",
+                "marks": [],
+                "value": "Trust: "
+              },
+              {
+                "attribute": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
+                "decimals": 1,
+                "kind": "value",
+                "marks": [
+                  "bold"
+                ],
+                "name": "elara.trust",
+                "ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+              }
+            ]
+          },
+          "title": "Elara at the lighthouse",
+          "type": "element"
+        },
+        {
+          "id": "nd_01HQ8ZF7K2M9W4R8XTVNPQ5DCB",
+          "position": {
+            "x": 980,
+            "y": 320
+          },
+          "target": {
+            "boardId": "bd_01HQ8ZAX6P3R9T1K7MWVND2CQJ",
+            "nodeId": "nd_01HQ8ZB9W2K5R8T4MCXVND7QPJ"
+          },
+          "title": "→ Quest: The Dark Light",
+          "type": "jumper"
+        }
+      ],
+      "schemaVersion": 1
+    }
+  ],
+  "title": "Storycreep published format, version 1: boards/<slug>.json"
+}

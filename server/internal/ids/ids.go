@@ -168,6 +168,16 @@ func (k Kind) Pattern() string {
 	return b.String()
 }
 
+// CanonicalPattern returns the regular expression of the identifiers of the
+// entity type k in their canonical spelling, as Encode writes them: the
+// lowercase prefix, an underscore, and the uppercase body, whose first
+// character keeps the value within 128 bits, as Pattern's does. Go's regular
+// expressions and ECMAScript's read it alike. It panics if k is not an
+// entity type.
+func (k Kind) CanonicalPattern() string {
+	return fmt.Sprintf("^%s_[%s][%s]{%d}$", k.Prefix(), alphabet[:8], alphabet, BodyLength-1)
+}
+
 // decodeTable maps an ASCII byte to its value in the alphabet, accepting
 // lowercase letters, or to invalid.
 var decodeTable = func() (t [256]byte) {
