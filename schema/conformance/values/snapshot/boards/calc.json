@@ -1435,7 +1435,7 @@
             }
           ]
         },
-        "source": "i = len(\"😀é\")\ns = upper(\"ßa\") + lower(\"İ\") + trim(\" x\\t\")\nok = \"￿\" < \"😀\" and \"a\" != \"A\" and contains(\"😀é\", \"é\")"
+        "source": "i = len(\"😀é\")\ns = upper(\"ßa\") + lower(\"İ\") + trim(\"\\u00A0x\\t\")\nok = \"\\uFFFF\" < \"😀\" and \"a\" != \"A\" and contains(\"😀é\", \"é\")"
       },
       "position": {
         "x": 800,

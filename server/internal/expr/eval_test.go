@@ -100,7 +100,7 @@ func TestCondition(t *testing.T) {
 		`name + "!" == "Ann!"`:                            true,
 		"rate * 2 == 1":                                   true,
 		"rate < 1 and not (rate > 1)":                     true,
-		`"a" < "b" && "😀" > "￿"`:                          true,
+		`"a" < "b" && "😀" > "\uFFFF"`:                          true,
 		`visited(node("` + nodeEntry + `"))`:              true,
 		`visits(node("` + nodeEntry + `")) == 1 or false`: true,
 		"to_int(rate) == 0 && to_string(rate) == \"0.5\"": true,

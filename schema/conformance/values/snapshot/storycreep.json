@@ -21,7 +21,7 @@
     "nodeId": "nd_0000000000000000000000CAST"
   },
   "files": {
-    "boards/calc.json": "sha256:356fa471843b3d45f3f0a719bfa340b4ac298f64a8492ebce98234674e394a25",
+    "boards/calc.json": "sha256:aa4e0a0d68aff96f81cebf36e1cc9407d42cbd59f6532a036a869194e93117b3",
     "project/component_types.json": "sha256:99fd222be8c0235a4bd75b47aafa57a60a73adef95093c32ded702b67ae34448",
     "project/components.json": "sha256:f9a11a36f3448fe6517b9132601ab9e035db61b95efcdca793242f3d24879e8d",
     "project/settings.json": "sha256:4b7bf032d923b7dab9481f4e44722684fbd8b1801770d378076069bf9a96322e",
@@ -39,7 +39,7 @@
   "schemaVersion": 1,
   "snapshot": {
     "channel": "release",
-    "contentHash": "sha256:852a525f90f320594414c3ad47a1e55208fb119a521cdafef9537d82d132d346",
+    "contentHash": "sha256:af03c6db7ef5f18a1851cb63e6a42bc7468d7fa947bcf8609baa415aa7abb7c3",
     "id": "snp_000000000000000000000000C4",
     "note": "Conformance suite values",
     "publishedAt": "2026-10-25T00:00:00Z",

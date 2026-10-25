@@ -517,8 +517,8 @@ s = to_string(round(-2.5)) + " " + to_string(to_int(-2.7)) + " " + to_string(to_
 r = to_float("2.2250738585072011e-308")`},
 				{id: "TEXT", typ: element, ending: true, text: "i={i} s={s} ok={ok}",
 					onEnter: `i = len("😀é")
-s = upper("ßa") + lower("İ") + trim(" x\t")
-ok = "￿" < "😀" and "a" != "A" and contains("😀é", "é")`},
+s = upper("ßa") + lower("İ") + trim("\u00A0x\t")
+ok = "\uFFFF" < "😀" and "a" != "A" and contains("😀é", "é")`},
 				{id: "JNR", typ: element, ending: true, text: "i={i} ok={ok} s=[{s}]",
 					onEnter: "s = \"abcdefghijklmnop\"\ns = s + s\ns = s + s\ns = s + s\ns = s + s\ns = s + s\n" +
 						"s = s + s\ns = s + s\ns = s + s\ni = len(s)\ns = s + \"!\"\nok = s == \"\""},
