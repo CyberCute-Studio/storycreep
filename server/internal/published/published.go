@@ -16,9 +16,9 @@
 // out, or an AST that expr.Decode does not read back as its context's, as one
 // whose names are not resolved. They do not lay the JSON out as §6.2 says,
 // sorted and indented, which the serializer does (plan item 76), and Decode
-// reads a file as a consumer does: it fails on null anywhere and on an
-// unknown value of a type, kind, or op field, and ignores a key that it does
-// not know (§6.4).
+// reads a file, refusing what its doc lists, as null anywhere and an unknown
+// value of a type, kind, or op field, and ignoring a key that it does not
+// know (§6.4), but it is no validator of the schemas.
 package published
 
 import (
@@ -102,9 +102,10 @@ const MaxInt = value.MaxInt
 // format holds.
 var ErrDecode = errors.New("published: not JSON of the published format")
 
-// Decode reads data, one JSON value, into v, a pointer to one of the
-// package's types, as a consumer reads a published file or a save state: it
-// fails, with an error that wraps ErrDecode, on data that is not one JSON
+// Decode reads data, one JSON value, a published file or a save state, into
+// v, a pointer to one of the package's types. It fails, with an error that
+// wraps ErrDecode, on what this list names and on nothing else: on data that
+// is not one JSON
 // value, that is not UTF-8, that holds null anywhere (§6.2), that escapes a
 // lone surrogate in a string, or that writes a number with an exponent beyond
 // ±value.MaxExponent, as 0e1000, which the schemas cannot tell from 0, but
@@ -126,14 +127,16 @@ var ErrDecode = errors.New("published: not JSON of the published format")
 // is int, or a value whose declaration is in another file that is neither a
 // boolean, a number, nor a string; and on an empty text or label, which a
 // file leaves out. Otherwise it reads data into v as json.Unmarshal does, but
-// for a key as a consumer reads it, as it is written (readTree): of a key
+// for a key, which it reads as it is written (readTree): of a key
 // that an object has twice, the last, where json.Unmarshal would merge what
 // the two hold; a key that the types do not know it ignores (§6.4), as KIND
 // in an object that they read as a struct, which differs from kind only by
 // its case, and which json.Unmarshal would read as kind; and a map's keys, as
 // a manifest's files' paths, it reads as they are written, whatever their
-// case. It does not check what else the schema holds a file to, as a pattern
-// or a bound, which a validator of the schema checks, but for an Int's,
+// case. A file that it reads may still be one that the schemas refuse: it
+// does not check what else they hold a file to, as a pattern or a bound,
+// which a validator of the schemas checks (plan items 78 and 84), but for an
+// Int's,
 // which is an integer of at most MaxInt in magnitude, and a value's of its
 // declaration's type, an int's within ±MaxInt and a float's within
 // ±1.7976931348623157e+308 as it is written (value.FloatBeyondSchema), as
