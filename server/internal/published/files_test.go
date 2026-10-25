@@ -23,15 +23,15 @@ var update = flag.Bool("update", false, "rewrite the published JSON Schemas and 
 const root = "../../.."
 
 // TestSchemaFiles checks that /schema holds the documents that Files
-// generates, so that a change of the Go types that does not regenerate them
-// fails the build (FR-DATA-04); run go test ./internal/published -run
-// TestSchemaFiles -update to rewrite them.
+// generates, and no other document beside them, so that a change of the Go
+// types that does not regenerate them fails the build (FR-DATA-04); run go
+// test ./internal/published -run TestSchemaFiles -update to rewrite them.
 func TestSchemaFiles(t *testing.T) {
 	files, err := Files(false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkFiles(t, files, "TestSchemaFiles")
+	checkFiles(t, files, "TestSchemaFiles", ".schema.json")
 }
 
 // examplesTypeScriptPath is the TypeScript module of the published format's
@@ -57,7 +57,7 @@ func TestTypeScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	modules[examplesTypeScriptPath] = examples
-	checkFiles(t, modules, "TestTypeScript")
+	checkFiles(t, modules, "TestTypeScript", ".gen.ts")
 }
 
 // examplesModule returns the TypeScript module of the documents' examples:
@@ -135,9 +135,40 @@ func camel(name string) string {
 }
 
 // checkFiles checks that each file, by its path from the repository's root,
-// holds what it should, or rewrites it when -update is set.
-func checkFiles(t *testing.T, files map[string][]byte, test string) {
+// holds what it should, and that no directory of them holds another file
+// whose name ends in suffix, as a document whose name changed leaves behind,
+// or rewrites them, and removes each other one, when -update is set.
+func checkFiles(t *testing.T, files map[string][]byte, test, suffix string) {
 	t.Helper()
+	dirs := map[string]bool{}
+	for path := range files {
+		dirs[filepath.Dir(filepath.Join(root, filepath.FromSlash(path)))] = true
+	}
+	for _, dir := range slices.Sorted(maps.Keys(dirs)) {
+		entries, err := os.ReadDir(dir)
+		if err != nil && !*update {
+			t.Error(err)
+			continue
+		}
+		for _, e := range entries {
+			rel, err := filepath.Rel(root, filepath.Join(dir, e.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.ToSlash(rel)
+			if _, ok := files[path]; ok || e.IsDir() || !strings.HasSuffix(e.Name(), suffix) {
+				continue
+			}
+			if *update {
+				if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
+					t.Fatal(err)
+				}
+				continue
+			}
+			t.Errorf("%s is not one of the files that the Go types generate; run go test ./internal/published -run "+
+				"%s -update", path, test)
+		}
+	}
 	for _, path := range slices.Sorted(maps.Keys(files)) {
 		want := files[path]
 		full := filepath.Join(root, filepath.FromSlash(path))

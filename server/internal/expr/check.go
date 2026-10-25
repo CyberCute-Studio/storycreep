@@ -85,7 +85,7 @@ func Check(n Node, ctx Context, p *Project, board string) error {
 	if ctx != ContextCondition && ctx != ContextScript {
 		return fmt.Errorf("%w: %q", ErrContext, ctx)
 	}
-	if board != "" && !canonical(ids.Board, board) {
+	if board != "" && !ids.IsCanonical(ids.Board, board) {
 		return fmt.Errorf("%w: %q", ErrBoard, board)
 	}
 	if p == nil {

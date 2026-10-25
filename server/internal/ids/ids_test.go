@@ -329,9 +329,9 @@ func TestPattern(t *testing.T) {
 	}
 }
 
-// TestCanonicalPattern checks that each kind's canonical pattern matches
-// exactly the identifiers that Decode accepts and that Encode writes as they
-// are, as the published format holds them.
+// TestCanonicalPattern checks that each kind's canonical pattern, and
+// IsCanonical, match exactly the identifiers that Decode accepts and that
+// Encode writes as they are, as the published format holds them.
 func TestCanonicalPattern(t *testing.T) {
 	v := readVectors(t)
 	for _, k := range Kinds() {
@@ -343,6 +343,9 @@ func TestCanonicalPattern(t *testing.T) {
 			if matched := re.MatchString(id); matched != canonical {
 				t.Errorf("%v's canonical pattern %s matches %q: %v, but its canonical spelling is %v", k,
 					k.CanonicalPattern(), id, matched, canonical)
+			}
+			if got := IsCanonical(k, id); got != canonical {
+				t.Errorf("IsCanonical(%v, %q) = %v, but its canonical spelling is %v", k, id, got, canonical)
 			}
 		}
 		for _, tc := range v.Encode {

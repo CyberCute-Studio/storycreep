@@ -16,7 +16,14 @@ type Board struct {
 	Connections []Connection `json:"connections" doc:"The board's connections, sorted by ID."`
 	Nodes       Nodes        `json:"nodes" doc:"The board's nodes, sorted by ID."`
 	// SchemaVersion is SchemaVersion.
-	SchemaVersion int `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
+	SchemaVersion Int `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
+}
+
+// MarshalJSON writes the board's file, its nodes and its connections [] when
+// it has none, or fails on a node or a value that is not set.
+func (b Board) MarshalJSON() ([]byte, error) {
+	type plain Board
+	return marshalFile("a board's file", plain(b))
 }
 
 // JSONSchemaDoc describes a board's file (schemagen.Documented).
@@ -184,7 +191,7 @@ type BranchOutput struct {
 	Condition *Condition `json:"condition,omitempty" when:"kind=if|elseif" required:"true" doc:"The condition that picks the output."`
 	ID        string     `json:"id" id:"branch_output"`
 	Kind      string     `json:"kind" enum:"if,elseif,else"`
-	Order     int        `json:"order" minimum:"0" doc:"The output's place among its branch's, from 0."`
+	Order     Int        `json:"order" minimum:"0" maximum:"9007199254740991" doc:"The output's place among its branch's, from 0."`
 }
 
 // JSONSchemaDoc describes a branch's output (schemagen.Documented).
@@ -202,7 +209,7 @@ type Connection struct {
 	ID         string     `json:"id" id:"connection"`
 	Label      *Label     `json:"label,omitempty" doc:"The connection's label, the text of its choice. Without it, the connection has none."`
 	OnTraverse *Script    `json:"onTraverse,omitempty" doc:"The script that runs when the flow traverses the connection. Without it, none."`
-	Order      int        `json:"order" minimum:"0" doc:"The connection's place among those that leave its port, from 0, the order of its choice."`
+	Order      Int        `json:"order" minimum:"0" maximum:"9007199254740991" doc:"The connection's place among those that leave its port, from 0, the order of its choice."`
 	To         string     `json:"to" id:"node" doc:"The node of the board that the connection leads to."`
 }
 

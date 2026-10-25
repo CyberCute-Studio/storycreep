@@ -459,6 +459,44 @@ func EscapesLoneSurrogate(raw []byte) bool {
 	return false
 }
 
+// CheckJSON says what makes data no JSON text that the published format
+// holds, as a file or a value of one, or returns "": data must be one JSON
+// value, in UTF-8, that holds null nowhere (PRD §6.2), and whose strings
+// escape no lone surrogate. encoding/json reads a byte that is not UTF-8,
+// and a lone surrogate, as U+FFFD, so that a reader that did not refuse them
+// would read other text than the file holds.
+func CheckJSON(data []byte) string {
+	switch {
+	case !json.Valid(data):
+		return "is not one JSON value"
+	case !utf8.Valid(data):
+		return "is not UTF-8"
+	case EscapesLoneSurrogate(data):
+		return "escapes a lone surrogate in a string, which is not a character"
+	case holdsNull(data):
+		return "holds null"
+	}
+	return ""
+}
+
+// holdsNull reports whether data, one JSON value, holds null, the only
+// literal of JSON that starts with n, outside its strings.
+func holdsNull(data []byte) bool {
+	inString := false
+	for i := 0; i < len(data); i++ {
+		switch c := data[i]; {
+		case inString && c == '\\':
+			// The escaped character, as the quote of \", ends no string.
+			i++
+		case c == '"':
+			inString = !inString
+		case !inString && c == 'n':
+			return true
+		}
+	}
+	return false
+}
+
 // hex4 returns the value of four hexadecimal digits, in either case, and
 // whether they are four such digits.
 func hex4(digits []byte) (rune, bool) {

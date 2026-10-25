@@ -115,6 +115,7 @@
         },
         "schemaVersion": {
           "description": "The version of the published format of the snapshot that the state was saved against.",
+          "maximum": 9007199254740991,
           "minimum": 1,
           "type": "integer"
         },
@@ -183,6 +184,7 @@
     },
     "Visits": {
       "additionalProperties": {
+        "maximum": 9007199254740991,
         "minimum": 1,
         "type": "integer"
       },

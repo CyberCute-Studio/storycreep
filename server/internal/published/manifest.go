@@ -7,7 +7,7 @@ import (
 // Manifest is a snapshot's manifest, storycreep.json (§6.3, §6.5): what the
 // snapshot is, its boards, and the hash of each of its files.
 type Manifest struct {
-	ASTVersion int             `json:"astVersion" minimum:"1" doc:"The highest ast_version among the constructs that the snapshot's expressions use, 1 for none (FR-EXPR-04). A runtime that supports a lower one refuses the snapshot (PRD §6.4)."`
+	ASTVersion Int             `json:"astVersion" minimum:"1" maximum:"9007199254740991" doc:"The highest ast_version among the constructs that the snapshot's expressions use, 1 for none (FR-EXPR-04). A runtime that supports a lower one refuses the snapshot (PRD §6.4)."`
 	Boards     []ManifestBoard `json:"boards" doc:"Every board, sorted by ID, by which a runtime finds a board's file without reading any other board's (PRD §6.5)."`
 	Counts     Counts          `json:"counts"`
 	Entry      *Entry          `json:"entry,omitempty" doc:"Where the flow starts: the project's entry node, of its entry board. Without it, the project has none, which only a draft may lack."`
@@ -15,7 +15,7 @@ type Manifest struct {
 	Generator  GeneratorInfo   `json:"generator"`
 	Project    ProjectInfo     `json:"project"`
 	// SchemaVersion is SchemaVersion.
-	SchemaVersion int      `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
+	SchemaVersion Int      `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
 	Snapshot      Snapshot `json:"snapshot"`
 }
 
@@ -23,6 +23,13 @@ type Manifest struct {
 func (Manifest) JSONSchemaDoc() string {
 	return "A snapshot's manifest, storycreep.json: what the snapshot is, its boards, and the hash of each of " +
 		"its files (PRD §6.3, §6.5)."
+}
+
+// MarshalJSON writes the manifest, its boards and its files [] and {} when it
+// has none, or fails on a snapshot that is not set.
+func (m Manifest) MarshalJSON() ([]byte, error) {
+	type plain Manifest
+	return marshalFile(ManifestPath, plain(m))
 }
 
 // UnmarshalJSON reads a manifest, whose snapshot is a release's or a draft's.
@@ -63,11 +70,11 @@ func (ManifestBoard) JSONSchemaDoc() string {
 
 // Counts are how many of each entity a snapshot holds.
 type Counts struct {
-	Boards      int `json:"boards" minimum:"0"`
-	Components  int `json:"components" minimum:"0"`
-	Connections int `json:"connections" minimum:"0"`
-	Nodes       int `json:"nodes" minimum:"0" doc:"The nodes of every type: elements, branches, and jumpers."`
-	Variables   int `json:"variables" minimum:"0" doc:"The variables, global and of each board."`
+	Boards      Int `json:"boards" minimum:"0" maximum:"9007199254740991"`
+	Components  Int `json:"components" minimum:"0" maximum:"9007199254740991"`
+	Connections Int `json:"connections" minimum:"0" maximum:"9007199254740991"`
+	Nodes       Int `json:"nodes" minimum:"0" maximum:"9007199254740991" doc:"The nodes of every type: elements, branches, and jumpers."`
+	Variables   Int `json:"variables" minimum:"0" maximum:"9007199254740991" doc:"The variables, global and of each board."`
 }
 
 // JSONSchemaDoc describes the counts (schemagen.Documented).

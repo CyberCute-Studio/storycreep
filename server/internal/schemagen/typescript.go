@@ -6,9 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/tsgen"
 )
 
 // file is a document as Document writes it.
@@ -72,7 +73,7 @@ func TypeScript(header string, documents ...[]byte) ([]byte, error) {
 	var b strings.Builder
 	b.WriteString(header)
 	for _, name := range slices.Sorted(maps.Keys(defs)) {
-		if !tsIdentifier.MatchString(name) || slices.Contains(tsReserved, name) {
+		if !tsgen.TypeName(name) {
 			return nil, fmt.Errorf("schemagen: %s is not a name that a TypeScript type may have", name)
 		}
 		s := defs[name]
@@ -81,7 +82,7 @@ func TypeScript(header string, documents ...[]byte) ([]byte, error) {
 			return nil, fmt.Errorf("schemagen: %s: %w", name, err)
 		}
 		b.WriteString("\n")
-		tsComment(&b, 0, s.Description)
+		tsgen.Comment(&b, 0, s.Description, false)
 		if s.Type == "object" && len(s.Properties) > 0 {
 			fmt.Fprintf(&b, "export interface %s %s\n", name, t)
 		} else {
@@ -89,20 +90,6 @@ func TypeScript(header string, documents ...[]byte) ([]byte, error) {
 		}
 	}
 	return []byte(b.String()), nil
-}
-
-// tsIdentifier matches the names that a TypeScript type may have.
-var tsIdentifier = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
-
-// tsReserved are TypeScript's reserved words and predefined types, which no
-// type may be named.
-var tsReserved = []string{
-	"any", "Array", "as", "bigint", "boolean", "break", "case", "catch", "class", "const", "continue",
-	"debugger", "declare", "default", "delete", "do", "else", "enum", "export", "extends", "false", "finally",
-	"for", "from", "function", "if", "implements", "import", "in", "instanceof", "interface", "let", "never",
-	"new", "null", "number", "object", "package", "private", "protected", "public", "Record", "return",
-	"static", "string", "super", "switch", "symbol", "this", "throw", "true", "try", "type", "typeof",
-	"undefined", "unknown", "var", "void", "while", "with", "yield",
 }
 
 // tsType returns the TypeScript type of the values of s, whose lines after
@@ -187,14 +174,14 @@ func tsObject(s *Schema, n int) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", name, err)
 		}
-		tsComment(&b, n+1, p.Description)
+		tsgen.Comment(&b, n+1, p.Description, false)
 		optional := "?"
 		if required[name] && !p.False {
 			optional = ""
 		}
-		fmt.Fprintf(&b, "%s%s%s: %s;\n", tsIndent(n+1), tsPropertyName(name), optional, t)
+		fmt.Fprintf(&b, "%s%s%s: %s;\n", tsgen.Indent(n+1), tsgen.PropertyName(name), optional, t)
 	}
-	b.WriteString(tsIndent(n) + "}")
+	b.WriteString(tsgen.Indent(n) + "}")
 	return b.String(), nil
 }
 
@@ -202,7 +189,7 @@ func tsObject(s *Schema, n int) (string, error) {
 func tsLiteral(v any) (string, error) {
 	switch v := v.(type) {
 	case string:
-		return tsString(v), nil
+		return tsgen.String(v), nil
 	case bool:
 		if v {
 			return "true", nil
@@ -215,48 +202,4 @@ func tsLiteral(v any) (string, error) {
 		return string(data), err
 	}
 	return "", fmt.Errorf("the const or enum value %v is not a string, a number, or a boolean", v)
-}
-
-// tsPropertyName returns name as a property's name: as it is if it is an
-// identifier, and quoted otherwise.
-func tsPropertyName(name string) string {
-	if tsIdentifier.MatchString(name) {
-		return name
-	}
-	return tsString(name)
-}
-
-// tsString returns s as a string literal, which a JSON string is.
-func tsString(s string) string {
-	data, _ := marshal(s)
-	return string(data)
-}
-
-func tsIndent(n int) string {
-	return strings.Repeat("  ", n)
-}
-
-// tsComment writes text to b as a JSDoc comment at the indentation n.
-func tsComment(b *strings.Builder, n int, text string) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return
-	}
-	lines := strings.Split(text, "\n")
-	for i, l := range lines {
-		lines[i] = strings.ReplaceAll(strings.TrimRight(l, " \t\r"), "*/", "*\\/")
-	}
-	if len(lines) == 1 {
-		fmt.Fprintf(b, "%s/** %s */\n", tsIndent(n), lines[0])
-		return
-	}
-	fmt.Fprintf(b, "%s/**\n", tsIndent(n))
-	for _, l := range lines {
-		if l == "" {
-			fmt.Fprintf(b, "%s *\n", tsIndent(n))
-		} else {
-			fmt.Fprintf(b, "%s * %s\n", tsIndent(n), l)
-		}
-	}
-	fmt.Fprintf(b, "%s */\n", tsIndent(n))
 }

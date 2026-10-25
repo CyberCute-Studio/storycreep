@@ -49,8 +49,7 @@
         },
         "name": {
           "description": "<component_key>.<attribute_key>, for readability: the AST names the attribute by its ref, the component's ID, and its attribute, the attribute definition's.",
-          "maxLength": 129,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}\\.[A-Za-z_][A-Za-z0-9_]{0,63}$",
           "type": "string"
         },
         "ref": {
@@ -567,6 +566,7 @@
             },
             "order": {
               "description": "The output's place among its branch's, from 0.",
+              "maximum": 9007199254740991,
               "minimum": 0,
               "type": "integer"
             }
@@ -596,6 +596,7 @@
             },
             "order": {
               "description": "The output's place among its branch's, from 0.",
+              "maximum": 9007199254740991,
               "minimum": 0,
               "type": "integer"
             }
@@ -622,6 +623,7 @@
             },
             "order": {
               "description": "The output's place among its branch's, from 0.",
+              "maximum": 9007199254740991,
               "minimum": 0,
               "type": "integer"
             }
@@ -697,6 +699,7 @@
         },
         "order": {
           "description": "The connection's place among those that leave its port, from 0, the order of its choice.",
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         },
@@ -1127,6 +1130,7 @@
         },
         "number": {
           "description": "The item's number.",
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         }

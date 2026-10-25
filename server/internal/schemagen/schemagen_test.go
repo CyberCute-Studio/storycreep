@@ -215,6 +215,21 @@ type badWhen struct {
 	X    string `json:"x,omitempty" when:"type=c"`
 }
 
+// alwaysWritten has a when field that encoding/json writes in every
+// variant, which the other variants would refuse.
+type alwaysWritten struct {
+	Type string `json:"type" enum:"a,b"`
+	X    string `json:"x" when:"type=a"`
+}
+
+type misspeltRequired struct {
+	A string `json:"a" required:"ture"`
+}
+
+type falseRequired struct {
+	A string `json:"a,omitempty" required:"false"`
+}
+
 type idAndPattern struct {
 	A string `json:"a" id:"node" pattern:"x"`
 }
@@ -232,6 +247,9 @@ func TestPanics(t *testing.T) {
 		"two fields of one name":           func(g *Generator) { g.Ref(reflect.TypeFor[twice]()) },
 		"typeFrom of a field with no enum": func(g *Generator) { g.Ref(reflect.TypeFor[noEnum]()) },
 		"when of a value of no enum":       func(g *Generator) { g.Ref(reflect.TypeFor[badWhen]()) },
+		"when of a field always written":   func(g *Generator) { g.Ref(reflect.TypeFor[alwaysWritten]()) },
+		"a misspelt required tag":          func(g *Generator) { g.Ref(reflect.TypeFor[misspeltRequired]()) },
+		"a required tag of false":          func(g *Generator) { g.Ref(reflect.TypeFor[falseRequired]()) },
 		"an ID with a pattern":             func(g *Generator) { g.Ref(reflect.TypeFor[idAndPattern]()) },
 		"an interface that is no union":    func(g *Generator) { g.Ref(reflect.TypeFor[anyField]()) },
 		"a union of a non-interface":       func(g *Generator) { g.Union(reflect.TypeFor[circle](), "kind", "") },
@@ -300,6 +318,8 @@ func TestDocument(t *testing.T) {
 		{Path: "schema/test/drawing.schema.json", Root: d.Root},
 		{Path: "schema/test/v1/drawing.json", Root: d.Root},
 		{Path: d.Path, Root: d.Root, Examples: []string{`{"a":1} {}`}},
+		{Path: d.Path, Root: d.Root, Examples: []string{`{"a":1}}`}},
+		{Path: d.Path, Root: d.Root, Examples: []string{`{"a":1}]`}},
 	} {
 		if _, err := g.Document(bad); err == nil {
 			t.Errorf("Document(%s, %q) did not fail", bad.Path, bad.Examples)

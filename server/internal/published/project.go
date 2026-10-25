@@ -11,8 +11,14 @@ import (
 type Settings struct {
 	Entry *Entry `json:"entry,omitempty" doc:"Where the flow starts, as the manifest's entry. Without it, the project has none, which only a draft may lack."`
 	// SchemaVersion is SchemaVersion.
-	SchemaVersion int      `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
+	SchemaVersion Int      `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
 	Signals       []string `json:"signals" minLength:"1" doc:"The names of the signals that the project's scripts emit with signal(), each once, sorted by their code points, [] for none (FR-EXPR-04)."`
+}
+
+// MarshalJSON writes the settings, its signals [] when there are none.
+func (s Settings) MarshalJSON() ([]byte, error) {
+	type plain Settings
+	return marshalFile(SettingsPath, plain(s))
 }
 
 // JSONSchemaDoc describes the settings (schemagen.Documented).
@@ -25,8 +31,15 @@ func (Settings) JSONSchemaDoc() string {
 // and of each board (§6.3, §6.5).
 type Variables struct {
 	// SchemaVersion is SchemaVersion.
-	SchemaVersion int        `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
+	SchemaVersion Int        `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
 	Variables     []Variable `json:"variables" doc:"Every variable, sorted by ID."`
+}
+
+// MarshalJSON writes the variables' file, its variables [] when there are
+// none, or fails on a variable whose default is not set.
+func (v Variables) MarshalJSON() ([]byte, error) {
+	type plain Variables
+	return marshalFile(VariablesPath, plain(v))
 }
 
 // JSONSchemaDoc describes the variables' file (schemagen.Documented).
@@ -62,7 +75,15 @@ func (Variable) JSONSchemaDoc() string {
 type ComponentTypes struct {
 	ComponentTypes []ComponentType `json:"componentTypes" doc:"Every component type that a component of the snapshot is of, sorted by ID."`
 	// SchemaVersion is SchemaVersion.
-	SchemaVersion int `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
+	SchemaVersion Int `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
+}
+
+// MarshalJSON writes the component types' file, its component types [] when
+// there are none, or fails on an attribute definition whose default is not
+// set.
+func (c ComponentTypes) MarshalJSON() ([]byte, error) {
+	type plain ComponentTypes
+	return marshalFile(ComponentTypesPath, plain(c))
 }
 
 // JSONSchemaDoc describes the component types' file (schemagen.Documented).
@@ -78,6 +99,13 @@ type ComponentType struct {
 	ID         string                `json:"id" id:"component_type"`
 	Key        string                `json:"key" pattern:"^[A-Za-z_][A-Za-z0-9_]*$" maxLength:"64"`
 	Name       string                `json:"name"`
+}
+
+// MarshalJSON writes the component type, its attribute definitions [] when
+// it has none.
+func (c ComponentType) MarshalJSON() ([]byte, error) {
+	type plain ComponentType
+	return marshalObject(plain(c))
 }
 
 // JSONSchemaDoc describes a component type (schemagen.Documented).
@@ -107,7 +135,14 @@ func (AttributeDefinition) JSONSchemaDoc() string {
 type Components struct {
 	Components []Component `json:"components" doc:"Every component, sorted by ID."`
 	// SchemaVersion is SchemaVersion.
-	SchemaVersion int `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
+	SchemaVersion Int `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
+}
+
+// MarshalJSON writes the components' file, its components [] when there are
+// none, or fails on a value of an attribute that is not set.
+func (c Components) MarshalJSON() ([]byte, error) {
+	type plain Components
+	return marshalFile(ComponentsPath, plain(c))
 }
 
 // JSONSchemaDoc describes the components' file (schemagen.Documented).
@@ -127,6 +162,12 @@ type Component struct {
 	Name            string          `json:"name"`
 }
 
+// MarshalJSON writes the component, its attributes {} when it has none.
+func (c Component) MarshalJSON() ([]byte, error) {
+	type plain Component
+	return marshalObject(plain(c))
+}
+
 // JSONSchemaDoc describes a component (schemagen.Documented).
 func (Component) JSONSchemaDoc() string {
 	return "A component, with a value of each attribute of its type, runtime or not (FR-COMP-02)."
@@ -135,6 +176,14 @@ func (Component) JSONSchemaDoc() string {
 // AttributeValues are values of attributes, by their attribute definitions'
 // IDs, which type them.
 type AttributeValues map[string]value.Value
+
+// MarshalJSON writes the values, {} when there are none.
+func (a AttributeValues) MarshalJSON() ([]byte, error) {
+	if a == nil {
+		return []byte("{}"), nil
+	}
+	return marshal(map[string]value.Value(a))
+}
 
 // JSONSchema gives the schemas the definition of attributes' values
 // (schemagen.Provider).

@@ -32,31 +32,41 @@ var (
 // It reads what the schema of ExpressionSchema or ScriptSchema takes, and
 // nothing else, and ignores a key that an object of the AST does not define,
 // as a consumer does (§6.4), so that it fails, with an error that wraps
-// ErrDecode, on: JSON that is not one value, or that holds null anywhere, as
-// the published format never does (§6.2), or a string that escapes a lone
-// surrogate; a node of an unknown kind, or with an unknown operator or a
-// literal of an unknown type, as a consumer fails loudly on an unknown enum
-// value (§6.4); a node at a place that its kind cannot be at, as Encode
-// refuses it; a field that is missing or of another type than its kind's; a
-// literal's value that is not of its type, as an int that is not integral or
-// is beyond ±(2^53 − 1), though one written as 2.0 is the int 2 (§5.8.9), a
-// float beyond a double's range, or a string of more than MaxStringLength
-// characters or that holds a NUL; a name that is not a key, or a ref that is
-// not an ID of its kind in its canonical spelling; a call of more than
-// MaxArguments arguments; a script of more than MaxStatements statements; and
-// an AST of more than MaxNodes nodes, or deeper than MaxDepth, its root 1
-// deep, which no AST that Check accepts is, so that Decode never recurses
-// deeper than that. It fails on a ctx that is neither context with an error
-// that wraps ErrContext.
+// ErrDecode, on: JSON that is not one value, or not UTF-8, or that holds null
+// anywhere, as the published format never does (§6.2), or a string that
+// escapes a lone surrogate (value.CheckJSON); a node of an unknown kind, or
+// with an unknown operator or a literal of an unknown type, as a consumer
+// fails loudly on an unknown enum value (§6.4); a node at a place that its
+// kind cannot be at, as Encode refuses it; a field that is missing or of
+// another type than its kind's; a literal's value that is not of its type,
+// as an int that is not integral or is beyond ±(2^53 − 1), though one
+// written as 2.0 is the int 2 (§5.8.9), a float beyond a double's range, or
+// a string of more than MaxStringLength characters or that holds a NUL; a
+// name that is not a key, an attribute's name that is not two keys joined by
+// a dot, or a ref that is not an ID of its kind in its canonical spelling; a
+// call of more than MaxArguments arguments; a script of more than
+// MaxStatements statements; and an AST of more than MaxNodes nodes, or deeper
+// than MaxDepth, its root 1 deep, which no AST that Check accepts is, so that
+// Decode never recurses deeper than that. It fails on a ctx that is neither
+// context with an error that wraps ErrContext.
 func Decode(data []byte, ctx Context) (Node, error) {
 	if ctx != ContextCondition && ctx != ContextScript {
 		return nil, fmt.Errorf("%w: %q", ErrContext, ctx)
 	}
-	if err := checkJSON(data); err != nil {
-		return nil, err
+	if problem := value.CheckJSON(data); problem != "" {
+		return nil, fmt.Errorf("%w: it %s", ErrDecode, problem)
+	}
+	// One pass reads data whole, numbers as they are written, which the
+	// decoder walks, so that no node's JSON is read again for each node
+	// above it.
+	var tree any
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&tree); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrDecode, err)
 	}
 	d := &decoder{}
-	n, err := d.node(json.RawMessage(data), atRoot, 1)
+	n, err := d.node(tree, atRoot, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -66,84 +76,62 @@ func Decode(data []byte, ctx Context) (Node, error) {
 	return n, nil
 }
 
-// checkJSON returns an error that wraps ErrDecode when data is not one JSON
-// value, holds null anywhere, or escapes a lone surrogate.
-func checkJSON(data []byte) error {
-	if !json.Valid(data) {
-		return fmt.Errorf("%w: it is not one JSON value", ErrDecode)
-	}
-	if value.EscapesLoneSurrogate(data) {
-		return fmt.Errorf("%w: a string escapes a lone surrogate", ErrDecode)
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			// json.Valid read data whole, so the only error is its end.
-			return nil
-		}
-		if tok == nil {
-			return fmt.Errorf("%w: it holds null", ErrDecode)
-		}
-	}
-}
-
 // decoder reads an AST's nodes, counting them.
 type decoder struct {
 	nodes int
 }
 
-// fields returns the object raw as its keys' values, or an error.
-func fields(raw json.RawMessage, what string) (map[string]json.RawMessage, error) {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil, fmt.Errorf("%w: %s is not an object", ErrDecode, what)
-	}
-	return obj, nil
-}
+// object is a node's object as Decode reads it, its keys' values: an object
+// as an object, an array as an []any, a number as a json.Number, a string as
+// a string, and a boolean as a bool.
+type object = map[string]any
 
-// field reads the required field key of a node of the kind kind into v.
-func field(obj map[string]json.RawMessage, kind Kind, key string, v any) error {
-	raw, ok := obj[key]
+// field returns the required field key of a node of the kind kind, of the
+// Go type T that Decode reads its JSON's type as.
+func field[T any](obj object, kind Kind, key string) (T, error) {
+	var zero T
+	v, ok := obj[key]
 	if !ok {
-		return fmt.Errorf("%w: a %s node has no %s", ErrDecode, kind, key)
+		return zero, fmt.Errorf("%w: a %s node has no %s", ErrDecode, kind, key)
 	}
-	if err := json.Unmarshal(raw, v); err != nil {
-		return fmt.Errorf("%w: the %s of a %s node is of another type than its kind's", ErrDecode, key, kind)
+	t, ok := v.(T)
+	if !ok {
+		return zero, fmt.Errorf("%w: the %s of a %s node is of another type than its kind's", ErrDecode, key, kind)
 	}
-	return nil
+	return t, nil
 }
 
 // id reads the required field key of a node of the kind kind, an ID of an
 // entity of the kind k in its canonical spelling.
-func id(obj map[string]json.RawMessage, kind Kind, key string, k ids.Kind) (string, error) {
-	var s string
-	if err := field(obj, kind, key, &s); err != nil {
+func id(obj object, kind Kind, key string, k ids.Kind) (string, error) {
+	s, err := field[string](obj, kind, key)
+	if err != nil {
 		return "", err
 	}
-	if !canonical(k, s) {
+	if !ids.IsCanonical(k, s) {
 		return "", fmt.Errorf("%w: the %s of a %s node is not the ID of a %s in its canonical spelling", ErrDecode,
 			key, kind, k)
 	}
 	return s, nil
 }
 
-// node reads the node raw, at the place at and the depth depth.
-func (d *decoder) node(raw json.RawMessage, at place, depth int) (Node, error) {
+// node reads the node v, at the place at and the depth depth.
+func (d *decoder) node(v any, at place, depth int) (Node, error) {
 	if depth > MaxDepth {
 		return nil, fmt.Errorf("%w: the AST is deeper than %d", ErrDecode, MaxDepth)
 	}
 	if d.nodes++; d.nodes > MaxNodes {
 		return nil, fmt.Errorf("%w: the AST has more than %d nodes", ErrDecode, MaxNodes)
 	}
-	obj, err := fields(raw, "a node")
-	if err != nil {
-		return nil, err
+	obj, ok := v.(object)
+	if !ok {
+		return nil, fmt.Errorf("%w: a node is not an object", ErrDecode)
 	}
-	var kind Kind
-	if err := field(obj, "", "kind", &kind); err != nil {
+	k, err := field[string](obj, "", "kind")
+	if err != nil {
 		return nil, fmt.Errorf("%w: a node has no kind, or one that is not a string", ErrDecode)
 	}
+	kind := Kind(k)
 	if _, ok := kindVersions[kind]; !ok {
 		return nil, fmt.Errorf("%w: %q is no kind of node", ErrDecode, kind)
 	}
@@ -181,14 +169,20 @@ func (d *decoder) node(raw json.RawMessage, at place, depth int) (Node, error) {
 
 // literal reads a literal, whose value is read as its type says, never by
 // its JSON form (§5.8.9), as package value reads a stored value.
-func literal(obj map[string]json.RawMessage) (Node, error) {
-	var typ string
-	if err := field(obj, KindLit, "type", &typ); err != nil {
+func literal(obj object) (Node, error) {
+	typ, err := field[string](obj, KindLit, "type")
+	if err != nil {
 		return nil, err
 	}
-	raw, ok := obj["value"]
+	x, ok := obj["value"]
 	if !ok {
 		return nil, fmt.Errorf("%w: a lit node has no value", ErrDecode)
+	}
+	// The value's JSON, a number as it is written, which Read reads by the
+	// literal's type.
+	raw, err := json.Marshal(x)
+	if err != nil {
+		return nil, fmt.Errorf("%w: the value of a lit node: %w", ErrDecode, err)
 	}
 	n := &Lit{Type: typ}
 	var dst any
@@ -218,13 +212,13 @@ func literal(obj map[string]json.RawMessage) (Node, error) {
 }
 
 // variable reads a variable, by its ref and its name, its key.
-func variable(obj map[string]json.RawMessage) (Node, error) {
+func variable(obj object) (Node, error) {
 	ref, err := id(obj, KindVar, "ref", ids.Variable)
 	if err != nil {
 		return nil, err
 	}
-	var name string
-	if err := field(obj, KindVar, "name", &name); err != nil {
+	name, err := field[string](obj, KindVar, "name")
+	if err != nil {
 		return nil, err
 	}
 	if len(name) > MaxIdentifierLength || !identifierName.MatchString(name) {
@@ -235,7 +229,7 @@ func variable(obj map[string]json.RawMessage) (Node, error) {
 
 // attribute reads a component's attribute, by its ref, its attribute, and
 // its name, <component_key>.<attribute_key>.
-func attribute(obj map[string]json.RawMessage) (Node, error) {
+func attribute(obj object) (Node, error) {
 	ref, err := id(obj, KindAttr, "ref", ids.Component)
 	if err != nil {
 		return nil, err
@@ -244,41 +238,42 @@ func attribute(obj map[string]json.RawMessage) (Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	var name string
-	if err := field(obj, KindAttr, "name", &name); err != nil {
+	name, err := field[string](obj, KindAttr, "name")
+	if err != nil {
 		return nil, err
 	}
-	component, attribute, _ := strings.Cut(name, ".")
-	if !attributeName.MatchString(name) || len(component) > MaxIdentifierLength ||
-		len(attribute) > MaxIdentifierLength {
+	// The pattern bounds each key to MaxIdentifierLength characters, as the
+	// schema does.
+	if !attributeName.MatchString(name) {
 		return nil, fmt.Errorf("%w: the name of an attr node is not two keys joined by a dot", ErrDecode)
 	}
+	component, attribute, _ := strings.Cut(name, ".")
 	return &Attr{Name: name, ComponentKey: component, AttributeKey: attribute, Ref: ref, Attribute: attr}, nil
 }
 
 // operand reads the field key of a node of the kind kind, a node at the place
 // at, one deeper than the node.
-func (d *decoder) operand(obj map[string]json.RawMessage, kind Kind, key string, at place, depth int) (Node, error) {
-	raw, ok := obj[key]
+func (d *decoder) operand(obj object, kind Kind, key string, at place, depth int) (Node, error) {
+	v, ok := obj[key]
 	if !ok {
 		return nil, fmt.Errorf("%w: a %s node has no %s", ErrDecode, kind, key)
 	}
-	return d.node(raw, at, depth+1)
+	return d.node(v, at, depth+1)
 }
 
 // list reads the field key of a node of the kind kind, an array of at most
 // most nodes at the place at, one deeper than the node.
-func (d *decoder) list(obj map[string]json.RawMessage, kind Kind, key string, at place, depth, most int) ([]Node, error) {
-	var raws []json.RawMessage
-	if err := field(obj, kind, key, &raws); err != nil {
+func (d *decoder) list(obj object, kind Kind, key string, at place, depth, most int) ([]Node, error) {
+	items, err := field[[]any](obj, kind, key)
+	if err != nil {
 		return nil, err
 	}
-	if len(raws) > most {
+	if len(items) > most {
 		return nil, fmt.Errorf("%w: a %s node has more than %d %s", ErrDecode, kind, most, key)
 	}
-	nodes := make([]Node, len(raws))
-	for i, raw := range raws {
-		n, err := d.node(raw, at, depth+1)
+	nodes := make([]Node, len(items))
+	for i, item := range items {
+		n, err := d.node(item, at, depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -287,11 +282,12 @@ func (d *decoder) list(obj map[string]json.RawMessage, kind Kind, key string, at
 	return nodes, nil
 }
 
-func (d *decoder) unary(obj map[string]json.RawMessage, depth int) (Node, error) {
-	var op UnaryOp
-	if err := field(obj, KindUnary, "op", &op); err != nil {
+func (d *decoder) unary(obj object, depth int) (Node, error) {
+	s, err := field[string](obj, KindUnary, "op")
+	if err != nil {
 		return nil, err
 	}
+	op := UnaryOp(s)
 	if _, ok := unaryVersions[op]; !ok {
 		return nil, fmt.Errorf("%w: %q is no unary operator", ErrDecode, op)
 	}
@@ -302,11 +298,12 @@ func (d *decoder) unary(obj map[string]json.RawMessage, depth int) (Node, error)
 	return &Unary{Op: op, Operand: operand}, nil
 }
 
-func (d *decoder) binary(obj map[string]json.RawMessage, depth int) (Node, error) {
-	var op BinaryOp
-	if err := field(obj, KindBinary, "op", &op); err != nil {
+func (d *decoder) binary(obj object, depth int) (Node, error) {
+	s, err := field[string](obj, KindBinary, "op")
+	if err != nil {
 		return nil, err
 	}
+	op := BinaryOp(s)
 	if _, ok := binaryVersions[op]; !ok {
 		return nil, fmt.Errorf("%w: %q is no binary operator", ErrDecode, op)
 	}
@@ -321,9 +318,9 @@ func (d *decoder) binary(obj map[string]json.RawMessage, depth int) (Node, error
 	return &Binary{Op: op, Left: left, Right: right}, nil
 }
 
-func (d *decoder) call(obj map[string]json.RawMessage, depth int) (Node, error) {
-	var function string
-	if err := field(obj, KindCall, "function", &function); err != nil {
+func (d *decoder) call(obj object, depth int) (Node, error) {
+	function, err := field[string](obj, KindCall, "function")
+	if err != nil {
 		return nil, err
 	}
 	if len(function) > MaxIdentifierLength || !identifierName.MatchString(function) {
@@ -336,11 +333,12 @@ func (d *decoder) call(obj map[string]json.RawMessage, depth int) (Node, error) 
 	return &Call{Function: function, Args: args}, nil
 }
 
-func (d *decoder) assign(obj map[string]json.RawMessage, depth int) (Node, error) {
-	var op AssignOp
-	if err := field(obj, KindAssign, "op", &op); err != nil {
+func (d *decoder) assign(obj object, depth int) (Node, error) {
+	s, err := field[string](obj, KindAssign, "op")
+	if err != nil {
 		return nil, err
 	}
+	op := AssignOp(s)
 	if _, ok := assignVersions[op]; !ok {
 		return nil, fmt.Errorf("%w: %q is no assignment operator", ErrDecode, op)
 	}
@@ -355,7 +353,7 @@ func (d *decoder) assign(obj map[string]json.RawMessage, depth int) (Node, error
 	return &Assign{Op: op, Target: target, Value: val}, nil
 }
 
-func (d *decoder) script(obj map[string]json.RawMessage, depth int) (Node, error) {
+func (d *decoder) script(obj object, depth int) (Node, error) {
 	statements, err := d.list(obj, KindScript, "statements", atStatement, depth, MaxStatements)
 	if err != nil {
 		return nil, err

@@ -38,24 +38,29 @@
       "description": "How many of each entity the snapshot holds.",
       "properties": {
         "boards": {
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         },
         "components": {
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         },
         "connections": {
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         },
         "nodes": {
           "description": "The nodes of every type: elements, branches, and jumpers.",
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         },
         "variables": {
           "description": "The variables, global and of each board.",
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         }
@@ -153,6 +158,7 @@
       "properties": {
         "astVersion": {
           "description": "The highest ast_version among the constructs that the snapshot's expressions use, 1 for none (FR-EXPR-04). A runtime that supports a lower one refuses the snapshot (PRD §6.4).",
+          "maximum": 9007199254740991,
           "minimum": 1,
           "type": "integer"
         },

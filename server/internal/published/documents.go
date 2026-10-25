@@ -164,13 +164,15 @@ func (a AST) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON reads the AST as expr.Decode reads it, a script's when its
-// kind is script, and a condition's otherwise.
+// kind is script, and a condition's otherwise. It reads the kind by its key
+// as it is written, as expr.Decode does, rather than as encoding/json reads a
+// field, whatever the key's case.
 func (a *AST) UnmarshalJSON(data []byte) error {
-	var head struct {
-		Kind string `json:"kind"`
-	}
+	var head map[string]json.RawMessage
+	var kind string
 	ctx := expr.ContextCondition
-	if json.Unmarshal(data, &head) == nil && head.Kind == string(expr.KindScript) {
+	if json.Unmarshal(data, &head) == nil && json.Unmarshal(head["kind"], &kind) == nil &&
+		kind == string(expr.KindScript) {
 		ctx = expr.ContextScript
 	}
 	n, err := expr.Decode(data, ctx)

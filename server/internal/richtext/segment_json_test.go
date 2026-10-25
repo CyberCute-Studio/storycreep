@@ -101,7 +101,11 @@ func TestSegmentUnmarshalAgreesWithSchema(t *testing.T) {
 			}
 		}
 	}
-	values := []any{"x", "", 0, -1, 7, 2.5, true, []any{}, []any{"bold", "bold"}, []any{"underline"},
+	// An integer written as 1.0 or 2e0 is one, as a consumer reads it by its
+	// declaration (PRD §5.8.9).
+	values := []any{"x", "", 0, -1, 7, 2.5, json.Number("1.0"), json.Number("2e0"), json.Number("-0.0"),
+		json.Number("9007199254740991"), json.Number("9007199254740992"), json.Number("1e400"), "1", true,
+		[]any{}, []any{"bold", "bold"}, []any{"underline"},
 		map[string]any{}, "https://example.com", "javascript:alert(1)", "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
 		"var_01HQ8Z5C2K8W1D5J9NTQZR4YBE", "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF", "cmp_01hq8z7kd3m9p2w5xrtvnq4bcf",
 		"bullet", "ordered", "value", "item", "text"}

@@ -3,6 +3,7 @@ package richtext
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"slices"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
+	"github.com/CyberCute-Studio/storycreep/server/internal/semantics"
 )
 
 // JSONSchema gives the published schemas the definition of a document's
@@ -89,7 +91,8 @@ func (Segment) JSONSchema(g *schemagen.Generator) *schemagen.Schema {
 			"depth": schemagen.Describe(cloneSchema(depth), "The item's depth, 1 for an item of a list that no list "+
 				"holds."),
 			"kind": kind(SegmentItem), "list": kind(ListOrdered),
-			"number": {Type: "integer", Minimum: schemagen.Float(0), Description: "The item's number."},
+			"number": {Type: "integer", Minimum: schemagen.Float(0), Maximum: schemagen.Float(semantics.MaxInt),
+				Description: "The item's number."},
 		}, "depth", "list", "number"),
 	}}, "A segment of a rich text.")
 }
@@ -170,7 +173,7 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 		marks                        []string
 		href, value, name, ref, attr string
 		list                         string
-		decimals, depth, number      int
+		decimals, depth, number      integer
 	)
 	read := []struct {
 		f string
@@ -213,13 +216,13 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 		if kind == SegmentValue && !present["attribute"] {
 			k = ids.Variable
 		}
-		if !canonical(k, ref) {
+		if !ids.IsCanonical(k, ref) {
 			return fmt.Errorf("richtext: a %s segment's ref is not the ID of a %s in its canonical spelling", kind, k)
 		}
 		s.Ref = ref
 	}
 	if present["attribute"] {
-		if !canonical(ids.AttributeDef, attr) {
+		if !ids.IsCanonical(ids.AttributeDef, attr) {
 			return fmt.Errorf("richtext: a value segment's attribute is not an attribute definition's ID in its " +
 				"canonical spelling")
 		}
@@ -229,19 +232,20 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 		if decimals < 0 || decimals > MaxDecimals {
 			return fmt.Errorf("richtext: a value segment's decimals are not from 0 to %d", MaxDecimals)
 		}
-		s.Decimals = &decimals
+		d := int(decimals)
+		s.Decimals = &d
 	}
 	if present["depth"] {
 		if depth < 1 || depth > MaxListDepth {
 			return fmt.Errorf("richtext: a segment's depth is not from 1 to %d", MaxListDepth)
 		}
-		s.Depth = depth
+		s.Depth = int(depth)
 	}
 	if kind == SegmentItem {
 		switch {
 		case list == ListBullet && !present["number"]:
 		case list == ListOrdered && present["number"] && number >= 0:
-			s.Number = number
+			s.Number = int(number)
 		default:
 			return fmt.Errorf("richtext: an item segment's list is %q, which is no kind of list, or it has a "+
 				"number exactly when its list is not ordered, or a negative one", list)
@@ -251,9 +255,18 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// canonical reports whether s is the ID of an entity of the kind k in its
-// canonical spelling.
-func canonical(k ids.Kind, s string) bool {
-	u, err := ids.Decode(k, s)
-	return err == nil && ids.Encode(k, u) == s
+// integer is an integer of a segment, as its decimals, which a consumer
+// reads as an integer by its declaration, whatever its JSON form, as 2.0 is
+// 2 (PRD §5.8.9), and which a JSON Schema's integer takes so.
+type integer int
+
+// UnmarshalJSON reads an integral JSON number, however it is written, of at
+// most semantics.MaxInt in magnitude, as an integer.
+func (n *integer) UnmarshalJSON(data []byte) error {
+	var f float64
+	if err := json.Unmarshal(data, &f); err != nil || f != math.Trunc(f) || math.Abs(f) > semantics.MaxInt {
+		return fmt.Errorf("richtext: %s is not an integer of at most %d in magnitude", data, semantics.MaxInt)
+	}
+	*n = integer(f)
+	return nil
 }

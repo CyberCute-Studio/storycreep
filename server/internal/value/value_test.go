@@ -333,3 +333,36 @@ func TestValueJSON(t *testing.T) {
 		t.Errorf("none writes %s, %v", out, err)
 	}
 }
+
+// TestCheckJSON checks what CheckJSON refuses of a JSON text: what is not one
+// JSON value, a byte that is not UTF-8, null anywhere outside a string, and a
+// lone surrogate escaped in a string, but not a string that holds null or an
+// escaped quote, nor a pair of surrogates.
+func TestCheckJSON(t *testing.T) {
+	t.Parallel()
+	for in, ok := range map[string]bool{
+		`{"a":[1,"b",true,{"c":2.5}]}`: true,
+		`"null"`:                       true,
+		`{"n":"\"null\\","m":"x\\"}`:   true,
+		`{"a":"\ud83d\ude00"}`:         true,
+		`{"a":"\u00e9 é"}`:             true,
+		`null`:                         false,
+		`{"a":null}`:                   false,
+		`[1, null]`:                    false,
+		`{"a":"\"","b":null}`:          false,
+		`{"a":"\\","b":null}`:          false,
+		`{"a":"\ud800"}`:               false,
+		`{"a":"\udc00\ud800"}`:         false,
+		`{"a":1}}`:                     false,
+		`{"a":1} {}`:                   false,
+		`{"a":`:                        false,
+		"{\"a\":\"\xff\"}":             false,
+		"{\"a\":\"\xed\xa0\x80\"}":     false,
+		`{"a":"x","n":"` + "\t" + `"}`: false,
+		` {"unknown":[{"x":"y"}]} `:    true,
+	} {
+		if problem := CheckJSON([]byte(in)); (problem == "") != ok {
+			t.Errorf("CheckJSON(%q) = %q", in, problem)
+		}
+	}
+}

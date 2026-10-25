@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/tsgen"
 )
 
 // TypeScript returns the TypeScript module of the document's types, which
@@ -57,80 +58,19 @@ type tsGen struct {
 	b strings.Builder
 }
 
-// identifier matches the names that TypeScript takes as they are.
-var identifier = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
-
-// reservedNames are the names that a schema's type may not have: the
-// reserved words of TypeScript, its predefined types, the globals that the
-// module uses, the module's own names, and the names that the client in
-// web/shared/src/api exports beside the module's, which would hide them.
-var reservedNames = []string{
-	"Answer", "any", "ApiError", "Array", "as", "bigint", "boolean", "break", "CallOptions", "case", "catch",
-	"class", "Client", "ClientOptions", "const", "continue", "createApiClient", "createClient", "debugger",
-	"declare", "default", "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for", "from",
-	"function", "if", "implements", "import", "in", "instanceof", "interface", "let", "never", "new", "null",
-	"number", "object", "OperationShape", "Operations", "package", "private", "protected", "public", "Record",
-	"return", "Route", "routes", "static", "string", "super", "switch", "symbol", "this", "throw", "true", "try",
-	"type", "typeof", "undefined", "unknown", "var", "void", "while", "with", "yield",
-}
-
-// propertyName returns name as a property name: as it is if it is an
-// identifier, and quoted otherwise.
-func propertyName(name string) string {
-	if identifier.MatchString(name) {
-		return name
-	}
-	return jsString(name)
-}
-
-// jsString returns s as a string literal. A JSON string is one.
-func jsString(s string) string {
-	var b bytes.Buffer
-	e := json.NewEncoder(&b)
-	e.SetEscapeHTML(false)
-	_ = e.Encode(s)
-	return strings.TrimSuffix(b.String(), "\n")
-}
-
-func indent(n int) string {
-	return strings.Repeat("  ", n)
-}
-
-// comment writes text, and @deprecated if deprecated is set, to b as a JSDoc
-// comment at the indentation n.
-func comment(b *strings.Builder, n int, text string, deprecated bool) {
-	var lines []string
-	if text = strings.TrimSpace(text); text != "" {
-		lines = strings.Split(text, "\n")
-	}
-	if deprecated {
-		lines = append(lines, "@deprecated")
-	}
-	if len(lines) == 0 {
-		return
-	}
-	for i, l := range lines {
-		lines[i] = strings.ReplaceAll(strings.TrimRight(l, " \t\r"), "*/", "*\\/")
-	}
-	if len(lines) == 1 {
-		fmt.Fprintf(b, "%s/** %s */\n", indent(n), lines[0])
-		return
-	}
-	fmt.Fprintf(b, "%s/**\n", indent(n))
-	for _, l := range lines {
-		if l == "" {
-			fmt.Fprintf(b, "%s *\n", indent(n))
-		} else {
-			fmt.Fprintf(b, "%s * %s\n", indent(n), l)
-		}
-	}
-	fmt.Fprintf(b, "%s */\n", indent(n))
+// moduleNames are the names, beside TypeScript's own (tsgen.TypeName), that
+// a schema's type may not have: the globals that the module uses, the
+// module's own names, and the names that the client in web/shared/src/api
+// exports beside the module's, which would hide them.
+var moduleNames = []string{
+	"Answer", "ApiError", "CallOptions", "Client", "ClientOptions", "createApiClient", "createClient",
+	"OperationShape", "Operations", "Route", "routes",
 }
 
 // declare writes the type of a named schema: an interface for an object
 // with properties, and a type alias for anything else.
 func (g *tsGen) declare(name string, s *Schema) error {
-	if !identifier.MatchString(name) || slices.Contains(reservedNames, name) {
+	if !tsgen.TypeName(name, moduleNames...) {
 		return errors.New("the name is not one that a TypeScript type may have")
 	}
 	t, err := g.typeOf(s, 0)
@@ -138,7 +78,7 @@ func (g *tsGen) declare(name string, s *Schema) error {
 		return err
 	}
 	g.b.WriteString("\n")
-	comment(&g.b, 0, s.Description, s.Deprecated)
+	tsgen.Comment(&g.b, 0, s.Description, s.Deprecated)
 	if slices.Equal(s.Type, Types{"object"}) && len(s.Properties) > 0 && !s.composed() && s.Enum == nil &&
 		s.Const == nil {
 		fmt.Fprintf(&g.b, "export interface %s %s\n", name, t)
@@ -286,7 +226,7 @@ func literal(v json.RawMessage) (string, error) {
 	case json.Number:
 		return x.String(), nil
 	case string:
-		return jsString(x), nil
+		return tsgen.String(x), nil
 	}
 	return "", fmt.Errorf("the enum or const value %s is not a string, number, boolean, or null", v)
 }
@@ -369,18 +309,18 @@ func (g *tsGen) objectOf(props []prop, n int) (string, error) {
 				return "", fmt.Errorf("%s: %w", p.name, err)
 			}
 		}
-		comment(&b, n+1, p.doc, p.deprecated)
+		tsgen.Comment(&b, n+1, p.doc, p.deprecated)
 		optional := ""
 		if p.optional {
 			optional = "?"
 		}
-		name := propertyName(p.name)
+		name := tsgen.PropertyName(p.name)
 		if p.numeric {
 			name = p.name
 		}
-		fmt.Fprintf(&b, "%s%s%s: %s;\n", indent(n+1), name, optional, t)
+		fmt.Fprintf(&b, "%s%s%s: %s;\n", tsgen.Indent(n+1), name, optional, t)
 	}
-	b.WriteString(indent(n) + "}")
+	b.WriteString(tsgen.Indent(n) + "}")
 	return b.String(), nil
 }
 
@@ -390,8 +330,8 @@ func (g *tsGen) operations() error {
 	slices.SortFunc(ops, func(a, b located) int { return strings.Compare(a.op.OperationID, b.op.OperationID) })
 
 	g.b.WriteString("\n")
-	comment(&g.b, 0, "The API's operations, by operation ID: what each takes, and what it answers with each status "+
-		"that is not an error's.", false)
+	tsgen.Comment(&g.b, 0, "The API's operations, by operation ID: what each takes, and what it answers with "+
+		"each status that is not an error's.", false)
 	g.b.WriteString("export interface Operations {\n")
 	for _, l := range ops {
 		op := l.op
@@ -407,23 +347,23 @@ func (g *tsGen) operations() error {
 		if err != nil {
 			return fmt.Errorf("%s %s: %w", l.method, l.path, err)
 		}
-		comment(&g.b, 1, text, op.Deprecated)
-		fmt.Fprintf(&g.b, "%s%s: {\n", indent(1), propertyName(op.OperationID))
-		fmt.Fprintf(&g.b, "%sinput: %s;\n", indent(2), input)
-		fmt.Fprintf(&g.b, "%sresponses: %s;\n", indent(2), responses)
-		fmt.Fprintf(&g.b, "%s};\n", indent(1))
+		tsgen.Comment(&g.b, 1, text, op.Deprecated)
+		fmt.Fprintf(&g.b, "%s%s: {\n", tsgen.Indent(1), tsgen.PropertyName(op.OperationID))
+		fmt.Fprintf(&g.b, "%sinput: %s;\n", tsgen.Indent(2), input)
+		fmt.Fprintf(&g.b, "%sresponses: %s;\n", tsgen.Indent(2), responses)
+		fmt.Fprintf(&g.b, "%s};\n", tsgen.Indent(1))
 	}
 	g.b.WriteString("}\n\n")
 
-	comment(&g.b, 0, "The method and path of each operation, and whether it answers with a file (blob).", false)
+	tsgen.Comment(&g.b, 0, "The method and path of each operation, and whether it answers with a file (blob).", false)
 	g.b.WriteString("export const routes = {\n")
 	for _, l := range ops {
 		blob := ""
 		if answersFile(l.op) {
 			blob = ", blob: true"
 		}
-		fmt.Fprintf(&g.b, "%s%s: { method: %s, path: %s%s },\n", indent(1), propertyName(l.op.OperationID),
-			jsString(l.method), jsString(l.path), blob)
+		fmt.Fprintf(&g.b, "%s%s: { method: %s, path: %s%s },\n", tsgen.Indent(1), tsgen.PropertyName(l.op.OperationID),
+			tsgen.String(l.method), tsgen.String(l.path), blob)
 	}
 	g.b.WriteString("} as const satisfies Record<keyof Operations, { method: string; path: string; blob?: true }>;\n")
 	return nil

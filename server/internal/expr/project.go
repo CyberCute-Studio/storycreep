@@ -107,7 +107,7 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 	seen := make(map[string]bool)
 	definitions := make(map[string]*Attribute)
 	id := func(k ids.Kind, s string) error {
-		if !canonical(k, s) {
+		if !ids.IsCanonical(k, s) {
 			return fmt.Errorf("%w: %q is not the ID of a %s in its canonical spelling", ErrProject, s, k)
 		}
 		if seen[s] {
@@ -128,7 +128,7 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 		}
 		scope := p.globals
 		if v.Board != "" {
-			if !canonical(ids.Board, v.Board) {
+			if !ids.IsCanonical(ids.Board, v.Board) {
 				return nil, fmt.Errorf("%w: %q is not the ID of a board in its canonical spelling", ErrProject,
 					v.Board)
 			}
@@ -158,7 +158,7 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 		listed := make(map[string]bool)
 		for i := range e.Attributes {
 			a := &e.Attributes[i]
-			if !canonical(ids.AttributeDef, a.ID) {
+			if !ids.IsCanonical(ids.AttributeDef, a.ID) {
 				return nil, fmt.Errorf("%w: %q is not the ID of a %s in its canonical spelling", ErrProject, a.ID,
 					ids.AttributeDef)
 			}
@@ -207,13 +207,6 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 
 // variableTypes are the types of a variable (FR-VAR-01).
 var variableTypes = []string{value.Bool, value.Int, value.Float, value.String}
-
-// canonical reports whether s is the ID of an entity of the kind k in its
-// canonical spelling, as ids.Encode writes it.
-func canonical(k ids.Kind, s string) bool {
-	u, err := ids.Decode(k, s)
-	return err == nil && ids.Encode(k, u) == s
-}
 
 // key returns an error that wraps ErrProject unless s is an identifier that is
 // not a reserved word, as a key is (§5.8.1).

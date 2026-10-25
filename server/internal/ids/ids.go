@@ -233,6 +233,15 @@ func Decode(k Kind, s string) (UUID, error) {
 	return u, nil
 }
 
+// IsCanonical reports whether s is the identifier of an entity of type k in
+// its canonical spelling, as Encode writes it, which CanonicalPattern
+// matches: the published format holds identifiers so, so that a consumer
+// compares them as strings.
+func IsCanonical(k Kind, s string) bool {
+	u, err := Decode(k, s)
+	return err == nil && Encode(k, u) == s
+}
+
 // DecodeAny returns the entity type and the UUID of the public identifier s,
 // whatever its type. The error is always a [*DecodeError].
 func DecodeAny(s string) (Kind, UUID, error) {

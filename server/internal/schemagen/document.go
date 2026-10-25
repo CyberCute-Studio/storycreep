@@ -61,7 +61,8 @@ func (g *Generator) Document(d Document) ([]byte, error) {
 	for i, ex := range d.Examples {
 		dec := json.NewDecoder(bytes.NewReader([]byte(ex)))
 		dec.UseNumber()
-		if err := dec.Decode(&examples[i]); err != nil || dec.More() {
+		// Decode reads one value, and json.Valid that nothing follows it.
+		if err := dec.Decode(&examples[i]); err != nil || !json.Valid([]byte(ex)) {
 			return nil, fmt.Errorf("schemagen: example %d of %s is not one JSON value", i, d.Path)
 		}
 	}

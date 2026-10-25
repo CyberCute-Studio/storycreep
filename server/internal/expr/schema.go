@@ -16,11 +16,13 @@ const (
 )
 
 // The patterns of the names that an AST writes: a variable's key, which is
-// an identifier (§5.8.1), and an attribute's, its component's key and its
-// own joined by a dot.
+// an identifier (§5.8.1), of at most MaxIdentifierLength characters, which
+// its schema bounds with maxLength; and an attribute's, its component's key
+// and its own joined by a dot, each of at most MaxIdentifierLength
+// characters, which the pattern bounds itself (TestAttributePattern).
 const (
 	identifierPattern = `^[A-Za-z_][A-Za-z0-9_]*$`
-	attributePattern  = `^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$`
+	attributePattern  = `^[A-Za-z_][A-Za-z0-9_]{0,63}\.[A-Za-z_][A-Za-z0-9_]{0,63}$`
 )
 
 // ExpressionSchema returns a reference to the definition of the AST of a
@@ -131,7 +133,7 @@ func attributeSchema(g *schemagen.Generator) *schemagen.Schema {
 		return schemagen.Describe(g.Object(map[string]*schemagen.Schema{
 			"attribute": g.ID(ids.AttributeDef),
 			"kind":      {Const: string(KindAttr)},
-			"name": {Type: "string", Pattern: attributePattern, MaxLength: schemagen.Int(2*MaxIdentifierLength + 1),
+			"name": {Type: "string", Pattern: attributePattern,
 				Description: "<component_key>.<attribute_key>, for readability: the AST names the attribute by " +
 					"its ref, the component's ID, and its attribute, the attribute definition's."},
 			"ref": g.ID(ids.Component),

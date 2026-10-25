@@ -40,10 +40,11 @@ import (
 //     one of the values after its =, separated by |, as in when:"type=enum":
 //     the struct's schema is one variant for each value of the property's
 //     enum, as for typeFrom, in which the field is required when it is
-//     required, and which no other variant takes.
-//   - required: "true" makes a field required where it is there, though it
-//     is tagged omitempty so that encoding/json leaves it out where it is not,
-//     as a when field.
+//     required, and which no other variant takes. The field is tagged
+//     omitempty or omitzero, so that encoding/json leaves it out where it
+//     is not.
+//   - required: "true", of a field tagged omitempty or omitzero, makes it
+//     required where it is there, as a when field.
 type Generator struct {
 	closed bool
 	// defs are the definitions, by their names; one that is being built is
@@ -441,6 +442,12 @@ func (g *Generator) object(t reflect.Type) *Schema {
 			addTeller(from, f)
 		}
 		if c := parseWhen(t, f); c != nil {
+			if !f.optional {
+				// encoding/json would write it in every variant, of which the
+				// others take no such property.
+				panic(fmt.Sprintf("schemagen: %s.%s is there only when %s is %s, but it is not tagged "+
+					"omitempty or omitzero", t, f.name, c.property, strings.Join(c.values, "|")))
+			}
 			addTeller(c.property, f)
 			for _, v := range c.values {
 				if !slices.Contains(values[c.property], v) {
@@ -502,11 +509,13 @@ func (g *Generator) objectOf(t reflect.Type, fs []field, combo map[string]string
 			s = g.value(t, f)
 		}
 		props[f.name] = Describe(s, f.tags["doc"])
-		switch r := f.tags["required"]; {
-		case r == "true" || !f.optional:
+		r, tagged := f.tags["required"]
+		if tagged && (r != "true" || !f.optional) {
+			panic(fmt.Sprintf("schemagen: the required tag of %s.%s is not true, or the field is required "+
+				"without it", t, f.name))
+		}
+		if tagged || !f.optional {
 			required = append(required, f.name)
-		case r != "":
-			panic(fmt.Sprintf("schemagen: the required tag of %s.%s is not true", t, f.name))
 		}
 	}
 	return g.Object(props, required...)

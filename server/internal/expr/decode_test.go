@@ -211,6 +211,27 @@ func TestDecodeAgreesWithSchema(t *testing.T) {
 	}
 }
 
+// TestAttributePattern checks that the name of an attribute's node, which
+// the AST's schema holds to attributePattern alone, is two keys of at most
+// MaxIdentifierLength characters each, joined by a dot, both as the schema
+// takes it and as Decode reads it.
+func TestAttributePattern(t *testing.T) {
+	condition, _ := astSchemas(t)
+	long := strings.Repeat("b", MaxIdentifierLength)
+	for name, ok := range map[string]bool{
+		"elara.trust": true, "a." + long: true, long + ".a": true, long + "." + long: true, "_.Z9": true,
+		"a." + long + "b": false, long + "b.a": false, "a.": false, ".a": false, "a.b.c": false, "1a.b": false,
+		"trust": false, "a-b.c": false,
+	} {
+		data := []byte(`{"attribute":"atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF","kind":"attr","name":"` + name +
+			`","ref":"cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"}`)
+		_, err := Decode(data, ContextCondition)
+		if schema := valid(t, condition, data); schema != ok || (err == nil) != ok {
+			t.Errorf("%s: the schema takes it: %v, and Decode: %v; want it taken: %v", name, schema, err, ok)
+		}
+	}
+}
+
 // TestDecodeErrors checks what Decode refuses, and what it takes.
 func TestDecodeErrors(t *testing.T) {
 	v := `{"kind":"var","name":"met_elara","ref":"var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"}`
@@ -262,6 +283,7 @@ func TestDecodeErrors(t *testing.T) {
 		{"a string of 4096 characters", lit("string", `"`+strings.Repeat("é", 4096)+`"`), ContextCondition, true},
 		{"a string of 4097 characters", lit("string", `"`+strings.Repeat("é", 4097)+`"`), ContextCondition, false},
 		{"a lone surrogate", lit("string", `"\ud800"`), ContextCondition, false},
+		{"a byte that is not UTF-8", lit("string", "\"a\xffb\""), ContextCondition, false},
 		{"a boolean of the type int", lit("int", "true"), ContextCondition, false},
 		{"an unknown type of a literal", lit("bytes", `"x"`), ContextCondition, false},
 		{"null", `null`, ContextCondition, false},
