@@ -460,7 +460,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** every §5.8.9 corpus case listed in the PRD passes in Go.
 
 ### 39. Expression lexer, parser, and AST encoding
-**Status:** todo · **Depends on:** 4, 38
+**Status:** done ([#45](https://github.com/CyberCute-Studio/storycreep/pull/45)) · **Depends on:** 4, 38
 **PRD:** §5.8.1, §5.8.2, §5.8.8, FR-EXPR-02 (parser: AC3), FR-EXPR-03 (AC3)
 - A lexer and parser, in `server/internal/expr`, for the grammar in §5.8.2, including word operators, script terminators and the line breaks that end a statement, comments, and `node("nd_…")` literals (N47).
 - Errors with stable codes and exact character ranges, counted in code points: the first that the parser meets from left to right, and `condition_must_be_pure` for an assignment in a condition (N47).
