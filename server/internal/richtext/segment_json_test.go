@@ -82,7 +82,8 @@ func compactJSON(t testing.TB, data []byte) []byte {
 // TestSegmentUnmarshalAgreesWithSchema checks that Segment.UnmarshalJSON
 // reads exactly the segments that the schema takes, of mutations of every
 // kind of segment of the vectors: each field replaced by a value of another
-// kind or of another value, and each field that another kind has added.
+// kind or of another value, null and a value that holds null included, and
+// each field that another kind has added.
 func TestSegmentUnmarshalAgreesWithSchema(t *testing.T) {
 	s := segmentsSchema(t)
 	seen := map[string]bool{}
@@ -111,7 +112,7 @@ func TestSegmentUnmarshalAgreesWithSchema(t *testing.T) {
 		[]any{}, []any{"bold", "bold"}, []any{"underline"},
 		map[string]any{}, "https://example.com", "javascript:alert(1)", "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
 		"var_01HQ8Z5C2K8W1D5J9NTQZR4YBE", "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF", "cmp_01hq8z7kd3m9p2w5xrtvnq4bcf",
-		"bullet", "ordered", "value", "item", "text"}
+		"bullet", "ordered", "value", "item", "text", nil, []any{nil}, map[string]any{"a": []any{1, nil}}}
 	fields := []string{"attribute", "decimals", "depth", "href", "kind", "list", "marks", "name", "number", "ref",
 		"value", "future"}
 	checked := 0
@@ -148,6 +149,23 @@ func TestSegmentUnmarshalAgreesWithSchema(t *testing.T) {
 	}
 	if !seen["item ordered false false false true"] {
 		t.Errorf("no vector has an ordered item, whose segment the test would mutate: %v", seen)
+	}
+}
+
+// TestSegmentUnmarshalKeeps checks that Segment.UnmarshalJSON leaves the
+// segment as it was where it fails, whatever it read before it failed.
+func TestSegmentUnmarshalKeeps(t *testing.T) {
+	want := Segment{Kind: SegmentText, Marks: []string{"bold"}, Value: "keep"}
+	for _, data := range []string{
+		`{"kind":"item","list":"bullet","depth":1,"number":2}`,
+		`{"kind":"value","marks":["italic"],"name":"a","ref":"var_01HQ8Z5C2K8W1D5J9NTQZR4YBE","decimals":-1}`,
+		`{"kind":"text","marks":[],"value":"x","future":{"a":null}}`,
+		`null`,
+	} {
+		s := want
+		if err := s.UnmarshalJSON([]byte(data)); err == nil || !reflect.DeepEqual(s, want) {
+			t.Errorf("UnmarshalJSON(%s) = %v, and the segment is %+v", data, err, s)
+		}
 	}
 }
 

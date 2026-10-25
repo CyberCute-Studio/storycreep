@@ -374,3 +374,22 @@ func TestCheckJSON(t *testing.T) {
 		}
 	}
 }
+
+// TestHoldsNull checks that HoldsNull finds null outside the strings of a
+// JSON text, at any depth, and nowhere else, as in a string or a number that
+// CheckJSON refuses for its exponent.
+func TestHoldsNull(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]bool{
+		`null`:                      true,
+		`{"a":[1,{"b":null}]}`:      true,
+		`{"n":"\"null\\","m":null}`: true,
+		`{"a":"null","null":"n"}`:   false,
+		`[true,false,-1.5E+3]`:      false,
+		`{"a":0e1000}`:              false,
+	} {
+		if got := HoldsNull([]byte(in)); got != want {
+			t.Errorf("HoldsNull(%s) = %v", in, got)
+		}
+	}
+}

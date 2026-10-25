@@ -259,23 +259,6 @@ func (v Value) Kind() string {
 	return kindOf(string(v.raw))
 }
 
-// Integer returns raw, a JSON number, as the integer that it is, as Read
-// reads an int without Checks: an integer from -MaxInt to MaxInt, however
-// it is written, as 3, 3.0, or 3e0, but for one written with an exponent
-// beyond ±MaxExponent, as 0e1000, or says why it is not one.
-func Integer(raw []byte) (int64, string) {
-	v, problem := FromJSON(raw).Read(Int, Checks{})
-	if problem != "" {
-		return 0, problem
-	}
-	// Read writes an int as its decimal, which ParseInt reads.
-	n, err := strconv.ParseInt(string(v.raw), 10, 64)
-	if err != nil {
-		return 0, "is not an integer, which an int is"
-	}
-	return n, ""
-}
-
 // Integral is an integer of a file, as a published file's count or a
 // segment's decimals, or of a save state, as a visit count, which a consumer
 // reads as an integer by its declaration, whatever its JSON form, and which
@@ -283,13 +266,20 @@ func Integer(raw []byte) (int64, string) {
 // number (PRD §5.8.9): an integral JSON number however it is written, as 2,
 // 2.0, or 2e0, from -MaxInt to MaxInt, as a JSON Schema's integer takes it,
 // but for one written with an exponent beyond ±MaxExponent, as 0e1000,
-// which no file holds (Integer).
+// which no file holds, as Read reads an int without Checks.
 type Integral int64
 
 // UnmarshalJSON reads an integral JSON number, however it is written, as an
-// Integral (Integer).
+// Integral, as Read reads an int without Checks (formProblem, integer).
 func (n *Integral) UnmarshalJSON(data []byte) error {
-	i, problem := Integer(data)
+	raw := string(data)
+	problem := "is not a number"
+	var i int64
+	if kindOf(raw) == "number" {
+		if problem = formProblem(raw, false); problem == "" {
+			i, problem = integer(raw)
+		}
+	}
 	if problem != "" {
 		return fmt.Errorf("value: %.40s is no integer of at most %d in magnitude: it %s", data, MaxInt, problem)
 	}
@@ -520,7 +510,7 @@ func CheckJSON(data []byte) string {
 	case EscapesLoneSurrogate(data):
 		return "escapes a lone surrogate in a string, which is not a character"
 	}
-	if problem := scanTokens(data); problem != "" {
+	if problem := scanTokens(data, true); problem != "" {
 		return problem
 	}
 	return ""
@@ -546,12 +536,20 @@ func ReadJSON(data []byte) (any, error) {
 	return tree, nil
 }
 
+// HoldsNull reports whether data, one JSON value, holds null anywhere
+// outside its strings, which no file holds (PRD §6.2), and which CheckJSON
+// refuses.
+func HoldsNull(data []byte) bool {
+	return scanTokens(data, false) != ""
+}
+
 // scanTokens says what of data, one JSON value, a file does not hold outside
-// its strings, null or a number written with an exponent beyond
-// ±MaxExponent, or returns "". Outside a string, null is the only literal
-// that starts with n, and a number the only token that starts with - or a
-// digit, which runs to the first byte that no number holds.
-func scanTokens(data []byte) string {
+// its strings, null or, if exponents is set, a number written with an
+// exponent beyond ±MaxExponent, or returns "". Outside a string, null is the
+// only literal that starts with n, and a number the only token that starts
+// with - or a digit, which runs to the first byte that no number holds, and
+// which holds no n.
+func scanTokens(data []byte, exponents bool) string {
 	inString := false
 	for i := 0; i < len(data); i++ {
 		switch c := data[i]; {
@@ -563,7 +561,7 @@ func scanTokens(data []byte) string {
 		case inString:
 		case c == 'n':
 			return "holds null"
-		case c == '-' || '0' <= c && c <= '9':
+		case exponents && (c == '-' || '0' <= c && c <= '9'):
 			end := i + 1
 			for end < len(data) && strings.IndexByte("+-.eE0123456789", data[end]) >= 0 {
 				end++

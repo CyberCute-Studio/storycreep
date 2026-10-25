@@ -102,21 +102,22 @@ const MaxInt = value.MaxInt
 // format holds.
 var ErrDecode = errors.New("published: not JSON of the published format")
 
-// Decode reads data, one JSON value, a published file or a save state, into
-// v, a pointer to one of the package's types, replacing what v held, which
-// it leaves as it was where it fails. It fails, as json.Unmarshal does, with
-// a *json.InvalidUnmarshalError, on a v that is not a pointer, or that is
-// nil, and otherwise, with an error that wraps ErrDecode, on what this list
-// names of data and on nothing else: on data that is not one JSON value,
-// that is not UTF-8, that holds null anywhere (§6.2), that escapes a lone
-// surrogate in a string, or that writes a number with an exponent beyond
-// ±value.MaxExponent, as 0e1000, which the schemas cannot tell from 0, but
-// which no file holds (value.CheckJSON); on a value of a JSON type that its
-// schema does not take, as a string where a number is, as json.Unmarshal
-// refuses it; on a key that its object's schema requires that is missing;
-// on a value of a field of an enum, as a type, a
-// kind, or an op, that the format does not have, as a consumer fails loudly on
-// one (§6.4); on a published file's schemaVersion or a save state's
+// Decode reads data, one JSON value, a published file or a save state, into v,
+// a pointer to one of the package's types, replacing what v held, which it
+// leaves as it was where it fails. It fails, as json.Unmarshal does, with a
+// *json.InvalidUnmarshalError, on a v that is not a pointer, or that is nil,
+// and otherwise, with an error that wraps ErrDecode, on what this list names
+// of data and on nothing else: on data that is not one JSON value, that is not
+// UTF-8, that holds null anywhere (§6.2), that escapes a lone surrogate in a
+// string, or that writes a number with an exponent beyond ±value.MaxExponent,
+// as 0e1000, which the schemas cannot tell from 0, but which no file holds
+// (value.CheckJSON); on a value of a JSON type that its schema does not take,
+// as a string where a number is, as json.Unmarshal refuses it; on a key that
+// its object's schema requires that is missing; on a value of a field of an
+// enum, as a type, a kind, or an op, that the format does not have, as a
+// consumer fails loudly on one (§6.4), or, of an object that it reads as a
+// variant of a union, as an *Element, a type or a channel that is not the
+// variant's; on a published file's schemaVersion or a save state's
 // stateVersion that is not the types', though not on a save state's
 // schemaVersion, its snapshot's, which a runtime compares with the snapshot
 // that it runs; on a key of an object's variant that is there, whatever its
@@ -127,29 +128,29 @@ var ErrDecode = errors.New("published: not JSON of the published format")
 // that it is there with, or that is not empty where that key is empty, which
 // the types leave out, as a save state's snapshotId without its
 // snapshotVersion, or with an empty one; on a value that is not of its
-// declaration's type, as a variable's default that is no int where its type
-// is int, or a value whose declaration is in another file that is neither a
+// declaration's type, as a variable's default that is no int where its type is
+// int, or a value whose declaration is in another file that is neither a
 // boolean, a number, nor a string; on an empty text or label, which a file
-// leaves out; on an AST that expr.Decode refuses, as one that the AST's
-// schema refuses, whose names are not resolved, or deeper than expr.MaxDepth
-// or of more than expr.MaxNodes nodes; and on a segment of a text or a label
-// that the segment's schema refuses, as one whose ref is not an ID in its
-// canonical spelling, as richtext.Segment's UnmarshalJSON refuses it.
-// Otherwise it reads data into v as json.Unmarshal reads it into a zero
-// value, but for a key, which it reads as it is written (readTree): of a
-// key that an object has twice, the last, where json.Unmarshal would merge
-// what the two hold; a key that the types do not know it ignores (§6.4), as
-// KIND in an object that they read as a struct, which differs from kind only
-// by its case, and which json.Unmarshal would read as kind; and a map's
-// keys, as a manifest's files' paths, it reads as they are written, whatever
-// their case. A file that it reads may still be one that the schemas refuse:
-// it does not check what else they hold a file to, as a pattern or a bound,
-// which a validator of the schemas checks (plan items 78 and 84), but for an
-// Int's, which is an integer of at most MaxInt in magnitude, a value's of
-// its declaration's type, an int's within ±MaxInt and a float's within
-// ±1.7976931348623157e+308 as it is written (value.FloatBeyondSchema), as
-// value.Schema bounds them, and an AST's and a segment's, which expr.Decode
-// and richtext read as their schemas take them.
+// leaves out; on an AST that expr.Decode refuses, as one that the AST's schema
+// refuses, whose names are not resolved, or deeper than expr.MaxDepth or of
+// more than expr.MaxNodes nodes; and on a segment of a text or a label that
+// the segment's schema refuses, as one whose ref is not an ID in its canonical
+// spelling, as richtext.Segment's UnmarshalJSON refuses it. Otherwise it reads
+// data into v as json.Unmarshal reads it into a zero value, but for a key,
+// which it reads as it is written (readTree): of a key that an object has
+// twice, the last, where json.Unmarshal would merge what the two hold; a key
+// that the types do not know it ignores (§6.4), as KIND in an object that they
+// read as a struct, which differs from kind only by its case, and which
+// json.Unmarshal would read as kind; and a map's keys, as a manifest's files'
+// paths, it reads as they are written, whatever their case. A file that it
+// reads may still be one that the schemas refuse: it does not check what else
+// they hold a file to, as a pattern or a bound, which a validator of the
+// schemas checks (plan items 78 and 84), but for an Int's, which is an integer
+// of at most MaxInt in magnitude, a value's of its declaration's type, an
+// int's within ±MaxInt and a float's within ±1.7976931348623157e+308 as it is
+// written (value.FloatBeyondSchema), as value.Schema bounds them, and an AST's
+// and a segment's, which expr.Decode and richtext read as their schemas take
+// them.
 func Decode(data []byte, v any) error {
 	if rv := reflect.ValueOf(v); rv.Kind() != reflect.Pointer || rv.IsNil() {
 		return &json.InvalidUnmarshalError{Type: reflect.TypeOf(v)}
@@ -365,7 +366,9 @@ func (e *tagError) Error() string {
 // this package's types read from tree, the JSON that readTree returned of
 // what it was read from, or of what holds v, at any depth, as Generator reads
 // the fields' tags (schemagen.Generator): a field's value that its enum or
-// const tag does not take; a key that is there where its variant does not
+// const tag does not take; of an object that is read as a variant of a union
+// itself, as an *Element, a key of the union, as type, that is missing or
+// that is not the variant's; a key that is there where its variant does not
 // have it, a when tag's or another variant's of its union, whatever its
 // value; a key that is missing where its object's schema requires it, or
 // that is empty where it is tagged required, and that the types leave out
@@ -448,6 +451,15 @@ func checkStruct(v reflect.Value, tree any) *tagError {
 	info := infoOf(t)
 	obj, _ := tree.(map[string]any)
 	if u, ok := knownKeys().variants[t]; ok {
+		// The union's key, which unmarshalVariant has read where a union is
+		// read, but not where Decode reads an object as the variant itself,
+		// as an *Element, whose schema requires its own value.
+		switch k, there := obj[u.key]; {
+		case !there:
+			return problemf("is missing, which its object's schema requires").at("." + u.key)
+		case k != u.value:
+			return problemf("is not %q, the %s of the variant that it is read as", u.value, u.key).at("." + u.key)
+		}
 		for _, k := range u.excluded {
 			if _, there := obj[k]; there {
 				return problemf("is there, which a %s of %q has not", u.key, u.value).at("." + k)

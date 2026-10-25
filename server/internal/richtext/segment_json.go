@@ -134,18 +134,24 @@ var segmentFields = map[string][2][]string{
 
 // UnmarshalJSON reads a segment as the published format holds it, as
 // MarshalJSON writes it, and as its schema takes it (Segment.JSONSchema): it
-// fails on a kind that it does not know, as a consumer does (PRD §6.4), on a
-// field of its kind that is missing or of another type, and on a value that
-// the schema does not take, as an ID that is not in its canonical spelling,
-// or an integer that is not integral; and it ignores a field that its kind
-// does not have, as one of another kind, as a consumer ignores a key that it
-// does not know (§6.4). Beyond the schema, which cannot tell how a number is
-// written, it refuses an integer written with an exponent beyond
-// ±value.MaxExponent, as 0e1000, which no file holds (value.Integral).
+// fails on a kind that it does not know, as a consumer does (PRD §6.4), on
+// null anywhere in the segment, which the schema takes nowhere, not even as
+// the value of a key that it does not define (schemagen.Generator.AnyValue),
+// on a field of its kind that is missing or of another type, and on a value
+// that the schema does not take, as an ID that is not in its canonical
+// spelling, or an integer that is not integral; and it ignores a field that
+// its kind does not have, as one of another kind, as a consumer ignores a key
+// that it does not know (§6.4). Beyond the schema, which cannot tell how a
+// number is written, it refuses an integer written with an exponent beyond
+// ±value.MaxExponent, as 0e1000, which no file holds (value.Integral). Where
+// it fails, it leaves s as it was.
 func (s *Segment) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil || raw == nil {
 		return fmt.Errorf("richtext: a segment is not an object")
+	}
+	if value.HoldsNull(data) {
+		return fmt.Errorf("richtext: a segment holds null, which no segment's schema takes")
 	}
 	var kind string
 	if r, ok := raw["kind"]; !ok || json.Unmarshal(r, &kind) != nil {
@@ -155,7 +161,7 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 	if !ok {
 		return fmt.Errorf("richtext: %q is no kind of segment", kind)
 	}
-	*s = Segment{Kind: kind}
+	seg := Segment{Kind: kind}
 	for _, f := range fields[0] {
 		if _, ok := raw[f]; !ok {
 			return fmt.Errorf("richtext: a %s segment has no %s", kind, f)
@@ -201,7 +207,7 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 				return fmt.Errorf("richtext: %q is no mark", m)
 			}
 		}
-		s.Marks = marks
+		seg.Marks = marks
 	}
 	if present["href"] {
 		// The schema's pattern, rather than CheckHref, which a later version
@@ -209,12 +215,12 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 		if n := utf8.RuneCountInString(href); n == 0 || n > MaxHrefChars || !hrefRegexp.MatchString(href) {
 			return fmt.Errorf("richtext: a segment's href is not the URL of a link")
 		}
-		s.Href = href
+		seg.Href = href
 	}
 	if kind == SegmentText && text == "" {
 		return fmt.Errorf("richtext: a text segment's value is empty")
 	}
-	s.Value, s.Name = text, name
+	seg.Value, seg.Name = text, name
 	if present["ref"] {
 		k := ids.Component
 		if kind == SegmentValue && !present["attribute"] {
@@ -223,27 +229,27 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 		if !ids.IsCanonical(k, ref) {
 			return fmt.Errorf("richtext: a %s segment's ref is not the ID of a %s in its canonical spelling", kind, k)
 		}
-		s.Ref = ref
+		seg.Ref = ref
 	}
 	if present["attribute"] {
 		if !ids.IsCanonical(ids.AttributeDef, attr) {
 			return fmt.Errorf("richtext: a value segment's attribute is not an attribute definition's ID in its " +
 				"canonical spelling")
 		}
-		s.Attribute = attr
+		seg.Attribute = attr
 	}
 	if present["decimals"] {
 		if decimals < 0 || decimals > MaxDecimals {
 			return fmt.Errorf("richtext: a value segment's decimals are not from 0 to %d", MaxDecimals)
 		}
 		d := int(decimals)
-		s.Decimals = &d
+		seg.Decimals = &d
 	}
 	if present["depth"] {
 		if depth < 1 || depth > MaxListDepth {
 			return fmt.Errorf("richtext: a segment's depth is not from 1 to %d", MaxListDepth)
 		}
-		s.Depth = int(depth)
+		seg.Depth = int(depth)
 	}
 	if kind == SegmentItem {
 		switch {
@@ -251,13 +257,14 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 		case list == ListOrdered && present["number"] && number >= 0 && number <= math.MaxInt:
 			// Within what an int holds, which a 32-bit platform's int may not
 			// hold of every number that the schema takes.
-			s.Number = int(number)
+			seg.Number = int(number)
 		default:
 			return fmt.Errorf("richtext: an item segment's list is %q, which is no kind of list, or it has a "+
 				"number exactly when its list is not ordered, or a negative one, or one that an int does not hold",
 				list)
 		}
-		s.List = list
+		seg.List = list
 	}
+	*s = seg
 	return nil
 }

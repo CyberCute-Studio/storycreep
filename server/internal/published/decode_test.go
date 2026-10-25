@@ -719,6 +719,71 @@ func TestVariantFields(t *testing.T) {
 	}
 }
 
+// TestDecodeVariant checks that Decode reads an object as a variant of a
+// union itself, as an *Element, exactly as the variant's definition takes it:
+// with the union's key of the variant's value, and neither without it, nor
+// with another variant's, nor with one of another JSON type.
+func TestDecodeVariant(t *testing.T) {
+	open := newValidator(t, false)
+	files := map[reflect.Type]string{reflect.TypeFor[Node](): "board", reflect.TypeFor[Snapshot](): "storycreep"}
+	objects := map[string]map[string]any{}
+	add := func(obj map[string]any, key string) {
+		if v, _ := obj[key].(string); objects[v] == nil {
+			objects[v] = obj
+		}
+	}
+	for _, ex := range boardExamples {
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(ex), &doc); err != nil {
+			t.Fatal(err)
+		}
+		for i := range doc["nodes"].([]any) {
+			add(item(t, doc, "nodes", i), "type")
+		}
+	}
+	for _, ex := range manifestExamples {
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(ex), &doc); err != nil {
+			t.Fatal(err)
+		}
+		add(doc["snapshot"].(map[string]any), "channel")
+	}
+	checked := 0
+	for _, u := range unions {
+		file := path.Clean(PublishedDir + "/" + files[u.iface] + ".schema.json")
+		for _, target := range u.variants {
+			def := target.Type.Elem().Name()
+			for _, source := range u.variants {
+				obj := maps.Clone(objects[source.Value])
+				if obj == nil {
+					t.Fatalf("no example has a %s of %q", u.key, source.Value)
+				}
+				keys := []any{nil, json.Number("1")}
+				for _, v := range u.variants {
+					keys = append(keys, v.Value)
+				}
+				for _, k := range keys {
+					if k == nil {
+						delete(obj, u.key)
+					} else {
+						obj[u.key] = k
+					}
+					data := mustMarshal(t, obj)
+					schema := open.validate(t, file, def, data) == nil
+					v := reflect.New(target.Type.Elem())
+					if err := Decode(data, v.Interface()); (err == nil) != schema {
+						t.Errorf("Decode(%s) as a %s = %v, but its definition takes it: %v", data, def, err, schema)
+					}
+					checked++
+				}
+			}
+		}
+	}
+	if checked < 30 {
+		t.Errorf("only %d objects were read as a variant", checked)
+	}
+}
+
 // TestDecodeValues checks that every schema and Decode refuse a value that is
 // not of its declaration's type, a variable's default, an attribute
 // definition's, a component's value, and a save state's, an enum's that is
