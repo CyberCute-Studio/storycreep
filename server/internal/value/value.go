@@ -18,6 +18,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 	"github.com/CyberCute-Studio/storycreep/server/internal/semantics"
 )
 
@@ -251,6 +252,41 @@ func (v Value) Read(typ string, c Checks, options ...string) (Value, string) {
 	return Value{}, fmt.Sprintf("is a %s, not a value of the type %s", kind, typ)
 }
 
+// Kind returns the kind of v's JSON, boolean, number, or string, which a
+// value of some type is, or "" for none and for any other, as null, an
+// object, or an array, which no value is.
+func (v Value) Kind() string {
+	return kindOf(string(v.raw))
+}
+
+// Integral is an integer of a file, as a published file's count or a
+// segment's decimals, or of a save state, as a visit count, which a consumer
+// reads as an integer by its declaration, whatever its JSON form, and which
+// a game may have read back as a float, as Godot's JSON parser reads every
+// number (PRD §5.8.9): an integral JSON number however it is written, as 2,
+// 2.0, or 2e0, from -MaxInt to MaxInt, as a JSON Schema's integer takes it,
+// but for one written with an exponent beyond ±MaxExponent, as 0e1000,
+// which no file holds, as Read reads an int without Checks.
+type Integral int64
+
+// UnmarshalJSON reads an integral JSON number, however it is written, as an
+// Integral, as Read reads an int without Checks (formProblem, integer).
+func (n *Integral) UnmarshalJSON(data []byte) error {
+	raw := string(data)
+	problem := "is not a number"
+	var i int64
+	if kindOf(raw) == "number" {
+		if problem = formProblem(raw, false); problem == "" {
+			i, problem = integer(raw)
+		}
+	}
+	if problem != "" {
+		return fmt.Errorf("value: %.40s is no integer of at most %d in magnitude: it %s", data, MaxInt, problem)
+	}
+	*n = Integral(i)
+	return nil
+}
+
 // kindOf returns the kind of the JSON value raw: boolean, number, or string,
 // or "" for any other, as null, an object, or an array.
 func kindOf(raw string) string {
@@ -404,7 +440,7 @@ func decodeString(raw json.RawMessage) (string, string) {
 	switch {
 	case !utf8.Valid(raw):
 		return "", "is not UTF-8"
-	case loneSurrogate(raw):
+	case EscapesLoneSurrogate(raw):
 		return "", "escapes a lone surrogate, which is not a character"
 	case json.Unmarshal(raw, &s) != nil:
 		return "", "is not a JSON string"
@@ -416,17 +452,17 @@ func decodeString(raw json.RawMessage) (string, string) {
 // and &, as the API writes its other texts (PRD §6.2), which json.Marshal
 // would escape.
 func stringValue(s string) Value {
-	var out bytes.Buffer
-	enc := json.NewEncoder(&out)
-	enc.SetEscapeHTML(false)
 	// A Go string always encodes, a byte that is not UTF-8 as U+FFFD.
-	_ = enc.Encode(s)
-	return Value{raw: bytes.TrimSuffix(out.Bytes(), []byte("\n"))}
+	raw, _ := schemagen.Marshal(s)
+	return Value{raw: raw}
 }
 
-// loneSurrogate reports whether raw, a JSON string, escapes a UTF-16
-// surrogate that is not one of a pair, as "\ud800".
-func loneSurrogate(raw []byte) bool {
+// EscapesLoneSurrogate reports whether raw, a JSON text, escapes a UTF-16
+// surrogate that is not one of a pair in one of its strings, as "\ud800",
+// which is no character, and which encoding/json reads as U+FFFD, where
+// JSON.parse keeps it. Every backslash of a JSON text is in a string, so raw
+// may be one string or a whole document.
+func EscapesLoneSurrogate(raw []byte) bool {
 	for i := 0; i < len(raw); i++ {
 		if raw[i] != '\\' {
 			continue
@@ -454,6 +490,90 @@ func loneSurrogate(raw []byte) bool {
 		}
 	}
 	return false
+}
+
+// CheckJSON says what makes data no JSON text that the published format
+// holds, as a file or a value of one, or returns "": data must be one JSON
+// value, in UTF-8, that holds null nowhere (PRD §6.2), whose strings escape
+// no lone surrogate, and whose numbers are each written with an exponent
+// within ±MaxExponent, if with one, as every number that the server writes
+// is (formProblem), so that 0e1000, which is 0, is refused wherever it is.
+// encoding/json reads a byte that is not UTF-8, and a lone surrogate, as
+// U+FFFD, so that a reader that did not refuse them would read other text
+// than the file holds.
+func CheckJSON(data []byte) string {
+	switch {
+	case !json.Valid(data):
+		return "is not one JSON value"
+	case !utf8.Valid(data):
+		return "is not UTF-8"
+	case EscapesLoneSurrogate(data):
+		return "escapes a lone surrogate in a string, which is not a character"
+	}
+	if problem := scanTokens(data, true); problem != "" {
+		return problem
+	}
+	return ""
+}
+
+// ReadJSON returns data, one JSON value that CheckJSON takes, as a tree: an
+// object as a map[string]any, of a key that it has twice the last, as a
+// consumer reads it, an array as an []any, a number as the json.Number that
+// it is written as, a string as a string, and a boolean as a bool; or fails,
+// with "it" and what CheckJSON says of data, on data that CheckJSON refuses.
+// Package published reads a file so, and package expr an AST, by what they
+// hold as it is written.
+func ReadJSON(data []byte) (any, error) {
+	if problem := CheckJSON(data); problem != "" {
+		return nil, fmt.Errorf("it %s", problem)
+	}
+	var tree any
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&tree); err != nil {
+		return nil, err
+	}
+	return tree, nil
+}
+
+// HoldsNull reports whether data, one JSON value, holds null anywhere
+// outside its strings, which no file holds (PRD §6.2), and which CheckJSON
+// refuses.
+func HoldsNull(data []byte) bool {
+	return scanTokens(data, false) != ""
+}
+
+// scanTokens says what of data, one JSON value, a file does not hold outside
+// its strings, null or, if exponents is set, a number written with an
+// exponent beyond ±MaxExponent, or returns "". Outside a string, null is the
+// only literal that starts with n, and a number the only token that starts
+// with - or a digit, which runs to the first byte that no number holds, and
+// which holds no n.
+func scanTokens(data []byte, exponents bool) string {
+	inString := false
+	for i := 0; i < len(data); i++ {
+		switch c := data[i]; {
+		case inString && c == '\\':
+			// The escaped character, as the quote of \", ends no string.
+			i++
+		case c == '"':
+			inString = !inString
+		case inString:
+		case c == 'n':
+			return "holds null"
+		case exponents && (c == '-' || '0' <= c && c <= '9'):
+			end := i + 1
+			for end < len(data) && strings.IndexByte("+-.eE0123456789", data[end]) >= 0 {
+				end++
+			}
+			if formProblem(string(data[i:end]), false) != "" {
+				return fmt.Sprintf("writes the number %.40s with an exponent beyond ±%d, as no number of a file is "+
+					"written", data[i:end], MaxExponent)
+			}
+			i = end - 1
+		}
+	}
+	return ""
 }
 
 // hex4 returns the value of four hexadecimal digits, in either case, and

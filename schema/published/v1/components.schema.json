@@ -1,0 +1,170 @@
+{
+  "$defs": {
+    "AnyValue": {
+      "description": "Any JSON value but null, at any depth: what an object may hold of a property that this version of the format does not define, which a consumer ignores (PRD §6.4).",
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "AssetId": {
+      "description": "An asset's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^ast_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "AttributeDefId": {
+      "description": "An attribute definition's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^atr_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "AttributeValues": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Value"
+      },
+      "description": "Values of attributes, by their attribute definitions' IDs, each of its definition's type.",
+      "propertyNames": {
+        "$ref": "#/$defs/AttributeDefId"
+      },
+      "type": "object"
+    },
+    "Component": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A component, with a value of each attribute of its type, runtime or not (FR-COMP-02).",
+      "properties": {
+        "attributes": {
+          "$ref": "#/$defs/AttributeValues",
+          "description": "A value of each of the attribute definitions of the component's type, by the definition's ID, of its type."
+        },
+        "componentTypeId": {
+          "$ref": "#/$defs/ComponentTypeId"
+        },
+        "id": {
+          "$ref": "#/$defs/ComponentId"
+        },
+        "image": {
+          "$ref": "#/$defs/AssetId",
+          "description": "The component's image. Its file is the snapshot's assets/<the ID's body>.<its extension> when the snapshot includes assets. Without it, the component has none."
+        },
+        "key": {
+          "description": "The key by which expressions name the component, unique among the project's.",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attributes",
+        "componentTypeId",
+        "id",
+        "key",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ComponentId": {
+      "description": "A component's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^cmp_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "ComponentTypeId": {
+      "description": "A component type's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^ct_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Components": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A snapshot's project/components.json: the components, with their values (PRD §6.3).",
+      "properties": {
+        "components": {
+          "description": "Every component, sorted by ID.",
+          "items": {
+            "$ref": "#/$defs/Component"
+          },
+          "type": "array"
+        },
+        "schemaVersion": {
+          "const": 1,
+          "description": "The version of the published format, 1.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "components",
+        "schemaVersion"
+      ],
+      "type": "object"
+    },
+    "Value": {
+      "description": "A value, which its declaration's type says how to read, never its JSON form (PRD §5.8.9): a boolean, a number, or a string.",
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/published/v1/components.schema.json",
+  "$ref": "#/$defs/Components",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A snapshot's project/components.json (PRD §6.3). schema/published/README.md describes the format.",
+  "examples": [
+    {
+      "components": [
+        {
+          "attributes": {
+            "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF": 1,
+            "atr_01HQ8Z8N5K2R7W4XTVNPQ6DCBG": "wary",
+            "atr_01HQ8Z8P6M3R8W5XTVNPQ7DCBH": "Keeper of the Lighthouse",
+            "atr_01HQ8Z8Q7N4R9W6XTVNPQ8DCBJ": "Raised on the rock.\nKnows every ship by its lamp."
+          },
+          "componentTypeId": "ct_01HQ8Z6T2M5K9W3XRVNPQ7DCBA",
+          "id": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+          "image": "ast_01HQ8ZG2K5M8W1R4XTVNPQ6DCB",
+          "key": "elara",
+          "name": "Elara"
+        },
+        {
+          "attributes": {},
+          "componentTypeId": "ct_01HQ8Z6V3N6K0W4XRVNPQ8DCBB",
+          "id": "cmp_01HQ8Z7M5E4N1Q3W6YSVPR5CDG",
+          "key": "brass_key",
+          "name": "Brass Key"
+        }
+      ],
+      "schemaVersion": 1
+    }
+  ],
+  "title": "Storycreep published format, version 1: project/components.json"
+}

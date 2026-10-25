@@ -1,0 +1,432 @@
+{
+  "$defs": {
+    "AnyValue": {
+      "description": "Any JSON value but null, at any depth: what an object may hold of a property that this version of the format does not define, which a consumer ignores (PRD §6.4).",
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "AttributeDefId": {
+      "description": "An attribute definition's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^atr_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "AttributeDefinition": {
+      "description": "An attribute definition of a component type (FR-COMP-01).",
+      "oneOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "default": {
+              "description": "The attribute's default, of its type: what a component that a game creates has, as play mode's does. Each component of the snapshot has a value of its own.",
+              "type": "boolean"
+            },
+            "id": {
+              "$ref": "#/$defs/AttributeDefId"
+            },
+            "key": {
+              "description": "The key by which expressions name the attribute, after its component's, as elara.trust, unique among its type's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "options": false,
+            "runtime": {
+              "description": "Whether the attribute is part of the game's state, which expressions read and write and a save state holds (FR-COMP-03). A text attribute never is.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "bool",
+              "description": "The attribute's type, by which a consumer reads its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "default",
+            "id",
+            "key",
+            "name",
+            "runtime",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "default": {
+              "description": "The attribute's default, of its type: what a component that a game creates has, as play mode's does. Each component of the snapshot has a value of its own.",
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "id": {
+              "$ref": "#/$defs/AttributeDefId"
+            },
+            "key": {
+              "description": "The key by which expressions name the attribute, after its component's, as elara.trust, unique among its type's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "options": false,
+            "runtime": {
+              "description": "Whether the attribute is part of the game's state, which expressions read and write and a save state holds (FR-COMP-03). A text attribute never is.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "int",
+              "description": "The attribute's type, by which a consumer reads its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "default",
+            "id",
+            "key",
+            "name",
+            "runtime",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "default": {
+              "description": "The attribute's default, of its type: what a component that a game creates has, as play mode's does. Each component of the snapshot has a value of its own.",
+              "maximum": 1.7976931348623157e+308,
+              "minimum": -1.7976931348623157e+308,
+              "type": "number"
+            },
+            "id": {
+              "$ref": "#/$defs/AttributeDefId"
+            },
+            "key": {
+              "description": "The key by which expressions name the attribute, after its component's, as elara.trust, unique among its type's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "options": false,
+            "runtime": {
+              "description": "Whether the attribute is part of the game's state, which expressions read and write and a save state holds (FR-COMP-03). A text attribute never is.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "float",
+              "description": "The attribute's type, by which a consumer reads its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "default",
+            "id",
+            "key",
+            "name",
+            "runtime",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "default": {
+              "description": "The attribute's default, of its type: what a component that a game creates has, as play mode's does. Each component of the snapshot has a value of its own.",
+              "maxLength": 4096,
+              "pattern": "^[^\\x00]*$",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/AttributeDefId"
+            },
+            "key": {
+              "description": "The key by which expressions name the attribute, after its component's, as elara.trust, unique among its type's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "options": false,
+            "runtime": {
+              "description": "Whether the attribute is part of the game's state, which expressions read and write and a save state holds (FR-COMP-03). A text attribute never is.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "string",
+              "description": "The attribute's type, by which a consumer reads its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "default",
+            "id",
+            "key",
+            "name",
+            "runtime",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "default": {
+              "description": "The attribute's default, of its type: what a component that a game creates has, as play mode's does. Each component of the snapshot has a value of its own.",
+              "maxLength": 100000,
+              "pattern": "^[^\\x00]*$",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/AttributeDefId"
+            },
+            "key": {
+              "description": "The key by which expressions name the attribute, after its component's, as elara.trust, unique among its type's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "options": false,
+            "runtime": {
+              "description": "Whether the attribute is part of the game's state, which expressions read and write and a save state holds (FR-COMP-03). A text attribute never is.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "text",
+              "description": "The attribute's type, by which a consumer reads its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "default",
+            "id",
+            "key",
+            "name",
+            "runtime",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "default": {
+              "description": "The attribute's default, of its type: what a component that a game creates has, as play mode's does. Each component of the snapshot has a value of its own.",
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/AttributeDefId"
+            },
+            "key": {
+              "description": "The key by which expressions name the attribute, after its component's, as elara.trust, unique among its type's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "options": {
+              "description": "An enum's options, in their author's order, one of which each of its values is.",
+              "items": {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "runtime": {
+              "description": "Whether the attribute is part of the game's state, which expressions read and write and a save state holds (FR-COMP-03). A text attribute never is.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "enum",
+              "description": "The attribute's type, by which a consumer reads its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "default",
+            "id",
+            "key",
+            "name",
+            "options",
+            "runtime",
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ComponentType": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A component type, with its attribute definitions (FR-COMP-01).",
+      "properties": {
+        "attributes": {
+          "description": "The type's attribute definitions, in their author's order, [] for none.",
+          "items": {
+            "$ref": "#/$defs/AttributeDefinition"
+          },
+          "type": "array"
+        },
+        "id": {
+          "$ref": "#/$defs/ComponentTypeId"
+        },
+        "key": {
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attributes",
+        "id",
+        "key",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ComponentTypeId": {
+      "description": "A component type's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^ct_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "ComponentTypes": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A snapshot's project/component_types.json: the component types, with their attribute definitions (PRD §6.3).",
+      "properties": {
+        "componentTypes": {
+          "description": "Every component type that a component of the snapshot is of, sorted by ID.",
+          "items": {
+            "$ref": "#/$defs/ComponentType"
+          },
+          "type": "array"
+        },
+        "schemaVersion": {
+          "const": 1,
+          "description": "The version of the published format, 1.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "componentTypes",
+        "schemaVersion"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/published/v1/component_types.schema.json",
+  "$ref": "#/$defs/ComponentTypes",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A snapshot's project/component_types.json (PRD §6.3). schema/published/README.md describes the format.",
+  "examples": [
+    {
+      "componentTypes": [
+        {
+          "attributes": [
+            {
+              "default": 0,
+              "id": "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF",
+              "key": "trust",
+              "name": "Trust",
+              "runtime": true,
+              "type": "int"
+            },
+            {
+              "default": "calm",
+              "id": "atr_01HQ8Z8N5K2R7W4XTVNPQ6DCBG",
+              "key": "mood",
+              "name": "Mood",
+              "options": [
+                "calm",
+                "wary",
+                "angry"
+              ],
+              "runtime": true,
+              "type": "enum"
+            },
+            {
+              "default": "",
+              "id": "atr_01HQ8Z8P6M3R8W5XTVNPQ7DCBH",
+              "key": "title",
+              "name": "Title",
+              "runtime": false,
+              "type": "string"
+            },
+            {
+              "default": "",
+              "id": "atr_01HQ8Z8Q7N4R9W6XTVNPQ8DCBJ",
+              "key": "bio",
+              "name": "Biography",
+              "runtime": false,
+              "type": "text"
+            }
+          ],
+          "id": "ct_01HQ8Z6T2M5K9W3XRVNPQ7DCBA",
+          "key": "character",
+          "name": "Character"
+        },
+        {
+          "attributes": [],
+          "id": "ct_01HQ8Z6V3N6K0W4XRVNPQ8DCBB",
+          "key": "item",
+          "name": "Item"
+        }
+      ],
+      "schemaVersion": 1
+    }
+  ],
+  "title": "Storycreep published format, version 1: project/component_types.json"
+}

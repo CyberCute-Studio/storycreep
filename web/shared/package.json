@@ -7,7 +7,9 @@
   "exports": {
     "./api": "./src/api/index.ts",
     "./i18n": "./src/i18n/index.ts",
-    "./ids": "./src/ids.ts"
+    "./ids": "./src/ids.ts",
+    "./published": "./src/published/index.ts",
+    "./save-state": "./src/save-state/index.ts"
   },
   "scripts": {
     "typecheck": "tsc && tsc -p tsconfig.browser.json",

@@ -13,6 +13,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 )
 
 // SchemaID is the $id of version 1 of the rich-text JSON Schema: the URL at
@@ -62,7 +63,7 @@ func Schema() []byte {
 		"$defs":    definitions(defsPrefix),
 		"examples": examples,
 	}
-	compact, err := marshalNoEscape(s)
+	compact, err := schemagen.Marshal(s)
 	if err != nil {
 		panic("richtext: the schema is not JSON: " + err.Error())
 	}

@@ -31,6 +31,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 	"github.com/CyberCute-Studio/storycreep/server/internal/semantics"
 )
 
@@ -1590,19 +1591,7 @@ func (d Doc) wire() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return marshalNoEscape(wireNode{Type: nodeDoc, Content: content})
-}
-
-// marshalNoEscape encodes v as JSON without escaping HTML (PRD §6.2) and
-// without the line feed that an Encoder ends it with.
-func marshalNoEscape(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+	return schemagen.Marshal(wireNode{Type: nodeDoc, Content: content})
 }
 
 // wireNode is a node as JSON holds it, with its fields in alphabetical order.

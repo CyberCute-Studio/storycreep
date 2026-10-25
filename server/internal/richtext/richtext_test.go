@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 )
 
 // paragraphs returns a document of a paragraph of each text.
@@ -53,7 +54,7 @@ func lists(depth int) []byte {
 // method writes too.
 func marshal(t *testing.T, v any) []byte {
 	t.Helper()
-	data, err := marshalNoEscape(v)
+	data, err := schemagen.Marshal(v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1262,7 +1263,7 @@ func FuzzParse(f *testing.F) {
 		// is written as the canonical form, which joins its texts again,
 		// and derives what it does.
 		built := Doc{Blocks: uncanonical(doc.Blocks)}
-		if b, err := marshalNoEscape(built); err != nil || !bytes.Equal(b, marshal(t, doc)) {
+		if b, err := schemagen.Marshal(built); err != nil || !bytes.Equal(b, marshal(t, doc)) {
 			t.Fatalf("a built Doc of %s is written as %s (%v)", canonical, b, err)
 		}
 		bd := built.Derive(names)

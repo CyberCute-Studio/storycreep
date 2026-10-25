@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 )
 
 // Names gives the names that a document's derivations show for what it
@@ -95,7 +97,7 @@ type segmentJSON struct {
 // the fields of its kind, without escaping HTML (§6.2), which an encoder that
 // escapes it, as json.Marshal does, escapes in what it writes too.
 func (s Segment) MarshalJSON() ([]byte, error) {
-	return marshalNoEscape(s.wire())
+	return schemagen.Marshal(s.wire())
 }
 
 // wire returns the segment as the published format holds it.
@@ -141,7 +143,7 @@ func (segs Segments) MarshalJSON() ([]byte, error) {
 	for i, s := range segs {
 		w[i] = s.wire()
 	}
-	return marshalNoEscape(w)
+	return schemagen.Marshal(w)
 }
 
 // Derived is what is derived from a document.

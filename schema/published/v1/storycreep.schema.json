@@ -1,0 +1,459 @@
+{
+  "$defs": {
+    "AnyValue": {
+      "description": "Any JSON value but null, at any depth: what an object may hold of a property that this version of the format does not define, which a consumer ignores (PRD §6.4).",
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "BoardId": {
+      "description": "A board's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^bd_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Counts": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "How many of each entity the snapshot holds.",
+      "properties": {
+        "boards": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "components": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "connections": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "nodes": {
+          "description": "The nodes of every type: elements, branches, and jumpers.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "variables": {
+          "description": "The variables, global and of each board.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "boards",
+        "components",
+        "connections",
+        "nodes",
+        "variables"
+      ],
+      "type": "object"
+    },
+    "DraftSnapshot": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "The working draft, as it was when it was pulled, which has neither an ID nor a version (PRD §7.8).",
+      "properties": {
+        "channel": {
+          "const": "draft"
+        },
+        "contentHash": {
+          "$ref": "#/$defs/Hash",
+          "description": "The hash of the draft's content when it was pulled."
+        },
+        "id": false,
+        "note": false,
+        "publishedAt": false,
+        "pulledAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "version": false
+      },
+      "required": [
+        "channel",
+        "contentHash",
+        "pulledAt"
+      ],
+      "type": "object"
+    },
+    "Entry": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "Where the flow starts: a node, and its board.",
+      "properties": {
+        "boardId": {
+          "$ref": "#/$defs/BoardId"
+        },
+        "nodeId": {
+          "$ref": "#/$defs/NodeId",
+          "description": "A node of the board."
+        }
+      },
+      "required": [
+        "boardId",
+        "nodeId"
+      ],
+      "type": "object"
+    },
+    "GeneratorInfo": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "What wrote the snapshot.",
+      "properties": {
+        "name": {
+          "description": "What wrote the snapshot, storycreep for the server.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "version": {
+          "description": "Its version.",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
+    "Hash": {
+      "description": "sha256: and the lowercase hexadecimal SHA-256 of the bytes.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "Manifest": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A snapshot's manifest, storycreep.json: what the snapshot is, its boards, and the hash of each of its files (PRD §6.3, §6.5).",
+      "properties": {
+        "astVersion": {
+          "description": "The highest ast_version among the constructs that the snapshot's expressions use, 1 for none (FR-EXPR-04). A runtime that supports a lower one refuses the snapshot (PRD §6.4).",
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "boards": {
+          "description": "Every board, sorted by ID, by which a runtime finds a board's file without reading any other board's (PRD §6.5).",
+          "items": {
+            "$ref": "#/$defs/ManifestBoard"
+          },
+          "type": "array"
+        },
+        "counts": {
+          "$ref": "#/$defs/Counts"
+        },
+        "entry": {
+          "$ref": "#/$defs/Entry",
+          "description": "Where the flow starts: the project's entry node, of its entry board. Without it, the project has none."
+        },
+        "files": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Hash"
+          },
+          "description": "The hash of each of the snapshot's files but the manifest, by its path, which uses forward slashes.",
+          "propertyNames": {
+            "pattern": "^(?:project/(?:settings|variables|component_types|components)\\.json|boards/[a-z0-9]+(?:-[a-z0-9]+)*\\.json|assets/[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}\\.(?:png|jpg|webp|gif|svg))$"
+          },
+          "type": "object"
+        },
+        "generator": {
+          "$ref": "#/$defs/GeneratorInfo"
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectInfo"
+        },
+        "schemaVersion": {
+          "const": 1,
+          "description": "The version of the published format, 1.",
+          "type": "integer"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/Snapshot"
+        }
+      },
+      "required": [
+        "astVersion",
+        "boards",
+        "counts",
+        "files",
+        "generator",
+        "project",
+        "schemaVersion",
+        "snapshot"
+      ],
+      "type": "object"
+    },
+    "ManifestBoard": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A board of the manifest's index: its ID, slug, name, entry node, and file.",
+      "properties": {
+        "entryNodeId": {
+          "$ref": "#/$defs/NodeId",
+          "description": "The board's entry node, where the flow enters the board when it starts there. Without it, the board has none."
+        },
+        "file": {
+          "description": "The path of the board's file, boards/ and its slug and .json, which the manifest's files list too.",
+          "pattern": "^boards/[a-z0-9]+(?:-[a-z0-9]+)*\\.json$",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/BoardId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "slug": {
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "id",
+        "name",
+        "slug"
+      ],
+      "type": "object"
+    },
+    "NodeId": {
+      "description": "A node's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^nd_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "ProjectId": {
+      "description": "A project's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^prj_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "ProjectInfo": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "The snapshot's project.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ProjectId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "slug": {
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "slug"
+      ],
+      "type": "object"
+    },
+    "ReleaseSnapshot": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A published release.",
+      "properties": {
+        "channel": {
+          "const": "release"
+        },
+        "contentHash": {
+          "$ref": "#/$defs/Hash",
+          "description": "The hash of the snapshot's content."
+        },
+        "id": {
+          "$ref": "#/$defs/SnapshotId"
+        },
+        "note": {
+          "description": "The note that the release was published with.",
+          "type": "string"
+        },
+        "publishedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "pulledAt": false,
+        "version": {
+          "description": "The release's version, which its author chose.",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "channel",
+        "contentHash",
+        "id",
+        "note",
+        "publishedAt",
+        "version"
+      ],
+      "type": "object"
+    },
+    "Snapshot": {
+      "description": "What the snapshot is: a published release, or the working draft as it was when it was pulled, which its channel tells (PRD §7.8).",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ReleaseSnapshot"
+        },
+        {
+          "$ref": "#/$defs/DraftSnapshot"
+        }
+      ]
+    },
+    "SnapshotId": {
+      "description": "A snapshot's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^snp_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Timestamp": {
+      "description": "A moment, in UTC, to the second (RFC 3339), as 2026-10-12T18:04:31Z.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "type": "string"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/published/v1/storycreep.schema.json",
+  "$ref": "#/$defs/Manifest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A snapshot's manifest, storycreep.json, at the root of the snapshot's files (PRD §6.3, §6.5). schema/published/README.md describes the format.",
+  "examples": [
+    {
+      "astVersion": 1,
+      "boards": [
+        {
+          "entryNodeId": "nd_01HQ8Z41M9D2PK7VW3RB6XGHTY",
+          "file": "boards/harbour-intro.json",
+          "id": "bd_01HQ8Z3XK4F7NAWR5TCQ9M2BVD",
+          "name": "Harbour Intro",
+          "slug": "harbour-intro"
+        },
+        {
+          "entryNodeId": "nd_01HQ8Z9R2M5K8W3XTVNPQ7DCBA",
+          "file": "boards/elara-first-meeting.json",
+          "id": "bd_01HQ8Z9N4T7K2W5XRVNPQ8DCBE",
+          "name": "Elara — First Meeting",
+          "slug": "elara-first-meeting"
+        },
+        {
+          "entryNodeId": "nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF",
+          "file": "boards/harbourmaster.json",
+          "id": "bd_01HQ8ZAX6P3R9T1K7MWVND2CQJ",
+          "name": "Harbourmaster",
+          "slug": "harbourmaster"
+        }
+      ],
+      "counts": {
+        "boards": 3,
+        "components": 4,
+        "connections": 58,
+        "nodes": 42,
+        "variables": 6
+      },
+      "entry": {
+        "boardId": "bd_01HQ8Z3XK4F7NAWR5TCQ9M2BVD",
+        "nodeId": "nd_01HQ8Z41M9D2PK7VW3RB6XGHTY"
+      },
+      "files": {
+        "boards/elara-first-meeting.json": "sha256:7b1e84cc413fe273e190ecee734b4c6021588589e8445ce6b7575406f5a11671",
+        "boards/harbour-intro.json": "sha256:0ac9d71fa2c808777b7b27a17e20f7940d7ffa2f67251f9ef86d32e6b6a8ca1c",
+        "boards/harbourmaster.json": "sha256:31f4a75bae9af1993eed5e17762ae6f8469f874fc5352dc61bd5c3465dcfd141",
+        "project/component_types.json": "sha256:a9021a2cc974b32d40c775d432206eaf8502d205b05cee1d2035d68e711c09e0",
+        "project/components.json": "sha256:c7710aa17083079d59b058cb5cc1bdd9d151edf60ab244f6b599126917401517",
+        "project/settings.json": "sha256:4e0d5d8cdcc789e42b0ec2f60affb1940e2a76385581b8b468734f9c3a1d660b",
+        "project/variables.json": "sha256:9d3acc5d88a51aca0a50d5cc3dc65c0ee46853e8f5dc44c8e20eb779d31747f9"
+      },
+      "generator": {
+        "name": "storycreep",
+        "version": "0.9.0"
+      },
+      "project": {
+        "id": "prj_01HQ8Z2YV0C4E8M1T6RN5KQJWP",
+        "name": "Harbour",
+        "slug": "harbour"
+      },
+      "schemaVersion": 1,
+      "snapshot": {
+        "channel": "release",
+        "contentHash": "sha256:5f2ced7002b439e9ac845f22357d822bac1444730fbdb6016d3ec9432297b9ec",
+        "id": "snp_01HQ9A7TBE5N2WQX8K4YJ3MDCR",
+        "note": "Harbour intro + keeper gate",
+        "publishedAt": "2026-10-12T18:04:31Z",
+        "version": "1.4.0"
+      }
+    },
+    {
+      "astVersion": 1,
+      "boards": [
+        {
+          "file": "boards/harbour-intro.json",
+          "id": "bd_01HQ8Z3XK4F7NAWR5TCQ9M2BVD",
+          "name": "Harbour Intro",
+          "slug": "harbour-intro"
+        }
+      ],
+      "counts": {
+        "boards": 1,
+        "components": 0,
+        "connections": 0,
+        "nodes": 0,
+        "variables": 0
+      },
+      "files": {
+        "boards/harbour-intro.json": "sha256:0ac9d71fa2c808777b7b27a17e20f7940d7ffa2f67251f9ef86d32e6b6a8ca1c",
+        "project/component_types.json": "sha256:a9021a2cc974b32d40c775d432206eaf8502d205b05cee1d2035d68e711c09e0",
+        "project/components.json": "sha256:c7710aa17083079d59b058cb5cc1bdd9d151edf60ab244f6b599126917401517",
+        "project/settings.json": "sha256:4e0d5d8cdcc789e42b0ec2f60affb1940e2a76385581b8b468734f9c3a1d660b",
+        "project/variables.json": "sha256:9d3acc5d88a51aca0a50d5cc3dc65c0ee46853e8f5dc44c8e20eb779d31747f9"
+      },
+      "generator": {
+        "name": "storycreep",
+        "version": "0.9.0"
+      },
+      "project": {
+        "id": "prj_01HQ8Z2YV0C4E8M1T6RN5KQJWP",
+        "name": "Harbour",
+        "slug": "harbour"
+      },
+      "schemaVersion": 1,
+      "snapshot": {
+        "channel": "draft",
+        "contentHash": "sha256:e18b7743ce348d9284d677a185f33295b92266cc435a5b5f775029b300066d26",
+        "pulledAt": "2026-10-13T09:15:00Z"
+      }
+    }
+  ],
+  "title": "Storycreep published format, version 1: storycreep.json"
+}
