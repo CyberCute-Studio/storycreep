@@ -60,8 +60,9 @@ const (
 	// ConditionMustBePure is an assignment operator in a condition, wherever
 	// the parser stops at it (FR-EXPR-02 AC3).
 	ConditionMustBePure Code = "condition_must_be_pure"
-	// ASTTooDeep is an opening parenthesis, a group's, a call's, or a node
-	// reference's, that opens one more than MaxDepth of them.
+	// ASTTooDeep is an opening parenthesis that the parser reads as a group's,
+	// a call's, or a node reference's, and that opens one more than MaxDepth
+	// of them; a ( that nothing before it can be followed by opens none.
 	ASTTooDeep Code = "ast_too_deep"
 	// ASTTooLarge is the token that makes an AST's node beyond MaxNodes: a
 	// literal, the identifier or the qualifier that a name, a call, or a node

@@ -7,7 +7,10 @@ import (
 
 // parser reads a source's tokens by the grammar of §5.8.2, by recursive
 // descent, and stops at the first token that it cannot read, with the error
-// that it fails with (fail).
+// that it fails with (fail). It reads the token after the current one only as
+// it steps past the current one (next), but for the token after a node
+// reference's string, which nodeRef reads ahead (peek), so that the error of a
+// token that it has not read never comes first.
 type parser struct {
 	ctx Context
 	lex *lexer
@@ -277,7 +280,10 @@ func (p *parser) primary() (Node, Range) {
 // the open parentheses, which the lexer reads a script's line breaks by too
 // (lexer.depth). A node reference's is one of them, since any argument but one
 // string literal is read as a call's, so that node(node(… would otherwise
-// recurse without bound.
+// recurse without bound. A ( that nothing before it can be followed by, as one
+// after a literal, opens no level, since the parser stops at it before it
+// would reach open, with the error that it stops at it with at any depth, as
+// UnexpectedToken, or ReservedWord after global.
 func (p *parser) open() {
 	if p.tok.depth > MaxDepth {
 		p.fail(ASTTooDeep, p.tok.Range)

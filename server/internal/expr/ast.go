@@ -32,7 +32,9 @@ type Node interface {
 	Kind() Kind
 	// Range returns where the node is in the source that Parse read it
 	// from: from its first token to its last, with the parentheses around
-	// its operands, but not those around itself.
+	// its operands, but not those around itself; a *Script's is the whole
+	// source, the white space and the comments around its statements
+	// included, whether it has any statement or none.
 	Range() Range
 	node()
 }
