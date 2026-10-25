@@ -15,10 +15,22 @@
 // identifiers and string literals, how deeply parentheses nest, and how many
 // nodes an AST has.
 //
+// Check does the rest, against what a project's expressions can name
+// (Project), at a board: it checks the AST against the other limits of the
+// sandbox, resolves each name to its entity's ID, with the near matches of a
+// name or a function that it cannot resolve, and checks the types (§5.8.3),
+// the built-ins' calls (§5.8.4), and purity, which keeps signal out of
+// conditions; it too returns the first error that it meets, an *Error.
+// Compile parses a source and checks its AST. VersionOf returns the
+// ast_version of the constructs that ASTs use, as a snapshot declares it
+// (FR-EXPR-04).
+//
 // schema/expr-corpus/syntax.json holds the parser's cases, which
-// TestSyntaxCorpus runs, and which the TypeScript parser runs too, so that the
-// two read every source alike; the corpus's README describes the cases, the
-// AST's JSON, and the codes of the errors.
+// TestSyntaxCorpus runs, and compile.json the checker's, with the project
+// that they resolve names against, which TestCompileCorpus runs; the
+// TypeScript parser and checker run them too, so that the two compile every
+// source alike. The corpus's README describes the cases, the AST's JSON, and
+// the codes of the errors.
 package expr
 
 import (
@@ -73,8 +85,8 @@ var ErrContext = errors.New("expr: no context of a source")
 // Parse never recurses deeper than parentheses nest, and its AST has at most
 // MaxNodes nodes, so that a walk of it that recurses once per level recurses
 // at most that deep, though the AST may be deeper than MaxDepth, as a chain of
-// binary operators, which nest without parentheses, makes it, until the AST
-// depth of §5.8.6 is checked of it (plan item 40).
+// binary operators, which nest without parentheses, makes it, until Check
+// checks the AST depth of §5.8.6 of it.
 func Parse(source string, ctx Context) (Node, error) {
 	if ctx != ContextCondition && ctx != ContextScript {
 		return nil, fmt.Errorf("%w: %q", ErrContext, ctx)

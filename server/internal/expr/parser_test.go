@@ -11,28 +11,11 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 )
 
-// children returns n's children, in the order of the source.
-func children(n Node) []Node {
-	switch n := n.(type) {
-	case *Unary:
-		return []Node{n.Operand}
-	case *Binary:
-		return []Node{n.Left, n.Right}
-	case *Call:
-		return n.Args
-	case *Assign:
-		return []Node{n.Target, n.Value}
-	case *Script:
-		return n.Statements
-	}
-	return nil
-}
-
 // ranges returns the kind and the range of each node of n, n first, each
 // node before its children.
 func ranges(n Node) []string {
 	out := []string{fmt.Sprintf("%s %d-%d", n.Kind(), n.Range().Start, n.Range().End)}
-	for _, c := range children(n) {
+	for _, c := range childrenOf(n) {
 		out = append(out, ranges(c)...)
 	}
 	return out
