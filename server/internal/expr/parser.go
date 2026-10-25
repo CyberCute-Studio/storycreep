@@ -15,7 +15,6 @@ type parser struct {
 	// ahead is the token after the current one, once peek has read it.
 	ahead    token
 	hasAhead bool
-	depth    int // how many parentheses are open
 	nodes    int // how many nodes the AST has so far (count)
 }
 
@@ -266,11 +265,19 @@ func (p *parser) primary() (Node, Range) {
 // them are open already. A node reference's is one of them, since any
 // argument but one string literal is read as a call's, so that node(node(…
 // would otherwise recurse without bound.
+//
+// open and close keep the one count of the open parentheses, the lexer's
+// depth, which the lexer reads a script's line breaks by, and change it before
+// they ask for the token after the parenthesis, so that the lexer reads that
+// token by the count that takes the parenthesis in. No other step of the
+// parser passes a parenthesis, and the lexer has read no token beyond the
+// current one when either changes the count, since the parser looks ahead
+// (peek) only past a node reference's string.
 func (p *parser) open() {
-	if p.depth == MaxDepth {
+	if p.lex.depth == MaxDepth {
 		p.fail(ASTTooDeep, p.tok.Range)
 	}
-	p.depth++
+	p.lex.depth++
 	p.next()
 }
 
@@ -281,7 +288,7 @@ func (p *parser) close() int {
 		p.unexpected()
 	}
 	end := p.tok.End
-	p.depth--
+	p.lex.depth--
 	p.next()
 	return end
 }
@@ -299,18 +306,17 @@ func (p *parser) nameOrCall() (Node, Range) {
 		}
 		return p.call(first)
 	}
-	parts := p.parts(first)
-	r := Range{first.Start, parts[len(parts)-1].End}
+	name := p.parts(first)
+	r := Range{first.Start, name.end}
 	var n Node
 	switch {
-	case len(parts) == 1:
+	case name.parts == 1:
 		n = &Var{Name: first.text, Key: first.text, Src: r}
-	case len(parts) == 2:
-		n = &Attr{Name: first.text + "." + parts[1].text, ComponentKey: first.text, AttributeKey: parts[1].text,
-			Src: r}
-	case len(parts) == 3 && first.text == "cmp":
-		n = &Attr{Name: "cmp." + parts[1].text + "." + parts[2].text, Explicit: true, ComponentKey: parts[1].text,
-			AttributeKey: parts[2].text, Src: r}
+	case name.parts == 2:
+		n = &Attr{Name: first.text + "." + name.second, ComponentKey: first.text, AttributeKey: name.second, Src: r}
+	case name.parts == 3 && first.text == "cmp":
+		n = &Attr{Name: "cmp." + name.second + "." + name.third, Explicit: true, ComponentKey: name.second,
+			AttributeKey: name.third, Src: r}
 	default:
 		p.fail(InvalidName, r)
 	}
@@ -327,30 +333,49 @@ func (p *parser) scoped() (Node, Range) {
 	if p.tok.kind != tDot {
 		p.fail(ReservedWord, q.Range)
 	}
-	parts := p.parts(q)
-	r := Range{q.Start, parts[len(parts)-1].End}
-	if len(parts) != 2 {
+	name := p.parts(q)
+	r := Range{q.Start, name.end}
+	if name.parts != 2 {
 		p.fail(InvalidName, r)
 	}
 	scope := ScopeGlobal
 	if q.kind == tBoard {
 		scope = ScopeBoard
 	}
-	n := &Var{Name: q.text + "." + parts[1].text, Scope: scope, Key: parts[1].text, Src: r}
+	n := &Var{Name: q.text + "." + name.second, Scope: scope, Key: name.second, Src: r}
 	return n, r
 }
 
-// parts returns the parts of a qualified name: first, which the parser has
+// qualified is what the parser keeps of a qualified name that it has read:
+// how many parts it has, its second and its third, the only ones after its
+// first that a name's forms hold, and where its last ends.
+type qualified struct {
+	parts         int
+	second, third string
+	end           int
+}
+
+// parts reads the parts of a qualified name: first, which the parser has
 // stepped past, and the identifier after each dot that follows. A reserved
-// word after a dot is ReservedWord.
-func (p *parser) parts(first token) []token {
-	parts := []token{first}
+// word after a dot is ReservedWord. It counts the parts rather than keeping
+// them, since neither a dot nor the part after it makes a node that count
+// would stop at, so that a name of any number of parts costs no more than one
+// of three.
+func (p *parser) parts(first token) qualified {
+	q := qualified{parts: 1, end: first.End}
 	for p.tok.kind == tDot {
 		p.next()
 		t := &p.tok
 		switch {
 		case t.kind == tIdent:
-			parts = append(parts, *t)
+			q.parts++
+			switch q.parts {
+			case 2:
+				q.second = t.text
+			case 3:
+				q.third = t.text
+			}
+			q.end = t.End
 			p.next()
 		case t.keyword:
 			p.fail(ReservedWord, t.Range)
@@ -358,7 +383,7 @@ func (p *parser) parts(first token) []token {
 			p.unexpected()
 		}
 	}
-	return parts
+	return q
 }
 
 // call reads a call of the function name, which the parser has stepped past,

@@ -443,6 +443,18 @@
       "error": { "code": "invalid_name", "start": 0, "end": 10 }
     },
     {
+      "note": "a name is read to its last part before its parts are counted, so that a reserved word after its third dot is reserved_word, not invalid_name",
+      "context": "condition",
+      "source": "a.b.c.null",
+      "error": { "code": "reserved_word", "start": 6, "end": 10 }
+    },
+    {
+      "note": "a name is read to its last part before its parts are counted, so that a number after its third dot is unexpected_token, not invalid_name",
+      "context": "condition",
+      "source": "a.b.c.1",
+      "error": { "code": "unexpected_token", "start": 6, "end": 7 }
+    },
+    {
       "note": "global without a dot after it is reserved_word",
       "context": "condition",
       "source": "global",

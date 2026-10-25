@@ -27,20 +27,26 @@ import (
 // is not resolved, is left out.
 //
 // Encode fails on a node that is not one of an AST: a nil one, an int beyond
-// ±(2^53 − 1), a float that is not finite, a string, a literal's or any
-// other, that is not UTF-8 or that holds a NUL, which no text holds (§5.8.1),
-// a name, a node reference, or a function that is empty, an operator or a
-// literal's type that the language does not have, or a node of a kind that
-// its place in the AST cannot be of: an AST is an expression or a script, a
-// script's statements are assignments and calls, an assignment's target is a
-// variable or an attribute, and every other child of a node is an expression,
-// neither an assignment nor a script.
+// ±(2^53 − 1), a float that is not finite, a string literal of more than
+// MaxStringLength characters, as no string value is (§5.8.1), a string, a
+// literal's or any other, that is not UTF-8 or that holds a NUL, which no
+// text holds, a name, a node reference, or a function that is empty, an
+// operator or a literal's type that the language does not have, a node that
+// the AST holds twice, as each node of a cycle is, which no tree holds, or a
+// node of a kind that its place in the AST cannot be of: an AST is an
+// expression or a script, a script's statements are assignments and calls,
+// an assignment's target is a variable or an attribute, and every other child
+// of a node is an expression, neither an assignment nor a script. It does not
+// check how a name, a node reference, or a function that is not empty is
+// spelt, which name resolution checks against what it names (§5.8.3, plan
+// item 40), nor the other limits of §5.8.6, which item 40 checks of an AST.
 //
 // Encode writes an AST of any depth without recursing, so that no AST that a
 // program builds, however deep, can exhaust the stack, which no program
-// recovers from.
+// recovers from, and refuses a node that it has reached already, so that
+// nodes that a program links in a cycle cannot make it write without end.
 func Encode(n Node) ([]byte, error) {
-	e := &encoder{}
+	e := &encoder{seen: make(map[Node]bool)}
 	e.enc = json.NewEncoder(&e.encoded)
 	e.enc.SetEscapeHTML(false)
 	e.stack = append(e.stack, part{node: n, place: atRoot})
@@ -115,6 +121,9 @@ func text(s string) part {
 type encoder struct {
 	b     bytes.Buffer
 	stack []part
+	// seen holds the nodes that the encoder has reached, each of which an
+	// AST holds once.
+	seen map[Node]bool
 	// enc writes a scalar's JSON to encoded.
 	enc     *json.Encoder
 	encoded bytes.Buffer
@@ -166,8 +175,11 @@ var (
 	}()
 )
 
-// errNil is a nil node.
-var errNil = errors.New("expr: a node is nil")
+// errNil is a nil node, and errTwice one that the AST holds twice.
+var (
+	errNil   = errors.New("expr: a node is nil")
+	errTwice = errors.New("expr: a node is in the AST twice")
+)
 
 // isNil reports whether n is nil, or a nil pointer, which every kind of node
 // is a pointer to.
@@ -183,6 +195,10 @@ func (e *encoder) node(n Node, at place) error {
 	if isNil(n) {
 		return errNil
 	}
+	if e.seen[n] {
+		return errTwice
+	}
+	e.seen[n] = true
 	if !fits(n, at) {
 		return fmt.Errorf("expr: a node of the kind %s cannot be %s", n.Kind(), places[at])
 	}
@@ -296,6 +312,9 @@ func (e *encoder) literal(n *Lit) error {
 	case value.String:
 		if err := checkText(n.Str); err != nil {
 			return err
+		}
+		if utf8.RuneCountInString(n.Str) > MaxStringLength {
+			return fmt.Errorf("expr: a string literal is longer than %d characters", MaxStringLength)
 		}
 		v = n.Str
 	default:

@@ -12,7 +12,9 @@ const (
 	// InvalidCharacter is a character that starts no token: outside a string
 	// or a comment, one that is not ASCII, or ASCII that the language does
 	// not use, as @ or a single &, and anywhere, a NUL, which no text holds,
-	// or a byte that is not UTF-8, right after a string's backslash too.
+	// or a byte that is not UTF-8, right after a string's backslash too,
+	// though one in place of a \u's hexadecimal digits ends them, so that the
+	// \u is InvalidEscape first.
 	InvalidCharacter Code = "invalid_character"
 	// UnterminatedString is a string literal whose closing quote does not
 	// come before the end of its line or of the source.

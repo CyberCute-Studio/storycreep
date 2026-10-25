@@ -149,24 +149,26 @@ func TestFirstError(t *testing.T) {
 	}
 }
 
-// TestNotUTF8 checks that a byte that is not UTF-8 is InvalidCharacter
-// wherever it is, one character long, as a NUL is, right after a backslash
-// too, which the corpus, a file of UTF-8, cannot hold.
+// TestNotUTF8 checks, of a byte that is not UTF-8, which the corpus, a file of
+// UTF-8, cannot hold, that it is InvalidCharacter wherever it is, one
+// character long, as a NUL is, right after a backslash too, but for one in
+// place of a \u's digits, which it ends, as a NUL does, so that the \u is
+// InvalidEscape first.
 func TestNotUTF8(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		source string
-		want   Range
+		want   *Error
 	}{
-		{"x == \xff", Range{5, 6}},
-		{"\"é\xffb\"", Range{2, 3}},
-		{"x // \xff", Range{5, 6}},
-		{"\"\\\xff\"", Range{2, 3}},
+		{"x == \xff", &Error{Code: InvalidCharacter, Range: Range{5, 6}}},
+		{"\"é\xffb\"", &Error{Code: InvalidCharacter, Range: Range{2, 3}}},
+		{"x // \xff", &Error{Code: InvalidCharacter, Range: Range{5, 6}}},
+		{"\"\\\xff\"", &Error{Code: InvalidCharacter, Range: Range{2, 3}}},
+		{"\"\\u1\xff\"", &Error{Code: InvalidEscape, Range: Range{1, 4}}},
 	} {
 		_, err := Parse(c.source, ContextCondition)
-		want := &Error{Code: InvalidCharacter, Range: c.want}
-		if fmt.Sprint(err) != fmt.Sprint(want) {
-			t.Errorf("Parse(%q) = %v; want %v", c.source, err, want)
+		if fmt.Sprint(err) != fmt.Sprint(c.want) {
+			t.Errorf("Parse(%q) = %v; want %v", c.source, err, c.want)
 		}
 	}
 }
@@ -247,11 +249,14 @@ func TestNodeCount(t *testing.T) {
 	}
 }
 
-// TestEarlyError checks that a source that Parse stops in early costs no more
-// than what it read of it, however long the rest of it is, since the lexer
-// reads tokens as the parser asks for them, rather than all of them first. It
+// TestLongSource checks that a long source costs no more than what Parse
+// keeps of it: one that Parse stops in early no more than what it read of it,
+// since the lexer reads tokens as the parser asks for them, rather than all of
+// them first, and a qualified name of a million parts no more than one of
+// three, since the parser counts a name's parts rather than keeping them. It
 // does not run in parallel, so that what other tests allocate is not counted.
-func TestEarlyError(t *testing.T) {
+func TestLongSource(t *testing.T) {
+	name := strings.Repeat("a.", 1<<20)
 	for _, c := range []struct {
 		source string
 		want   *Error
@@ -259,6 +264,9 @@ func TestEarlyError(t *testing.T) {
 		{") " + strings.Repeat("a ", 1<<20), &Error{Code: UnexpectedToken, Range: Range{0, 1}}},
 		{strings.Repeat("(", 2<<20), &Error{Code: ASTTooDeep, Range: Range{MaxDepth, MaxDepth + 1}}},
 		{"1" + strings.Repeat("+1", 1<<20), &Error{Code: ASTTooLarge, Range: Range{512, 513}}},
+		{name + "a", &Error{Code: InvalidName, Range: Range{0, len(name) + 1}}},
+		{"global." + name + "a", &Error{Code: InvalidName, Range: Range{0, len(name) + 8}}},
+		{name + "null", &Error{Code: ReservedWord, Range: Range{len(name), len(name) + 4}}},
 	} {
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)

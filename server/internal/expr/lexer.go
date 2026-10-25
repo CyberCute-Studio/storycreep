@@ -85,8 +85,11 @@ type lexer struct {
 	at  int // the code point offset of the next character
 	// prev is the kind of the last token that next returned, or tEOF before
 	// the first.
-	prev  tokenKind
-	depth int // how many parentheses are open
+	prev tokenKind
+	// depth is how many parentheses are open, which the parser counts as it
+	// steps past them (parser.open, parser.close), before it asks for the
+	// token after each, so that the parser and the lexer share one count.
+	depth int
 	// pending is the error of a comment after a line break that ends a
 	// statement, which next returns after the line break's tNewline.
 	pending    token
@@ -140,15 +143,11 @@ func (l *lexer) next() token {
 }
 
 // emit returns t, the token that next returns, once it has noted what t
-// changes of how the tokens after it are read.
+// changes of how the tokens after it are read, but for a parenthesis, which
+// the parser counts (depth).
 func (l *lexer) emit(t token) token {
-	switch t.kind {
-	case tError, tEOF:
+	if t.kind == tError || t.kind == tEOF {
 		l.done, l.eof = true, t.End
-	case tLParen:
-		l.depth++
-	case tRParen:
-		l.depth = max(l.depth-1, 0)
 	}
 	l.prev = t.kind
 	return t
