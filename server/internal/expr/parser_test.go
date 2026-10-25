@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -249,13 +250,11 @@ func TestNodeCount(t *testing.T) {
 	}
 }
 
-// TestLongSource checks that a long source costs no more than what Parse
-// keeps of it: one that Parse stops in early no more than what it read of it,
-// since the lexer reads tokens as the parser asks for them, rather than all of
-// them first, and a qualified name of a million parts no more than one of
-// three, since the parser counts a name's parts rather than keeping them. It
-// does not run in parallel, so that what other tests allocate is not counted.
+// TestLongSource checks the errors of long sources, which TestSourceCost
+// holds to what they cost: of a qualified name of a million parts, read to its
+// last part, over all of them, and of sources that Parse stops in early.
 func TestLongSource(t *testing.T) {
+	t.Parallel()
 	name := strings.Repeat("a.", 1<<20)
 	for _, c := range []struct {
 		source string
@@ -268,34 +267,195 @@ func TestLongSource(t *testing.T) {
 		{"global." + name + "a", &Error{Code: InvalidName, Range: Range{0, len(name) + 8}}},
 		{name + "null", &Error{Code: ReservedWord, Range: Range{len(name), len(name) + 4}}},
 	} {
-		var before, after runtime.MemStats
-		runtime.ReadMemStats(&before)
-		_, err := Parse(c.source, ContextCondition)
-		runtime.ReadMemStats(&after)
-		if fmt.Sprint(err) != fmt.Sprint(c.want) {
+		if _, err := Parse(c.source, ContextCondition); fmt.Sprint(err) != fmt.Sprint(c.want) {
 			t.Errorf("Parse(%.20q…) = %v; want %v", c.source, err, c.want)
 		}
-		if n := after.TotalAlloc - before.TotalAlloc; n > 64<<10 {
-			t.Errorf("Parse(%.20q…) allocated %d bytes, of a source of %d; want at most 64 KiB", c.source, n,
-				len(c.source))
+	}
+}
+
+// TestSourceCost checks that no source, however long, costs Parse more than
+// its AST may hold (PRD §5.8.6), of every token and every form of the
+// grammar, so that a change that makes any of them cost more fails here
+// rather than waiting to be found: each source of some 2 MiB, which repeats a
+// token or a form, or holds an error at its start, in its middle, or at its
+// end, read in either context, allocates at most 256 KiB, more than an AST of
+// MaxNodes nodes and its error take, and the values of the string literals
+// with escapes that the parser reads, each allocated once, at its length,
+// since a string's value without an escape is the source's characters, and a
+// float literal is read from its first 800 digits. Each source also gives
+// the error that it is meant to, or an AST, so that none stops before what it
+// repeats. The test does not run in parallel, so that what other tests
+// allocate is not counted, and takes the least of three runs, so that what the
+// runtime allocates meanwhile is not either.
+func TestSourceCost(t *testing.T) {
+	const size = 2 << 20
+	bs := string(rune(92)) // a backslash
+	maxString := func(char string) string { return `"` + strings.Repeat(char, MaxStringLength) + `"` }
+	ref := `node("nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF")`
+	type codes struct{ condition, script Code }
+	var (
+		ast        = codes{"", InvalidStatement} // an expression's AST, which is no statement
+		both       = func(c Code) codes { return codes{c, c} }
+		tooLarge   = both(ASTTooLarge)
+		unexpected = both(UnexpectedToken)
+	)
+	// Each source is prefix, unit as many times as size holds it beside
+	// them, and suffix, of whose string literals each that has an escape has
+	// a value of escaped bytes.
+	shapes := []struct {
+		name                 string
+		prefix, unit, suffix string
+		want                 codes
+		escaped              int
+	}{
+		{"an identifier", "", "a", "", both(IdentifierTooLong), 0},
+		{"names", "", "a ", "", unexpected, 0},
+		{"a qualified name", "", "a.", "a", both(InvalidName), 0},
+		{"a qualified name of spaced dots", "", "a . ", "a", both(InvalidName), 0},
+		{"a global name", "global.", "a.", "a", both(InvalidName), 0},
+		{"a cmp name", "cmp.", "a.", "a", both(InvalidName), 0},
+		{"a name that ends in a reserved word", "", "a.", "null", both(ReservedWord), 0},
+		{"reserved words", "", "null ", "", both(ReservedWord), 0},
+		{"qualifiers", "", "global ", "", both(ReservedWord), 0},
+		{"nested calls", "", "f(", "", both(ASTTooDeep), 0},
+		{"a sum of calls", "f()", "+f()", "", tooLarge, 0},
+		{"arguments", "f(", "1,", "1)", tooLarge, 0},
+		{"arguments of names", "f(", "a,", "a)", tooLarge, 0},
+		{"empty arguments", "f(", ",", "", unexpected, 0},
+		{"nested node references", "", "node(", "", both(ASTTooDeep), 0},
+		{"a sum of node references", ref, "+" + ref, "", tooLarge, 0},
+		{"a node reference of a long string", `node("`, "a", `")`, both(StringTooLong), 0},
+		{"a node reference of a long string of escapes", `node("`, bs + "n", `")`, both(StringTooLong), 0},
+		{"node references of names", "", "node(a)+", "1", both(InvalidNodeRef), 0},
+		{"a string", `"`, "a", `"`, both(StringTooLong), 0},
+		{"a string without its closing quote", `"`, "a", "", both(UnterminatedString), 0},
+		{"a string of escapes", `"`, bs + "n", `"`, both(StringTooLong), 0},
+		{"a string of \\u escapes", `"`, bs + "u00e9", `"`, both(StringTooLong), 0},
+		{"a string of a surrogate pair's escapes", `"`, bs + "uD83D" + bs + "uDE00", `"`, both(StringTooLong), 0},
+		{"a string of é", `"`, "é", `"`, both(StringTooLong), 0},
+		{"a string with a bad escape at its end", `"`, "a", bs + `q"`, both(InvalidEscape), 0},
+		{"a string with a NUL at its end", `"`, "a", "\x00\"", both(InvalidCharacter), 0},
+		{"a sum of strings", maxString("a"), "+" + maxString("a"), "", tooLarge, 0},
+		{"a sum of strings of 😀", maxString("😀"), "+" + maxString("😀"), "", ast, 0},
+		{"a sum of strings of escapes", maxString(bs + "n"), "+" + maxString(bs+"n"), "", ast, MaxStringLength},
+		{"a sum of strings of \\u escapes", maxString(bs + "u00e9"), "+" + maxString(bs+"u00e9"), "", ast,
+			2 * MaxStringLength},
+		{"an integer", "", "1", "", both(IntegerOutOfRange), 0},
+		{"an integer of leading zeros", "", "0", "1", ast, 0},
+		{"a sum of integers", "1", "+1", "", tooLarge, 0},
+		{"a float of many digits after its point", "1.", "1", "", ast, 0},
+		{"a float of many zeros after its point", "0.", "0", "1", ast, 0},
+		{"a float of many digits before its point", "", "1", ".5", both(FloatOutOfRange), 0},
+		{"a float of many digits and an exponent that brings it back", "", "1", ".5e-2097150", ast, 0},
+		{"a float of many leading zeros", "", "0", ".5", ast, 0},
+		{"a float of many trailing zeros", "1.", "0", "", ast, 0},
+		{"a float of many digits and an E", "1.", "1", "E5", ast, 0},
+		{"a float of a long exponent", "1.5e", "1", "", both(FloatOutOfRange), 0},
+		{"a float of a long exponent of zeros", "1.5e", "0", "1", ast, 0},
+		{"a sum of floats", "1.5", "+1.5", "", tooLarge, 0},
+		{"a number of letters", "1", "a", "", both(InvalidNumber), 0},
+		{"a number of points", "1", ".", "", both(InvalidNumber), 0},
+		{"a comment", "// ", "a", "", codes{UnexpectedEnd, ""}, 0},
+		{"comments", "", "// a\n", "x", ast, 0},
+		{"comments and a NUL", "", "// a\n", "// \x00", both(InvalidCharacter), 0},
+		{"spaces", "", " ", "x", ast, 0},
+		{"tabs", "", "\t", "x", ast, 0},
+		{"line breaks", "", "\n", "x", ast, 0},
+		{"CRs and LFs", "", "\r\n", "x", ast, 0},
+		{"semicolons", "", ";", "", codes{UnexpectedToken, ""}, 0},
+		{"semicolons and a call", "", ";", "f()", codes{UnexpectedToken, ""}, 0},
+		{"blank lines between calls", "f()", "\n", "f()", codes{UnexpectedToken, ""}, 0},
+		{"calls on lines", "", "f()\n", "", codes{UnexpectedToken, ASTTooLarge}, 0},
+		{"negations", "", "-", "1", unexpected, 0},
+		{"nots", "", "not ", "x", unexpected, 0},
+		{"a sum of negations", "", "-1+", "1", tooLarge, 0},
+		{"||", "1", "||1", "", tooLarge, 0},
+		{"&&", "1", "&&1", "", tooLarge, 0},
+		{"or", "1", " or 1", "", tooLarge, 0},
+		{"and", "1", " and 1", "", tooLarge, 0},
+		{"==", "1", "==1", "", tooLarge, 0},
+		{"!=", "1", "!=1", "", tooLarge, 0},
+		{"<", "1", "<1", "", tooLarge, 0},
+		{"<=", "1", "<=1", "", tooLarge, 0},
+		{">", "1", ">1", "", tooLarge, 0},
+		{">=", "1", ">=1", "", tooLarge, 0},
+		{"+", "1", "+1", "", tooLarge, 0},
+		{"-", "1", "-1", "", tooLarge, 0},
+		{"*", "1", "*1", "", tooLarge, 0},
+		{"/", "1", "/1", "", tooLarge, 0},
+		{"%", "1", "%1", "", tooLarge, 0},
+		{"a sum of groups", "(1)", "+(1)", "", tooLarge, 0},
+		{"a sum of nested groups", "", "((1))+", "1", tooLarge, 0},
+		{"opening parentheses", "", "(", "", both(ASTTooDeep), 0},
+		{"closing parentheses", "", ")", "", unexpected, 0},
+		{"assignments", "", "x = 1;", "", codes{ConditionMustBePure, ASTTooLarge}, 0},
+		{"assignments on lines", "", "x += 1\n", "", codes{ConditionMustBePure, ASTTooLarge}, 0},
+		{"assignments to attributes", "", "a.b = 1\n", "", codes{ConditionMustBePure, ASTTooLarge}, 0},
+		{"call statements", "", "f(x)\n", "", codes{UnexpectedToken, ASTTooLarge}, 0},
+		{"an assignment of a sum", "x = ", "1+", "1", codes{ConditionMustBePure, ASTTooLarge}, 0},
+		{"an error at the start", "@", "a ", "", both(InvalidCharacter), 0},
+		{"an error in the middle", strings.Repeat(" ", size/2) + "@", " ", "", both(InvalidCharacter), 0},
+		{"an error at the end", "", " ", "@", both(InvalidCharacter), 0},
+		{"characters that are not ASCII", "", "é", "", both(InvalidCharacter), 0},
+		{"bytes that are not UTF-8", "", "\xff", "", both(InvalidCharacter), 0},
+		{"NULs", "", "\x00", "", both(InvalidCharacter), 0},
+	}
+	for _, s := range shapes {
+		n := (size - len(s.prefix) - len(s.suffix)) / len(s.unit)
+		source := s.prefix + strings.Repeat(s.unit, n) + s.suffix
+		budget := uint64(256<<10 + s.escaped*(1+n))
+		for ctx, want := range map[Context]Code{ContextCondition: s.want.condition, ContextScript: s.want.script} {
+			least := ^uint64(0)
+			var err error
+			for range 3 {
+				var before, after runtime.MemStats
+				runtime.ReadMemStats(&before)
+				_, err = Parse(source, ctx)
+				runtime.ReadMemStats(&after)
+				least = min(least, after.TotalAlloc-before.TotalAlloc)
+			}
+			var got Code
+			if e, ok := err.(*Error); ok {
+				got = e.Code
+			}
+			if err != nil && got == "" || got != want {
+				t.Errorf("Parse of %s as a %s = %v; want the code %q", s.name, ctx, err, want)
+			}
+			if least > budget {
+				t.Errorf("Parse of %s, %d bytes, as a %s allocated %d bytes; want at most %d", s.name, len(source), ctx,
+					least, budget)
+			}
 		}
 	}
 }
 
 // TestLineBreakEnds checks that a line break that ends a statement ends it
-// before the lexer reads the token after it, however long that token is.
+// before the lexer reads anything after it, the token after it however long,
+// and that the lexer reads the line breaks, the comments, and the white space
+// after it as white space of the token after it; and that the lexer counts
+// the parentheses that are open by the tokens that it has read, whatever the
+// parser has read of them, so that a line break within them is white space.
 func TestLineBreakEnds(t *testing.T) {
 	t.Parallel()
 	l := &lexer{src: "x // a\n\n  \"" + strings.Repeat("a", 1<<20), ctx: ContextScript}
 	if k := l.next().kind; k != tIdent {
 		t.Fatalf("the first token is of the kind %d; want an identifier", k)
 	}
-	if t2 := l.next(); t2.kind != tNewline || t2.Range != (Range{6, 7}) || l.i != 10 {
+	if t2 := l.next(); t2.kind != tNewline || t2.Range != (Range{6, 7}) || l.i != 7 {
 		t.Errorf("the second token is of the kind %d at %v, with the lexer at byte %d; want a line break at 6 to 7, "+
-			"with the lexer at byte 10, before the string", t2.kind, t2.Range, l.i)
+			"with the lexer at byte 7, right after it", t2.kind, t2.Range, l.i)
 	}
-	if k := l.next().kind; k != tError {
-		t.Errorf("the third token is of the kind %d; want the unterminated string", k)
+	if t3 := l.next(); t3.kind != tError || t3.err.Code != UnterminatedString || t3.Start != 10 {
+		t.Errorf("the third token is of the kind %d at %v; want the unterminated string at 10", t3.kind, t3.Range)
+	}
+	l = &lexer{src: "f((x)\ny)\nz", ctx: ContextScript}
+	var kinds []tokenKind
+	for len(kinds) == 0 || kinds[len(kinds)-1] != tEOF {
+		kinds = append(kinds, l.next().kind)
+	}
+	want := []tokenKind{tIdent, tLParen, tLParen, tIdent, tRParen, tIdent, tRParen, tNewline, tIdent, tEOF}
+	if !slices.Equal(kinds, want) {
+		t.Errorf("the tokens of f((x), a line break, y), a line break, and z are of the kinds %v; want %v", kinds, want)
 	}
 }
 

@@ -189,6 +189,12 @@
       "error": { "code": "invalid_number", "start": 0, "end": 4 }
     },
     {
+      "note": "a letter that is not ASCII ends a number, which is of ASCII letters, and is invalid_character after it",
+      "context": "condition",
+      "source": "3é",
+      "error": { "code": "invalid_character", "start": 1, "end": 2 }
+    },
+    {
       "note": "an underscore between digits is invalid_number",
       "context": "condition",
       "source": "1_000",

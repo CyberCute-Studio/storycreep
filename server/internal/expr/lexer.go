@@ -65,9 +65,12 @@ type token struct {
 	// keyword is set for a reserved word (ident.ReservedWords), as true or
 	// and is, though not for the && that and stands for.
 	keyword bool
-	i       int64   // an int literal's value
-	f       float64 // a float literal's value
-	err     *Error  // a tError's error
+	// depth is a ('s count of the parentheses that are open once it opens,
+	// itself among them (lexer.depth).
+	depth int
+	i     int64   // an int literal's value
+	f     float64 // a float literal's value
+	err   *Error  // a tError's error
 }
 
 // errorToken returns a tError of the error code over r.
@@ -86,14 +89,12 @@ type lexer struct {
 	// prev is the kind of the last token that next returned, or tEOF before
 	// the first.
 	prev tokenKind
-	// depth is how many parentheses are open, which the parser counts as it
-	// steps past them (parser.open, parser.close), before it asks for the
-	// token after each, so that the parser and the lexer share one count.
+	// depth is how many parentheses the tokens that next has returned leave
+	// open, which it counts as it returns each (emit), so that a line break
+	// is read by the parentheses before it in the source, however far the
+	// parser has read, and the parser reads the count that a ( opens from
+	// the token (token.depth).
 	depth int
-	// pending is the error of a comment after a line break that ends a
-	// statement, which next returns after the line break's tNewline.
-	pending    token
-	hasPending bool
 	// done is set once next has returned a tError or the tEOF, after which
 	// it returns a tEOF at eof.
 	done bool
@@ -106,34 +107,20 @@ type lexer struct {
 //
 // In a script, a line break outside parentheses after an identifier, a
 // literal, or a ), the tokens that an expression ends with, ends the
-// statement before it, and next returns it as a tNewline: one for each run of
-// line breaks, comments, and white space, before the token after the run, or
-// the error of a comment in the run. next reads the token after the run only
-// once it is asked for the token after the tNewline, so that nothing after the
-// run is read before the statement ends. Every other
-// line break, and every line break of a condition, is white space, so that an
-// expression can go on on the next line after an operator, a comma, or an
-// opening parenthesis.
+// statement before it, and next returns it as a tNewline, having stepped past
+// nothing after it, so that nothing after it is read before the statement
+// ends, a comment's error included: the line breaks, comments, and white
+// space after it are white space of the token after the tNewline, since a
+// tNewline ends no expression. Every other line break, and every line break
+// of a condition, is white space, so that an expression can go on on the next
+// line after an operator, a comma, or an opening parenthesis.
 func (l *lexer) next() token {
-	switch {
-	case l.hasPending:
-		l.hasPending = false
-		return l.emit(l.pending)
-	case l.done:
+	if l.done {
 		return token{kind: tEOF, Range: Range{l.eof, l.eof}}
 	}
-	brk, t, bad := l.space()
-	if brk >= 0 && l.ctx == ContextScript && l.depth == 0 && endsExpression(l.prev) {
-		// The next call finds no white space to step past, and reads the
-		// token after the run, unless a comment in the run holds an error,
-		// which space has read already, and which the next call returns.
-		if bad {
-			l.pending, l.hasPending = t, true
-		}
-		return l.emit(token{kind: tNewline, Range: Range{brk, brk + 1}})
-	}
+	t, ok := l.space(l.ctx == ContextScript && l.depth == 0 && endsExpression(l.prev))
 	switch {
-	case bad:
+	case ok:
 	case l.i == len(l.src):
 		t = token{kind: tEOF, Range: Range{l.at, l.at}}
 	default:
@@ -143,38 +130,46 @@ func (l *lexer) next() token {
 }
 
 // emit returns t, the token that next returns, once it has noted what t
-// changes of how the tokens after it are read, but for a parenthesis, which
-// the parser counts (depth).
+// changes of how the tokens after it are read: the parentheses that are open,
+// which a ( takes the count of, and whether a line break after it ends a
+// statement.
 func (l *lexer) emit(t token) token {
-	if t.kind == tError || t.kind == tEOF {
+	switch t.kind {
+	case tError, tEOF:
 		l.done, l.eof = true, t.End
+	case tLParen:
+		l.depth++
+		t.depth = l.depth
+	case tRParen:
+		l.depth--
 	}
 	l.prev = t.kind
 	return t
 }
 
 // space steps past the white space and the comments at the next character,
-// and returns where the first line break among them is, or -1, and, with bad
-// set, the error of a comment among them that holds a forbidden character,
-// which it stops at.
-func (l *lexer) space() (brk int, t token, bad bool) {
-	brk = -1
+// and returns, with ok set, the token that it stops at among them, if any:
+// the tNewline of the first line break, when brk is set, having stepped past
+// nothing after it, or the error of a comment that holds a forbidden
+// character.
+func (l *lexer) space(brk bool) (t token, ok bool) {
 	for {
 		r, n := l.peek()
 		switch {
 		case r == ' ' || r == '\t':
 			l.step(n)
 		case r == '\n' || r == '\r':
-			if brk < 0 {
-				brk = l.at
-			}
+			at := l.at
 			l.step(n)
+			if brk {
+				return token{kind: tNewline, Range: Range{at, at + 1}}, true
+			}
 		case r == '/' && strings.HasPrefix(l.src[l.i:], "//"):
 			if t, ok := l.comment(); !ok {
-				return brk, t, true
+				return t, true
 			}
 		default:
-			return brk, token{}, false
+			return token{}, false
 		}
 	}
 }
@@ -333,11 +328,12 @@ func (l *lexer) word() token {
 	return t
 }
 
-// number reads a number: the run of letters, digits, underscores, and points
-// that starts with a digit, with a sign after an e or an E of it, which is an
-// integer literal, [0-9]+, or a float literal,
+// number reads a number: the run of ASCII letters, digits, underscores, and
+// points that starts with a digit, with a sign after an e or an E of it,
+// which is an integer literal, [0-9]+, or a float literal,
 // [0-9]+\.[0-9]+([eE][+-]?[0-9]+)?, or else InvalidNumber, as 1., 1e5, 3abc,
-// and 1_000 are, whole.
+// and 1_000 are, whole. A letter that is not ASCII ends the run, as any
+// character that starts no token does, so that 3é is 3 and InvalidCharacter.
 func (l *lexer) number() token {
 	start, from := l.at, l.i
 	for l.i < len(l.src) {
@@ -402,35 +398,60 @@ func isFloatLiteral(s string) bool {
 // InvalidCharacter, each at the first that the string has, from left to
 // right. A string read whole whose value is longer than MaxStringLength code
 // points is StringTooLong, whole.
+//
+// The value of a string without an escape is the source's characters between
+// its quotes, and that of one with an escape is written once it is read
+// whole, at its length, so that no string costs more than its value, and one
+// that is refused costs nothing.
 func (l *lexer) string() token {
-	start := l.at
+	start, from := l.at, l.i
+	length, size, escaped, err := l.characters(nil)
+	switch {
+	case err != nil:
+		return token{kind: tError, Range: err.Range, err: err}
+	case length > MaxStringLength:
+		return errorToken(StringTooLong, Range{start, l.at})
+	}
+	t := token{kind: tString, Range: Range{start, l.at}, text: l.src[from+1 : l.i-1]}
+	if escaped {
+		// The literal again, from its opening quote, to write its value,
+		// which ends where the first reading ended.
+		l.i, l.at = from, start
+		var b strings.Builder
+		b.Grow(size)
+		l.characters(&b)
+		t.text = b.String()
+	}
+	return t
+}
+
+// characters steps past a string literal, from its opening quote to its
+// closing one, and returns how many characters its value has, how many bytes,
+// and whether it has an escape, or the error that string returns of it,
+// writing its value's characters to b, unless b is nil, as it reads each.
+func (l *lexer) characters(b *strings.Builder) (length, size int, escaped bool, err *Error) {
+	open := l.at
 	l.step(1)
-	var b strings.Builder
-	length := 0
 	for {
 		r, n := l.peek()
 		switch {
 		case r == -1 || r == '\n' || r == '\r':
-			return errorToken(UnterminatedString, Range{start, l.at})
+			return 0, 0, false, &Error{Code: UnterminatedString, Range: Range{open, l.at}}
 		case r == '"':
 			l.step(n)
-			if length > MaxStringLength {
-				return errorToken(StringTooLong, Range{start, l.at})
-			}
-			return token{kind: tString, Range: Range{start, l.at}, text: b.String()}
+			return length, size, escaped, nil
 		case r == '\\':
-			var err *Error
-			if r, err = l.escape(start); err != nil {
-				return token{kind: tError, Range: err.Range, err: err}
+			if r, err = l.escape(open); err != nil {
+				return 0, 0, false, err
 			}
+			escaped = true
 		case forbidden(r, n):
-			return errorToken(InvalidCharacter, Range{l.at, l.at + 1})
+			return 0, 0, false, &Error{Code: InvalidCharacter, Range: Range{l.at, l.at + 1}}
 		default:
 			l.step(n)
 		}
-		// A string too long is read to its end, for its range, but its
-		// value no further.
-		if length++; length <= MaxStringLength {
+		length, size = length+1, size+utf8.RuneLen(r)
+		if b != nil {
 			b.WriteRune(r)
 		}
 	}

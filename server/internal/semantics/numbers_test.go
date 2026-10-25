@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"math/rand/v2"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -294,6 +295,92 @@ func TestParseFloat(t *testing.T) {
 			} else if problem != "" || n != exact.Int64() {
 				t.Fatalf("ParseInt(%s) = %d, %q; want %s", s, n, problem, exact)
 			}
+		}
+	}
+}
+
+// TestParseFloatDigits checks that ParseFloat reads a string of more
+// significant digits than maxDigits, the most that it writes for strconv, as
+// the double nearest it, against an exact reading of it as a fraction
+// (big.Rat), where only digits far past maxDigits decide that double: the
+// point halfway between two doubles written in full, which rounds to the even
+// one, the same with a thousand zeros and a 1 after it, which rounds up, and
+// the point a little below it, of thousands of nines, which rounds down; and
+// strings of thousands of random digits, on either side of the point.
+func TestParseFloatDigits(t *testing.T) {
+	t.Parallel()
+	rng := rand.New(rand.NewPCG(38, 7))
+	check := func(s string) {
+		t.Helper()
+		r, ok := new(big.Rat).SetString(s)
+		if !ok {
+			t.Fatalf("big.Rat does not read %.40s…", s)
+		}
+		want, _ := r.Float64()
+		got, problem := ParseFloat(s)
+		switch {
+		case math.IsInf(want, 0):
+			if problem != FloatNotFinite || got != 0 {
+				t.Fatalf("ParseFloat(%.40s…) = %v, %q; want 0, float_not_finite", s, got, problem)
+			}
+		case problem != "" || math.Float64bits(got) != math.Float64bits(want+0):
+			t.Fatalf("ParseFloat(%.40s…, of %d characters) = %v, %q; want %v", s, len(s), got, problem, want+0)
+		}
+	}
+	two := big.NewRat(2, 1)
+	tiny := new(big.Rat).SetFrac(big.NewInt(1), new(big.Int).Exp(big.NewInt(10), big.NewInt(2100), nil))
+	for range 300 {
+		f := math.Abs(randomFloat(rng))
+		if f == math.MaxFloat64 {
+			continue
+		}
+		half := new(big.Rat).Add(new(big.Rat).SetFloat64(f), new(big.Rat).SetFloat64(math.Nextafter(f, math.Inf(1))))
+		half.Quo(half, two)
+		// A double's denominator is at most 2^1075, so that 1,100 digits
+		// after the point write the halfway point exactly, and one at least
+		// of them is left of an integral one.
+		exact := strings.TrimRight(half.FloatString(1100), "0")
+		if strings.HasSuffix(exact, ".") {
+			exact += "0"
+		}
+		check(exact)
+		check(exact + strings.Repeat("0", 1000) + "1")
+		check(new(big.Rat).Sub(half, tiny).FloatString(2100))
+	}
+	digits := func(n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = byte('0' + rng.IntN(10))
+		}
+		return string(b)
+	}
+	for range 300 {
+		s := digits(1+rng.IntN(2000)) + "." + digits(1+rng.IntN(2000))
+		if rng.IntN(2) == 0 {
+			s += "e-" + strconv.Itoa(rng.IntN(2400))
+		}
+		check(s)
+	}
+}
+
+// TestParseFloatCost checks that ParseFloat allocates no more for a string of
+// a million digits than for one of a thousand, whichever side of the point
+// they are on and whatever spells its exponent, so that a float literal of a
+// source of any length costs no more than its value. It does not run in
+// parallel, so that what other tests allocate is not counted.
+func TestParseFloatCost(t *testing.T) {
+	million := strings.Repeat("1", 1<<20)
+	for _, s := range []string{"1." + million, million + ".5e-1048570", "0." + strings.Repeat("0", 1<<20) + "1e1048577",
+		"1." + million + "E5", "1." + strings.Repeat("0", 1<<20)} {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		_, problem := ParseFloat(s)
+		runtime.ReadMemStats(&after)
+		if problem != "" {
+			t.Errorf("ParseFloat(%.20s…) reports %q", s, problem)
+		}
+		if n := after.TotalAlloc - before.TotalAlloc; n > 16<<10 {
+			t.Errorf("ParseFloat(%.20s…) allocated %d bytes, of a string of %d; want at most 16 KiB", s, n, len(s))
 		}
 	}
 }

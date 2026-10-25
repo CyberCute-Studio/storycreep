@@ -261,23 +261,16 @@ func (p *parser) primary() (Node, Range) {
 }
 
 // open steps past the opening parenthesis that is the current token, a
-// group's, a call's, or a node reference's, which is ASTTooDeep if MaxDepth of
-// them are open already. A node reference's is one of them, since any
-// argument but one string literal is read as a call's, so that node(node(…
-// would otherwise recurse without bound.
-//
-// open and close keep the one count of the open parentheses, the lexer's
-// depth, which the lexer reads a script's line breaks by, and change it before
-// they ask for the token after the parenthesis, so that the lexer reads that
-// token by the count that takes the parenthesis in. No other step of the
-// parser passes a parenthesis, and the lexer has read no token beyond the
-// current one when either changes the count, since the parser looks ahead
-// (peek) only past a node reference's string.
+// group's, a call's, or a node reference's, which is ASTTooDeep if it opens
+// one more than MaxDepth of them, as the lexer counts them, the one count of
+// the open parentheses, which the lexer reads a script's line breaks by too
+// (lexer.depth). A node reference's is one of them, since any argument but one
+// string literal is read as a call's, so that node(node(… would otherwise
+// recurse without bound.
 func (p *parser) open() {
-	if p.lex.depth == MaxDepth {
+	if p.tok.depth > MaxDepth {
 		p.fail(ASTTooDeep, p.tok.Range)
 	}
-	p.lex.depth++
 	p.next()
 }
 
@@ -288,7 +281,6 @@ func (p *parser) close() int {
 		p.unexpected()
 	}
 	end := p.tok.End
-	p.lex.depth--
 	p.next()
 	return end
 }

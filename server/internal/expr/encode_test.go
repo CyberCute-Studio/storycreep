@@ -119,12 +119,24 @@ func TestEncodeCanonical(t *testing.T) {
 	}
 }
 
+// embedded and unhashable are Nodes by the methods of the *Lit that they
+// embed, as a type of another package can be, which Encode would otherwise
+// write as nothing, or panic at, without its fields.
+type (
+	embedded   struct{ *Lit }
+	unhashable struct {
+		*Lit
+		_ []int
+	}
+)
+
 // TestEncodeRefuses checks that Encode refuses a node that is not one of an
-// AST, rather than write what no AST is: of what is no value, operator, or
-// string of the language, without the name, the node reference, or the
-// function that it needs, of a kind that its place cannot be of, or in the
-// AST twice, as nodes that a program links in a cycle are, which Encode
-// would otherwise write without end.
+// AST, rather than write what no AST is, or panic: of a type that is none of
+// the kinds', of what is no value, operator, or string of the language,
+// without the name, the node reference, or the function that it needs, of a
+// kind that its place cannot be of, or in the AST twice, as nodes that a
+// program links in a cycle are, which Encode would otherwise write without
+// end.
 func TestEncodeRefuses(t *testing.T) {
 	t.Parallel()
 	lit := &Lit{Type: value.Int, Int: 1}
@@ -134,6 +146,11 @@ func TestEncodeRefuses(t *testing.T) {
 	cycle := &Binary{Op: OpAdd, Right: &Lit{Type: value.Int, Int: 2}}
 	cycle.Left = &Unary{Op: OpNeg, Operand: cycle}
 	for _, n := range []Node{
+		&embedded{lit},
+		embedded{lit},
+		unhashable{Lit: lit},
+		&Binary{Op: OpAdd, Left: &embedded{lit}, Right: &Lit{Type: value.Int, Int: 2}},
+		script(&Assign{Op: OpAssign, Target: x, Value: embedded{&Lit{Type: value.Int, Int: 2}}}),
 		cycle,
 		&Binary{Op: OpAdd, Left: lit, Right: lit},
 		&Lit{Type: value.String, Str: strings.Repeat("é", MaxStringLength+1)},

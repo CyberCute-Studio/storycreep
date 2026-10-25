@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"reflect"
 	"strings"
 	"unicode/utf8"
 
@@ -26,25 +25,29 @@ import (
 // >, &, and / among them. A field that is not set, as the ref of a name that
 // is not resolved, is left out.
 //
-// Encode fails on a node that is not one of an AST: a nil one, an int beyond
-// ±(2^53 − 1), a float that is not finite, a string literal of more than
-// MaxStringLength characters, as no string value is (§5.8.1), a string, a
-// literal's or any other, that is not UTF-8 or that holds a NUL, which no
-// text holds, a name, a node reference, or a function that is empty, an
-// operator or a literal's type that the language does not have, a node that
-// the AST holds twice, as each node of a cycle is, which no tree holds, or a
-// node of a kind that its place in the AST cannot be of: an AST is an
-// expression or a script, a script's statements are assignments and calls,
-// an assignment's target is a variable or an attribute, and every other child
-// of a node is an expression, neither an assignment nor a script. It does not
-// check how a name, a node reference, or a function that is not empty is
-// spelt, which name resolution checks against what it names (§5.8.3, plan
-// item 40), nor the other limits of §5.8.6, which item 40 checks of an AST.
+// Encode fails on a node that is not one of an AST: a nil one, one of a type
+// that is none of the nine kinds', as one of another package that embeds
+// one, an int beyond ±(2^53 − 1), a float that is not finite, a string
+// literal of more than MaxStringLength characters, as no string value is
+// (§5.8.1), a string, a literal's or any other, that is not UTF-8 or that
+// holds a NUL, which no text holds, a name, a node reference, or a function
+// that is empty, an operator or a literal's type that the language does not
+// have, a node that the AST holds twice, as each node of a cycle is, which no
+// tree holds, or a node of a kind that its place in the AST cannot be of: an
+// AST is an expression or a script, a script's statements are assignments
+// and calls, an assignment's target is a variable or an attribute, and every
+// other child of a node is an expression, neither an assignment nor a
+// script. It does not check how a name, a node reference, or a function that
+// is not empty is spelt, which name resolution checks against what it names
+// (§5.8.3, plan item 40), nor the other limits of §5.8.6, which item 40
+// checks of an AST.
 //
 // Encode writes an AST of any depth without recursing, so that no AST that a
 // program builds, however deep, can exhaust the stack, which no program
 // recovers from, and refuses a node that it has reached already, so that
-// nodes that a program links in a cycle cannot make it write without end.
+// nodes that a program links in a cycle cannot make it write without end, nor
+// nodes that it shares make it write more nodes than they are, as a node
+// whose operands are both one node of n levels would make it write 2^n.
 func Encode(n Node) ([]byte, error) {
 	e := &encoder{seen: make(map[Node]bool)}
 	e.enc = json.NewEncoder(&e.encoded)
@@ -88,7 +91,8 @@ var places = [...]string{
 	atTarget:    "an assignment's target",
 }
 
-// fits reports whether n, which is not nil, can be at the place at.
+// fits reports whether n, which is a node of one of the kinds (check), can be
+// at the place at.
 func fits(n Node, at place) bool {
 	switch n.(type) {
 	case *Script:
@@ -99,8 +103,10 @@ func fits(n Node, at place) bool {
 		return at != atTarget
 	case *Var, *Attr:
 		return at != atStatement
+	case *Lit, *NodeRef, *Unary, *Binary:
+		return at == atRoot || at == atOperand
 	}
-	return at == atRoot || at == atOperand
+	return false
 }
 
 // part is a part of an AST's canonical form that Encode has yet to write: a
@@ -181,10 +187,40 @@ var (
 	errTwice = errors.New("expr: a node is in the AST twice")
 )
 
-// isNil reports whether n is nil, or a nil pointer, which every kind of node
-// is a pointer to.
-func isNil(n Node) bool {
-	return n == nil || reflect.ValueOf(n).IsNil()
+// check returns errNil for a node that is nil, or a nil pointer, which every
+// kind of node is a pointer to, and an error for one of a type that is none
+// of theirs, as one of another package that embeds one of them, which has
+// the kind's methods but neither its fields nor its JSON, and otherwise nil.
+func check(n Node) error {
+	var isNil bool
+	switch n := n.(type) {
+	case *Lit:
+		isNil = n == nil
+	case *Var:
+		isNil = n == nil
+	case *Attr:
+		isNil = n == nil
+	case *NodeRef:
+		isNil = n == nil
+	case *Unary:
+		isNil = n == nil
+	case *Binary:
+		isNil = n == nil
+	case *Call:
+		isNil = n == nil
+	case *Assign:
+		isNil = n == nil
+	case *Script:
+		isNil = n == nil
+	case nil:
+		isNil = true
+	default:
+		return fmt.Errorf("expr: a node of the type %T is of no kind of an AST", n)
+	}
+	if isNil {
+		return errNil
+	}
+	return nil
 }
 
 // node writes n, which is at the place at, but for its children, which it
@@ -192,8 +228,8 @@ func isNil(n Node) bool {
 // write, or returns why n is not a node of an AST there. Each object's keys
 // are in alphabetical order.
 func (e *encoder) node(n Node, at place) error {
-	if isNil(n) {
-		return errNil
+	if err := check(n); err != nil {
+		return err
 	}
 	if e.seen[n] {
 		return errTwice
