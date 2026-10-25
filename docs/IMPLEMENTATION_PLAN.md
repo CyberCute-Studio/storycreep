@@ -470,7 +470,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-EXPR-02 AC3 and FR-EXPR-03 AC3 pass and the corpus runs in CI.
 
 ### 40. Name resolution, type checking, and sandbox limits
-**Status:** todo · **Depends on:** 33, 35, 39
+**Status:** done ([#46](https://github.com/CyberCute-Studio/storycreep/pull/46)) · **Depends on:** 33, 35, 39
 **PRD:** FR-EXPR-02 (server: AC2, AC4), FR-EXPR-04 (AC2, AC3), FR-VAR-02 (AC1 resolution, AC2), FR-COMP-03 (AC2), §5.8.3–§5.8.6
 - A checker in `server/internal/expr` (`Check`, and `Compile` of a source), against what a project's expressions can name (`Project`), at a board. Resolution order: board → global → component, a variable shadowing a component of its key in `<component>.<attribute>`. Explicit `global.` / `board.` / `cmp.` forms. Identifiers resolve to IDs, with near-match suggestions (N48).
 - Typing and widening rules, a type error naming its operand, its type, and the types its place takes. Purity (`condition_must_be_pure`), of which item 39's parser refuses an assignment (N47). `signal()` allowed only as a script's statement, with a literal name, and a pure call is no statement. `node_ref_jumper`. Non-runtime attributes rejected, and an `enum` one written only one of its options. Cross-board board-variable references rejected (N48).
