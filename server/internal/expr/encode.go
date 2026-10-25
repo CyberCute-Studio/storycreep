@@ -91,24 +91,6 @@ var places = [...]string{
 	atTarget:    "an assignment's target",
 }
 
-// fits reports whether n, which is a node of one of the kinds (check), can be
-// at the place at.
-func fits(n Node, at place) bool {
-	switch n.(type) {
-	case *Script:
-		return at == atRoot
-	case *Assign:
-		return at == atStatement
-	case *Call:
-		return at != atTarget
-	case *Var, *Attr:
-		return at != atStatement
-	case *Lit, *NodeRef, *Unary, *Binary:
-		return at == atRoot || at == atOperand
-	}
-	return false
-}
-
 // part is a part of an AST's canonical form that Encode has yet to write: a
 // node, at its place, or, when it is set, text.
 type part struct {
@@ -187,38 +169,47 @@ var (
 	errTwice = errors.New("expr: a node is in the AST twice")
 )
 
-// check returns errNil for a node that is nil, or a nil pointer, which every
-// kind of node is a pointer to, and an error for one of a type that is none
-// of theirs, as one of another package that embeds one of them, which has
-// the kind's methods but neither its fields nor its JSON, and otherwise nil.
-func check(n Node) error {
-	var isNil bool
+// check returns nil if n is a node of one of the kinds that can be at the
+// place at, and otherwise why it is not: errNil for a node that is nil, or a
+// nil pointer, which every kind of node is a pointer to, an error for one of
+// a type that is none of theirs, as one of another package that embeds one
+// of them, which has the kind's methods but neither its fields nor its JSON,
+// and an error for one of a kind that the place cannot be of. It tells each
+// kind's nil pointer, and where each kind can be, in one switch over the
+// kinds, so that node's switch, which writes each, is the only other list of
+// them.
+func check(n Node, at place) error {
+	var isNil, fits bool
+	expression := at == atRoot || at == atOperand
 	switch n := n.(type) {
 	case *Lit:
-		isNil = n == nil
+		isNil, fits = n == nil, expression
 	case *Var:
-		isNil = n == nil
+		isNil, fits = n == nil, at != atStatement
 	case *Attr:
-		isNil = n == nil
+		isNil, fits = n == nil, at != atStatement
 	case *NodeRef:
-		isNil = n == nil
+		isNil, fits = n == nil, expression
 	case *Unary:
-		isNil = n == nil
+		isNil, fits = n == nil, expression
 	case *Binary:
-		isNil = n == nil
+		isNil, fits = n == nil, expression
 	case *Call:
-		isNil = n == nil
+		isNil, fits = n == nil, at != atTarget
 	case *Assign:
-		isNil = n == nil
+		isNil, fits = n == nil, at == atStatement
 	case *Script:
-		isNil = n == nil
+		isNil, fits = n == nil, at == atRoot
 	case nil:
 		isNil = true
 	default:
 		return fmt.Errorf("expr: a node of the type %T is of no kind of an AST", n)
 	}
-	if isNil {
+	switch {
+	case isNil:
 		return errNil
+	case !fits:
+		return fmt.Errorf("expr: a node of the kind %s cannot be %s", n.Kind(), places[at])
 	}
 	return nil
 }
@@ -228,16 +219,13 @@ func check(n Node) error {
 // write, or returns why n is not a node of an AST there. Each object's keys
 // are in alphabetical order.
 func (e *encoder) node(n Node, at place) error {
-	if err := check(n); err != nil {
+	if err := check(n, at); err != nil {
 		return err
 	}
 	if e.seen[n] {
 		return errTwice
 	}
 	e.seen[n] = true
-	if !fits(n, at) {
-		return fmt.Errorf("expr: a node of the kind %s cannot be %s", n.Kind(), places[at])
-	}
 	switch n := n.(type) {
 	case *Lit:
 		return e.literal(n)

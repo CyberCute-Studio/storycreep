@@ -285,8 +285,10 @@ func TestLongSource(t *testing.T) {
 // float literal is read from its first 800 digits. Each source also gives
 // the error that it is meant to, or an AST, so that none stops before what it
 // repeats. The test does not run in parallel, so that what other tests
-// allocate is not counted, and takes the least of three runs, so that what the
-// runtime allocates meanwhile is not either.
+// allocate is not counted, and takes the least of up to three runs, a second
+// and a third only when one is over the budget, so that what the runtime
+// allocates meanwhile is not counted either, while the test, which reads 90
+// sources of 2 MiB in either context, takes no longer than one run of each.
 func TestSourceCost(t *testing.T) {
 	const size = 2 << 20
 	bs := string(rune(92)) // a backslash
@@ -412,7 +414,9 @@ func TestSourceCost(t *testing.T) {
 				runtime.ReadMemStats(&before)
 				_, err = Parse(source, ctx)
 				runtime.ReadMemStats(&after)
-				least = min(least, after.TotalAlloc-before.TotalAlloc)
+				if least = min(least, after.TotalAlloc-before.TotalAlloc); least <= budget {
+					break
+				}
 			}
 			var got Code
 			if e, ok := err.(*Error); ok {

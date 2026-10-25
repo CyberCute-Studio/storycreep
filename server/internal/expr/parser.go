@@ -150,7 +150,10 @@ func (p *parser) statement() Node {
 // ASTTooLarge at the token if the AST has MaxNodes nodes already, before
 // anything else is decided at it, so that a source of any length costs no
 // more than an AST of MaxNodes nodes, and no AST that Parse returns is deeper
-// than that.
+// than that. A token that the lexer could not read, which it reads whole
+// before the parser reaches it, never reaches count, nor does a reserved word
+// that no rule reads, so that each is its own error where the node beyond
+// MaxNodes would be.
 func (p *parser) count() {
 	if p.nodes == MaxNodes {
 		p.fail(ASTTooLarge, p.tok.Range)

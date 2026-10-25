@@ -367,20 +367,31 @@ func TestParseFloatDigits(t *testing.T) {
 // a million digits than for one of a thousand, whichever side of the point
 // they are on and whatever spells its exponent, so that a float literal of a
 // source of any length costs no more than its value. It does not run in
-// parallel, so that what other tests allocate is not counted.
+// parallel, so that what other tests allocate is not counted, and takes the
+// least of up to three runs, a second and a third only when one is over the
+// budget, so that what the runtime allocates meanwhile is not counted either,
+// as TestSourceCost of package expr does.
 func TestParseFloatCost(t *testing.T) {
+	const budget = 16 << 10
 	million := strings.Repeat("1", 1<<20)
 	for _, s := range []string{"1." + million, million + ".5e-1048570", "0." + strings.Repeat("0", 1<<20) + "1e1048577",
 		"1." + million + "E5", "1." + strings.Repeat("0", 1<<20)} {
-		var before, after runtime.MemStats
-		runtime.ReadMemStats(&before)
-		_, problem := ParseFloat(s)
-		runtime.ReadMemStats(&after)
+		least := ^uint64(0)
+		var problem RuntimeError
+		for range 3 {
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			_, problem = ParseFloat(s)
+			runtime.ReadMemStats(&after)
+			if least = min(least, after.TotalAlloc-before.TotalAlloc); least <= budget {
+				break
+			}
+		}
 		if problem != "" {
 			t.Errorf("ParseFloat(%.20s…) reports %q", s, problem)
 		}
-		if n := after.TotalAlloc - before.TotalAlloc; n > 16<<10 {
-			t.Errorf("ParseFloat(%.20s…) allocated %d bytes, of a string of %d; want at most 16 KiB", s, n, len(s))
+		if least > budget {
+			t.Errorf("ParseFloat(%.20s…) allocated %d bytes, of a string of %d; want at most 16 KiB", s, least, len(s))
 		}
 	}
 }

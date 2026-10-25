@@ -67,7 +67,9 @@ const (
 	// literal, the identifier or the qualifier that a name, a call, or a node
 	// reference starts with, a unary or a binary operator, or a statement's
 	// assignment operator, each counted as the parser reaches it, after a
-	// script's own node, which counts before its first token.
+	// script's own node, which counts before its first token. A token that
+	// the lexer could not read makes no node, nor does a reserved word that no
+	// rule reads, so that each is its own error there.
 	ASTTooLarge Code = "ast_too_large"
 )
 

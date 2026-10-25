@@ -4,21 +4,31 @@ import (
 	"errors"
 	"slices"
 	"testing"
-	"unicode/utf8"
 )
 
 // FuzzParse checks Parse on any source, in either context, from the corpus's
 // sources on: it never panics; its error is one of its codes, over characters
 // of the source; and its AST encodes, the same bytes each time, with every
-// node's range within the source.
+// node's range within its parent's, after its elder sibling's, and over the
+// node as it is written, so that the characters of the range, read as a
+// condition, are the same node, but for an assignment's and a script's, which
+// no condition is.
 func FuzzParse(f *testing.F) {
 	_, sources := readSyntaxCorpus(f)
 	for _, s := range sources {
 		f.Add(s)
 	}
 	f.Add("x = a\n and b // c\r\n(signal(\"\\uD83D\\uDE00\"))")
+	f.Add("-(a) + (-(b)) * f((c), -(d))")
 	f.Fuzz(func(t *testing.T, source string) {
-		length := utf8.RuneCountInString(source)
+		// offsets are the byte offsets of the source's characters, as Parse
+		// counts them, a byte that is not UTF-8 one, and of its end.
+		var offsets []int
+		for i := range source {
+			offsets = append(offsets, i)
+		}
+		offsets = append(offsets, len(source))
+		length := len(offsets) - 1
 		for _, ctx := range []Context{ContextCondition, ContextScript} {
 			n, err := Parse(source, ctx)
 			if err != nil {
@@ -37,17 +47,29 @@ func FuzzParse(f *testing.F) {
 			if again, _ := Parse(source, ctx); encoded(again) != string(b) {
 				t.Fatalf("Parse(%q, %s) encodes as %s, then %s", source, ctx, b, encoded(again))
 			}
-			var check func(Node)
-			check = func(n Node) {
-				if r := n.Range(); r.Start < 0 || r.Start > r.End || r.End > length {
-					t.Fatalf("Parse(%q, %s) has a %s at %v, beyond the source's %d characters", source, ctx,
-						n.Kind(), r, length)
+			// check checks n, whose range is to be within the range within,
+			// and its children.
+			var check func(n Node, within Range)
+			check = func(n Node, within Range) {
+				r := n.Range()
+				if r.Start < within.Start || r.Start > r.End || r.End > within.End {
+					t.Fatalf("Parse(%q, %s) has a %s at %v, beyond %v, of its parent after its elder sibling, or "+
+						"of the source", source, ctx, n.Kind(), r, within)
 				}
+				if k := n.Kind(); k != KindAssign && k != KindScript {
+					written := source[offsets[r.Start]:offsets[r.End]]
+					if again, err := Parse(written, ContextCondition); err != nil || encoded(again) != encoded(n) {
+						t.Fatalf("Parse(%q, %s) has a %s at %v, %q, which reads as %s, %v; want %s", source, ctx, k, r,
+							written, encoded(again), err, encoded(n))
+					}
+				}
+				from := r.Start
 				for _, c := range children(n) {
-					check(c)
+					check(c, Range{from, r.End})
+					from = c.Range().End
 				}
 			}
-			check(n)
+			check(n, Range{0, length})
 		}
 	})
 }
