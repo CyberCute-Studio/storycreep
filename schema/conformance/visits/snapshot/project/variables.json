@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "variables": [
+    {
+      "default": 0,
+      "id": "var_0000000000000000000000000V",
+      "key": "seen",
+      "scope": "global",
+      "type": "int"
+    }
+  ]
+}

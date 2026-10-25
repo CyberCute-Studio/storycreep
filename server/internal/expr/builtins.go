@@ -1,6 +1,9 @@
 package expr
 
 import (
+	"maps"
+	"slices"
+
 	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
@@ -134,6 +137,11 @@ var builtins = map[string]builtin{
 	"visited":     {params: []typeSet{tyNode}, result: tyBool, version: 1},
 	"visits":      {params: []typeSet{tyNode}, result: tyInt, version: 1},
 	"signal":      {params: []typeSet{tyString, tyValue}, optional: 1, effect: true, version: 1},
+}
+
+// Builtins returns the names of the built-in functions (§5.8.4), sorted.
+func Builtins() []string {
+	return slices.Sorted(maps.Keys(builtins))
 }
 
 // ASTVersion is the ast_version of this package's language (FR-EXPR-04): the

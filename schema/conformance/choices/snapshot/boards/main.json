@@ -1,0 +1,529 @@
+{
+  "board": {
+    "entryNodeId": "nd_000000000000000000000START",
+    "id": "bd_0000000000000000000000PAGE",
+    "name": "Main",
+    "slug": "main"
+  },
+  "connections": [
+    {
+      "from": "nd_000000000000000000000START",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000ASK",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Talk to "
+          },
+          {
+            "kind": "mention",
+            "marks": [],
+            "ref": "cmp_00000000000000000000KEEPER",
+            "value": "Elara"
+          }
+        ]
+      },
+      "onTraverse": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "met",
+                "ref": "var_00000000000000000000000MET"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "bool",
+                "value": true
+              }
+            },
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "asking"
+                },
+                {
+                  "kind": "var",
+                  "name": "met",
+                  "ref": "var_00000000000000000000000MET"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "met = true\nsignal(\"asking\", met)"
+      },
+      "order": 1,
+      "to": "nd_0000000000000000000000CHAT"
+    },
+    {
+      "condition": {
+        "ast": {
+          "kind": "binary",
+          "left": {
+            "kind": "var",
+            "name": "gold",
+            "ref": "var_0000000000000000000000CASH"
+          },
+          "op": "gte",
+          "right": {
+            "kind": "lit",
+            "type": "int",
+            "value": 2
+          }
+        },
+        "source": "gold >= 2"
+      },
+      "from": "nd_000000000000000000000START",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000PAY",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Buy a rope"
+          }
+        ]
+      },
+      "onTraverse": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "-=",
+              "target": {
+                "kind": "var",
+                "name": "gold",
+                "ref": "var_0000000000000000000000CASH"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 2
+              }
+            }
+          ]
+        },
+        "source": "gold -= 2"
+      },
+      "order": 0,
+      "to": "nd_00000000000000000000MARKET"
+    },
+    {
+      "from": "nd_0000000000000000000000CHAT",
+      "fromPort": "out",
+      "id": "cn_0000000000000000000000BACK",
+      "order": 0,
+      "to": "nd_000000000000000000000START"
+    },
+    {
+      "condition": {
+        "ast": {
+          "kind": "binary",
+          "left": {
+            "kind": "var",
+            "name": "gold",
+            "ref": "var_0000000000000000000000CASH"
+          },
+          "op": "gt",
+          "right": {
+            "kind": "lit",
+            "type": "int",
+            "value": 100
+          }
+        },
+        "source": "gold > 100"
+      },
+      "from": "nd_000000000000000000000GATED",
+      "fromPort": "out",
+      "id": "cn_0000000000000000000000FREE",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Open"
+          }
+        ]
+      },
+      "order": 0,
+      "to": "nd_000000000000000000000START"
+    },
+    {
+      "condition": {
+        "ast": {
+          "kind": "var",
+          "name": "met",
+          "ref": "var_00000000000000000000000MET"
+        },
+        "source": "met"
+      },
+      "from": "nd_000000000000000000000START",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000DEPART",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Leave"
+          }
+        ]
+      },
+      "order": 2,
+      "to": "nd_00000000000000000000000BYE"
+    },
+    {
+      "from": "nd_00000000000000000000000BYE",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000REPEAT",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Again"
+          }
+        ]
+      },
+      "order": 0,
+      "to": "nd_000000000000000000000START"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "nd_00000000000000000000000BYE",
+      "isEnding": true,
+      "kind": "narration",
+      "onExit": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "bye_exit"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"bye_exit\")"
+      },
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "text": {
+        "preview": "Goodbye, {name}.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Goodbye, "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "name",
+            "ref": "var_0000000000000000000000NAME"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "."
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_0000000000000000000000CHAT",
+      "isEnding": false,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "+=",
+              "target": {
+                "attribute": "atr_0000000000000000000000TRST",
+                "kind": "attr",
+                "name": "elara.trust",
+                "ref": "cmp_00000000000000000000KEEPER"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 1
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "attribute": "atr_000000000000000000000000MD",
+                "kind": "attr",
+                "name": "elara.mood",
+                "ref": "cmp_00000000000000000000KEEPER"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "string",
+                "value": "calm"
+              }
+            },
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "chat_enter"
+                },
+                {
+                  "attribute": "atr_0000000000000000000000TRST",
+                  "kind": "attr",
+                  "name": "elara.trust",
+                  "ref": "cmp_00000000000000000000KEEPER"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "elara.trust += 1\nelara.mood = \"calm\"\nsignal(\"chat_enter\", elara.trust)"
+      },
+      "position": {
+        "x": 400,
+        "y": 0
+      },
+      "text": {
+        "preview": "Elara is {elara.mood}. Trust: {elara.trust}.",
+        "segments": [
+          {
+            "kind": "mention",
+            "marks": [],
+            "ref": "cmp_00000000000000000000KEEPER",
+            "value": "Elara"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " is "
+          },
+          {
+            "attribute": "atr_000000000000000000000000MD",
+            "kind": "value",
+            "marks": [],
+            "name": "elara.mood",
+            "ref": "cmp_00000000000000000000KEEPER"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": ". Trust: "
+          },
+          {
+            "attribute": "atr_0000000000000000000000TRST",
+            "kind": "value",
+            "marks": [],
+            "name": "elara.trust",
+            "ref": "cmp_00000000000000000000KEEPER"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "."
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_000000000000000000000GATED",
+      "isEnding": false,
+      "kind": "narration",
+      "onExit": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "gated_exit"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"gated_exit\")"
+      },
+      "position": {
+        "x": 800,
+        "y": 0
+      },
+      "text": {
+        "preview": "A locked door.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "A locked door."
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_000000000000000000000START",
+      "isEnding": false,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "+=",
+              "target": {
+                "kind": "var",
+                "name": "gold",
+                "ref": "var_0000000000000000000000CASH"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 1
+              }
+            }
+          ]
+        },
+        "source": "gold += 1"
+      },
+      "onExit": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "left_start"
+                },
+                {
+                  "kind": "var",
+                  "name": "gold",
+                  "ref": "var_0000000000000000000000CASH"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"left_start\", gold)"
+      },
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "text": {
+        "preview": "Hello, {name}. You have {gold} gold.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Hello, "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "name",
+            "ref": "var_0000000000000000000000NAME"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": ". You have "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "gold",
+            "ref": "var_0000000000000000000000CASH"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " gold."
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_00000000000000000000MARKET",
+      "isEnding": false,
+      "kind": "narration",
+      "onExit": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "market_exit"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"market_exit\")"
+      },
+      "position": {
+        "x": 200,
+        "y": 0
+      },
+      "text": {
+        "preview": "You buy a rope.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "You buy a rope."
+          }
+        ]
+      },
+      "type": "element"
+    }
+  ],
+  "schemaVersion": 1
+}

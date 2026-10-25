@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "variables": [
+    {
+      "default": false,
+      "id": "var_00000000000000000000000MET",
+      "key": "met",
+      "scope": "global",
+      "type": "bool"
+    },
+    {
+      "default": 0,
+      "id": "var_0000000000000000000000CASH",
+      "key": "gold",
+      "scope": "global",
+      "type": "int"
+    },
+    {
+      "default": "Ann",
+      "id": "var_0000000000000000000000NAME",
+      "key": "name",
+      "scope": "global",
+      "type": "string"
+    }
+  ]
+}

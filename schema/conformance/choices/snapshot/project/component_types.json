@@ -1,0 +1,41 @@
+{
+  "componentTypes": [
+    {
+      "attributes": [
+        {
+          "default": 0,
+          "id": "atr_0000000000000000000000TRST",
+          "key": "trust",
+          "name": "Trust",
+          "runtime": true,
+          "type": "int"
+        },
+        {
+          "default": "calm",
+          "id": "atr_000000000000000000000000MD",
+          "key": "mood",
+          "name": "Mood",
+          "options": [
+            "calm",
+            "wary",
+            "angry"
+          ],
+          "runtime": true,
+          "type": "enum"
+        },
+        {
+          "default": "",
+          "id": "atr_00000000000000000000000TAG",
+          "key": "title",
+          "name": "Title",
+          "runtime": false,
+          "type": "string"
+        }
+      ],
+      "id": "ct_0000000000000000000000CHAR",
+      "key": "character",
+      "name": "Character"
+    }
+  ],
+  "schemaVersion": 1
+}

@@ -1,0 +1,48 @@
+{
+  "astVersion": 1,
+  "boards": [
+    {
+      "entryNodeId": "nd_000000000000000000000START",
+      "file": "boards/main.json",
+      "id": "bd_0000000000000000000000PAGE",
+      "name": "Main",
+      "slug": "main"
+    }
+  ],
+  "counts": {
+    "boards": 1,
+    "components": 1,
+    "connections": 6,
+    "nodes": 5,
+    "variables": 3
+  },
+  "entry": {
+    "boardId": "bd_0000000000000000000000PAGE",
+    "nodeId": "nd_000000000000000000000START"
+  },
+  "files": {
+    "boards/main.json": "sha256:324aa162c48d3dd50a1d28657ece05bca199464988ea415739924289f3eafe15",
+    "project/component_types.json": "sha256:af14f399069d4842cd347f473a2a2909110551d4020df212b25aa8cb16b5889f",
+    "project/components.json": "sha256:d60daa5d713759fb2a1e15af6cc1cb285929b9cff76ee4d6346a013927adf5f8",
+    "project/settings.json": "sha256:32352c8114265cb42841dad4ce1226bc1d72f63faa6a7888e22f49830fa5bae5",
+    "project/variables.json": "sha256:ed6e082d422c75ab5000f0605bb52c9bbe868499834ed5b1b03c671c24b82ea3"
+  },
+  "generator": {
+    "name": "storycreep",
+    "version": "conformance"
+  },
+  "project": {
+    "id": "prj_000000000000000000000000C1",
+    "name": "Choices",
+    "slug": "choices"
+  },
+  "schemaVersion": 1,
+  "snapshot": {
+    "channel": "release",
+    "contentHash": "sha256:7c6af1611749c987be49f566da0742f745b3d6694eea9ebe28e4e505d1790a3d",
+    "id": "snp_000000000000000000000000C1",
+    "note": "Conformance suite choices",
+    "publishedAt": "2026-10-25T00:00:00Z",
+    "version": "1.0.0"
+  }
+}

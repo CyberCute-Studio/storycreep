@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "variables": [
+    {
+      "default": 0,
+      "id": "var_00000000000000000000000PTS",
+      "key": "score",
+      "scope": "global",
+      "type": "int"
+    }
+  ]
+}

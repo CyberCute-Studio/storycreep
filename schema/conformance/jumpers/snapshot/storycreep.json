@@ -1,0 +1,53 @@
+{
+  "astVersion": 1,
+  "boards": [
+    {
+      "entryNodeId": "nd_00000000000000000000HENTRY",
+      "file": "boards/harbour.json",
+      "id": "bd_00000000000000000000000HRB",
+      "name": "Harbour",
+      "slug": "harbour"
+    },
+    {
+      "entryNodeId": "nd_00000000000000000000BENTRY",
+      "file": "boards/lighthouse.json",
+      "id": "bd_000000000000000000000BEACN",
+      "name": "Lighthouse",
+      "slug": "lighthouse"
+    }
+  ],
+  "counts": {
+    "boards": 2,
+    "components": 0,
+    "connections": 5,
+    "nodes": 7,
+    "variables": 5
+  },
+  "entry": {
+    "boardId": "bd_00000000000000000000000HRB",
+    "nodeId": "nd_00000000000000000000HENTRY"
+  },
+  "files": {
+    "boards/harbour.json": "sha256:8ef1ffd8538a283fd20803cab232835b09c325472909ac7f2d361c7099ae3027",
+    "boards/lighthouse.json": "sha256:1a5650f819c83ecc33d1f37a4420365c67f33d7a9b7191b4150d407c0a1ce2b4",
+    "project/component_types.json": "sha256:99fd222be8c0235a4bd75b47aafa57a60a73adef95093c32ded702b67ae34448",
+    "project/components.json": "sha256:f9a11a36f3448fe6517b9132601ab9e035db61b95efcdca793242f3d24879e8d",
+    "project/settings.json": "sha256:bc7777690205f7d4cfbf7197ae447faebbace51a864aca54aab4433bdd2bd2f7",
+    "project/variables.json": "sha256:8517cb32ecb441aac8ec8352496b2ec381a9346ff4f0bf716dea1f009b9a88d1"
+  },
+  "generator": {
+    "name": "storycreep",
+    "version": "conformance"
+  },
+  "project": {
+    "id": "prj_000000000000000000000000C3",
+    "name": "Jumpers",
+    "slug": "jumpers"
+  },
+  "schemaVersion": 1,
+  "snapshot": {
+    "channel": "draft",
+    "contentHash": "sha256:d7147c8e3ccb795cef6cd7b397cefb879d40c04d7a9924a4e8abbb59d421dbe2",
+    "pulledAt": "2026-10-25T00:00:00Z"
+  }
+}

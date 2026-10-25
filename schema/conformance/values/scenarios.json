@@ -1,0 +1,634 @@
+{
+  "scenarios": [
+    {
+      "note": "PRD §5.8.3: an int is widened where a float is read, and to_int, to_string, and == of an int and a float convert and compare as the language types them",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000CAST"
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000CAST"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000CAST"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "state": {
+            "attributes": {},
+            "cursor": {
+              "boardId": "bd_0000000000000000000000MATH",
+              "nodeId": "nd_0000000000000000000000CAST",
+              "phase": "ended"
+            },
+            "projectId": "prj_000000000000000000000000C4",
+            "schemaVersion": 1,
+            "snapshotId": "snp_000000000000000000000000C4",
+            "snapshotVersion": "1.0.0",
+            "stateVersion": 1,
+            "variables": {
+              "var_000000000000000000000000B1": true,
+              "var_000000000000000000000000F1": 3,
+              "var_000000000000000000000000G1": 0,
+              "var_000000000000000000000000H1": 0,
+              "var_000000000000000000000000N1": 4,
+              "var_000000000000000000000000R1": 0,
+              "var_000000000000000000000000S1": "3.0/4",
+              "var_00000000000000000000000MAX": 9007199254740991
+            },
+            "visits": {
+              "nd_0000000000000000000000CAST": 1
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_0000000000000000000000CAST",
+            "phase": "ended",
+            "text": "f=3.0 i=4 s=3.0/4 ok=true"
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.3, §5.8.7: a division or a modulo by zero is division_by_zero, and yields its type's zero value, which the expression and the script go on with",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000DVZ"
+            },
+            {
+              "at": "nd_00000000000000000000000DVZ",
+              "code": "division_by_zero",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "at": "nd_00000000000000000000000DVZ",
+              "code": "division_by_zero",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "at": "nd_00000000000000000000000DVZ",
+              "code": "division_by_zero",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000DVZ"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000DVZ"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_00000000000000000000000DVZ"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000DVZ",
+            "phase": "ended",
+            "text": "i=5 f=0.5 r=0.0 ok=true"
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.9: an int beyond ±(2^53 − 1) is integer_overflow and yields 0, a product checked before it multiplies, a float's conversion before it converts, and an int widens to a float exactly",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000BEYND"
+            },
+            {
+              "at": "nd_000000000000000000000BEYND",
+              "code": "integer_overflow",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "at": "nd_000000000000000000000BEYND",
+              "code": "integer_overflow",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "at": "nd_000000000000000000000BEYND",
+              "code": "integer_overflow",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "at": "nd_000000000000000000000BEYND",
+              "code": "integer_overflow",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000BEYND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000BEYND"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_000000000000000000000BEYND"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_000000000000000000000BEYND",
+            "phase": "ended",
+            "text": "i=5 s=0 ok=true f=9007199254740992.0"
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.9: to_int and to_float read their exact grammars, conversion_failed beyond them, float_not_finite beyond a double, correctly rounded, and round rounds half away from zero",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000PARSE"
+            },
+            {
+              "at": "nd_000000000000000000000PARSE",
+              "code": "conversion_failed",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "at": "nd_000000000000000000000PARSE",
+              "code": "conversion_failed",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "at": "nd_000000000000000000000PARSE",
+              "code": "float_not_finite",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000PARSE"
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000PARSE"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_000000000000000000000PARSE"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_000000000000000000000PARSE",
+            "phase": "ended",
+            "text": "i=0 f=0.0 ok=true s=-3 -2 9007199254740992.0 r=2.225073858507201e-308"
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.9: strings are code points, cased by simple mappings and trimmed of White_Space by the pinned tables, and compared by code point",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000TEXT"
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000TEXT"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000TEXT"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_0000000000000000000000TEXT"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_0000000000000000000000TEXT",
+            "phase": "ended",
+            "text": "i=2 s=ßAix ok=true"
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.9: a string of more than 4,096 characters is string_too_long and yields the empty string",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000JNR"
+            },
+            {
+              "at": "nd_00000000000000000000000JNR",
+              "code": "string_too_long",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000JNR"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000JNR"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_00000000000000000000000JNR"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000JNR",
+            "phase": "ended",
+            "text": "i=4096 ok=true s=[]"
+          }
+        }
+      ]
+    },
+    {
+      "note": "FR-TEXT-02, PRD §5.8.9: a text's value is shown as to_string writes it, and with a format specifier's digits rounded half away from zero, in positional notation, without the sign of a value that rounds to zero",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000FMT"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000FMT"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000FMT"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_00000000000000000000000FMT"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000FMT",
+            "phase": "ended",
+            "text": "1.01 0.30000000000000004 5.00 1 1e+21 1000000000000000000000.0 0.00 -0.001"
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.9: an int's / truncates toward zero, and % takes the sign of the dividend",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000TRNC"
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000TRNC"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000TRNC"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_0000000000000000000000TRNC"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_0000000000000000000000TRNC",
+            "phase": "ended",
+            "text": "i=-3 s=-1 f=-3.5"
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.4: min, max, abs, and clamp are of their arguments' widened type, clamp is min(max(x, lo), hi), and floor, ceil, len, contains, starts_with, and ends_with",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000FNS"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000FNS"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000FNS"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_00000000000000000000000FNS"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000FNS",
+            "phase": "ended",
+            "text": "f=1.0 i=5 ok=true s=231.5 r=3.5"
+          }
+        }
+      ]
+    },
+    {
+      "note": "FR-GODOT-08 AC2: in non-strict mode, the flow goes on after a runtime error of an expression with its documented fallback, the zero value",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000STRCT"
+            },
+            {
+              "at": "nd_000000000000000000000STRCT",
+              "code": "division_by_zero",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000STRCT"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_000000000000000000000STRCT"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000NXT",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000STRCT",
+            "phase": "awaiting_choice",
+            "text": "ok=true"
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000STRCT"
+            },
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000AFTER"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000AFTER"
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000AFTER"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "advance"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_000000000000000000000AFTER",
+            "phase": "ended",
+            "text": "After."
+          }
+        }
+      ]
+    },
+    {
+      "note": "FR-GODOT-08 AC2: in strict mode, a runtime error of an expression halts the flow once its call has run as in non-strict mode, until reset() clears the halt",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000STRCT"
+            },
+            {
+              "at": "nd_000000000000000000000STRCT",
+              "code": "division_by_zero",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000STRCT"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_000000000000000000000STRCT"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000NXT",
+                "text": ""
+              }
+            ],
+            "halted": true,
+            "node": "nd_000000000000000000000STRCT",
+            "phase": "awaiting_choice",
+            "text": "ok=true"
+          }
+        },
+        {
+          "events": [
+            {
+              "code": "flow_halted",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "call": "advance"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000NXT",
+                "text": ""
+              }
+            ],
+            "halted": true,
+            "node": "nd_000000000000000000000STRCT",
+            "phase": "awaiting_choice",
+            "text": "ok=true"
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000CAST"
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000CAST"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000CAST"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "reset"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_0000000000000000000000CAST",
+            "phase": "ended",
+            "text": "f=3.0 i=4 s=3.0/4 ok=true"
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000STRCT"
+            },
+            {
+              "at": "nd_000000000000000000000STRCT",
+              "code": "division_by_zero",
+              "event": "error",
+              "expression": "onEnter"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000STRCT"
+            }
+          ],
+          "input": {
+            "call": "goto",
+            "node": "nd_000000000000000000000STRCT"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000NXT",
+                "text": ""
+              }
+            ],
+            "halted": true,
+            "node": "nd_000000000000000000000STRCT",
+            "phase": "awaiting_choice",
+            "text": "ok=true"
+          }
+        }
+      ],
+      "strict": true
+    }
+  ]
+}

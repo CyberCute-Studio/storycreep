@@ -1,0 +1,16 @@
+{
+  "entry": {
+    "boardId": "bd_0000000000000000000000RANK",
+    "nodeId": "nd_000000000000000000000START"
+  },
+  "schemaVersion": 1,
+  "signals": [
+    "afb_exit",
+    "gate_enter",
+    "gate_exit",
+    "ncb_exit",
+    "neb_exit",
+    "skipped",
+    "taken"
+  ]
+}

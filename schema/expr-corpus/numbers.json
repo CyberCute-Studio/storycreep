@@ -954,6 +954,138 @@
       "args": [{ "type": "string", "value": "" }],
       "result": { "type": "float", "value": 0.0 },
       "error": "conversion_failed"
+    },
+    {
+      "note": "min of two ints is an int",
+      "op": "min",
+      "args": [{ "type": "int", "value": 3 }, { "type": "int", "value": -2 }],
+      "result": { "type": "int", "value": -2 }
+    },
+    {
+      "note": "max of two ints is an int",
+      "op": "max",
+      "args": [{ "type": "int", "value": 3 }, { "type": "int", "value": -2 }],
+      "result": { "type": "int", "value": 3 }
+    },
+    {
+      "note": "min of an int and a float is a float, the int widened, though the int is the less",
+      "op": "min",
+      "args": [
+        { "type": "int", "value": 1 },
+        { "type": "float", "value": 2.5 }
+      ],
+      "result": { "type": "float", "value": 1.0 }
+    },
+    {
+      "note": "max of an int and a float that are equal is the float's type",
+      "op": "max",
+      "args": [
+        { "type": "int", "value": 2 },
+        { "type": "float", "value": 2.0 }
+      ],
+      "result": { "type": "float", "value": 2.0 }
+    },
+    {
+      "note": "min of two floats",
+      "op": "min",
+      "args": [
+        { "type": "float", "value": -0.5 },
+        { "type": "float", "value": 0.25 }
+      ],
+      "result": { "type": "float", "value": -0.5 }
+    },
+    {
+      "note": "max of the least and the greatest int",
+      "op": "max",
+      "args": [
+        { "type": "int", "value": -9007199254740991 },
+        { "type": "int", "value": 9007199254740991 }
+      ],
+      "result": { "type": "int", "value": 9007199254740991 }
+    },
+    {
+      "note": "abs of a negative int",
+      "op": "abs",
+      "args": [{ "type": "int", "value": -7 }],
+      "result": { "type": "int", "value": 7 }
+    },
+    {
+      "note": "abs of -MAX is MAX, which no int overflows",
+      "op": "abs",
+      "args": [{ "type": "int", "value": -9007199254740991 }],
+      "result": { "type": "int", "value": 9007199254740991 }
+    },
+    {
+      "note": "abs of a float keeps its type",
+      "op": "abs",
+      "args": [{ "type": "float", "value": -2.5 }],
+      "result": { "type": "float", "value": 2.5 }
+    },
+    {
+      "note": "abs of 0.0 is 0.0, never -0",
+      "op": "abs",
+      "args": [{ "type": "float", "value": 0.0 }],
+      "result": { "type": "float", "value": 0.0 }
+    },
+    {
+      "note": "clamp of an int within its bounds is itself",
+      "op": "clamp",
+      "args": [
+        { "type": "int", "value": 5 },
+        { "type": "int", "value": 0 },
+        { "type": "int", "value": 10 }
+      ],
+      "result": { "type": "int", "value": 5 }
+    },
+    {
+      "note": "clamp of an int below its bounds is lo",
+      "op": "clamp",
+      "args": [
+        { "type": "int", "value": -3 },
+        { "type": "int", "value": 0 },
+        { "type": "int", "value": 10 }
+      ],
+      "result": { "type": "int", "value": 0 }
+    },
+    {
+      "note": "clamp of an int above its bounds is hi",
+      "op": "clamp",
+      "args": [
+        { "type": "int", "value": 12 },
+        { "type": "int", "value": 0 },
+        { "type": "int", "value": 10 }
+      ],
+      "result": { "type": "int", "value": 10 }
+    },
+    {
+      "note": "clamp is min(max(x, lo), hi), so hi when lo is greater than hi",
+      "op": "clamp",
+      "args": [
+        { "type": "int", "value": 5 },
+        { "type": "int", "value": 10 },
+        { "type": "int", "value": 0 }
+      ],
+      "result": { "type": "int", "value": 0 }
+    },
+    {
+      "note": "clamp of an int with a float bound is a float",
+      "op": "clamp",
+      "args": [
+        { "type": "int", "value": 5 },
+        { "type": "int", "value": 0 },
+        { "type": "float", "value": 2.5 }
+      ],
+      "result": { "type": "float", "value": 2.5 }
+    },
+    {
+      "note": "clamp of a float within int bounds is the float",
+      "op": "clamp",
+      "args": [
+        { "type": "float", "value": 0.5 },
+        { "type": "int", "value": 0 },
+        { "type": "int", "value": 1 }
+      ],
+      "result": { "type": "float", "value": 0.5 }
     }
   ]
 }

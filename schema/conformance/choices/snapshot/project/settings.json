@@ -1,0 +1,15 @@
+{
+  "entry": {
+    "boardId": "bd_0000000000000000000000PAGE",
+    "nodeId": "nd_000000000000000000000START"
+  },
+  "schemaVersion": 1,
+  "signals": [
+    "asking",
+    "bye_exit",
+    "chat_enter",
+    "gated_exit",
+    "left_start",
+    "market_exit"
+  ]
+}

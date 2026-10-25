@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "variables": [
+    {
+      "boardId": "bd_000000000000000000000BEACN",
+      "default": 0,
+      "id": "var_0000000000000000000000BTMP",
+      "key": "temp",
+      "resetOnEnter": true,
+      "scope": "board",
+      "type": "int"
+    },
+    {
+      "boardId": "bd_00000000000000000000000HRB",
+      "default": 0,
+      "id": "var_0000000000000000000000HTMP",
+      "key": "temp",
+      "resetOnEnter": true,
+      "scope": "board",
+      "type": "int"
+    },
+    {
+      "default": 0,
+      "id": "var_0000000000000000000000TRPS",
+      "key": "trips",
+      "scope": "global",
+      "type": "int"
+    },
+    {
+      "boardId": "bd_000000000000000000000BEACN",
+      "default": 0,
+      "id": "var_000000000000000000000BKEEP",
+      "key": "keep",
+      "scope": "board",
+      "type": "int"
+    },
+    {
+      "boardId": "bd_00000000000000000000000HRB",
+      "default": 0,
+      "id": "var_000000000000000000000HKEEP",
+      "key": "keep",
+      "scope": "board",
+      "type": "int"
+    }
+  ]
+}

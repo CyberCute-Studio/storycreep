@@ -1,0 +1,48 @@
+{
+  "astVersion": 1,
+  "boards": [
+    {
+      "entryNodeId": "nd_000000000000000000000START",
+      "file": "boards/roll.json",
+      "id": "bd_0000000000000000000000RANK",
+      "name": "Roll",
+      "slug": "roll"
+    }
+  ],
+  "counts": {
+    "boards": 1,
+    "components": 0,
+    "connections": 21,
+    "nodes": 13,
+    "variables": 1
+  },
+  "entry": {
+    "boardId": "bd_0000000000000000000000RANK",
+    "nodeId": "nd_000000000000000000000START"
+  },
+  "files": {
+    "boards/roll.json": "sha256:509474ece6168e85ec4678a8af489e1c67cbab7ad996919eb18a5914c4aa357d",
+    "project/component_types.json": "sha256:99fd222be8c0235a4bd75b47aafa57a60a73adef95093c32ded702b67ae34448",
+    "project/components.json": "sha256:f9a11a36f3448fe6517b9132601ab9e035db61b95efcdca793242f3d24879e8d",
+    "project/settings.json": "sha256:a8723b8ce32127cbec9e27e4cd0258f9d1f12aca1566304af9f4e89b68f7098f",
+    "project/variables.json": "sha256:fecab8043f24baf870dc8ea1a2bf6d82a6e114b6764deebdc1fe61843f82b238"
+  },
+  "generator": {
+    "name": "storycreep",
+    "version": "conformance"
+  },
+  "project": {
+    "id": "prj_000000000000000000000000C2",
+    "name": "Branches",
+    "slug": "branches"
+  },
+  "schemaVersion": 1,
+  "snapshot": {
+    "channel": "release",
+    "contentHash": "sha256:3f34bfa7fac0bd2805b3c6f190dd8ee0cc67d4658b8f3ad79049050f5c1f3cc5",
+    "id": "snp_000000000000000000000000C2",
+    "note": "Conformance suite branches",
+    "publishedAt": "2026-10-25T00:00:00Z",
+    "version": "1.0.0"
+  }
+}

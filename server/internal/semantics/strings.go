@@ -14,6 +14,21 @@ func Len(s string) int {
 	return utf8.RuneCountInString(s)
 }
 
+// Concat returns a + b, the strings one after the other, as + of two strings
+// does (§5.8.3), or StringTooLong and "" when that has more than
+// MaxStringLength code points, so that no script, however many of its
+// statements double a string, builds one longer than a string literal may be,
+// nor one that a runtime's memory cannot hold: a script of 64 statements that
+// each double a string would otherwise build one of 2^64 times its length. It
+// counts code points, as Len does, so that "😀", one code point, two UTF-16
+// code units, and four bytes, counts as one.
+func Concat(a, b string) (string, RuntimeError) {
+	if Len(a)+Len(b) > MaxStringLength {
+		return "", StringTooLong
+	}
+	return a + b, ""
+}
+
 // Compare returns -1, 0, or +1 as a is before, equal to, or after b, in the
 // lexicographic order of their code points, as <, <=, >, and >= compare
 // strings (§5.8.3, §5.8.9), which the order of their UTF-8 bytes is: the

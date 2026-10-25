@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "variables": [
+    {
+      "default": false,
+      "id": "var_000000000000000000000000B1",
+      "key": "ok",
+      "scope": "global",
+      "type": "bool"
+    },
+    {
+      "default": 0,
+      "id": "var_000000000000000000000000F1",
+      "key": "f",
+      "scope": "global",
+      "type": "float"
+    },
+    {
+      "default": 0,
+      "id": "var_000000000000000000000000G1",
+      "key": "g",
+      "scope": "global",
+      "type": "float"
+    },
+    {
+      "default": 0,
+      "id": "var_000000000000000000000000H1",
+      "key": "h",
+      "scope": "global",
+      "type": "float"
+    },
+    {
+      "default": 0,
+      "id": "var_000000000000000000000000N1",
+      "key": "i",
+      "scope": "global",
+      "type": "int"
+    },
+    {
+      "default": 0,
+      "id": "var_000000000000000000000000R1",
+      "key": "r",
+      "scope": "global",
+      "type": "float"
+    },
+    {
+      "default": "",
+      "id": "var_000000000000000000000000S1",
+      "key": "s",
+      "scope": "global",
+      "type": "string"
+    },
+    {
+      "default": 9007199254740991,
+      "id": "var_00000000000000000000000MAX",
+      "key": "big",
+      "scope": "global",
+      "type": "int"
+    }
+  ]
+}

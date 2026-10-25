@@ -1,0 +1,216 @@
+{
+  "board": {
+    "entryNodeId": "nd_00000000000000000000000HVB",
+    "id": "bd_0000000000000000000000MEET",
+    "name": "Meeting",
+    "slug": "meet"
+  },
+  "connections": [
+    {
+      "condition": {
+        "ast": {
+          "kind": "unary",
+          "op": "not",
+          "operand": {
+            "args": [
+              {
+                "kind": "node_ref",
+                "ref": "nd_000000000000000000000ASKED"
+              }
+            ],
+            "function": "visited",
+            "kind": "call"
+          }
+        },
+        "source": "not visited(node(\"nd_000000000000000000000ASKED\"))"
+      },
+      "from": "nd_00000000000000000000000HVB",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000ASK",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Ask"
+          }
+        ]
+      },
+      "order": 0,
+      "to": "nd_000000000000000000000ASKED"
+    },
+    {
+      "from": "nd_000000000000000000000ASKED",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000RET",
+      "order": 0,
+      "to": "nd_00000000000000000000000HVB"
+    },
+    {
+      "condition": {
+        "ast": {
+          "kind": "binary",
+          "left": {
+            "args": [
+              {
+                "kind": "node_ref",
+                "ref": "nd_00000000000000000000000HVB"
+              }
+            ],
+            "function": "visits",
+            "kind": "call"
+          },
+          "op": "lt",
+          "right": {
+            "kind": "lit",
+            "type": "int",
+            "value": 3
+          }
+        },
+        "source": "visits(node(\"nd_00000000000000000000000HVB\")) < 3"
+      },
+      "from": "nd_00000000000000000000000HVB",
+      "fromPort": "out",
+      "id": "cn_0000000000000000000000STAY",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Wait"
+          }
+        ]
+      },
+      "order": 1,
+      "to": "nd_00000000000000000000000HVB"
+    },
+    {
+      "from": "nd_00000000000000000000000HVB",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000DEPART",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Leave"
+          }
+        ]
+      },
+      "order": 2,
+      "to": "nd_0000000000000000000000AWAY"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "nd_00000000000000000000000HVB",
+      "isEnding": false,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "seen",
+                "ref": "var_0000000000000000000000000V"
+              },
+              "value": {
+                "args": [
+                  {
+                    "kind": "node_ref",
+                    "ref": "nd_00000000000000000000000HVB"
+                  }
+                ],
+                "function": "visits",
+                "kind": "call"
+              }
+            }
+          ]
+        },
+        "source": "seen = visits(node(\"nd_00000000000000000000000HVB\"))"
+      },
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "text": {
+        "preview": "Visit {seen}.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Visit "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "seen",
+            "ref": "var_0000000000000000000000000V"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "."
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_0000000000000000000000AWAY",
+      "isEnding": true,
+      "kind": "narration",
+      "position": {
+        "x": 400,
+        "y": 0
+      },
+      "text": {
+        "preview": "You leave after {seen} visits.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "You leave after "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "seen",
+            "ref": "var_0000000000000000000000000V"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " visits."
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_000000000000000000000ASKED",
+      "isEnding": false,
+      "kind": "narration",
+      "position": {
+        "x": 200,
+        "y": 0
+      },
+      "text": {
+        "preview": "She tells you of the light.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "She tells you of the light."
+          }
+        ]
+      },
+      "type": "element"
+    }
+  ],
+  "schemaVersion": 1
+}

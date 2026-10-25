@@ -1,0 +1,11 @@
+{
+  "entry": {
+    "boardId": "bd_00000000000000000000000HRB",
+    "nodeId": "nd_00000000000000000000HENTRY"
+  },
+  "schemaVersion": 1,
+  "signals": [
+    "broken_traverse",
+    "harbour_exit"
+  ]
+}

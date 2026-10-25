@@ -26,6 +26,11 @@ package semantics
 // int, and every int widens to a float exactly (PRD §5.8.1, §5.8.9).
 const MaxInt = 1<<53 - 1
 
+// MaxStringLength is the most code points that a string may have, as a
+// string literal may (PRD §5.8.1), and as a string result may, which a longer
+// one is StringTooLong (Concat).
+const MaxStringLength = 4096
+
 // MaxDecimals is the most digits after the point that an interpolation
 // format specifier shows a number with (FR-TEXT-02), as a text value
 // reference's decimals, from 0 to MaxDecimals, does (FormatFixed).
@@ -48,4 +53,7 @@ const (
 	// ConversionFailed is a string that to_int or to_float does not read,
 	// as one outside its grammar.
 	ConversionFailed RuntimeError = "conversion_failed"
+	// StringTooLong is a string result of more than MaxStringLength code
+	// points, which only + of two strings can give.
+	StringTooLong RuntimeError = "string_too_long"
 )

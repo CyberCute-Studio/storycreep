@@ -293,6 +293,14 @@ func (sg *segmenter) inlines(inlines []Inline) {
 // indented by two spaces for each depth, as far as a bulleted item's text
 // but not a numbered one's.
 func PlainText(segs []Segment) string {
+	return Render(segs, func(s Segment) string { return "{" + s.Name + "}" })
+}
+
+// Render returns the text of a document's segments as PlainText lays it out,
+// but each value as value writes it, as a runtime shows the text of a node
+// or of a choice with its values resolved (FR-TEXT-02, PRD §5.8.5), rather
+// than as its name in braces.
+func Render(segs []Segment, value func(Segment) string) string {
 	var b strings.Builder
 	depth := 0
 	for i, s := range segs {
@@ -300,7 +308,7 @@ func PlainText(segs []Segment) string {
 		case SegmentText, SegmentMention:
 			b.WriteString(s.Value)
 		case SegmentValue:
-			b.WriteString("{" + s.Name + "}")
+			b.WriteString(value(s))
 		case SegmentBreak:
 			b.WriteByte('\n')
 			b.WriteString(indent(depth))

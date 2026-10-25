@@ -72,14 +72,20 @@ type Project struct {
 	// boardsOf are the boards that have a variable of each key.
 	boardsOf   map[string][]string
 	components map[string]*component
+	// variables and componentIDs are the variables and the components by
+	// their IDs, by which CheckResolved reads a name.
+	variables    map[string]*Variable
+	componentIDs map[string]*component
 	// nodes say of each node, by its ID, whether it is a jumper.
 	nodes map[string]bool
 }
 
-// component is a Component and its attributes by their keys.
+// component is a Component and its attributes by their keys, and by their
+// definitions' IDs.
 type component struct {
 	Component
 	attributes map[string]*Attribute
+	byID       map[string]*Attribute
 }
 
 // ErrProject is NewProject's error for what is not a project's: an ID that is
@@ -100,6 +106,9 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 		boardsOf:   make(map[string][]string),
 		components: make(map[string]*component),
 		nodes:      make(map[string]bool),
+
+		variables:    make(map[string]*Variable),
+		componentIDs: make(map[string]*component),
 	}
 	// seen are the IDs of the variables, the components, and the nodes, and
 	// definitions the attribute definitions by theirs, which the components
@@ -142,6 +151,7 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 			return nil, fmt.Errorf("%w: two variables of one scope have the key %s", ErrProject, v.Key)
 		}
 		scope[v.Key] = &v
+		p.variables[v.ID] = &v
 	}
 	for _, c := range components {
 		if err := id(ids.Component, c.ID); err != nil {
@@ -154,7 +164,7 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 			return nil, fmt.Errorf("%w: two components have the key %s", ErrProject, c.Key)
 		}
 		e := &component{Component: Component{ID: c.ID, Key: c.Key, Attributes: slices.Clone(c.Attributes)},
-			attributes: make(map[string]*Attribute)}
+			attributes: make(map[string]*Attribute), byID: make(map[string]*Attribute)}
 		listed := make(map[string]bool)
 		for i := range e.Attributes {
 			a := &e.Attributes[i]
@@ -193,8 +203,10 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 			a.Options = slices.Clone(a.Options)
 			definitions[a.ID] = a
 			e.attributes[a.Key] = a
+			e.byID[a.ID] = a
 		}
 		p.components[c.Key] = e
+		p.componentIDs[c.ID] = e
 	}
 	for _, n := range nodes {
 		if err := id(ids.Node, n.ID); err != nil {

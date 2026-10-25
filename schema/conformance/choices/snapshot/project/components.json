@@ -1,0 +1,16 @@
+{
+  "components": [
+    {
+      "attributes": {
+        "atr_000000000000000000000000MD": "wary",
+        "atr_00000000000000000000000TAG": "Keeper",
+        "atr_0000000000000000000000TRST": 1
+      },
+      "componentTypeId": "ct_0000000000000000000000CHAR",
+      "id": "cmp_00000000000000000000KEEPER",
+      "key": "elara",
+      "name": "Elara"
+    }
+  ],
+  "schemaVersion": 1
+}

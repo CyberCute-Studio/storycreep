@@ -1,0 +1,48 @@
+{
+  "astVersion": 1,
+  "boards": [
+    {
+      "entryNodeId": "nd_00000000000000000000000HVB",
+      "file": "boards/meet.json",
+      "id": "bd_0000000000000000000000MEET",
+      "name": "Meeting",
+      "slug": "meet"
+    }
+  ],
+  "counts": {
+    "boards": 1,
+    "components": 0,
+    "connections": 4,
+    "nodes": 3,
+    "variables": 1
+  },
+  "entry": {
+    "boardId": "bd_0000000000000000000000MEET",
+    "nodeId": "nd_00000000000000000000000HVB"
+  },
+  "files": {
+    "boards/meet.json": "sha256:40fda7beaffd7b417ba0106bf3d601075081a2f6249cc72c8d12c1a4b02dd2a9",
+    "project/component_types.json": "sha256:99fd222be8c0235a4bd75b47aafa57a60a73adef95093c32ded702b67ae34448",
+    "project/components.json": "sha256:f9a11a36f3448fe6517b9132601ab9e035db61b95efcdca793242f3d24879e8d",
+    "project/settings.json": "sha256:6d256806f5915236516e628d72f78bbdf976ad951725596ca7574f8ef0f260ec",
+    "project/variables.json": "sha256:18ecf45db53365393d6ca1d686ee2e24bf9e716579e113441df489e9a7e260bc"
+  },
+  "generator": {
+    "name": "storycreep",
+    "version": "conformance"
+  },
+  "project": {
+    "id": "prj_000000000000000000000000C5",
+    "name": "Visits",
+    "slug": "visits"
+  },
+  "schemaVersion": 1,
+  "snapshot": {
+    "channel": "release",
+    "contentHash": "sha256:05b0aac9bf36b158189422c8079a6129f572ba2c8f4f697f7c21196c5703df2d",
+    "id": "snp_000000000000000000000000C5",
+    "note": "Conformance suite visits",
+    "publishedAt": "2026-10-25T00:00:00Z",
+    "version": "1.0.0"
+  }
+}

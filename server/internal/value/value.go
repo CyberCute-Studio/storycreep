@@ -50,8 +50,9 @@ const (
 	// expression language's (semantics.MaxInt).
 	MaxInt = semantics.MaxInt
 	// MaxStringLength is the most characters that a string may have, as a
-	// string literal of the expression language may.
-	MaxStringLength = 4096
+	// string literal of the expression language may, and a string that an
+	// expression computes (semantics.MaxStringLength).
+	MaxStringLength = semantics.MaxStringLength
 	// MaxTextLength is the most characters that a text may have.
 	MaxTextLength = 100_000
 	// MaxOptions is the most options that an enum may have, and

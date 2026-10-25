@@ -2,12 +2,12 @@
 
 Cases of the expression language that every implementation of it runs, so that the evaluators, Go, TypeScript, and GDScript, give the same result for the same expression (PRD §5.8.9, plan note N46), and the parsers, Go and TypeScript, read every source alike, and their checkers compile it alike (FR-EXPR-02, plan notes N47 and N48). Where a platform's own operation differs, as JavaScript's `Math.round`, `toFixed`, `.length`, and `<` on strings, GDScript's `String.to_float()`, or an int64 product that wraps, a case says what the language computes instead.
 
-The Go package `server/internal/semantics` runs every case of an operation (`TestCorpus`), and so will the TypeScript engine (plan item 44) and the GDScript evaluator (item 103). The Go package `server/internal/expr` runs every case of the parser (`TestSyntaxCorpus`) and of the checker (`TestCompileCorpus`), and so will the TypeScript parser and checker (item 44).
+The Go package `server/internal/semantics` runs every case of an operation against its primitives (`TestCorpus`), and the Go evaluator runs them too, `server/internal/expr` each but those of `interpolate` as an AST of the case's operator or built-in of literals (`TestEvaluatorCorpus`), and `server/internal/flow` those of `interpolate` as it shows a text's value (`TestInterpolate`); so will the TypeScript engine (plan item 44) and the GDScript evaluator (item 103). The Go package `server/internal/expr` runs every case of the parser (`TestSyntaxCorpus`) and of the checker (`TestCompileCorpus`), and so will the TypeScript parser and checker (item 44).
 
 | File | Cases of |
 | --- | --- |
-| [`numbers.json`](numbers.json) | `int` and `float` arithmetic, with their overflow, `float_not_finite`, and division by zero; the conversion of a float to an int, `to_int`, `floor`, `ceil`, and `round`; and `to_int` and `to_float` of a string. |
-| [`strings.json`](strings.json) | `len`, comparison, concatenation, `contains`, `starts_with`, and `ends_with`, all of code points, and `upper`, `lower`, and `trim` by the tables of [`../unicode/`](../unicode/). |
+| [`numbers.json`](numbers.json) | `int` and `float` arithmetic, with their overflow, `float_not_finite`, and division by zero; the conversion of a float to an int, `to_int`, `floor`, `ceil`, and `round`; `to_int` and `to_float` of a string; and `min`, `max`, `abs`, and `clamp`. |
+| [`strings.json`](strings.json) | `len`, comparison, concatenation and its bound, `contains`, `starts_with`, and `ends_with`, all of code points, and `upper`, `lower`, and `trim` by the tables of [`../unicode/`](../unicode/). |
 | [`formatting.json`](formatting.json) | `to_string`, and how a text value reference shows a value, with and without a format specifier (FR-TEXT-02). |
 | [`syntax.json`](syntax.json) | The parser: a condition's or a script's source, and the AST or the error that it gives, of each token, operator, and form of the grammar, and of each error (§5.8.1, §5.8.2, §5.8.8). Its format is [its own](#a-case-of-the-parser). |
 | [`compile.json`](compile.json) | The checker: a source on a board of a project, and the AST that it compiles to, its names resolved, or the error that it gives, of each form of a name, each operator's and built-in's types, each rule of purity, each limit of the sandbox, and each error (§5.8.3–§5.8.6). Its format is [its own](#a-case-of-the-checker). |
@@ -47,9 +47,12 @@ An operation takes the types that the language's type checker gives it (§5.8.3)
 | `op` | Arguments | Result |
 | --- | --- | --- |
 | `+`, `-`, `*`, `/` | two numbers | an `int` of two `int`s, otherwise a `float`. `/` of two `int`s truncates toward zero. |
-| `+` | two strings | their concatenation |
+| `+` | two strings | their concatenation, of at most 4,096 code points, or `""` beyond them |
 | `%` | two `int`s | the remainder, with the sign of the dividend |
 | `-` | one number | its negation |
+| `min`, `max` | two numbers | the lesser or the greater, of the widened type of both: an `int` of two `int`s, otherwise a `float` |
+| `abs` | one number | its magnitude, of its type |
+| `clamp` | three numbers, `x`, `lo`, and `hi` | `min(max(x, lo), hi)`, of the widened type of all three, so `hi` when `lo` is greater than `hi` |
 | `==`, `!=` | two values of one type after widening | a `bool` |
 | `<`, `<=`, `>`, `>=` | two numbers, or two strings, compared by code point | a `bool` |
 | `to_int` | a `float`, truncated toward zero, or a `string` | an `int` |
@@ -69,6 +72,7 @@ An operation takes the types that the language's type checker gives it (§5.8.3)
 | `float_not_finite` | A `float` result overflows a double, or `to_float` of a string does. |
 | `division_by_zero` | `/` by `0` or `0.0`, or `%` by `0`. |
 | `conversion_failed` | `to_int` or `to_float` of a string outside its grammar. |
+| `string_too_long` | `+` of strings whose concatenation has more than 4,096 code points, as no string literal may (PRD §5.8.1, §5.8.3). |
 
 ## A case of the parser
 

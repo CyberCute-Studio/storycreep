@@ -82,6 +82,34 @@ func Compile(source string, ctx Context, p *Project, board string) (Node, error)
 // Every AST that it accepts, Encode writes. It reads at most MaxNodes + 1
 // nodes of n, and recurses at most MaxDepth deep, whatever n is.
 func Check(n Node, ctx Context, p *Project, board string) error {
+	return checkAST(n, ctx, p, board, false)
+}
+
+// CheckResolved checks n, an AST whose names are resolved, as Decode returns
+// a published one, as Check checks the AST that Parse returns, but for how it
+// reads a name: by its refs, as a runtime's loader checks the ASTs of a
+// snapshot against the snapshot's declarations (schema/published/README.md),
+// rather than anew by its keys, which may name another entity, as a bare key
+// names the board's variable of a global one's key. A variable's Ref names a
+// variable of p, global or of the board, or the error is UnknownIdentifier, or
+// BoardVariableOutOfScope for another board's; an attribute's Ref names a
+// component of p, or the error is UnknownIdentifier, and its Attribute one of
+// the component's attributes, or the error is UnknownAttribute, which is
+// runtime, or the error is AttributeNotRuntime; and a node reference's Ref a
+// node of p that is no jumper, as Check reads it. Each error has no
+// suggestions, and is over the node's range, which a decoded AST does not
+// set. It sets nothing of n, whose names are resolved already: it reads
+// neither a name's keys nor its Name, which a published AST holds for
+// debugging alone (§5.8.8), nor a variable's Scope. It returns what Check
+// returns of a ctx, a board, or an n that Check refuses for them, and reads
+// n's limits, types, and purity as Check does.
+func CheckResolved(n Node, ctx Context, p *Project, board string) error {
+	return checkAST(n, ctx, p, board, true)
+}
+
+// checkAST is Check, which reads each name by its keys, or CheckResolved, by
+// its refs, as refs says.
+func checkAST(n Node, ctx Context, p *Project, board string, refs bool) error {
 	if ctx != ContextCondition && ctx != ContextScript {
 		return fmt.Errorf("%w: %q", ErrContext, ctx)
 	}
@@ -97,7 +125,7 @@ func Check(n Node, ctx Context, p *Project, board string) error {
 	if err := limits(n, ctx); err != nil {
 		return err
 	}
-	c := &checker{ctx: ctx, p: p, board: board}
+	c := &checker{ctx: ctx, p: p, board: board, refs: refs}
 	if err := c.root(n); err != nil {
 		return err
 	}
@@ -199,6 +227,8 @@ type checker struct {
 	ctx   Context
 	p     *Project
 	board string
+	// refs is set for CheckResolved, which reads each name by its refs.
+	refs bool
 	// resolved are what the checker sets of the AST's names, which Check
 	// does once it has met no error.
 	resolved []resolution
@@ -467,6 +497,16 @@ func (c *checker) resolve(n Node, name, ref, attribute string) {
 // variable, board.<key> one of the board, and a bare key the board's, a
 // global one, or else a component, which is no value.
 func (c *checker) variable(n *Var) (*Variable, error) {
+	if c.refs {
+		v := c.p.variables[n.Ref]
+		switch {
+		case v == nil:
+			return nil, &Error{Code: UnknownIdentifier, Range: n.Src}
+		case v.Board != "" && v.Board != c.board:
+			return nil, &Error{Code: BoardVariableOutOfScope, Range: n.Src}
+		}
+		return v, nil
+	}
 	var v *Variable
 	switch n.Scope {
 	case ScopeGlobal:
@@ -527,6 +567,20 @@ func (c *checker) shadowed(key string) bool {
 // unless a variable has the component's key, as cmp.<component>.<attribute>
 // names it whatever has.
 func (c *checker) attribute(n *Attr) (*Attribute, error) {
+	if c.refs {
+		comp := c.p.componentIDs[n.Ref]
+		if comp == nil {
+			return nil, &Error{Code: UnknownIdentifier, Range: n.Src}
+		}
+		a := comp.byID[n.Attribute]
+		switch {
+		case a == nil:
+			return nil, &Error{Code: UnknownAttribute, Range: n.Src}
+		case !a.Runtime:
+			return nil, &Error{Code: AttributeNotRuntime, Range: n.Src}
+		}
+		return a, nil
+	}
 	// qualifier is how the name is written before the component's key.
 	qualifier := ""
 	if n.Explicit {

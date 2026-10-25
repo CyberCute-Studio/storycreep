@@ -1,0 +1,2025 @@
+{
+  "scenarios": [
+    {
+      "note": "FR-EDIT-04: a branch picks its first output whose condition holds, and goes on by itself by the first connection of the output whose condition holds: the branch's on-exit, then that connection's on-traverse, without awaiting a choice",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000HGH",
+                "text": "High"
+              },
+              {
+                "id": "cn_00000000000000000000000MDD",
+                "text": "Mid"
+              },
+              {
+                "id": "cn_00000000000000000000000SMA",
+                "text": "Low"
+              },
+              {
+                "id": "cn_00000000000000000000000NEC",
+                "text": "No else"
+              },
+              {
+                "id": "cn_00000000000000000000000NCC",
+                "text": "Unconnected"
+              },
+              {
+                "id": "cn_00000000000000000000000AFC",
+                "text": "All false"
+              },
+              {
+                "id": "cn_00000000000000000000000RPT",
+                "text": "Loop"
+              },
+              {
+                "id": "cn_00000000000000000000000FVR",
+                "text": "Forever"
+              },
+              {
+                "id": "cn_00000000000000000000000CHN",
+                "text": "Chain"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Roll the dice."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000GATE"
+            },
+            {
+              "event": "signal",
+              "name": "gate_enter",
+              "value": {
+                "type": "int",
+                "value": 10
+              }
+            },
+            {
+              "event": "signal",
+              "name": "gate_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000GATE"
+            },
+            {
+              "event": "signal",
+              "name": "taken"
+            },
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000BEST"
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000BEST"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000BEST"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000HGH"
+          },
+          "state": {
+            "attributes": {},
+            "cursor": {
+              "boardId": "bd_0000000000000000000000RANK",
+              "nodeId": "nd_0000000000000000000000BEST",
+              "phase": "ended"
+            },
+            "projectId": "prj_000000000000000000000000C2",
+            "schemaVersion": 1,
+            "snapshotId": "snp_000000000000000000000000C2",
+            "snapshotVersion": "1.0.0",
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000PTS": 10
+            },
+            "visits": {
+              "nd_0000000000000000000000BEST": 1,
+              "nd_0000000000000000000000GATE": 1,
+              "nd_000000000000000000000START": 1
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_0000000000000000000000BEST",
+            "phase": "ended",
+            "text": "You win with 10."
+          }
+        }
+      ]
+    },
+    {
+      "note": "FR-EDIT-04: a branch picks its elseif when its if's condition does not hold",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000HGH",
+                "text": "High"
+              },
+              {
+                "id": "cn_00000000000000000000000MDD",
+                "text": "Mid"
+              },
+              {
+                "id": "cn_00000000000000000000000SMA",
+                "text": "Low"
+              },
+              {
+                "id": "cn_00000000000000000000000NEC",
+                "text": "No else"
+              },
+              {
+                "id": "cn_00000000000000000000000NCC",
+                "text": "Unconnected"
+              },
+              {
+                "id": "cn_00000000000000000000000AFC",
+                "text": "All false"
+              },
+              {
+                "id": "cn_00000000000000000000000RPT",
+                "text": "Loop"
+              },
+              {
+                "id": "cn_00000000000000000000000FVR",
+                "text": "Forever"
+              },
+              {
+                "id": "cn_00000000000000000000000CHN",
+                "text": "Chain"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Roll the dice."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000GATE"
+            },
+            {
+              "event": "signal",
+              "name": "gate_enter",
+              "value": {
+                "type": "int",
+                "value": 5
+              }
+            },
+            {
+              "event": "signal",
+              "name": "gate_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000GATE"
+            },
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000EVEN"
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000EVEN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000EVEN"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000MDD"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_0000000000000000000000EVEN",
+            "phase": "ended",
+            "text": "A draw."
+          }
+        }
+      ]
+    },
+    {
+      "note": "FR-EDIT-04: a branch picks its else when no other output's condition holds",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000HGH",
+                "text": "High"
+              },
+              {
+                "id": "cn_00000000000000000000000MDD",
+                "text": "Mid"
+              },
+              {
+                "id": "cn_00000000000000000000000SMA",
+                "text": "Low"
+              },
+              {
+                "id": "cn_00000000000000000000000NEC",
+                "text": "No else"
+              },
+              {
+                "id": "cn_00000000000000000000000NCC",
+                "text": "Unconnected"
+              },
+              {
+                "id": "cn_00000000000000000000000AFC",
+                "text": "All false"
+              },
+              {
+                "id": "cn_00000000000000000000000RPT",
+                "text": "Loop"
+              },
+              {
+                "id": "cn_00000000000000000000000FVR",
+                "text": "Forever"
+              },
+              {
+                "id": "cn_00000000000000000000000CHN",
+                "text": "Chain"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Roll the dice."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000GATE"
+            },
+            {
+              "event": "signal",
+              "name": "gate_enter",
+              "value": {
+                "type": "int",
+                "value": 1
+              }
+            },
+            {
+              "event": "signal",
+              "name": "gate_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000GATE"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000BAD"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000BAD"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000BAD"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000SMA"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000BAD",
+            "phase": "ended",
+            "text": "You lose."
+          }
+        }
+      ]
+    },
+    {
+      "note": "FR-EDIT-04 AC1: at a branch whose conditions are all false and which has no else, the flow ends, a dead end: the branch's ready, then its on-exit, then the end",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000HGH",
+                "text": "High"
+              },
+              {
+                "id": "cn_00000000000000000000000MDD",
+                "text": "Mid"
+              },
+              {
+                "id": "cn_00000000000000000000000SMA",
+                "text": "Low"
+              },
+              {
+                "id": "cn_00000000000000000000000NEC",
+                "text": "No else"
+              },
+              {
+                "id": "cn_00000000000000000000000NCC",
+                "text": "Unconnected"
+              },
+              {
+                "id": "cn_00000000000000000000000AFC",
+                "text": "All false"
+              },
+              {
+                "id": "cn_00000000000000000000000RPT",
+                "text": "Loop"
+              },
+              {
+                "id": "cn_00000000000000000000000FVR",
+                "text": "Forever"
+              },
+              {
+                "id": "cn_00000000000000000000000CHN",
+                "text": "Chain"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Roll the dice."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000NEB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000NEB"
+            },
+            {
+              "event": "signal",
+              "name": "neb_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000NEB"
+            },
+            {
+              "event": "end",
+              "reason": "dead_end"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000NEC"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000NEB",
+            "phase": "ended",
+            "text": ""
+          }
+        }
+      ]
+    },
+    {
+      "note": "at a branch whose picked output no connection leaves, the flow ends, a dead end",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000HGH",
+                "text": "High"
+              },
+              {
+                "id": "cn_00000000000000000000000MDD",
+                "text": "Mid"
+              },
+              {
+                "id": "cn_00000000000000000000000SMA",
+                "text": "Low"
+              },
+              {
+                "id": "cn_00000000000000000000000NEC",
+                "text": "No else"
+              },
+              {
+                "id": "cn_00000000000000000000000NCC",
+                "text": "Unconnected"
+              },
+              {
+                "id": "cn_00000000000000000000000AFC",
+                "text": "All false"
+              },
+              {
+                "id": "cn_00000000000000000000000RPT",
+                "text": "Loop"
+              },
+              {
+                "id": "cn_00000000000000000000000FVR",
+                "text": "Forever"
+              },
+              {
+                "id": "cn_00000000000000000000000CHN",
+                "text": "Chain"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Roll the dice."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000NCB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000NCB"
+            },
+            {
+              "event": "signal",
+              "name": "ncb_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000NCB"
+            },
+            {
+              "event": "end",
+              "reason": "dead_end"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000NCC"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000NCB",
+            "phase": "ended",
+            "text": ""
+          }
+        }
+      ]
+    },
+    {
+      "note": "at a branch whose picked output's connections' conditions are all false, the flow ends with no_choices",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000HGH",
+                "text": "High"
+              },
+              {
+                "id": "cn_00000000000000000000000MDD",
+                "text": "Mid"
+              },
+              {
+                "id": "cn_00000000000000000000000SMA",
+                "text": "Low"
+              },
+              {
+                "id": "cn_00000000000000000000000NEC",
+                "text": "No else"
+              },
+              {
+                "id": "cn_00000000000000000000000NCC",
+                "text": "Unconnected"
+              },
+              {
+                "id": "cn_00000000000000000000000AFC",
+                "text": "All false"
+              },
+              {
+                "id": "cn_00000000000000000000000RPT",
+                "text": "Loop"
+              },
+              {
+                "id": "cn_00000000000000000000000FVR",
+                "text": "Forever"
+              },
+              {
+                "id": "cn_00000000000000000000000CHN",
+                "text": "Chain"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Roll the dice."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000AFB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000AFB"
+            },
+            {
+              "event": "signal",
+              "name": "afb_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000AFB"
+            },
+            {
+              "event": "end",
+              "reason": "no_choices"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000AFC"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000AFB",
+            "phase": "ended",
+            "text": ""
+          }
+        }
+      ]
+    },
+    {
+      "note": "a cycle of branches goes round until a condition that its scripts change fails, each pass a visit of the branch",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000HGH",
+                "text": "High"
+              },
+              {
+                "id": "cn_00000000000000000000000MDD",
+                "text": "Mid"
+              },
+              {
+                "id": "cn_00000000000000000000000SMA",
+                "text": "Low"
+              },
+              {
+                "id": "cn_00000000000000000000000NEC",
+                "text": "No else"
+              },
+              {
+                "id": "cn_00000000000000000000000NCC",
+                "text": "Unconnected"
+              },
+              {
+                "id": "cn_00000000000000000000000AFC",
+                "text": "All false"
+              },
+              {
+                "id": "cn_00000000000000000000000RPT",
+                "text": "Loop"
+              },
+              {
+                "id": "cn_00000000000000000000000FVR",
+                "text": "Forever"
+              },
+              {
+                "id": "cn_00000000000000000000000CHN",
+                "text": "Chain"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Roll the dice."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000CYC"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000CYC"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000CYC"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000CYC"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000CYC"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000CYC"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000END"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000END"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000END"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000RPT"
+          },
+          "state": {
+            "attributes": {},
+            "cursor": {
+              "boardId": "bd_0000000000000000000000RANK",
+              "nodeId": "nd_00000000000000000000000END",
+              "phase": "ended"
+            },
+            "projectId": "prj_000000000000000000000000C2",
+            "schemaVersion": 1,
+            "snapshotId": "snp_000000000000000000000000C2",
+            "snapshotVersion": "1.0.0",
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000PTS": 3
+            },
+            "visits": {
+              "nd_00000000000000000000000CYC": 3,
+              "nd_00000000000000000000000END": 1,
+              "nd_000000000000000000000START": 1
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000END",
+            "phase": "ended",
+            "text": "Looped 3 times."
+          }
+        }
+      ]
+    },
+    {
+      "note": "a cycle of branches whose conditions always hold ends once the flow has passed through 100 branches in one call: flow_loop, then a dead end at the branch",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000HGH",
+                "text": "High"
+              },
+              {
+                "id": "cn_00000000000000000000000MDD",
+                "text": "Mid"
+              },
+              {
+                "id": "cn_00000000000000000000000SMA",
+                "text": "Low"
+              },
+              {
+                "id": "cn_00000000000000000000000NEC",
+                "text": "No else"
+              },
+              {
+                "id": "cn_00000000000000000000000NCC",
+                "text": "Unconnected"
+              },
+              {
+                "id": "cn_00000000000000000000000AFC",
+                "text": "All false"
+              },
+              {
+                "id": "cn_00000000000000000000000RPT",
+                "text": "Loop"
+              },
+              {
+                "id": "cn_00000000000000000000000FVR",
+                "text": "Forever"
+              },
+              {
+                "id": "cn_00000000000000000000000CHN",
+                "text": "Chain"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Roll the dice."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "at": "nd_00000000000000000000000SPN",
+              "code": "flow_loop",
+              "event": "error"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000SPN"
+            },
+            {
+              "event": "end",
+              "reason": "dead_end"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000FVR"
+          },
+          "state": {
+            "attributes": {},
+            "cursor": {
+              "boardId": "bd_0000000000000000000000RANK",
+              "nodeId": "nd_00000000000000000000000SPN",
+              "phase": "ended"
+            },
+            "projectId": "prj_000000000000000000000000C2",
+            "schemaVersion": 1,
+            "snapshotId": "snp_000000000000000000000000C2",
+            "snapshotVersion": "1.0.0",
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000PTS": 0
+            },
+            "visits": {
+              "nd_00000000000000000000000SPN": 101,
+              "nd_000000000000000000000START": 1
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000SPN",
+            "phase": "ended",
+            "text": ""
+          }
+        }
+      ]
+    },
+    {
+      "note": "a chain of branches passes through each, and the flow comes to rest at the element after them",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000HGH",
+                "text": "High"
+              },
+              {
+                "id": "cn_00000000000000000000000MDD",
+                "text": "Mid"
+              },
+              {
+                "id": "cn_00000000000000000000000SMA",
+                "text": "Low"
+              },
+              {
+                "id": "cn_00000000000000000000000NEC",
+                "text": "No else"
+              },
+              {
+                "id": "cn_00000000000000000000000NCC",
+                "text": "Unconnected"
+              },
+              {
+                "id": "cn_00000000000000000000000AFC",
+                "text": "All false"
+              },
+              {
+                "id": "cn_00000000000000000000000RPT",
+                "text": "Loop"
+              },
+              {
+                "id": "cn_00000000000000000000000FVR",
+                "text": "Forever"
+              },
+              {
+                "id": "cn_00000000000000000000000CHN",
+                "text": "Chain"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Roll the dice."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000CHA"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000CHA"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000CHB"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000CHB"
+            },
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000BEST"
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000BEST"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000BEST"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000CHN"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_0000000000000000000000BEST",
+            "phase": "ended",
+            "text": "You win with 0."
+          }
+        }
+      ]
+    },
+    {
+      "note": "start() at a branch, and goto() of one, pass through it as a connection to it does",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000GATE"
+            },
+            {
+              "event": "signal",
+              "name": "gate_enter",
+              "value": {
+                "type": "int",
+                "value": 0
+              }
+            },
+            {
+              "event": "signal",
+              "name": "gate_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000GATE"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000BAD"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000BAD"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000BAD"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_0000000000000000000000GATE"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000BAD",
+            "phase": "ended",
+            "text": "You lose."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000GATE"
+            },
+            {
+              "event": "signal",
+              "name": "gate_enter",
+              "value": {
+                "type": "int",
+                "value": 0
+              }
+            },
+            {
+              "event": "signal",
+              "name": "gate_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000GATE"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000BAD"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000BAD"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000BAD"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "goto",
+            "node": "nd_0000000000000000000000GATE"
+          },
+          "state": {
+            "attributes": {},
+            "cursor": {
+              "boardId": "bd_0000000000000000000000RANK",
+              "nodeId": "nd_00000000000000000000000BAD",
+              "phase": "ended"
+            },
+            "projectId": "prj_000000000000000000000000C2",
+            "schemaVersion": 1,
+            "snapshotId": "snp_000000000000000000000000C2",
+            "snapshotVersion": "1.0.0",
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000PTS": 0
+            },
+            "visits": {
+              "nd_00000000000000000000000BAD": 2,
+              "nd_0000000000000000000000GATE": 2
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000BAD",
+            "phase": "ended",
+            "text": "You lose."
+          }
+        }
+      ]
+    }
+  ]
+}
