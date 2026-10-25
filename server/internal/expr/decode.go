@@ -42,13 +42,19 @@ var (
 // as an int that is not integral or is beyond ±(2^53 − 1), though one
 // written as 2.0 is the int 2 (§5.8.9), a float beyond a double's range, or
 // a string of more than MaxStringLength characters or that holds a NUL; a
-// name that is not a key, an attribute's name that is not two keys joined by
-// a dot, or a ref that is not an ID of its kind in its canonical spelling; a
-// call of more than MaxArguments arguments; a script of more than
-// MaxStatements statements; and an AST of more than MaxNodes nodes, or deeper
-// than MaxDepth, its root 1 deep, which no AST that Check accepts is, so that
-// Decode never recurses deeper than that. It fails on a ctx that is neither
-// context with an error that wraps ErrContext.
+// variable's name or a call's function that is not an identifier of at most
+// MaxIdentifierLength characters, as the schema's pattern takes it, a
+// reserved word included, an attribute's name that is not two such
+// identifiers joined by a dot, or a ref that is not an ID of its kind in its
+// canonical spelling; a call of more than MaxArguments arguments; and a
+// script of more than MaxStatements statements. Beyond the schema, which
+// cannot say how a number is written nor how large an AST is, it fails on a
+// literal's number written with an exponent beyond ±value.MaxExponent, as
+// 0e1000, which is 0, but which no file holds, as package value refuses it,
+// and on an AST of more than MaxNodes nodes, or deeper than MaxDepth, its
+// root 1 deep, which no AST that Check accepts is, so that Decode never
+// recurses deeper than that. It fails on a ctx that is neither context with
+// an error that wraps ErrContext.
 func Decode(data []byte, ctx Context) (Node, error) {
 	if ctx != ContextCondition && ctx != ContextScript {
 		return nil, fmt.Errorf("%w: %q", ErrContext, ctx)
@@ -222,7 +228,8 @@ func variable(obj object) (Node, error) {
 		return nil, err
 	}
 	if len(name) > MaxIdentifierLength || !identifierName.MatchString(name) {
-		return nil, fmt.Errorf("%w: the name of a var node is not a key", ErrDecode)
+		return nil, fmt.Errorf("%w: the name of a var node is not an identifier of at most %d characters", ErrDecode,
+			MaxIdentifierLength)
 	}
 	return &Var{Name: name, Key: name, Ref: ref}, nil
 }
@@ -324,7 +331,8 @@ func (d *decoder) call(obj object, depth int) (Node, error) {
 		return nil, err
 	}
 	if len(function) > MaxIdentifierLength || !identifierName.MatchString(function) {
-		return nil, fmt.Errorf("%w: the function of a call node is not a name", ErrDecode)
+		return nil, fmt.Errorf("%w: the function of a call node is not an identifier of at most %d characters",
+			ErrDecode, MaxIdentifierLength)
 	}
 	args, err := d.list(obj, KindCall, "args", atOperand, depth, MaxArguments)
 	if err != nil {

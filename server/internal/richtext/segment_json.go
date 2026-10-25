@@ -3,7 +3,6 @@ package richtext
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"reflect"
 	"regexp"
 	"slices"
@@ -12,6 +11,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 	"github.com/CyberCute-Studio/storycreep/server/internal/semantics"
+	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
 // JSONSchema gives the published schemas the definition of a document's
@@ -135,9 +135,12 @@ var segmentFields = map[string][2][]string{
 // MarshalJSON writes it, and as its schema takes it (Segment.JSONSchema): it
 // fails on a kind that it does not know, as a consumer does (PRD §6.4), on a
 // field of its kind that is missing or of another type, and on a value that
-// the schema does not take, as an ID that is not in its canonical spelling;
-// and it ignores a field that its kind does not have, as one of another kind,
-// as a consumer ignores a key that it does not know (§6.4).
+// the schema does not take, as an ID that is not in its canonical spelling,
+// or an integer that is not integral; and it ignores a field that its kind
+// does not have, as one of another kind, as a consumer ignores a key that it
+// does not know (§6.4). Beyond the schema, which cannot tell how a number is
+// written, it refuses an integer written with an exponent beyond
+// ±value.MaxExponent, as 0e1000, which no file holds (integer).
 func (s *Segment) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -258,15 +261,19 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 // integer is an integer of a segment, as its decimals, which a consumer
 // reads as an integer by its declaration, whatever its JSON form, as 2.0 is
 // 2 (PRD §5.8.9), and which a JSON Schema's integer takes so.
-type integer int
+type integer int64
 
 // UnmarshalJSON reads an integral JSON number, however it is written, of at
-// most semantics.MaxInt in magnitude, as an integer.
+// most semantics.MaxInt in magnitude, as an integer, as package value reads
+// an int: by its decimal, exactly, so that 1.0000000000000000001, which a
+// double rounds to 1, is not one, but for a number written with an exponent
+// beyond ±value.MaxExponent, which no file's number is, and which it refuses.
 func (n *integer) UnmarshalJSON(data []byte) error {
-	var f float64
-	if err := json.Unmarshal(data, &f); err != nil || f != math.Trunc(f) || math.Abs(f) > semantics.MaxInt {
+	v, problem := value.FromJSON(data).Read(value.Int, value.Checks{})
+	var i int64
+	if problem != "" || json.Unmarshal(v.JSON(), &i) != nil {
 		return fmt.Errorf("richtext: %s is not an integer of at most %d in magnitude", data, semantics.MaxInt)
 	}
-	*n = integer(f)
+	*n = integer(i)
 	return nil
 }

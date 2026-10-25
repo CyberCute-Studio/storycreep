@@ -14,7 +14,7 @@ import (
 func TestSchema(t *testing.T) {
 	values := []string{
 		`true`, `false`, `0`, `-1`, `2.0`, `2.5`, `1e3`, `9007199254740991`, `-9007199254740991`,
-		`9007199254740992`, `1.7976931348623157e308`, `1e309`, `""`, `"calm"`, `"a\nb"`,
+		`9007199254740992`, `1.7976931348623157e308`, `1e309`, `""`, `"calm"`, `"a\nb"`, `"a\u0000b"`,
 		`"` + string(bytes.Repeat([]byte("é"), MaxStringLength)) + `"`,
 		`"` + string(bytes.Repeat([]byte("é"), MaxStringLength+1)) + `"`,
 		`"` + string(bytes.Repeat([]byte("x"), MaxOptionLength+1)) + `"`, `[]`, `{}`,

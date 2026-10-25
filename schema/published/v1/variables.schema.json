@@ -176,6 +176,7 @@
             "default": {
               "description": "The variable's default, of its type.",
               "maxLength": 4096,
+              "pattern": "^[^\\x00]*$",
               "type": "string"
             },
             "description": {
@@ -377,6 +378,7 @@
             "default": {
               "description": "The variable's default, of its type.",
               "maxLength": 4096,
+              "pattern": "^[^\\x00]*$",
               "type": "string"
             },
             "description": {

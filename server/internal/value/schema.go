@@ -30,9 +30,10 @@ func (Value) JSONSchemaOf(_ *schemagen.Generator, typ string) *schemagen.Schema 
 // as the published format holds it: a bool a boolean; an int an integer
 // within ±MaxInt, which a consumer reads as an int whatever its JSON form, as
 // 2.0 (§5.8.9); a float a number that a double holds; a string a string of at
-// most MaxStringLength characters; a text one of at most MaxTextLength; and an
-// enum one of its attribute's options, of 1 to MaxOptionLength characters. It
-// panics on another type.
+// most MaxStringLength characters, and a text one of at most MaxTextLength,
+// neither of which holds a NUL, which PostgreSQL's text cannot hold, nor a
+// string literal of an expression (noNUL); and an enum one of its attribute's
+// options, of 1 to MaxOptionLength characters. It panics on another type.
 func Schema(typ string) *schemagen.Schema {
 	switch typ {
 	case Bool:
@@ -43,12 +44,16 @@ func Schema(typ string) *schemagen.Schema {
 		return &schemagen.Schema{Type: "number", Minimum: schemagen.Float(-math.MaxFloat64),
 			Maximum: schemagen.Float(math.MaxFloat64)}
 	case String:
-		return &schemagen.Schema{Type: "string", MaxLength: schemagen.Int(MaxStringLength)}
+		return &schemagen.Schema{Type: "string", Pattern: noNUL, MaxLength: schemagen.Int(MaxStringLength)}
 	case Text:
-		return &schemagen.Schema{Type: "string", MaxLength: schemagen.Int(MaxTextLength)}
+		return &schemagen.Schema{Type: "string", Pattern: noNUL, MaxLength: schemagen.Int(MaxTextLength)}
 	case Enum:
 		return &schemagen.Schema{Type: "string", MinLength: schemagen.Int(1),
 			MaxLength: schemagen.Int(MaxOptionLength)}
 	}
 	panic(fmt.Sprintf("value: %q is no type of a value", typ))
 }
+
+// noNUL is the pattern of a string without a NUL, which Go's regular
+// expressions and ECMAScript's read alike.
+const noNUL = `^[^\x00]*$`

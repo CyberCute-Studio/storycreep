@@ -210,6 +210,20 @@ type noEnum struct {
 	Default typed  `json:"default" typeFrom:"type"`
 }
 
+// boundedDefault has a tag on a field typed by another, which the
+// TypedProvider's schema would leave unsaid.
+type boundedDefault struct {
+	Type    string `json:"type" enum:"int,text"`
+	Default typed  `json:"default" typeFrom:"type" maxLength:"10"`
+}
+
+// patternedTeller has a tag on a field that tells variants apart, which its
+// variants' const would leave unsaid.
+type patternedTeller struct {
+	Type    string `json:"type" enum:"int,text" maxLength:"3"`
+	Default typed  `json:"default" typeFrom:"type"`
+}
+
 type badWhen struct {
 	Type string `json:"type" enum:"a,b"`
 	X    string `json:"x,omitempty" when:"type=c"`
@@ -246,6 +260,8 @@ func TestPanics(t *testing.T) {
 		"a tag of another type":            func(g *Generator) { g.Ref(reflect.TypeFor[wrongTag]()) },
 		"two fields of one name":           func(g *Generator) { g.Ref(reflect.TypeFor[twice]()) },
 		"typeFrom of a field with no enum": func(g *Generator) { g.Ref(reflect.TypeFor[noEnum]()) },
+		"a bound of a typed field":         func(g *Generator) { g.Ref(reflect.TypeFor[boundedDefault]()) },
+		"a bound of a variants' property":  func(g *Generator) { g.Ref(reflect.TypeFor[patternedTeller]()) },
 		"when of a value of no enum":       func(g *Generator) { g.Ref(reflect.TypeFor[badWhen]()) },
 		"when of a field always written":   func(g *Generator) { g.Ref(reflect.TypeFor[alwaysWritten]()) },
 		"a misspelt required tag":          func(g *Generator) { g.Ref(reflect.TypeFor[misspeltRequired]()) },

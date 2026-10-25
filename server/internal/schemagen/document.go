@@ -77,7 +77,7 @@ func (g *Generator) Document(d Document) ([]byte, error) {
 	if len(examples) > 0 {
 		doc["examples"] = examples
 	}
-	compact, err := marshal(doc)
+	compact, err := Marshal(doc)
 	if err != nil {
 		return nil, err
 	}

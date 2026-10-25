@@ -34,8 +34,10 @@ import (
 //   - keyId, keyPattern: of a map, its keys, as id and pattern do a string.
 //   - typeFrom: the field's value is of the type that the string property of
 //     the struct that the tag names says, as a variable's default is of its
-//     type. The field's Go type is a TypedProvider, and the struct's schema
-//     is one variant of an object for each value of the property's enum.
+//     type. The field's Go type is a TypedProvider, whose schema is all that
+//     constrains it, so that it has no other tag that would, and the
+//     struct's schema is one variant of an object for each value of the
+//     property's enum, which is all that constrains the property.
 //   - when: the field is there only when the property that the tag names is
 //     one of the values after its =, separated by |, as in when:"type=enum":
 //     the struct's schema is one variant for each value of the property's
@@ -498,8 +500,14 @@ func (g *Generator) objectOf(t reflect.Type, fs []field, combo map[string]string
 		var s *Schema
 		switch from, typed := f.tags["typeFrom"]; {
 		case combo != nil && combo[f.name] != "":
+			// The enum's value of the variant is all that the field's tags
+			// say of it.
+			allowTags(t, f, []string{"enum"})
 			s = &Schema{Const: combo[f.name]}
 		case typed:
+			// The TypedProvider's schema is all that the field's tags say of
+			// its value.
+			allowTags(t, f, []string{"typeFrom"})
 			p, ok := instance(deref(f.typ), typedProviderType)
 			if !ok {
 				panic(fmt.Sprintf("schemagen: %s.%s is tagged typeFrom, but %s is no TypedProvider", t, f.name, f.typ))
@@ -529,19 +537,24 @@ var (
 	mapTags    = []string{"keyId", "keyPattern"}
 )
 
-// value returns the schema of the field f of the struct t.
-func (g *Generator) value(t reflect.Type, f field) *Schema {
-	allowed := func(sets ...[]string) {
-		for k := range f.tags {
-			if k == "json" || k == "doc" || k == "required" || k == "when" {
-				continue
-			}
-			if !slices.ContainsFunc(sets, func(set []string) bool { return slices.Contains(set, k) }) {
-				panic(fmt.Sprintf("schemagen: %s.%s, of %s, has the tag %s, which its type cannot have", t, f.name,
-					f.typ, k))
-			}
+// allowTags panics on a tag of the field f of the struct t that constrains
+// it, other than json, doc, required, and when, that none of sets holds, as
+// one that its type cannot have.
+func allowTags(t reflect.Type, f field, sets ...[]string) {
+	for k := range f.tags {
+		if k == "json" || k == "doc" || k == "required" || k == "when" {
+			continue
+		}
+		if !slices.ContainsFunc(sets, func(set []string) bool { return slices.Contains(set, k) }) {
+			panic(fmt.Sprintf("schemagen: %s.%s, of %s, has the tag %s, which its type cannot have", t, f.name,
+				f.typ, k))
 		}
 	}
+}
+
+// value returns the schema of the field f of the struct t.
+func (g *Generator) value(t reflect.Type, f field) *Schema {
+	allowed := func(sets ...[]string) { allowTags(t, f, sets...) }
 	ft := deref(f.typ)
 	if g.named(ft) {
 		allowed()

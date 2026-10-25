@@ -182,7 +182,7 @@ func (a AttributeValues) MarshalJSON() ([]byte, error) {
 	if a == nil {
 		return []byte("{}"), nil
 	}
-	return marshal(map[string]value.Value(a))
+	return schemagen.Marshal(map[string]value.Value(a))
 }
 
 // JSONSchema gives the schemas the definition of attributes' values

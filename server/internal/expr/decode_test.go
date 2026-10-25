@@ -119,7 +119,7 @@ func TestDecodeCorpus(t *testing.T) {
 func TestDecodeAgreesWithSchema(t *testing.T) {
 	condition, script := astSchemas(t)
 	asts, contexts := resolvedASTs(t)
-	replacements := []any{nil, "x", 1.5, 9007199254740992, true, map[string]any{}, []any{},
+	replacements := []any{nil, "x", "a\x00b", 1.5, 9007199254740992, true, map[string]any{}, []any{},
 		"var_01HQ8ZV01K7MWVND2CQJ4RT9XB", "nd_01hq8zn01k7mwvnd2cqj4rt9xb", "script", "+="}
 	// The shortest ASTs that together use every kind of node, operator, and
 	// literal's type that the corpus's ASTs use, in each context, which
@@ -296,7 +296,8 @@ func TestDecodeErrors(t *testing.T) {
 		{"a ref that is not canonical", `{"kind":"var","name":"a","ref":"var_01hq8z5brt9c4f2m7xkdpv6nha"}`, ContextCondition, false},
 		{"a ref of another kind", `{"kind":"var","name":"a","ref":"cmp_01HQ8Z5BRT9C4F2M7XKDPV6NHA"}`, ContextCondition, false},
 		{"no ref", `{"kind":"var","name":"a"}`, ContextCondition, false},
-		{"a name that is no key", `{"kind":"var","name":"a.b","ref":"var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"}`, ContextCondition, false},
+		{"a name that is no identifier", `{"kind":"var","name":"a.b","ref":"var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"}`, ContextCondition, false},
+		{"a reserved word as a name, as the schema takes it", `{"kind":"var","name":"true","ref":"var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"}`, ContextCondition, true},
 		{"an attribute's name of one key", `{"attribute":"atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF","kind":"attr","name":"trust","ref":"cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"}`, ContextCondition, false},
 		{"a script as a condition", statements(1), ContextCondition, false},
 		{"a condition as a script", v, ContextScript, false},
@@ -331,5 +332,24 @@ func TestDecodeErrors(t *testing.T) {
 	}
 	if _, err := Decode([]byte(v), "expression"); !errors.Is(err, ErrContext) {
 		t.Errorf("Decode of no context = %v, want an error that wraps ErrContext", err)
+	}
+}
+
+// TestDecodeBeyondSchema checks what Decode refuses beyond the AST's schema,
+// as its doc says: a number written with an exponent beyond ±999, which the
+// schema cannot tell from the same number written otherwise.
+func TestDecodeBeyondSchema(t *testing.T) {
+	condition, _ := astSchemas(t)
+	lit := func(typ, value string) string { return `{"kind":"lit","type":"` + typ + `","value":` + value + `}` }
+	for data, ok := range map[string]bool{
+		lit("int", "0e999"): true, lit("int", "0e1000"): false, lit("int", "1000e-3"): true,
+		lit("float", "1e-999"): true, lit("float", "1e-1000"): false,
+	} {
+		if !valid(t, condition, []byte(data)) {
+			t.Errorf("the schema does not take %s", data)
+		}
+		if _, err := Decode([]byte(data), ContextCondition); (err == nil) != ok {
+			t.Errorf("Decode(%s) = %v, want it taken: %v", data, err, ok)
+		}
 	}
 }

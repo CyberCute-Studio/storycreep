@@ -17,9 +17,9 @@
 //
 // No schema takes null, which the published format never holds (§6.2), and
 // every object takes keys that it does not define, which a consumer ignores
-// (§6.4), of any value but null, at any depth (AnyValue). A Generator made
-// with Closed takes no such key, so that a test can check that an example
-// holds only what the schema defines.
+// (§6.4), of any value but null, at any depth (AnyValue). A closed
+// Generator, New(true)'s, takes no such key, so that a test can check that an
+// example holds only what the schema defines.
 package schemagen
 
 import (
@@ -91,7 +91,7 @@ func (s *Schema) MarshalJSON() ([]byte, error) {
 			m[k] = v
 		}
 	}
-	return marshal(m)
+	return Marshal(m)
 }
 
 // reflectValue returns the value that the field at p holds, or nil when it
@@ -196,8 +196,9 @@ func Int(n int) *int { return &n }
 // Float returns a pointer to f, for a keyword's bound.
 func Float(f float64) *float64 { return &f }
 
-// marshal writes v as JSON without escaping HTML.
-func marshal(v any) ([]byte, error) {
+// Marshal writes v as JSON without escaping HTML, as the published files and
+// their schemas are written (§6.2).
+func Marshal(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)

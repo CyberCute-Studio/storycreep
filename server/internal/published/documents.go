@@ -92,7 +92,7 @@ func Documents() []schemagen.Document {
 // all, so that a definition that two of them hold is the same in both: it
 // defines every document's root before it writes any document, since a
 // union of definitions that one document reaches can change a definition
-// that another reaches too (schemagen.Generator.OneOf).
+// that another reaches too (schemagen.Generator.Union).
 func Files(closed bool) (map[string][]byte, error) {
 	g := Generator(closed)
 	docs := Documents()
@@ -158,9 +158,15 @@ func (AST) JSONSchema(g *schemagen.Generator) *schemagen.Schema {
 	}
 }
 
-// MarshalJSON writes the AST as expr.Encode writes it.
+// MarshalJSON writes the AST as expr.Encode writes it, a script's when its
+// kind is script and a condition's otherwise, or fails on an AST that a file
+// does not hold (encodeAST).
 func (a AST) MarshalJSON() ([]byte, error) {
-	return expr.Encode(a.Node)
+	ctx := expr.ContextCondition
+	if a.Node != nil && a.Node.Kind() == expr.KindScript {
+		ctx = expr.ContextScript
+	}
+	return encodeAST(a.Node, ctx)
 }
 
 // UnmarshalJSON reads the AST as expr.Decode reads it, a script's when its

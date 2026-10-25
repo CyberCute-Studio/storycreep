@@ -313,6 +313,7 @@
         },
         "value": {
           "maxLength": 4096,
+          "pattern": "^[^\\x00]*$",
           "type": "string"
         }
       },

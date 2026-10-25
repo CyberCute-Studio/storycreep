@@ -103,8 +103,11 @@ func TestSegmentUnmarshalAgreesWithSchema(t *testing.T) {
 	}
 	// An integer written as 1.0 or 2e0 is one, as a consumer reads it by its
 	// declaration (PRD §5.8.9).
+	// One that a double rounds to an integer, or that is a fraction written
+	// with an exponent, is not one.
 	values := []any{"x", "", 0, -1, 7, 2.5, json.Number("1.0"), json.Number("2e0"), json.Number("-0.0"),
-		json.Number("9007199254740991"), json.Number("9007199254740992"), json.Number("1e400"), "1", true,
+		json.Number("1.0000000000000000001"), json.Number("1e-1000"), json.Number("9007199254740991"),
+		json.Number("9007199254740992"), json.Number("1e400"), "1", true,
 		[]any{}, []any{"bold", "bold"}, []any{"underline"},
 		map[string]any{}, "https://example.com", "javascript:alert(1)", "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
 		"var_01HQ8Z5C2K8W1D5J9NTQZR4YBE", "atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF", "cmp_01hq8z7kd3m9p2w5xrtvnq4bcf",
@@ -145,5 +148,28 @@ func TestSegmentUnmarshalAgreesWithSchema(t *testing.T) {
 	}
 	if !seen["item ordered false false false true"] {
 		t.Errorf("no vector has an ordered item, whose segment the test would mutate: %v", seen)
+	}
+}
+
+// TestSegmentExponent checks the one thing that Segment.UnmarshalJSON
+// refuses beyond the schema, which cannot tell how a number is written: an
+// integer written with an exponent beyond ±999, as 0e1000, which is 0.
+func TestSegmentExponent(t *testing.T) {
+	s := segmentsSchema(t)
+	for data, ok := range map[string]bool{
+		`[{"decimals":0e999,"kind":"value","marks":[],"name":"a","ref":"var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"}]`:  true,
+		`[{"decimals":0e1000,"kind":"value","marks":[],"name":"a","ref":"var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"}]`: false,
+	} {
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader([]byte(data)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Validate(inst); err != nil {
+			t.Errorf("%s does not validate: %v", data, err)
+		}
+		var segs Segments
+		if err := json.Unmarshal([]byte(data), &segs); (err == nil) != ok {
+			t.Errorf("UnmarshalJSON(%s) = %v, want it taken: %v", data, err, ok)
+		}
 	}
 }

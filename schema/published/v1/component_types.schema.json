@@ -169,6 +169,7 @@
             "default": {
               "description": "The attribute's default, of its type: what a component that a game creates has, as play mode's does. Each component of the snapshot has a value of its own.",
               "maxLength": 4096,
+              "pattern": "^[^\\x00]*$",
               "type": "string"
             },
             "id": {
@@ -211,6 +212,7 @@
             "default": {
               "description": "The attribute's default, of its type: what a component that a game creates has, as play mode's does. Each component of the snapshot has a value of its own.",
               "maxLength": 100000,
+              "pattern": "^[^\\x00]*$",
               "type": "string"
             },
             "id": {

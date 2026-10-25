@@ -2,6 +2,7 @@ package published
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
@@ -226,6 +227,19 @@ type Text struct {
 	Segments richtext.Segments `json:"segments"`
 }
 
+// MarshalJSON writes the text, or fails on one without segments, which a file
+// leaves out (atLeastOne).
+func (t Text) MarshalJSON() ([]byte, error) {
+	if len(t.Segments) == 0 {
+		return nil, errEmptyText
+	}
+	type plain Text
+	return schemagen.Marshal(plain(t))
+}
+
+// errEmptyText is the error of writing a text or a label without segments.
+var errEmptyText = errors.New("published: a text or a label has no segments, where an empty one is left out")
+
 // JSONSchemaDoc describes a text (schemagen.Documented).
 func (Text) JSONSchemaDoc() string {
 	return "An element's text: its segments, at least one, and its preview (PRD §6.5)."
@@ -244,6 +258,16 @@ func (Text) JSONSchema(g *schemagen.Generator) *schemagen.Schema {
 // Label is a connection's label, the text of its choice: its segments.
 type Label struct {
 	Segments richtext.Segments `json:"segments"`
+}
+
+// MarshalJSON writes the label, or fails on one without segments, which a
+// file leaves out (atLeastOne).
+func (l Label) MarshalJSON() ([]byte, error) {
+	if len(l.Segments) == 0 {
+		return nil, errEmptyText
+	}
+	type plain Label
+	return schemagen.Marshal(plain(l))
 }
 
 // JSONSchemaDoc describes a label (schemagen.Documented).
@@ -307,25 +331,42 @@ func expressionSchema(g *schemagen.Generator, ast *schemagen.Schema, description
 	}, "ast", "source"), description)
 }
 
-// MarshalJSON writes the condition, its AST as expr.Encode writes it.
+// MarshalJSON writes the condition, its AST as expr.Encode writes it, or
+// fails on an AST that a file does not hold (encodeAST).
 func (c Condition) MarshalJSON() ([]byte, error) {
 	return marshalExpression(c.AST, c.Source, expr.ContextCondition)
 }
 
-// MarshalJSON writes the script, its AST as expr.Encode writes it.
+// MarshalJSON writes the script, its AST as expr.Encode writes it, or fails
+// on an AST that a file does not hold (encodeAST).
 func (s Script) MarshalJSON() ([]byte, error) {
 	return marshalExpression(s.AST, s.Source, expr.ContextScript)
 }
 
 func marshalExpression(ast expr.Node, source string, ctx expr.Context) ([]byte, error) {
-	if ast == nil || (ast.Kind() == expr.KindScript) != (ctx == expr.ContextScript) {
-		return nil, fmt.Errorf("published: the AST of a %s is a script exactly when its context is", ctx)
+	data, err := encodeAST(ast, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return schemagen.Marshal(expressionJSON{AST: data, Source: source})
+}
+
+// encodeAST returns the JSON that expr.Encode writes of ast, the AST of a
+// ctx, or fails on one that is not set, or that expr.Decode does not read
+// back as a ctx's, as a file holds it: one whose names are not resolved, as
+// expr.Parse returns it, or a script where ctx is a condition's.
+func encodeAST(ast expr.Node, ctx expr.Context) (json.RawMessage, error) {
+	if ast == nil {
+		return nil, fmt.Errorf("published: the AST of a %s is not set", ctx)
 	}
 	data, err := expr.Encode(ast)
 	if err != nil {
 		return nil, err
 	}
-	return marshal(expressionJSON{AST: data, Source: source})
+	if _, err := expr.Decode(data, ctx); err != nil {
+		return nil, fmt.Errorf("published: the AST of a %s is not one that a file holds: %w", ctx, err)
+	}
+	return data, nil
 }
 
 // UnmarshalJSON reads a condition, its AST as expr.Decode reads it.
