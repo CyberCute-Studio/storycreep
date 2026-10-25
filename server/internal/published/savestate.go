@@ -31,10 +31,11 @@ type SaveState struct {
 }
 
 // MarshalJSON writes the save state, its variables, attributes, and visits {}
-// when it has none, or fails on a value that is not set.
+// when it has none, or fails on what Decode would refuse of it, as a value
+// that is not set (marshalFile).
 func (s SaveState) MarshalJSON() ([]byte, error) {
 	type plain SaveState
-	return marshalFile("a save state", plain(s))
+	return marshalFile[SaveState]("a save state", plain(s))
 }
 
 // JSONSchemaDoc describes a save state (schemagen.Documented).

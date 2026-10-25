@@ -91,28 +91,44 @@ func (g *Generator) Document(d Document) ([]byte, error) {
 
 // collect adds to defs the definitions that s refers to, at any depth.
 func (g *Generator) collect(s *Schema, defs map[string]*Schema) {
-	if s == nil || s.False {
-		return
-	}
-	if name := RefName(s.Ref); name != "" {
-		if _, ok := defs[name]; !ok {
-			def := g.defs[name]
-			if def == nil {
-				panic("schemagen: " + s.Ref + " refers to no definition")
+	g.Walk(func(c *Schema) {
+		if name := RefName(c.Ref); name != "" {
+			if g.defs[name] == nil {
+				panic("schemagen: " + c.Ref + " refers to no definition")
 			}
-			defs[name] = def
-			g.collect(def, defs)
+			defs[name] = g.defs[name]
+		} else if c.Ref != "" {
+			panic("schemagen: " + c.Ref + " is not a reference to a definition of the document")
 		}
-	} else if s.Ref != "" {
-		panic("schemagen: " + s.Ref + " is not a reference to a definition of the document")
+	}, s)
+}
+
+// Walk calls visit with each schema that roots hold, themselves included, at
+// any depth, a schema that is not False, and with each definition that one of
+// them refers to, after the reference, once each, as a document holds them.
+func (g *Generator) Walk(visit func(s *Schema), roots ...*Schema) {
+	seen := map[string]bool{}
+	var walk func(s *Schema)
+	walk = func(s *Schema) {
+		if s == nil || s.False {
+			return
+		}
+		visit(s)
+		if name := RefName(s.Ref); name != "" && !seen[name] {
+			seen[name] = true
+			walk(g.defs[name])
+		}
+		for _, c := range []*Schema{s.Items, s.AdditionalProperties, s.PropertyNames} {
+			walk(c)
+		}
+		for _, name := range slices.Sorted(maps.Keys(s.Properties)) {
+			walk(s.Properties[name])
+		}
+		for _, c := range s.OneOf {
+			walk(c)
+		}
 	}
-	for _, c := range []*Schema{s.Items, s.AdditionalProperties, s.PropertyNames} {
-		g.collect(c, defs)
-	}
-	for _, name := range slices.Sorted(maps.Keys(s.Properties)) {
-		g.collect(s.Properties[name], defs)
-	}
-	for _, c := range s.OneOf {
-		g.collect(c, defs)
+	for _, r := range roots {
+		walk(r)
 	}
 }

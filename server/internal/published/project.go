@@ -15,10 +15,11 @@ type Settings struct {
 	Signals       []string `json:"signals" minLength:"1" doc:"The names of the signals that the project's scripts emit with signal(), each once, sorted by their code points, [] for none (FR-EXPR-04)."`
 }
 
-// MarshalJSON writes the settings, its signals [] when there are none.
+// MarshalJSON writes the settings, its signals [] when there are none, or
+// fails on what Decode would refuse of them (marshalFile).
 func (s Settings) MarshalJSON() ([]byte, error) {
 	type plain Settings
-	return marshalFile(SettingsPath, plain(s))
+	return marshalFile[Settings](SettingsPath, plain(s))
 }
 
 // JSONSchemaDoc describes the settings (schemagen.Documented).
@@ -36,10 +37,11 @@ type Variables struct {
 }
 
 // MarshalJSON writes the variables' file, its variables [] when there are
-// none, or fails on a variable whose default is not set.
+// none, or fails on what Decode would refuse of it, as a variable whose
+// default is not set, or is not of its type (marshalFile).
 func (v Variables) MarshalJSON() ([]byte, error) {
 	type plain Variables
-	return marshalFile(VariablesPath, plain(v))
+	return marshalFile[Variables](VariablesPath, plain(v))
 }
 
 // JSONSchemaDoc describes the variables' file (schemagen.Documented).
@@ -79,11 +81,11 @@ type ComponentTypes struct {
 }
 
 // MarshalJSON writes the component types' file, its component types [] when
-// there are none, or fails on an attribute definition whose default is not
-// set.
+// there are none, or fails on what Decode would refuse of it, as an attribute
+// definition whose default is not set (marshalFile).
 func (c ComponentTypes) MarshalJSON() ([]byte, error) {
 	type plain ComponentTypes
-	return marshalFile(ComponentTypesPath, plain(c))
+	return marshalFile[ComponentTypes](ComponentTypesPath, plain(c))
 }
 
 // JSONSchemaDoc describes the component types' file (schemagen.Documented).
@@ -139,10 +141,11 @@ type Components struct {
 }
 
 // MarshalJSON writes the components' file, its components [] when there are
-// none, or fails on a value of an attribute that is not set.
+// none, or fails on what Decode would refuse of it, as a value of an
+// attribute that is not set (marshalFile).
 func (c Components) MarshalJSON() ([]byte, error) {
 	type plain Components
-	return marshalFile(ComponentsPath, plain(c))
+	return marshalFile[Components](ComponentsPath, plain(c))
 }
 
 // JSONSchemaDoc describes the components' file (schemagen.Documented).

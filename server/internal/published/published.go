@@ -10,15 +10,15 @@
 // that it has, and a union's variant with the value that tells it
 // (MarshalJSON), never null: an array or an object that a file always holds,
 // as a branch's outputs or a component's attributes, is written [] or {} when
-// its slice or map is nil, and a file fails to be written, rather than hold
-// null, where a value is not set, as a variable's default or a node, or hold
-// what Decode refuses (checkTags), an empty text or label, which a file
-// leaves out, or an AST that expr.Decode does not read back as its
-// context's, as one whose names are not resolved. They do not lay the JSON
-// out as §6.2 says, sorted and indented, which the serializer does (plan
-// item 76), and Decode reads a file as a consumer does: it fails on null
-// anywhere and on an unknown value of a type, kind, or op field, and ignores
-// a key that it does not know (§6.4).
+// its slice or map is nil, and a file fails to be written where Decode would
+// refuse what it writes (marshalFile), as null where a value is not set, as a
+// variable's default or a node, an empty text or label, which a file leaves
+// out, or an AST that expr.Decode does not read back as its context's, as one
+// whose names are not resolved. They do not lay the JSON out as §6.2 says,
+// sorted and indented, which the serializer does (plan item 76), and Decode
+// reads a file as a consumer does: it fails on null anywhere and on an
+// unknown value of a type, kind, or op field, and ignores a key that it does
+// not know (§6.4).
 package published
 
 import (
@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -100,15 +99,11 @@ type Int int64
 const MaxInt = value.MaxInt
 
 // UnmarshalJSON reads an integral JSON number, however it is written, as an
-// Int.
+// Int (value.Integer).
 func (n *Int) UnmarshalJSON(data []byte) error {
-	v, problem := value.FromJSON(data).Read(value.Int, value.Checks{})
+	i, problem := value.Integer(data)
 	if problem != "" {
 		return fmt.Errorf("published: an integer %s", problem)
-	}
-	var i int64
-	if err := json.Unmarshal(v.JSON(), &i); err != nil {
-		return err
 	}
 	*n = Int(i)
 	return nil
@@ -121,77 +116,84 @@ var ErrDecode = errors.New("published: not JSON of the published format")
 // Decode reads data, one JSON value, into v, a pointer to one of the
 // package's types, as a consumer reads a published file or a save state: it
 // fails, with an error that wraps ErrDecode, on data that is not one JSON
-// value, that is not UTF-8, that holds null anywhere (§6.2), or that escapes
-// a lone surrogate in a string (value.CheckJSON); on a value of a field of an
-// enum, as a type, a kind, or an op, that the format does not have, as a
-// consumer fails loudly on one (§6.4); on a published file's schemaVersion or
-// a save state's stateVersion that is not the types', though not on a save
-// state's schemaVersion, its snapshot's, which a runtime compares with the
-// snapshot that it runs; and on a field of an object's variant (a when tag)
-// that is there where its variant does not have it, as an else output's
-// condition or a global variable's boardId, or that is missing where its
-// variant requires it, as an if output's condition or an enum's options
-// (checkTags). Otherwise it reads data into v as json.Unmarshal does, but for
-// a key as a consumer reads it, as it is written: it ignores a key that the
-// types do not know (§6.4), as KIND, which differs from kind only by its case,
-// and which json.Unmarshal would read as kind. It does not check what else
-// the schema holds a file to, as a pattern or a bound, which a validator of
-// the schema checks, and refuses, beyond the schema, an integer written with
-// an exponent beyond ±value.MaxExponent (Int, expr.Decode).
+// value, that is not UTF-8, that holds null anywhere (§6.2), that escapes a
+// lone surrogate in a string, or that writes a number with an exponent beyond
+// ±value.MaxExponent, as 0e1000, which the schemas cannot tell from 0, but
+// which no file holds (value.CheckJSON); on a key that its object's schema
+// requires that is missing; on a value of a field of an enum, as a type, a
+// kind, or an op, that the format does not have, as a consumer fails loudly on
+// one (§6.4); on a published file's schemaVersion or a save state's
+// stateVersion that is not the types', though not on a save state's
+// schemaVersion, its snapshot's, which a runtime compares with the snapshot
+// that it runs; on a key of an object's variant that is there, whatever its
+// value, where its variant does not have it, as an else output's condition, a
+// global variable's boardId, a draft's version, or a jumper's text, or that is
+// missing or empty where its variant requires it, as an if output's condition
+// or an enum's options (checkTags); on a value that is not of its
+// declaration's type, as a variable's default that is no int where its type
+// is int, or a value whose declaration is in another file that is neither a
+// boolean, a number, nor a string; and on an empty text or label, which a
+// file leaves out. Otherwise it reads data into v as json.Unmarshal does, but
+// for a key as a consumer reads it, as it is written: it ignores a key that
+// the types do not know (§6.4), as KIND, which differs from kind only by its
+// case, and which json.Unmarshal would read as kind. It does not check what
+// else the schema holds a file to, as a pattern or a bound, which a validator
+// of the schema checks, but for an Int's, which is an integer of at most
+// MaxInt in magnitude, and a value's of its declaration's type, an int's
+// within ±MaxInt and a float's within ±1.7976931348623157e+308 as it is
+// written (value.FloatBeyondSchema), as value.Schema bounds them.
 func Decode(data []byte, v any) error {
-	if problem := value.CheckJSON(data); problem != "" {
-		return fmt.Errorf("%w: it %s", ErrDecode, problem)
-	}
-	data, err := dropCaseVariants(data)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrDecode, err)
-	}
-	if err := json.Unmarshal(data, v); err != nil {
-		return fmt.Errorf("%w: %w", ErrDecode, err)
-	}
-	if err := checkTags(reflect.ValueOf(v), "$"); err != nil {
+	if err := decode(data, v); err != nil {
 		return fmt.Errorf("%w: %w", ErrDecode, err)
 	}
 	return nil
 }
 
-// keySets are the keys that the schemas of Documents define of every object
-// of every document, which encoding/json reads the package's types' fields
-// by, and each of them folded (foldKey), by which Decode finds a key that
-// differs from one of them only by its case (dropCaseVariants). They are read
-// from the schemas, rather than from the types' fields, since a Provider
-// defines keys of its own, as a text's, an AST's, and a segment's.
-type keySets struct {
-	known, folded map[string]bool
+// decode is Decode, its error without ErrDecode.
+func decode(data []byte, v any) error {
+	if problem := value.CheckJSON(data); problem != "" {
+		return fmt.Errorf("it %s", problem)
+	}
+	tree, data, err := readTree(data)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, v); err != nil {
+		return err
+	}
+	if err := checkTags(reflect.ValueOf(v), tree); err != nil {
+		return err
+	}
+	return nil
 }
 
-// knownKeys returns the keySets of the schemas, which a generator reads once,
-// without writing a document.
-var knownKeys = sync.OnceValue(func() keySets {
+// schemaKeys are what Decode reads of the schemas of Documents: the keys that
+// they define of every object of every document, which encoding/json reads
+// the package's types' fields by, and each of them folded (foldKey), by which
+// Decode finds a key that differs from one of them only by its case
+// (readTree); and, of each variant of a union, the keys that another variant
+// of its union defines and it does not, which its schema takes none of
+// (schemagen.Generator.Union). They are read from the schemas, rather than
+// from the types' fields, since a Provider defines keys of its own, as a
+// text's, an AST's, and a segment's.
+type schemaKeys struct {
+	known, folded map[string]bool
+	variants      map[reflect.Type]unionVariant
+}
+
+// unionVariant is a variant of a union: the key and the value that tell it,
+// and the keys that its schema takes none of.
+type unionVariant struct {
+	key, value string
+	excluded   []string
+}
+
+// knownKeys returns the schemaKeys of the schemas, which a generator reads
+// once, without writing a document.
+var knownKeys = sync.OnceValue(func() schemaKeys {
 	g := Generator(false)
-	sets := keySets{known: map[string]bool{}, folded: map[string]bool{}}
-	seen := map[string]bool{}
-	var walk func(s *schemagen.Schema)
-	walk = func(s *schemagen.Schema) {
-		if s == nil {
-			return
-		}
-		if name := schemagen.RefName(s.Ref); name != "" && !seen[name] {
-			seen[name] = true
-			walk(g.Def(name))
-		}
-		for k, p := range s.Properties {
-			sets.known[k] = true
-			sets.folded[foldKey(k)] = true
-			walk(p)
-		}
-		walk(s.Items)
-		walk(s.AdditionalProperties)
-		walk(s.PropertyNames)
-		for _, c := range s.OneOf {
-			walk(c)
-		}
-	}
+	sets := schemaKeys{known: map[string]bool{}, folded: map[string]bool{},
+		variants: map[reflect.Type]unionVariant{}}
 	// Every root is defined before any definition is read, as Files does,
 	// since a union that one root reaches can change a definition that
 	// another reaches too (schemagen.Generator.Union).
@@ -199,8 +201,27 @@ var knownKeys = sync.OnceValue(func() keySets {
 	for _, d := range Documents() {
 		roots = append(roots, g.Ref(d.Root))
 	}
-	for _, r := range roots {
-		walk(r)
+	g.Walk(func(s *schemagen.Schema) {
+		for k := range s.Properties {
+			sets.known[k] = true
+			sets.folded[foldKey(k)] = true
+		}
+	}, roots...)
+	for _, u := range unions {
+		for _, v := range u.variants {
+			uv := unionVariant{key: u.key, value: v.Value}
+			for k, p := range g.Def(schemagen.RefName(g.Ref(v.Type).Ref)).Properties {
+				if p.False {
+					uv.excluded = append(uv.excluded, k)
+				}
+			}
+			slices.Sort(uv.excluded)
+			t := v.Type
+			if t.Kind() == reflect.Pointer {
+				t = t.Elem()
+			}
+			sets.variants[t] = uv
+		}
 	}
 	return sets
 })
@@ -225,33 +246,32 @@ func foldKey(k string) string {
 	return b.String()
 }
 
-// dropCaseVariants returns data, one JSON value that value.CheckJSON took,
-// without each key of its objects, at any depth, that is none of the known
-// keys (knownKeys) but differs from one of them only by its case, as KIND from
-// kind, which encoding/json would read as the field that the known key names,
-// where a consumer ignores it, as a key that it does not know (§6.4). It
-// returns data itself, having only scanned it for its keys, when it has no
-// such key. No two known keys differ only by their case (TestKnownKeys), so
-// that every key that it keeps is read as a consumer reads it.
-func dropCaseVariants(data []byte) ([]byte, error) {
-	keys := knownKeys()
-	variant := func(k string) bool { return !keys.known[k] && keys.folded[foldKey(k)] }
-	if !hasKey(data, variant) {
-		return data, nil
-	}
+// readTree returns data, one JSON value that value.CheckJSON took, as a tree
+// of maps, slices, json.Numbers, strings, and booleans, which checkTags reads
+// what is there of, without each key of its objects, at any depth, that is
+// none of the known keys (knownKeys) but differs from one of them only by its
+// case, as KIND from kind, which encoding/json would read as the field that
+// the known key names, where a consumer ignores it, as a key that it does not
+// know (§6.4); and data without those keys, which is data itself when it has
+// none. No two known keys differ only by their case (TestKnownKeys), so that
+// every key that it keeps is read as a consumer reads it.
+func readTree(data []byte) (any, []byte, error) {
 	var tree any
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	if err := dec.Decode(&tree); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	keys := knownKeys()
+	dropped := false
 	var walk func(v any)
 	walk = func(v any) {
 		switch v := v.(type) {
 		case map[string]any:
 			for k, c := range v {
-				if variant(k) {
+				if !keys.known[k] && keys.folded[foldKey(k)] {
 					delete(v, k)
+					dropped = true
 					continue
 				}
 				walk(c)
@@ -263,149 +283,355 @@ func dropCaseVariants(data []byte) ([]byte, error) {
 		}
 	}
 	walk(tree)
-	return schemagen.Marshal(tree)
-}
-
-// hasKey reports whether data, one JSON value that value.CheckJSON took, has
-// a key of an object, at any depth, that match takes, as it reads: a string
-// that a colon follows.
-func hasKey(data []byte, match func(string) bool) bool {
-	for i := 0; i < len(data); i++ {
-		if data[i] != '"' {
-			continue
-		}
-		start, escaped := i, false
-		// The string ends at the first quote that no backslash escapes,
-		// which valid JSON has.
-		for i++; data[i] != '"'; i++ {
-			if data[i] == '\\' {
-				escaped = true
-				i++
-			}
-		}
-		j := i + 1
-		for j < len(data) && strings.IndexByte(" \t\n\r", data[j]) >= 0 {
-			j++
-		}
-		if j == len(data) || data[j] != ':' {
-			continue
-		}
-		key := string(data[start+1 : i])
-		if escaped && json.Unmarshal(data[start:i+1], &key) != nil || match(key) {
-			return true
-		}
+	if !dropped {
+		return tree, data, nil
 	}
-	return false
+	data, err := schemagen.Marshal(tree)
+	return tree, data, err
 }
 
 // thisPackage is the path of this package, whose types checkTags reads.
 var thisPackage = reflect.TypeFor[Manifest]().PkgPath()
 
-// checkTags returns an error for a field of v, at path, at any depth, whose
-// value its enum or const tag does not take, as Generator's schema would
-// not, but for an optional field that is not there, or that its when tag
-// does not take (checkWhen). It reads the values of this package's types,
-// and none of another package's, as an AST's, whose own decoding checks
+// tagError is an error of checkTags: what is wrong, and the keys and the
+// indexes that lead to it from the root, $, the last first, which are added
+// as the error returns, so that a path is built only for an error.
+type tagError struct {
+	problem string
+	path    []string
+}
+
+func problemf(format string, args ...any) *tagError {
+	return &tagError{problem: fmt.Sprintf(format, args...)}
+}
+
+// at returns e, the error of a value at step, as .kind or [2], from what
+// holds it.
+func (e *tagError) at(step string) *tagError {
+	e.path = append(e.path, step)
+	return e
+}
+
+func (e *tagError) Error() string {
+	var b strings.Builder
+	b.WriteString("$")
+	for i := len(e.path) - 1; i >= 0; i-- {
+		b.WriteString(e.path[i])
+	}
+	return b.String() + " " + e.problem
+}
+
+// checkTags returns an error for what the schemas refuse of v, a value of
+// this package's types read from tree, the JSON that readTree returned of
+// what it was read from, or of what holds v, at any depth, as Generator reads
+// the fields' tags (schemagen.Generator): a field's value that its enum or
+// const tag does not take; a key that is there where its variant does not
+// have it, a when tag's or another variant's of its union, whatever its
+// value; a key that is missing where its object's schema requires it, or
+// that is empty where it is tagged required, and that the types leave out
+// when empty (written), as an enum's options; a field tagged typeFrom whose
+// value is not of the type that its property says (checkVariant); and a
+// value whose declaration is in another file that is neither a boolean, a
+// number, nor a string. It reads a value.Value, and no value of another
+// package's types, as an AST's or a segment's, whose own decoding checks
 // them.
-func checkTags(v reflect.Value, path string) error {
+func checkTags(v reflect.Value, tree any) *tagError {
 	switch v.Kind() {
 	case reflect.Pointer, reflect.Interface:
 		if v.IsNil() {
 			return nil
 		}
-		return checkTags(v.Elem(), path)
+		return checkTags(v.Elem(), tree)
 	case reflect.Slice, reflect.Array:
+		if !composite(v.Type().Elem()) {
+			return nil
+		}
+		items, _ := tree.([]any)
 		for i := range v.Len() {
-			if err := checkTags(v.Index(i), fmt.Sprintf("%s[%d]", path, i)); err != nil {
-				return err
+			var item any
+			if i < len(items) {
+				item = items[i]
+			}
+			if err := checkTags(v.Index(i), item); err != nil {
+				return err.at(fmt.Sprintf("[%d]", i))
 			}
 		}
 	case reflect.Map:
+		if !composite(v.Type().Elem()) {
+			return nil
+		}
+		obj, _ := tree.(map[string]any)
 		iter := v.MapRange()
 		for iter.Next() {
-			if err := checkTags(iter.Value(), fmt.Sprintf("%s[%q]", path, iter.Key())); err != nil {
-				return err
+			if err := checkTags(iter.Value(), obj[iter.Key().String()]); err != nil {
+				return err.at(fmt.Sprintf("[%q]", iter.Key().String()))
 			}
 		}
 	case reflect.Struct:
-		t := v.Type()
-		if t.PkgPath() != thisPackage {
-			return nil
+		switch t := v.Type(); {
+		case t == valueType:
+			if v.CanInterface() && v.Interface().(value.Value).Kind() == "" {
+				return problemf("is neither a boolean, a number, nor a string, which a value is")
+			}
+		case t.PkgPath() == thisPackage:
+			return checkStruct(v, tree)
 		}
-		// The enums and the consts first, which tell the variant whose
-		// fields checkWhen checks.
-		for pass := range 3 {
-			for i := range t.NumField() {
-				f := t.Field(i)
-				if !f.IsExported() {
+	}
+	return nil
+}
+
+// composite reports whether a value of t may hold a value that checkTags
+// reads: a struct, or what may hold one.
+func composite(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Interface, reflect.Struct, reflect.Slice, reflect.Array, reflect.Map:
+		return true
+	}
+	return false
+}
+
+// checkStruct is checkTags of v, a struct of this package's types, whose JSON
+// is tree.
+func checkStruct(v reflect.Value, tree any) *tagError {
+	t := v.Type()
+	info := infoOf(t)
+	obj, _ := tree.(map[string]any)
+	if u, ok := knownKeys().variants[t]; ok {
+		for _, k := range u.excluded {
+			if _, there := obj[k]; there {
+				return problemf("is there, which a %s of %q has not", u.key, u.value).at("." + k)
+			}
+		}
+	}
+	// The enums and the consts first, which tell the variant whose fields the
+	// rest are checked by.
+	for i := range info.fields {
+		f := &info.fields[i]
+		if _, there := obj[f.name]; there || !f.optional {
+			if err := f.checkValue(info.value(v, f)); err != nil {
+				return err.at("." + f.name)
+			}
+		}
+	}
+	for i := range info.fields {
+		f := &info.fields[i]
+		x, there := obj[f.name]
+		fv := info.value(v, f)
+		if err := info.checkVariant(v, f, fv, there); err != nil {
+			return err.at("." + f.name)
+		}
+		if err := checkTags(fv, x); err != nil {
+			return err.at("." + f.name)
+		}
+	}
+	return nil
+}
+
+// structInfo is a struct type's fields as encoding/json reads them, an
+// embedded struct's as the struct's own, with what checkTags reads of their
+// tags, which it reads once of each type.
+type structInfo struct {
+	fields []fieldInfo
+	byName map[string]*fieldInfo
+}
+
+// fieldInfo is a field of a struct, as encoding/json reads it, with its tags.
+type fieldInfo struct {
+	// index is its index, as reflect.Value.FieldByIndex takes it, and typ its
+	// type.
+	index []int
+	typ   reflect.Type
+	// name is the key that it is read by, and named whether its json tag
+	// names it so, which a field that a type reads by a key of its own, as a
+	// condition's, is not.
+	name     string
+	named    bool
+	opts     string
+	optional bool
+	// required is whether it is tagged required.
+	required bool
+	enum     []string
+	// konst is its const tag's value, as JSON reads it, and konstTag the
+	// tag, if it has one.
+	konst    any
+	konstTag string
+	// when is the property that its when tag names, and whenValues the
+	// values that it is there for, if it has one.
+	when       string
+	whenValues []string
+	typeFrom   string
+}
+
+// structInfos are the structInfo of each struct type that checkTags read.
+var structInfos sync.Map
+
+// infoOf returns the structInfo of the struct type t.
+func infoOf(t reflect.Type) *structInfo {
+	if info, ok := structInfos.Load(t); ok {
+		return info.(*structInfo)
+	}
+	info := &structInfo{byName: map[string]*fieldInfo{}}
+	var add func(t reflect.Type, index []int)
+	add = func(t reflect.Type, index []int) {
+		for i := range t.NumField() {
+			f := t.Field(i)
+			tag := f.Tag.Get("json")
+			if tag == "-" {
+				continue
+			}
+			name, opts, _ := strings.Cut(tag, ",")
+			at := append(slices.Clone(index), i)
+			if embedded := f.Type; f.Anonymous && name == "" {
+				if embedded.Kind() == reflect.Pointer {
+					embedded = embedded.Elem()
+				}
+				if embedded.Kind() == reflect.Struct {
+					add(embedded, at)
 					continue
 				}
-				name, opts, _ := strings.Cut(f.Tag.Get("json"), ",")
-				at := path + "." + name
-				fv := v.Field(i)
-				var err error
-				switch pass {
-				case 0:
-					err = checkValue(f, fv, at, opts)
-				case 1:
-					err = checkWhen(v, f, fv, at, opts)
-				default:
-					err = checkTags(fv, at)
+			}
+			if !f.IsExported() {
+				continue
+			}
+			fi := fieldInfo{index: at, typ: f.Type, name: name, named: name != "", opts: opts, optional: omits(opts),
+				required: f.Tag.Get("required") == "true", typeFrom: f.Tag.Get("typeFrom")}
+			if !fi.named {
+				fi.name = f.Name
+			}
+			if e, ok := f.Tag.Lookup("enum"); ok {
+				fi.enum = strings.Split(e, ",")
+			}
+			if c, ok := f.Tag.Lookup("const"); ok {
+				if err := json.Unmarshal([]byte(c), &fi.konst); err != nil {
+					panic(fmt.Sprintf("published: the const tag of %s.%s is not JSON", t, f.Name))
 				}
-				if err != nil {
-					return err
+				fi.konstTag = c
+			}
+			if w, ok := f.Tag.Lookup("when"); ok {
+				property, values, _ := strings.Cut(w, "=")
+				fi.when, fi.whenValues = property, strings.Split(values, "|")
+			}
+			info.fields = append(info.fields, fi)
+		}
+	}
+	add(t, nil)
+	for i := range info.fields {
+		info.byName[info.fields[i].name] = &info.fields[i]
+	}
+	actual, _ := structInfos.LoadOrStore(t, info)
+	return actual.(*structInfo)
+}
+
+// value returns the value of the field f of v, or its zero value where an
+// embedded pointer that holds it is nil.
+func (info *structInfo) value(v reflect.Value, f *fieldInfo) reflect.Value {
+	fv, err := v.FieldByIndexErr(f.index)
+	if err != nil {
+		return reflect.Zero(f.typ)
+	}
+	return fv
+}
+
+// property returns the value of the string field of v that is read by the
+// key name, a when or a typeFrom tag's property, or "" if v has none.
+func (info *structInfo) property(v reflect.Value, name string) string {
+	f, ok := info.byName[name]
+	if !ok {
+		return ""
+	}
+	return info.value(v, f).String()
+}
+
+// checkValue returns an error for fv, the value of the field f, that its
+// enum tag does not take, or the items of a slice of strings that it does
+// not, or that its const tag does not take.
+func (f *fieldInfo) checkValue(fv reflect.Value) *tagError {
+	if f.enum != nil {
+		switch {
+		case fv.Kind() == reflect.String:
+			if !slices.Contains(f.enum, fv.String()) {
+				return problemf("is %q, which is none of %s", fv.String(), strings.Join(f.enum, ","))
+			}
+		case fv.Kind() == reflect.Slice && fv.Type().Elem().Kind() == reflect.String:
+			for i := range fv.Len() {
+				if s := fv.Index(i).String(); !slices.Contains(f.enum, s) {
+					return problemf("is %q, which is none of %s", s, strings.Join(f.enum, ",")).
+						at(fmt.Sprintf("[%d]", i))
 				}
 			}
 		}
 	}
-	return nil
-}
-
-// checkValue returns an error for the field f, whose value is fv, at at,
-// whose json tag's options are opts, whose enum or const tag does not take
-// its value, but for an optional field of an enum that is not there.
-func checkValue(f reflect.StructField, fv reflect.Value, at, opts string) error {
-	if enum, ok := f.Tag.Lookup("enum"); ok && fv.Kind() == reflect.String {
-		// An optional field, as Generator reads one, that is not there.
-		absent := omits(opts) && fv.String() == ""
-		if !absent && !slices.Contains(strings.Split(enum, ","), fv.String()) {
-			return fmt.Errorf("%s is %q, which is none of %s", at, fv.String(), enum)
-		}
-	}
-	if c, ok := f.Tag.Lookup("const"); ok && fv.CanInt() {
-		if want, err := strconv.ParseInt(c, 10, 64); err != nil || fv.Int() != want {
-			return fmt.Errorf("%s is %d, not %s", at, fv.Int(), c)
-		}
+	if f.konstTag != "" && !isConst(fv, f.konst) {
+		return problemf("is %v, not %s", fv, f.konstTag)
 	}
 	return nil
 }
 
-// checkWhen returns an error for the field f of the struct v, whose value is
-// fv, at at, whose json tag's options are opts, tagged when:"p=a|b"
-// (schemagen.Generator): one that is there where the struct's property p is
-// none of the values after the =, whose variant does not have it, as an else
-// output's condition, or that is not there where p is one of them and f is
-// tagged required, whose variant requires it, as an if output's condition. A
-// field that encoding/json leaves out, as an empty one tagged omitempty, is
-// not there (written).
-func checkWhen(v reflect.Value, f reflect.StructField, fv reflect.Value, at, opts string) error {
-	when, ok := f.Tag.Lookup("when")
+// isConst reports whether fv is c, a value as JSON reads it: the same string,
+// boolean, or number.
+func isConst(fv reflect.Value, c any) bool {
+	switch c := c.(type) {
+	case string:
+		return fv.Kind() == reflect.String && fv.String() == c
+	case bool:
+		return fv.Kind() == reflect.Bool && fv.Bool() == c
+	case float64:
+		switch {
+		case fv.CanInt():
+			return float64(fv.Int()) == c
+		case fv.CanUint():
+			return float64(fv.Uint()) == c
+		case fv.CanFloat():
+			return fv.Float() == c
+		}
+	}
+	return false
+}
+
+// checkVariant returns an error for the field f of the struct v, whose value
+// is fv, there where its key is in the struct's JSON: one that is there where
+// its variant does not have it (a when tag), whatever its value; one that is
+// not there where its object's schema requires it, its variant's where it has
+// a when tag; one that is empty where it is tagged required and the types
+// leave it out (written), as an enum's options; and a value of one tagged
+// typeFrom that is not of the type that its property says, as value.Read
+// reads it, a float's within the bounds of its schema (value.Schema), but
+// for an enum's, which is a string, and which a consumer checks is one of
+// its options.
+func (info *structInfo) checkVariant(v reflect.Value, f *fieldInfo, fv reflect.Value, there bool) *tagError {
+	has, is := true, ""
+	if f.when != "" {
+		is = info.property(v, f.when)
+		has = slices.Contains(f.whenValues, is)
+	}
+	switch {
+	case there && !has:
+		return problemf("is there, which a %s of %q has not", f.when, is)
+	case !has:
+	case !there && f.named && (!f.optional || f.required):
+		if f.when != "" {
+			return problemf("is missing, which a %s of %q has", f.when, is)
+		}
+		return problemf("is missing, which its object's schema requires")
+	case there && f.required && !written(fv, f.opts):
+		return problemf("is empty, which the types leave out, but it is required where it is there")
+	}
+	if f.typeFrom == "" || !there || !fv.CanInterface() {
+		return nil
+	}
+	val, ok := fv.Interface().(value.Value)
 	if !ok {
 		return nil
 	}
-	property, values, _ := strings.Cut(when, "=")
-	is := ""
-	for i := range v.NumField() {
-		if name, _, _ := strings.Cut(v.Type().Field(i).Tag.Get("json"), ","); name == property {
-			is = v.Field(i).String()
-		}
+	typ := info.property(v, f.typeFrom)
+	if typ == value.Enum {
+		typ = value.String
 	}
-	there, has := written(fv, opts), slices.Contains(strings.Split(values, "|"), is)
-	switch {
-	case there && !has:
-		return fmt.Errorf("%s is there, which a %s of %q has not", at, property, is)
-	case !there && has && f.Tag.Get("required") == "true":
-		return fmt.Errorf("%s is missing, which a %s of %q has", at, property, is)
+	if _, problem := val.Read(typ, value.Checks{}); problem != "" {
+		return problemf("%s", problem)
+	}
+	if typ == value.Float && value.FloatBeyondSchema(val.JSON()) {
+		return problemf("is beyond ±1.7976931348623157e+308, the greatest double's shortest form, as it is written")
 	}
 	return nil
 }
@@ -413,12 +639,18 @@ func checkWhen(v reflect.Value, f reflect.StructField, fv reflect.Value, at, opt
 // written reports whether encoding/json writes fv, the value of a field whose
 // json tag's options are opts: not when it is tagged omitempty and fv is
 // empty, false, 0, a nil pointer, or of no length, nor when it is tagged
-// omitzero and fv is zero.
+// omitzero and fv is zero, as its IsZero method says, if it has one.
 func written(fv reflect.Value, opts string) bool {
 	for o := range strings.SplitSeq(opts, ",") {
 		switch o {
 		case "omitzero":
-			if fv.IsZero() {
+			zero := fv.IsZero()
+			if fv.CanInterface() && !(fv.Kind() == reflect.Pointer && fv.IsNil()) {
+				if z, ok := fv.Interface().(interface{ IsZero() bool }); ok {
+					zero = z.IsZero()
+				}
+			}
+			if zero {
 				return false
 			}
 		case "omitempty":
@@ -474,22 +706,23 @@ func marshalObject[T any](v T) ([]byte, error) {
 	return schemagen.Marshal(v)
 }
 
-// marshalFile writes v, a file's struct of a type without methods, as
-// marshalObject does, or fails, rather than write null, which no file holds
-// (§6.2), where a value of it is not set, as a variable's default, a node, or
-// a manifest's snapshot, or rather than write what Decode refuses of its
-// tags (checkTags), as an element's kind that is none of the enum's, another
-// schemaVersion, or an else output's condition.
-func marshalFile[T any](file string, v T) ([]byte, error) {
-	if err := checkTags(reflect.ValueOf(v), "$"); err != nil {
-		return nil, fmt.Errorf("published: %s: %w", file, err)
-	}
+// marshalFile writes v, a file's struct as a type F without methods, as
+// marshalObject does, or fails where Decode would refuse what it writes, as
+// it reads it into an F: rather than write null, which no file holds (§6.2),
+// where a value of it is not set, as a variable's default, a node, or a
+// manifest's snapshot; or what Decode refuses of its tags (checkTags), as an
+// element's kind that is none of the enum's, another schemaVersion, an else
+// output's condition, or a value that is not of its type; or an AST that
+// expr.Decode does not read back as its context's, as one whose names are not
+// resolved, as expr.Parse returns it. So the types never write a file that
+// Decode refuses.
+func marshalFile[F, T any](file string, v T) ([]byte, error) {
 	data, err := marshalObject(v)
 	if err != nil {
 		return nil, err
 	}
-	if problem := value.CheckJSON(data); problem != "" {
-		return nil, fmt.Errorf("published: %s %s, where a value is not set", file, problem)
+	if err := decode(data, new(F)); err != nil {
+		return nil, fmt.Errorf("published: %s is not written, since Decode would refuse it: %w", file, err)
 	}
 	return data, nil
 }

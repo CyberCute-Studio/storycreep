@@ -26,10 +26,11 @@ func (Manifest) JSONSchemaDoc() string {
 }
 
 // MarshalJSON writes the manifest, its boards and its files [] and {} when it
-// has none, or fails on a snapshot that is not set.
+// has none, or fails on what Decode would refuse of it, as a snapshot that
+// is not set (marshalFile).
 func (m Manifest) MarshalJSON() ([]byte, error) {
 	type plain Manifest
-	return marshalFile(ManifestPath, plain(m))
+	return marshalFile[Manifest](ManifestPath, plain(m))
 }
 
 // UnmarshalJSON reads a manifest, whose snapshot is a release's or a draft's.

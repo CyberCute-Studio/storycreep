@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path"
 	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
@@ -229,25 +232,104 @@ func TestDecodeText(t *testing.T) {
 	}
 }
 
-// optionalEnums has fields of enums that are optional, as Generator reads a
-// field tagged omitempty or omitzero.
-type optionalEnums struct {
-	Empty string `json:"empty,omitempty" enum:"a,b"`
-	Zero  string `json:"zero,omitzero" enum:"a,b"`
+// tagged has a field of each tag that Decode reads, as Generator reads them:
+// optional enums, tagged omitempty and omitzero, an enum of a slice's
+// strings, a const string, and fields that a property of an embedded struct
+// tells, one there for some of its values and required there, and a value
+// of the type that another property says.
+type tagged struct {
+	TaggedKind
+	Default value.Value `json:"default" typeFrom:"type"`
+	Empty   string      `json:"empty,omitempty" enum:"a,b"`
+	Extra   string      `json:"extra,omitempty" when:"kind=one" required:"true" minLength:"1"`
+	Marks   []string    `json:"marks,omitempty" enum:"x,y"`
+	Op      string      `json:"op" const:"\"set\""`
+	Type    string      `json:"type" enum:"int,float,string,enum"`
+	Zero    string      `json:"zero,omitzero" enum:"a,b"`
 }
 
-// TestOptionalEnum checks that Decode takes an optional field of an enum that
-// is not there, whether it is tagged omitempty or omitzero, as the schema
-// does, and refuses one that is there with a value that the enum does not
-// have.
-func TestOptionalEnum(t *testing.T) {
-	for data, ok := range map[string]bool{
-		`{}`: true, `{"empty":"a","zero":"b"}`: true, `{"zero":"c"}`: false, `{"empty":"c"}`: false,
-		`{"zero":""}`: true,
-	} {
-		var v optionalEnums
-		if err := Decode([]byte(data), &v); (err == nil) != ok {
-			t.Errorf("Decode(%s) = %v", data, err)
+// TaggedKind is embedded in tagged, as encoding/json reads its field as
+// tagged's own.
+type TaggedKind struct {
+	Kind string `json:"kind" enum:"one,two"`
+}
+
+// schemaOf returns the JSON Schema that a generator writes of the type root,
+// as a document of its own, compiled by the tests' validator.
+func schemaOf(t *testing.T, root reflect.Type) *jsonschema.Schema {
+	t.Helper()
+	const path = "schema/test/v1/test.schema.json"
+	data, err := schemagen.New(false).Document(schemagen.Document{Path: path, Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := jsonschema.NewCompiler()
+	c.DefaultDraft(jsonschema.Draft2020)
+	if err := c.AddResource(schemagen.BaseURL+path, doc); err != nil {
+		t.Fatal(err)
+	}
+	return c.MustCompile(schemagen.BaseURL + path)
+}
+
+// TestTagsAgreeWithSchema checks that Decode refuses exactly what the schema
+// that Generator writes of a type refuses by the tags that Decode reads, of
+// a type that has each of them: an optional enum that is not there, whether
+// it is tagged omitempty or omitzero, is taken, and one that is there,
+// whatever its value, is one of the enum's, the empty string not among them;
+// so is each string of a slice that the enum tags; a const field is its
+// value; a field that a property of an embedded struct tells is there exactly
+// for the property's values that it names, and is not empty there, where it
+// is required; a value is of the type that its property says, an enum's a
+// string; and a key that the schema requires is there.
+func TestTagsAgreeWithSchema(t *testing.T) {
+	s := schemaOf(t, reflect.TypeFor[tagged]())
+	const base = `"default":1,"op":"set","type":"int"`
+	inputs := []string{
+		`{"kind":"two",` + base + `}`,
+		`{"kind":"one",` + base + `,"extra":"e"}`,
+		`{"kind":"one",` + base + `}`,
+		`{"kind":"one",` + base + `,"extra":""}`,
+		`{"kind":"two",` + base + `,"extra":"e"}`,
+		`{"kind":"two",` + base + `,"extra":""}`,
+		`{"kind":"three",` + base + `}`,
+		`{` + base + `}`,
+		`{"kind":"two","default":1,"op":"get","type":"int"}`,
+		`{"kind":"two","default":1,"type":"int"}`,
+		`{"kind":"two","default":1,"op":"set"}`,
+		`{"kind":"two","op":"set","type":"int"}`,
+		`{"kind":"two",` + base + `,"empty":"a","zero":"b","marks":["x","y"]}`,
+		`{"kind":"two",` + base + `,"marks":[]}`,
+		`{"kind":"two",` + base + `,"marks":["x","z"]}`,
+		`{"kind":"two",` + base + `,"marks":[""]}`,
+		`{"kind":"two",` + base + `,"empty":""}`,
+		`{"kind":"two",` + base + `,"zero":""}`,
+		`{"kind":"two",` + base + `,"zero":"c"}`,
+		`{"kind":"two","default":2.0,"op":"set","type":"int"}`,
+		`{"kind":"two","default":2.5,"op":"set","type":"int"}`,
+		`{"kind":"two","default":"1","op":"set","type":"int"}`,
+		`{"kind":"two","default":{"a":1},"op":"set","type":"int"}`,
+		`{"kind":"two","default":"s","op":"set","type":"string"}`,
+		`{"kind":"two","default":1,"op":"set","type":"string"}`,
+		`{"kind":"two","default":"calm","op":"set","type":"enum"}`,
+		`{"kind":"two","default":true,"op":"set","type":"enum"}`,
+		`{"kind":"two","default":-1.7976931348623157e308,"op":"set","type":"float"}`,
+		`{"kind":"two","default":-1.7976931348623158e308,"op":"set","type":"float"}`,
+		`{"kind":"two","default":1e309,"op":"set","type":"float"}`,
+		`{}`,
+	}
+	for _, data := range inputs {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		schema := s.Validate(inst) == nil
+		var v tagged
+		if err := Decode([]byte(data), &v); (err == nil) != schema {
+			t.Errorf("Decode(%s) = %v, but the schema takes it: %v", data, err, schema)
 		}
 	}
 }
@@ -435,20 +517,26 @@ func item(t *testing.T, obj map[string]any, key string, i int) map[string]any {
 // TestVariantFields checks that a field that is there only in some variants
 // of an object (a when tag), as a branch's output's condition, a board's
 // variable's boardId, or an enum's options, is refused where its variant does
-// not have it, and where its variant requires it but it is missing, by every
-// schema and by Decode, as a consumer refuses it.
+// not have it, whatever its value, false and empty ones included, and where
+// its variant requires it but it is missing or empty, and that a key that a
+// variant of a union does not define but another does, as a jumper's text or
+// a draft's version, is refused, by every schema and by Decode, as a consumer
+// refuses it.
 func TestVariantFields(t *testing.T) {
 	open := newValidator(t, false)
-	board := func(doc map[string]any) map[string]any {
+	node := func(doc map[string]any, typ string) map[string]any {
 		for i := range doc["nodes"].([]any) {
-			if n := item(t, doc, "nodes", i); n["type"] == NodeBranch {
+			if n := item(t, doc, "nodes", i); n["type"] == typ {
 				return n
 			}
 		}
-		t.Fatal("the board's example has no branch")
+		t.Fatalf("the board's example has no %s", typ)
 		return nil
 	}
+	board := func(doc map[string]any) map[string]any { return node(doc, NodeBranch) }
 	condition := map[string]any{"ast": map[string]any{"kind": "lit", "type": "bool", "value": true}, "source": "true"}
+	text := map[string]any{"preview": "a", "segments": []any{map[string]any{"kind": "text", "marks": []any{}, "value": "a"}}}
+	snapshot := func(doc map[string]any) map[string]any { return doc["snapshot"].(map[string]any) }
 	for name, tt := range map[string]struct {
 		path, ex string
 		edit     func(doc map[string]any)
@@ -474,6 +562,45 @@ func TestVariantFields(t *testing.T) {
 		"an int with options": {"component_types", componentTypesExamples[0], func(doc map[string]any) {
 			item(t, item(t, doc, "componentTypes", 0), "attributes", 0)["options"] = []any{"a"}
 		}},
+		"a global variable with an empty board": {"variables", variablesExamples[0], func(doc map[string]any) {
+			item(t, doc, "variables", 0)["boardId"] = ""
+		}},
+		"a global variable not reset on entering a board": {"variables", variablesExamples[0], func(doc map[string]any) {
+			item(t, doc, "variables", 0)["resetOnEnter"] = false
+		}},
+		"an int with no options": {"component_types", componentTypesExamples[0], func(doc map[string]any) {
+			item(t, item(t, doc, "componentTypes", 0), "attributes", 0)["options"] = []any{}
+		}},
+		"an enum with no options": {"component_types", componentTypesExamples[0], func(doc map[string]any) {
+			item(t, item(t, doc, "componentTypes", 0), "attributes", 1)["options"] = []any{}
+		}},
+		"an else output with an empty condition": {"board", boardExamples[0], func(doc map[string]any) {
+			item(t, board(doc), "outputs", 1)["condition"] = map[string]any{}
+		}},
+		"a draft with a version": {"storycreep", manifestExamples[1], func(doc map[string]any) {
+			snapshot(doc)["version"] = "1.4.0"
+		}},
+		"a draft with an ID": {"storycreep", manifestExamples[1], func(doc map[string]any) {
+			snapshot(doc)["id"] = "snp_01HQ9A7TBE5N2WQX8K4YJ3MDCR"
+		}},
+		"a release with the moment of a pull": {"storycreep", manifestExamples[0], func(doc map[string]any) {
+			snapshot(doc)["pulledAt"] = "2026-10-13T09:15:00Z"
+		}},
+		"a jumper with text": {"board", boardExamples[1], func(doc map[string]any) {
+			node(doc, NodeJumper)["text"] = text
+		}},
+		"a jumper with no outputs": {"board", boardExamples[1], func(doc map[string]any) {
+			node(doc, NodeJumper)["outputs"] = []any{}
+		}},
+		"a jumper that is no ending": {"board", boardExamples[1], func(doc map[string]any) {
+			node(doc, NodeJumper)["isEnding"] = false
+		}},
+		"an element with a target": {"board", boardExamples[1], func(doc map[string]any) {
+			node(doc, NodeElement)["target"] = node(doc, NodeJumper)["target"]
+		}},
+		"a branch of a kind": {"board", boardExamples[0], func(doc map[string]any) {
+			board(doc)["kind"] = "dialogue"
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			data := edited(t, tt.ex, tt.edit)
@@ -494,12 +621,133 @@ func TestVariantFields(t *testing.T) {
 	}
 }
 
+// TestDecodeValues checks that every schema and Decode refuse a value that is
+// not of its declaration's type, a variable's default, an attribute
+// definition's, a component's value, and a save state's, an enum's that is
+// no string, and a float's beyond the greatest double's shortest form, and
+// an empty text or label, which a file leaves out, and that
+// Decode refuses, beyond the schemas, a number written with an exponent
+// beyond ±999, wherever it is, which the schemas cannot tell from the number
+// written otherwise.
+func TestDecodeValues(t *testing.T) {
+	open := newValidator(t, false)
+	for name, tt := range map[string]struct {
+		path, ex string
+		edit     func(doc map[string]any)
+		schema   bool
+	}{
+		"an int's default that is a string": {"variables", variablesExamples[0], func(doc map[string]any) {
+			item(t, doc, "variables", 1)["default"] = "1"
+		}, false},
+		"an int's default that is not integral": {"variables", variablesExamples[0], func(doc map[string]any) {
+			item(t, doc, "variables", 1)["default"] = 2.5
+		}, false},
+		"an int's default that is an object": {"variables", variablesExamples[0], func(doc map[string]any) {
+			item(t, doc, "variables", 1)["default"] = map[string]any{"a": 1}
+		}, false},
+		"a float's default beyond the greatest double's shortest form": {"variables", variablesExamples[1], func(doc map[string]any) {
+			item(t, doc, "variables", 0)["default"] = json.RawMessage("1.7976931348623158e308")
+		}, false},
+		"a bool's default that is a number": {"variables", variablesExamples[0], func(doc map[string]any) {
+			item(t, doc, "variables", 0)["default"] = 0
+		}, false},
+		"an enum's default that is a number": {"component_types", componentTypesExamples[0], func(doc map[string]any) {
+			item(t, item(t, doc, "componentTypes", 0), "attributes", 1)["default"] = 1
+		}, false},
+		"a text's default that is a boolean": {"component_types", componentTypesExamples[0], func(doc map[string]any) {
+			item(t, item(t, doc, "componentTypes", 0), "attributes", 3)["default"] = true
+		}, false},
+		"a component's value that is an array": {"components", componentsExamples[0], func(doc map[string]any) {
+			item(t, doc, "components", 0)["attributes"].(map[string]any)["atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF"] = []any{1}
+		}, false},
+		"a state's value that is an object": {"../../save-state/v1/save-state", saveStateExamples[0], func(doc map[string]any) {
+			doc["variables"].(map[string]any)["var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"] = map[string]any{}
+		}, false},
+		"an empty text": {"board", boardExamples[1], func(doc map[string]any) {
+			item(t, doc, "nodes", 0)["text"] = map[string]any{"preview": "", "segments": []any{}}
+		}, false},
+		"an empty label": {"board", boardExamples[1], func(doc map[string]any) {
+			item(t, doc, "connections", 0)["label"] = map[string]any{"segments": []any{}}
+		}, false},
+		"a default written with an exponent beyond 999": {"variables", variablesExamples[0], func(doc map[string]any) {
+			item(t, doc, "variables", 1)["default"] = json.RawMessage("0e1000")
+		}, true},
+		"a position written with an exponent beyond 999": {"board", boardExamples[1], func(doc map[string]any) {
+			item(t, doc, "nodes", 0)["position"].(map[string]any)["x"] = json.RawMessage("1E-1000")
+		}, true},
+		"an unknown key's number written with an exponent beyond 999": {"board", boardExamples[1], func(doc map[string]any) {
+			doc["future"] = []any{json.RawMessage("-0.0e+01000")}
+		}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			data := edited(t, tt.ex, tt.edit)
+			file := path.Clean(PublishedDir + "/" + tt.path + ".schema.json")
+			if err := open.validate(t, file, "", data); (err == nil) != tt.schema {
+				t.Errorf("%s takes it: %v, want %v", file, err == nil, tt.schema)
+			}
+			var d schemagen.Document
+			for _, doc := range Documents() {
+				if doc.Path == file {
+					d = doc
+				}
+			}
+			if _, err := roundTrip(d, data); !errors.Is(err, ErrDecode) {
+				t.Errorf("Decode = %v, want an error that wraps ErrDecode", err)
+			}
+		})
+	}
+}
+
+// TestMissingKeys checks that Decode refuses an example without one of its
+// keys exactly when every schema refuses it, as a consumer does: one that its
+// object's schema, or its variant's, requires, wherever it is.
+func TestMissingKeys(t *testing.T) {
+	open := newValidator(t, false)
+	checked := 0
+	for _, d := range Documents() {
+		for i, ex := range d.Examples {
+			var doc any
+			if err := json.Unmarshal([]byte(ex), &doc); err != nil {
+				t.Fatal(err)
+			}
+			var walk func(v any, path string)
+			walk = func(v any, path string) {
+				switch v := v.(type) {
+				case map[string]any:
+					for _, k := range slices.Sorted(maps.Keys(v)) {
+						c := v[k]
+						walk(c, path+"."+k)
+						delete(v, k)
+						data := mustMarshal(t, doc)
+						v[k] = c
+						checked++
+						schema := open.validate(t, d.Path, "", data) == nil
+						if _, err := roundTrip(d, data); (err == nil) != schema {
+							t.Errorf("%s: example %d without %s.%s: Decode = %v, but the schema takes it: %v", d.Path, i,
+								path, k, err, schema)
+						}
+					}
+				case []any:
+					for j, c := range v {
+						walk(c, fmt.Sprintf("%s[%d]", path, j))
+					}
+				}
+			}
+			walk(doc, "$")
+		}
+	}
+	if checked < 300 {
+		t.Errorf("only %d keys were left out", checked)
+	}
+}
+
 // TestMarshalRefuses checks that the types refuse to write what Decode
 // refuses, or what a file leaves out, rather than write a file that every
 // schema refuses: a value of an enum that the format does not have, another
 // schemaVersion, a field that its variant does not have or that it requires,
-// an empty text or label, and an AST that is not resolved, which expr.Decode
-// does not read back.
+// an empty text or label, an AST that is not resolved, which expr.Decode
+// does not read back, and a value that is not of its declaration's type, or
+// that no value is.
 func TestMarshalRefuses(t *testing.T) {
 	unresolved, err := expr.Parse("met_elara == true", expr.ContextCondition)
 	if err != nil {
@@ -576,6 +824,25 @@ func TestMarshalRefuses(t *testing.T) {
 	}
 	if data, err := json.Marshal(AST{Node: unresolved}); err == nil {
 		t.Errorf("an AST that is not resolved is written as %s", data)
+	}
+	// A value that is not of its declaration's type, or that no value is.
+	for _, raw := range []string{`"1"`, `2.5`, `{"a":1}`, `[1]`, `0e1000`} {
+		var w Variables
+		if err := Decode([]byte(variablesExamples[0]), &w); err != nil {
+			t.Fatal(err)
+		}
+		w.Variables[1].Default = value.FromJSON([]byte(raw))
+		if data, err := json.Marshal(w); err == nil {
+			t.Errorf("an int variable whose default is %s is written as %s", raw, data)
+		}
+	}
+	var cs Components
+	if err := Decode([]byte(componentsExamples[0]), &cs); err != nil {
+		t.Fatal(err)
+	}
+	cs.Components[0].Attributes["atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF"] = value.FromJSON([]byte(`{"a":1}`))
+	if data, err := json.Marshal(cs); err == nil {
+		t.Errorf("a component whose value is an object is written as %s", data)
 	}
 }
 

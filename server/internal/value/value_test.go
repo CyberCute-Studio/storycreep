@@ -335,9 +335,10 @@ func TestValueJSON(t *testing.T) {
 }
 
 // TestCheckJSON checks what CheckJSON refuses of a JSON text: what is not one
-// JSON value, a byte that is not UTF-8, null anywhere outside a string, and a
-// lone surrogate escaped in a string, but not a string that holds null or an
-// escaped quote, nor a pair of surrogates.
+// JSON value, a byte that is not UTF-8, null anywhere outside a string, a
+// lone surrogate escaped in a string, and a number written with an exponent
+// beyond ±999 anywhere, but not a string that holds null, an escaped quote,
+// or such a number, nor a pair of surrogates.
 func TestCheckJSON(t *testing.T) {
 	t.Parallel()
 	for in, ok := range map[string]bool{
@@ -360,6 +361,13 @@ func TestCheckJSON(t *testing.T) {
 		"{\"a\":\"\xed\xa0\x80\"}":     false,
 		`{"a":"x","n":"` + "\t" + `"}`: false,
 		` {"unknown":[{"x":"y"}]} `:    true,
+		`{"a":[1,-2.5e-999,1E+0999]}`:  true,
+		`{"a":"0e1000","b":true}`:      true,
+		`{"a":false,"b":-0.0E1}`:       true,
+		`{"a":0e1000}`:                 false,
+		`[1,2,1E+1000]`:                false,
+		`-1e-1000`:                     false,
+		`[{"b":0.5e99999999999}]`:      false,
 	} {
 		if problem := CheckJSON([]byte(in)); (problem == "") != ok {
 			t.Errorf("CheckJSON(%q) = %q", in, problem)

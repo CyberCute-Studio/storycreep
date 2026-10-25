@@ -269,9 +269,8 @@ type integer int64
 // double rounds to 1, is not one, but for a number written with an exponent
 // beyond ±value.MaxExponent, which no file's number is, and which it refuses.
 func (n *integer) UnmarshalJSON(data []byte) error {
-	v, problem := value.FromJSON(data).Read(value.Int, value.Checks{})
-	var i int64
-	if problem != "" || json.Unmarshal(v.JSON(), &i) != nil {
+	i, problem := value.Integer(data)
+	if problem != "" {
 		return fmt.Errorf("richtext: %s is not an integer of at most %d in magnitude", data, semantics.MaxInt)
 	}
 	*n = integer(i)

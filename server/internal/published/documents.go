@@ -27,21 +27,33 @@ const (
 	SaveStateDir = "schema/save-state/v1"
 )
 
+// unions are the formats' unions, each an interface whose variants the value
+// of its key tells apart, which Generator declares (schemagen.Generator.Union).
+var unions = []struct {
+	iface    reflect.Type
+	key, doc string
+	variants []schemagen.Variant
+}{
+	{reflect.TypeFor[Node](), "type", "A node of a board: an element, a branch, or a jumper, which its type tells " +
+		"(FR-EDIT-02).", []schemagen.Variant{
+		{Value: NodeElement, Type: reflect.TypeFor[*Element]()},
+		{Value: NodeBranch, Type: reflect.TypeFor[*Branch]()},
+		{Value: NodeJumper, Type: reflect.TypeFor[*Jumper]()},
+	}},
+	{reflect.TypeFor[Snapshot](), "channel", "What the snapshot is: a published release, or the working draft as " +
+		"it was when it was pulled, which its channel tells (PRD §7.8).", []schemagen.Variant{
+		{Value: ChannelRelease, Type: reflect.TypeFor[*ReleaseSnapshot]()},
+		{Value: ChannelDraft, Type: reflect.TypeFor[*DraftSnapshot]()},
+	}},
+}
+
 // Generator returns a generator of the formats' schemas, a closed one if
 // closed is set (schemagen.New), which knows the unions of the formats.
 func Generator(closed bool) *schemagen.Generator {
 	g := schemagen.New(closed)
-	g.Union(reflect.TypeFor[Node](), "type", "A node of a board: an element, a branch, or a jumper, which its "+
-		"type tells (FR-EDIT-02).",
-		schemagen.Variant{Value: NodeElement, Type: reflect.TypeFor[*Element]()},
-		schemagen.Variant{Value: NodeBranch, Type: reflect.TypeFor[*Branch]()},
-		schemagen.Variant{Value: NodeJumper, Type: reflect.TypeFor[*Jumper]()},
-	)
-	g.Union(reflect.TypeFor[Snapshot](), "channel", "What the snapshot is: a published release, or the working "+
-		"draft as it was when it was pulled, which its channel tells (PRD §7.8).",
-		schemagen.Variant{Value: ChannelRelease, Type: reflect.TypeFor[*ReleaseSnapshot]()},
-		schemagen.Variant{Value: ChannelDraft, Type: reflect.TypeFor[*DraftSnapshot]()},
-	)
+	for _, u := range unions {
+		g.Union(u.iface, u.key, u.doc, u.variants...)
+	}
 	return g
 }
 
@@ -159,14 +171,22 @@ func (AST) JSONSchema(g *schemagen.Generator) *schemagen.Schema {
 }
 
 // MarshalJSON writes the AST as expr.Encode writes it, a script's when its
-// kind is script and a condition's otherwise, or fails on an AST that a file
-// does not hold (encodeAST).
+// kind is script and a condition's otherwise, or fails on one that is not
+// set, or that expr.Decode does not read back, as a file does not hold it:
+// one whose names are not resolved, as expr.Parse returns it.
 func (a AST) MarshalJSON() ([]byte, error) {
 	ctx := expr.ContextCondition
 	if a.Node != nil && a.Node.Kind() == expr.KindScript {
 		ctx = expr.ContextScript
 	}
-	return encodeAST(a.Node, ctx)
+	data, err := encodeAST(a.Node, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := expr.Decode(data, ctx); err != nil {
+		return nil, fmt.Errorf("published: the AST is not one that a file holds: %w", err)
+	}
+	return data, nil
 }
 
 // UnmarshalJSON reads the AST as expr.Decode reads it, a script's when its

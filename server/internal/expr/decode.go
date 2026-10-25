@@ -40,8 +40,11 @@ var (
 // kind cannot be at, as Encode refuses it; a field that is missing or of
 // another type than its kind's; a literal's value that is not of its type,
 // as an int that is not integral or is beyond ±(2^53 − 1), though one
-// written as 2.0 is the int 2 (§5.8.9), a float beyond a double's range, or
-// a string of more than MaxStringLength characters or that holds a NUL; a
+// written as 2.0 is the int 2 (§5.8.9), a float beyond
+// ±1.7976931348623157e+308, the greatest double's shortest form, as it is
+// written, though a double reads one up to half a unit in the last place
+// beyond the greatest double as it (value.FloatBeyondSchema), or a string of
+// more than MaxStringLength characters or that holds a NUL; a
 // variable's name or a call's function that is not an identifier of at most
 // MaxIdentifierLength characters, as the schema's pattern takes it, a
 // reserved word included, an attribute's name that is not two such
@@ -49,9 +52,10 @@ var (
 // canonical spelling; a call of more than MaxArguments arguments; and a
 // script of more than MaxStatements statements. Beyond the schema, which
 // cannot say how a number is written nor how large an AST is, it fails on a
-// literal's number written with an exponent beyond ±value.MaxExponent, as
-// 0e1000, which is 0, but which no file holds, as package value refuses it,
-// and on an AST of more than MaxNodes nodes, or deeper than MaxDepth, its
+// number written with an exponent beyond ±value.MaxExponent, as 0e1000,
+// which is 0, but which no file holds, a literal's or one of a key that it
+// ignores, as value.CheckJSON refuses it, and on an AST of more than
+// MaxNodes nodes, or deeper than MaxDepth, its
 // root 1 deep, which no AST that Check accepts is, so that Decode never
 // recurses deeper than that. It fails on a ctx that is neither context with
 // an error that wraps ErrContext.
@@ -206,8 +210,13 @@ func literal(obj object) (Node, error) {
 	}
 	// Read takes an int written as 2.0, reads an int's decimal exactly, and
 	// refuses a number beyond a double's range or written with an exponent
-	// beyond ±value.MaxExponent, which no canonical form has.
+	// beyond ±value.MaxExponent, which no canonical form has. The schema
+	// refuses a float beyond the greatest double's shortest form, as it is
+	// written, which Read reads as the greatest double.
 	v, problem := value.FromJSON(raw).Read(typ, value.Checks{})
+	if problem == "" && typ == value.Float && value.FloatBeyondSchema(raw) {
+		problem = "is beyond ±1.7976931348623157e+308, the greatest double's shortest form, as it is written"
+	}
 	if problem != "" || json.Unmarshal(v.JSON(), dst) != nil {
 		return nil, fmt.Errorf("%w: the value of a lit node of the type %s %s", ErrDecode, typ, problem)
 	}

@@ -21,10 +21,11 @@ type Board struct {
 }
 
 // MarshalJSON writes the board's file, its nodes and its connections [] when
-// it has none, or fails on a node or a value that is not set.
+// it has none, or fails on what Decode would refuse of it, as a node or a
+// value that is not set (marshalFile).
 func (b Board) MarshalJSON() ([]byte, error) {
 	type plain Board
-	return marshalFile("a board's file", plain(b))
+	return marshalFile[Board]("a board's file", plain(b))
 }
 
 // JSONSchemaDoc describes a board's file (schemagen.Documented).
@@ -230,15 +231,32 @@ type Text struct {
 // MarshalJSON writes the text, or fails on one without segments, which a file
 // leaves out (atLeastOne).
 func (t Text) MarshalJSON() ([]byte, error) {
-	if len(t.Segments) == 0 {
-		return nil, errEmptyText
+	if err := notEmpty(t.Segments); err != nil {
+		return nil, err
 	}
 	type plain Text
 	return schemagen.Marshal(plain(t))
 }
 
-// errEmptyText is the error of writing a text or a label without segments.
-var errEmptyText = errors.New("published: a text or a label has no segments, where an empty one is left out")
+// UnmarshalJSON reads a text, or fails on one without segments, which a file
+// leaves out (atLeastOne), and which the types do not write.
+func (t *Text) UnmarshalJSON(data []byte) error {
+	type plain Text
+	if err := json.Unmarshal(data, (*plain)(t)); err != nil {
+		return err
+	}
+	return notEmpty(t.Segments)
+}
+
+// notEmpty returns an error for a text's or a label's segments when there are
+// none: an empty text or label is left out of a file, rather than written
+// without segments, and a file that holds one is refused.
+func notEmpty(s richtext.Segments) error {
+	if len(s) == 0 {
+		return errors.New("published: a text or a label has no segments, where an empty one is left out")
+	}
+	return nil
+}
 
 // JSONSchemaDoc describes a text (schemagen.Documented).
 func (Text) JSONSchemaDoc() string {
@@ -263,11 +281,21 @@ type Label struct {
 // MarshalJSON writes the label, or fails on one without segments, which a
 // file leaves out (atLeastOne).
 func (l Label) MarshalJSON() ([]byte, error) {
-	if len(l.Segments) == 0 {
-		return nil, errEmptyText
+	if err := notEmpty(l.Segments); err != nil {
+		return nil, err
 	}
 	type plain Label
 	return schemagen.Marshal(plain(l))
+}
+
+// UnmarshalJSON reads a label, or fails on one without segments, which a
+// file leaves out (atLeastOne), and which the types do not write.
+func (l *Label) UnmarshalJSON(data []byte) error {
+	type plain Label
+	if err := json.Unmarshal(data, (*plain)(l)); err != nil {
+		return err
+	}
+	return notEmpty(l.Segments)
 }
 
 // JSONSchemaDoc describes a label (schemagen.Documented).
@@ -303,10 +331,10 @@ type Script struct {
 }
 
 // expressionJSON is a condition or a script as the published format holds
-// it.
+// it, its source nil where it is missing.
 type expressionJSON struct {
 	AST    json.RawMessage `json:"ast"`
-	Source string          `json:"source"`
+	Source *string         `json:"source"`
 }
 
 // JSONSchema gives the schemas the definition of a condition
@@ -332,13 +360,16 @@ func expressionSchema(g *schemagen.Generator, ast *schemagen.Schema, description
 }
 
 // MarshalJSON writes the condition, its AST as expr.Encode writes it, or
-// fails on an AST that a file does not hold (encodeAST).
+// fails on an AST that is not set. A file that holds it fails to be written
+// where expr.Decode does not read its AST back as a condition's, as one
+// whose names are not resolved (marshalFile).
 func (c Condition) MarshalJSON() ([]byte, error) {
 	return marshalExpression(c.AST, c.Source, expr.ContextCondition)
 }
 
 // MarshalJSON writes the script, its AST as expr.Encode writes it, or fails
-// on an AST that a file does not hold (encodeAST).
+// on an AST that is not set. A file that holds it fails to be written where
+// expr.Decode does not read its AST back as a script's (marshalFile).
 func (s Script) MarshalJSON() ([]byte, error) {
 	return marshalExpression(s.AST, s.Source, expr.ContextScript)
 }
@@ -348,25 +379,16 @@ func marshalExpression(ast expr.Node, source string, ctx expr.Context) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	return schemagen.Marshal(expressionJSON{AST: data, Source: source})
+	return schemagen.Marshal(expressionJSON{AST: data, Source: &source})
 }
 
 // encodeAST returns the JSON that expr.Encode writes of ast, the AST of a
-// ctx, or fails on one that is not set, or that expr.Decode does not read
-// back as a ctx's, as a file holds it: one whose names are not resolved, as
-// expr.Parse returns it, or a script where ctx is a condition's.
+// ctx, or fails on one that is not set.
 func encodeAST(ast expr.Node, ctx expr.Context) (json.RawMessage, error) {
 	if ast == nil {
 		return nil, fmt.Errorf("published: the AST of a %s is not set", ctx)
 	}
-	data, err := expr.Encode(ast)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := expr.Decode(data, ctx); err != nil {
-		return nil, fmt.Errorf("published: the AST of a %s is not one that a file holds: %w", ctx, err)
-	}
-	return data, nil
+	return expr.Encode(ast)
 }
 
 // UnmarshalJSON reads a condition, its AST as expr.Decode reads it.
@@ -388,9 +410,9 @@ func unmarshalExpression(data []byte, ctx expr.Context) (expr.Node, string, erro
 	if err := json.Unmarshal(data, &w); err != nil {
 		return nil, "", err
 	}
-	if w.AST == nil {
-		return nil, "", fmt.Errorf("published: a %s has no ast", ctx)
+	if w.AST == nil || w.Source == nil {
+		return nil, "", fmt.Errorf("published: a %s has no ast, or no source", ctx)
 	}
 	ast, err := expr.Decode(w.AST, ctx)
-	return ast, w.Source, err
+	return ast, *w.Source, err
 }

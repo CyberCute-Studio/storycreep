@@ -251,6 +251,30 @@ func (v Value) Read(typ string, c Checks, options ...string) (Value, string) {
 	return Value{}, fmt.Sprintf("is a %s, not a value of the type %s", kind, typ)
 }
 
+// Kind returns the kind of v's JSON, boolean, number, or string, which a
+// value of some type is, or "" for none and for any other, as null, an
+// object, or an array, which no value is.
+func (v Value) Kind() string {
+	return kindOf(string(v.raw))
+}
+
+// Integer returns raw, a JSON number, as the integer that it is, as Read
+// reads an int without Checks: an integer from -MaxInt to MaxInt, however
+// it is written, as 3, 3.0, or 3e0, but for one written with an exponent
+// beyond ±MaxExponent, as 0e1000, or says why it is not one.
+func Integer(raw []byte) (int64, string) {
+	v, problem := FromJSON(raw).Read(Int, Checks{})
+	if problem != "" {
+		return 0, problem
+	}
+	// Read writes an int as its decimal, which ParseInt reads.
+	n, err := strconv.ParseInt(string(v.raw), 10, 64)
+	if err != nil {
+		return 0, "is not an integer, which an int is"
+	}
+	return n, ""
+}
+
 // kindOf returns the kind of the JSON value raw: boolean, number, or string,
 // or "" for any other, as null, an object, or an array.
 func kindOf(raw string) string {
@@ -461,10 +485,13 @@ func EscapesLoneSurrogate(raw []byte) bool {
 
 // CheckJSON says what makes data no JSON text that the published format
 // holds, as a file or a value of one, or returns "": data must be one JSON
-// value, in UTF-8, that holds null nowhere (PRD §6.2), and whose strings
-// escape no lone surrogate. encoding/json reads a byte that is not UTF-8,
-// and a lone surrogate, as U+FFFD, so that a reader that did not refuse them
-// would read other text than the file holds.
+// value, in UTF-8, that holds null nowhere (PRD §6.2), whose strings escape
+// no lone surrogate, and whose numbers are each written with an exponent
+// within ±MaxExponent, if with one, as every number that the server writes
+// is (formProblem), so that 0e1000, which is 0, is refused wherever it is.
+// encoding/json reads a byte that is not UTF-8, and a lone surrogate, as
+// U+FFFD, so that a reader that did not refuse them would read other text
+// than the file holds.
 func CheckJSON(data []byte) string {
 	switch {
 	case !json.Valid(data):
@@ -473,15 +500,19 @@ func CheckJSON(data []byte) string {
 		return "is not UTF-8"
 	case EscapesLoneSurrogate(data):
 		return "escapes a lone surrogate in a string, which is not a character"
-	case holdsNull(data):
-		return "holds null"
+	}
+	if problem := scanTokens(data); problem != "" {
+		return problem
 	}
 	return ""
 }
 
-// holdsNull reports whether data, one JSON value, holds null, the only
-// literal of JSON that starts with n, outside its strings.
-func holdsNull(data []byte) bool {
+// scanTokens says what of data, one JSON value, a file does not hold outside
+// its strings, null or a number written with an exponent beyond
+// ±MaxExponent, or returns "". Outside a string, null is the only literal
+// that starts with n, and a number the only token that starts with - or a
+// digit, which runs to the first byte that no number holds.
+func scanTokens(data []byte) string {
 	inString := false
 	for i := 0; i < len(data); i++ {
 		switch c := data[i]; {
@@ -490,11 +521,22 @@ func holdsNull(data []byte) bool {
 			i++
 		case c == '"':
 			inString = !inString
-		case !inString && c == 'n':
-			return true
+		case inString:
+		case c == 'n':
+			return "holds null"
+		case c == '-' || '0' <= c && c <= '9':
+			end := i + 1
+			for end < len(data) && strings.IndexByte("+-.eE0123456789", data[end]) >= 0 {
+				end++
+			}
+			if formProblem(string(data[i:end]), false) != "" {
+				return fmt.Sprintf("writes the number %.40s with an exponent beyond ±%d, as no number of a file is "+
+					"written", data[i:end], MaxExponent)
+			}
+			i = end - 1
 		}
 	}
-	return false
+	return ""
 }
 
 // hex4 returns the value of four hexadecimal digits, in either case, and

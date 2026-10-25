@@ -120,7 +120,8 @@ func TestDecodeAgreesWithSchema(t *testing.T) {
 	condition, script := astSchemas(t)
 	asts, contexts := resolvedASTs(t)
 	replacements := []any{nil, "x", "a\x00b", 1.5, 9007199254740992, true, map[string]any{}, []any{},
-		"var_01HQ8ZV01K7MWVND2CQJ4RT9XB", "nd_01hq8zn01k7mwvnd2cqj4rt9xb", "script", "+="}
+		"var_01HQ8ZV01K7MWVND2CQJ4RT9XB", "nd_01hq8zn01k7mwvnd2cqj4rt9xb", "script", "+=",
+		json.Number("1.7976931348623157e308"), json.Number("-1.7976931348623158e308")}
 	// The shortest ASTs that together use every kind of node, operator, and
 	// literal's type that the corpus's ASTs use, in each context, which
 	// cover what every AST holds at a fraction of the cost.
@@ -278,6 +279,8 @@ func TestDecodeErrors(t *testing.T) {
 		{"an int that is not integral", lit("int", "2.5"), ContextCondition, false},
 		{"an int that rounds to an integer as a double", lit("int", "4503599627370495.5"), ContextCondition, false},
 		{"a float beyond a double", lit("float", "1e400"), ContextCondition, false},
+		{"the greatest float, as its shortest form writes it", lit("float", "1.7976931348623157e308"), ContextCondition, true},
+		{"a float beyond that, which a double reads as the greatest", lit("float", "-1.7976931348623158e308"), ContextCondition, false},
 		{"a float written as an int", lit("float", "2"), ContextCondition, true},
 		{"a string with a NUL", lit("string", `"a\u0000"`), ContextCondition, false},
 		{"a string of 4096 characters", lit("string", `"`+strings.Repeat("é", 4096)+`"`), ContextCondition, true},
@@ -336,14 +339,16 @@ func TestDecodeErrors(t *testing.T) {
 }
 
 // TestDecodeBeyondSchema checks what Decode refuses beyond the AST's schema,
-// as its doc says: a number written with an exponent beyond ±999, which the
-// schema cannot tell from the same number written otherwise.
+// as its doc says: a number written with an exponent beyond ±999, a
+// literal's or one of a key that it ignores, which the schema cannot tell
+// from the same number written otherwise.
 func TestDecodeBeyondSchema(t *testing.T) {
 	condition, _ := astSchemas(t)
 	lit := func(typ, value string) string { return `{"kind":"lit","type":"` + typ + `","value":` + value + `}` }
 	for data, ok := range map[string]bool{
 		lit("int", "0e999"): true, lit("int", "0e1000"): false, lit("int", "1000e-3"): true,
 		lit("float", "1e-999"): true, lit("float", "1e-1000"): false,
+		`{"future":[0e1000],"kind":"var","name":"a","ref":"var_01HQ8Z5BRT9C4F2M7XKDPV6NHA"}`: false,
 	} {
 		if !valid(t, condition, []byte(data)) {
 			t.Errorf("the schema does not take %s", data)
