@@ -221,6 +221,11 @@ func TestLoad(t *testing.T) {
 			outputs[1], outputs[2] = outputs[2], outputs[1]
 			outputs[1].(map[string]any)["order"], outputs[2].(map[string]any)["order"] = 1, 2
 		}, "not one if"},
+		{"a release's jumper without a target", jumpersSuite(), published.ManifestPath, func(m map[string]any) {
+			m["snapshot"] = map[string]any{"channel": "release", "contentHash": "sha256:" + strings.Repeat("0", 64),
+				"id": mnemonicID(ids.Snapshot, "C3"), "note": "", "publishedAt": "2026-10-25T00:00:00Z",
+				"version": "1.0.0"}
+		}, "which only a draft's may lack"},
 		{"a jumper to a jumper", jumpersSuite(), harbour, func(b map[string]any) {
 			nodeOf(b, nd("JSD"))["target"] = map[string]any{"boardId": bd("HRB"), "nodeId": nd("JBC")}
 		}, "targets the jumper"},

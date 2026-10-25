@@ -669,6 +669,9 @@ func (l *loader) checkNode(b string, n published.Node, p *expr.Project) error {
 		}
 		return scripts(n.ID, n.OnEnter, n.OnExit)
 	case *published.Jumper:
+		if _, release := l.s.manifest.Snapshot.(*published.ReleaseSnapshot); release && n.Target == nil {
+			return fmt.Errorf("the jumper %s has no target, which only a draft's may lack", n.ID)
+		}
 		if t := n.Target; t != nil {
 			target := l.s.nodes[t.NodeID]
 			if target == nil || target.board != t.BoardID {
