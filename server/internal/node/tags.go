@@ -6,9 +6,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"golang.org/x/text/cases"
-	"golang.org/x/text/unicode/norm"
-
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 )
 
@@ -28,17 +25,6 @@ const (
 	MaxSuggestions = 100
 )
 
-// fold returns the key by which two tags are the same tag: the tag in
-// Unicode's normalization form C, with its case folded, so that Quest, QUEST,
-// and quest are one tag (PRD FR-EDIT-06, plan note N43), and an accented
-// letter written as one character or as a letter and a mark is one letter.
-// The folded tag is put in form C again, since folding may leave a letter in
-// another form: ΐ folds to ι with two marks, and Ϊ́, a capital and a mark,
-// to ϊ with one, which form C writes alike, as ΐ.
-func fold(tag string) string {
-	return norm.NFC.String(cases.Fold().String(norm.NFC.String(tag)))
-}
-
 // checkTags returns the problems of a node's tags at the field at: at most
 // MaxTags, each a name of 1 to MaxTagLength characters, without white space
 // around it, and without control characters (input.CheckTrimmedName), and no
@@ -55,7 +41,7 @@ func checkTags(at string, tags []string) input.FieldErrors {
 			errs = append(errs, input.FieldError{Field: f, Message: problem})
 			continue
 		}
-		key := fold(tag)
+		key := input.FoldCase(tag)
 		if j, dup := first[key]; dup {
 			errs = append(errs, input.FieldError{Field: f, Message: fmt.Sprintf("is the tag of %s[%d] too, but for "+
 				"its case, which tags are compared without", at, j)})
@@ -79,12 +65,12 @@ type spelling struct {
 }
 
 // suggest returns at most limit of the tags of the project that start with
-// prefix, compared without regard to case, as fold compares them, each once,
+// prefix, compared without regard to case, as input.FoldCase compares them, each once,
 // as the most of the nodes that have it write it, the most used first, then
 // by their folded keys, from spellings, the tags as the nodes write them,
 // each with how many nodes have it, which ProjectTags returns.
 func suggest(spellings []spelling, prefix string, limit int) []Tag {
-	start := fold(prefix)
+	start := input.FoldCase(prefix)
 	type merged struct {
 		key  string
 		best spelling
@@ -93,7 +79,7 @@ func suggest(spellings []spelling, prefix string, limit int) []Tag {
 	byKey := map[string]*merged{}
 	var keys []string
 	for _, s := range spellings {
-		key := fold(s.tag)
+		key := input.FoldCase(s.tag)
 		if !strings.HasPrefix(key, start) {
 			continue
 		}

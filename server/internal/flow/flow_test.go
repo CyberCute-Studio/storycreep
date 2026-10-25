@@ -42,8 +42,7 @@ func snapshotFS(t *testing.T, s *suite, edits map[string]func(map[string]any)) f
 			if data, err = json.Marshal(v); err != nil {
 				t.Fatal(err)
 			}
-			sum := sha256.Sum256(data)
-			manifest["files"].(map[string]any)[path] = "sha256:" + hex.EncodeToString(sum[:])
+			manifest["files"].(map[string]any)[path] = hashOf(data)
 		}
 		fsys[path] = &fstest.MapFile{Data: data}
 	}
@@ -78,6 +77,12 @@ func connectionOf(board map[string]any, id string) map[string]any {
 	panic("no connection " + id)
 }
 
+// attributeOf returns the attribute definition of a component_types.json's
+// JSON at the index i of its first type's.
+func attributeOf(f map[string]any, i int) map[string]any {
+	return f["componentTypes"].([]any)[0].(map[string]any)["attributes"].([]any)[i].(map[string]any)
+}
+
 // TestLoad checks that Load refuses a snapshot that a runtime cannot run as
 // the files say, at each of the checks that its doc lists, and loads every
 // suite's snapshot as it is.
@@ -103,7 +108,85 @@ func TestLoad(t *testing.T) {
 		}, "its hash"},
 		{"a file that the manifest does not list", choicesSuite(), published.ManifestPath, func(m map[string]any) {
 			delete(m["files"].(map[string]any), main)
-		}, "its hash"},
+		}, "not among the manifest's files"},
+		{"a path of no file of a snapshot", choicesSuite(), published.ManifestPath, func(m map[string]any) {
+			m["files"].(map[string]any)["notes.txt"] = "sha256:" + strings.Repeat("0", 64)
+		}, "none of the paths"},
+		{"a board's path of a name that Windows reserves", choicesSuite(), published.ManifestPath,
+			func(m map[string]any) {
+				m["files"].(map[string]any)[published.BoardPath("con")] = "sha256:" + strings.Repeat("0", 64)
+			}, "none of the paths"},
+		{"an understated astVersion", choicesSuite(), published.ManifestPath,
+			func(m map[string]any) { m["astVersion"] = 0 }, "though its expressions use"},
+		{"the manifest's counts", choicesSuite(), published.ManifestPath, func(m map[string]any) {
+			m["counts"].(map[string]any)["nodes"] = 99
+		}, "counts"},
+		{"an index's board of another name than its file's", choicesSuite(), published.ManifestPath,
+			func(m map[string]any) { m["boards"].([]any)[0].(map[string]any)["name"] = "Other" }, "not the index's"},
+		{"an index's board whose file is not of its slug", choicesSuite(), published.ManifestPath,
+			func(m map[string]any) { m["boards"].([]any)[0].(map[string]any)["slug"] = "other" },
+			"not boards/ and its slug"},
+		{"a signal that is there twice", choicesSuite(), published.SettingsPath, func(f map[string]any) {
+			f["signals"] = []any{"asking", "asking"}
+		}, "signal is there twice"},
+		{"a component type that is there twice", choicesSuite(), published.ComponentTypesPath,
+			func(f map[string]any) {
+				ts := f["componentTypes"].([]any)
+				f["componentTypes"] = append(ts, ts[0])
+			}, "two of its entities"},
+		{"two component types of one key", choicesSuite(), published.ComponentTypesPath, func(f map[string]any) {
+			f["componentTypes"] = append(f["componentTypes"].([]any), map[string]any{"id": ct("PRP"),
+				"key": "character", "name": "Other", "attributes": []any{}})
+		}, "two component types have the key"},
+		{"two definitions of one key", choicesSuite(), published.ComponentTypesPath, func(f map[string]any) {
+			attributeOf(f, 1)["key"] = "trust"
+		}, "have the key trust"},
+		{"a text's definition that is runtime", choicesSuite(), published.ComponentTypesPath,
+			func(f map[string]any) {
+				a := attributeOf(f, 2)
+				a["type"], a["runtime"] = "text", true
+			}, "never runtime"},
+		{"an enum's option that is there twice", choicesSuite(), published.ComponentTypesPath,
+			func(f map[string]any) { attributeOf(f, 1)["options"] = []any{"calm", "calm", "wary", "angry"} },
+			"option twice"},
+		{"an enum's default of no option", choicesSuite(), published.ComponentTypesPath,
+			func(f map[string]any) { attributeOf(f, 1)["default"] = "sad" }, "the default of the definition"},
+		{"a branch's outputs of one ID", branchesSuite(), roll, func(b map[string]any) {
+			outputs := nodeOf(b, nd("GATE"))["outputs"].([]any)
+			outputs[1].(map[string]any)["id"] = outputs[0].(map[string]any)["id"]
+		}, "two of its entities"},
+		{"a connection that is there twice", choicesSuite(), main, func(b map[string]any) {
+			b["connections"] = append(b["connections"].([]any), connectionOf(b, cn("PAY")))
+		}, "two of its entities"},
+		{"a speaker of no component", choicesSuite(), main, func(b map[string]any) {
+			nodeOf(b, nd("START"))["speaker"] = cm("NADA")
+		}, "no component of the snapshot"},
+		{"two tags that are the same but for their case", choicesSuite(), main, func(b map[string]any) {
+			nodeOf(b, nd("START"))["tags"] = []any{"Quest", "quest"}
+		}, "the same but for their case"},
+		{"a mention of no component", choicesSuite(), main, func(b map[string]any) {
+			nodeOf(b, nd("CHAT"))["text"].(map[string]any)["segments"].([]any)[0].(map[string]any)["ref"] = cm("NADA")
+		}, "a mention is of"},
+		{"a segment's marks out of order", choicesSuite(), main, func(b map[string]any) {
+			nodeOf(b, nd("CHAT"))["text"].(map[string]any)["segments"].([]any)[0].(map[string]any)["marks"] =
+				[]any{"italic", "bold"}
+		}, "alphabetical order"},
+		{"a segment's link without an href", choicesSuite(), main, func(b map[string]any) {
+			nodeOf(b, nd("CHAT"))["text"].(map[string]any)["segments"].([]any)[0].(map[string]any)["marks"] =
+				[]any{"link"}
+		}, "the link mark"},
+		{"a text's value of another board's variable", jumpersSuite(), harbour, func(b map[string]any) {
+			segs := nodeOf(b, nd("HENTRY"))["text"].(map[string]any)["segments"].([]any)
+			segs[1].(map[string]any)["ref"] = vr("BTMP")
+		}, "board_variable_out_of_scope"},
+		{"a string default of more than 4,096 characters", choicesSuite(), published.VariablesPath,
+			func(f map[string]any) {
+				f["variables"].([]any)[2].(map[string]any)["default"] = strings.Repeat("a", 4097)
+			}, "more than 4096 characters"},
+		{"a label's value of an attribute that is not runtime", choicesSuite(), main, func(b map[string]any) {
+			connectionOf(b, cn("ASK"))["label"].(map[string]any)["segments"].([]any)[1] = map[string]any{
+				"kind": "value", "marks": []any{}, "name": "elara.title", "ref": cm("KEEPER"), "attribute": at("TAG")}
+		}, "the label of " + cn("ASK") + ": a value is of"},
 		{"a file that does not decode", choicesSuite(), main, func(b map[string]any) { b["schemaVersion"] = 2 },
 			"schemaVersion"},
 		{"a board's file of another board", choicesSuite(), main, func(b map[string]any) {
@@ -158,7 +241,7 @@ func TestLoad(t *testing.T) {
 			segs := nodeOf(b, nd("START"))["text"].(map[string]any)["segments"].([]any)
 			segs[1].(map[string]any)["ref"] = vr("NADA")
 		}, "no variable of the snapshot"},
-		{"a label's value of an attribute that is not runtime", choicesSuite(), main, func(b map[string]any) {
+		{"a text's value of an attribute that is not runtime", choicesSuite(), main, func(b map[string]any) {
 			segs := nodeOf(b, nd("CHAT"))["text"].(map[string]any)["segments"].([]any)
 			segs[2].(map[string]any)["attribute"] = at("TAG")
 		}, "no runtime attribute"},
@@ -201,6 +284,28 @@ func TestLoad(t *testing.T) {
 			t.Errorf("%s: %v; want an error of ErrLoad that says %q", c.name, err, c.want)
 		}
 	}
+	// A file that Load lists but does not decode, an asset, is hashed too.
+	asset := "assets/" + strings.TrimPrefix(mnemonicID(ids.Asset, "CVR"), ids.Asset.Prefix()+"_") + ".png"
+	data := []byte("an image")
+	for _, c := range []struct {
+		hash string
+		ok   bool
+	}{{"sha256:" + strings.Repeat("0", 64), false}, {hashOf(data), true}} {
+		fsys := snapshotFS(t, choicesSuite(), map[string]func(map[string]any){
+			published.ManifestPath: func(m map[string]any) { m["files"].(map[string]any)[asset] = c.hash },
+		})
+		fsys[asset] = &fstest.MapFile{Data: data}
+		_, err := Load(fsys)
+		if (err == nil) != c.ok || err != nil && !strings.Contains(err.Error(), asset+": its hash") {
+			t.Errorf("an asset of the hash %s: %v", c.hash, err)
+		}
+	}
+}
+
+// hashOf returns the hash of data, as a manifest lists a file's.
+func hashOf(data []byte) string {
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // TestLoadOrder checks that Load reports the same error of a snapshot that
@@ -268,10 +373,19 @@ func TestLoadStateRefuses(t *testing.T) {
 		"of an attribute that is not runtime": func(st *published.SaveState) {
 			st.Attributes[cm("KEEPER")][at("TAG")] = raw("x")
 		},
+		"of attributes of no component": func(st *published.SaveState) {
+			st.Attributes[cm("NADA")] = published.AttributeValues{}
+		},
+		"of a string of more than 4,096 characters": func(st *published.SaveState) {
+			st.Variables[vr("NAME")] = raw(strings.Repeat("a", 4097))
+		},
+		"of a string with a NUL":       func(st *published.SaveState) { st.Variables[vr("NAME")] = raw("a\x00b") },
 		"of a visit of no node":        func(st *published.SaveState) { st.Visits[nd("NADA")] = 1 },
 		"of a visit count below 1":     func(st *published.SaveState) { st.Visits[nd("CHAT")] = 0 },
 		"of a cursor of no node":       func(st *published.SaveState) { st.Cursor.NodeID = nd("NADA") },
 		"of a cursor of another board": func(st *published.SaveState) { st.Cursor.BoardID = bd("NADA") },
+		"of a cursor of no phase":      func(st *published.SaveState) { st.Cursor.Phase = "" },
+		"of a cursor of another phase": func(st *published.SaveState) { st.Cursor.Phase = "waiting" },
 	} {
 		st := good()
 		edit(&st)
@@ -328,10 +442,21 @@ func TestSetValues(t *testing.T) {
 		"an infinity":                r.SetVariable(vr("F1"), expr.FloatValue(math.Inf(1))),
 		"a NaN":                      r.SetVariable(vr("F1"), expr.FloatValue(math.NaN())),
 		"a string that is not UTF-8": r.SetVariable(vr("S1"), expr.StringValue("\xff")),
+		"a string of more than 4,096 characters": r.SetVariable(vr("S1"),
+			expr.StringValue(strings.Repeat("é", 4097))),
+		"a string with a NUL": r.SetVariable(vr("S1"), expr.StringValue("a\x00b")),
 	} {
 		if err == nil {
 			t.Errorf("SetVariable or SetAttribute of %s is not refused", name)
 		}
+	}
+	for _, s := range []string{strings.Repeat("é", 4096), "a\x01b"} {
+		if err := r.SetVariable(vr("S1"), expr.StringValue(s)); err != nil || r.Variable(vr("S1")).Str != s {
+			t.Errorf("SetVariable of a string of %d characters: %v", len([]rune(s)), err)
+		}
+	}
+	if err := r.SetVariable(vr("S1"), expr.StringValue("")); err != nil {
+		t.Fatal(err)
 	}
 	if r.Variable(vr("N1")) != expr.IntValue(0) || r.Variable(vr("B1")) != expr.BoolValue(false) ||
 		r.Variable(vr("F1")) != expr.FloatValue(2) || r.Variable(vr("S1")) != expr.StringValue("") {
@@ -431,6 +556,93 @@ func TestResetWithoutEntry(t *testing.T) {
 	if node, phase := r.Current(); node != nd("START") || phase != awaitingChoice || len(r.Choices()) == 0 {
 		t.Errorf("Reset moved the flow to %s, %s", node, phase)
 	}
+}
+
+// TestResetBrokenEntry checks that Reset of a snapshot whose entry is a
+// jumper without a target reports jumper_broken, as Start("", "") does, and
+// changes nothing, since it resolves the entry before anything else (PRD
+// §5.8.5): neither the values, nor the visit counts, nor where the flow is.
+func TestResetBrokenEntry(t *testing.T) {
+	t.Parallel()
+	broken := func(f map[string]any) { f["entry"].(map[string]any)["nodeId"] = nd("JBRK") }
+	snap, err := Load(snapshotFS(t, jumpersSuite(), map[string]func(map[string]any){
+		published.ManifestPath: broken, published.SettingsPath: broken,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []Event
+	r := New(snap, false, func(e Event) { events = append(events, e) })
+	r.Start(bd("HRB"), "")
+	if err := r.SetVariable(vr("TRPS"), expr.IntValue(9)); err != nil {
+		t.Fatal(err)
+	}
+	before := r.SaveState()
+	events = nil
+	r.Reset()
+	if len(events) != 1 || events[0].Kind != EventError || events[0].Code != JumperBroken ||
+		events[0].At != nd("JBRK") {
+		t.Errorf("Reset reports %+v; want jumper_broken of JBRK alone", events)
+	}
+	if err := sameState(snap, r.SaveState(), before); err != nil {
+		t.Errorf("Reset changed the state: %v", err)
+	}
+	if node, phase := r.Current(); node != nd("HENTRY") || phase != awaitingChoice || len(r.Choices()) == 0 {
+		t.Errorf("Reset moved the flow to %s, %s", node, phase)
+	}
+}
+
+// TestListenerSaves checks that a listener may save the state within a call
+// where the flow is at rest, at an error of a call that moves nothing, at
+// the ready of an element that awaits a choice, and at the end, each the
+// state that the call leaves or found, and that its save elsewhere, as at an
+// enter, panics, as no save state holds the flow there.
+func TestListenerSaves(t *testing.T) {
+	t.Parallel()
+	s := choicesSuite()
+	snap := loaded(t, s)
+	var r *Runtime
+	// kind is the kind of the event that the listener saves at, and saved
+	// what it saved.
+	var kind string
+	var saved published.SaveState
+	r = New(snap, false, func(e Event) {
+		if e.Kind == kind {
+			saved = r.SaveState()
+		}
+	})
+	for _, c := range []struct {
+		kind string
+		call func()
+	}{
+		{EventReady, func() { r.Start("", "") }},
+		{EventError, func() { r.Choose(cn("DEPART")) }},
+		{EventEnd, func() { r.Goto(bd("PAGE"), nd("BYE")) }},
+	} {
+		kind, saved = c.kind, published.SaveState{}
+		before := r.SaveState()
+		c.call()
+		want := r.SaveState()
+		if c.kind == EventError {
+			want = before
+		}
+		if err := sameState(snap, saved, want); err != nil {
+			t.Errorf("a save at the %s: %v", c.kind, err)
+		}
+	}
+	r = New(snap, false, func(e Event) {
+		if e.Kind == EventEnter {
+			r.SaveState()
+		}
+	})
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("a listener's save at an enter did not panic")
+			}
+		}()
+		r.Start("", "")
+	}()
 }
 
 // TestListenerMovesFlow checks that a listener that calls a method that

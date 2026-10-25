@@ -50,7 +50,7 @@ func exampleProject(t *testing.T) *expr.Project {
 	for _, b := range decodeAll[Board](t, boardExamples) {
 		for _, n := range b.Nodes {
 			_, jumper := n.(*Jumper)
-			nodes = append(nodes, expr.BoardNode{ID: nodeID(n), Jumper: jumper})
+			nodes = append(nodes, expr.BoardNode{ID: n.NodeID(), Jumper: jumper})
 		}
 	}
 	p, err := expr.NewProject(variables, components, nodes)
@@ -58,18 +58,6 @@ func exampleProject(t *testing.T) *expr.Project {
 		t.Fatal(err)
 	}
 	return p
-}
-
-func nodeID(n Node) string {
-	switch n := n.(type) {
-	case *Element:
-		return n.ID
-	case *Branch:
-		return n.ID
-	case *Jumper:
-		return n.ID
-	}
-	return ""
 }
 
 // expression is an expression of a board's example, at the board.

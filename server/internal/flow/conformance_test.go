@@ -147,7 +147,7 @@ func canonical(data []byte) ([]byte, error) {
 }
 
 // mnemonicID returns the ID of the kind k whose body is the mnemonic, letters
-// and digits of Crockford's base 32, after zeros, as nd_0000000000000000000000START,
+// and digits of Crockford's base 32, after zeros, as nd_000000000000000000000START,
 // so that a scenario names its entities readably. It panics on a mnemonic
 // that makes no ID in its canonical spelling.
 func mnemonicID(k ids.Kind, mnemonic string) string {
@@ -499,7 +499,7 @@ func (s *suite) files() (map[string][]byte, error) {
 			}
 			f.Connections = append(f.Connections, conn)
 		}
-		slices.SortFunc(f.Nodes, func(a, b published.Node) int { return strings.Compare(nodeID(a), nodeID(b)) })
+		slices.SortFunc(f.Nodes, func(a, b published.Node) int { return strings.Compare(a.NodeID(), b.NodeID()) })
 		slices.SortFunc(f.Connections, func(a, b published.Connection) int { return strings.Compare(a.ID, b.ID) })
 		counts.Boards++
 		counts.Nodes += published.Int(len(f.Nodes))
@@ -740,7 +740,7 @@ func runScenario(t *testing.T, where string, s *Snapshot, sc scenarioJSON) {
 		if events == nil {
 			events = []eventJSON{}
 		}
-		if !reflect.DeepEqual(events, st.Events) {
+		if !sameEvents(events, st.Events) {
 			t.Errorf("%s: events\n%s\nwant\n%s", at, show(events), show(st.Events))
 		}
 		if got := viewOf(r); !reflect.DeepEqual(got, st.View) {
@@ -752,6 +752,26 @@ func runScenario(t *testing.T, where string, s *Snapshot, sc scenarioJSON) {
 			}
 		}
 	}
+}
+
+// sameEvents reports whether got are want: the same kinds in the same order,
+// each with the same fields, a signal's value compared by its type and the
+// value that the type reads, so that 2 and 2.0 are one float, as a state's
+// values are compared (schema/conformance/README.md).
+func sameEvents(got, want []eventJSON) bool {
+	return slices.EqualFunc(got, want, func(g, w eventJSON) bool {
+		gv, wv := g.Value, w.Value
+		g.Value, w.Value = nil, nil
+		switch {
+		case g != w || (gv == nil) != (wv == nil):
+			return false
+		case gv == nil:
+			return true
+		}
+		a, errA := valueOf(gv.Value, gv.Type, nil)
+		b, errB := valueOf(wv.Value, wv.Type, nil)
+		return gv.Type == wv.Type && errA == nil && errB == nil && a == b
+	})
 }
 
 // show returns v's JSON, for a failure's message.

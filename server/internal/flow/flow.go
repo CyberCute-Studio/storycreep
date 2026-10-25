@@ -13,6 +13,7 @@
 package flow
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -20,12 +21,18 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"reflect"
+	"regexp"
 	"slices"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 	"github.com/CyberCute-Studio/storycreep/server/internal/semantics"
+	"github.com/CyberCute-Studio/storycreep/server/internal/slug"
 	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
@@ -55,8 +62,6 @@ type Snapshot struct {
 	options       map[attributeKey][]string
 	boards        map[string]*board
 	nodes         map[string]*node
-	// connections are every connection, by ID.
-	connections map[string]*published.Connection
 }
 
 // attributeKey names a component's runtime attribute: the component's ID and
@@ -84,51 +89,96 @@ const out = "out"
 
 // Load reads the snapshot that fsys holds, as a game's res://storycreep/
 // holds one (PRD §6.3), from its manifest, storycreep.json, and checks what
-// a runtime relies on: that each file that it reads, the project's four and
-// each board's, has the hash that the manifest lists for it, though it reads
-// no other file that the manifest lists, as an asset, and so checks no
-// other's hash; that the snapshot's astVersion is at most expr.ASTVersion,
-// which a newer one is refused for as the runtime's ast_unsupported
-// (FR-EXPR-04); that each file is one that published.Decode reads; and that
-// its references resolve as schema/published/README.md says a consumer
-// checks: the entry's and the boards' entry nodes are nodes of their boards,
-// which the index and the boards' files agree on; a connection leaves an
-// element by out or a branch by one of its outputs, for a node of its board,
-// its port's connections ordered 0, 1, 2, and so on, as a branch's outputs
-// are, which are one if, then any elseifs, then an else, if the branch has
-// one (FR-EDIT-04), or none; a jumper's target, when it has one, is a node of
-// its board that is no jumper; a variable's board is one of the index's; a
-// component's type is one of the snapshot's, and its values are one of each
-// of its type's definitions, of the definition's type, as every default is
-// of its declaration's; a text's or a label's value is of a variable or of a
-// runtime attribute of a component; and every AST type-checks at its board
-// against the snapshot's declarations, its names read by their refs
-// (expr.CheckResolved). Its error wraps ErrLoad, and that of the file that
-// it reads, and of a snapshot that is wrong in several ways it is always the
-// same one, as it reads the files and checks them in one order. It reads
-// every board's file, where the Godot runtime reads one only once the flow
-// enters its board (FR-GODOT-05), which gives the same flow.
+// schema/published/README.md says a runtime's loader checks beyond the
+// schemas, and what the runtime relies on beside it: that each path of the
+// manifest's files is one of the forms of the pull's path rules (§7.5), a
+// board's of a slug that is no name that Windows reserves for a device, and
+// each file that it lists, an asset's among them, has its hash; that the
+// snapshot's astVersion is at most expr.ASTVersion, which a newer one is
+// refused for as the runtime's ast_unsupported, and at least the highest
+// version of the constructs that its ASTs use (expr.VersionOf), as every
+// runtime trusts it to be (FR-EXPR-04); that each file is one that
+// published.Decode reads, every index's board's among them; that every
+// reference resolves: the entry's and the boards' entry nodes are nodes of
+// their boards, a connection leaves an element by out or a branch by one of
+// its outputs, for a node of its board, a jumper's target, when it has one,
+// is a node of its board that is no jumper, a speaker and a mention are of a
+// component of the snapshot, a text's or a label's value of a variable that
+// an expression of its board reads, or of a runtime attribute of a component
+// (FR-TEXT-02), a variable's board is one of the index's, a component's type
+// is one of the snapshot's, and every AST type-checks at its board against
+// the snapshot's declarations, its names read by their refs
+// (expr.CheckResolved); that a component's values are one of each of its
+// type's definitions, of the definition's type, as each definition's default
+// and each variable's are, an enum's one of its options, which are each there
+// once, and that a text's definition is never runtime; that the files agree:
+// each board of the index has its file's ID, name, slug, and entry node, or
+// none, and its file is boards/ and its slug and .json, the settings' entry
+// is the manifest's, or neither has one, and the manifest's counts are how
+// many boards, components, connections, nodes, and variables the files hold;
+// that a segment's marks are each there once, in alphabetical order, the link
+// among them exactly when it has an href; and that no two entities have one
+// ID, no two component types, no two definitions of a type, no two
+// components, and no two variables of a scope have one key, no two tags of a
+// node are the same but for their case (input.FoldCase), no signal is there
+// twice, a branch's outputs are one if, then any elseifs, then an else, if it
+// has one (FR-EDIT-04), or none, and its outputs' and a port's connections'
+// orders are 0, 1, 2, and so on. It is no validator of the schemas, whose
+// patterns and bounds published.Decode does not check, but for a value's,
+// which is of its declaration's type, and a string of at most
+// semantics.MaxStringLength characters without a NUL, as the language's are
+// (valueOf). Its error wraps ErrLoad, and that of the file that it reads,
+// and of a snapshot that is wrong in several ways it is always the same one,
+// as it reads the files and checks them in one order. It reads every board's
+// file, where the Godot runtime reads one only once the flow enters its
+// board (FR-GODOT-05), which gives the same flow.
 func Load(fsys fs.FS) (*Snapshot, error) {
-	s := &Snapshot{
-		declared: make(map[string]*published.Variable), defaults: make(map[string]expr.Value),
-		initial: make(map[attributeKey]expr.Value), declaredTypes: make(map[attributeKey]string), options: make(map[attributeKey][]string), boards: make(map[string]*board), nodes: make(map[string]*node),
-		connections: make(map[string]*published.Connection),
+	l := &loader{
+		s: &Snapshot{
+			declared: make(map[string]*published.Variable), defaults: make(map[string]expr.Value),
+			initial: make(map[attributeKey]expr.Value), declaredTypes: make(map[attributeKey]string),
+			options: make(map[attributeKey][]string), boards: make(map[string]*board), nodes: make(map[string]*node),
+		},
+		entities: make(map[string]bool), components: make(map[string]bool), read: make(map[string]bool),
 	}
-	if err := s.load(fsys); err != nil {
+	if err := l.load(fsys); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrLoad, err)
 	}
-	return s, nil
+	return l.s, nil
 }
 
-// load is Load, of s, its maps made.
-func (s *Snapshot) load(fsys fs.FS) error {
-	if err := read(fsys, published.ManifestPath, "", &s.manifest); err != nil {
+// loader is what Load keeps while it reads a snapshot's files beside the
+// snapshot s: the IDs of the entities that it has read, of which no two are
+// one, the components' IDs, the paths of the files that it has read, and the
+// ASTs, whose constructs' versions the manifest's astVersion covers.
+type loader struct {
+	s          *Snapshot
+	entities   map[string]bool
+	components map[string]bool
+	read       map[string]bool
+	asts       []expr.Node
+}
+
+// load is Load.
+func (l *loader) load(fsys fs.FS) error {
+	s := l.s
+	data, err := fs.ReadFile(fsys, published.ManifestPath)
+	if err != nil {
+		return err
+	}
+	if err := decode(published.ManifestPath, data, &s.manifest); err != nil {
 		return err
 	}
 	m := &s.manifest
 	if m.ASTVersion > expr.ASTVersion {
 		return fmt.Errorf("ast_unsupported: the snapshot's astVersion is %d, and this runtime supports %d",
 			m.ASTVersion, expr.ASTVersion)
+	}
+	for _, path := range slices.Sorted(maps.Keys(m.Files)) {
+		if !isFilePath(path) {
+			return fmt.Errorf("the manifest lists %q, which is none of the paths of a snapshot's files (PRD §7.5)",
+				path)
+		}
 	}
 	var settings published.Settings
 	var variables published.Variables
@@ -141,30 +191,46 @@ func (s *Snapshot) load(fsys fs.FS) error {
 		{published.SettingsPath, &settings}, {published.VariablesPath, &variables},
 		{published.ComponentTypesPath, &types}, {published.ComponentsPath, &components},
 	} {
-		if err := read(fsys, f.path, m.Files[f.path], f.v); err != nil {
+		if err := l.readFile(fsys, f.path, f.v); err != nil {
 			return err
 		}
 	}
 	files := make(map[string]*published.Board)
 	for _, b := range m.Boards {
-		if s.boards[b.ID] != nil {
-			return fmt.Errorf("the index has the board %s twice", b.ID)
+		if err := l.entity(b.ID); err != nil {
+			return fmt.Errorf("the index: %w", err)
 		}
 		s.boards[b.ID] = &board{info: b}
+		if b.File != published.BoardPath(b.Slug) {
+			return fmt.Errorf("the index's board %s's file is %s, not boards/ and its slug and .json", b.ID, b.File)
+		}
 		var f published.Board
-		if err := read(fsys, b.File, m.Files[b.File], &f); err != nil {
+		if err := l.readFile(fsys, b.File, &f); err != nil {
 			return err
 		}
-		if f.Board.ID != b.ID || f.Board.EntryNodeID != b.EntryNodeID {
-			return fmt.Errorf("%s: its board is not the index's %s, of its entry node", b.File, b.ID)
+		if f.Board != (published.BoardInfo{EntryNodeID: b.EntryNodeID, ID: b.ID, Name: b.Name, Slug: b.Slug}) {
+			return fmt.Errorf("%s: its board is not the index's %s, of its ID, name, slug, or entry node", b.File,
+				b.ID)
 		}
 		files[b.ID] = &f
 	}
-	if err := s.declare(variables, types, components); err != nil {
+	// The files that it does not read, as the assets, are hashed too, so
+	// that every file that the manifest lists is its bytes'.
+	for _, path := range slices.Sorted(maps.Keys(m.Files)) {
+		if !l.read[path] {
+			if _, err := contents(fsys, m.Files, path); err != nil {
+				return err
+			}
+		}
+	}
+	if len(slices.Compact(slices.Sorted(slices.Values(settings.Signals)))) != len(settings.Signals) {
+		return fmt.Errorf("%s: a signal is there twice", published.SettingsPath)
+	}
+	if err := l.declare(variables, types, components); err != nil {
 		return err
 	}
 	for _, b := range m.Boards {
-		if err := s.addNodes(b.ID, files[b.ID]); err != nil {
+		if err := l.addNodes(b.ID, files[b.ID]); err != nil {
 			return fmt.Errorf("%s: %w", b.File, err)
 		}
 	}
@@ -173,7 +239,7 @@ func (s *Snapshot) load(fsys fs.FS) error {
 		return err
 	}
 	for _, b := range m.Boards {
-		if err := s.addConnections(b.ID, files[b.ID], p); err != nil {
+		if err := l.addConnections(b.ID, files[b.ID], p); err != nil {
 			return fmt.Errorf("%s: %w", b.File, err)
 		}
 	}
@@ -189,32 +255,102 @@ func (s *Snapshot) load(fsys fs.FS) error {
 			return fmt.Errorf("the board %s's entry node %s is not one of its nodes", b.ID, e)
 		}
 	}
+	counts := published.Counts{Boards: published.Int(len(m.Boards)),
+		Components: published.Int(len(components.Components)), Variables: published.Int(len(variables.Variables))}
+	for _, f := range files {
+		counts.Nodes += published.Int(len(f.Nodes))
+		counts.Connections += published.Int(len(f.Connections))
+	}
+	if m.Counts != counts {
+		return fmt.Errorf("the manifest's counts are %+v, but the files hold %+v", m.Counts, counts)
+	}
+	if v := published.Int(expr.VersionOf(l.asts...)); v > m.ASTVersion {
+		return fmt.Errorf("the snapshot's astVersion is %d, though its expressions use constructs of version %d "+
+			"(FR-EXPR-04)", m.ASTVersion, v)
+	}
 	return nil
 }
 
-// read reads the file of the path in fsys into v, with published.Decode,
-// once it has checked that its bytes have the hash hash, unless hash is "",
-// as the manifest's, which no manifest lists.
-func read(fsys fs.FS, path string, hash published.Hash, v any) error {
+// filePattern is the pattern of the path of a snapshot's file but the
+// manifest, of a key of the manifest's files (published.Manifest), which the
+// pull's path rules take (PRD §7.5).
+var filePattern = func() *regexp.Regexp {
+	f, _ := reflect.TypeFor[published.Manifest]().FieldByName("Files")
+	pattern := f.Tag.Get("keyPattern")
+	if pattern == "" {
+		panic("flow: published.Manifest's files have no keyPattern")
+	}
+	return regexp.MustCompile(pattern)
+}()
+
+// isFilePath reports whether path is the path of a snapshot's file but the
+// manifest, as the pull's path rules take it (PRD §7.5): of the forms of
+// filePattern, a board's of a slug of at most slug.MaxLength characters that
+// is no name that Windows reserves for a device (slug.Check).
+func isFilePath(path string) bool {
+	if !filePattern.MatchString(path) {
+		return false
+	}
+	if name, ok := strings.CutPrefix(path, "boards/"); ok {
+		return slug.Check(strings.TrimSuffix(name, ".json")) == nil
+	}
+	return true
+}
+
+// contents returns the bytes of the file of the path in fsys, once it has
+// checked that the manifest's files list it, with the hash of its bytes.
+func contents(fsys fs.FS, files map[string]published.Hash, path string) ([]byte, error) {
+	want, ok := files[path]
+	if !ok {
+		return nil, fmt.Errorf("%s is not among the manifest's files", path)
+	}
 	data, err := fs.ReadFile(fsys, path)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	if got := published.Hash("sha256:" + hex.EncodeToString(sum[:])); got != want {
+		return nil, fmt.Errorf("%s: its hash is %s, not the manifest's %q", path, got, want)
+	}
+	return data, nil
+}
+
+// readFile reads the file of the path in fsys into v, with published.Decode,
+// once it has checked its hash (contents).
+func (l *loader) readFile(fsys fs.FS, path string, v any) error {
+	data, err := contents(fsys, l.s.manifest.Files, path)
 	if err != nil {
 		return err
 	}
-	if path != published.ManifestPath {
-		sum := sha256.Sum256(data)
-		if want := published.Hash("sha256:" + hex.EncodeToString(sum[:])); hash != want {
-			return fmt.Errorf("%s: its hash is %s, not the manifest's %q", path, want, hash)
-		}
-	}
+	l.read[path] = true
+	return decode(path, data, v)
+}
+
+// decode reads data, the file of the path, into v, with published.Decode.
+func decode(path string, data []byte, v any) error {
 	if err := published.Decode(data, v); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	return nil
 }
 
+// entity returns an error when id is the ID of an entity that l has read
+// already, and otherwise records it.
+func (l *loader) entity(id string) error {
+	if l.entities[id] {
+		return fmt.Errorf("%s is the ID of two of its entities", id)
+	}
+	l.entities[id] = true
+	return nil
+}
+
 // valueOf returns v, a value of the published format or of a save state, as
 // a value of the type typ, an enum's one of options, as the format's values
-// are typed by their declarations (§5.8.9), or an error.
+// are typed by their declarations (§5.8.9), or an error. A string is a value
+// of the language, of at most semantics.MaxStringLength characters, and a
+// text one of at most value.MaxTextLength, neither with a NUL, as the
+// format's schemas take them (value.Schema), and as no expression builds
+// another (§5.8.1, §5.8.3).
 func valueOf(v value.Value, typ string, options []string) (expr.Value, error) {
 	if v.JSON() == nil {
 		return expr.Value{}, errors.New("is missing")
@@ -239,8 +375,21 @@ func valueOf(v value.Value, typ string, options []string) (expr.Value, error) {
 		return expr.FloatValue(f), nil
 	}
 	var str string
-	err := json.Unmarshal(read.JSON(), &str)
-	return expr.StringValue(str), err
+	if err := json.Unmarshal(read.JSON(), &str); err != nil {
+		return expr.Value{}, err
+	}
+	bound := 0
+	switch typ {
+	case value.String:
+		bound = semantics.MaxStringLength
+	case value.Text:
+		bound = value.MaxTextLength
+	}
+	if bound > 0 && (utf8.RuneCountInString(str) > bound || strings.ContainsRune(str, 0)) {
+		return expr.Value{}, fmt.Errorf("is a %s of more than %d characters, or with a NUL, which no value is", typ,
+			bound)
+	}
+	return expr.StringValue(str), nil
 }
 
 // jsonOf returns v, of the type typ, as the published format and a save state
@@ -264,14 +413,15 @@ func jsonOf(v expr.Value, typ string) value.Value {
 	return read
 }
 
-// declare reads the variables and the components' runtime attributes, with
-// their values in the snapshot.
-func (s *Snapshot) declare(variables published.Variables, types published.ComponentTypes,
+// declare reads the variables, the component types' definitions, and the
+// components' runtime attributes, with their values in the snapshot.
+func (l *loader) declare(variables published.Variables, types published.ComponentTypes,
 	components published.Components) error {
+	s := l.s
 	for i := range variables.Variables {
 		v := &variables.Variables[i]
-		if s.declared[v.ID] != nil {
-			return fmt.Errorf("the variable %s is there twice", v.ID)
+		if err := l.entity(v.ID); err != nil {
+			return fmt.Errorf("%s: %w", published.VariablesPath, err)
 		}
 		if v.Scope == published.ScopeBoard {
 			b := s.boards[v.BoardID]
@@ -291,10 +441,25 @@ func (s *Snapshot) declare(variables published.Variables, types published.Compon
 		s.defaults[v.ID] = d
 	}
 	definitions := make(map[string][]published.AttributeDefinition)
+	typeKeys := make(map[string]bool)
 	for _, t := range types.ComponentTypes {
+		if err := l.entity(t.ID); err != nil {
+			return fmt.Errorf("%s: %w", published.ComponentTypesPath, err)
+		}
+		if typeKeys[t.Key] {
+			return fmt.Errorf("two component types have the key %s", t.Key)
+		}
+		typeKeys[t.Key] = true
+		if err := l.define(t); err != nil {
+			return err
+		}
 		definitions[t.ID] = t.Attributes
 	}
 	for _, c := range components.Components {
+		if err := l.entity(c.ID); err != nil {
+			return fmt.Errorf("%s: %w", published.ComponentsPath, err)
+		}
+		l.components[c.ID] = true
 		defs, ok := definitions[c.ComponentTypeID]
 		if !ok {
 			return fmt.Errorf("the component %s is of %s, which is no component type of the snapshot", c.ID,
@@ -323,17 +488,49 @@ func (s *Snapshot) declare(variables published.Variables, types published.Compon
 	return nil
 }
 
+// define checks the attribute definitions of the component type t: each its
+// own entity, of a key of its own among the type's, a text never runtime, an
+// enum's options each there once, and its default of its type, an enum's one
+// of its options.
+func (l *loader) define(t published.ComponentType) error {
+	keys := make(map[string]bool)
+	for _, d := range t.Attributes {
+		if err := l.entity(d.ID); err != nil {
+			return fmt.Errorf("%s: %w", published.ComponentTypesPath, err)
+		}
+		switch {
+		case keys[d.Key]:
+			return fmt.Errorf("two definitions of the component type %s have the key %s", t.ID, d.Key)
+		case d.Type == value.Text && d.Runtime:
+			return fmt.Errorf("the definition %s is a text, which is never runtime", d.ID)
+		case len(slices.Compact(slices.Sorted(slices.Values(d.Options)))) != len(d.Options):
+			return fmt.Errorf("the definition %s has an option twice", d.ID)
+		}
+		keys[d.Key] = true
+		if _, err := valueOf(d.Default, d.Type, d.Options); err != nil {
+			return fmt.Errorf("the default of the definition %s %w", d.ID, err)
+		}
+	}
+	return nil
+}
+
 // addNodes adds the nodes of the board b's file f, and their ports.
-func (s *Snapshot) addNodes(b string, f *published.Board) error {
+func (l *loader) addNodes(b string, f *published.Board) error {
 	for _, n := range f.Nodes {
-		id, ports := nodeID(n), map[string][]*published.Connection{}
+		id, ports := n.NodeID(), map[string][]*published.Connection{}
+		if err := l.entity(id); err != nil {
+			return err
+		}
 		switch n := n.(type) {
 		case *published.Element:
 			ports[out] = nil
 		case *published.Branch:
 			last := len(n.Outputs) - 1
 			for i, o := range n.Outputs {
-				if int(o.Order) != i {
+				if err := l.entity(o.ID); err != nil {
+					return err
+				}
+				if o.Order != published.Int(i) {
 					return fmt.Errorf("the branch %s's outputs are not ordered 0, 1, 2, and so on", n.ID)
 				}
 				// The first output is the if, and the last may be an else,
@@ -345,10 +542,7 @@ func (s *Snapshot) addNodes(b string, f *published.Board) error {
 				ports[o.ID] = nil
 			}
 		}
-		if s.nodes[id] != nil {
-			return fmt.Errorf("the node %s is there twice", id)
-		}
-		s.nodes[id] = &node{board: b, node: n, ports: ports}
+		l.s.nodes[id] = &node{board: b, node: n, ports: ports}
 	}
 	return nil
 }
@@ -383,12 +577,13 @@ func (s *Snapshot) project(types published.ComponentTypes, components published.
 
 // addConnections adds the connections of the board b's file f to their
 // nodes' ports, and checks the board's expressions, texts, and jumpers.
-func (s *Snapshot) addConnections(b string, f *published.Board, p *expr.Project) error {
+func (l *loader) addConnections(b string, f *published.Board, p *expr.Project) error {
+	s := l.s
 	for i := range f.Connections {
 		c := &f.Connections[i]
 		from, to := s.nodes[c.From], s.nodes[c.To]
-		if s.connections[c.ID] != nil {
-			return fmt.Errorf("the connection %s is there twice", c.ID)
+		if err := l.entity(c.ID); err != nil {
+			return err
 		}
 		if from == nil || from.board != b || to == nil || to.board != b {
 			return fmt.Errorf("the connection %s does not join two nodes of the board", c.ID)
@@ -397,36 +592,35 @@ func (s *Snapshot) addConnections(b string, f *published.Board, p *expr.Project)
 			return fmt.Errorf("the connection %s leaves %s by %s, which is no port of it", c.ID, c.From, c.FromPort)
 		}
 		from.ports[c.FromPort] = append(from.ports[c.FromPort], c)
-		s.connections[c.ID] = c
 		if c.Condition != nil {
-			if err := expr.CheckResolved(c.Condition.AST, expr.ContextCondition, p, b); err != nil {
+			if err := l.check(c.Condition.AST, expr.ContextCondition, p, b); err != nil {
 				return fmt.Errorf("the condition of %s: %w", c.ID, err)
 			}
 		}
 		if c.OnTraverse != nil {
-			if err := expr.CheckResolved(c.OnTraverse.AST, expr.ContextScript, p, b); err != nil {
+			if err := l.check(c.OnTraverse.AST, expr.ContextScript, p, b); err != nil {
 				return fmt.Errorf("the script of %s: %w", c.ID, err)
 			}
 		}
 		if c.Label != nil {
-			if err := s.checkSegments(c.Label.Segments); err != nil {
+			if err := l.checkSegments(b, c.Label.Segments); err != nil {
 				return fmt.Errorf("the label of %s: %w", c.ID, err)
 			}
 		}
 	}
 	for _, n := range f.Nodes {
-		if err := s.checkNode(b, n, p); err != nil {
+		if err := l.checkNode(b, n, p); err != nil {
 			return err
 		}
 	}
 	for _, n := range f.Nodes {
-		ports := s.nodes[nodeID(n)].ports
+		ports := s.nodes[n.NodeID()].ports
 		for _, port := range slices.Sorted(maps.Keys(ports)) {
 			cs := ports[port]
-			slices.SortFunc(cs, func(a, b *published.Connection) int { return int(a.Order - b.Order) })
+			slices.SortFunc(cs, func(a, b *published.Connection) int { return cmp.Compare(a.Order, b.Order) })
 			for i, c := range cs {
-				if int(c.Order) != i {
-					return fmt.Errorf("the connections of %s's port %s are not ordered 0, 1, 2, and so on", nodeID(n),
+				if c.Order != published.Int(i) {
+					return fmt.Errorf("the connections of %s's port %s are not ordered 0, 1, 2, and so on", n.NodeID(),
 						port)
 				}
 			}
@@ -435,26 +629,24 @@ func (s *Snapshot) addConnections(b string, f *published.Board, p *expr.Project)
 	return nil
 }
 
-// nodeID returns the ID of n.
-func nodeID(n published.Node) string {
-	switch n := n.(type) {
-	case *published.Element:
-		return n.ID
-	case *published.Branch:
-		return n.ID
-	case *published.Jumper:
-		return n.ID
+// check checks the AST n of the board b in the context ctx against the
+// snapshot's declarations (expr.CheckResolved), and keeps it, so that the
+// manifest's astVersion is checked against its constructs.
+func (l *loader) check(n expr.Node, ctx expr.Context, p *expr.Project, b string) error {
+	if err := expr.CheckResolved(n, ctx, p, b); err != nil {
+		return err
 	}
-	return ""
+	l.asts = append(l.asts, n)
+	return nil
 }
 
-// checkNode checks the scripts, the text, the outputs' conditions, and the
-// target of the node n of the board b.
-func (s *Snapshot) checkNode(b string, n published.Node, p *expr.Project) error {
+// checkNode checks the scripts, the speaker, the tags, the text, the
+// outputs' conditions, and the target of the node n of the board b.
+func (l *loader) checkNode(b string, n published.Node, p *expr.Project) error {
 	scripts := func(id string, onEnter, onExit *published.Script) error {
 		for _, sc := range []*published.Script{onEnter, onExit} {
 			if sc != nil {
-				if err := expr.CheckResolved(sc.AST, expr.ContextScript, p, b); err != nil {
+				if err := l.check(sc.AST, expr.ContextScript, p, b); err != nil {
 					return fmt.Errorf("a script of %s: %w", id, err)
 				}
 			}
@@ -463,8 +655,19 @@ func (s *Snapshot) checkNode(b string, n published.Node, p *expr.Project) error 
 	}
 	switch n := n.(type) {
 	case *published.Element:
+		if n.Speaker != "" && !l.components[n.Speaker] {
+			return fmt.Errorf("the speaker of %s is %s, which is no component of the snapshot", n.ID, n.Speaker)
+		}
+		tags := make(map[string]bool)
+		for _, tag := range n.Tags {
+			key := input.FoldCase(tag)
+			if tags[key] {
+				return fmt.Errorf("two tags of %s are the same but for their case", n.ID)
+			}
+			tags[key] = true
+		}
 		if n.Text != nil {
-			if err := s.checkSegments(n.Text.Segments); err != nil {
+			if err := l.checkSegments(b, n.Text.Segments); err != nil {
 				return fmt.Errorf("the text of %s: %w", n.ID, err)
 			}
 		}
@@ -472,7 +675,7 @@ func (s *Snapshot) checkNode(b string, n published.Node, p *expr.Project) error 
 	case *published.Branch:
 		for _, o := range n.Outputs {
 			if o.Condition != nil {
-				if err := expr.CheckResolved(o.Condition.AST, expr.ContextCondition, p, b); err != nil {
+				if err := l.check(o.Condition.AST, expr.ContextCondition, p, b); err != nil {
 					return fmt.Errorf("the condition of %s: %w", o.ID, err)
 				}
 			}
@@ -480,7 +683,7 @@ func (s *Snapshot) checkNode(b string, n published.Node, p *expr.Project) error 
 		return scripts(n.ID, n.OnEnter, n.OnExit)
 	case *published.Jumper:
 		if t := n.Target; t != nil {
-			target := s.nodes[t.NodeID]
+			target := l.s.nodes[t.NodeID]
 			if target == nil || target.board != t.BoardID {
 				return fmt.Errorf("the jumper %s's target %s is not a node of its board %s", n.ID, t.NodeID, t.BoardID)
 			}
@@ -492,20 +695,43 @@ func (s *Snapshot) checkNode(b string, n published.Node, p *expr.Project) error 
 	return nil
 }
 
-// checkSegments checks that each value of a text or a label is of a
-// variable, or of a runtime attribute of a component.
-func (s *Snapshot) checkSegments(segs richtext.Segments) error {
+// linkMark is the mark of a segment of a link, which has an href.
+const linkMark = "link"
+
+// checkSegments checks the segments of a text or a label of the board b:
+// that each mention is of a component of the snapshot, and each value of a
+// variable that an expression of the board reads, which a board-scoped
+// variable of another board is not (§5.8.3), or of a runtime attribute of a
+// component, as an expression's var or attr leaf is (FR-TEXT-02); and that a
+// segment's marks are each there once, in alphabetical order, the link among
+// them exactly when it has an href.
+func (l *loader) checkSegments(b string, segs richtext.Segments) error {
+	s := l.s
 	for _, seg := range segs {
-		if seg.Kind != richtext.SegmentValue {
-			continue
-		}
-		if seg.Attribute == "" {
-			if s.declared[seg.Ref] == nil {
-				return fmt.Errorf("a value is of %s, which is no variable of the snapshot", seg.Ref)
+		for i := 1; i < len(seg.Marks); i++ {
+			if seg.Marks[i-1] >= seg.Marks[i] {
+				return errors.New("a segment's marks are not each there once, in alphabetical order")
 			}
-		} else if _, ok := s.initial[attributeKey{seg.Ref, seg.Attribute}]; !ok {
-			return fmt.Errorf("a value is of %s's %s, which is no runtime attribute of the snapshot", seg.Ref,
-				seg.Attribute)
+		}
+		if slices.Contains(seg.Marks, linkMark) != (seg.Href != "") {
+			return errors.New("a segment has the link mark without an href, or an href without the link mark")
+		}
+		switch {
+		case seg.Kind == richtext.SegmentMention:
+			if !l.components[seg.Ref] {
+				return fmt.Errorf("a mention is of %s, which is no component of the snapshot", seg.Ref)
+			}
+		case seg.Kind != richtext.SegmentValue:
+		case seg.Attribute != "":
+			if _, ok := s.initial[attributeKey{seg.Ref, seg.Attribute}]; !ok {
+				return fmt.Errorf("a value is of %s's %s, which is no runtime attribute of the snapshot", seg.Ref,
+					seg.Attribute)
+			}
+		case s.declared[seg.Ref] == nil:
+			return fmt.Errorf("a value is of %s, which is no variable of the snapshot", seg.Ref)
+		case s.declared[seg.Ref].Scope == published.ScopeBoard && s.declared[seg.Ref].BoardID != b:
+			return fmt.Errorf("a value is of %s, a variable of another board, which an expression of the board does "+
+				"not read (board_variable_out_of_scope)", seg.Ref)
 		}
 	}
 	return nil

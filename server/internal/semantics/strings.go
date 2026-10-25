@@ -21,9 +21,11 @@ func Len(s string) int {
 // nor one that a runtime's memory cannot hold: a script of 64 statements that
 // each double a string would otherwise build one of 2^64 times its length. It
 // counts code points, as Len does, so that "😀", one code point, two UTF-16
-// code units, and four bytes, counts as one.
+// code units, and four bytes, counts as one. Of strings of at most
+// MaxStringLength bytes together, which have at most as many code points, it
+// counts none.
 func Concat(a, b string) (string, RuntimeError) {
-	if Len(a)+Len(b) > MaxStringLength {
+	if len(a)+len(b) > MaxStringLength && Len(a)+Len(b) > MaxStringLength {
 		return "", StringTooLong
 	}
 	return a + b, ""

@@ -57,6 +57,8 @@ const (
 // Node is a node of a board: an *Element, a *Branch, or a *Jumper.
 type Node interface {
 	nodeType() string
+	// NodeID returns the node's ID, whatever its type.
+	NodeID() string
 }
 
 // Nodes are a board's nodes, of any type.
@@ -123,6 +125,15 @@ type Jumper struct {
 func (*Element) nodeType() string { return NodeElement }
 func (*Branch) nodeType() string  { return NodeBranch }
 func (*Jumper) nodeType() string  { return NodeJumper }
+
+// NodeID returns the element's ID (Node).
+func (n *Element) NodeID() string { return n.ID }
+
+// NodeID returns the branch's ID (Node).
+func (n *Branch) NodeID() string { return n.ID }
+
+// NodeID returns the jumper's ID (Node).
+func (n *Jumper) NodeID() string { return n.ID }
 
 // JSONSchemaDoc describes an element (schemagen.Documented).
 func (Element) JSONSchemaDoc() string {

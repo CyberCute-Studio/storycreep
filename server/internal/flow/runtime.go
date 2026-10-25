@@ -2,6 +2,7 @@ package flow
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
@@ -120,14 +121,20 @@ type Choice struct {
 // call: the listener may read the state, and set a value, but not call one of
 // those, which panics when it does, since the call that it is within would go
 // on from a flow that it no longer has; a caller that moves the flow on from
-// an event does so once the call has returned. A Runtime is not safe for use
-// by several goroutines at once.
+// an event does so once the call has returned. Nor may the listener save the
+// state (SaveState) but where the flow is at rest within the call: at the
+// ready of an element that awaits a choice, at the end, and at an error of a
+// call that has moved nothing yet, as an invalid_choice; elsewhere, as at an
+// enter, whose on-enter has not run, which no save state can hold, it panics
+// too. A Runtime is not safe for use by several goroutines at once.
 type Runtime struct {
 	s      *Snapshot
 	strict bool
 	listen func(Event)
-	// moving is set while a call that moves the flow runs.
-	moving bool
+	// moving is set while a call that moves the flow runs, and rest while
+	// such a call has the flow at rest: before it moves anything, and from
+	// an element's ready or the end on.
+	moving, rest bool
 
 	vars   map[string]expr.Value
 	attrs  map[attributeKey]expr.Value
@@ -169,14 +176,7 @@ func New(s *Snapshot, strict bool, listen func(Event)) *Runtime {
 // defaults sets every value to its snapshot's, and clears the visit counts
 // and where the flow is.
 func (r *Runtime) defaults() {
-	r.vars = make(map[string]expr.Value, len(r.s.defaults))
-	for id, v := range r.s.defaults {
-		r.vars[id] = v
-	}
-	r.attrs = make(map[attributeKey]expr.Value, len(r.s.initial))
-	for k, v := range r.s.initial {
-		r.attrs[k] = v
-	}
+	r.vars, r.attrs = maps.Clone(r.s.defaults), maps.Clone(r.s.initial)
 	r.visits = make(map[string]int64)
 	r.current, r.phase, r.choices = "", "", nil
 }
@@ -185,12 +185,13 @@ func (r *Runtime) defaults() {
 // it is Start, Reset, or LoadState, or refused by it, with FlowHalted, if it
 // is Choose, Advance, or Goto, and halts the flow in strict mode once f has
 // reported a runtime error. It panics when the listener calls it within
-// another call (Runtime).
+// another call (Runtime). The flow is at rest until f moves it, which clears
+// rest.
 func (r *Runtime) call(clears bool, f func()) {
 	if r.moving {
 		panic("flow: the listener called a method that moves the flow within a call that moves it")
 	}
-	r.moving = true
+	r.moving, r.rest = true, true
 	defer func() { r.moving = false }()
 	if clears {
 		r.halted = false
@@ -247,17 +248,15 @@ func (r *Runtime) Goto(board, node string) {
 
 // Reset sets every variable and runtime attribute to its value in the
 // snapshot, clears every visit count, and starts the flow at the project's
-// entry, as Start("", "") does, as reset() does. Of a snapshot without an
-// entry, it reports UnknownNode, as Start("", "") does, and changes nothing.
-// It clears a halt.
+// entry, as Start("", "") does, as reset() does, once it has resolved the
+// entry, before anything else (§5.8.5): of a snapshot without an entry, it
+// reports UnknownNode, and of one whose entry is a jumper without a target
+// JumperBroken, as Start("", "") does, and changes nothing. It clears a halt.
 func (r *Runtime) Reset() {
 	r.call(true, func() {
-		if r.s.entry == nil {
-			r.fail(UnknownNode, "")
-			return
-		}
-		r.defaults()
 		if id, ok := r.resolve("", ""); ok {
+			r.rest = false
+			r.defaults()
 			r.settle(id, true)
 		}
 	})
@@ -361,6 +360,7 @@ func (r *Runtime) leave(c *published.Connection) {
 
 // exit runs the current node's on-exit and reports its exit.
 func (r *Runtime) exit() {
+	r.rest = false
 	id := r.current
 	r.run(id, ExpressionOnExit, onExit(r.s.nodes[id].node))
 	r.listen(Event{Kind: EventExit, Node: id})
@@ -398,6 +398,7 @@ func (r *Runtime) settle(id string, entry bool) {
 // choice, or ends; or a branch's output, of which it returns the connection
 // that the flow passes on by, or nil when it ends there.
 func (r *Runtime) arrive(id string, entry bool) *published.Connection {
+	r.rest = false
 	n := r.s.nodes[id]
 	if entry || r.current == "" || r.s.nodes[r.current].board != n.board {
 		for _, v := range r.s.boards[n.board].reset {
@@ -439,7 +440,7 @@ func (r *Runtime) element(n *published.Element) {
 		r.end(ReasonNoChoices)
 		return
 	}
-	r.phase = published.PhaseAwaitingChoice
+	r.phase, r.rest = published.PhaseAwaitingChoice, true
 	r.listen(Event{Kind: EventReady, Node: n.ID})
 }
 
@@ -508,6 +509,7 @@ func (r *Runtime) end(reason string) {
 func (r *Runtime) finish(reason string) {
 	r.phase, r.choices = published.PhaseEnded, nil
 	r.exit()
+	r.rest = true
 	r.listen(Event{Kind: EventEnd, Reason: reason})
 }
 
@@ -695,12 +697,15 @@ func typed(v expr.Value, typ string) (expr.Value, error) {
 // another value, or as none: when v is no value of the language
 // (expr.Value), an int beyond ±(2^53 − 1), a float that is not finite, or a
 // string that is not UTF-8, which SaveState would otherwise write as another
-// value or as none.
+// value or as none, or one of more than semantics.MaxStringLength
+// characters, or with a NUL, which no expression builds (§5.8.1, §5.8.9),
+// and which LoadState refuses (valueOf).
 func asSaved(v expr.Value, typ string) (expr.Value, error) {
 	read, err := valueOf(jsonOf(v, typ), typ, nil)
 	if err != nil || read != v {
 		return expr.Value{}, fmt.Errorf("flow: the %s is no value of the language, as an int beyond ±(2^53 − 1), a "+
-			"float that is not finite, or a string that is not UTF-8 is not", v.Type)
+			"float that is not finite, a string that is not UTF-8, or one of more than %d characters, or with a NUL, "+
+			"is not", v.Type, semantics.MaxStringLength)
 	}
 	return read, nil
 }

@@ -20,8 +20,13 @@ var ErrState = errors.New("flow: a state that this runtime does not load")
 // started, the value of every variable and of every component's runtime
 // attribute, and the visit count of every node that the flow has entered.
 // Neither a halt nor the current choices are part of it: LoadState builds the
-// choices again.
+// choices again. It panics when the listener calls it within a call that
+// moves the flow while the flow is not at rest (Runtime), as at an enter,
+// when the node's on-enter has not run, which no cursor's phase says.
 func (r *Runtime) SaveState() published.SaveState {
+	if r.moving && !r.rest {
+		panic("flow: the listener saved the state within a call that moves the flow, where the flow is not at rest")
+	}
 	m := &r.s.manifest
 	st := published.SaveState{
 		Attributes:    make(map[string]published.AttributeValues),
@@ -64,13 +69,16 @@ func (r *Runtime) SaveState() published.SaveState {
 // snapshot, and returns an error that wraps ErrState, and changes nothing, of
 // any other: of another project or snapshot, of another stateVersion, which
 // published.Decode refuses, that lacks a variable or a runtime attribute of
-// the snapshot or holds one that the snapshot does not have, or a value that
-// its declaration's type does not read (§5.8.9), a visit count of a node that
-// the snapshot does not have, or of a jumper, which the flow never enters, or
-// below 1, or whose cursor is not of a node of its board, which is no jumper,
-// and awaits a choice only at an element that is no ending and that a
-// connection leaves, as no flow awaits one elsewhere: it passes through a
-// branch, and ends at an ending and at a dead end (§5.8.5).
+// the snapshot or holds one that the snapshot does not have, or attributes
+// of a component without any, which SaveState never writes, or a value that
+// its declaration's type does not read (§5.8.9, valueOf), a visit count of a
+// node that the snapshot does not have, or of a jumper, which the flow never
+// enters, or below 1, or whose cursor is not of a node of its board, which is
+// no jumper, in a phase that is neither awaiting_choice nor ended, which
+// published.Decode refuses too, and awaits a choice only at an element that
+// is no ending and that a connection leaves, as no flow awaits one
+// elsewhere: it passes through a branch, and ends at an ending and at a dead
+// end (§5.8.5).
 // Loading a state saved against another snapshot, with what PRD §8.5 says of
 // its entities that have changed, is the Godot runtime's and play mode's
 // (FR-GODOT-07, FR-PLAY-05).
@@ -80,6 +88,9 @@ func (r *Runtime) LoadState(st published.SaveState) error {
 		return fmt.Errorf("%w: %w", ErrState, err)
 	}
 	r.call(true, func() {
+		// The choices' conditions may report a runtime error, at which the
+		// flow is not at rest.
+		r.rest = false
 		r.vars, r.attrs, r.visits = vars, attrs, visits
 		r.current, r.phase, r.choices = "", "", nil
 		if c := st.Cursor; c != nil {
@@ -123,6 +134,9 @@ func (s *Snapshot) state(st published.SaveState) (map[string]expr.Value, map[att
 	n := 0
 	for _, c := range slices.Sorted(maps.Keys(st.Attributes)) {
 		values := st.Attributes[c]
+		if len(values) == 0 {
+			return nil, nil, nil, fmt.Errorf("it holds attributes of %s, but none of its values", c)
+		}
 		for _, a := range slices.Sorted(maps.Keys(values)) {
 			k := attributeKey{c, a}
 			typ, ok := s.declaredTypes[k]
@@ -157,6 +171,10 @@ func (s *Snapshot) state(st published.SaveState) (map[string]expr.Value, map[att
 		if n == nil || n.board != c.BoardID {
 			return nil, nil, nil, fmt.Errorf("its cursor's node %s is not a node of its board %s", c.NodeID,
 				c.BoardID)
+		}
+		if c.Phase != published.PhaseAwaitingChoice && c.Phase != published.PhaseEnded {
+			return nil, nil, nil, fmt.Errorf("its cursor's phase is %q, neither %s nor %s", c.Phase,
+				published.PhaseAwaitingChoice, published.PhaseEnded)
 		}
 		awaits := c.Phase == published.PhaseAwaitingChoice
 		switch e := n.node.(type) {
