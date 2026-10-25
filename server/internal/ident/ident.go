@@ -69,6 +69,24 @@ func ReservedWords() []string {
 	return slices.Clone(reserved)
 }
 
+// IsReserved reports whether s is one of the words of the expression language
+// (ReservedWords), compared case by case.
+func IsReserved(s string) bool {
+	return slices.Contains(reserved, s)
+}
+
+// IsStart reports whether the byte c may start an identifier: an ASCII letter
+// or an underscore.
+func IsStart(c byte) bool {
+	return 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z' || c == '_'
+}
+
+// IsPart reports whether the byte c may be a character of an identifier after
+// its first: an ASCII letter, digit, or underscore.
+func IsPart(c byte) bool {
+	return IsStart(c) || '0' <= c && c <= '9'
+}
+
 // Check returns nil if s is an identifier, and otherwise an *Error that says
 // why it is not: Format for one that is not of the form, and Reserved for a
 // word of the language.
@@ -77,13 +95,11 @@ func Check(s string) error {
 		return &Error{Reason: Format}
 	}
 	for i := range len(s) {
-		c := s[i]
-		letter := 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z' || c == '_'
-		if !letter && (i == 0 || c < '0' || c > '9') {
+		if i == 0 && !IsStart(s[i]) || !IsPart(s[i]) {
 			return &Error{Reason: Format}
 		}
 	}
-	if slices.Contains(reserved, s) {
+	if IsReserved(s) {
 		return &Error{Reason: Reserved}
 	}
 	return nil

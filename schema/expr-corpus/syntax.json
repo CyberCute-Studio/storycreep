@@ -1,0 +1,1987 @@
+{
+  "cases": [
+    {
+      "note": "true is a bool literal",
+      "context": "condition",
+      "source": "true",
+      "ast": { "kind": "lit", "type": "bool", "value": true }
+    },
+    {
+      "note": "false is a bool literal",
+      "context": "condition",
+      "source": "false",
+      "ast": { "kind": "lit", "type": "bool", "value": false }
+    },
+    {
+      "note": "an int literal",
+      "context": "condition",
+      "source": "42",
+      "ast": { "kind": "lit", "type": "int", "value": 42 }
+    },
+    {
+      "note": "zero is an int literal",
+      "context": "condition",
+      "source": "0",
+      "ast": { "kind": "lit", "type": "int", "value": 0 }
+    },
+    {
+      "note": "the greatest int is a literal",
+      "context": "condition",
+      "source": "9007199254740991",
+      "ast": { "kind": "lit", "type": "int", "value": 9007199254740991 }
+    },
+    {
+      "note": "an int literal one past the greatest int is integer_out_of_range",
+      "context": "condition",
+      "source": "9007199254740992",
+      "error": { "code": "integer_out_of_range", "start": 0, "end": 16 }
+    },
+    {
+      "note": "an int literal of 30 digits is integer_out_of_range, whole",
+      "context": "condition",
+      "source": "123456789012345678901234567890",
+      "error": { "code": "integer_out_of_range", "start": 0, "end": 30 }
+    },
+    {
+      "note": "an int literal's leading zeros are read, as to_int reads them",
+      "context": "condition",
+      "source": "007",
+      "ast": { "kind": "lit", "type": "int", "value": 7 }
+    },
+    {
+      "note": "a negative number is the unary - of a literal",
+      "context": "condition",
+      "source": "-5",
+      "ast": {
+        "kind": "unary",
+        "op": "neg",
+        "operand": { "kind": "lit", "type": "int", "value": 5 }
+      }
+    },
+    {
+      "note": "the least int is the unary - of the greatest",
+      "context": "condition",
+      "source": "-9007199254740991",
+      "ast": {
+        "kind": "unary",
+        "op": "neg",
+        "operand": { "kind": "lit", "type": "int", "value": 9007199254740991 }
+      }
+    },
+    {
+      "note": "-2^53 is integer_out_of_range at its literal, which is 2^53",
+      "context": "condition",
+      "source": "-9007199254740992",
+      "error": { "code": "integer_out_of_range", "start": 1, "end": 17 }
+    },
+    {
+      "note": "a float literal",
+      "context": "condition",
+      "source": "1.5",
+      "ast": { "kind": "lit", "type": "float", "value": 1.5 }
+    },
+    {
+      "note": "an integral float literal is written without a point",
+      "context": "condition",
+      "source": "2.0",
+      "ast": { "kind": "lit", "type": "float", "value": 2 }
+    },
+    {
+      "note": "a float literal with an exponent",
+      "context": "condition",
+      "source": "1.5e3",
+      "ast": { "kind": "lit", "type": "float", "value": 1500 }
+    },
+    {
+      "note": "an exponent's E may be upper case, and have a sign",
+      "context": "condition",
+      "source": "1.0E+2",
+      "ast": { "kind": "lit", "type": "float", "value": 100 }
+    },
+    {
+      "note": "a float below 1e-6 is written with an exponent",
+      "context": "condition",
+      "source": "2.5e-7",
+      "ast": { "kind": "lit", "type": "float", "value": 2.5e-7 }
+    },
+    {
+      "note": "a float of 1e-6 is written in positional notation",
+      "context": "condition",
+      "source": "1.0e-6",
+      "ast": { "kind": "lit", "type": "float", "value": 0.000001 }
+    },
+    {
+      "note": "a float of 1e21 is written with an exponent",
+      "context": "condition",
+      "source": "1.0e21",
+      "ast": { "kind": "lit", "type": "float", "value": 1e21 }
+    },
+    {
+      "note": "the greatest double below 1e21 is written in positional notation",
+      "context": "condition",
+      "source": "999999999999999900000.0",
+      "ast": { "kind": "lit", "type": "float", "value": 999999999999999900000 }
+    },
+    {
+      "note": "a float literal is the double nearest it",
+      "context": "condition",
+      "source": "0.1",
+      "ast": { "kind": "lit", "type": "float", "value": 0.1 }
+    },
+    {
+      "note": "a float literal halfway between two doubles is the even one",
+      "context": "condition",
+      "source": "9007199254740993.0",
+      "ast": { "kind": "lit", "type": "float", "value": 9007199254740992 }
+    },
+    {
+      "note": "the least subnormal double",
+      "context": "condition",
+      "source": "5.0e-324",
+      "ast": { "kind": "lit", "type": "float", "value": 5e-324 }
+    },
+    {
+      "note": "a float literal below the least subnormal is 0",
+      "context": "condition",
+      "source": "1.0e-400",
+      "ast": { "kind": "lit", "type": "float", "value": 0 }
+    },
+    {
+      "note": "the greatest double",
+      "context": "condition",
+      "source": "1.7976931348623157e308",
+      "ast": { "kind": "lit", "type": "float", "value": 1.7976931348623157e308 }
+    },
+    {
+      "note": "a float literal beyond a double's range is float_out_of_range",
+      "context": "condition",
+      "source": "1.0e309",
+      "error": { "code": "float_out_of_range", "start": 0, "end": 7 }
+    },
+    {
+      "note": "a point without digits after it is invalid_number",
+      "context": "condition",
+      "source": "1.",
+      "error": { "code": "invalid_number", "start": 0, "end": 2 }
+    },
+    {
+      "note": "an exponent without a point is invalid_number",
+      "context": "condition",
+      "source": "1e5",
+      "error": { "code": "invalid_number", "start": 0, "end": 3 }
+    },
+    {
+      "note": "an exponent without digits is invalid_number",
+      "context": "condition",
+      "source": "1.5e",
+      "error": { "code": "invalid_number", "start": 0, "end": 4 }
+    },
+    {
+      "note": "an exponent's sign without digits is invalid_number",
+      "context": "condition",
+      "source": "1.5e+",
+      "error": { "code": "invalid_number", "start": 0, "end": 5 }
+    },
+    {
+      "note": "letters after digits are invalid_number, with the digits",
+      "context": "condition",
+      "source": "3abc",
+      "error": { "code": "invalid_number", "start": 0, "end": 4 }
+    },
+    {
+      "note": "a letter that is not ASCII ends a number, which is of ASCII letters, and is invalid_character after it",
+      "context": "condition",
+      "source": "3é",
+      "error": { "code": "invalid_character", "start": 1, "end": 2 }
+    },
+    {
+      "note": "an underscore between digits is invalid_number",
+      "context": "condition",
+      "source": "1_000",
+      "error": { "code": "invalid_number", "start": 0, "end": 5 }
+    },
+    {
+      "note": "a hexadecimal number is invalid_number",
+      "context": "condition",
+      "source": "0x1F",
+      "error": { "code": "invalid_number", "start": 0, "end": 4 }
+    },
+    {
+      "note": "a number of two points is invalid_number, whole",
+      "context": "condition",
+      "source": "1.2.3",
+      "error": { "code": "invalid_number", "start": 0, "end": 5 }
+    },
+    {
+      "note": "a number is read whole before it is told to be a literal, so that an integer beyond 2^53 with a letter after it is invalid_number",
+      "context": "condition",
+      "source": "99999999999999999999a",
+      "error": { "code": "invalid_number", "start": 0, "end": 21 }
+    },
+    {
+      "note": "a number is read whole before it is told to be a literal, so that a float beyond a double's range with a letter after it is invalid_number",
+      "context": "condition",
+      "source": "1.0e309x",
+      "error": { "code": "invalid_number", "start": 0, "end": 8 }
+    },
+    {
+      "note": "a sign after an e of a number is part of the number, though no exponent is, so that 3e-x is invalid_number, whole",
+      "context": "condition",
+      "source": "3e-x",
+      "error": { "code": "invalid_number", "start": 0, "end": 4 }
+    },
+    {
+      "note": "a sign after an E of a hexadecimal number is part of the number, invalid_number, whole",
+      "context": "condition",
+      "source": "0xE-1",
+      "error": { "code": "invalid_number", "start": 0, "end": 5 }
+    },
+    {
+      "note": "a point before digits is unexpected_token",
+      "context": "condition",
+      "source": ".5",
+      "error": { "code": "unexpected_token", "start": 0, "end": 1 }
+    },
+    {
+      "note": "a string literal",
+      "context": "condition",
+      "source": "\"harbour\"",
+      "ast": { "kind": "lit", "type": "string", "value": "harbour" }
+    },
+    {
+      "note": "the empty string",
+      "context": "condition",
+      "source": "\"\"",
+      "ast": { "kind": "lit", "type": "string", "value": "" }
+    },
+    {
+      "note": "the escapes of a string literal",
+      "context": "condition",
+      "source": "\"a\\\"b\\\\c\\nd\\te\\rf\"",
+      "ast": { "kind": "lit", "type": "string", "value": "a\"b\\c\nd\te\rf" }
+    },
+    {
+      "note": "a \\u escape, of hexadecimal digits in either case",
+      "context": "condition",
+      "source": "\"\\u00e9\\u00C9\"",
+      "ast": { "kind": "lit", "type": "string", "value": "éÉ" }
+    },
+    {
+      "note": "the escapes of a surrogate pair are one character",
+      "context": "condition",
+      "source": "\"\\uD83D\\uDE00\"",
+      "ast": { "kind": "lit", "type": "string", "value": "😀" }
+    },
+    {
+      "note": "a high surrogate's escape without a low one's after it is invalid_escape",
+      "context": "condition",
+      "source": "\"\\uD83Dx\"",
+      "error": { "code": "invalid_escape", "start": 1, "end": 7 }
+    },
+    {
+      "note": "a low surrogate's escape alone is invalid_escape",
+      "context": "condition",
+      "source": "\"\\uDE00\"",
+      "error": { "code": "invalid_escape", "start": 1, "end": 7 }
+    },
+    {
+      "note": "the escape of NUL is invalid_escape, since no text holds one",
+      "context": "condition",
+      "source": "\"\\u0000\"",
+      "error": { "code": "invalid_escape", "start": 1, "end": 7 }
+    },
+    {
+      "note": "the escape of a character that the language does not escape is invalid_escape",
+      "context": "condition",
+      "source": "\"\\x41\"",
+      "error": { "code": "invalid_escape", "start": 1, "end": 3 }
+    },
+    {
+      "note": "a \\u escape of fewer than four hexadecimal digits is invalid_escape, up to the first that is not one",
+      "context": "condition",
+      "source": "\"\\u12G4\"",
+      "error": { "code": "invalid_escape", "start": 1, "end": 5 }
+    },
+    {
+      "note": "a single quote is invalid_character",
+      "context": "condition",
+      "source": "'a'",
+      "error": { "code": "invalid_character", "start": 0, "end": 1 }
+    },
+    {
+      "note": "a string without its closing quote is unterminated_string",
+      "context": "condition",
+      "source": "\"abc",
+      "error": { "code": "unterminated_string", "start": 0, "end": 4 }
+    },
+    {
+      "note": "a string literal ends at its line's end at the latest",
+      "context": "condition",
+      "source": "\"abc\n\" == x",
+      "error": { "code": "unterminated_string", "start": 0, "end": 4 }
+    },
+    {
+      "note": "a backslash at the end of the source is unterminated_string",
+      "context": "condition",
+      "source": "\"abc\\",
+      "error": { "code": "unterminated_string", "start": 0, "end": 5 }
+    },
+    {
+      "note": "a string literal's characters are read in turn, so that a NUL in one that its line does not close is invalid_character",
+      "context": "condition",
+      "source": "\"a\u0000",
+      "error": { "code": "invalid_character", "start": 2, "end": 3 }
+    },
+    {
+      "note": "a NUL right after a backslash is invalid_character, at the NUL, rather than invalid_escape",
+      "context": "condition",
+      "source": "\"\\\u0000\"",
+      "error": { "code": "invalid_character", "start": 2, "end": 3 }
+    },
+    {
+      "note": "a \\u that the end of the source cuts short is invalid_escape, over the \\u and its digits",
+      "context": "condition",
+      "source": "\"\\u12",
+      "error": { "code": "invalid_escape", "start": 1, "end": 5 }
+    },
+    {
+      "note": "a \\u that a line break cuts short is invalid_escape, not unterminated_string",
+      "context": "condition",
+      "source": "x == \"\\u\n\"",
+      "error": { "code": "invalid_escape", "start": 6, "end": 8 }
+    },
+    {
+      "note": "a NUL in place of a \\u's digits is invalid_escape, over the \\u, as whatever ends its digits is",
+      "context": "condition",
+      "source": "\"\\u\u0000\"",
+      "error": { "code": "invalid_escape", "start": 1, "end": 3 }
+    },
+    {
+      "note": "<, >, &, and / are not escaped",
+      "context": "condition",
+      "source": "\"<a & b/>\"",
+      "ast": { "kind": "lit", "type": "string", "value": "<a & b/>" }
+    },
+    {
+      "note": "U+2028 in a string literal",
+      "context": "condition",
+      "source": "\"\u2028\"",
+      "ast": { "kind": "lit", "type": "string", "value": "\u2028" }
+    },
+    {
+      "note": "a string literal of 4,096 characters",
+      "context": "condition",
+      "source": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "ast": {
+        "kind": "lit",
+        "type": "string",
+        "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "note": "a string literal of 4,097 characters is string_too_long, whole",
+      "context": "condition",
+      "source": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "error": { "code": "string_too_long", "start": 0, "end": 4099 }
+    },
+    {
+      "note": "a string literal is read to its end before its length is checked, so that a bad escape after 4,097 characters is invalid_escape",
+      "context": "condition",
+      "source": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\q\"",
+      "error": { "code": "invalid_escape", "start": 4098, "end": 4100 }
+    },
+    {
+      "note": "a string literal is read to its end before its length is checked, so that one of 4,097 characters that the source ends in is unterminated_string",
+      "context": "condition",
+      "source": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "error": { "code": "unterminated_string", "start": 0, "end": 4098 }
+    },
+    {
+      "note": "a string literal's length is counted in code points: 2,049 beyond U+FFFF, which are 4,098 UTF-16 code units",
+      "context": "condition",
+      "source": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+      "ast": {
+        "kind": "lit",
+        "type": "string",
+        "value": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      }
+    },
+    {
+      "note": "a variable by its key",
+      "context": "condition",
+      "source": "met_elara",
+      "ast": { "kind": "var", "name": "met_elara" }
+    },
+    {
+      "note": "an identifier may start with an underscore and hold digits",
+      "context": "condition",
+      "source": "_x9",
+      "ast": { "kind": "var", "name": "_x9" }
+    },
+    {
+      "note": "identifiers are compared case by case, so True is a name",
+      "context": "condition",
+      "source": "True",
+      "ast": { "kind": "var", "name": "True" }
+    },
+    {
+      "note": "a global variable",
+      "context": "condition",
+      "source": "global.met_elara",
+      "ast": { "kind": "var", "name": "global.met_elara" }
+    },
+    {
+      "note": "a board variable",
+      "context": "condition",
+      "source": "board.visits_here",
+      "ast": { "kind": "var", "name": "board.visits_here" }
+    },
+    {
+      "note": "a component's attribute",
+      "context": "condition",
+      "source": "elara.trust",
+      "ast": { "kind": "attr", "name": "elara.trust" }
+    },
+    {
+      "note": "a component's attribute after cmp.",
+      "context": "condition",
+      "source": "cmp.elara.trust",
+      "ast": { "kind": "attr", "name": "cmp.elara.trust" }
+    },
+    {
+      "note": "cmp is a component's key too",
+      "context": "condition",
+      "source": "cmp.trust",
+      "ast": { "kind": "attr", "name": "cmp.trust" }
+    },
+    {
+      "note": "white space around a name's dot",
+      "context": "condition",
+      "source": "elara . trust",
+      "ast": { "kind": "attr", "name": "elara.trust" }
+    },
+    {
+      "note": "a name of three parts that does not start with cmp is invalid_name",
+      "context": "condition",
+      "source": "a.b.c",
+      "error": { "code": "invalid_name", "start": 0, "end": 5 }
+    },
+    {
+      "note": "a name of four parts is invalid_name",
+      "context": "condition",
+      "source": "cmp.a.b.c",
+      "error": { "code": "invalid_name", "start": 0, "end": 9 }
+    },
+    {
+      "note": "a name of four parts that does not start with cmp is invalid_name, over all four",
+      "context": "condition",
+      "source": "a.b.c.d",
+      "error": { "code": "invalid_name", "start": 0, "end": 7 }
+    },
+    {
+      "note": "a qualifier with two parts after it is invalid_name",
+      "context": "condition",
+      "source": "global.a.b",
+      "error": { "code": "invalid_name", "start": 0, "end": 10 }
+    },
+    {
+      "note": "a name is read to its last part before its parts are counted, so that a reserved word after its third dot is reserved_word, not invalid_name",
+      "context": "condition",
+      "source": "a.b.c.null",
+      "error": { "code": "reserved_word", "start": 6, "end": 10 }
+    },
+    {
+      "note": "a name is read to its last part before its parts are counted, so that a number after its third dot is unexpected_token, not invalid_name",
+      "context": "condition",
+      "source": "a.b.c.1",
+      "error": { "code": "unexpected_token", "start": 6, "end": 7 }
+    },
+    {
+      "note": "a token that cannot be read after a name's last part is no dot, so that a.b.c and an @ is invalid_name, as before any other token",
+      "context": "condition",
+      "source": "a.b.c@",
+      "error": { "code": "invalid_name", "start": 0, "end": 5 }
+    },
+    {
+      "note": "global without a dot after it is reserved_word",
+      "context": "condition",
+      "source": "global",
+      "error": { "code": "reserved_word", "start": 0, "end": 6 }
+    },
+    {
+      "note": "board without a dot after it is reserved_word",
+      "context": "condition",
+      "source": "board == 1",
+      "error": { "code": "reserved_word", "start": 0, "end": 5 }
+    },
+    {
+      "note": "a token that cannot be read after global is no dot, so that global is reserved_word, as before any other token",
+      "context": "condition",
+      "source": "global@",
+      "error": { "code": "reserved_word", "start": 0, "end": 6 }
+    },
+    {
+      "note": "a token that cannot be read after a qualified name's last part is no dot, so that global.x.y and an @ is invalid_name, as global.x.y 1 is",
+      "context": "condition",
+      "source": "global.x.y@",
+      "error": { "code": "invalid_name", "start": 0, "end": 10 }
+    },
+    {
+      "note": "null is reserved_word, since the language has no null",
+      "context": "condition",
+      "source": "null",
+      "error": { "code": "reserved_word", "start": 0, "end": 4 }
+    },
+    {
+      "note": "the parser reads no token beyond the one that it stops at, so that null before an @ is reserved_word",
+      "context": "condition",
+      "source": "null@",
+      "error": { "code": "reserved_word", "start": 0, "end": 4 }
+    },
+    {
+      "note": "a reserved word as an operand is reserved_word",
+      "context": "condition",
+      "source": "x == null",
+      "error": { "code": "reserved_word", "start": 5, "end": 9 }
+    },
+    {
+      "note": "if is reserved_word",
+      "context": "condition",
+      "source": "if",
+      "error": { "code": "reserved_word", "start": 0, "end": 2 }
+    },
+    {
+      "note": "elseif is reserved_word",
+      "context": "condition",
+      "source": "elseif",
+      "error": { "code": "reserved_word", "start": 0, "end": 6 }
+    },
+    {
+      "note": "a literal's word after a dot is reserved_word",
+      "context": "condition",
+      "source": "elara.true",
+      "error": { "code": "reserved_word", "start": 6, "end": 10 }
+    },
+    {
+      "note": "an operator's word after a dot is reserved_word",
+      "context": "condition",
+      "source": "elara.and",
+      "error": { "code": "reserved_word", "start": 6, "end": 9 }
+    },
+    {
+      "note": "a qualifier after a qualifier's dot is reserved_word",
+      "context": "condition",
+      "source": "global.board",
+      "error": { "code": "reserved_word", "start": 7, "end": 12 }
+    },
+    {
+      "note": "a dot at the end of the source is unexpected_end",
+      "context": "condition",
+      "source": "elara.",
+      "error": { "code": "unexpected_end", "start": 6, "end": 6 }
+    },
+    {
+      "note": "a number after a dot is unexpected_token",
+      "context": "condition",
+      "source": "elara.1",
+      "error": { "code": "unexpected_token", "start": 6, "end": 7 }
+    },
+    {
+      "note": "a number after a qualifier's dot is unexpected_token, not reserved_word",
+      "context": "condition",
+      "source": "global.1",
+      "error": { "code": "unexpected_token", "start": 7, "end": 8 }
+    },
+    {
+      "note": "an identifier of 64 characters",
+      "context": "condition",
+      "source": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcd",
+      "ast": {
+        "kind": "var",
+        "name": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcd"
+      }
+    },
+    {
+      "note": "an identifier of 65 characters is identifier_too_long",
+      "context": "condition",
+      "source": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcde",
+      "error": { "code": "identifier_too_long", "start": 0, "end": 65 }
+    },
+    {
+      "note": "a letter that is not ASCII is invalid_character",
+      "context": "condition",
+      "source": "café",
+      "error": { "code": "invalid_character", "start": 3, "end": 4 }
+    },
+    {
+      "note": "an @ is invalid_character",
+      "context": "condition",
+      "source": "x @ y",
+      "error": { "code": "invalid_character", "start": 2, "end": 3 }
+    },
+    {
+      "note": "a single & is invalid_character",
+      "context": "condition",
+      "source": "a & b",
+      "error": { "code": "invalid_character", "start": 2, "end": 3 }
+    },
+    {
+      "note": "a single | is invalid_character",
+      "context": "condition",
+      "source": "a | b",
+      "error": { "code": "invalid_character", "start": 2, "end": 3 }
+    },
+    {
+      "note": "a no-break space is invalid_character, not white space",
+      "context": "condition",
+      "source": "a\u00a0== b",
+      "error": { "code": "invalid_character", "start": 1, "end": 2 }
+    },
+    {
+      "note": "a NUL in a string literal is invalid_character",
+      "context": "condition",
+      "source": "x == \"a\u0000\"",
+      "error": { "code": "invalid_character", "start": 7, "end": 8 }
+    },
+    {
+      "note": "a NUL in a comment is invalid_character",
+      "context": "condition",
+      "source": "x // a\u0000",
+      "error": { "code": "invalid_character", "start": 6, "end": 7 }
+    },
+    {
+      "note": "a range counts a character beyond U+FFFF in a comment as one, as anywhere, so that a NUL after it is at 6",
+      "context": "condition",
+      "source": "x // 😀\u0000",
+      "error": { "code": "invalid_character", "start": 6, "end": 7 }
+    },
+    {
+      "note": "a NUL outside a string literal and a comment is invalid_character",
+      "context": "condition",
+      "source": "x == \u0000",
+      "error": { "code": "invalid_character", "start": 5, "end": 6 }
+    },
+    {
+      "note": "a range counts a character beyond U+FFFF as one",
+      "context": "condition",
+      "source": "\"😀😀\" +",
+      "error": { "code": "unexpected_end", "start": 6, "end": 6 }
+    },
+    {
+      "note": "a character beyond U+FFFF outside a string literal is invalid_character, one code point long",
+      "context": "condition",
+      "source": "x == 😀",
+      "error": { "code": "invalid_character", "start": 5, "end": 6 }
+    },
+    {
+      "note": "the condition of the example in PRD §6.5",
+      "context": "condition",
+      "source": "met_elara == true",
+      "ast": {
+        "kind": "binary",
+        "left": { "kind": "var", "name": "met_elara" },
+        "op": "eq",
+        "right": { "kind": "lit", "type": "bool", "value": true }
+      }
+    },
+    {
+      "note": "the branch condition of the example in PRD §6.5",
+      "context": "condition",
+      "source": "elara.trust >= 3",
+      "ast": {
+        "kind": "binary",
+        "left": { "kind": "attr", "name": "elara.trust" },
+        "op": "gte",
+        "right": { "kind": "lit", "type": "int", "value": 3 }
+      }
+    },
+    {
+      "note": "|| is below &&",
+      "context": "condition",
+      "source": "a || b && c",
+      "ast": {
+        "kind": "binary",
+        "left": { "kind": "var", "name": "a" },
+        "op": "or",
+        "right": {
+          "kind": "binary",
+          "left": { "kind": "var", "name": "b" },
+          "op": "and",
+          "right": { "kind": "var", "name": "c" }
+        }
+      }
+    },
+    {
+      "note": "or, and, and not are &&, ||, and !",
+      "context": "condition",
+      "source": "a or b and not c",
+      "ast": {
+        "kind": "binary",
+        "left": { "kind": "var", "name": "a" },
+        "op": "or",
+        "right": {
+          "kind": "binary",
+          "left": { "kind": "var", "name": "b" },
+          "op": "and",
+          "right": {
+            "kind": "unary",
+            "op": "not",
+            "operand": { "kind": "var", "name": "c" }
+          }
+        }
+      }
+    },
+    {
+      "note": "! is not",
+      "context": "condition",
+      "source": "!a",
+      "ast": {
+        "kind": "unary",
+        "op": "not",
+        "operand": { "kind": "var", "name": "a" }
+      }
+    },
+    {
+      "note": "a unary operator is above ==",
+      "context": "condition",
+      "source": "!a == b",
+      "ast": {
+        "kind": "binary",
+        "left": {
+          "kind": "unary",
+          "op": "not",
+          "operand": { "kind": "var", "name": "a" }
+        },
+        "op": "eq",
+        "right": { "kind": "var", "name": "b" }
+      }
+    },
+    {
+      "note": "== and != are left-associative",
+      "context": "condition",
+      "source": "a == b != c",
+      "ast": {
+        "kind": "binary",
+        "left": {
+          "kind": "binary",
+          "left": { "kind": "var", "name": "a" },
+          "op": "eq",
+          "right": { "kind": "var", "name": "b" }
+        },
+        "op": "ne",
+        "right": { "kind": "var", "name": "c" }
+      }
+    },
+    {
+      "note": "a comparison is above ==",
+      "context": "condition",
+      "source": "a < b == c >= d",
+      "ast": {
+        "kind": "binary",
+        "left": {
+          "kind": "binary",
+          "left": { "kind": "var", "name": "a" },
+          "op": "lt",
+          "right": { "kind": "var", "name": "b" }
+        },
+        "op": "eq",
+        "right": {
+          "kind": "binary",
+          "left": { "kind": "var", "name": "c" },
+          "op": "gte",
+          "right": { "kind": "var", "name": "d" }
+        }
+      }
+    },
+    {
+      "note": "<= and >",
+      "context": "condition",
+      "source": "a <= b && c > d",
+      "ast": {
+        "kind": "binary",
+        "left": {
+          "kind": "binary",
+          "left": { "kind": "var", "name": "a" },
+          "op": "lte",
+          "right": { "kind": "var", "name": "b" }
+        },
+        "op": "and",
+        "right": {
+          "kind": "binary",
+          "left": { "kind": "var", "name": "c" },
+          "op": "gt",
+          "right": { "kind": "var", "name": "d" }
+        }
+      }
+    },
+    {
+      "note": "&& is left-associative, and below ==",
+      "context": "condition",
+      "source": "a && b == c && d",
+      "ast": {
+        "kind": "binary",
+        "left": {
+          "kind": "binary",
+          "left": { "kind": "var", "name": "a" },
+          "op": "and",
+          "right": {
+            "kind": "binary",
+            "left": { "kind": "var", "name": "b" },
+            "op": "eq",
+            "right": { "kind": "var", "name": "c" }
+          }
+        },
+        "op": "and",
+        "right": { "kind": "var", "name": "d" }
+      }
+    },
+    {
+      "note": "* is above +",
+      "context": "condition",
+      "source": "1 + 2 * 3",
+      "ast": {
+        "kind": "binary",
+        "left": { "kind": "lit", "type": "int", "value": 1 },
+        "op": "add",
+        "right": {
+          "kind": "binary",
+          "left": { "kind": "lit", "type": "int", "value": 2 },
+          "op": "mul",
+          "right": { "kind": "lit", "type": "int", "value": 3 }
+        }
+      }
+    },
+    {
+      "note": "parentheses group",
+      "context": "condition",
+      "source": "(1 + 2) * 3",
+      "ast": {
+        "kind": "binary",
+        "left": {
+          "kind": "binary",
+          "left": { "kind": "lit", "type": "int", "value": 1 },
+          "op": "add",
+          "right": { "kind": "lit", "type": "int", "value": 2 }
+        },
+        "op": "mul",
+        "right": { "kind": "lit", "type": "int", "value": 3 }
+      }
+    },
+    {
+      "note": "- is left-associative",
+      "context": "condition",
+      "source": "10 - 4 - 3",
+      "ast": {
+        "kind": "binary",
+        "left": {
+          "kind": "binary",
+          "left": { "kind": "lit", "type": "int", "value": 10 },
+          "op": "sub",
+          "right": { "kind": "lit", "type": "int", "value": 4 }
+        },
+        "op": "sub",
+        "right": { "kind": "lit", "type": "int", "value": 3 }
+      }
+    },
+    {
+      "note": "/ and % are as * is",
+      "context": "condition",
+      "source": "8 / 4 % 3",
+      "ast": {
+        "kind": "binary",
+        "left": {
+          "kind": "binary",
+          "left": { "kind": "lit", "type": "int", "value": 8 },
+          "op": "div",
+          "right": { "kind": "lit", "type": "int", "value": 4 }
+        },
+        "op": "mod",
+        "right": { "kind": "lit", "type": "int", "value": 3 }
+      }
+    },
+    {
+      "note": "a unary - is above *",
+      "context": "condition",
+      "source": "-x * 2",
+      "ast": {
+        "kind": "binary",
+        "left": {
+          "kind": "unary",
+          "op": "neg",
+          "operand": { "kind": "var", "name": "x" }
+        },
+        "op": "mul",
+        "right": { "kind": "lit", "type": "int", "value": 2 }
+      }
+    },
+    {
+      "note": "a binary - before a unary -",
+      "context": "condition",
+      "source": "a - -b",
+      "ast": {
+        "kind": "binary",
+        "left": { "kind": "var", "name": "a" },
+        "op": "sub",
+        "right": {
+          "kind": "unary",
+          "op": "neg",
+          "operand": { "kind": "var", "name": "b" }
+        }
+      }
+    },
+    {
+      "note": "a unary operator applies to a primary, so a second - is unexpected_token",
+      "context": "condition",
+      "source": "--a",
+      "error": { "code": "unexpected_token", "start": 1, "end": 2 }
+    },
+    {
+      "note": "a second ! is unexpected_token",
+      "context": "condition",
+      "source": "!!a",
+      "error": { "code": "unexpected_token", "start": 1, "end": 2 }
+    },
+    {
+      "note": "a second not is unexpected_token",
+      "context": "condition",
+      "source": "not not a",
+      "error": { "code": "unexpected_token", "start": 4, "end": 7 }
+    },
+    {
+      "note": "a unary operator of a unary operator in parentheses",
+      "context": "condition",
+      "source": "-(-a)",
+      "ast": {
+        "kind": "unary",
+        "op": "neg",
+        "operand": {
+          "kind": "unary",
+          "op": "neg",
+          "operand": { "kind": "var", "name": "a" }
+        }
+      }
+    },
+    {
+      "note": "parentheses leave no node",
+      "context": "condition",
+      "source": "((a))",
+      "ast": { "kind": "var", "name": "a" }
+    },
+    {
+      "note": "an unclosed parenthesis is unexpected_end",
+      "context": "condition",
+      "source": "(a",
+      "error": { "code": "unexpected_end", "start": 2, "end": 2 }
+    },
+    {
+      "note": "a closing parenthesis without its opening one is unexpected_token",
+      "context": "condition",
+      "source": "a)",
+      "error": { "code": "unexpected_token", "start": 1, "end": 2 }
+    },
+    {
+      "note": "empty parentheses are unexpected_token",
+      "context": "condition",
+      "source": "()",
+      "error": { "code": "unexpected_token", "start": 1, "end": 2 }
+    },
+    {
+      "note": "an operator without its right operand is unexpected_end",
+      "context": "condition",
+      "source": "a +",
+      "error": { "code": "unexpected_end", "start": 3, "end": 3 }
+    },
+    {
+      "note": "two operators are unexpected_token",
+      "context": "condition",
+      "source": "a + * b",
+      "error": { "code": "unexpected_token", "start": 4, "end": 5 }
+    },
+    {
+      "note": "two operands are unexpected_token",
+      "context": "condition",
+      "source": "a b",
+      "error": { "code": "unexpected_token", "start": 2, "end": 3 }
+    },
+    {
+      "note": "the parser reads no token beyond the one that it stops at, so that the second of two operands is unexpected_token though an @ follows it",
+      "context": "condition",
+      "source": "a b@",
+      "error": { "code": "unexpected_token", "start": 2, "end": 3 }
+    },
+    {
+      "note": "an empty condition is unexpected_end",
+      "context": "condition",
+      "source": "",
+      "error": { "code": "unexpected_end", "start": 0, "end": 0 }
+    },
+    {
+      "note": "a condition of white space and a comment is unexpected_end",
+      "context": "condition",
+      "source": "  // nothing",
+      "error": { "code": "unexpected_end", "start": 12, "end": 12 }
+    },
+    {
+      "note": "a comment after a condition",
+      "context": "condition",
+      "source": "trust >= 3 // the keeper's",
+      "ast": {
+        "kind": "binary",
+        "left": { "kind": "var", "name": "trust" },
+        "op": "gte",
+        "right": { "kind": "lit", "type": "int", "value": 3 }
+      }
+    },
+    {
+      "note": "a condition goes on over a line break, which is white space",
+      "context": "condition",
+      "source": "met_elara\n  and trust > 2",
+      "ast": {
+        "kind": "binary",
+        "left": { "kind": "var", "name": "met_elara" },
+        "op": "and",
+        "right": {
+          "kind": "binary",
+          "left": { "kind": "var", "name": "trust" },
+          "op": "gt",
+          "right": { "kind": "lit", "type": "int", "value": 2 }
+        }
+      }
+    },
+    {
+      "note": "a ; in a condition is unexpected_token",
+      "context": "condition",
+      "source": "a; b",
+      "error": { "code": "unexpected_token", "start": 1, "end": 2 }
+    },
+    {
+      "note": "PRD FR-EXPR-02 AC3: an assignment in a condition is condition_must_be_pure, at its operator",
+      "context": "condition",
+      "source": "met_elara = true",
+      "error": { "code": "condition_must_be_pure", "start": 10, "end": 11 }
+    },
+    {
+      "note": "a compound assignment in a condition is condition_must_be_pure",
+      "context": "condition",
+      "source": "trust += 1",
+      "error": { "code": "condition_must_be_pure", "start": 6, "end": 8 }
+    },
+    {
+      "note": "an assignment in parentheses in a condition is condition_must_be_pure",
+      "context": "condition",
+      "source": "a and (x = 1)",
+      "error": { "code": "condition_must_be_pure", "start": 9, "end": 10 }
+    },
+    {
+      "note": "an assignment's operator after a literal in a condition is condition_must_be_pure, before the token after it is read",
+      "context": "condition",
+      "source": "1 = @",
+      "error": { "code": "condition_must_be_pure", "start": 2, "end": 3 }
+    },
+    {
+      "note": "an assignment in a call's arguments in a condition is condition_must_be_pure",
+      "context": "condition",
+      "source": "f(x = 1)",
+      "error": { "code": "condition_must_be_pure", "start": 4, "end": 5 }
+    },
+    {
+      "note": "an assignment's operator where an operand starts in a condition is condition_must_be_pure",
+      "context": "condition",
+      "source": "= x",
+      "error": { "code": "condition_must_be_pure", "start": 0, "end": 1 }
+    },
+    {
+      "note": "an assignment's operator after a qualified name's dot in a condition is condition_must_be_pure, where a name's part would be",
+      "context": "condition",
+      "source": "elara.= 1",
+      "error": { "code": "condition_must_be_pure", "start": 6, "end": 7 }
+    },
+    {
+      "note": "a call",
+      "context": "condition",
+      "source": "min(trust, 3)",
+      "ast": {
+        "args": [
+          { "kind": "var", "name": "trust" },
+          { "kind": "lit", "type": "int", "value": 3 }
+        ],
+        "function": "min",
+        "kind": "call"
+      }
+    },
+    {
+      "note": "a call without arguments",
+      "context": "condition",
+      "source": "visited()",
+      "ast": { "args": [], "function": "visited", "kind": "call" }
+    },
+    {
+      "note": "a call in a call's arguments",
+      "context": "condition",
+      "source": "clamp(x, 0, max(y, 10))",
+      "ast": {
+        "args": [
+          { "kind": "var", "name": "x" },
+          { "kind": "lit", "type": "int", "value": 0 },
+          {
+            "args": [
+              { "kind": "var", "name": "y" },
+              { "kind": "lit", "type": "int", "value": 10 }
+            ],
+            "function": "max",
+            "kind": "call"
+          }
+        ],
+        "function": "clamp",
+        "kind": "call"
+      }
+    },
+    {
+      "note": "white space between a function's name and its parenthesis",
+      "context": "condition",
+      "source": "len (name)",
+      "ast": {
+        "args": [{ "kind": "var", "name": "name" }],
+        "function": "len",
+        "kind": "call"
+      }
+    },
+    {
+      "note": "a comma after a call's last argument is unexpected_token, at the parenthesis",
+      "context": "condition",
+      "source": "f(1,)",
+      "error": { "code": "unexpected_token", "start": 4, "end": 5 }
+    },
+    {
+      "note": "a comma before a call's first argument is unexpected_token",
+      "context": "condition",
+      "source": "f(,1)",
+      "error": { "code": "unexpected_token", "start": 2, "end": 3 }
+    },
+    {
+      "note": "two arguments without a comma between them are unexpected_token",
+      "context": "condition",
+      "source": "f(1 2)",
+      "error": { "code": "unexpected_token", "start": 4, "end": 5 }
+    },
+    {
+      "note": "an unclosed call is unexpected_end",
+      "context": "condition",
+      "source": "f(1",
+      "error": { "code": "unexpected_end", "start": 3, "end": 3 }
+    },
+    {
+      "note": "an attribute is not called: its parenthesis is unexpected_token",
+      "context": "condition",
+      "source": "elara.trust(1)",
+      "error": { "code": "unexpected_token", "start": 11, "end": 12 }
+    },
+    {
+      "note": "a reserved word is not called",
+      "context": "condition",
+      "source": "if(x)",
+      "error": { "code": "reserved_word", "start": 0, "end": 2 }
+    },
+    {
+      "note": "a qualifier is not called",
+      "context": "condition",
+      "source": "global(x)",
+      "error": { "code": "reserved_word", "start": 0, "end": 6 }
+    },
+    {
+      "note": "a literal is not called",
+      "context": "condition",
+      "source": "true(1)",
+      "error": { "code": "unexpected_token", "start": 4, "end": 5 }
+    },
+    {
+      "note": "a node reference",
+      "context": "condition",
+      "source": "visited(node(\"nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF\"))",
+      "ast": {
+        "args": [
+          { "kind": "node_ref", "ref": "nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF" }
+        ],
+        "function": "visited",
+        "kind": "call"
+      }
+    },
+    {
+      "note": "a node's ID in any case is written in its canonical spelling",
+      "context": "condition",
+      "source": "visits(node(\"ND_01hq8zb1t4v7k2mc9xrpw5ndyf\")) > 2",
+      "ast": {
+        "kind": "binary",
+        "left": {
+          "args": [
+            { "kind": "node_ref", "ref": "nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF" }
+          ],
+          "function": "visits",
+          "kind": "call"
+        },
+        "op": "gt",
+        "right": { "kind": "lit", "type": "int", "value": 2 }
+      }
+    },
+    {
+      "note": "a board's ID in a node reference is invalid_node_ref, over its string",
+      "context": "condition",
+      "source": "node(\"bd_01HQ8ZAX6P3R9T1K7MWVND2CQJ\")",
+      "error": { "code": "invalid_node_ref", "start": 5, "end": 36 }
+    },
+    {
+      "note": "a malformed ID in a node reference is invalid_node_ref",
+      "context": "condition",
+      "source": "node(\"nd_x\")",
+      "error": { "code": "invalid_node_ref", "start": 5, "end": 11 }
+    },
+    {
+      "note": "a node reference of a name is invalid_node_ref, whole",
+      "context": "condition",
+      "source": "node(x)",
+      "error": { "code": "invalid_node_ref", "start": 0, "end": 7 }
+    },
+    {
+      "note": "a node reference without an argument is invalid_node_ref",
+      "context": "condition",
+      "source": "node()",
+      "error": { "code": "invalid_node_ref", "start": 0, "end": 6 }
+    },
+    {
+      "note": "a node reference of two arguments is invalid_node_ref, whole",
+      "context": "condition",
+      "source": "node(\"nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF\", 1)",
+      "error": { "code": "invalid_node_ref", "start": 0, "end": 40 }
+    },
+    {
+      "note": "a node reference's string in parentheses is not its one string literal, so that it is invalid_node_ref, whole",
+      "context": "condition",
+      "source": "node((\"nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF\"))",
+      "error": { "code": "invalid_node_ref", "start": 0, "end": 39 }
+    },
+    {
+      "note": "a node reference's error comes before that of the token after its closing parenthesis, one that cannot be read too",
+      "context": "condition",
+      "source": "node(\"nd_x\")@",
+      "error": { "code": "invalid_node_ref", "start": 5, "end": 11 }
+    },
+    {
+      "note": "a node reference of a name is invalid_node_ref before the token after its closing parenthesis, one that cannot be read too",
+      "context": "condition",
+      "source": "node(x)@",
+      "error": { "code": "invalid_node_ref", "start": 0, "end": 7 }
+    },
+    {
+      "note": "a variable may be named node",
+      "context": "condition",
+      "source": "node == 1",
+      "ast": {
+        "kind": "binary",
+        "left": { "kind": "var", "name": "node" },
+        "op": "eq",
+        "right": { "kind": "lit", "type": "int", "value": 1 }
+      }
+    },
+    {
+      "note": "a component may be named node",
+      "context": "condition",
+      "source": "node.mood",
+      "ast": { "kind": "attr", "name": "node.mood" }
+    },
+    {
+      "note": "an empty script",
+      "context": "script",
+      "source": "",
+      "ast": { "kind": "script", "statements": [] }
+    },
+    {
+      "note": "a script of a comment and line breaks has no statements",
+      "context": "script",
+      "source": "// nothing yet\n\n",
+      "ast": { "kind": "script", "statements": [] }
+    },
+    {
+      "note": "the on-traverse script of the example in PRD §6.5",
+      "context": "script",
+      "source": "harbour_rumours += 1",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "+=",
+            "target": { "kind": "var", "name": "harbour_rumours" },
+            "value": { "kind": "lit", "type": "int", "value": 1 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "the assignment operators",
+      "context": "script",
+      "source": "a = 1; b -= 2; c *= 3; d /= 4; e %= 5",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "a" },
+            "value": { "kind": "lit", "type": "int", "value": 1 }
+          },
+          {
+            "kind": "assign",
+            "op": "-=",
+            "target": { "kind": "var", "name": "b" },
+            "value": { "kind": "lit", "type": "int", "value": 2 }
+          },
+          {
+            "kind": "assign",
+            "op": "*=",
+            "target": { "kind": "var", "name": "c" },
+            "value": { "kind": "lit", "type": "int", "value": 3 }
+          },
+          {
+            "kind": "assign",
+            "op": "/=",
+            "target": { "kind": "var", "name": "d" },
+            "value": { "kind": "lit", "type": "int", "value": 4 }
+          },
+          {
+            "kind": "assign",
+            "op": "%=",
+            "target": { "kind": "var", "name": "e" },
+            "value": { "kind": "lit", "type": "int", "value": 5 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "statements on lines of their own",
+      "context": "script",
+      "source": "x = 1\ny = 2",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": { "kind": "lit", "type": "int", "value": 1 }
+          },
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "y" },
+            "value": { "kind": "lit", "type": "int", "value": 2 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "a call statement",
+      "context": "script",
+      "source": "signal(\"door_opened\")",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "args": [
+              { "kind": "lit", "type": "string", "value": "door_opened" }
+            ],
+            "function": "signal",
+            "kind": "call"
+          }
+        ]
+      }
+    },
+    {
+      "note": "a call statement with two arguments",
+      "context": "script",
+      "source": "signal(\"met\", elara.trust)",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "args": [
+              { "kind": "lit", "type": "string", "value": "met" },
+              { "kind": "attr", "name": "elara.trust" }
+            ],
+            "function": "signal",
+            "kind": "call"
+          }
+        ]
+      }
+    },
+    {
+      "note": "an assignment to an attribute",
+      "context": "script",
+      "source": "elara.trust += 1",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "+=",
+            "target": { "kind": "attr", "name": "elara.trust" },
+            "value": { "kind": "lit", "type": "int", "value": 1 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "an assignment to an attribute after cmp.",
+      "context": "script",
+      "source": "cmp.elara.trust = 0",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "attr", "name": "cmp.elara.trust" },
+            "value": { "kind": "lit", "type": "int", "value": 0 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "an assignment to a global variable",
+      "context": "script",
+      "source": "global.gold = gold + 10",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "global.gold" },
+            "value": {
+              "kind": "binary",
+              "left": { "kind": "var", "name": "gold" },
+              "op": "add",
+              "right": { "kind": "lit", "type": "int", "value": 10 }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "note": "terminators may repeat before, between, and after statements",
+      "context": "script",
+      "source": "\n;\nx = 1 ;; \n\ny = 2 ;\n",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": { "kind": "lit", "type": "int", "value": 1 }
+          },
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "y" },
+            "value": { "kind": "lit", "type": "int", "value": 2 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "comments in a script",
+      "context": "script",
+      "source": "// the keeper\nx = 1 // why\n// done",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": { "kind": "lit", "type": "int", "value": 1 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "a statement goes on after an operator at the end of its line",
+      "context": "script",
+      "source": "x = 1 +\n  2",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": {
+              "kind": "binary",
+              "left": { "kind": "lit", "type": "int", "value": 1 },
+              "op": "add",
+              "right": { "kind": "lit", "type": "int", "value": 2 }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "note": "a statement goes on after = at the end of its line",
+      "context": "script",
+      "source": "x =\n  1",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": { "kind": "lit", "type": "int", "value": 1 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "a statement goes on over a line break in a call's parentheses",
+      "context": "script",
+      "source": "x = min(1,\n  2)",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": {
+              "args": [
+                { "kind": "lit", "type": "int", "value": 1 },
+                { "kind": "lit", "type": "int", "value": 2 }
+              ],
+              "function": "min",
+              "kind": "call"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "note": "a statement goes on over a line break after an operand in parentheses",
+      "context": "script",
+      "source": "x = (a\n  + b)",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": {
+              "kind": "binary",
+              "left": { "kind": "var", "name": "a" },
+              "op": "add",
+              "right": { "kind": "var", "name": "b" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "note": "a line break after an operand ends the statement, so an operator on the next line is unexpected_token",
+      "context": "script",
+      "source": "x = a\n  and b",
+      "error": { "code": "unexpected_token", "start": 8, "end": 11 }
+    },
+    {
+      "note": "a line break after global or board, which an expression does not end with, is white space",
+      "context": "script",
+      "source": "x = global\n.gold",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": { "kind": "var", "name": "global.gold" }
+          }
+        ]
+      }
+    },
+    {
+      "note": "a line break after a name ends the statement, which is invalid_statement",
+      "context": "script",
+      "source": "x\n= 1",
+      "error": { "code": "invalid_statement", "start": 0, "end": 1 }
+    },
+    {
+      "note": "a token after a statement's expression that neither assigns nor ends the statement is unexpected_token, as in a condition",
+      "context": "script",
+      "source": "x y",
+      "error": { "code": "unexpected_token", "start": 2, "end": 3 }
+    },
+    {
+      "note": "a token that cannot be read after a statement's expression is its own error, not invalid_statement",
+      "context": "script",
+      "source": "x @",
+      "error": { "code": "invalid_character", "start": 2, "end": 3 }
+    },
+    {
+      "note": "a string with a bad escape after a statement's expression is invalid_escape",
+      "context": "script",
+      "source": "x == 1 \"\\q\"",
+      "error": { "code": "invalid_escape", "start": 8, "end": 10 }
+    },
+    {
+      "note": "a line break that ends a statement ends it before the comment on the next line is read, so that the statement's error comes first",
+      "context": "script",
+      "source": "x\n// \u0000",
+      "error": { "code": "invalid_statement", "start": 0, "end": 1 }
+    },
+    {
+      "note": "a comment on a statement's line is read before the line break that ends the statement, so that a NUL in it comes first",
+      "context": "script",
+      "source": "x // \u0000",
+      "error": { "code": "invalid_character", "start": 5, "end": 6 }
+    },
+    {
+      "note": "an expression is no statement: invalid_statement, whole",
+      "context": "script",
+      "source": "x == 1",
+      "error": { "code": "invalid_statement", "start": 0, "end": 6 }
+    },
+    {
+      "note": "a name is no statement",
+      "context": "script",
+      "source": "met_elara",
+      "error": { "code": "invalid_statement", "start": 0, "end": 9 }
+    },
+    {
+      "note": "a literal is no statement",
+      "context": "script",
+      "source": "1",
+      "error": { "code": "invalid_statement", "start": 0, "end": 1 }
+    },
+    {
+      "note": "a call in parentheses is no statement, over its parentheses",
+      "context": "script",
+      "source": "(signal(\"x\"))",
+      "error": { "code": "invalid_statement", "start": 0, "end": 13 }
+    },
+    {
+      "note": "a node reference is no statement",
+      "context": "script",
+      "source": "node(\"nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF\")",
+      "error": { "code": "invalid_statement", "start": 0, "end": 37 }
+    },
+    {
+      "note": "an assignment to a literal is invalid_assignment_target",
+      "context": "script",
+      "source": "1 = x",
+      "error": { "code": "invalid_assignment_target", "start": 0, "end": 1 }
+    },
+    {
+      "note": "an assignment to a name in parentheses is invalid_assignment_target, over its parentheses",
+      "context": "script",
+      "source": "(x) = 1",
+      "error": { "code": "invalid_assignment_target", "start": 0, "end": 3 }
+    },
+    {
+      "note": "an assignment to a call is invalid_assignment_target",
+      "context": "script",
+      "source": "f(x) = 1",
+      "error": { "code": "invalid_assignment_target", "start": 0, "end": 4 }
+    },
+    {
+      "note": "an assignment to an expression is invalid_assignment_target",
+      "context": "script",
+      "source": "x + 1 = 2",
+      "error": { "code": "invalid_assignment_target", "start": 0, "end": 5 }
+    },
+    {
+      "note": "an assignment's target is checked at its operator, before its value is read, so that 1 = and an @ is invalid_assignment_target",
+      "context": "script",
+      "source": "1 = @",
+      "error": { "code": "invalid_assignment_target", "start": 0, "end": 1 }
+    },
+    {
+      "note": "assignments do not chain: the second = is unexpected_token",
+      "context": "script",
+      "source": "x = y = 1",
+      "error": { "code": "unexpected_token", "start": 6, "end": 7 }
+    },
+    {
+      "note": "two statements without a terminator between them are unexpected_token",
+      "context": "script",
+      "source": "x = 1 y = 2",
+      "error": { "code": "unexpected_token", "start": 6, "end": 7 }
+    },
+    {
+      "note": "an assignment without its value is unexpected_end",
+      "context": "script",
+      "source": "x =",
+      "error": { "code": "unexpected_end", "start": 3, "end": 3 }
+    },
+    {
+      "note": "an assignment in a call's arguments in a script is unexpected_token",
+      "context": "script",
+      "source": "f(x = 1)",
+      "error": { "code": "unexpected_token", "start": 4, "end": 5 }
+    },
+    {
+      "note": "a CR LF ends a statement",
+      "context": "script",
+      "source": "x = 1\r\ny = 2",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": { "kind": "lit", "type": "int", "value": 1 }
+          },
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "y" },
+            "value": { "kind": "lit", "type": "int", "value": 2 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "a CR alone ends a statement",
+      "context": "script",
+      "source": "x = 1\ry = 2",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": { "kind": "lit", "type": "int", "value": 1 }
+          },
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "y" },
+            "value": { "kind": "lit", "type": "int", "value": 2 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "U+2028 and U+2029 are no line breaks, so that a comment goes on past them to the end of its line",
+      "context": "script",
+      "source": "x = 1 // a\u2028y = 2\u2029z = 3",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": { "kind": "lit", "type": "int", "value": 1 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "U+2028 outside a string literal or a comment is invalid_character, not a line break that ends a statement",
+      "context": "script",
+      "source": "x = 1\u2028y = 2",
+      "error": { "code": "invalid_character", "start": 5, "end": 6 }
+    },
+    {
+      "note": "tabs are white space",
+      "context": "script",
+      "source": "x\t=\t1",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": { "kind": "lit", "type": "int", "value": 1 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "a name of three parts that does not start with cmp, as a target, is invalid_name",
+      "context": "script",
+      "source": "a.b.c = 1",
+      "error": { "code": "invalid_name", "start": 0, "end": 5 }
+    },
+    {
+      "note": "a line break in a script's string literal is unterminated_string",
+      "context": "script",
+      "source": "x = \"a\nb\"",
+      "error": { "code": "unterminated_string", "start": 4, "end": 6 }
+    },
+    {
+      "note": "a character beyond U+FFFF in a script is invalid_character, one code point long",
+      "context": "script",
+      "source": "x = 😀",
+      "error": { "code": "invalid_character", "start": 4, "end": 5 }
+    },
+    {
+      "note": "parentheses nest 64 deep",
+      "context": "condition",
+      "source": "((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((x))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+      "ast": { "kind": "var", "name": "x" }
+    },
+    {
+      "note": "a 65th parenthesis in parentheses is ast_too_deep, at it",
+      "context": "condition",
+      "source": "(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((x)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+      "error": { "code": "ast_too_deep", "start": 64, "end": 65 }
+    },
+    {
+      "note": "a 65th call in calls is ast_too_deep, at its parenthesis",
+      "context": "condition",
+      "source": "f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+      "error": { "code": "ast_too_deep", "start": 129, "end": 130 }
+    },
+    {
+      "note": "a node reference in 64 parentheses is ast_too_deep, at its parenthesis",
+      "context": "script",
+      "source": "((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((node(\"nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF\")))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+      "error": { "code": "ast_too_deep", "start": 68, "end": 69 }
+    },
+    {
+      "note": "a parenthesis after a literal opens no level, so that one after true in 64 parentheses is unexpected_token, as at any depth, not ast_too_deep",
+      "context": "condition",
+      "source": "((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((true(1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+      "error": { "code": "unexpected_token", "start": 68, "end": 69 }
+    },
+    {
+      "note": "a parenthesis after global opens no level, so that global before one in 64 parentheses is reserved_word",
+      "context": "condition",
+      "source": "((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((global(x)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+      "error": { "code": "reserved_word", "start": 64, "end": 70 }
+    },
+    {
+      "note": "a parenthesis after a qualified name's last part opens no level, so that a.b.c before one in 64 parentheses is invalid_name",
+      "context": "condition",
+      "source": "((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((a.b.c(x)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+      "error": { "code": "invalid_name", "start": 64, "end": 69 }
+    },
+    {
+      "note": "a parenthesis after a node reference's string opens no level, so that one there in 64 parentheses is unexpected_token, the string read as a call's argument",
+      "context": "condition",
+      "source": "(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((node(\"nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF\"(1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+      "error": { "code": "unexpected_token", "start": 99, "end": 100 }
+    },
+    {
+      "note": "the token that makes an AST's 513th node is ast_too_large, at it: the 257th one of a sum of ones and +",
+      "context": "condition",
+      "source": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1",
+      "error": { "code": "ast_too_large", "start": 512, "end": 513 }
+    },
+    {
+      "note": "a script's own node counts, so that the = of the 171st statement of x = 1 is its 513th node, ast_too_large",
+      "context": "script",
+      "source": "x = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\nx = 1\n",
+      "error": { "code": "ast_too_large", "start": 1022, "end": 1023 }
+    },
+    {
+      "note": "a statement's assignment operator counts before its target is checked, so that the = of 1 = 2 as the 513th node, after a call and its 509 ones, is ast_too_large",
+      "context": "script",
+      "source": "f(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1)\n1 = 2",
+      "error": { "code": "ast_too_large", "start": 1023, "end": 1024 }
+    },
+    {
+      "note": "a unary operator is a node: the - after a call and its 511 arguments is the 513th",
+      "context": "condition",
+      "source": "f(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,-1)",
+      "error": { "code": "ast_too_large", "start": 1024, "end": 1025 }
+    },
+    {
+      "note": "a qualifier is the token that makes its variable's node: global, after a call and its 511 arguments, is the 513th",
+      "context": "condition",
+      "source": "f(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,global.x)",
+      "error": { "code": "ast_too_large", "start": 1024, "end": 1030 }
+    },
+    {
+      "note": "the string of a node reference is part of its node, so that the argument after a call's 510 ones and a node reference is the 513th",
+      "context": "condition",
+      "source": "f(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,node(\"nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF\"), 1)",
+      "error": { "code": "ast_too_large", "start": 1061, "end": 1062 }
+    },
+    {
+      "note": "a token that cannot be read after a node reference's string is no closing parenthesis, so that the string is an argument, a node, and after a call's 510 ones and node the 513th, ast_too_large",
+      "context": "condition",
+      "source": "f(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,node(\"x\"@",
+      "error": { "code": "ast_too_large", "start": 1027, "end": 1030 }
+    },
+    {
+      "note": "a token that cannot be read makes no node, so that a string with a bad escape where the 513th node would be is invalid_escape",
+      "context": "condition",
+      "source": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+\"\\q\"",
+      "error": { "code": "invalid_escape", "start": 513, "end": 515 }
+    },
+    {
+      "note": "an integer literal of 2^53 where the 513th node would be is integer_out_of_range, a token that cannot be read",
+      "context": "condition",
+      "source": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+9007199254740992",
+      "error": { "code": "integer_out_of_range", "start": 512, "end": 528 }
+    },
+    {
+      "note": "a float literal beyond a double's range where the 513th node would be is float_out_of_range, a token that cannot be read",
+      "context": "condition",
+      "source": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1.0e309",
+      "error": { "code": "float_out_of_range", "start": 512, "end": 519 }
+    },
+    {
+      "note": "a number of neither literal's form where the 513th node would be is invalid_number, a token that cannot be read",
+      "context": "condition",
+      "source": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1.",
+      "error": { "code": "invalid_number", "start": 512, "end": 514 }
+    },
+    {
+      "note": "a string literal of 4,097 characters where the 513th node would be is string_too_long, a token that cannot be read",
+      "context": "condition",
+      "source": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "error": { "code": "string_too_long", "start": 512, "end": 4611 }
+    },
+    {
+      "note": "a string literal without its closing quote where the 513th node would be is unterminated_string, a token that cannot be read",
+      "context": "condition",
+      "source": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+\"abc",
+      "error": { "code": "unterminated_string", "start": 512, "end": 516 }
+    },
+    {
+      "note": "an identifier of 65 characters where the 513th node would be is identifier_too_long, a token that cannot be read",
+      "context": "condition",
+      "source": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "error": { "code": "identifier_too_long", "start": 512, "end": 577 }
+    },
+    {
+      "note": "null where the 513th node would be is reserved_word, since it makes no node",
+      "context": "condition",
+      "source": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+null",
+      "error": { "code": "reserved_word", "start": 512, "end": 516 }
+    },
+    {
+      "note": "the identifier that a name starts with counts before its parts are read, so that a.b.c.d as the 513th node is ast_too_large at a",
+      "context": "condition",
+      "source": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+a.b.c.d",
+      "error": { "code": "ast_too_large", "start": 512, "end": 513 }
+    },
+    {
+      "note": "a qualifier counts before the dot after it is read, so that global without one as the 513th node is ast_too_large at it",
+      "context": "condition",
+      "source": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+global",
+      "error": { "code": "ast_too_large", "start": 512, "end": 518 }
+    },
+    {
+      "note": "a call's name counts before its parenthesis is read, so that f as the 513th node in 64 parentheses is ast_too_large, though its parenthesis would open the 65th level",
+      "context": "condition",
+      "source": "((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+f(1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+      "error": { "code": "ast_too_large", "start": 576, "end": 577 }
+    }
+  ]
+}

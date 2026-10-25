@@ -270,13 +270,26 @@ const hugeExponent = 1_000_000_000
 // or 5 digits of exponent. It writes s's digits without the zeros around them
 // as 0.ddd, with the exponent that gives s's value, which ParseFloat reads
 // exactly however many digits follow the point, once it has told that
-// exponent from one beyond a double's range, either way.
+// exponent from one beyond a double's range, either way. It writes at most
+// maxDigits of the digits, and 1 after them for the rest when any of the rest
+// is not 0 (significantDigits), which reads as the same double, so that it
+// allocates no more for a string of a million digits, as a float literal of
+// a source may be, than for one of a thousand.
 func nearest(s string) (float64, bool) {
 	body, negative := cutSign(s)
-	mantissa, exponent, _ := strings.Cut(strings.ToLower(body), "e")
+	mantissa, exponent := body, ""
+	if i := strings.IndexAny(body, "eE"); i >= 0 {
+		mantissa, exponent = body[:i], body[i+1:]
+	}
 	whole, fraction, _ := strings.Cut(mantissa, ".")
-	digits := strings.TrimLeft(whole+fraction, "0")
-	significant := strings.TrimRight(digits, "0")
+	// The digits of whole and of fraction, from the first that is not 0, are
+	// lead and then tail.
+	lead, tail := strings.TrimLeft(whole, "0"), fraction
+	if lead == "" {
+		tail = strings.TrimLeft(fraction, "0")
+	}
+	digits := len(lead) + len(tail)
+	significant := significantDigits(lead, tail)
 	if significant == "" {
 		return 0, true
 	}
@@ -297,7 +310,7 @@ func nearest(s string) (float64, bool) {
 	// The value is 0.significant times ten to the power of point: at least
 	// 1e310, past a double's range, if point is more than 310, and less than
 	// 1e-400, which rounds to 0, if it is less than -400.
-	point := int64(len(digits)) - int64(len(fraction)) + e
+	point := int64(digits) - int64(len(fraction)) + e
 	switch {
 	case point > 310:
 		return 0, false
@@ -312,6 +325,33 @@ func nearest(s string) (float64, bool) {
 		f = -f
 	}
 	return f, true
+}
+
+// maxDigits is how many of a number's significant digits nearest writes:
+// more than the 768 that the exact value of a double, or of the point halfway
+// between two, has at most, so that two numbers whose first maxDigits
+// significant digits are the same, and whose digits after them are 0, or are
+// not all 0, are each on the same side of every double and of every point
+// halfway between two, and so have the same nearest double.
+const maxDigits = 800
+
+// significantDigits returns the digits of lead and then tail, the first of
+// which is not 0, without the zeros after the last that is not, or "" if
+// there is none: at most maxDigits of them, and then 1, standing for the rest,
+// when any of the rest is not 0, which reads as the same double as all of
+// them would (maxDigits).
+func significantDigits(lead, tail string) string {
+	b := make([]byte, 0, maxDigits+1)
+	rest := false
+	for _, part := range [...]string{lead, tail} {
+		n := min(len(part), maxDigits-len(b))
+		b = append(b, part[:n]...)
+		rest = rest || strings.TrimLeft(part[n:], "0") != ""
+	}
+	if rest {
+		return string(append(b, '1'))
+	}
+	return strings.TrimRight(string(b), "0")
 }
 
 // FormatInt returns n as to_string writes an int (§5.8.9): a plain decimal,
