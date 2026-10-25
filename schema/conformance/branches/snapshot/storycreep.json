@@ -12,7 +12,7 @@
   "counts": {
     "boards": 1,
     "components": 0,
-    "connections": 21,
+    "connections": 22,
     "nodes": 13,
     "variables": 1
   },
@@ -21,7 +21,7 @@
     "nodeId": "nd_000000000000000000000START"
   },
   "files": {
-    "boards/roll.json": "sha256:509474ece6168e85ec4678a8af489e1c67cbab7ad996919eb18a5914c4aa357d",
+    "boards/roll.json": "sha256:906e7d5c22f2bd6219390b06b76287645279e0464ef2e8641812b17fa4552a4d",
     "project/component_types.json": "sha256:99fd222be8c0235a4bd75b47aafa57a60a73adef95093c32ded702b67ae34448",
     "project/components.json": "sha256:f9a11a36f3448fe6517b9132601ab9e035db61b95efcdca793242f3d24879e8d",
     "project/settings.json": "sha256:a8723b8ce32127cbec9e27e4cd0258f9d1f12aca1566304af9f4e89b68f7098f",
@@ -39,7 +39,7 @@
   "schemaVersion": 1,
   "snapshot": {
     "channel": "release",
-    "contentHash": "sha256:3f34bfa7fac0bd2805b3c6f190dd8ee0cc67d4658b8f3ad79049050f5c1f3cc5",
+    "contentHash": "sha256:0336bc630729377ed3479b48d87eaa20d9789204f89c901f5306de9174dc5a7a",
     "id": "snp_000000000000000000000000C2",
     "note": "Conformance suite branches",
     "publishedAt": "2026-10-25T00:00:00Z",

@@ -56,7 +56,7 @@ const (
 	// names that the snapshot does not have, a node of another board than the
 	// one that it names, a board without an entry node that it names
 	// without a node, or no entry of the project, which it names with
-	// neither.
+	// neither, as a reset starts at.
 	UnknownNode semantics.RuntimeError = "unknown_node"
 	// JumperBroken is a jumper without a target, which only a draft has, that
 	// the flow reaches.
@@ -116,12 +116,18 @@ type Choice struct {
 // the values of the variables and of the components' runtime attributes, the
 // nodes' visit counts, and where the flow is. Each call that moves the flow,
 // Start, Goto, Reset, Choose, Advance, and LoadState, reports its events, in
-// order, to the listener that New was given. A Runtime is not safe for use by
-// several goroutines at once.
+// order, to the listener that New was given, as each happens, within the
+// call: the listener may read the state, and set a value, but not call one of
+// those, which panics when it does, since the call that it is within would go
+// on from a flow that it no longer has; a caller that moves the flow on from
+// an event does so once the call has returned. A Runtime is not safe for use
+// by several goroutines at once.
 type Runtime struct {
 	s      *Snapshot
 	strict bool
 	listen func(Event)
+	// moving is set while a call that moves the flow runs.
+	moving bool
 
 	vars   map[string]expr.Value
 	attrs  map[attributeKey]expr.Value
@@ -178,8 +184,14 @@ func (r *Runtime) defaults() {
 // call runs f, a call that moves the flow, after the halt that it clears, if
 // it is Start, Reset, or LoadState, or refused by it, with FlowHalted, if it
 // is Choose, Advance, or Goto, and halts the flow in strict mode once f has
-// reported a runtime error.
+// reported a runtime error. It panics when the listener calls it within
+// another call (Runtime).
 func (r *Runtime) call(clears bool, f func()) {
+	if r.moving {
+		panic("flow: the listener called a method that moves the flow within a call that moves it")
+	}
+	r.moving = true
+	defer func() { r.moving = false }()
 	if clears {
 		r.halted = false
 	}
@@ -235,9 +247,15 @@ func (r *Runtime) Goto(board, node string) {
 
 // Reset sets every variable and runtime attribute to its value in the
 // snapshot, clears every visit count, and starts the flow at the project's
-// entry, as Start("", "") does, as reset() does. It clears a halt.
+// entry, as Start("", "") does, as reset() does. Of a snapshot without an
+// entry, it reports UnknownNode, as Start("", "") does, and changes nothing.
+// It clears a halt.
 func (r *Runtime) Reset() {
 	r.call(true, func() {
+		if r.s.entry == nil {
+			r.fail(UnknownNode, "")
+			return
+		}
 		r.defaults()
 		if id, ok := r.resolve("", ""); ok {
 			r.settle(id, true)
@@ -440,9 +458,11 @@ func (r *Runtime) hold(cs []*published.Connection) []*published.Connection {
 // branch picks the output of the branch n, the current node: its first if or
 // elseif whose condition holds, or else its else, and returns the first
 // connection of the output whose condition holds, which the flow passes on
-// by, or ends the flow at the branch, at a dead end when it picks no output or
-// none leaves the output, or at no choices when no connection's condition
-// holds, or after MaxPasses branches in the call, and returns nil.
+// by, evaluating the outputs' conditions, and then the connections', in
+// order until one holds, and none after it, or ends the flow at the branch,
+// at a dead end when it picks no output or none leaves the output, or at no
+// choices when no connection's condition holds, or after MaxPasses branches
+// in the call, and returns nil.
 func (r *Runtime) branch(n *published.Branch) *published.Connection {
 	var picked *published.BranchOutput
 	for i := range n.Outputs {
@@ -456,9 +476,15 @@ func (r *Runtime) branch(n *published.Branch) *published.Connection {
 		r.end(ReasonDeadEnd)
 		return nil
 	}
-	held := r.hold(r.s.nodes[n.ID].ports[picked.ID])
+	var next *published.Connection
+	for _, c := range r.s.nodes[n.ID].ports[picked.ID] {
+		if r.holds(c.ID, c.Condition) {
+			next = c
+			break
+		}
+	}
 	switch {
-	case len(held) == 0:
+	case next == nil:
 		r.end(ReasonNoChoices)
 		return nil
 	case r.passes >= MaxPasses:
@@ -467,7 +493,7 @@ func (r *Runtime) branch(n *published.Branch) *published.Connection {
 		return nil
 	}
 	r.passes++
-	return held[0]
+	return next
 }
 
 // end ends the flow at the current node, for the reason (§5.8.5): its ready,
@@ -603,9 +629,10 @@ func (r *Runtime) Variable(id string) expr.Value {
 }
 
 // SetVariable sets the variable whose ID is id to v, an int widened for a
-// float, as set_variable() does, or returns an error and sets nothing of an
-// id that is no variable's, or a v of another type. The choices of the
-// current node stay as they are (Choices).
+// float, a -0 as 0, as set_variable() does, or returns an error and sets
+// nothing of an id that is no variable's, a v of another type, or one that
+// is no value of the language, which a save state would not hold as it is
+// (asSaved). The choices of the current node stay as they are (Choices).
 func (r *Runtime) SetVariable(id string, v expr.Value) error {
 	d := r.s.declared[id]
 	if d == nil {
@@ -613,6 +640,9 @@ func (r *Runtime) SetVariable(id string, v expr.Value) error {
 	}
 	v, err := typed(v, d.Type)
 	if err != nil {
+		return err
+	}
+	if v, err = asSaved(v, d.Type); err != nil {
 		return err
 	}
 	r.vars[id] = v
@@ -640,6 +670,10 @@ func (r *Runtime) SetAttribute(component, attribute string, v expr.Value) error 
 	if o := r.s.options[k]; o != nil && !slices.Contains(o, v.Str) {
 		return fmt.Errorf("flow: %q is none of the options of %s of %s", v.Str, attribute, component)
 	}
+	// As SaveState writes it: an enum's as a string.
+	if v, err = asSaved(v, cur.Type); err != nil {
+		return err
+	}
 	r.attrs[k] = v
 	return nil
 }
@@ -654,6 +688,21 @@ func typed(v expr.Value, typ string) (expr.Value, error) {
 		return expr.FloatValue(float64(v.Int)), nil
 	}
 	return expr.Value{}, fmt.Errorf("flow: a %s is no value of the type %s", v.Type, typ)
+}
+
+// asSaved returns v, a value of the type typ, as a save state holds it and
+// LoadState reads it back, a -0 as 0, or an error when it reads back as
+// another value, or as none: when v is no value of the language
+// (expr.Value), an int beyond ±(2^53 − 1), a float that is not finite, or a
+// string that is not UTF-8, which SaveState would otherwise write as another
+// value or as none.
+func asSaved(v expr.Value, typ string) (expr.Value, error) {
+	read, err := valueOf(jsonOf(v, typ), typ, nil)
+	if err != nil || read != v {
+		return expr.Value{}, fmt.Errorf("flow: the %s is no value of the language, as an int beyond ±(2^53 − 1), a "+
+			"float that is not finite, or a string that is not UTF-8 is not", v.Type)
+	}
+	return read, nil
 }
 
 // Visits returns how many times the flow has entered the node whose ID is

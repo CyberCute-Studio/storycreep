@@ -113,6 +113,14 @@ type builtin struct {
 	version int
 }
 
+// takes reports whether a call of b may have n arguments: as many as its
+// params, or fewer by at most its optional ones, which Check refuses any
+// other number of as WrongArgumentCount, and of which the evaluator evaluates
+// no call of any other.
+func (b builtin) takes(n int) bool {
+	return n >= len(b.params)-b.optional && n <= len(b.params)
+}
+
 // builtins are the built-in functions, by their names (§5.8.4). A signal's
 // first parameter, its name, is a string literal of a character or more,
 // which Check reads rather than its type.

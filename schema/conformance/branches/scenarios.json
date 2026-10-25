@@ -1,7 +1,7 @@
 {
   "scenarios": [
     {
-      "note": "FR-EDIT-04: a branch picks its first output whose condition holds, and goes on by itself by the first connection of the output whose condition holds: the branch's on-exit, then that connection's on-traverse, without awaiting a choice",
+      "note": "FR-EDIT-04: a branch picks its first output whose condition holds, and goes on by itself by the first connection of the output whose condition holds, without evaluating the conditions of the connections after it, of which one would report division_by_zero: the branch's on-exit, then that connection's on-traverse, without awaiting a choice",
       "steps": [
         {
           "events": [

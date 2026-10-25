@@ -81,6 +81,13 @@ func Compile(source string, ctx Context, p *Project, board string) (Node, error)
 // which it resolves against p and the built-ins, nor the nodes' ranges.
 // Every AST that it accepts, Encode writes. It reads at most MaxNodes + 1
 // nodes of n, and recurses at most MaxDepth deep, whatever n is.
+//
+// Check resolves each name anew by its keys, though n's names are resolved
+// already, so that an AST that it resolved checks again unchanged; but of a
+// published AST, which Decode reads with its refs, and whose JSON holds
+// neither a variable's scope nor an attribute's cmp., the keys may name
+// another entity than the refs, as a bare key names the board's variable of
+// a global one's key: CheckResolved checks such an AST by its refs.
 func Check(n Node, ctx Context, p *Project, board string) error {
 	return checkAST(n, ctx, p, board, false)
 }
@@ -393,7 +400,7 @@ func (c *checker) call(n *Call, statement bool) (typeSet, error) {
 	case !b.effect && statement:
 		return 0, &Error{Code: InvalidStatement, Range: n.Src}
 	}
-	if len(n.Args) < len(b.params)-b.optional || len(n.Args) > len(b.params) {
+	if !b.takes(len(n.Args)) {
 		return 0, &Error{Code: WrongArgumentCount, Range: n.Src}
 	}
 	types := make([]typeSet, len(n.Args))

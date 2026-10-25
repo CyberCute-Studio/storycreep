@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,7 +112,7 @@ func TestLoad(t *testing.T) {
 		{"the settings' entry", choicesSuite(), published.SettingsPath, func(f map[string]any) {
 			f["entry"].(map[string]any)["nodeId"] = nd("BYE")
 		}, "not the settings'"},
-		{"an entry of no node", choicesSuite(), published.ManifestPath, func(m map[string]any) {
+		{"the manifest's entry", choicesSuite(), published.ManifestPath, func(m map[string]any) {
 			m["entry"].(map[string]any)["nodeId"] = nd("NADA")
 		}, "not the settings'"},
 		{"a connection to a node of no board", choicesSuite(), main, func(b map[string]any) {
@@ -126,6 +127,17 @@ func TestLoad(t *testing.T) {
 		{"a branch's outputs out of order", branchesSuite(), roll, func(b map[string]any) {
 			nodeOf(b, nd("GATE"))["outputs"].([]any)[0].(map[string]any)["order"] = 1
 		}, "outputs are not ordered"},
+		{"a branch whose first output is no if", branchesSuite(), roll, func(b map[string]any) {
+			nodeOf(b, nd("GATE"))["outputs"].([]any)[0].(map[string]any)["kind"] = published.OutputElseIf
+		}, "not one if"},
+		{"a branch with a second if", branchesSuite(), roll, func(b map[string]any) {
+			nodeOf(b, nd("GATE"))["outputs"].([]any)[1].(map[string]any)["kind"] = published.OutputIf
+		}, "not one if"},
+		{"a branch whose else is not its last output", branchesSuite(), roll, func(b map[string]any) {
+			outputs := nodeOf(b, nd("GATE"))["outputs"].([]any)
+			outputs[1], outputs[2] = outputs[2], outputs[1]
+			outputs[1].(map[string]any)["order"], outputs[2].(map[string]any)["order"] = 1, 2
+		}, "not one if"},
 		{"a jumper to a jumper", jumpersSuite(), harbour, func(b map[string]any) {
 			nodeOf(b, nd("JSD"))["target"] = map[string]any{"boardId": bd("HRB"), "nodeId": nd("JBC")}
 		}, "targets the jumper"},
@@ -163,6 +175,51 @@ func TestLoad(t *testing.T) {
 		_, err := Load(snapshotFS(t, c.suite, map[string]func(map[string]any){c.path: c.edit}))
 		if !errors.Is(err, ErrLoad) || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v; want an error of ErrLoad that says %q", c.name, err, c.want)
+		}
+	}
+	// The checks of what the files agree on, which an edit of one file alone
+	// fails first.
+	entry := func(f map[string]any) { f["entry"].(map[string]any)["nodeId"] = nd("NADA") }
+	boardEntry := func(f map[string]any) {
+		for _, b := range f["boards"].([]any) {
+			b.(map[string]any)["entryNodeId"] = nd("NADA")
+		}
+	}
+	for _, c := range []struct {
+		name  string
+		edits map[string]func(map[string]any)
+		want  string
+	}{
+		{"an entry of no node", map[string]func(map[string]any){published.ManifestPath: entry,
+			published.SettingsPath: entry}, "is not a node of its board"},
+		{"a board's entry node of no node", map[string]func(map[string]any){published.ManifestPath: boardEntry,
+			main: func(b map[string]any) { b["board"].(map[string]any)["entryNodeId"] = nd("NADA") }},
+			"is not one of its nodes"},
+	} {
+		_, err := Load(snapshotFS(t, choicesSuite(), c.edits))
+		if !errors.Is(err, ErrLoad) || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v; want an error of ErrLoad that says %q", c.name, err, c.want)
+		}
+	}
+}
+
+// TestLoadOrder checks that Load reports the same error of a snapshot that
+// is wrong in several ways, each time it loads it: of the first file that it
+// reads, the settings, though variables.json is wrong too.
+func TestLoadOrder(t *testing.T) {
+	t.Parallel()
+	hash := func(path string) func(map[string]any) {
+		return func(m map[string]any) { m["files"].(map[string]any)[path] = "sha256:" + strings.Repeat("0", 64) }
+	}
+	for range 20 {
+		_, err := Load(snapshotFS(t, choicesSuite(), map[string]func(map[string]any){
+			published.ManifestPath: func(m map[string]any) {
+				hash(published.SettingsPath)(m)
+				hash(published.VariablesPath)(m)
+			},
+		}))
+		if err == nil || !strings.Contains(err.Error(), published.SettingsPath) {
+			t.Fatalf("Load = %v; want the error of %s", err, published.SettingsPath)
 		}
 	}
 }
@@ -235,6 +292,20 @@ func TestLoadStateRefuses(t *testing.T) {
 	if err := r.LoadState(j.state("HRB", "JSD", endedPhase, nil, nil, nil)); !errors.Is(err, ErrState) {
 		t.Errorf("a cursor at a jumper: %v; want an error of ErrState", err)
 	}
+	if err := r.LoadState(j.state("HRB", "HENTRY", awaitingChoice, nil, nil,
+		map[string]int{"HENTRY": 1, "JSD": 1})); !errors.Is(err, ErrState) {
+		t.Errorf("a visit count of a jumper: %v; want an error of ErrState", err)
+	}
+	r = New(snap, false, nil)
+	for _, n := range []string{"BYE", "MARKET"} {
+		if err := r.LoadState(s.state("PAGE", n, awaitingChoice, nil, nil, nil)); !errors.Is(err, ErrState) {
+			t.Errorf("a cursor that awaits a choice at %s, an ending or a dead end: %v; want an error of ErrState", n,
+				err)
+		}
+		if err := r.LoadState(s.state("PAGE", n, endedPhase, nil, nil, nil)); err != nil {
+			t.Errorf("a cursor that ended at %s: %v", n, err)
+		}
+	}
 }
 
 // TestSetValues checks that SetVariable and SetAttribute widen an int for a
@@ -247,18 +318,31 @@ func TestSetValues(t *testing.T) {
 		t.Errorf("SetVariable of an int for a float: %v, %v", err, r.Variable(vr("F1")))
 	}
 	for name, err := range map[string]error{
-		"a string for an int": r.SetVariable(vr("N1"), expr.StringValue("1")),
-		"a float for an int":  r.SetVariable(vr("N1"), expr.FloatValue(1)),
-		"a variable of no ID": r.SetVariable(vr("NADA"), expr.IntValue(1)),
-		"none for a bool":     r.SetVariable(vr("B1"), expr.Value{}),
-		"a value of no ID's":  r.SetAttribute(cm("NADA"), at("NADA"), expr.IntValue(1)),
+		"a string for an int":        r.SetVariable(vr("N1"), expr.StringValue("1")),
+		"a float for an int":         r.SetVariable(vr("N1"), expr.FloatValue(1)),
+		"a variable of no ID":        r.SetVariable(vr("NADA"), expr.IntValue(1)),
+		"none for a bool":            r.SetVariable(vr("B1"), expr.Value{}),
+		"a value of no ID's":         r.SetAttribute(cm("NADA"), at("NADA"), expr.IntValue(1)),
+		"an int beyond 2^53 − 1":     r.SetVariable(vr("N1"), expr.IntValue(1<<53)),
+		"an int beyond −(2^53 − 1)":  r.SetVariable(vr("N1"), expr.IntValue(-1<<53)),
+		"an infinity":                r.SetVariable(vr("F1"), expr.FloatValue(math.Inf(1))),
+		"a NaN":                      r.SetVariable(vr("F1"), expr.FloatValue(math.NaN())),
+		"a string that is not UTF-8": r.SetVariable(vr("S1"), expr.StringValue("\xff")),
 	} {
 		if err == nil {
 			t.Errorf("SetVariable or SetAttribute of %s is not refused", name)
 		}
 	}
-	if r.Variable(vr("N1")) != expr.IntValue(0) || r.Variable(vr("B1")) != expr.BoolValue(false) {
+	if r.Variable(vr("N1")) != expr.IntValue(0) || r.Variable(vr("B1")) != expr.BoolValue(false) ||
+		r.Variable(vr("F1")) != expr.FloatValue(2) || r.Variable(vr("S1")) != expr.StringValue("") {
 		t.Error("a refused value changed the variable")
+	}
+	if err := r.SetVariable(vr("F1"), expr.FloatValue(math.Copysign(0, -1))); err != nil ||
+		math.Signbit(r.Variable(vr("F1")).Float) {
+		t.Errorf("SetVariable of -0: %v, %v; want 0", err, r.Variable(vr("F1")))
+	}
+	if err := r.SetVariable(vr("N1"), expr.IntValue(-(1<<53 - 1))); err != nil {
+		t.Errorf("SetVariable of −(2^53 − 1): %v", err)
 	}
 	c := New(loaded(t, choicesSuite()), false, nil)
 	if err := c.SetAttribute(cm("KEEPER"), at("MD"), expr.StringValue("sad")); err == nil {
@@ -314,5 +398,64 @@ func TestInterpolate(t *testing.T) {
 	}
 	if n == 0 {
 		t.Error("formatting.json has no interpolate case")
+	}
+}
+
+// TestResetWithoutEntry checks that Reset of a snapshot without an entry
+// reports unknown_node, as Start("", "") does, and changes nothing: neither
+// the values, nor the visit counts, nor where the flow is.
+func TestResetWithoutEntry(t *testing.T) {
+	t.Parallel()
+	noEntry := func(f map[string]any) { delete(f, "entry") }
+	snap, err := Load(snapshotFS(t, choicesSuite(), map[string]func(map[string]any){
+		published.ManifestPath: noEntry, published.SettingsPath: noEntry,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []Event
+	r := New(snap, false, func(e Event) { events = append(events, e) })
+	r.Start(bd("PAGE"), "")
+	if err := r.SetVariable(vr("CASH"), expr.IntValue(9)); err != nil {
+		t.Fatal(err)
+	}
+	before := r.SaveState()
+	events = nil
+	r.Reset()
+	if len(events) != 1 || events[0].Kind != EventError || events[0].Code != UnknownNode {
+		t.Errorf("Reset reports %+v; want unknown_node alone", events)
+	}
+	if err := sameState(snap, r.SaveState(), before); err != nil {
+		t.Errorf("Reset changed the state: %v", err)
+	}
+	if node, phase := r.Current(); node != nd("START") || phase != awaitingChoice || len(r.Choices()) == 0 {
+		t.Errorf("Reset moved the flow to %s, %s", node, phase)
+	}
+}
+
+// TestListenerMovesFlow checks that a listener that calls a method that
+// moves the flow, within a call that moves it, panics, and leaves the
+// runtime usable once the call has returned.
+func TestListenerMovesFlow(t *testing.T) {
+	t.Parallel()
+	var r *Runtime
+	moved := false
+	r = New(loaded(t, choicesSuite()), false, func(e Event) {
+		if e.Kind == EventReady && !moved {
+			moved = true
+			r.Goto(bd("PAGE"), nd("CHAT"))
+		}
+	})
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("a listener's Goto within Start did not panic")
+			}
+		}()
+		r.Start("", "")
+	}()
+	r.Start("", "")
+	if node, _ := r.Current(); node != nd("START") {
+		t.Errorf("Start after the panic is at %s", node)
 	}
 }

@@ -72,14 +72,14 @@
     },
     {
       "from": "nd_00000000000000000000000CHA",
-      "fromPort": "bo_00000000000000000000000CAE",
+      "fromPort": "bo_00000000000000000000000CAT",
       "id": "cn_00000000000000000000000CAB",
       "order": 0,
       "to": "nd_00000000000000000000000CHB"
     },
     {
       "from": "nd_00000000000000000000000CHB",
-      "fromPort": "bo_00000000000000000000000CBE",
+      "fromPort": "bo_00000000000000000000000CBT",
       "id": "cn_00000000000000000000000CBB",
       "order": 0,
       "to": "nd_0000000000000000000000BEST"
@@ -260,6 +260,39 @@
       "to": "nd_0000000000000000000000BEST"
     },
     {
+      "condition": {
+        "ast": {
+          "kind": "binary",
+          "left": {
+            "kind": "binary",
+            "left": {
+              "kind": "var",
+              "name": "score",
+              "ref": "var_00000000000000000000000PTS"
+            },
+            "op": "div",
+            "right": {
+              "kind": "lit",
+              "type": "int",
+              "value": 0
+            }
+          },
+          "op": "gt",
+          "right": {
+            "kind": "lit",
+            "type": "int",
+            "value": 0
+          }
+        },
+        "source": "score / 0 > 0"
+      },
+      "from": "nd_0000000000000000000000GATE",
+      "fromPort": "bo_000000000000000000000000GH",
+      "id": "cn_00000000000000000000000NVR",
+      "order": 2,
+      "to": "nd_00000000000000000000000BAD"
+    },
+    {
       "from": "nd_000000000000000000000START",
       "fromPort": "out",
       "id": "cn_00000000000000000000000RPT",
@@ -358,7 +391,7 @@
     },
     {
       "from": "nd_00000000000000000000000SPN",
-      "fromPort": "bo_00000000000000000000000SPE",
+      "fromPort": "bo_00000000000000000000000SPT",
       "id": "cn_00000000000000000000000SPB",
       "order": 0,
       "to": "nd_00000000000000000000000SPN"
@@ -414,9 +447,31 @@
       },
       "outputs": [
         {
+          "condition": {
+            "ast": {
+              "kind": "binary",
+              "left": {
+                "kind": "var",
+                "name": "score",
+                "ref": "var_00000000000000000000000PTS"
+              },
+              "op": "gt",
+              "right": {
+                "kind": "lit",
+                "type": "int",
+                "value": 100
+              }
+            },
+            "source": "score > 100"
+          },
+          "id": "bo_00000000000000000000000AFF",
+          "kind": "if",
+          "order": 0
+        },
+        {
           "id": "bo_00000000000000000000000AFE",
           "kind": "else",
-          "order": 0
+          "order": 1
         }
       ],
       "position": {
@@ -449,8 +504,16 @@
       "id": "nd_00000000000000000000000CHA",
       "outputs": [
         {
-          "id": "bo_00000000000000000000000CAE",
-          "kind": "else",
+          "condition": {
+            "ast": {
+              "kind": "lit",
+              "type": "bool",
+              "value": true
+            },
+            "source": "true"
+          },
+          "id": "bo_00000000000000000000000CAT",
+          "kind": "if",
           "order": 0
         }
       ],
@@ -464,8 +527,16 @@
       "id": "nd_00000000000000000000000CHB",
       "outputs": [
         {
-          "id": "bo_00000000000000000000000CBE",
-          "kind": "else",
+          "condition": {
+            "ast": {
+              "kind": "lit",
+              "type": "bool",
+              "value": true
+            },
+            "source": "true"
+          },
+          "id": "bo_00000000000000000000000CBT",
+          "kind": "if",
           "order": 0
         }
       ],
@@ -662,8 +733,16 @@
       "id": "nd_00000000000000000000000SPN",
       "outputs": [
         {
-          "id": "bo_00000000000000000000000SPE",
-          "kind": "else",
+          "condition": {
+            "ast": {
+              "kind": "lit",
+              "type": "bool",
+              "value": true
+            },
+            "source": "true"
+          },
+          "id": "bo_00000000000000000000000SPT",
+          "kind": "if",
           "order": 0
         }
       ],

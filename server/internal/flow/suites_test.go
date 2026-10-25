@@ -217,14 +217,15 @@ func branchesSuite() *suite {
 				{id: "NCB", typ: branch, onExit: `signal("ncb_exit")`,
 					outputs: []fixtureOutput{{id: "NCA", kind: published.OutputIf, condition: "true"}}},
 				{id: "AFB", typ: branch, onExit: `signal("afb_exit")`,
-					outputs: []fixtureOutput{{id: "AFE", kind: published.OutputElse}}},
+					outputs: []fixtureOutput{{id: "AFF", kind: published.OutputIf, condition: "score > 100"},
+						{id: "AFE", kind: published.OutputElse}}},
 				{id: "CYC", typ: branch, onEnter: "score += 1",
 					outputs: []fixtureOutput{{id: "CYA", kind: published.OutputIf, condition: "score < 3"},
 						{id: "CYE", kind: published.OutputElse}}},
 				{id: "END", typ: element, ending: true, text: "Looped {score} times."},
-				{id: "SPN", typ: branch, outputs: []fixtureOutput{{id: "SPE", kind: published.OutputElse}}},
-				{id: "CHA", typ: branch, outputs: []fixtureOutput{{id: "CAE", kind: published.OutputElse}}},
-				{id: "CHB", typ: branch, outputs: []fixtureOutput{{id: "CBE", kind: published.OutputElse}}},
+				{id: "SPN", typ: branch, outputs: []fixtureOutput{{id: "SPT", kind: published.OutputIf, condition: "true"}}},
+				{id: "CHA", typ: branch, outputs: []fixtureOutput{{id: "CAT", kind: published.OutputIf, condition: "true"}}},
+				{id: "CHB", typ: branch, outputs: []fixtureOutput{{id: "CBT", kind: published.OutputIf, condition: "true"}}},
 			},
 			connections: []fixtureConnection{
 				{id: "HGH", from: "START", to: "GATE", label: "High", onTraverse: "score = 10"},
@@ -239,6 +240,7 @@ func branchesSuite() *suite {
 				{id: "SKP", from: "GATE", port: "GH", to: "BAD", condition: "score > 100",
 					onTraverse: `signal("skipped")`},
 				{id: "TKN", from: "GATE", port: "GH", to: "BEST", onTraverse: `signal("taken")`},
+				{id: "NVR", from: "GATE", port: "GH", to: "BAD", condition: "score / 0 > 0"},
 				{id: "GMC", from: "GATE", port: "GM", to: "EVEN"},
 				{id: "GEC", from: "GATE", port: "GE", to: "BAD"},
 				{id: "NEX", from: "NEB", port: "NEA", to: "BEST"},
@@ -246,9 +248,9 @@ func branchesSuite() *suite {
 				{id: "AF2", from: "AFB", port: "AFE", to: "BAD", condition: "score < 0"},
 				{id: "CYB", from: "CYC", port: "CYA", to: "CYC"},
 				{id: "CYD", from: "CYC", port: "CYE", to: "END"},
-				{id: "SPB", from: "SPN", port: "SPE", to: "SPN"},
-				{id: "CAB", from: "CHA", port: "CAE", to: "CHB"},
-				{id: "CBB", from: "CHB", port: "CBE", to: "BEST"},
+				{id: "SPB", from: "SPN", port: "SPT", to: "SPN"},
+				{id: "CAB", from: "CHA", port: "CAT", to: "CHB"},
+				{id: "CBB", from: "CHB", port: "CBT", to: "BEST"},
 			}}},
 		entry: [2]string{"RANK", "START"},
 	}
@@ -265,8 +267,9 @@ func branchesSuite() *suite {
 	s.scenarios = []scenarioJSON{
 		{
 			Note: "FR-EDIT-04: a branch picks its first output whose condition holds, and goes on by itself by " +
-				"the first connection of the output whose condition holds: the branch's on-exit, then that " +
-				"connection's on-traverse, without awaiting a choice",
+				"the first connection of the output whose condition holds, without evaluating the conditions of " +
+				"the connections after it, of which one would report division_by_zero: the branch's on-exit, " +
+				"then that connection's on-traverse, without awaiting a choice",
 			Steps: []stepJSON{started, withState(step(choose("HGH"), events(exit("START"), enter("GATE"),
 				signal("gate_enter", expr.IntValue(10)), signal("gate_exit"), exit("GATE"), signal("taken"),
 				enter("BEST"), ready("BEST"), exit("BEST"), end(ReasonEnding)), ended("BEST", "You win with 10.")),

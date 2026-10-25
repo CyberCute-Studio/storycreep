@@ -66,8 +66,11 @@ func (r *Runtime) SaveState() published.SaveState {
 // published.Decode refuses, that lacks a variable or a runtime attribute of
 // the snapshot or holds one that the snapshot does not have, or a value that
 // its declaration's type does not read (§5.8.9), a visit count of a node that
-// the snapshot does not have, or below 1, or whose cursor is not of a node of
-// its board, which is no jumper, and awaits a choice only at an element.
+// the snapshot does not have, or of a jumper, which the flow never enters, or
+// below 1, or whose cursor is not of a node of its board, which is no jumper,
+// and awaits a choice only at an element that is no ending and that a
+// connection leaves, as no flow awaits one elsewhere: it passes through a
+// branch, and ends at an ending and at a dead end (§5.8.5).
 // Loading a state saved against another snapshot, with what PRD §8.5 says of
 // its entities that have changed, is the Godot runtime's and play mode's
 // (FR-GODOT-07, FR-PLAY-05).
@@ -109,8 +112,8 @@ func (s *Snapshot) state(st published.SaveState) (map[string]expr.Value, map[att
 	if !slices.Equal(slices.Sorted(maps.Keys(st.Variables)), slices.Sorted(slices.Values(s.variables))) {
 		return nil, nil, nil, errors.New("its variables are not the snapshot's")
 	}
-	for vid, v := range st.Variables {
-		read, err := valueOf(v, s.declared[vid].Type, nil)
+	for _, vid := range slices.Sorted(maps.Keys(st.Variables)) {
+		read, err := valueOf(st.Variables[vid], s.declared[vid].Type, nil)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("the value of the variable %s %w", vid, err)
 		}
@@ -118,14 +121,15 @@ func (s *Snapshot) state(st published.SaveState) (map[string]expr.Value, map[att
 	}
 	attrs := make(map[attributeKey]expr.Value)
 	n := 0
-	for c, values := range st.Attributes {
-		for a, v := range values {
+	for _, c := range slices.Sorted(maps.Keys(st.Attributes)) {
+		values := st.Attributes[c]
+		for _, a := range slices.Sorted(maps.Keys(values)) {
 			k := attributeKey{c, a}
 			typ, ok := s.declaredTypes[k]
 			if !ok {
 				return nil, nil, nil, fmt.Errorf("%s of %s is no runtime attribute of the snapshot", a, c)
 			}
-			read, err := valueOf(v, typ, s.options[k])
+			read, err := valueOf(values[a], typ, s.options[k])
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("the value of %s of %s %w", a, c, err)
 			}
@@ -137,10 +141,14 @@ func (s *Snapshot) state(st published.SaveState) (map[string]expr.Value, map[att
 		return nil, nil, nil, errors.New("it lacks a runtime attribute of the snapshot")
 	}
 	visits := make(map[string]int64)
-	for nid, count := range st.Visits {
-		if s.nodes[nid] == nil || count < 1 {
+	for _, nid := range slices.Sorted(maps.Keys(st.Visits)) {
+		count, n := st.Visits[nid], s.nodes[nid]
+		if n == nil || count < 1 {
 			return nil, nil, nil, fmt.Errorf("its visit count of %s is not of a node of the snapshot, or below 1",
 				nid)
+		}
+		if _, jumper := n.node.(*published.Jumper); jumper {
+			return nil, nil, nil, fmt.Errorf("it has a visit count of the jumper %s, which the flow never enters", nid)
 		}
 		visits[nid] = int64(count)
 	}
@@ -150,12 +158,18 @@ func (s *Snapshot) state(st published.SaveState) (map[string]expr.Value, map[att
 			return nil, nil, nil, fmt.Errorf("its cursor's node %s is not a node of its board %s", c.NodeID,
 				c.BoardID)
 		}
-		switch n.node.(type) {
+		awaits := c.Phase == published.PhaseAwaitingChoice
+		switch e := n.node.(type) {
 		case *published.Jumper:
 			return nil, nil, nil, fmt.Errorf("its cursor is at the jumper %s", c.NodeID)
 		case *published.Branch:
-			if c.Phase != published.PhaseEnded {
+			if awaits {
 				return nil, nil, nil, fmt.Errorf("its cursor awaits a choice at the branch %s", c.NodeID)
+			}
+		case *published.Element:
+			if awaits && (e.IsEnding || len(n.ports[out]) == 0) {
+				return nil, nil, nil, fmt.Errorf("its cursor awaits a choice at %s, an ending or a dead end",
+					c.NodeID)
 			}
 		}
 	}

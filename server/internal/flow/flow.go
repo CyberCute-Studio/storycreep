@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"slices"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
@@ -83,26 +84,30 @@ const out = "out"
 
 // Load reads the snapshot that fsys holds, as a game's res://storycreep/
 // holds one (PRD §6.3), from its manifest, storycreep.json, and checks what
-// a runtime relies on: that each file that the manifest lists has its hash,
-// that the snapshot's astVersion is at most expr.ASTVersion, which a newer
-// one is refused for as the runtime's ast_unsupported (FR-EXPR-04), that
-// each file is one that published.Decode reads, and that its references
-// resolve as schema/published/README.md says a consumer checks: the entry's
-// and the boards' entry nodes are nodes of their boards, which the index and
-// the boards' files agree on; a connection leaves an element by out or a
-// branch by one of its outputs, for a node of its board, its port's
-// connections ordered 0, 1, 2, and so on, as a branch's outputs are; a
-// jumper's target, when it has one, is a node of its board that is no
-// jumper; a variable's board is one of the index's; a component's type is
-// one of the snapshot's, and its values are one of each of its type's
-// definitions, of the definition's type, as every default is of its
-// declaration's; a text's or a label's value is of a variable or of a
+// a runtime relies on: that each file that it reads, the project's four and
+// each board's, has the hash that the manifest lists for it, though it reads
+// no other file that the manifest lists, as an asset, and so checks no
+// other's hash; that the snapshot's astVersion is at most expr.ASTVersion,
+// which a newer one is refused for as the runtime's ast_unsupported
+// (FR-EXPR-04); that each file is one that published.Decode reads; and that
+// its references resolve as schema/published/README.md says a consumer
+// checks: the entry's and the boards' entry nodes are nodes of their boards,
+// which the index and the boards' files agree on; a connection leaves an
+// element by out or a branch by one of its outputs, for a node of its board,
+// its port's connections ordered 0, 1, 2, and so on, as a branch's outputs
+// are, which are one if, then any elseifs, then an else, if the branch has
+// one (FR-EDIT-04), or none; a jumper's target, when it has one, is a node of
+// its board that is no jumper; a variable's board is one of the index's; a
+// component's type is one of the snapshot's, and its values are one of each
+// of its type's definitions, of the definition's type, as every default is
+// of its declaration's; a text's or a label's value is of a variable or of a
 // runtime attribute of a component; and every AST type-checks at its board
 // against the snapshot's declarations, its names read by their refs
 // (expr.CheckResolved). Its error wraps ErrLoad, and that of the file that
-// it reads. It reads every board's file, where the Godot runtime reads one
-// only once the flow enters its board (FR-GODOT-05), which gives the same
-// flow.
+// it reads, and of a snapshot that is wrong in several ways it is always the
+// same one, as it reads the files and checks them in one order. It reads
+// every board's file, where the Godot runtime reads one only once the flow
+// enters its board (FR-GODOT-05), which gives the same flow.
 func Load(fsys fs.FS) (*Snapshot, error) {
 	s := &Snapshot{
 		declared: make(map[string]*published.Variable), defaults: make(map[string]expr.Value),
@@ -129,11 +134,14 @@ func (s *Snapshot) load(fsys fs.FS) error {
 	var variables published.Variables
 	var types published.ComponentTypes
 	var components published.Components
-	for path, v := range map[string]any{
-		published.SettingsPath: &settings, published.VariablesPath: &variables,
-		published.ComponentTypesPath: &types, published.ComponentsPath: &components,
+	for _, f := range []struct {
+		path string
+		v    any
+	}{
+		{published.SettingsPath, &settings}, {published.VariablesPath, &variables},
+		{published.ComponentTypesPath, &types}, {published.ComponentsPath, &components},
 	} {
-		if err := read(fsys, path, m.Files[path], v); err != nil {
+		if err := read(fsys, f.path, m.Files[f.path], f.v); err != nil {
 			return err
 		}
 	}
@@ -176,9 +184,9 @@ func (s *Snapshot) load(fsys fs.FS) error {
 	if e := s.entry; e != nil && (s.nodes[e.NodeID] == nil || s.nodes[e.NodeID].board != e.BoardID) {
 		return fmt.Errorf("the entry %s is not a node of its board %s", e.NodeID, e.BoardID)
 	}
-	for id, b := range s.boards {
-		if e := b.info.EntryNodeID; e != "" && (s.nodes[e] == nil || s.nodes[e].board != id) {
-			return fmt.Errorf("the board %s's entry node %s is not one of its nodes", id, e)
+	for _, b := range m.Boards {
+		if e := b.EntryNodeID; e != "" && (s.nodes[e] == nil || s.nodes[e].board != b.ID) {
+			return fmt.Errorf("the board %s's entry node %s is not one of its nodes", b.ID, e)
 		}
 	}
 	return nil
@@ -236,7 +244,10 @@ func valueOf(v value.Value, typ string, options []string) (expr.Value, error) {
 }
 
 // jsonOf returns v, of the type typ, as the published format and a save state
-// hold a value (value.Value).
+// hold a value (value.Value). v is a value of the language, as every value
+// that a runtime holds is (asSaved), which it writes as it is; of any other, an
+// int beyond ±(2^53 − 1), a float that is not finite, or a string that is not
+// UTF-8, it returns another value, or none.
 func jsonOf(v expr.Value, typ string) value.Value {
 	var data []byte
 	switch v.Type {
@@ -315,21 +326,24 @@ func (s *Snapshot) declare(variables published.Variables, types published.Compon
 // addNodes adds the nodes of the board b's file f, and their ports.
 func (s *Snapshot) addNodes(b string, f *published.Board) error {
 	for _, n := range f.Nodes {
-		id, ports := "", map[string][]*published.Connection{}
+		id, ports := nodeID(n), map[string][]*published.Connection{}
 		switch n := n.(type) {
 		case *published.Element:
-			id = n.ID
 			ports[out] = nil
 		case *published.Branch:
-			id = n.ID
+			last := len(n.Outputs) - 1
 			for i, o := range n.Outputs {
 				if int(o.Order) != i {
 					return fmt.Errorf("the branch %s's outputs are not ordered 0, 1, 2, and so on", n.ID)
 				}
+				// The first output is the if, and the last may be an else,
+				// which the runtime picks once no output before it holds.
+				if (o.Kind == published.OutputIf) != (i == 0) || o.Kind == published.OutputElse && i != last {
+					return fmt.Errorf("the branch %s's outputs are not one if, then any elseifs, then an else, if "+
+						"it has one", n.ID)
+				}
 				ports[o.ID] = nil
 			}
-		case *published.Jumper:
-			id = n.ID
 		}
 		if s.nodes[id] != nil {
 			return fmt.Errorf("the node %s is there twice", id)
@@ -406,7 +420,9 @@ func (s *Snapshot) addConnections(b string, f *published.Board, p *expr.Project)
 		}
 	}
 	for _, n := range f.Nodes {
-		for port, cs := range s.nodes[nodeID(n)].ports {
+		ports := s.nodes[nodeID(n)].ports
+		for _, port := range slices.Sorted(maps.Keys(ports)) {
+			cs := ports[port]
 			slices.SortFunc(cs, func(a, b *published.Connection) int { return int(a.Order - b.Order) })
 			for i, c := range cs {
 				if int(c.Order) != i {

@@ -100,7 +100,7 @@ func TestCondition(t *testing.T) {
 		`name + "!" == "Ann!"`:                            true,
 		"rate * 2 == 1":                                   true,
 		"rate < 1 and not (rate > 1)":                     true,
-		`"a" < "b" && "😀" > "\uFFFF"`:                          true,
+		`"a" < "b" && "😀" > "\uFFFF"`:                     true,
 		`visited(node("` + nodeEntry + `"))`:              true,
 		`visits(node("` + nodeEntry + `")) == 1 or false`: true,
 		"to_int(rate) == 0 && to_string(rate) == \"0.5\"": true,
@@ -260,10 +260,18 @@ func TestNoPanic(t *testing.T) {
 		&Call{Function: "nothing"},
 		&NodeRef{Ref: nodeEntry},
 		&Script{Statements: []Node{nil, &Assign{Op: OpAssign, Target: &Lit{}}}},
+		(*Lit)(nil),
+		&Binary{Op: OpEq, Left: (*Lit)(nil), Right: (*Var)(nil)},
+		&Unary{Op: OpNot, Operand: (*Attr)(nil)},
+		&Call{Function: "abs", Args: []Node{(*Call)(nil)}},
+		&Call{Function: "visits", Args: []Node{(*NodeRef)(nil)}},
 	} {
 		Condition(n, envOf())
 	}
 	Run(&Script{Statements: []Node{nil, &Assign{Op: OpAddAssign, Target: &Var{Ref: varTrust}}}}, envOf())
+	Run(&Script{Statements: []Node{(*Assign)(nil), (*Call)(nil), &Assign{Op: OpAssign, Target: (*Var)(nil)},
+		&Assign{Op: OpAssign, Target: (*Attr)(nil), Value: (*Binary)(nil)}}}, envOf())
+	Run((*Script)(nil), envOf())
 	Run(nil, envOf())
 }
 

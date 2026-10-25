@@ -36,17 +36,6 @@ func FloatValue(f float64) Value { return Value{Type: value.Float, Float: f} }
 // StringValue returns the string s.
 func StringValue(s string) Value { return Value{Type: value.String, Str: s} }
 
-// ZeroValue returns the zero value of the type typ (§5.8.7): false, 0, 0.0,
-// or "", of a string, and of an enum or a text, which an expression reads as
-// a string.
-func ZeroValue(typ string) Value {
-	switch typ {
-	case value.Bool, value.Int, value.Float:
-		return Value{Type: typ}
-	}
-	return StringValue("")
-}
-
 // String returns v as to_string writes it (§5.8.9): an int as a plain
 // decimal, a float as its shortest round-tripping decimal, a bool as true or
 // false, and a string as it is.
@@ -120,7 +109,8 @@ const StepBudgetExceeded semantics.RuntimeError = "step_budget_exceeded"
 //
 // n is an AST that Check or CheckResolved accepted as a condition's, its
 // names resolved. Of any other, what Condition returns is not defined, but it
-// returns, without a panic, once it has taken at most MaxSteps steps.
+// returns, without a panic, once it has taken at most MaxSteps steps: a node
+// that is nil, or a nil pointer of a kind, as (*Lit)(nil), is none.
 func Condition(n Node, env Env) bool {
 	e := &evaluator{env: env}
 	defer e.stop()
@@ -147,11 +137,19 @@ func Run(s *Script, env Env) {
 	for _, st := range s.Statements {
 		switch st := st.(type) {
 		case *Assign:
-			e.assign(st)
+			if st != nil {
+				e.assign(st)
+			}
 		case *Call:
 			e.eval(st)
 		}
 	}
+}
+
+// isNil reports whether n is nil, or a nil pointer of a kind of node, which
+// check tells first of any node.
+func isNil(n Node) bool {
+	return check(n, atRoot) == errNil
 }
 
 // evaluator evaluates an AST against its env, counting its steps.
@@ -202,9 +200,9 @@ func (e *evaluator) floatResult(f float64, code semantics.RuntimeError) Value {
 }
 
 // eval evaluates the expression n and returns its value, or none of a node
-// that is no expression.
+// that is no expression, nil or a nil pointer among them.
 func (e *evaluator) eval(n Node) Value {
-	if n == nil {
+	if isNil(n) {
 		return Value{}
 	}
 	e.step()
@@ -229,7 +227,7 @@ func (e *evaluator) eval(n Node) Value {
 	case *Call:
 		b, ok := builtins[n.Function]
 		f := evaluations[n.Function]
-		if !ok || f == nil || len(n.Args) < len(b.params)-b.optional || len(n.Args) > len(b.params) {
+		if !ok || f == nil || !b.takes(len(n.Args)) {
 			return Value{}
 		}
 		return f(e, n.Args)
@@ -340,6 +338,9 @@ var assignOperators = map[AssignOp]BinaryOp{
 // target's type, an int widened for a float (§5.8.3).
 func (e *evaluator) assign(a *Assign) {
 	e.step()
+	if isNil(a.Target) {
+		return
+	}
 	var target Value
 	switch t := a.Target.(type) {
 	case *Var:
@@ -413,7 +414,7 @@ func (e *evaluator) text(args []Node, i int) string {
 // which it counts as a step, or "" of anything else.
 func (e *evaluator) node(args []Node) string {
 	e.step()
-	if r, ok := args[0].(*NodeRef); ok {
+	if r, ok := args[0].(*NodeRef); ok && r != nil {
 		return r.Ref
 	}
 	return ""
