@@ -13,19 +13,9 @@ import (
 
 // children returns n's children, in the order of the source.
 func children(n Node) []Node {
-	switch n := n.(type) {
-	case *Unary:
-		return []Node{n.Operand}
-	case *Binary:
-		return []Node{n.Left, n.Right}
-	case *Call:
-		return n.Args
-	case *Assign:
-		return []Node{n.Target, n.Value}
-	case *Script:
-		return n.Statements
-	}
-	return nil
+	var out []Node
+	eachChild(n, func(c Node, _ place) { out = append(out, c) })
+	return out
 }
 
 // ranges returns the kind and the range of each node of n, n first, each

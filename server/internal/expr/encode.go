@@ -176,8 +176,9 @@ var (
 // of them, which has the kind's methods but neither its fields nor its JSON,
 // and an error for one of a kind that the place cannot be of. It tells each
 // kind's nil pointer, and where each kind can be, in one switch over the
-// kinds, so that node's switch, which writes each, is the only other list of
-// them.
+// kinds, as eachChild tells each kind's children, at their places, in one,
+// which Check and VersionOf read an AST by; node's switch, which writes each
+// kind's children with what comes between them, lists them once more.
 func check(n Node, at place) error {
 	var isNil, fits bool
 	expression := at == atRoot || at == atOperand
@@ -212,6 +213,42 @@ func check(n Node, at place) error {
 		return fmt.Errorf("expr: a node of the kind %s cannot be %s", n.Kind(), places[at])
 	}
 	return nil
+}
+
+// eachChild calls f with each of n's children, at its place, in the order of
+// the source: a script's statements, a call's arguments, a unary operator's
+// operand, a binary operator's left operand and then its right, and an
+// assignment's target and then its value. A nil n, a leaf, and a node of a
+// type that is none of the kinds' have none.
+func eachChild(n Node, f func(child Node, at place)) {
+	switch n := n.(type) {
+	case *Unary:
+		if n != nil {
+			f(n.Operand, atOperand)
+		}
+	case *Binary:
+		if n != nil {
+			f(n.Left, atOperand)
+			f(n.Right, atOperand)
+		}
+	case *Call:
+		if n != nil {
+			for _, a := range n.Args {
+				f(a, atOperand)
+			}
+		}
+	case *Assign:
+		if n != nil {
+			f(n.Target, atTarget)
+			f(n.Value, atOperand)
+		}
+	case *Script:
+		if n != nil {
+			for _, s := range n.Statements {
+				f(s, atStatement)
+			}
+		}
+	}
 }
 
 // node writes n, which is at the place at, but for its children, which it
@@ -314,35 +351,9 @@ func (e *encoder) optional(key, s string) error {
 // literal writes a literal, its value of its type, or returns why it is no
 // value of the language.
 func (e *encoder) literal(n *Lit) error {
-	var v any
-	switch n.Type {
-	case value.Bool:
-		v = n.Bool
-	case value.Int:
-		if n.Int < -semantics.MaxInt || n.Int > semantics.MaxInt {
-			return fmt.Errorf("expr: the int %d is beyond ±%d", n.Int, int64(semantics.MaxInt))
-		}
-		v = n.Int
-	case value.Float:
-		if math.IsNaN(n.Float) || math.IsInf(n.Float, 0) {
-			return fmt.Errorf("expr: the float %v is not finite", n.Float)
-		}
-		f := n.Float
-		if f == 0 {
-			// -0 is 0 (§5.8.9), which encoding/json would write as -0.
-			f = 0
-		}
-		v = f
-	case value.String:
-		if err := checkText(n.Str); err != nil {
-			return err
-		}
-		if utf8.RuneCountInString(n.Str) > MaxStringLength {
-			return fmt.Errorf("expr: a string literal is longer than %d characters", MaxStringLength)
-		}
-		v = n.Str
-	default:
-		return fmt.Errorf("expr: %q is no type of a literal", n.Type)
+	v, err := literalValue(n)
+	if err != nil {
+		return err
 	}
 	j, err := e.jsonOf(v)
 	if err != nil {
@@ -350,6 +361,43 @@ func (e *encoder) literal(n *Lit) error {
 	}
 	e.b.WriteString(`{"kind":"lit","type":"` + n.Type + `","value":` + j + "}")
 	return nil
+}
+
+// literalValue returns the value of the literal n, a bool, an int64, a
+// float64, or a string, as its JSON writes it, or why it is no value of the
+// language: a type that no literal is of, an int beyond ±(2^53 − 1), a float
+// that is not finite, or a string that is not UTF-8, that holds a NUL, or
+// that is longer than MaxStringLength characters. Encode and Check both refuse
+// a literal by it, so that every AST that Check accepts, Encode writes.
+func literalValue(n *Lit) (any, error) {
+	switch n.Type {
+	case value.Bool:
+		return n.Bool, nil
+	case value.Int:
+		if n.Int < -semantics.MaxInt || n.Int > semantics.MaxInt {
+			return nil, fmt.Errorf("expr: the int %d is beyond ±%d", n.Int, int64(semantics.MaxInt))
+		}
+		return n.Int, nil
+	case value.Float:
+		if math.IsNaN(n.Float) || math.IsInf(n.Float, 0) {
+			return nil, fmt.Errorf("expr: the float %v is not finite", n.Float)
+		}
+		f := n.Float
+		if f == 0 {
+			// -0 is 0 (§5.8.9), which encoding/json would write as -0.
+			f = 0
+		}
+		return f, nil
+	case value.String:
+		if err := checkText(n.Str); err != nil {
+			return nil, err
+		}
+		if utf8.RuneCountInString(n.Str) > MaxStringLength {
+			return nil, fmt.Errorf("expr: a string literal is longer than %d characters", MaxStringLength)
+		}
+		return n.Str, nil
+	}
+	return nil, fmt.Errorf("expr: %q is no type of a literal", n.Type)
 }
 
 // The strings that no AST holds: one that is not UTF-8, which encoding/json

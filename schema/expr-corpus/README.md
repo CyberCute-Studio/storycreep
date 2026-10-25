@@ -1,8 +1,8 @@
 # Expression corpus
 
-Cases of the expression language that every implementation of it runs, so that the evaluators, Go, TypeScript, and GDScript, give the same result for the same expression (PRD §5.8.9, plan note N46), and the parsers, Go and TypeScript, read every source alike (FR-EXPR-02, plan note N47). Where a platform's own operation differs, as JavaScript's `Math.round`, `toFixed`, `.length`, and `<` on strings, GDScript's `String.to_float()`, or an int64 product that wraps, a case says what the language computes instead.
+Cases of the expression language that every implementation of it runs, so that the evaluators, Go, TypeScript, and GDScript, give the same result for the same expression (PRD §5.8.9, plan note N46), and the parsers, Go and TypeScript, read every source alike, and their checkers compile it alike (FR-EXPR-02, plan notes N47 and N48). Where a platform's own operation differs, as JavaScript's `Math.round`, `toFixed`, `.length`, and `<` on strings, GDScript's `String.to_float()`, or an int64 product that wraps, a case says what the language computes instead.
 
-The Go package `server/internal/semantics` runs every case of an operation (`TestCorpus`), and so will the TypeScript engine (plan item 44) and the GDScript evaluator (item 103). The Go package `server/internal/expr` runs every case of the parser (`TestSyntaxCorpus`), and so will the TypeScript parser (item 44).
+The Go package `server/internal/semantics` runs every case of an operation (`TestCorpus`), and so will the TypeScript engine (plan item 44) and the GDScript evaluator (item 103). The Go package `server/internal/expr` runs every case of the parser (`TestSyntaxCorpus`) and of the checker (`TestCompileCorpus`), and so will the TypeScript parser and checker (item 44).
 
 | File | Cases of |
 | --- | --- |
@@ -10,6 +10,7 @@ The Go package `server/internal/semantics` runs every case of an operation (`Tes
 | [`strings.json`](strings.json) | `len`, comparison, concatenation, `contains`, `starts_with`, and `ends_with`, all of code points, and `upper`, `lower`, and `trim` by the tables of [`../unicode/`](../unicode/). |
 | [`formatting.json`](formatting.json) | `to_string`, and how a text value reference shows a value, with and without a format specifier (FR-TEXT-02). |
 | [`syntax.json`](syntax.json) | The parser: a condition's or a script's source, and the AST or the error that it gives, of each token, operator, and form of the grammar, and of each error (§5.8.1, §5.8.2, §5.8.8). Its format is [its own](#a-case-of-the-parser). |
+| [`compile.json`](compile.json) | The checker: a source on a board of a project, and the AST that it compiles to, its names resolved, or the error that it gives, of each form of a name, each operator's and built-in's types, each rule of purity, each limit of the sandbox, and each error (§5.8.3–§5.8.6). Its format is [its own](#a-case-of-the-checker). |
 
 ## A case
 
@@ -135,3 +136,142 @@ The parser reads a source from left to right, and stops with the first error tha
 | `condition_must_be_pure` | An assignment's operator in a condition (FR-EXPR-02 AC3). | The operator. |
 | `ast_too_deep` | An opening parenthesis that the parser reads as a group's, a call's, or a node reference's, and that opens one more than 64 of them (PRD §5.8.6); a `(` that nothing before it can be followed by opens none (above). | The parenthesis. |
 | `ast_too_large` | A token that makes an AST's node beyond 512 (PRD §5.8.6), the nodes counted as the parser reads the tokens that make them (above): each literal, name, call, node reference, and operator, and a script's own node. | The token. |
+
+## A case of the checker
+
+`compile.json` is an object of a `project`, which every case resolves its names against, and of `cases`, each a source on a board of the project, with the AST that it compiles to, or the error that it gives:
+
+```json
+{
+  "note": "PRD FR-VAR-02 AC2: a variable of another board, by its bare key, is board_variable_out_of_scope",
+  "context": "condition",
+  "board": "bd_01HQ8ZA01K7MWVND2CQJ4RT9XB",
+  "source": "secret == \"x\"",
+  "error": { "code": "board_variable_out_of_scope", "start": 0, "end": 6 }
+}
+```
+
+| Key | Contents |
+| --- | --- |
+| `note` | What the case checks, unique within the file. |
+| `context` | How the source is read, as in `syntax.json`: `condition` or `script`. |
+| `board` | The ID of the board whose expression the source is, or absent for an expression of no board, which reads no board's variable. |
+| `source` | The source, a JSON string, as in `syntax.json`. |
+| `ast` | The AST that the source compiles to: the parser's, with each `var`'s `ref`, its variable's ID, and each `attr`'s `ref` and `attribute`, its component's and its attribute definition's IDs, and the `name` of each its entity's keys (PRD §5.8.8), whichever form the source writes it in, so that `global.trust` and `trust`, of one variable, have one AST, and so do `cmp.elara.trust` and `elara.trust`. |
+| `error` | Instead of `ast`, the first error that the source gives, the parser's, as in `syntax.json`, or else the checker's: its `code` (below), its range, `start` and `end`, counted in code points, as the parser's are, and, of a `type_mismatch`, its operand's `type` and the `expected` types of the operand's place, and of an unknown name or function, or a `variable_not_component`, its `suggestions`, if it has any, each left out when it has none. |
+
+A runner compares a case's `ast` with its checker's as it compares the parser's (above), and its `error` by each key, `expected` and `suggestions` in their order.
+
+### The project
+
+`project` holds what the cases' sources can name, each entity by its ID, in its canonical spelling (PRD §5.2), and by its key, as a project's entities that are not in the trash:
+
+| Key | Contents |
+| --- | --- |
+| `variables` | Each an `id`, a `key`, a `type`, `bool`, `int`, `float`, or `string`, and a `board`, the ID of the board whose variable it is, or absent for a global variable. |
+| `components` | Each an `id`, a `key`, and `attributes`, each an `id`, its attribute definition's, a `key`, a `type`, `bool`, `int`, `float`, `string`, `text`, or `enum`, `runtime`, `true` for an attribute that is part of the game's state, or absent, and an `enum`'s `options`. The components of one type list its definitions alike, each of the same `id`, `key`, `type`, `runtime`, and `options`, as `elara` and `mira` do, so that an `id` is listed by several components, though once by each. |
+| `nodes` | Each an `id`, and `jumper`, `true` for a jumper, or absent. |
+
+### Names
+
+A name resolves as PRD §5.8.3 says, at the board of its expression:
+
+- A bare key names the board's variable of the key, or else the global one. A key that neither has is, in this order: `component_not_value` when a component has it, since a component is no value, though another board's variable has it too; `board_variable_out_of_scope` when another board's variable has it (PRD FR-VAR-02 AC2); and otherwise `unknown_identifier`.
+- `global.<key>` names the global variable of the key, or is `unknown_identifier`, even of a key that a board's variable has.
+- `board.<key>` names the board's variable of the key, or is `board_variable_out_of_scope` of a key that another board's variable has, and otherwise `unknown_identifier`. An expression of no board names no board's variable.
+- `<component>.<attribute>` reads its first key as a bare key is read: when the board's variable or a global one has it, it names that variable, which has no attributes, so that the name is `variable_not_component`, which `cmp.<component>.<attribute>` avoids. Otherwise it names the component of the key, or is `unknown_identifier`; another board's variable does not shadow the component.
+- `cmp.<component>.<attribute>` names the component of the key, whatever variable has the key too, or is `unknown_identifier`.
+- An attribute that its component does not have is `unknown_attribute`, and one that is not `runtime` `attribute_not_runtime`, whether it is read or assigned (PRD FR-COMP-03 AC2). An `enum` attribute is read as a `string`, and a `text` one is never `runtime`.
+- `node("…")` names a node of the project, or is `unknown_node`, and a jumper's is `node_ref_jumper` (PRD §5.8.5), wherever it is.
+
+The errors of a name cover all of it, as written, with the white space and the comments between its parts.
+
+### Suggestions
+
+An `unknown_identifier`, an `unknown_attribute`, and an `unknown_function` suggest what might be written in place of their characters: the near matches of the key or the function that they name, among those that could be there, written in the form that the source writes:
+
+| Error of | Near matches among | Written as |
+| --- | --- | --- |
+| A bare key | The keys of the board's variables and of the global ones. | `<key>` |
+| `global.<key>` | The global variables' keys. | `global.<key>` |
+| `board.<key>` | The board's variables' keys. | `board.<key>` |
+| `<component>.<attribute>`, of an unknown component | The keys of the components that no variable of the board or global one shadows. | `<key>.<attribute>` |
+| `cmp.<component>.<attribute>`, of an unknown component | Every component's key. | `cmp.<key>.<attribute>` |
+| An unknown attribute | The keys of its component's `runtime` attributes. | `<component>.<key>`, or `cmp.<component>.<key>` |
+| An unknown function | The built-ins that the call's place can call: `signal` as a script's statement, and the others anywhere else. | `<name>` |
+
+A `variable_not_component` suggests `cmp.<component>.<attribute>` when that names a `runtime` attribute, and nothing otherwise. No other error suggests anything.
+
+A key or a function, of n characters, is near another when the optimal string alignment distance of the two, their ASCII letters in lower case, is at most a third of n, rounded down, and at least 1, but less than n: the fewest insertions, deletions, and substitutions of a character, and swaps of two adjacent characters, that make one the other, no character edited twice. So `trsut` is one from `trust`, and `Trust` none, `conitns` three from `contains`, not the two of a swap and a character inserted between the swapped ones, which edits them twice, and a key of one character is near only itself in another case. The near matches are listed nearest first, then by their bytes, each once, and three at most.
+
+### Types
+
+Types are `bool`, `int`, `float`, and `string`, the values' (PRD §5.8.3), and `node`, a node reference's, which only `visited` and `visits` take. A number is an `int` or a `float`, and an `int` is widened where a `float` is read. A condition is a `bool`. Each operator takes its operands as below, so that the left operand decides what the right one may be, and the right one is the operand that a `type_mismatch` names when the two do not go together, as the `1` of `name + 1`:
+
+| Operator | Left operand, or the one | Right operand | Result |
+| --- | --- | --- | --- |
+| `!`, `not` | A `bool`. | | A `bool`. |
+| `-`, of one | A number. | | Of its type. |
+| `&&`, `and`, `\|\|`, `or` | A `bool`. | A `bool`. | A `bool`. |
+| `+` | A number or a `string`. | A number after a number, and a `string` after a `string`. | A `string` of `string`s, an `int` of `int`s, and otherwise a `float`. |
+| `-`, `*`, `/` | A number. | A number. | An `int` of `int`s, and otherwise a `float`. |
+| `%` | An `int`. | An `int`. | An `int`. |
+| `==`, `!=` | A value. | A number after a number, and otherwise a value of the left one's type. | A `bool`. |
+| `<`, `<=`, `>`, `>=` | A number or a `string`. | A number after a number, and a `string` after a `string`. | A `bool`. |
+
+An assignment's target is a variable or a `runtime` attribute. Its value of `=` is of the target's type, or an `int` for a `float`, and `op=` is read as `op` of the target and the value is, its result of the target's type: the target of `+=` is a number or a `string`, of `-=`, `*=`, and `/=` a number, and of `%=` an `int`, and the value is of the target's type, or an `int` for a `float`, so that `gold += 1.5`, of an `int` `gold`, names the `1.5`. An `enum` attribute is assigned only with `=` and a string literal of one of its options, compared exactly, or the assignment is `invalid_enum_value`, over its value.
+
+The built-ins (PRD §5.8.4) take and give:
+
+| Function | Arguments | Result |
+| --- | --- | --- |
+| `min`, `max` | Two numbers. | An `int` of `int`s, and otherwise a `float`. |
+| `abs` | A number. | Of its type. |
+| `floor`, `ceil`, `round` | A number. | An `int`. |
+| `clamp` | Three numbers. | An `int` of `int`s, and otherwise a `float`. |
+| `to_int` | A number or a `string`. | An `int`. |
+| `to_float` | A number or a `string`. | A `float`. |
+| `to_string` | A value. | A `string`. |
+| `len` | A `string`. | An `int`. |
+| `contains`, `starts_with`, `ends_with` | Two `string`s. | A `bool`. |
+| `lower`, `upper`, `trim` | A `string`. | A `string`. |
+| `visited` | A `node`. | A `bool`. |
+| `visits` | A `node`. | An `int`. |
+| `signal` | A name, a string literal of a character or more, and a value, or none. | None: it is a script's statement. |
+
+`signal` has an effect, and is called only as a script's statement: in a condition it is `condition_must_be_pure` (PRD FR-EXPR-04 AC3), and anywhere else in a script `signal_not_statement`. Every other built-in is pure, and a call of one as a statement, which would do nothing, is `invalid_statement`.
+
+A `type_mismatch` names its operand's `type`, and the types that its place takes, `expected`, in the order `bool`, `int`, `float`, `string`, `node` (PRD FR-EXPR-02 AC4).
+
+### The first compile error
+
+The checker reads an AST that the parser returns in two passes, and stops at the first error that it meets, so that every checker gives a source the same one:
+
+- The first pass reads the AST against the limits of the sandbox (PRD §5.8.6), before any name is resolved, each node before its children, and the children in order: a script's statements, a call's arguments, a unary operator's operand, a binary operator's left operand and then its right, and an assignment's target and then its value. The AST's root is 1 deep, and each child one deeper than its parent. At each node, in this order: the 513th node is `ast_too_large`, which no source gives, since the parser gives it first; a node 65 deep is `ast_too_deep`, as the innermost operands of a chain of 64 operators are, the first of them reported, in a condition that compares a chain of 63 `+`, the comparison 1 deep and the innermost `+` 64, though no parenthesis nests too deep; a script's 65th statement is `too_many_statements`, before any of its statements is read; a call's 9th argument is `too_many_arguments`, before its function is resolved or its arguments read; and, in a script, the 9th call of `signal`, wherever it is, is `too_many_signals`. A condition's calls of `signal` count for nothing, since each is `condition_must_be_pure`.
+- The second pass resolves names and checks types and purity, from left to right: each operand is read whole, and then checked against its place, before the next is read. So `true + trsut` is `type_mismatch` at `true`, and `trsut + true` `unknown_identifier` at `trsut`, an assignment's target comes before its value, and a statement before the next. A call's function is resolved first, `unknown_function` over its name, then its place is checked, `signal` in a condition, `signal` anywhere but as a statement, or a pure built-in as a statement, then its number of arguments, `wrong_argument_count` over the call, and then each argument in order. A signal's name is not read as an operand, but checked to be a string literal of a character or more, or `invalid_signal_name` over it, so that `signal(trsut)` is `invalid_signal_name`. A condition's expression, read whole, is a `bool`, or `type_mismatch` over all of it, without the parentheses around it. An assignment to an `enum` attribute reads its value whole before it checks it.
+
+### Compile errors
+
+| Error | When | Range |
+| --- | --- | --- |
+| `ast_too_large` | An AST of more than 512 nodes (PRD §5.8.6), which the parser stops short of first, so that only an AST that the parser did not return has it. | The 513th node. |
+| `ast_too_deep` | An AST more than 64 deep (PRD §5.8.6), its root 1 deep. | The first node 65 deep. |
+| `too_many_statements` | A script of more than 64 statements. | The 65th statement. |
+| `too_many_arguments` | A call of more than 8 arguments. | The 9th argument. |
+| `too_many_signals` | A script of more than 8 calls of `signal`. | The 9th call. |
+| `unknown_identifier` | A name whose variable, or whose component, nothing at its place has. | The name. |
+| `board_variable_out_of_scope` | A variable of another board, by its bare key or as `board.<key>` (PRD FR-VAR-02 AC2). | The name. |
+| `variable_not_component` | `<component>.<attribute>` whose first key a variable of the board or a global one has. | The name. |
+| `component_not_value` | A component's key alone, where a value is read. | The key. |
+| `unknown_attribute` | An attribute that its component does not have. | The name. |
+| `attribute_not_runtime` | An attribute that is not `runtime`, read or assigned (PRD FR-COMP-03 AC2). | The name. |
+| `unknown_node` | A node reference to a node that the project does not have, or has in the trash. | The `node("…")`. |
+| `node_ref_jumper` | A node reference to a jumper, whose visits are always none (PRD §5.8.5). | The `node("…")`. |
+| `unknown_function` | A call of a function that is not a built-in (PRD FR-EXPR-04 AC2). | The function's name. |
+| `condition_must_be_pure` | A call of `signal` in a condition (PRD FR-EXPR-04 AC3), as the parser gives an assignment's operator there. | The call. |
+| `signal_not_statement` | A call of `signal` in a script anywhere but as a statement, where a value is read, which it has none of. | The call. |
+| `invalid_statement` | A statement that is a call of a pure built-in, which does nothing, as the parser gives a statement that is neither an assignment nor a call. | The call. |
+| `wrong_argument_count` | A call of a built-in of more or fewer arguments than it takes. | The call. |
+| `invalid_signal_name` | A signal's name that is not a string literal, or is the empty one. | The name's argument. |
+| `type_mismatch` | An operand of a type that its place does not take (above), with its `type` and the `expected` types (PRD FR-EXPR-02 AC4). | The operand, without the parentheses around it. |
+| `invalid_enum_value` | An assignment to an `enum` attribute other than `=` of a string literal of one of its options. | The assignment's value. |

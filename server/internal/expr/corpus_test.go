@@ -16,25 +16,38 @@ import (
 // corpusPath is the file of the parser's cases in the expression corpus.
 var corpusPath = filepath.Join("..", "..", "..", "schema", "expr-corpus", "syntax.json")
 
-// codes are the codes of Parse's errors, in the order of their declaration,
-// which the README's table lists them in.
-var codes = []Code{
+// syntaxCodes are the codes of Parse's errors, in the order of their
+// declaration, which the README's table of syntax errors lists them in.
+var syntaxCodes = []Code{
 	InvalidCharacter, UnterminatedString, InvalidEscape, StringTooLong, InvalidNumber, IntegerOutOfRange,
 	FloatOutOfRange, IdentifierTooLong, UnexpectedToken, UnexpectedEnd, ReservedWord, InvalidName,
 	InvalidNodeRef, InvalidStatement, InvalidAssignmentTarget, ConditionMustBePure, ASTTooDeep, ASTTooLarge,
 }
 
-// TestProblems checks that every code has the English description that an
-// Error's message holds, and that nothing else has one.
+// compileCodes are the codes of Check's errors, in the order of the README's
+// table of compile errors: the limits' first, in the order that the first
+// pass checks them at a node, and then the second pass's.
+var compileCodes = []Code{
+	ASTTooLarge, ASTTooDeep, TooManyStatements, TooManyArguments, TooManySignals, UnknownIdentifier,
+	BoardVariableOutOfScope, VariableNotComponent, ComponentNotValue, UnknownAttribute, AttributeNotRuntime,
+	UnknownNode, NodeRefJumper, UnknownFunction, ConditionMustBePure, SignalNotStatement, InvalidStatement,
+	WrongArgumentCount, InvalidSignalName, TypeMismatch, InvalidEnumValue,
+}
+
+// TestProblems checks that every code of Parse's and of Check's errors has the
+// English description that an Error's message holds, and that nothing else
+// has one.
 func TestProblems(t *testing.T) {
 	t.Parallel()
-	if len(problems) != len(codes) {
-		t.Errorf("problems describes %d codes; want the %d of codes", len(problems), len(codes))
-	}
-	for _, code := range codes {
+	all := make(map[Code]bool)
+	for _, code := range slices.Concat(syntaxCodes, compileCodes) {
+		all[code] = true
 		if problems[code] == "" {
 			t.Errorf("the code %s has no problem", code)
 		}
+	}
+	if len(problems) != len(all) {
+		t.Errorf("problems describes %d codes; want the %d of Parse's and Check's errors", len(problems), len(all))
 	}
 }
 
@@ -130,7 +143,7 @@ func TestSyntaxCorpus(t *testing.T) {
 		got, err := Parse(source, c.Context)
 		if c.Error != nil {
 			seen[c.Error.Code] = true
-			if !slices.Contains(codes, c.Error.Code) {
+			if !slices.Contains(syntaxCodes, c.Error.Code) {
 				t.Errorf("%s: %q is no code of an error", where, c.Error.Code)
 			}
 			if n := utf8.RuneCountInString(source); c.Error.Start < 0 || c.Error.Start > c.Error.End ||
@@ -158,7 +171,7 @@ func TestSyntaxCorpus(t *testing.T) {
 			t.Errorf("%s: Parse(%q) = %s; want %s", where, source, encoded(got), want)
 		}
 	}
-	for _, code := range codes {
+	for _, code := range syntaxCodes {
 		if !seen[code] {
 			t.Errorf("syntax.json has no case of the error %s", code)
 		}
@@ -187,8 +200,8 @@ func TestSyntaxErrorTable(t *testing.T) {
 			listed = append(listed, Code(code))
 		}
 	}
-	if !slices.Equal(listed, codes) {
-		t.Errorf("README.md's syntax errors are %v; want %v", listed, codes)
+	if !slices.Equal(listed, syntaxCodes) {
+		t.Errorf("README.md's syntax errors are %v; want %v", listed, syntaxCodes)
 	}
 }
 
