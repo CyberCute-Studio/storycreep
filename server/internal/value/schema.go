@@ -3,8 +3,8 @@ package value
 import (
 	"fmt"
 	"math"
-	"math/big"
 	"strconv"
+	"strings"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 )
@@ -61,23 +61,36 @@ func Schema(typ string) *schemagen.Schema {
 // expressions and ECMAScript's read alike.
 const noNUL = `^[^\x00]*$`
 
-// maxFloat is the bound of a float that Schema gives, as JSON Schema compares
-// a number with it: math.MaxFloat64 as a schema writes it, its shortest form,
-// 1.7976931348623157e+308, which is a little less than the double itself.
-var maxFloat, _ = new(big.Rat).SetString(strconv.FormatFloat(math.MaxFloat64, 'g', -1, 64))
+// maxDigits are the significant digits of the bound of a float that Schema
+// gives, as JSON Schema compares a number with it: math.MaxFloat64 as a
+// schema writes it, its shortest form, 1.7976931348623157e+308, which is a
+// little less than the double itself.
+var maxDigits = strings.Replace(strings.SplitN(strconv.FormatFloat(math.MaxFloat64, 'e', -1, 64), "e", 2)[0],
+	".", "", 1)
 
 // FloatBeyondSchema reports whether raw, a JSON number that Read takes as a
 // float, is beyond the bounds that Schema gives a float, ±1.7976931348623157e+308,
 // with which JSON Schema compares the number as it is written, by its value,
 // though a double, and so Read, reads every number from there to half a unit
 // in the last place beyond math.MaxFloat64, as 1.7976931348623158e308, as
-// math.MaxFloat64, which no number that the server writes is.
+// math.MaxFloat64, which no number that the server writes is. It compares
+// the number's digits, as it is written, with the bound's, in time linear in
+// its length, however many digits it has.
 func FloatBeyondSchema(raw []byte) bool {
 	f, err := strconv.ParseFloat(string(raw), 64)
 	if err != nil || math.Abs(f) != math.MaxFloat64 {
 		// Within the bounds, or beyond a double's range, which Read refuses.
 		return false
 	}
-	r, ok := new(big.Rat).SetString(string(raw))
-	return !ok || r.Abs(r).Cmp(maxFloat) > 0
+	// raw is within half a unit in the last place of math.MaxFloat64, so that
+	// its first significant digit is of the same power of ten as the bound's,
+	// and it is beyond the bound exactly when its significant digits, read
+	// as a fraction, are greater than the bound's, as a string compares them
+	// once neither has a zero at its end.
+	mantissa := strings.TrimLeft(string(raw), "+-")
+	if i := strings.IndexAny(mantissa, "eE"); i >= 0 {
+		mantissa = mantissa[:i]
+	}
+	digits := strings.Trim(strings.Replace(mantissa, ".", "", 1), "0")
+	return digits > maxDigits
 }

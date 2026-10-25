@@ -99,18 +99,27 @@ func Documents() []schemagen.Document {
 	}
 }
 
+// primed returns a Generator, a closed one if closed is set, that has defined
+// the root of each of docs, and a reference to each root, in docs' order. A
+// definition is read, or a document written, only once every root is
+// defined, since a union of definitions that one root reaches can change a
+// definition that another reaches too (schemagen.Generator.Union).
+func primed(closed bool, docs []schemagen.Document) (*schemagen.Generator, []*schemagen.Schema) {
+	g := Generator(closed)
+	roots := make([]*schemagen.Schema, len(docs))
+	for i, d := range docs {
+		roots[i] = g.Ref(d.Root)
+	}
+	return g, roots
+}
+
 // Files returns each of the Documents, by its path, as /schema holds it, of
 // a closed generator if closed is set, for tests. One generator writes them
-// all, so that a definition that two of them hold is the same in both: it
-// defines every document's root before it writes any document, since a
-// union of definitions that one document reaches can change a definition
-// that another reaches too (schemagen.Generator.Union).
+// all, so that a definition that two of them hold is the same in both, once
+// it has defined every document's root (primed).
 func Files(closed bool) (map[string][]byte, error) {
-	g := Generator(closed)
 	docs := Documents()
-	for _, d := range docs {
-		g.Ref(d.Root)
-	}
+	g, _ := primed(closed, docs)
 	files := map[string][]byte{}
 	for _, d := range docs {
 		data, err := g.Document(d)

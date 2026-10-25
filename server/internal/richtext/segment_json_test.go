@@ -60,7 +60,7 @@ func TestSegmentsJSON(t *testing.T) {
 			t.Errorf("%s: the segments do not decode: %v", v.Note, err)
 			continue
 		}
-		out, err := marshalNoEscape(segs)
+		out, err := schemagen.Marshal(segs)
 		if err != nil {
 			t.Fatal(err)
 		}

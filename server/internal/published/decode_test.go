@@ -87,11 +87,9 @@ func TestMarshalNeverNull(t *testing.T) {
 	// [] or {} when it is nil, itself (marshalObject) or by the field's type.
 	marshaler := reflect.TypeFor[json.Marshaler]()
 	for _, rt := range packageTypes(t) {
-		for i := range rt.NumField() {
-			f := rt.Field(i)
-			_, opts, _ := strings.Cut(f.Tag.Get("json"), ",")
+		for _, f := range schemagen.Fields(rt) {
 			kind := f.Type.Kind()
-			if (kind == reflect.Slice || kind == reflect.Map) && !omits(opts) && !rt.Implements(marshaler) &&
+			if (kind == reflect.Slice || kind == reflect.Map) && !f.Optional && !rt.Implements(marshaler) &&
 				!f.Type.Implements(marshaler) {
 				t.Errorf("%s.%s, which a file always holds, is written as null when it is nil", rt, f.Name)
 			}
@@ -151,6 +149,83 @@ func TestCaseVariantKeys(t *testing.T) {
 	}
 	if checked < 200 {
 		t.Errorf("only %d keys were checked", checked)
+	}
+}
+
+// TestDuplicateKeys checks that Decode reads a key that an object has twice
+// as a consumer reads it, as the last of them, rather than as encoding/json
+// reads it, merging what the two hold: a save state's variables written
+// again as {} are none, and a board's connections written again without
+// their conditions have none, as a runtime reads them, choices that always
+// are, and the board is written again as a consumer read it.
+func TestDuplicateKeys(t *testing.T) {
+	again := func(ex, key string, v any) []byte {
+		return []byte(strings.TrimSuffix(strings.TrimSpace(ex), "}") + `,"` + key + `":` + string(mustMarshal(t, v)) + "}")
+	}
+	var st SaveState
+	if err := Decode(again(saveStateExamples[0], "variables", map[string]any{}), &st); err != nil ||
+		len(st.Variables) != 0 {
+		t.Errorf("Decode of a state whose variables are written again as {} = %v, its variables %v", err, st.Variables)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(boardExamples[0]), &doc); err != nil {
+		t.Fatal(err)
+	}
+	conditions := 0
+	var connections []any
+	for i := range doc["connections"].([]any) {
+		c := maps.Clone(item(t, doc, "connections", i))
+		if _, ok := c["condition"]; ok {
+			conditions++
+		}
+		delete(c, "condition")
+		connections = append(connections, c)
+	}
+	if conditions == 0 {
+		t.Fatal("the board's example has no connection with a condition")
+	}
+	data := again(boardExamples[0], "connections", connections)
+	var b Board
+	if err := Decode(data, &b); err != nil {
+		t.Fatal(err)
+	}
+	for i, c := range b.Connections {
+		if c.Condition != nil {
+			t.Errorf("connection %d, whose last copy has no condition, has the first's", i)
+		}
+	}
+	if out, err := json.Marshal(b); err != nil || !sameJSON(t, out, data) {
+		t.Errorf("the board whose connections are written again is written as %s (%v)", out, err)
+	}
+}
+
+// TestMapKeysAsWritten checks that Decode reads a map's keys as they are
+// written, as a consumer reads them, a manifest's files' paths and a save
+// state's variables' and visits' IDs, one that differs from a key that the
+// schemas define only by its case included, which it ignores only in an
+// object that the types read as a struct, where encoding/json would read it
+// as the other.
+func TestMapKeysAsWritten(t *testing.T) {
+	var m Manifest
+	data := edited(t, manifestExamples[0], func(doc map[string]any) {
+		doc["files"].(map[string]any)["Name"] = "sha256:" + strings.Repeat("0", 64)
+	})
+	if err := Decode(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.Files["Name"]; !ok {
+		t.Errorf("the manifest's files lost Name: %v", m.Files)
+	}
+	var st SaveState
+	data = edited(t, saveStateExamples[0], func(doc map[string]any) {
+		doc["variables"].(map[string]any)["KIND"] = 1
+		doc["visits"].(map[string]any)["Id"] = 2
+	})
+	if err := Decode(data, &st); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Variables["KIND"]; !ok || st.Visits["Id"] != 2 {
+		t.Errorf("the state's variables %v or visits %v lost KIND or Id", st.Variables, st.Visits)
 	}
 }
 
@@ -235,8 +310,10 @@ func TestDecodeText(t *testing.T) {
 // tagged has a field of each tag that Decode reads, as Generator reads them:
 // optional enums, tagged omitempty and omitzero, an enum of a slice's
 // strings, a const string, and fields that a property of an embedded struct
-// tells, one there for some of its values and required there, and a value
-// of the type that another property says.
+// tells, one there for some of its values and required there, a value of
+// the type that another property says, and two fields there with each other,
+// whose bounds refuse their empty values, which the types leave out, as a
+// save state's snapshotId and snapshotVersion.
 type tagged struct {
 	TaggedKind
 	Default value.Value `json:"default" typeFrom:"type"`
@@ -244,8 +321,8 @@ type tagged struct {
 	Extra   string      `json:"extra,omitempty" when:"kind=one" required:"true" minLength:"1"`
 	Marks   []string    `json:"marks,omitempty" enum:"x,y"`
 	Op      string      `json:"op" const:"\"set\""`
-	PairA   string      `json:"pairA,omitzero" with:"pairB"`
-	PairB   Int         `json:"pairB,omitempty" with:"pairA" maximum:"9007199254740991"`
+	PairA   string      `json:"pairA,omitzero" with:"pairB" minLength:"1"`
+	PairB   Int         `json:"pairB,omitempty" with:"pairA" minimum:"1" maximum:"9007199254740991"`
 	Type    string      `json:"type" enum:"int,float,string,enum"`
 	Zero    string      `json:"zero,omitzero" enum:"a,b"`
 }
@@ -286,9 +363,10 @@ func schemaOf(t *testing.T, root reflect.Type) *jsonschema.Schema {
 // value; a field that a property of an embedded struct tells is there exactly
 // for the property's values that it names, and is not empty there, where it
 // is required; two fields tagged with each other are each there exactly
-// when the other is, whatever their values; a value is of the type that its
-// property says, an enum's a string; and a key that the schema requires is
-// there.
+// when the other is, and neither is empty where the other is not, which the
+// types would read as the one without the other, and which the fields'
+// bounds refuse in the schema; a value is of the type that its property
+// says, an enum's a string; and a key that the schema requires is there.
 func TestTagsAgreeWithSchema(t *testing.T) {
 	s := schemaOf(t, reflect.TypeFor[tagged]())
 	const base = `"default":1,"op":"set","type":"int"`
@@ -324,7 +402,8 @@ func TestTagsAgreeWithSchema(t *testing.T) {
 		`{"kind":"two","default":-1.7976931348623158e308,"op":"set","type":"float"}`,
 		`{"kind":"two","default":1e309,"op":"set","type":"float"}`,
 		`{"kind":"two",` + base + `,"pairA":"a","pairB":1}`,
-		`{"kind":"two",` + base + `,"pairA":"","pairB":0}`,
+		`{"kind":"two",` + base + `,"pairA":"a","pairB":0}`,
+		`{"kind":"two",` + base + `,"pairA":"","pairB":1}`,
 		`{"kind":"two",` + base + `,"pairA":"a"}`,
 		`{"kind":"two",` + base + `,"pairB":1}`,
 		`{"kind":"two",` + base + `,"pairA":""}`,
@@ -616,6 +695,10 @@ func TestVariantFields(t *testing.T) {
 			func(doc map[string]any) { delete(doc, "snapshotId") }},
 		"a draft's state with a snapshot's version": {"../../save-state/v1/save-state", saveStateExamples[1],
 			func(doc map[string]any) { doc["snapshotVersion"] = "1.4.0" }},
+		"a state with a snapshot's ID and an empty version": {"../../save-state/v1/save-state", saveStateExamples[0],
+			func(doc map[string]any) { doc["snapshotVersion"] = "" }},
+		"a state with a snapshot's version and an empty ID": {"../../save-state/v1/save-state", saveStateExamples[0],
+			func(doc map[string]any) { doc["snapshotId"] = "" }},
 	} {
 		t.Run(name, func(t *testing.T) {
 			data := edited(t, tt.ex, tt.edit)

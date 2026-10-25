@@ -74,15 +74,19 @@ func TestSchema(t *testing.T) {
 // beyond the bounds of a float's schema though a double reads them as the
 // greatest: those written beyond its shortest form, either way, up to half a
 // unit in the last place beyond the greatest double, which a double reads as
-// an infinity, and which Read refuses.
+// an infinity, and which Read refuses, however many digits they are written
+// with, as a million zeros after the bound's, which big.Rat refuses to read.
 func TestFloatBeyondSchema(t *testing.T) {
+	zeros := strings.Repeat("0", 1_100_000)
 	for raw, want := range map[string]bool{
+		`1.7976931348623157` + zeros + `e308`: false, `-1.7976931348623157` + zeros + `1e308`: true,
+		`0.00017976931348623157e312`: false, `0.000179769313486231571e+312`: true, `1797693134862315.7e293`: false,
 		`1.7976931348623157e308`: false, `-1.7976931348623157E+308`: false, `17976931348623157` + strings.Repeat("0", 292): false,
 		`1.79769313486231570000001e308`: true, `-1.7976931348623158e308`: true, `1.797693134862315807e308`: true,
 		`1.7976931348623159e308`: false, `1e309`: false, `1.7976931348623156e308`: false, `0`: false, `2.5`: false,
 	} {
 		if got := FloatBeyondSchema([]byte(raw)); got != want {
-			t.Errorf("FloatBeyondSchema(%s) = %v, want %v", raw, got, want)
+			t.Errorf("FloatBeyondSchema(%.40s…, of %d characters) = %v, want %v", raw, len(raw), got, want)
 		}
 	}
 }

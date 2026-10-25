@@ -119,20 +119,25 @@ var ErrDecode = errors.New("published: not JSON of the published format")
 // global variable's boardId, a draft's version, or a jumper's text, or that is
 // missing or empty where its variant requires it, as an if output's condition
 // or an enum's options (checkTags); on a key that is there without the key
-// that it is there with, as a save state's snapshotId without its
-// snapshotVersion; on a value that is not of its declaration's type, as a
-// variable's default that is no int where its type is int, or a value whose
-// declaration is in another file that is neither a boolean, a number, nor a
-// string; and on an empty text or label, which a file leaves out. Otherwise
-// it reads data into v as json.Unmarshal does, but for a key as a consumer
-// reads it, as it is written: it ignores a key that the types do not know
-// (§6.4), as KIND, which differs from kind only by its case, and which
-// json.Unmarshal would read as kind. It does not check what else the schema
-// holds a file to, as a pattern or a bound, which a validator of the schema
-// checks, but for an Int's, which is an integer of at most MaxInt in
-// magnitude, and a value's of its declaration's type, an int's within
-// ±MaxInt and a float's within ±1.7976931348623157e+308 as it is written
-// (value.FloatBeyondSchema), as value.Schema bounds them.
+// that it is there with, or that is not empty where that key is empty, which
+// the types leave out, as a save state's snapshotId without its
+// snapshotVersion, or with an empty one; on a value that is not of its
+// declaration's type, as a variable's default that is no int where its type
+// is int, or a value whose declaration is in another file that is neither a
+// boolean, a number, nor a string; and on an empty text or label, which a
+// file leaves out. Otherwise it reads data into v as json.Unmarshal does, but
+// for a key as a consumer reads it, as it is written (readTree): of a key
+// that an object has twice, the last, where json.Unmarshal would merge what
+// the two hold; a key that the types do not know it ignores (§6.4), as KIND
+// in an object that they read as a struct, which differs from kind only by
+// its case, and which json.Unmarshal would read as kind; and a map's keys, as
+// a manifest's files' paths, it reads as they are written, whatever their
+// case. It does not check what else the schema holds a file to, as a pattern
+// or a bound, which a validator of the schema checks, but for an Int's,
+// which is an integer of at most MaxInt in magnitude, and a value's of its
+// declaration's type, an int's within ±MaxInt and a float's within
+// ±1.7976931348623157e+308 as it is written (value.FloatBeyondSchema), as
+// value.Schema bounds them.
 func Decode(data []byte, v any) error {
 	if err := decode(data, v); err != nil {
 		return fmt.Errorf("%w: %w", ErrDecode, err)
@@ -145,7 +150,7 @@ func decode(data []byte, v any) error {
 	if problem := value.CheckJSON(data); problem != "" {
 		return fmt.Errorf("it %s", problem)
 	}
-	tree, data, err := readTree(data)
+	tree, data, err := readTree(data, reflect.TypeOf(v))
 	if err != nil {
 		return err
 	}
@@ -162,7 +167,7 @@ func decode(data []byte, v any) error {
 // they define of every object of every document, which encoding/json reads
 // the package's types' fields by, and each of them folded (foldKey), by which
 // Decode finds a key that differs from one of them only by its case
-// (readTree); and, of each variant of a union, the keys that another variant
+// (strip); and, of each variant of a union, the keys that another variant
 // of its union defines and it does not, which its schema takes none of
 // (schemagen.Generator.Union). They are read from the schemas, rather than
 // from the types' fields, since a Provider defines keys of its own, as a
@@ -182,16 +187,9 @@ type unionVariant struct {
 // knownKeys returns the schemaKeys of the schemas, which a generator reads
 // once, without writing a document.
 var knownKeys = sync.OnceValue(func() schemaKeys {
-	g := Generator(false)
+	g, roots := primed(false, Documents())
 	sets := schemaKeys{known: map[string]bool{}, folded: map[string]bool{},
 		variants: map[reflect.Type]unionVariant{}}
-	// Every root is defined before any definition is read, as Files does,
-	// since a union that one root reaches can change a definition that
-	// another reaches too (schemagen.Generator.Union).
-	var roots []*schemagen.Schema
-	for _, d := range Documents() {
-		roots = append(roots, g.Ref(d.Root))
-	}
 	g.Walk(func(s *schemagen.Schema) {
 		for k := range s.Properties {
 			sets.known[k] = true
@@ -237,48 +235,83 @@ func foldKey(k string) string {
 	return b.String()
 }
 
-// readTree returns data, one JSON value that value.CheckJSON took, as a tree
-// of maps, slices, json.Numbers, strings, and booleans, which checkTags reads
-// what is there of, without each key of its objects, at any depth, that is
-// none of the known keys (knownKeys) but differs from one of them only by its
-// case, as KIND from kind, which encoding/json would read as the field that
-// the known key names, where a consumer ignores it, as a key that it does not
-// know (§6.4); and data without those keys, which is data itself when it has
-// none. No two known keys differ only by their case (TestKnownKeys), so that
-// every key that it keeps is read as a consumer reads it.
-func readTree(data []byte) (any, []byte, error) {
+// readTree returns data, one JSON value that value.CheckJSON took of a value
+// of the type t, as a tree of maps, slices, json.Numbers, strings, and
+// booleans, which checkTags reads what is there of, and the tree as JSON
+// again, which Decode reads into the types, so that both read the same keys,
+// each as a consumer reads it: of a key that an object has twice, the last,
+// as the tree holds it, where encoding/json, reading data itself, would read
+// both into one field or map, keeping what the first holds and the last does
+// not, as a connection's condition; and without each key of an object that
+// encoding/json reads as a struct of this package's types that is none of the
+// known keys (knownKeys) but differs from one of them only by its case, as
+// KIND from kind, which encoding/json would read as the field that the known
+// key names, where a consumer ignores it, as a key that it does not know
+// (§6.4) (strip). No two known keys differ only by their case
+// (TestKnownKeys), so that every key that it keeps is read as a consumer
+// reads it.
+func readTree(data []byte, t reflect.Type) (any, []byte, error) {
 	var tree any
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	if err := dec.Decode(&tree); err != nil {
 		return nil, nil, err
 	}
-	keys := knownKeys()
-	dropped := false
-	var walk func(v any)
-	walk = func(v any) {
-		switch v := v.(type) {
-		case map[string]any:
-			for k, c := range v {
-				if !keys.known[k] && keys.folded[foldKey(k)] {
-					delete(v, k)
-					dropped = true
-					continue
+	strip(t, tree, knownKeys())
+	data, err := schemagen.Marshal(tree)
+	return tree, data, err
+}
+
+// strip removes from tree, the JSON of a value of the type t, each key of an
+// object, at any depth, that encoding/json reads as a struct of this
+// package's types, and that is none of the known keys but differs from one of
+// them only by its case. It removes no key of a map, as a manifest's files'
+// or a save state's variables', which encoding/json reads as it is written,
+// and nothing of a value that a type of another package reads, as an AST or
+// a segment, which reads a key as it is written too, nor of what a key that
+// the types do not know holds, which encoding/json does not read.
+func strip(t reflect.Type, tree any, keys schemaKeys) {
+	switch t.Kind() {
+	case reflect.Pointer:
+		strip(t.Elem(), tree, keys)
+	case reflect.Slice, reflect.Array:
+		items, _ := tree.([]any)
+		for _, c := range items {
+			strip(t.Elem(), c, keys)
+		}
+	case reflect.Map:
+		obj, _ := tree.(map[string]any)
+		for _, c := range obj {
+			strip(t.Elem(), c, keys)
+		}
+	case reflect.Interface:
+		// A union's variant, which its key's value tells, as unmarshalVariant
+		// reads it.
+		obj, _ := tree.(map[string]any)
+		for _, u := range unions {
+			for _, v := range u.variants {
+				if u.iface == t && obj[u.key] == v.Value {
+					strip(v.Type, obj, keys)
 				}
-				walk(c)
 			}
-		case []any:
-			for _, c := range v {
-				walk(c)
+		}
+	case reflect.Struct:
+		if t.PkgPath() != thisPackage {
+			return
+		}
+		obj, _ := tree.(map[string]any)
+		info := infoOf(t)
+		for k, c := range obj {
+			// A field that its type reads by a key of its own, as a
+			// condition's AST by ast, is named by no json tag, and no key is
+			// read as it here.
+			if f, ok := info.byName[k]; ok && f.named {
+				strip(f.typ, c, keys)
+			} else if !keys.known[k] && keys.folded[foldKey(k)] {
+				delete(obj, k)
 			}
 		}
 	}
-	walk(tree)
-	if !dropped {
-		return tree, data, nil
-	}
-	data, err := schemagen.Marshal(tree)
-	return tree, data, err
 }
 
 // thisPackage is the path of this package, whose types checkTags reads.
@@ -322,7 +355,8 @@ func (e *tagError) Error() string {
 // that is empty where it is tagged required, and that the types leave out
 // when empty (written), as an enum's options; a key that is there without
 // the key that its with tag names, which its object's schema requires where
-// it is (dependentRequired); a field tagged typeFrom whose value is not of
+// it is (dependentRequired), or that is not empty where that key is
+// (checkWith); a field tagged typeFrom whose value is not of
 // the type that its property says (checkVariant); and a value whose
 // declaration is in another file that is neither a boolean, a number, nor a
 // string. It reads a value.Value, and no value of another package's types,
@@ -418,8 +452,8 @@ func checkStruct(v reflect.Value, tree any) *tagError {
 		if err := info.checkVariant(v, f, fv, there); err != nil {
 			return err.at("." + f.name)
 		}
-		if _, other := obj[f.with]; f.with != "" && there && !other {
-			return problemf("is there without %s, which is there exactly when it is", f.with).at("." + f.name)
+		if err := info.checkWith(v, f, fv, obj, there); err != nil {
+			return err.at("." + f.name)
 		}
 		if err := checkTags(fv, x); err != nil {
 			return err.at("." + f.name)
@@ -613,6 +647,31 @@ func (info *structInfo) checkVariant(v reflect.Value, f *fieldInfo, fv reflect.V
 	return nil
 }
 
+// checkWith returns an error for the field f of the struct v, whose value is
+// fv, there where its key is in obj, the struct's JSON, that its with tag
+// names another field of: one that is there where the other's key is not,
+// which the object's schema requires where it is (dependentRequired), and
+// one that is not empty where the other is, which the types leave out
+// (written), so that the types would read the one without the other, as a
+// save state's snapshotId with an empty snapshotVersion, which the schema's
+// bounds refuse. Two fields that are there and both empty are read as
+// neither.
+func (info *structInfo) checkWith(v reflect.Value, f *fieldInfo, fv reflect.Value, obj map[string]any,
+	there bool) *tagError {
+	other, ok := info.byName[f.with]
+	if f.with == "" || !there || !ok {
+		return nil
+	}
+	if _, ok := obj[f.with]; !ok {
+		return problemf("is there without %s, which is there exactly when it is", f.with)
+	}
+	if written(fv, f.opts) && !written(info.value(v, other), other.opts) {
+		return problemf("is there, and %s is empty, which the types leave out, though it is there exactly when "+
+			"this is", f.with)
+	}
+	return nil
+}
+
 // written reports whether encoding/json writes fv, the value of a field whose
 // json tag's options are opts: not when it is tagged omitempty and fv is
 // empty, false, 0, a nil pointer, or of no length, nor when it is tagged
@@ -648,32 +707,26 @@ func written(fv reflect.Value, opts string) bool {
 	return true
 }
 
-// omits reports whether opts, the options of a json tag, leave the field out
-// when it is empty or zero, which makes it optional (schemagen.Generator).
-func omits(opts string) bool {
-	for o := range strings.SplitSeq(opts, ",") {
-		if o == "omitempty" || o == "omitzero" {
-			return true
-		}
-	}
-	return false
-}
-
 // marshalObject writes v, a struct of a type without methods, as JSON, each
-// of its slices and maps that its JSON always holds, as a branch's outputs,
-// written as [] or {} when it is nil, rather than as null, which no file
-// holds (§6.2). Each of the package's types that has such a field writes
-// itself with it.
+// of its slices and maps that its JSON always holds, one that is not
+// optional (schemagen.Fields), as a branch's outputs, written as [] or {}
+// when it is nil, rather than as null, which no file holds (§6.2). Each of
+// the package's types that has such a field writes itself with it.
 func marshalObject[T any](v T) ([]byte, error) {
 	rv := reflect.ValueOf(&v).Elem()
-	t := rv.Type()
-	for i := range t.NumField() {
-		f := t.Field(i)
-		name, opts, _ := strings.Cut(f.Tag.Get("json"), ",")
-		if !f.IsExported() || name == "-" || omits(opts) {
+	info := infoOf(rv.Type())
+	for i := range info.fields {
+		f := &info.fields[i]
+		if f.optional {
 			continue
 		}
-		switch fv := rv.Field(i); {
+		fv, err := rv.FieldByIndexErr(f.index)
+		if err != nil || !fv.CanSet() {
+			// A field of an embedded pointer that is nil, which encoding/json
+			// leaves out.
+			continue
+		}
+		switch {
 		case fv.Kind() == reflect.Slice && fv.IsNil():
 			fv.Set(reflect.MakeSlice(fv.Type(), 0, 0))
 		case fv.Kind() == reflect.Map && fv.IsNil():

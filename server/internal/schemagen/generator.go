@@ -50,7 +50,10 @@ import (
 //   - with: the field is there exactly when the field whose key the tag
 //     names is, which is tagged with this one's: both are tagged omitempty
 //     or omitzero, and the object's dependentRequired requires each where
-//     the other is, as a save state's snapshotId and snapshotVersion.
+//     the other is, as a save state's snapshotId and snapshotVersion. Since
+//     encoding/json leaves either out when it is empty, give each a bound
+//     that refuses its empty value, as theirs do, so that the schema
+//     refuses one that is empty where the other is not.
 //
 // Fields returns a struct's fields as the Generator reads them, with their
 // tags, so that what else reads the tags reads the same fields.
