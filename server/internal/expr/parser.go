@@ -72,6 +72,14 @@ func (p *parser) peek() tokenKind {
 // lexer could not read; UnexpectedEnd at the end of the source;
 // ConditionMustBePure for an assignment operator in a condition, wherever it
 // is, as in a + (x = 1); and otherwise UnexpectedToken.
+//
+// A token that the lexer could not read is its error only here, where the
+// parser stops at it. Where the parser reads it only to tell that it is not a
+// dot, as after a qualifier or a name's last part, or not the ) after a node
+// reference's string, it is not one, as any other token would not be, so that
+// the error of what the tokens before it make comes first, as ReservedWord of
+// global@ and InvalidName of a.b.c@ do, and a node reference's error comes
+// before that of the token after its ) (nodeRef).
 func (p *parser) unexpected() {
 	t := &p.tok
 	switch {
@@ -319,8 +327,9 @@ func (p *parser) nameOrCall() (Node, Range) {
 }
 
 // scoped reads a variable written after its qualifier: global.<key> or
-// board.<key>. The qualifier without a dot after it is ReservedWord, and with
-// more than one part after it, InvalidName.
+// board.<key>. The qualifier without a dot after it is ReservedWord, whatever
+// the token after it is, one that the lexer could not read too, and with more
+// than one part after it, InvalidName.
 func (p *parser) scoped() (Node, Range) {
 	q := p.tok
 	p.count()
@@ -412,7 +421,11 @@ func (p *parser) arguments() []Node {
 // one string literal that holds a node's ID, in any case, which is part of the
 // reference's node, or else InvalidNodeRef, over the string, or over the whole
 // node(…) when it holds anything else, once the parser has read it to its
-// closing parenthesis, as a call's arguments, each node of which counts.
+// closing parenthesis, as a call's arguments, each node of which counts, and
+// stepped past that parenthesis, so that its error comes before that of the
+// token after it, one that the lexer could not read too. A string that a token
+// other than ) follows, one that the lexer could not read among them, is such
+// an argument, a literal, which counts before the parser stops at that token.
 func (p *parser) nodeRef(name token) (Node, Range) {
 	p.open()
 	if p.tok.kind == tString && p.peek() == tRParen {

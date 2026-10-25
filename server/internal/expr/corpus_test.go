@@ -99,12 +99,14 @@ func escapesSurrogate(raw []byte) bool {
 
 // TestSyntaxCorpus runs every case of the expression corpus's syntax.json, as
 // the TypeScript parser runs them too: Parse gives each source the AST that
-// the case holds, in its canonical form (Encode), or the error, of its code
-// and over its characters. It also checks the corpus itself: each case's note
-// is its own, its context is a context, it has an AST or an error, its error's
-// range is within its source, its AST is written as its canonical form writes
-// it, but for the order of its keys and the white space between its tokens,
-// and every code of Parse's errors has a case.
+// the case holds, compared by value, as the corpus's README says, in the
+// canonical form that Encode writes, each number the double nearest it, or
+// the error, of its code and over its characters. It also checks the corpus
+// itself: each case's note is its own, its context is a context, it has an
+// AST or an error, its error's range is within its source, its AST gives no
+// variable or attribute the ref or the attribute that name resolution adds,
+// as the README says that no case does, and every code of Parse's errors has
+// a case.
 func TestSyntaxCorpus(t *testing.T) {
 	t.Parallel()
 	cases, sources := readSyntaxCorpus(t)
@@ -140,6 +142,11 @@ func TestSyntaxCorpus(t *testing.T) {
 				t.Errorf("%s: Parse(%q) = %v, %v; want the error %v", where, source, encoded(got), err, c.Error)
 			}
 			continue
+		}
+		var tree any
+		if json.Unmarshal(c.AST, &tree) == nil && resolved(tree) {
+			t.Errorf("%s: the AST gives a variable or an attribute a ref or an attribute, which name resolution "+
+				"adds and no case has", where)
 		}
 		want, err2 := canonicalJSON(c.AST)
 		switch {
@@ -183,6 +190,30 @@ func TestSyntaxErrorTable(t *testing.T) {
 	if !slices.Equal(listed, codes) {
 		t.Errorf("README.md's syntax errors are %v; want %v", listed, codes)
 	}
+}
+
+// resolved reports whether v, a case's AST as encoding/json decodes it, has a
+// var or an attr with a ref or an attribute, which name resolution adds (PRD
+// §5.8.3), rather than the name alone that the parser gives it.
+func resolved(v any) bool {
+	switch v := v.(type) {
+	case []any:
+		return slices.ContainsFunc(v, resolved)
+	case map[string]any:
+		if kind := v["kind"]; kind == string(KindVar) || kind == string(KindAttr) {
+			_, ref := v["ref"]
+			_, attribute := v["attribute"]
+			if ref || attribute {
+				return true
+			}
+		}
+		for _, e := range v {
+			if resolved(e) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // canonicalJSON returns the JSON raw as Encode writes an AST's: without white

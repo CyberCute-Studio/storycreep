@@ -461,6 +461,12 @@
       "error": { "code": "unexpected_token", "start": 6, "end": 7 }
     },
     {
+      "note": "a token that cannot be read after a name's last part is no dot, so that a.b.c and an @ is invalid_name, as before any other token",
+      "context": "condition",
+      "source": "a.b.c@",
+      "error": { "code": "invalid_name", "start": 0, "end": 5 }
+    },
+    {
       "note": "global without a dot after it is reserved_word",
       "context": "condition",
       "source": "global",
@@ -471,6 +477,12 @@
       "context": "condition",
       "source": "board == 1",
       "error": { "code": "reserved_word", "start": 0, "end": 5 }
+    },
+    {
+      "note": "a token that cannot be read after global is no dot, so that global is reserved_word, as before any other token",
+      "context": "condition",
+      "source": "global@",
+      "error": { "code": "reserved_word", "start": 0, "end": 6 }
     },
     {
       "note": "null is reserved_word, since the language has no null",
@@ -587,6 +599,12 @@
       "note": "a NUL in a comment is invalid_character",
       "context": "condition",
       "source": "x // a\u0000",
+      "error": { "code": "invalid_character", "start": 6, "end": 7 }
+    },
+    {
+      "note": "a range counts a character beyond U+FFFF in a comment as one, as anywhere, so that a NUL after it is at 6",
+      "context": "condition",
+      "source": "x // 😀\u0000",
       "error": { "code": "invalid_character", "start": 6, "end": 7 }
     },
     {
@@ -1158,6 +1176,12 @@
       "error": { "code": "invalid_node_ref", "start": 0, "end": 40 }
     },
     {
+      "note": "a node reference's error comes before that of the token after its closing parenthesis, one that cannot be read too",
+      "context": "condition",
+      "source": "node(\"nd_x\")@",
+      "error": { "code": "invalid_node_ref", "start": 5, "end": 11 }
+    },
+    {
       "note": "a variable may be named node",
       "context": "condition",
       "source": "node == 1",
@@ -1652,6 +1676,28 @@
       }
     },
     {
+      "note": "U+2028 and U+2029 are no line breaks, so that a comment goes on past them to the end of its line",
+      "context": "script",
+      "source": "x = 1 // a\u2028y = 2\u2029z = 3",
+      "ast": {
+        "kind": "script",
+        "statements": [
+          {
+            "kind": "assign",
+            "op": "=",
+            "target": { "kind": "var", "name": "x" },
+            "value": { "kind": "lit", "type": "int", "value": 1 }
+          }
+        ]
+      }
+    },
+    {
+      "note": "U+2028 outside a string literal or a comment is invalid_character, not a line break that ends a statement",
+      "context": "script",
+      "source": "x = 1\u2028y = 2",
+      "error": { "code": "invalid_character", "start": 5, "end": 6 }
+    },
+    {
       "note": "tabs are white space",
       "context": "script",
       "source": "x\t=\t1",
@@ -1738,6 +1784,12 @@
       "context": "condition",
       "source": "f(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,node(\"nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF\"), 1)",
       "error": { "code": "ast_too_large", "start": 1061, "end": 1062 }
+    },
+    {
+      "note": "a token that cannot be read after a node reference's string is no closing parenthesis, so that the string is an argument, a node, and after a call's 510 ones and node the 513th, ast_too_large",
+      "context": "condition",
+      "source": "f(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,node(\"x\"@",
+      "error": { "code": "ast_too_large", "start": 1027, "end": 1030 }
     },
     {
       "note": "a token that cannot be read makes no node, so that a string with a bad escape where the 513th node would be is invalid_escape",
