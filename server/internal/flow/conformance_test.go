@@ -728,17 +728,17 @@ func TestConformance(t *testing.T) {
 // diverges.
 func runScenario(t *testing.T, where string, s *Snapshot, sc scenarioJSON) {
 	t.Helper()
-	var events []eventJSON
-	r := New(s, sc.Strict, func(e Event) { events = append(events, eventOf(e)) })
+	r := New(s, sc.Strict)
 	for i, st := range sc.Steps {
 		at := fmt.Sprintf("%s: step %d (%s)", where, i+1, st.Input.Call)
-		events = nil
-		if err := call(r, s, st.Input); err != nil {
+		emitted, err := call(r, s, st.Input)
+		if err != nil {
 			t.Errorf("%s: %v", at, err)
 			return
 		}
-		if events == nil {
-			events = []eventJSON{}
+		events := []eventJSON{}
+		for _, e := range emitted {
+			events = append(events, eventOf(e))
 		}
 		if !sameEvents(events, st.Events) {
 			t.Errorf("%s: events\n%s\nwant\n%s", at, show(events), show(st.Events))
@@ -784,49 +784,48 @@ func show(v any) string {
 }
 
 // call makes the input's call of r, its values typed by their declarations
-// in s.
-func call(r *Runtime, s *Snapshot, in inputJSON) error {
+// in s, and returns the events that it emits, none of a set_variable or a
+// set_attribute, which moves no flow.
+func call(r *Runtime, s *Snapshot, in inputJSON) ([]Event, error) {
 	switch in.Call {
 	case callStart:
-		r.Start(in.Board, in.Node)
+		return r.Start(in.Board, in.Node), nil
 	case callGoto:
-		r.Goto(in.Board, in.Node)
+		return r.Goto(in.Board, in.Node), nil
 	case callReset:
-		r.Reset()
+		return r.Reset(), nil
 	case callChoose:
-		r.Choose(in.Choice)
+		return r.Choose(in.Choice), nil
 	case callAdvance:
-		r.Advance()
+		return r.Advance(), nil
 	case callSetVariable:
 		d := s.declared[in.Variable]
 		if d == nil || in.Value == nil {
-			return fmt.Errorf("set_variable of %q, which is no variable, or of no value", in.Variable)
+			return nil, fmt.Errorf("set_variable of %q, which is no variable, or of no value", in.Variable)
 		}
 		v, err := valueOf(*in.Value, d.Type, nil)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return r.SetVariable(in.Variable, v)
+		return nil, r.SetVariable(in.Variable, v)
 	case callSetAttribute:
 		k := attributeKey{in.Component, in.Attribute}
 		typ, ok := s.declaredTypes[k]
 		if !ok || in.Value == nil {
-			return fmt.Errorf("set_attribute of %v, which is no runtime attribute, or of no value", k)
+			return nil, fmt.Errorf("set_attribute of %v, which is no runtime attribute, or of no value", k)
 		}
 		v, err := valueOf(*in.Value, typ, s.options[k])
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return r.SetAttribute(in.Component, in.Attribute, v)
+		return nil, r.SetAttribute(in.Component, in.Attribute, v)
 	case callLoadState:
 		if in.State == nil {
-			return errors.New("load_state of no state")
+			return nil, errors.New("load_state of no state")
 		}
 		return r.LoadState(*in.State)
-	default:
-		return fmt.Errorf("%q is no call", in.Call)
 	}
-	return nil
+	return nil, fmt.Errorf("%q is no call", in.Call)
 }
 
 // eventOf returns e as a scenario writes it.

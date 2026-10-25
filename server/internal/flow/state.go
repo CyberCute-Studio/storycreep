@@ -20,13 +20,8 @@ var ErrState = errors.New("flow: a state that this runtime does not load")
 // started, the value of every variable and of every component's runtime
 // attribute, and the visit count of every node that the flow has entered.
 // Neither a halt nor the current choices are part of it: LoadState builds the
-// choices again. It panics where the flow is not at rest (Runtime), as when
-// the listener calls it at an enter, whose on-enter has not run, which no
-// cursor's phase says, or after a panic of the listener stopped a call there.
+// choices again.
 func (r *Runtime) SaveState() published.SaveState {
-	if !r.atRest() {
-		panic("flow: the state was saved where the flow is not at rest, between two nodes")
-	}
 	m := &r.s.manifest
 	st := published.SaveState{
 		Attributes:    make(map[string]published.AttributeValues),
@@ -63,7 +58,9 @@ func (r *Runtime) SaveState() published.SaveState {
 // as no board entry, and without the visit count, the enter, or the on-enter
 // of the cursor's node, whose choices it builds again when the cursor awaits
 // one, from the conditions as they hold of st, and which it does not end when
-// none holds. It clears a halt.
+// none holds. It clears a halt, and returns the events that it emits, as a
+// call that moves the flow does (Runtime): the runtime errors of the
+// conditions, [] for none.
 //
 // It loads a state of the snapshot alone, whose entities are those of the
 // snapshot, and returns an error that wraps ErrState, and changes nothing, of
@@ -84,26 +81,24 @@ func (r *Runtime) SaveState() published.SaveState {
 // Loading a state saved against another snapshot, with what PRD §8.5 says of
 // its entities that have changed, is the Godot runtime's and play mode's
 // (FR-GODOT-07, FR-PLAY-05).
-func (r *Runtime) LoadState(st published.SaveState) error {
+func (r *Runtime) LoadState(st published.SaveState) ([]Event, error) {
 	vars, attrs, visits, err := r.s.state(st)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrState, err)
+		return nil, fmt.Errorf("%w: %w", ErrState, err)
 	}
-	r.call(true, func() {
+	return r.call(true, func() {
 		r.vars, r.attrs, r.visits = vars, attrs, visits
 		r.current, r.phase, r.choices = "", "", nil
 		if c := st.Cursor; c != nil {
 			// The flow comes to rest, of the cursor's phase, once its
-			// choices are built, whose conditions may report a runtime error,
-			// at which it is not at rest.
+			// choices are built.
 			r.current = c.NodeID
 			if c.Phase == published.PhaseAwaitingChoice {
 				r.choices = r.hold(r.s.nodes[c.NodeID].ports[out])
 			}
 			r.phase = c.Phase
 		}
-	})
-	return nil
+	}), nil
 }
 
 // state returns the values and the visit counts of st, a state of the

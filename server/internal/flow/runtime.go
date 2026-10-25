@@ -117,36 +117,24 @@ type Choice struct {
 // Runtime runs the flow of a snapshot (§5.8.5, §8.4.2), and holds its state:
 // the values of the variables and of the components' runtime attributes, the
 // nodes' visit counts, and where the flow is. Each call that moves the flow,
-// Start, Goto, Reset, Choose, Advance, and LoadState, reports its events, in
-// order, to the listener that New was given, as each happens, within the
-// call: the listener may read the state, and set a value, but not call one of
-// those, which panics when it does, since the call that it is within would go
-// on from a flow that it no longer has; a caller that moves the flow on from
-// an event does so once the call has returned. Nor may the listener save the
-// state (SaveState) but where the flow is at rest within the call: at the
-// ready of an element that awaits a choice, at the end, and at an error of a
-// call that has moved nothing yet, as an invalid_choice; elsewhere, as at an
-// enter, whose on-enter has not run, which no save state can hold, it panics
-// too. A call that a panic of the listener stops leaves the flow where the
-// panic stopped it, halted in strict mode once the call has reported a
-// runtime error: where that is between two nodes, as at an enter, the
-// phase is "" (Current), the flow awaits no choice, and SaveState panics, until
-// Start, Goto, Reset, or LoadState moves the flow to rest again, a Goto
-// without an on-exit, as of a flow that awaits no choice. A Runtime is not
-// safe for use by several goroutines at once.
+// Start, Goto, Reset, Choose, Advance, and LoadState, returns the events that
+// it emits, in order, once it has run to its end, as the Godot runtime emits
+// its signals one after another within the call (§8.4.3); nothing runs
+// within a call but the call itself, so that between two calls the flow is
+// always at rest: before it starts, awaiting a choice, or ended. A Runtime
+// is not safe for use by several goroutines at once.
 type Runtime struct {
 	s      *Snapshot
 	strict bool
-	listen func(Event)
-	// moving is set while a call that moves the flow runs.
-	moving bool
+	// events are the events of the call that runs.
+	events []Event
 
 	vars   map[string]expr.Value
 	attrs  map[attributeKey]expr.Value
 	visits map[string]int64
 	// current is the current node, or "" before the flow starts, and phase
 	// its phase, published.PhaseAwaitingChoice or published.PhaseEnded where
-	// the flow is at rest there, or "" while it is not (atRest).
+	// the flow is at rest there, or "" between two nodes within a call.
 	current string
 	phase   string
 	choices []*published.Connection
@@ -164,17 +152,14 @@ type Runtime struct {
 
 // New returns a runtime of the snapshot s, its variables and its runtime
 // attributes their values in the snapshot, no node visited, and the flow not
-// started, which reports its events to listen, if it is not nil. In strict
+// started. In strict
 // mode, as play mode always runs and the Godot runtime in a debug build, a
 // call that reports a runtime error halts the flow once it has run as it
 // runs in non-strict mode, so that the state is the same in both: until
 // Start, Reset, or LoadState, every Choose, Advance, and Goto reports
 // FlowHalted and does nothing (FR-GODOT-08).
-func New(s *Snapshot, strict bool, listen func(Event)) *Runtime {
-	if listen == nil {
-		listen = func(Event) {}
-	}
-	r := &Runtime{s: s, strict: strict, listen: listen}
+func New(s *Snapshot, strict bool) *Runtime {
+	r := &Runtime{s: s, strict: strict}
 	r.defaults()
 	return r
 }
@@ -189,44 +174,36 @@ func (r *Runtime) defaults() {
 
 // call runs f, a call that moves the flow, after the halt that it clears, if
 // it is Start, Reset, or LoadState, or refused by it, with FlowHalted, if it
-// is Choose, Advance, or Goto, and halts the flow in strict mode once f has
-// reported a runtime error, even when a panic of the listener stops f. It
-// panics when the listener calls it within another call (Runtime).
-func (r *Runtime) call(clears bool, f func()) {
-	if r.moving {
-		panic("flow: the listener called a method that moves the flow within a call that moves it")
-	}
-	r.moving = true
-	r.errored, r.passes, r.at, r.expression = false, 0, "", ""
-	defer func() {
-		r.moving = false
-		if r.strict && r.errored {
-			r.halted = true
-		}
-	}()
+// is Choose, Advance, or Goto, halts the flow in strict mode once f has
+// reported a runtime error, and returns the events that it emitted, in order,
+// [] for none.
+func (r *Runtime) call(clears bool, f func()) []Event {
+	r.events, r.errored, r.passes, r.at, r.expression = []Event{}, false, 0, "", ""
 	if clears {
 		r.halted = false
 	}
 	if r.halted {
 		r.fail(FlowHalted, "")
-		return
+	} else {
+		f()
 	}
-	f()
+	if r.strict && r.errored {
+		r.halted = true
+	}
+	events := r.events
+	r.events = nil
+	return events
 }
 
-// atRest reports whether the flow is at rest: before it starts, awaiting a
-// choice, or ended, as a save state's cursor holds it, rather than between
-// two nodes, as a call that moves it has it from a node's on-exit, and from
-// its enter until it awaits a choice there or has ended there, after its
-// on-exit, or as a panic of the listener that stopped such a call left it.
-func (r *Runtime) atRest() bool {
-	return r.current == "" || r.phase != ""
+// emit records the event e of the call that runs.
+func (r *Runtime) emit(e Event) {
+	r.events = append(r.events, e)
 }
 
 // fail reports the runtime error code of the entity at, the call's own.
 func (r *Runtime) fail(code semantics.RuntimeError, at string) {
 	r.errored = true
-	r.listen(Event{Kind: EventError, Code: code, At: at})
+	r.emit(Event{Kind: EventError, Code: code, At: at})
 }
 
 // Start starts the flow at the node of the board, as start() does (§5.8.5):
@@ -236,8 +213,8 @@ func (r *Runtime) fail(code semantics.RuntimeError, at string) {
 // reset, and at a jumper's target when the node is a jumper. A board or a node
 // that the snapshot does not have reports UnknownNode, and a jumper without a
 // target JumperBroken, and neither moves the flow. It clears a halt.
-func (r *Runtime) Start(board, node string) {
-	r.call(true, func() {
+func (r *Runtime) Start(board, node string) []Event {
+	return r.call(true, func() {
 		if id, ok := r.resolve(board, node); ok {
 			r.settle(id, true)
 		}
@@ -249,8 +226,8 @@ func (r *Runtime) Start(board, node string) {
 // for one that the flow ended at, which it left already, and runs no
 // connection's on-traverse. A node that Start would not move to moves the
 // flow nowhere, without the on-exit.
-func (r *Runtime) Goto(board, node string) {
-	r.call(false, func() {
+func (r *Runtime) Goto(board, node string) []Event {
+	return r.call(false, func() {
 		id, ok := r.resolve(board, node)
 		if !ok {
 			return
@@ -268,8 +245,8 @@ func (r *Runtime) Goto(board, node string) {
 // entry, before anything else (§5.8.5): of a snapshot without an entry, it
 // reports UnknownNode, and of one whose entry is a jumper without a target
 // JumperBroken, as Start("", "") does, and changes nothing. It clears a halt.
-func (r *Runtime) Reset() {
-	r.call(true, func() {
+func (r *Runtime) Reset() []Event {
+	return r.call(true, func() {
 		if id, ok := r.resolve("", ""); ok {
 			r.defaults()
 			r.settle(id, true)
@@ -282,8 +259,8 @@ func (r *Runtime) Reset() {
 // the flow arrives at its node (§5.8.5). An id that is not one of the current
 // choices, or any while the flow does not await a choice, reports
 // InvalidChoice and moves nothing.
-func (r *Runtime) Choose(id string) {
-	r.call(false, func() {
+func (r *Runtime) Choose(id string) []Event {
+	return r.call(false, func() {
 		i := slices.IndexFunc(r.choices, func(c *published.Connection) bool { return c.ID == id })
 		if r.phase != published.PhaseAwaitingChoice || i < 0 {
 			r.fail(InvalidChoice, "")
@@ -296,8 +273,8 @@ func (r *Runtime) Choose(id string) {
 // Advance takes the one connection that leaves the current node, which has
 // no condition, as advance() does, as Choose does, or reports CannotAdvance
 // and moves nothing when the flow cannot advance (CanAdvance).
-func (r *Runtime) Advance() {
-	r.call(false, func() {
+func (r *Runtime) Advance() []Event {
+	return r.call(false, func() {
 		if !r.CanAdvance() {
 			r.fail(CannotAdvance, "")
 			return
@@ -373,15 +350,13 @@ func (r *Runtime) leave(c *published.Connection) {
 	r.settle(dest, false)
 }
 
-// exit leaves the current node, at which the flow then awaits no choice, of
-// no phase, as it has none until it arrives at the next node and comes to
-// rest there, or has ended (atRest), and runs its on-exit and reports its
-// exit.
+// exit leaves the current node, at which the flow then awaits no choice, and
+// runs its on-exit and reports its exit.
 func (r *Runtime) exit() {
 	r.phase, r.choices = "", nil
 	id := r.current
 	r.run(id, ExpressionOnExit, onExit(r.s.nodes[id].node))
-	r.listen(Event{Kind: EventExit, Node: id})
+	r.emit(Event{Kind: EventExit, Node: id})
 }
 
 // traverse runs the on-traverse of c, the connection that the flow takes.
@@ -426,7 +401,7 @@ func (r *Runtime) arrive(id string, entry bool) *published.Connection {
 	if r.visits[id] < published.MaxInt {
 		r.visits[id]++
 	}
-	r.listen(Event{Kind: EventEnter, Node: id})
+	r.emit(Event{Kind: EventEnter, Node: id})
 	switch n := n.node.(type) {
 	case *published.Element:
 		r.run(id, ExpressionOnEnter, n.OnEnter)
@@ -458,7 +433,7 @@ func (r *Runtime) element(n *published.Element) {
 		return
 	}
 	r.phase = published.PhaseAwaitingChoice
-	r.listen(Event{Kind: EventReady, Node: n.ID})
+	r.emit(Event{Kind: EventReady, Node: n.ID})
 }
 
 // hold returns the connections of cs whose conditions hold, in order, a
@@ -517,7 +492,7 @@ func (r *Runtime) branch(n *published.Branch) *published.Connection {
 // end ends the flow at the current node, for the reason (§5.8.5): its ready,
 // its choices none, then its on-exit, its exit, and the end.
 func (r *Runtime) end(reason string) {
-	r.listen(Event{Kind: EventReady, Node: r.current})
+	r.emit(Event{Kind: EventReady, Node: r.current})
 	r.finish(reason)
 }
 
@@ -527,7 +502,7 @@ func (r *Runtime) end(reason string) {
 func (r *Runtime) finish(reason string) {
 	r.exit()
 	r.phase = published.PhaseEnded
-	r.listen(Event{Kind: EventEnd, Reason: reason})
+	r.emit(Event{Kind: EventEnd, Reason: reason})
 }
 
 // onExit returns the on-exit of the node n, or nil.
@@ -567,10 +542,7 @@ func (r *Runtime) holds(at string, c *published.Condition) bool {
 // Current returns the current node and its phase, published.PhaseAwaitingChoice
 // or published.PhaseEnded, or "" and "" before the flow starts, as
 // current_node() does: the node that the flow ended at stays current
-// (§5.8.5). Between two nodes, as a listener reads it within a call that
-// moves the flow, from a node's on-exit, and from its enter until it awaits a
-// choice there or has ended there, after its on-exit, the phase is "", as no
-// cursor's is, and the flow awaits no choice (Runtime).
+// (§5.8.5).
 func (r *Runtime) Current() (node, phase string) {
 	return r.current, r.phase
 }
@@ -756,12 +728,12 @@ func (e *env) Visits(node string) int64 { return e.visits[node] }
 
 // Signal reports a script's signal.
 func (e *env) Signal(name string, v *expr.Value) {
-	e.listen(Event{Kind: EventSignal, Name: name, Value: v})
+	(*Runtime)(e).emit(Event{Kind: EventSignal, Name: name, Value: v})
 }
 
 // Error reports a runtime error of the expression that the evaluator
 // evaluates.
 func (e *env) Error(code semantics.RuntimeError) {
 	e.errored = true
-	e.listen(Event{Kind: EventError, Code: code, At: e.at, Expression: e.expression})
+	(*Runtime)(e).emit(Event{Kind: EventError, Code: code, At: e.at, Expression: e.expression})
 }

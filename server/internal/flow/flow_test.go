@@ -8,7 +8,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -371,8 +370,8 @@ func TestLoadStateRefuses(t *testing.T) {
 	good := func() published.SaveState {
 		return s.state("PAGE", "CHAT", awaitingChoice, map[string]any{"CASH": 3}, nil, map[string]int{"CHAT": 1})
 	}
-	r := New(snap, false, nil)
-	if err := r.LoadState(good()); err != nil {
+	r := New(snap, false)
+	if _, err := r.LoadState(good()); err != nil {
 		t.Fatalf("a state of the snapshot: %v", err)
 	}
 	r.Start("", "")
@@ -414,7 +413,7 @@ func TestLoadStateRefuses(t *testing.T) {
 	} {
 		st := good()
 		edit(&st)
-		if err := r.LoadState(st); !errors.Is(err, ErrState) {
+		if _, err := r.LoadState(st); !errors.Is(err, ErrState) {
 			t.Errorf("a state %s: %v; want an error of ErrState", name, err)
 		}
 		if after := r.SaveState(); sameState(snap, after, before) != nil {
@@ -422,26 +421,26 @@ func TestLoadStateRefuses(t *testing.T) {
 		}
 	}
 	b := branchesSuite()
-	r = New(loaded(t, b), false, nil)
-	if err := r.LoadState(b.state("RANK", "GATE", awaitingChoice, nil, nil, nil)); !errors.Is(err, ErrState) {
+	r = New(loaded(t, b), false)
+	if _, err := r.LoadState(b.state("RANK", "GATE", awaitingChoice, nil, nil, nil)); !errors.Is(err, ErrState) {
 		t.Errorf("a cursor that awaits a choice at a branch: %v; want an error of ErrState", err)
 	}
 	j := jumpersSuite()
-	r = New(loaded(t, j), false, nil)
-	if err := r.LoadState(j.state("HRB", "JSD", endedPhase, nil, nil, nil)); !errors.Is(err, ErrState) {
+	r = New(loaded(t, j), false)
+	if _, err := r.LoadState(j.state("HRB", "JSD", endedPhase, nil, nil, nil)); !errors.Is(err, ErrState) {
 		t.Errorf("a cursor at a jumper: %v; want an error of ErrState", err)
 	}
-	if err := r.LoadState(j.state("HRB", "HENTRY", awaitingChoice, nil, nil,
+	if _, err := r.LoadState(j.state("HRB", "HENTRY", awaitingChoice, nil, nil,
 		map[string]int{"HENTRY": 1, "JSD": 1})); !errors.Is(err, ErrState) {
 		t.Errorf("a visit count of a jumper: %v; want an error of ErrState", err)
 	}
-	r = New(snap, false, nil)
+	r = New(snap, false)
 	for _, n := range []string{"BYE", "MARKET"} {
-		if err := r.LoadState(s.state("PAGE", n, awaitingChoice, nil, nil, nil)); !errors.Is(err, ErrState) {
+		if _, err := r.LoadState(s.state("PAGE", n, awaitingChoice, nil, nil, nil)); !errors.Is(err, ErrState) {
 			t.Errorf("a cursor that awaits a choice at %s, an ending or a dead end: %v; want an error of ErrState", n,
 				err)
 		}
-		if err := r.LoadState(s.state("PAGE", n, endedPhase, nil, nil, nil)); err != nil {
+		if _, err := r.LoadState(s.state("PAGE", n, endedPhase, nil, nil, nil)); err != nil {
 			t.Errorf("a cursor that ended at %s: %v", n, err)
 		}
 	}
@@ -452,7 +451,7 @@ func TestLoadStateRefuses(t *testing.T) {
 // that the snapshot does not have, changing nothing.
 func TestSetValues(t *testing.T) {
 	t.Parallel()
-	r := New(loaded(t, valuesSuite()), false, nil)
+	r := New(loaded(t, valuesSuite()), false)
 	if err := r.SetVariable(vr("F1"), expr.IntValue(2)); err != nil || r.Variable(vr("F1")) != expr.FloatValue(2) {
 		t.Errorf("SetVariable of an int for a float: %v, %v", err, r.Variable(vr("F1")))
 	}
@@ -494,7 +493,7 @@ func TestSetValues(t *testing.T) {
 	if err := r.SetVariable(vr("N1"), expr.IntValue(-(1<<53 - 1))); err != nil {
 		t.Errorf("SetVariable of −(2^53 − 1): %v", err)
 	}
-	c := New(loaded(t, choicesSuite()), false, nil)
+	c := New(loaded(t, choicesSuite()), false)
 	if err := c.SetAttribute(cm("KEEPER"), at("MD"), expr.StringValue("sad")); err == nil {
 		t.Error("SetAttribute of an enum's other option is not refused")
 	}
@@ -518,11 +517,11 @@ func TestSetValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c = New(snap, false, nil)
+	c = New(snap, false)
 	if err := c.SetAttribute(cm("KEEPER"), at("MD"), expr.StringValue(option)); err != nil {
 		t.Fatalf("SetAttribute of an enum's option with a NUL: %v", err)
 	}
-	if err := c.LoadState(c.SaveState()); err != nil || c.Attribute(cm("KEEPER"), at("MD")).Str != option {
+	if _, err := c.LoadState(c.SaveState()); err != nil || c.Attribute(cm("KEEPER"), at("MD")).Str != option {
 		t.Errorf("LoadState of the state of an enum's option with a NUL: %v", err)
 	}
 }
@@ -583,15 +582,13 @@ func TestResetWithoutEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var events []Event
-	r := New(snap, false, func(e Event) { events = append(events, e) })
+	r := New(snap, false)
 	r.Start(bd("PAGE"), "")
 	if err := r.SetVariable(vr("CASH"), expr.IntValue(9)); err != nil {
 		t.Fatal(err)
 	}
 	before := r.SaveState()
-	events = nil
-	r.Reset()
+	events := r.Reset()
 	if len(events) != 1 || events[0].Kind != EventError || events[0].Code != UnknownNode {
 		t.Errorf("Reset reports %+v; want unknown_node alone", events)
 	}
@@ -616,15 +613,13 @@ func TestResetBrokenEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var events []Event
-	r := New(snap, false, func(e Event) { events = append(events, e) })
+	r := New(snap, false)
 	r.Start(bd("HRB"), "")
 	if err := r.SetVariable(vr("TRPS"), expr.IntValue(9)); err != nil {
 		t.Fatal(err)
 	}
 	before := r.SaveState()
-	events = nil
-	r.Reset()
+	events := r.Reset()
 	if len(events) != 1 || events[0].Kind != EventError || events[0].Code != JumperBroken ||
 		events[0].At != nd("JBRK") {
 		t.Errorf("Reset reports %+v; want jumper_broken of JBRK alone", events)
@@ -634,144 +629,5 @@ func TestResetBrokenEntry(t *testing.T) {
 	}
 	if node, phase := r.Current(); node != nd("HENTRY") || phase != awaitingChoice || len(r.Choices()) == 0 {
 		t.Errorf("Reset moved the flow to %s, %s", node, phase)
-	}
-}
-
-// TestListenerSaves checks that a listener may save the state within a call
-// where the flow is at rest, at an error of a call that moves nothing, at
-// the ready of an element that awaits a choice, and at the end, each the
-// state that the call leaves or found, and that its save elsewhere, as at an
-// enter, panics, as no save state holds the flow there.
-func TestListenerSaves(t *testing.T) {
-	t.Parallel()
-	s := choicesSuite()
-	snap := loaded(t, s)
-	var r *Runtime
-	// kind is the kind of the event that the listener saves at, and saved
-	// what it saved.
-	var kind string
-	var saved published.SaveState
-	r = New(snap, false, func(e Event) {
-		if e.Kind == kind {
-			saved = r.SaveState()
-		}
-	})
-	for _, c := range []struct {
-		kind string
-		call func()
-	}{
-		{EventReady, func() { r.Start("", "") }},
-		{EventError, func() { r.Choose(cn("DEPART")) }},
-		{EventEnd, func() { r.Goto(bd("PAGE"), nd("BYE")) }},
-	} {
-		kind, saved = c.kind, published.SaveState{}
-		before := r.SaveState()
-		c.call()
-		want := r.SaveState()
-		if c.kind == EventError {
-			want = before
-		}
-		if err := sameState(snap, saved, want); err != nil {
-			t.Errorf("a save at the %s: %v", c.kind, err)
-		}
-	}
-	r = New(snap, false, func(e Event) {
-		if e.Kind == EventEnter {
-			r.SaveState()
-		}
-	})
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Error("a listener's save at an enter did not panic")
-			}
-		}()
-		r.Start("", "")
-	}()
-}
-
-// TestListenerMovesFlow checks that a listener that calls a method that
-// moves the flow, within a call that moves it, panics, and leaves the
-// runtime usable once the call has returned: where the panic stopped the
-// call between two nodes, at an enter, the flow is of no phase, and
-// SaveState panics, until Start moves the flow to rest; and in strict mode, a
-// call that reported a runtime error before a panic stopped it halts the
-// flow.
-func TestListenerMovesFlow(t *testing.T) {
-	t.Parallel()
-	panics := func(name string, f func()) {
-		t.Helper()
-		defer func() {
-			if recover() == nil {
-				t.Errorf("%s did not panic", name)
-			}
-		}()
-		f()
-	}
-	for _, kind := range []string{EventReady, EventEnter} {
-		var r *Runtime
-		moved := false
-		r = New(loaded(t, choicesSuite()), false, func(e Event) {
-			if e.Kind == kind && !moved {
-				moved = true
-				r.Goto(bd("PAGE"), nd("CHAT"))
-			}
-		})
-		panics("a listener's Goto within Start at the "+kind, func() { r.Start("", "") })
-		if kind == EventEnter {
-			if node, phase := r.Current(); node != nd("START") || phase != "" || r.CanAdvance() {
-				t.Errorf("after the panic at the enter, the flow is at %s, %q; want START, of no phase", node,
-					phase)
-			}
-			panics("a save after the panic at the enter", func() { r.SaveState() })
-		}
-		r.Start("", "")
-		if node, phase := r.Current(); node != nd("START") || phase != awaitingChoice {
-			t.Errorf("Start after the panic at the %s is at %s, %q", kind, node, phase)
-		}
-		r.SaveState()
-	}
-	var r *Runtime
-	r = New(loaded(t, choicesSuite()), true, func(e Event) {
-		if e.Kind == EventError {
-			panic("the listener's")
-		}
-	})
-	panics("a listener's panic at an invalid_choice", func() { r.Choose(cn("NADA")) })
-	if !r.Halted() {
-		t.Error("strict mode did not halt the flow of a call that reported a runtime error before a panic stopped it")
-	}
-}
-
-// TestListenerReadsPhase checks what a listener reads of the flow at each
-// exit and at the end: of no phase and without choices, at a node that the
-// flow leaves by a choice, by a goto, and at one that it ends at, alike, and
-// ended at the end, after the node's on-exit, as a cursor is (PRD §8.5).
-func TestListenerReadsPhase(t *testing.T) {
-	t.Parallel()
-	type seen struct {
-		kind, node, phase    string
-		choices              int
-		canAdvance, finished bool
-	}
-	var r *Runtime
-	var got []seen
-	r = New(loaded(t, choicesSuite()), false, func(e Event) {
-		if e.Kind == EventExit || e.Kind == EventEnd {
-			node, phase := r.Current()
-			got = append(got, seen{e.Kind, node, phase, len(r.Choices()), r.CanAdvance(), r.IsFinished()})
-		}
-	})
-	r.Start("", "")
-	r.Choose(cn("ASK"))
-	r.Goto(bd("PAGE"), nd("BYE"))
-	want := []seen{
-		{kind: EventExit, node: nd("START")},
-		{kind: EventExit, node: nd("CHAT")},
-		{kind: EventExit, node: nd("BYE")},
-		{kind: EventEnd, node: nd("BYE"), phase: endedPhase, finished: true},
-	}
-	if !slices.Equal(got, want) {
-		t.Errorf("the listener read %+v; want %+v", got, want)
 	}
 }
