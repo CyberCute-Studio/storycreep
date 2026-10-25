@@ -731,6 +731,25 @@
     },
     {
       "id": "nd_00000000000000000000000SPN",
+      "onExit": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "spn_exit"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"spn_exit\")"
+      },
       "outputs": [
         {
           "condition": {

@@ -2,7 +2,6 @@ package flow
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math"
@@ -260,6 +259,11 @@ func TestLoad(t *testing.T) {
 		if !errors.Is(err, ErrLoad) || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v; want an error of ErrLoad that says %q", c.name, err, c.want)
 		}
+		// A newer astVersion alone is ErrASTUnsupported too, which a newer
+		// runtime may run.
+		if errors.Is(err, ErrASTUnsupported) != (c.want == "ast_unsupported") {
+			t.Errorf("%s: %v; want an error of ErrASTUnsupported only of a newer astVersion", c.name, err)
+		}
 	}
 	// The checks of what the files agree on, which an edit of one file alone
 	// fails first.
@@ -291,7 +295,7 @@ func TestLoad(t *testing.T) {
 	for _, c := range []struct {
 		hash string
 		ok   bool
-	}{{"sha256:" + strings.Repeat("0", 64), false}, {hashOf(data), true}} {
+	}{{"sha256:" + strings.Repeat("0", 64), false}, {string(hashOf(data)), true}} {
 		fsys := snapshotFS(t, choicesSuite(), map[string]func(map[string]any){
 			published.ManifestPath: func(m map[string]any) { m["files"].(map[string]any)[asset] = c.hash },
 		})
@@ -303,10 +307,10 @@ func TestLoad(t *testing.T) {
 	}
 }
 
-// hashOf returns the hash of data, as a manifest lists a file's.
-func hashOf(data []byte) string {
+// hashOf returns the hash of data, as a manifest lists a file's (fileHash).
+func hashOf(data []byte) published.Hash {
 	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return fileHash(sum[:])
 }
 
 // TestLoadOrder checks that Load reports the same error of a snapshot that
@@ -443,6 +447,27 @@ func TestLoadStateRefuses(t *testing.T) {
 		if _, err := r.LoadState(s.state("PAGE", n, endedPhase, nil, nil, nil)); err != nil {
 			t.Errorf("a cursor that ended at %s: %v", n, err)
 		}
+	}
+}
+
+// TestSameState checks that sameState, which TestConformance compares each
+// step's state with, tells two states apart by their keys, as the README
+// says a runner compares them: a state of another component's attributes is
+// not the state, though the component holds none of them.
+func TestSameState(t *testing.T) {
+	t.Parallel()
+	s := choicesSuite()
+	snap := loaded(t, s)
+	state := func() published.SaveState {
+		return s.state("PAGE", "START", awaitingChoice, nil, nil, map[string]int{"START": 1})
+	}
+	if err := sameState(snap, state(), state()); err != nil {
+		t.Fatalf("a state is not itself: %v", err)
+	}
+	other := state()
+	other.Attributes = map[string]published.AttributeValues{cm("NADA"): {}}
+	if err := sameState(snap, state(), other); err == nil {
+		t.Error("a state of another component's attributes, though none of them, is the state")
 	}
 }
 

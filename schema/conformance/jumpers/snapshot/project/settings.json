@@ -6,6 +6,9 @@
   "schemaVersion": 1,
   "signals": [
     "broken_traverse",
+    "fork_enter",
+    "fork_exit",
+    "fork_traverse",
     "harbour_exit"
   ]
 }

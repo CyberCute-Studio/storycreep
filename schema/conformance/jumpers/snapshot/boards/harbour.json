@@ -7,6 +7,32 @@
   },
   "connections": [
     {
+      "from": "nd_00000000000000000000000FRK",
+      "fromPort": "bo_0000000000000000000000FRKT",
+      "id": "cn_00000000000000000000000FKJ",
+      "onTraverse": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "fork_traverse"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"fork_traverse\")"
+      },
+      "order": 0,
+      "to": "nd_0000000000000000000000JBRK"
+    },
+    {
       "from": "nd_00000000000000000000000HSD",
       "fromPort": "out",
       "id": "cn_00000000000000000000000SDB",
@@ -68,6 +94,20 @@
       "to": "nd_00000000000000000000000JSD"
     },
     {
+      "from": "nd_00000000000000000000000RND",
+      "fromPort": "bo_0000000000000000000000RNDA",
+      "id": "cn_0000000000000000000000RNDB",
+      "order": 0,
+      "to": "nd_00000000000000000000000RND"
+    },
+    {
+      "from": "nd_00000000000000000000000RND",
+      "fromPort": "bo_0000000000000000000000RNDE",
+      "id": "cn_0000000000000000000000RNDJ",
+      "order": 0,
+      "to": "nd_0000000000000000000000JBRK"
+    },
+    {
       "from": "nd_00000000000000000000HENTRY",
       "fromPort": "out",
       "id": "cn_0000000000000000000000TBRK",
@@ -101,9 +141,86 @@
       },
       "order": 2,
       "to": "nd_0000000000000000000000JBRK"
+    },
+    {
+      "from": "nd_00000000000000000000HENTRY",
+      "fromPort": "out",
+      "id": "cn_0000000000000000000000TFRK",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Fork"
+          }
+        ]
+      },
+      "order": 3,
+      "to": "nd_00000000000000000000000FRK"
     }
   ],
   "nodes": [
+    {
+      "id": "nd_00000000000000000000000FRK",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "fork_enter"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"fork_enter\")"
+      },
+      "onExit": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "fork_exit"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"fork_exit\")"
+      },
+      "outputs": [
+        {
+          "condition": {
+            "ast": {
+              "kind": "lit",
+              "type": "bool",
+              "value": true
+            },
+            "source": "true"
+          },
+          "id": "bo_0000000000000000000000FRKT",
+          "kind": "if",
+          "order": 0
+        }
+      ],
+      "position": {
+        "x": 1000,
+        "y": 0
+      },
+      "type": "branch"
+    },
     {
       "id": "nd_00000000000000000000000HSD",
       "isEnding": false,
@@ -180,6 +297,65 @@
         "nodeId": "nd_00000000000000000000000HSD"
       },
       "type": "jumper"
+    },
+    {
+      "id": "nd_00000000000000000000000RND",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "+=",
+              "target": {
+                "kind": "var",
+                "name": "laps",
+                "ref": "var_00000000000000000000000CNT"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 1
+              }
+            }
+          ]
+        },
+        "source": "laps += 1"
+      },
+      "outputs": [
+        {
+          "condition": {
+            "ast": {
+              "kind": "binary",
+              "left": {
+                "kind": "var",
+                "name": "laps",
+                "ref": "var_00000000000000000000000CNT"
+              },
+              "op": "lte",
+              "right": {
+                "kind": "lit",
+                "type": "int",
+                "value": 100
+              }
+            },
+            "source": "laps <= 100"
+          },
+          "id": "bo_0000000000000000000000RNDA",
+          "kind": "if",
+          "order": 0
+        },
+        {
+          "id": "bo_0000000000000000000000RNDE",
+          "kind": "else",
+          "order": 1
+        }
+      ],
+      "position": {
+        "x": 1200,
+        "y": 0
+      },
+      "type": "branch"
     },
     {
       "id": "nd_0000000000000000000000JBRK",

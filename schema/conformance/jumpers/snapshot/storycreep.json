@@ -19,21 +19,21 @@
   "counts": {
     "boards": 2,
     "components": 0,
-    "connections": 5,
-    "nodes": 7,
-    "variables": 5
+    "connections": 9,
+    "nodes": 9,
+    "variables": 6
   },
   "entry": {
     "boardId": "bd_00000000000000000000000HRB",
     "nodeId": "nd_00000000000000000000HENTRY"
   },
   "files": {
-    "boards/harbour.json": "sha256:8ef1ffd8538a283fd20803cab232835b09c325472909ac7f2d361c7099ae3027",
+    "boards/harbour.json": "sha256:710e550a60c28aa4f76455eda796c574d7082cb7dbabb9b446e182f3655a0259",
     "boards/lighthouse.json": "sha256:1a5650f819c83ecc33d1f37a4420365c67f33d7a9b7191b4150d407c0a1ce2b4",
     "project/component_types.json": "sha256:99fd222be8c0235a4bd75b47aafa57a60a73adef95093c32ded702b67ae34448",
     "project/components.json": "sha256:f9a11a36f3448fe6517b9132601ab9e035db61b95efcdca793242f3d24879e8d",
-    "project/settings.json": "sha256:bc7777690205f7d4cfbf7197ae447faebbace51a864aca54aab4433bdd2bd2f7",
-    "project/variables.json": "sha256:8517cb32ecb441aac8ec8352496b2ec381a9346ff4f0bf716dea1f009b9a88d1"
+    "project/settings.json": "sha256:728f8c28926ada82ce5cc5691e5e6ad5ac1a2a70232e4db53715e87312db97e2",
+    "project/variables.json": "sha256:326e0855dd85d39252f7392faf01112f49b23d162b89fd96397753af086c2858"
   },
   "generator": {
     "name": "storycreep",
@@ -47,7 +47,7 @@
   "schemaVersion": 1,
   "snapshot": {
     "channel": "draft",
-    "contentHash": "sha256:d7147c8e3ccb795cef6cd7b397cefb879d40c04d7a9924a4e8abbb59d421dbe2",
+    "contentHash": "sha256:e409021c899332e6cc7a3776871a65d404a8352571f2b81c754b2dab91e1cf04",
     "pulledAt": "2026-10-25T00:00:00Z"
   }
 }

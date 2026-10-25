@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "variables": [
     {
+      "default": 0,
+      "id": "var_00000000000000000000000CNT",
+      "key": "laps",
+      "scope": "global",
+      "type": "int"
+    },
+    {
       "boardId": "bd_000000000000000000000BEACN",
       "default": 0,
       "id": "var_0000000000000000000000BTMP",

@@ -21,10 +21,10 @@
     "nodeId": "nd_000000000000000000000START"
   },
   "files": {
-    "boards/roll.json": "sha256:906e7d5c22f2bd6219390b06b76287645279e0464ef2e8641812b17fa4552a4d",
+    "boards/roll.json": "sha256:1636a61ecb0ca1c67a1605d9bb03f541450249b7e0139d3b37c42f67642708d1",
     "project/component_types.json": "sha256:99fd222be8c0235a4bd75b47aafa57a60a73adef95093c32ded702b67ae34448",
     "project/components.json": "sha256:f9a11a36f3448fe6517b9132601ab9e035db61b95efcdca793242f3d24879e8d",
-    "project/settings.json": "sha256:a8723b8ce32127cbec9e27e4cd0258f9d1f12aca1566304af9f4e89b68f7098f",
+    "project/settings.json": "sha256:dadc0a1167bfb69e74cced3993d9b199a9a47ff75a885427c2e013dcf80a02d2",
     "project/variables.json": "sha256:fecab8043f24baf870dc8ea1a2bf6d82a6e114b6764deebdc1fe61843f82b238"
   },
   "generator": {
@@ -39,7 +39,7 @@
   "schemaVersion": 1,
   "snapshot": {
     "channel": "release",
-    "contentHash": "sha256:0336bc630729377ed3479b48d87eaa20d9789204f89c901f5306de9174dc5a7a",
+    "contentHash": "sha256:e2e81966a6ea40bac18b21b613d2280b8a1d479fa95e568848c855aa4162f066",
     "id": "snp_000000000000000000000000C2",
     "note": "Conformance suite branches",
     "publishedAt": "2026-10-25T00:00:00Z",

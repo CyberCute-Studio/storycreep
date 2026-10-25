@@ -75,7 +75,9 @@ const (
 // so that a cycle of branches whose conditions always hold, which no element
 // stops, ends rather than runs without end: the branch that the flow would
 // leave once it has left MaxPasses branches in the call ends the flow there,
-// with FlowLoop and ReasonDeadEnd.
+// with FlowLoop and ReasonDeadEnd. One whose connection leads to a jumper
+// without a target is none that the flow would leave, and ends it with
+// JumperBroken alone.
 const MaxPasses = 100
 
 // The expressions of an entity, as an EventError's Expression names them:
@@ -367,7 +369,12 @@ func (r *Runtime) traverse(c *published.Connection) {
 // settle has the flow arrive at the node id, which is no jumper, as a board
 // entry when entry is set or the node's board is not the current node's, and
 // go on through each branch that it passes until it is at rest: awaiting a
-// choice, or ended.
+// choice, or ended. A branch's connection to a jumper without a target ends
+// the flow at the branch, a dead end, as an element's does (leave), and a
+// branch that the flow would leave once it has left MaxPasses branches in
+// the call ends it there with FlowLoop, once its connection's destination is
+// resolved, so that a branch whose connection leads to a jumper without a
+// target, which the flow does not leave, reports JumperBroken alone (§5.8.5).
 func (r *Runtime) settle(id string, entry bool) {
 	for {
 		next := r.arrive(id, entry)
@@ -379,6 +386,12 @@ func (r *Runtime) settle(id string, entry bool) {
 			r.end(ReasonDeadEnd)
 			return
 		}
+		if r.passes >= MaxPasses {
+			r.fail(FlowLoop, r.current)
+			r.end(ReasonDeadEnd)
+			return
+		}
+		r.passes++
 		r.exit()
 		r.traverse(next)
 		id, entry = dest, false
@@ -451,11 +464,11 @@ func (r *Runtime) hold(cs []*published.Connection) []*published.Connection {
 // branch picks the output of the branch n, the current node: its first if or
 // elseif whose condition holds, or else its else, and returns the first
 // connection of the output whose condition holds, which the flow passes on
-// by, evaluating the outputs' conditions, and then the connections', in
-// order until one holds, and none after it, or ends the flow at the branch,
-// at a dead end when it picks no output or none leaves the output, or at no
-// choices when no connection's condition holds, or after MaxPasses branches
-// in the call, and returns nil.
+// by, unless settle ends it there, evaluating the outputs' conditions, and
+// then the connections', in order until one holds, and none after it, or
+// ends the flow at the branch, at a dead end when it picks no output or none
+// leaves the output, or at no choices when no connection's condition holds,
+// and returns nil.
 func (r *Runtime) branch(n *published.Branch) *published.Connection {
 	var picked *published.BranchOutput
 	for i := range n.Outputs {
@@ -469,24 +482,13 @@ func (r *Runtime) branch(n *published.Branch) *published.Connection {
 		r.end(ReasonDeadEnd)
 		return nil
 	}
-	var next *published.Connection
 	for _, c := range r.s.nodes[n.ID].ports[picked.ID] {
 		if r.holds(c.ID, c.Condition) {
-			next = c
-			break
+			return c
 		}
 	}
-	switch {
-	case next == nil:
-		r.end(ReasonNoChoices)
-		return nil
-	case r.passes >= MaxPasses:
-		r.fail(FlowLoop, n.ID)
-		r.end(ReasonDeadEnd)
-		return nil
-	}
-	r.passes++
-	return next
+	r.end(ReasonNoChoices)
+	return nil
 }
 
 // end ends the flow at the current node, for the reason (§5.8.5): its ready,

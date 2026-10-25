@@ -2,8 +2,6 @@ package flow
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -563,14 +561,12 @@ func (s *suite) files() (map[string][]byte, error) {
 	hashes := make(map[string]published.Hash)
 	var all strings.Builder
 	for _, path := range slices.Sorted(maps.Keys(files)) {
-		sum := sha256.Sum256(files[path])
-		hashes[path] = published.Hash("sha256:" + hex.EncodeToString(sum[:]))
+		hashes[path] = hashOf(files[path])
 		all.WriteString(path + " " + string(hashes[path]) + "\n")
 	}
 	// The content hash is the server's (plan item 78), which a runtime does
 	// not check: the fixtures' is the hash of their files' paths and hashes.
-	sum := sha256.Sum256([]byte(all.String()))
-	contentHash := published.Hash("sha256:" + hex.EncodeToString(sum[:]))
+	contentHash := hashOf([]byte(all.String()))
 	var snapshot published.Snapshot = &published.ReleaseSnapshot{ContentHash: contentHash,
 		ID: mnemonicID(ids.Snapshot, s.code), Note: "Conformance suite " + s.name,
 		PublishedAt: "2026-10-25T00:00:00Z", Version: "1.0.0"}
@@ -849,8 +845,10 @@ func viewOf(r *Runtime) viewJSON {
 	return v
 }
 
-// sameState returns why got, a state of s, is not want, each value compared
-// as its declaration types it, or nil.
+// sameState returns why got, a state of s, is not want, or nil: each key,
+// the variables', the components', and each component's attributes', and
+// each value compared as its declaration types it
+// (schema/conformance/README.md).
 func sameState(s *Snapshot, got, want published.SaveState) error {
 	type plain struct {
 		Cursor                                 *published.Cursor
@@ -875,11 +873,11 @@ func sameState(s *Snapshot, got, want published.SaveState) error {
 			return fmt.Errorf("the variable %s is %v; want %v", id, a, b)
 		}
 	}
-	if len(got.Attributes) != len(want.Attributes) {
+	if !slices.Equal(slices.Sorted(maps.Keys(got.Attributes)), slices.Sorted(maps.Keys(want.Attributes))) {
 		return errors.New("the attributes' components differ")
 	}
 	for c, values := range want.Attributes {
-		if len(got.Attributes[c]) != len(values) {
+		if !slices.Equal(slices.Sorted(maps.Keys(got.Attributes[c])), slices.Sorted(maps.Keys(values))) {
 			return fmt.Errorf("the attributes of %s differ", c)
 		}
 		for a, v := range values {

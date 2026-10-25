@@ -42,6 +42,12 @@ import (
 // runs.
 var ErrLoad = errors.New("flow: not a snapshot that a runtime runs")
 
+// ErrASTUnsupported is Load's error, beside ErrLoad, for a snapshot whose
+// astVersion is newer than expr.ASTVersion, the runtime's ast_unsupported
+// (FR-EXPR-04 AC4, PRD §6.4), which a newer runtime may run, so that a
+// caller can tell it from a snapshot that no runtime runs.
+var ErrASTUnsupported = errors.New("ast_unsupported")
+
 // Snapshot is a published snapshot, loaded and checked (Load), which a
 // Runtime runs and never changes, so that several runtimes may run one at
 // once.
@@ -97,15 +103,15 @@ const out = "out"
 // node's tags compared as input.FoldCase folds them. Beyond that list, it
 // checks what the runtime relies on: that the snapshot's astVersion is at
 // most expr.ASTVersion, which a newer one is refused for as the runtime's
-// ast_unsupported, and at least the highest version of the constructs that
-// its ASTs use (expr.VersionOf), as every runtime trusts it to be
-// (FR-EXPR-04); that a text's or a label's value is of a variable that an
-// expression of its board reads (FR-TEXT-02, §5.8.3), or of a runtime
-// attribute; and that every value is of its declaration's type, a string of
-// at most semantics.MaxStringLength characters without a NUL, as the
-// language's are (valueOf). It is no validator of the schemas, whose
-// patterns and bounds published.Decode does not check. Its error wraps
-// ErrLoad, and that of the file that it reads,
+// ast_unsupported, with an error that wraps ErrASTUnsupported too, and at
+// least the highest version of the constructs that its ASTs use
+// (expr.VersionOf), as every runtime trusts it to be (FR-EXPR-04); that a
+// text's or a label's value is of a variable that an expression of its board
+// reads (FR-TEXT-02, §5.8.3), or of a runtime attribute; and that every value
+// is of its declaration's type, a string of at most semantics.MaxStringLength
+// characters without a NUL, as the language's are (valueOf). It is no
+// validator of the schemas, whose patterns and bounds published.Decode does
+// not check. Its error wraps ErrLoad, and that of the file that it reads,
 // and of a snapshot that is wrong in several ways it is always the same one,
 // as it reads the files and checks them in one order. It reads every board's
 // file, where the Godot runtime reads one only once the flow enters its
@@ -149,7 +155,7 @@ func (l *loader) load(fsys fs.FS) error {
 	}
 	m := &s.manifest
 	if m.ASTVersion > expr.ASTVersion {
-		return fmt.Errorf("ast_unsupported: the snapshot's astVersion is %d, and this runtime supports %d",
+		return fmt.Errorf("%w: the snapshot's astVersion is %d, and this runtime supports %d", ErrASTUnsupported,
 			m.ASTVersion, expr.ASTVersion)
 	}
 	for _, path := range slices.Sorted(maps.Keys(m.Files)) {
@@ -196,7 +202,7 @@ func (l *loader) load(fsys fs.FS) error {
 	// they stream, so that every file that the manifest lists is its bytes'.
 	for _, path := range slices.Sorted(maps.Keys(m.Files)) {
 		if !l.read[path] {
-			if err := hashed(fsys, m.Files, path); err != nil {
+			if err := hashed(fsys, m.Files, path, io.Discard); err != nil {
 				return err
 			}
 		}
@@ -282,24 +288,23 @@ func isFilePath(path string) bool {
 }
 
 // contents returns the bytes of the file of the path in fsys, once it has
-// checked that the manifest's files list it, with the hash of its bytes.
+// checked that the manifest's files list it with the hash of its bytes
+// (hashed).
 func contents(fsys fs.FS, files map[string]published.Hash, path string) ([]byte, error) {
-	if _, ok := files[path]; !ok {
-		return nil, fmt.Errorf("%s is not among the manifest's files", path)
-	}
-	data, err := fs.ReadFile(fsys, path)
-	if err != nil {
+	var data bytes.Buffer
+	if err := hashed(fsys, files, path, &data); err != nil {
 		return nil, err
 	}
-	return data, checkHash(files, path, bytes.NewReader(data))
+	return data.Bytes(), nil
 }
 
 // hashed checks that the manifest's files list the file of the path in fsys
-// with the hash of its bytes, as contents does, but reads them as they
-// stream, without holding them, as an asset's, which the loader does not
-// decode, may be large.
-func hashed(fsys fs.FS, files map[string]published.Hash, path string) error {
-	if _, ok := files[path]; !ok {
+// with the hash of its bytes, which it reads as they stream and writes to w,
+// so that it holds none of them when w is io.Discard, as of an asset, which
+// the loader does not decode, and which may be large.
+func hashed(fsys fs.FS, files map[string]published.Hash, path string, w io.Writer) error {
+	want, ok := files[path]
+	if !ok {
 		return fmt.Errorf("%s is not among the manifest's files", path)
 	}
 	f, err := fsys.Open(path)
@@ -307,20 +312,20 @@ func hashed(fsys fs.FS, files map[string]published.Hash, path string) error {
 		return err
 	}
 	defer f.Close()
-	return checkHash(files, path, f)
-}
-
-// checkHash checks that the bytes that r reads, of the file of the path, have
-// the hash that the manifest's files list of it.
-func checkHash(files map[string]published.Hash, path string, r io.Reader) error {
 	h := sha256.New()
-	if _, err := io.Copy(h, r); err != nil {
+	if _, err := io.Copy(io.MultiWriter(h, w), f); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	if got := published.Hash("sha256:" + hex.EncodeToString(h.Sum(nil))); got != files[path] {
-		return fmt.Errorf("%s: its hash is %s, not the manifest's %q", path, got, files[path])
+	if got := fileHash(h.Sum(nil)); got != want {
+		return fmt.Errorf("%s: its hash is %s, not the manifest's %q", path, got, want)
 	}
 	return nil
+}
+
+// fileHash returns the hash of a file whose SHA-256 is sum as the manifest
+// lists it (published.Hash): sha256: and the sum's lowercase hexadecimal.
+func fileHash(sum []byte) published.Hash {
+	return published.Hash("sha256:" + hex.EncodeToString(sum))
 }
 
 // readFile reads the file of the path in fsys into v, with published.Decode,

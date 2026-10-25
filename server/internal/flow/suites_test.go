@@ -223,7 +223,8 @@ func branchesSuite() *suite {
 					outputs: []fixtureOutput{{id: "CYA", kind: published.OutputIf, condition: "score < 3"},
 						{id: "CYE", kind: published.OutputElse}}},
 				{id: "END", typ: element, ending: true, text: "Looped {score} times."},
-				{id: "SPN", typ: branch, outputs: []fixtureOutput{{id: "SPT", kind: published.OutputIf, condition: "true"}}},
+				{id: "SPN", typ: branch, onExit: `signal("spn_exit")`,
+					outputs: []fixtureOutput{{id: "SPT", kind: published.OutputIf, condition: "true"}}},
 				{id: "CHA", typ: branch, outputs: []fixtureOutput{{id: "CAT", kind: published.OutputIf, condition: "true"}}},
 				{id: "CHB", typ: branch, outputs: []fixtureOutput{{id: "CBT", kind: published.OutputIf, condition: "true"}}},
 			},
@@ -257,13 +258,14 @@ func branchesSuite() *suite {
 	started := step(start("", ""), events(enter("START"), ready("START")), awaiting("START", "Roll the dice.",
 		false, "HGH", "High", "MDD", "Mid", "SMA", "Low", "NEC", "No else", "NCC", "Unconnected", "AFC",
 		"All false", "RPT", "Loop", "FVR", "Forever", "CHN", "Chain"))
-	// spin are the events of a pass round the cycle of the branch SPN.
+	// spin are the events of a choice of the cycle of the branch SPN: its
+	// passes, each its on-exit, and then its end, after its on-exit too.
 	spin := events(enter("SPN"))
 	for range MaxPasses {
-		spin = append(spin, exit("SPN"), enter("SPN"))
+		spin = append(spin, signal("spn_exit"), exit("SPN"), enter("SPN"))
 	}
-	spin = append(events(exit("START")), append(spin, fault(FlowLoop, nd("SPN"), ""), ready("SPN"), exit("SPN"),
-		end(ReasonDeadEnd))...)
+	spin = append(events(exit("START")), append(spin, fault(FlowLoop, nd("SPN"), ""), ready("SPN"),
+		signal("spn_exit"), exit("SPN"), end(ReasonDeadEnd))...)
 	s.scenarios = []scenarioJSON{
 		{
 			Note: "FR-EDIT-04: a branch picks its first output whose condition holds, and goes on by itself by " +
@@ -316,7 +318,7 @@ func branchesSuite() *suite {
 		},
 		{
 			Note: "a cycle of branches whose conditions always hold ends once the flow has passed through 100 " +
-				"branches in one call: flow_loop, then a dead end at the branch",
+				"branches in one call: flow_loop, then a dead end at the branch, after its on-exit",
 			Steps: []stepJSON{started, withState(step(choose("FVR"), spin, ended("SPN", "")),
 				s.state("RANK", "SPN", endedPhase, nil, nil, map[string]int{"START": 1, "SPN": MaxPasses + 1}))},
 		},
@@ -344,13 +346,15 @@ func branchesSuite() *suite {
 
 // jumpersSuite is of jumpers to the same board and to another, board entry
 // and resetOnEnter, board-scoped variables of one key on two boards, start,
-// goto, and reset, a jumper without a target, and load_state. Its snapshot
-// is a draft, which alone may have a jumper without a target.
+// goto, and reset, a jumper without a target, of an element's connection and
+// of a branch's, and load_state. Its snapshot is a draft, which alone may
+// have a jumper without a target.
 func jumpersSuite() *suite {
 	s := &suite{
 		name: "jumpers", code: "C3", project: "Jumpers", draft: true,
 		variables: []fixtureVar{
 			{id: "TRPS", key: "trips", typ: value.Int, def: 0},
+			{id: "CNT", key: "laps", typ: value.Int, def: 0},
 			{id: "HTMP", key: "temp", typ: value.Int, def: 0, board: "HRB", reset: true},
 			{id: "HKEEP", key: "keep", typ: value.Int, def: 0, board: "HRB"},
 			{id: "BTMP", key: "temp", typ: value.Int, def: 0, board: "BEACN", reset: true},
@@ -365,12 +369,21 @@ func jumpersSuite() *suite {
 					{id: "JSD", typ: jumper, target: [2]string{"HRB", "HSD"}},
 					{id: "JBC", typ: jumper, target: [2]string{"BEACN", "BENTRY"}},
 					{id: "JBRK", typ: jumper},
+					{id: "FRK", typ: branch, onEnter: `signal("fork_enter")`, onExit: `signal("fork_exit")`,
+						outputs: []fixtureOutput{{id: "FRKT", kind: published.OutputIf, condition: "true"}}},
+					{id: "RND", typ: branch, onEnter: "laps += 1",
+						outputs: []fixtureOutput{{id: "RNDA", kind: published.OutputIf, condition: "laps <= 100"},
+							{id: "RNDE", kind: published.OutputElse}}},
 				},
 				connections: []fixtureConnection{
 					{id: "TSD", from: "HENTRY", to: "JSD", label: "Side"},
 					{id: "TBC", from: "HENTRY", to: "JBC", label: "Beacon", onTraverse: "trips += 1"},
 					{id: "TBRK", from: "HENTRY", to: "JBRK", label: "Broken", onTraverse: `signal("broken_traverse")`},
+					{id: "TFRK", from: "HENTRY", to: "FRK", label: "Fork"},
 					{id: "SDB", from: "HSD", to: "HENTRY"},
+					{id: "FKJ", from: "FRK", port: "FRKT", to: "JBRK", onTraverse: `signal("fork_traverse")`},
+					{id: "RNDB", from: "RND", port: "RNDA", to: "RND"},
+					{id: "RNDJ", from: "RND", port: "RNDE", to: "JBRK"},
 				}},
 			{id: "BEACN", slug: "lighthouse", name: "Lighthouse", entry: "BENTRY",
 				nodes: []fixtureNode{
@@ -384,8 +397,16 @@ func jumpersSuite() *suite {
 	}
 	harbour := func(temp, keep int) viewJSON {
 		return awaiting("HENTRY", fmt.Sprintf("Harbour: temp %d, keep %d.", temp, keep), false, "TSD", "Side", "TBC",
-			"Beacon", "TBRK", "Broken")
+			"Beacon", "TBRK", "Broken", "TFRK", "Fork")
 	}
+	// laps are the events of a start at the branch RND, which passes through
+	// itself 100 times, and at its 101st entry takes its else, whose
+	// connection leads to the jumper without a target.
+	laps := events(enter("RND"))
+	for range MaxPasses {
+		laps = append(laps, exit("RND"), enter("RND"))
+	}
+	laps = append(laps, fault(JumperBroken, nd("JBRK"), ""), ready("RND"), exit("RND"), end(ReasonDeadEnd))
 	beacon := func(temp, keep, trips int) viewJSON {
 		return awaiting("BENTRY", fmt.Sprintf("Lighthouse: temp %d, keep %d, trips %d.", temp, keep, trips), true,
 			"THM", "Home")
@@ -444,6 +465,24 @@ func jumpersSuite() *suite {
 				signal("harbour_exit"), exit("HENTRY"), end(ReasonDeadEnd)),
 				ended("HENTRY", "Harbour: temp 1, keep 1.")), s.state("HRB", "HENTRY", endedPhase,
 				map[string]any{"HTMP": 1, "HKEEP": 1}, nil, map[string]int{"HENTRY": 1}))},
+		},
+		{
+			Note: "a branch whose connection leads to a jumper without a target is jumper_broken once its on-enter " +
+				"has run and it has picked the connection: the connection's on-traverse does not run, and the flow " +
+				"ends at the branch, a dead end: its ready, then its on-exit, then the end",
+			Steps: []stepJSON{started, withState(step(choose("TFRK"), events(signal("harbour_exit"), exit("HENTRY"),
+				enter("FRK"), signal("fork_enter"), fault(JumperBroken, nd("JBRK"), ""), ready("FRK"),
+				signal("fork_exit"), exit("FRK"), end(ReasonDeadEnd)), ended("FRK", "")),
+				s.state("HRB", "FRK", endedPhase, map[string]any{"HTMP": 1, "HKEEP": 1}, nil,
+					map[string]int{"HENTRY": 1, "FRK": 1}))},
+		},
+		{
+			Note: "PRD §5.8.5: a branch that the flow would leave once it has passed through 100 branches in the " +
+				"call, but whose connection leads to a jumper without a target, is jumper_broken alone, not " +
+				"flow_loop: the destination is resolved first, and the flow does not leave the branch",
+			Steps: []stepJSON{withState(step(start("", nd("RND")), laps, ended("RND", "")),
+				s.state("HRB", "RND", endedPhase, map[string]any{"CNT": MaxPasses + 1}, nil,
+					map[string]int{"RND": MaxPasses + 1}))},
 		},
 		{
 			Note: "start() or goto() of a jumper without a target is jumper_broken, and moves the flow nowhere, " +
