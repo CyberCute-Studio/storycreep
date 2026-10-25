@@ -66,7 +66,7 @@ func FuzzParse(f *testing.F) {
 					}
 				}
 				from := r.Start
-				for _, c := range childrenOf(n) {
+				for _, c := range children(n) {
 					check(c, Range{from, r.End})
 					from = c.Range().End
 				}

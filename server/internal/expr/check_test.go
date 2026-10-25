@@ -3,6 +3,7 @@ package expr
 import (
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -397,8 +398,9 @@ func TestCheckResolves(t *testing.T) {
 
 // TestCheckRefuses checks Check's errors for what is its caller's mistake
 // rather than the source's: a context that is none, a board that is not a
-// board's ID, and what is not an AST that Parse returns of the context, each
-// an error that is no *Error. A nil project names nothing.
+// board's ID, and what no AST that Parse returns of the context holds, among
+// them a literal that Encode refuses, each an error that is no *Error, met in
+// the first pass's order. A nil project names nothing.
 func TestCheckRefuses(t *testing.T) {
 	t.Parallel()
 	one := func() *Lit { return &Lit{Type: value.Int, Int: 1} }
@@ -431,6 +433,14 @@ func TestCheckRefuses(t *testing.T) {
 		{"a variable as a statement", &Script{Statements: []Node{&Var{Key: "x"}}}, ContextScript, "", ErrAST},
 		{"an unknown operator", &Binary{Op: "xor", Left: one(), Right: one()}, ContextCondition, "", ErrAST},
 		{"an unknown literal type", &Lit{Type: "text"}, ContextCondition, "", ErrAST},
+		{"an int beyond 2^53 - 1", &Binary{Op: OpGt, Left: &Lit{Type: value.Int, Int: 1 << 60}, Right: one()},
+			ContextCondition, "", ErrAST},
+		{"a float that is not finite", &Lit{Type: value.Float, Float: math.NaN()}, ContextCondition, "", ErrAST},
+		{"a string that holds a NUL", &Lit{Type: value.String, Str: "a\x00"}, ContextCondition, "", ErrAST},
+		{"a string that is not UTF-8", &Lit{Type: value.String, Str: "\xff"}, ContextCondition, "", ErrAST},
+		{"a string of too many characters", &Lit{Type: value.String, Str: strings.Repeat("a", MaxStringLength+1)},
+			ContextCondition, "", ErrAST},
+		{"a variable of no scope", &Var{Scope: "cmp", Key: "x"}, ContextCondition, "", ErrAST},
 		{"a nil 9th argument", &Call{Function: "min", Args: nine}, ContextCondition, "", ErrAST},
 	} {
 		err := Check(c.n, c.ctx, nil, c.board)
@@ -438,6 +448,18 @@ func TestCheckRefuses(t *testing.T) {
 		if !errors.Is(err, c.want) || errors.As(err, &e) {
 			t.Errorf("%s: Check = %v; want an error that wraps %v, and no *Error", c.name, err, c.want)
 		}
+	}
+	// The first pass meets what is no AST's as it meets the limits, each at
+	// its node, so that a script beyond its statements' limit is
+	// too_many_statements before its first statement, which is nil, is read.
+	statements := []Node{nil}
+	for range MaxStatements {
+		statements = append(statements, &Call{Function: "signal", Args: []Node{&Lit{Type: value.String, Str: "s"}},
+			Src: Range{1, 2}})
+	}
+	err := Check(&Script{Statements: statements}, ContextScript, nil, "")
+	if want := (&Error{Code: TooManyStatements, Range: Range{1, 2}}); fmt.Sprint(err) != fmt.Sprint(want) {
+		t.Errorf("Check of a script of a nil statement and %d more = %v; want %v", MaxStatements, err, want)
 	}
 	if _, err := Compile("1 > 0", ContextCondition, nil, ""); err != nil {
 		t.Errorf("Compile of a source that names nothing against no project: %v", err)
@@ -480,11 +502,46 @@ func TestNewProject(t *testing.T) {
 			{ID: atrAge, Key: "age", Type: value.Int, Options: []string{"a"}}}}}, nil},
 		{"an attribute of no type", nil, []Component{{ID: cmpElara, Key: "c", Attributes: []Attribute{
 			{ID: atrAge, Key: "age", Type: "date"}}}}, nil},
+		{"a runtime text", nil, []Component{{ID: cmpElara, Key: "c", Attributes: []Attribute{
+			{ID: atrBio, Key: "bio", Type: value.Text, Runtime: true}}}}, nil},
+		{"a definition twice of a component", nil, []Component{{ID: cmpElara, Key: "c", Attributes: []Attribute{attr,
+			{ID: atrTrust, Key: "faith", Type: value.Int, Runtime: true}}}}, nil},
+		{"a definition of two types", nil, []Component{{ID: cmpElara, Key: "c", Attributes: []Attribute{attr}},
+			{ID: testID(ids.Component, 9), Key: "d", Attributes: []Attribute{
+				{ID: atrTrust, Key: "trust", Type: value.Float, Runtime: true}}}}, nil},
+		{"a definition of two keys", nil, []Component{{ID: cmpElara, Key: "c", Attributes: []Attribute{attr}},
+			{ID: testID(ids.Component, 9), Key: "d", Attributes: []Attribute{
+				{ID: atrTrust, Key: "faith", Type: value.Int, Runtime: true}}}}, nil},
+		{"a definition runtime of one component only", nil, []Component{{ID: cmpElara, Key: "c",
+			Attributes: []Attribute{attr}}, {ID: testID(ids.Component, 9), Key: "d", Attributes: []Attribute{
+			{ID: atrTrust, Key: "trust", Type: value.Int}}}}, nil},
+		{"an enum's options unalike", nil, []Component{
+			{ID: cmpElara, Key: "c", Attributes: []Attribute{
+				{ID: atrMood, Key: "mood", Type: value.Enum, Runtime: true, Options: []string{"a", "b"}}}},
+			{ID: testID(ids.Component, 9), Key: "d", Attributes: []Attribute{
+				{ID: atrMood, Key: "mood", Type: value.Enum, Runtime: true, Options: []string{"b", "a"}}}}}, nil},
 		{"a variable's ID for a node", nil, nil, []BoardNode{{ID: varTrust}}},
 	} {
 		if _, err := NewProject(c.variables, c.components, c.nodes); !errors.Is(err, ErrProject) {
 			t.Errorf("%s: NewProject = %v; want an error that wraps ErrProject", c.name, err)
 		}
+	}
+	// The components of a type share its attribute definitions, so that
+	// elara.trust and mira.trust are one definition of two components.
+	cmpMira := testID(ids.Component, 9)
+	shared, err := NewProject(nil, []Component{{ID: cmpElara, Key: "elara", Attributes: []Attribute{attr}},
+		{ID: cmpMira, Key: "mira", Attributes: []Attribute{attr}}}, nil)
+	if err != nil {
+		t.Fatalf("NewProject of two components of one type: %v", err)
+	}
+	n, err := Compile("elara.trust > mira.trust", ContextCondition, shared, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	elara, mira := n.(*Binary).Left.(*Attr), n.(*Binary).Right.(*Attr)
+	if elara.Ref != cmpElara || mira.Ref != cmpMira || elara.Attribute != atrTrust || mira.Attribute != atrTrust {
+		t.Errorf("elara.trust and mira.trust resolve to %s, %s and %s, %s; want %s, %s and %s, %[6]s", elara.Ref,
+			elara.Attribute, mira.Ref, mira.Attribute, cmpElara, atrTrust, cmpMira)
 	}
 	variables := []Variable{v(varTrust, "trust", value.Int, "")}
 	components := []Component{{ID: cmpElara, Key: "elara", Attributes: []Attribute{
@@ -586,6 +643,22 @@ func TestVersionOf(t *testing.T) {
 	if v := VersionOf(&Binary{Op: OpAnd, Left: shared, Right: shared}, cycle, nil, (*Call)(nil)); v != 1 {
 		t.Errorf("VersionOf of shared, cyclic, and nil nodes = %d; want 1", v)
 	}
+	// A node of a type of no kind counts for nothing, nor do its children,
+	// though a map cannot take it as a key, nor does a node at a place that
+	// its kind cannot be at.
+	odd := uncomparable{Lit: &Lit{Type: value.Bool}}
+	target := &Assign{Op: OpAssign, Target: &Call{Function: "trim", Args: []Node{&Lit{Type: value.String}}},
+		Value: &Lit{Type: value.String}}
+	if v := VersionOf(odd, &Binary{Op: OpAnd, Left: odd, Right: shared}, &Script{Statements: []Node{target}}); v != 1 {
+		t.Errorf("VersionOf of nodes of no kind, and of a call of trim as a target = %d; want 1", v)
+	}
+}
+
+// uncomparable is a node of a type that is none of the kinds', which a map
+// cannot take as a key, as another package may declare one.
+type uncomparable struct {
+	*Lit
+	values []int
 }
 
 // TestNear checks the near matches that an Error suggests, as the corpus's
@@ -606,7 +679,11 @@ func TestNear(t *testing.T) {
 		{"abcdef", []string{"badcfe"}, nil},
 		{"abcdefghi", []string{"badcfeghi", "badcfehgi"}, []string{"badcfeghi"}},
 		{"ca", []string{"abc"}, nil},
+		{"conitns", []string{"contains"}, nil},
 		{"same", []string{"sane", "sane", "same_"}, []string{"same_", "sane"}},
+		// A longer candidate before a shorter one, whose distance reads the
+		// rows that the longer one's left.
+		{"mood", []string{"moody", "molds", "mod", "mold"}, []string{"mod", "mold", "moody"}},
 		{"q", nil, nil},
 	} {
 		if got := near(c.name, c.candidates); !slices.Equal(got, c.want) {
@@ -618,11 +695,14 @@ func TestNear(t *testing.T) {
 		want int
 	}{
 		{"", "", 0}, {"a", "", 1}, {"", "abc", 3}, {"kitten", "sitting", 3}, {"ab", "ba", 1}, {"ca", "abc", 3},
-		{"abcd", "badc", 2}, {"trust", "trsut", 1},
+		{"abcd", "badc", 2}, {"trust", "trsut", 1}, {"conitns", "contains", 3},
 	} {
-		// The distance, or one beyond the limit when it is beyond it.
+		// The distance, or one beyond the limit when it is beyond it, with
+		// rows that a longer string's distance left behind, as near reuses
+		// them.
+		rows := [3][]int{{9, 9, 9, 9, 9, 9, 9, 9, 9, 9}, {9, 9, 9, 9, 9, 9, 9, 9, 9, 9}, {9, 9, 9, 9, 9, 9, 9, 9, 9, 9}}
 		for limit := range 4 {
-			got := distance(c.a, c.b, limit)
+			got := distance(c.a, c.b, limit, &rows)
 			if c.want <= limit && got != c.want || c.want > limit && got <= limit {
 				t.Errorf("distance(%q, %q, %d) = %d; want %d, or more than %d if it is", c.a, c.b, limit, got,
 					c.want, limit)

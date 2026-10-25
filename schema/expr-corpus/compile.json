@@ -160,6 +160,53 @@
             "runtime": true
           }
         ]
+      },
+      {
+        "id": "cmp_01HQ8ZC04K7MWVND2CQJ4RT9XB",
+        "key": "mira",
+        "attributes": [
+          {
+            "id": "atr_01HQ8ZR01K7MWVND2CQJ4RT9XB",
+            "key": "trust",
+            "type": "int",
+            "runtime": true
+          },
+          {
+            "id": "atr_01HQ8ZR02K7MWVND2CQJ4RT9XB",
+            "key": "mood",
+            "type": "enum",
+            "runtime": true,
+            "options": ["calm", "angry", "wary"]
+          },
+          {
+            "id": "atr_01HQ8ZR03K7MWVND2CQJ4RT9XB",
+            "key": "bio",
+            "type": "text"
+          },
+          {
+            "id": "atr_01HQ8ZR04K7MWVND2CQJ4RT9XB",
+            "key": "age",
+            "type": "int"
+          },
+          {
+            "id": "atr_01HQ8ZR05K7MWVND2CQJ4RT9XB",
+            "key": "afraid",
+            "type": "bool",
+            "runtime": true
+          },
+          {
+            "id": "atr_01HQ8ZR06K7MWVND2CQJ4RT9XB",
+            "key": "title",
+            "type": "string",
+            "runtime": true
+          },
+          {
+            "id": "atr_01HQ8ZR07K7MWVND2CQJ4RT9XB",
+            "key": "height",
+            "type": "float",
+            "runtime": true
+          }
+        ]
       }
     ],
     "nodes": [
@@ -640,6 +687,17 @@
       }
     },
     {
+      "note": "a bare key that a component and another board's variable have is component_not_value, the component before the variable out of scope",
+      "context": "condition",
+      "board": "bd_01HQ8ZA01K7MWVND2CQJ4RT9XB",
+      "source": "captain",
+      "error": {
+        "code": "component_not_value",
+        "start": 0,
+        "end": 7
+      }
+    },
+    {
       "note": "an attribute is named by its component's ID, its definition's ID, and component.attribute",
       "context": "condition",
       "board": "bd_01HQ8ZA01K7MWVND2CQJ4RT9XB",
@@ -699,6 +757,28 @@
           "kind": "lit",
           "type": "int",
           "value": 3
+        }
+      }
+    },
+    {
+      "note": "PRD §5.3: the components of a type share its attribute definitions, so that elara.trust and mira.trust name one definition of two components",
+      "context": "condition",
+      "board": "bd_01HQ8ZA01K7MWVND2CQJ4RT9XB",
+      "source": "elara.trust > mira.trust",
+      "ast": {
+        "kind": "binary",
+        "left": {
+          "attribute": "atr_01HQ8ZR01K7MWVND2CQJ4RT9XB",
+          "kind": "attr",
+          "name": "elara.trust",
+          "ref": "cmp_01HQ8ZC01K7MWVND2CQJ4RT9XB"
+        },
+        "op": "gt",
+        "right": {
+          "attribute": "atr_01HQ8ZR01K7MWVND2CQJ4RT9XB",
+          "kind": "attr",
+          "name": "mira.trust",
+          "ref": "cmp_01HQ8ZC04K7MWVND2CQJ4RT9XB"
         }
       }
     },
@@ -2663,6 +2743,17 @@
         "code": "unknown_function",
         "start": 0,
         "end": 3
+      }
+    },
+    {
+      "note": "the distance is the optimal string alignment distance, which edits no character twice: conitns is three edits from contains, though a swap and a character inserted between the swapped ones would be two",
+      "context": "condition",
+      "board": "bd_01HQ8ZA01K7MWVND2CQJ4RT9XB",
+      "source": "conitns(player_name, \"a\")",
+      "error": {
+        "code": "unknown_function",
+        "start": 0,
+        "end": 7
       }
     },
     {

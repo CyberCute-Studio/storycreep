@@ -26,13 +26,14 @@ func near(name string, candidates []string) []string {
 		d int
 	}
 	var matches []match
+	var rows [3][]int
 	lower := strings.ToLower(name)
 	for _, c := range candidates {
 		// The distance is at least the difference of the lengths.
 		if abs(len(c)-len(name)) > limit {
 			continue
 		}
-		if d := distance(lower, strings.ToLower(c), limit); d <= limit {
+		if d := distance(lower, strings.ToLower(c), limit, &rows); d <= limit {
 			matches = append(matches, match{c, d})
 		}
 	}
@@ -56,13 +57,14 @@ func abs(x int) int {
 }
 
 // distance returns the optimal string alignment distance of a and b, or a
-// distance above limit once it is certain to be more than limit.
-func distance(a, b string, limit int) int {
+// distance above limit once it is certain to be more than limit. It keeps
+// the distances in rows, which it grows to b's length, so that one near
+// reuses them for each of its candidates.
+func distance(a, b string, limit int, rows *[3][]int) int {
 	// rows are three rows of the distances of a's prefixes from b's: the
 	// one before the previous one, the previous one, and the current one.
-	var rows [3][]int
 	for i := range rows {
-		rows[i] = make([]int, len(b)+1)
+		rows[i] = slices.Grow(rows[i][:0], len(b)+1)[:len(b)+1]
 	}
 	for j := range rows[1] {
 		rows[1][j] = j

@@ -164,74 +164,49 @@ var (
 // and the built-ins that they use, or 1, the first, for none, so that a
 // project that uses no construct of a newer version stays loadable by an
 // older runtime. It reads ASTs that Check accepted, of constructs that this
-// package knows; any other construct counts for nothing, and a node that it
-// reaches twice once, so that it never reads without end.
+// package knows; a node that is none of an AST's at its place, as a nil one
+// or one of a type of another package, counts for nothing, nor do its
+// children, and a node that it reaches twice once, so that it never reads
+// without end.
 func VersionOf(asts ...Node) int {
+	type visit struct {
+		n  Node
+		at place
+	}
 	v := 1
 	seen := make(map[Node]bool)
-	stack := append([]Node(nil), asts...)
+	var stack []visit
+	for _, n := range asts {
+		stack = append(stack, visit{n, atRoot})
+	}
 	for len(stack) > 0 {
-		n := stack[len(stack)-1]
+		top := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if n == nil || seen[n] {
+		// check comes first, since a type of another package may be one that
+		// a map cannot take as a key.
+		if check(top.n, top.at) != nil || seen[top.n] {
 			continue
 		}
-		seen[n] = true
-		v = max(v, versionOf(n))
-		stack = append(stack, childrenOf(n)...)
+		seen[top.n] = true
+		v = max(v, versionOf(top.n))
+		eachChild(top.n, func(c Node, at place) { stack = append(stack, visit{c, at}) })
 	}
 	return v
 }
 
-// versionOf returns the ast_version of n's own construct: of its kind, and of
-// its operator or its function, if it has one, or 0 for a nil one.
+// versionOf returns the ast_version of n's own construct, a node that is not
+// nil: of its kind, and of its operator or its function, if it has one.
 func versionOf(n Node) int {
 	v := kindVersions[n.Kind()]
 	switch n := n.(type) {
 	case *Unary:
-		if n != nil {
-			v = max(v, unaryVersions[n.Op])
-		}
+		v = max(v, unaryVersions[n.Op])
 	case *Binary:
-		if n != nil {
-			v = max(v, binaryVersions[n.Op])
-		}
+		v = max(v, binaryVersions[n.Op])
 	case *Assign:
-		if n != nil {
-			v = max(v, assignVersions[n.Op])
-		}
+		v = max(v, assignVersions[n.Op])
 	case *Call:
-		if n != nil {
-			v = max(v, builtins[n.Function].version)
-		}
+		v = max(v, builtins[n.Function].version)
 	}
 	return v
-}
-
-// childrenOf returns n's children, in the order of the source, or none for
-// a nil n.
-func childrenOf(n Node) []Node {
-	switch n := n.(type) {
-	case *Unary:
-		if n != nil {
-			return []Node{n.Operand}
-		}
-	case *Binary:
-		if n != nil {
-			return []Node{n.Left, n.Right}
-		}
-	case *Call:
-		if n != nil {
-			return n.Args
-		}
-	case *Assign:
-		if n != nil {
-			return []Node{n.Target, n.Value}
-		}
-	case *Script:
-		if n != nil {
-			return n.Statements
-		}
-	}
-	return nil
 }

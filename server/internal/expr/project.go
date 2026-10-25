@@ -35,7 +35,10 @@ type Component struct {
 // Attribute is one of a component's attributes, of its type's attribute
 // definition (FR-COMP-01).
 type Attribute struct {
-	// ID is the attribute definition's ID, in its canonical spelling.
+	// ID is the attribute definition's ID, in its canonical spelling, which
+	// each component of its type lists, with the definition's key, type,
+	// runtime flag, and options, as elara.trust and mira.trust share one
+	// (PRD §5.3).
 	ID  string `json:"id"`
 	Key string `json:"key"`
 	// Type is one of value.Types(): an expression reads a value.Enum as a
@@ -81,9 +84,10 @@ type component struct {
 
 // ErrProject is NewProject's error for what is not a project's: an ID that is
 // not one of its entity's, in its canonical spelling, a key that is not an
-// identifier, a type that is not a variable's or an attribute's, an enum's
-// options that it does not have, or an entity whose ID, or whose key in its
-// scope, is another's.
+// identifier, a type that is not a variable's or an attribute's, a text
+// attribute that is runtime, an enum's options that it does not have, an
+// entity whose ID, or whose key in its scope, is another's, or an attribute
+// definition that two components list unalike, or one component twice.
 var ErrProject = errors.New("expr: not what a project has")
 
 // NewProject returns the Project of the variables, the components, and the
@@ -97,7 +101,11 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 		components: make(map[string]*component),
 		nodes:      make(map[string]bool),
 	}
+	// seen are the IDs of the variables, the components, and the nodes, and
+	// definitions the attribute definitions by theirs, which the components
+	// of a type share.
 	seen := make(map[string]bool)
+	definitions := make(map[string]*Attribute)
 	id := func(k ids.Kind, s string) error {
 		if !canonical(k, s) {
 			return fmt.Errorf("%w: %q is not the ID of a %s in its canonical spelling", ErrProject, s, k)
@@ -147,16 +155,26 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 		}
 		e := &component{Component: Component{ID: c.ID, Key: c.Key, Attributes: slices.Clone(c.Attributes)},
 			attributes: make(map[string]*Attribute)}
+		listed := make(map[string]bool)
 		for i := range e.Attributes {
 			a := &e.Attributes[i]
-			if err := id(ids.AttributeDef, a.ID); err != nil {
-				return nil, err
+			if !canonical(ids.AttributeDef, a.ID) {
+				return nil, fmt.Errorf("%w: %q is not the ID of a %s in its canonical spelling", ErrProject, a.ID,
+					ids.AttributeDef)
 			}
+			if listed[a.ID] {
+				return nil, fmt.Errorf("%w: %s lists the attribute definition %s twice", ErrProject, c.Key, a.ID)
+			}
+			listed[a.ID] = true
 			if err := key(a.Key); err != nil {
 				return nil, err
 			}
 			if !slices.Contains(value.Types(), a.Type) {
 				return nil, fmt.Errorf("%w: %q is no type of an attribute", ErrProject, a.Type)
+			}
+			if a.Type == value.Text && a.Runtime {
+				return nil, fmt.Errorf("%w: the attribute %s.%s is a text, which is never runtime", ErrProject,
+					c.Key, a.Key)
 			}
 			if (a.Type == value.Enum) != (len(a.Options) > 0) {
 				return nil, fmt.Errorf("%w: the attribute %s.%s has options and is no enum, or is one without them",
@@ -165,7 +183,15 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 			if e.attributes[a.Key] != nil {
 				return nil, fmt.Errorf("%w: two attributes of %s have the key %s", ErrProject, c.Key, a.Key)
 			}
+			// The components of a type share its definitions, each of which
+			// is one entity, of one key, type, runtime flag, and options.
+			if d, ok := definitions[a.ID]; ok && (d.Key != a.Key || d.Type != a.Type || d.Runtime != a.Runtime ||
+				!slices.Equal(d.Options, a.Options)) {
+				return nil, fmt.Errorf("%w: two components list the attribute definition %s unalike", ErrProject,
+					a.ID)
+			}
 			a.Options = slices.Clone(a.Options)
+			definitions[a.ID] = a
 			e.attributes[a.Key] = a
 		}
 		p.components[c.Key] = e

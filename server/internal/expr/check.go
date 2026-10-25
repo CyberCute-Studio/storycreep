@@ -21,12 +21,15 @@ const (
 	MaxSignals = 8
 )
 
-// ErrAST is Check's error for what is not an AST that Parse returns: a nil
+// ErrAST is Check's error for what no AST that Parse returns holds: a nil
 // node, a node of a type that is none of the nine kinds', a node at a place
 // that its kind cannot be at, as an expression where a statement is, a node
 // that the AST holds twice, an operator or a literal's type that the
-// language does not have, or an AST of the other context than the one that
-// Check is given, which is its caller's mistake rather than the source's.
+// language does not have, a literal's value that Encode refuses, as an int
+// beyond ±(2^53 − 1) or a string that holds a NUL, a variable's Scope that
+// is none of ScopeNone, ScopeGlobal, and ScopeBoard, or an AST of the other
+// context than the one that Check is given, which is its caller's mistake
+// rather than the source's.
 var ErrAST = errors.New("expr: not an AST of the language")
 
 // ErrBoard is Check's error for a board that is not "" or a board's ID in its
@@ -69,9 +72,15 @@ func Compile(source string, ctx Context, p *Project, board string) (Node, error)
 //
 // Check returns an error that wraps ErrContext for a ctx that is neither
 // ContextCondition nor ContextScript, ErrBoard for a board that is not a
-// board's ID, and ErrAST for an n that is not an AST that Parse could
-// return of a source in ctx. It reads at most MaxNodes + 1 nodes of n, and
-// recurses at most MaxDepth deep, whatever n is.
+// board's ID, and ErrAST for an n that holds what ErrAST lists, which the
+// first pass meets at its node, in its order, as it meets the limits'
+// errors, so that an n that holds both gives the one that comes first: a
+// script of more than MaxStatements statements gives TooManyStatements, over
+// its first statement beyond them, before any other of its statements is
+// read. It does not check how a key, a node's ID, or a function is spelt,
+// which it resolves against p and the built-ins, nor the nodes' ranges.
+// Every AST that it accepts, Encode writes. It reads at most MaxNodes + 1
+// nodes of n, and recurses at most MaxDepth deep, whatever n is.
 func Check(n Node, ctx Context, p *Project, board string) error {
 	if ctx != ContextCondition && ctx != ContextScript {
 		return fmt.Errorf("%w: %q", ErrContext, ctx)
@@ -93,14 +102,18 @@ func Check(n Node, ctx Context, p *Project, board string) error {
 		return err
 	}
 	for _, r := range c.resolved {
-		r()
+		switch n := r.n.(type) {
+		case *Var:
+			n.Name, n.Ref = r.name, r.ref
+		case *Attr:
+			n.Name, n.Ref, n.Attribute = r.name, r.ref, r.attribute
+		}
 	}
 	return nil
 }
 
-// limits reads n against the sandbox's limits (Check), and checks that n is
-// an AST that Parse could return of a source in ctx, but for the names that
-// it holds, which the checker reads.
+// limits reads n against the sandbox's limits (Check), and checks that n
+// holds nothing that ErrAST lists, each node, at its place, as it reaches it.
 func limits(n Node, ctx Context) error {
 	type visit struct {
 		n     Node
@@ -126,24 +139,23 @@ func limits(n Node, ctx Context) error {
 		if v.depth > MaxDepth {
 			return &Error{Code: ASTTooDeep, Range: v.n.Range()}
 		}
-		var children []visit
 		switch n := v.n.(type) {
 		case *Lit:
-			switch n.Type {
-			case value.Bool, value.Int, value.Float, value.String:
-			default:
-				return fmt.Errorf("%w: %q is no type of a literal", ErrAST, n.Type)
+			if _, err := literalValue(n); err != nil {
+				return fmt.Errorf("%w: %w", ErrAST, err)
+			}
+		case *Var:
+			if n.Scope != ScopeNone && n.Scope != ScopeGlobal && n.Scope != ScopeBoard {
+				return fmt.Errorf("%w: %q is no scope of a variable", ErrAST, n.Scope)
 			}
 		case *Unary:
 			if !unaryOps[n.Op] {
 				return fmt.Errorf("%w: %q is no unary operator", ErrAST, n.Op)
 			}
-			children = []visit{{n.Operand, atOperand, v.depth + 1}}
 		case *Binary:
 			if !binaryOps[n.Op] {
 				return fmt.Errorf("%w: %q is no binary operator", ErrAST, n.Op)
 			}
-			children = []visit{{n.Left, atOperand, v.depth + 1}, {n.Right, atOperand, v.depth + 1}}
 		case *Call:
 			if len(n.Args) > MaxArguments {
 				return beyond(TooManyArguments, n.Args[MaxArguments], atOperand)
@@ -153,26 +165,19 @@ func limits(n Node, ctx Context) error {
 					return &Error{Code: TooManySignals, Range: n.Src}
 				}
 			}
-			for _, a := range n.Args {
-				children = append(children, visit{a, atOperand, v.depth + 1})
-			}
 		case *Assign:
 			if !assignOpSet[n.Op] {
 				return fmt.Errorf("%w: %q is no assignment operator", ErrAST, n.Op)
 			}
-			children = []visit{{n.Target, atTarget, v.depth + 1}, {n.Value, atOperand, v.depth + 1}}
 		case *Script:
 			if len(n.Statements) > MaxStatements {
 				return beyond(TooManyStatements, n.Statements[MaxStatements], atStatement)
 			}
-			for _, s := range n.Statements {
-				children = append(children, visit{s, atStatement, v.depth + 1})
-			}
 		}
 		// The children are read in order, the first of them next.
-		for i := len(children) - 1; i >= 0; i-- {
-			stack = append(stack, children[i])
-		}
+		from := len(stack)
+		eachChild(v.n, func(c Node, at place) { stack = append(stack, visit{c, at, v.depth + 1}) })
+		slices.Reverse(stack[from:])
 	}
 	return nil
 }
@@ -196,7 +201,14 @@ type checker struct {
 	board string
 	// resolved are what the checker sets of the AST's names, which Check
 	// does once it has met no error.
-	resolved []func()
+	resolved []resolution
+}
+
+// resolution is what Check sets of n, a *Var or an *Attr: its Name, its Ref,
+// and an *Attr's Attribute.
+type resolution struct {
+	n                    Node
+	name, ref, attribute string
 }
 
 // root checks the AST n: a script's statements, or a condition's expression,
@@ -448,14 +460,7 @@ var targets = map[AssignOp]typeSet{
 // resolve has Check set the name of n, a *Var or an *Attr, to the entity of
 // the IDs ref and attribute, of the name name, once it has met no error.
 func (c *checker) resolve(n Node, name, ref, attribute string) {
-	c.resolved = append(c.resolved, func() {
-		switch n := n.(type) {
-		case *Var:
-			n.Name, n.Ref = name, ref
-		case *Attr:
-			n.Name, n.Ref, n.Attribute = name, ref, attribute
-		}
-	})
+	c.resolved = append(c.resolved, resolution{n, name, ref, attribute})
 }
 
 // variable resolves the variable n (§5.8.3): global.<key> names a global
