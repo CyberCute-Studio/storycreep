@@ -1,7 +1,6 @@
 package expr
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,10 +44,10 @@ var (
 // nothing else, and ignores a key that an object of the AST does not define,
 // as a consumer does (§6.4), so that it fails, with an error that wraps
 // ErrDecode, on: JSON that is not one value, or not UTF-8, or that holds null
-// anywhere, as the published format never does (§6.2), or a string that
-// escapes a lone surrogate (value.CheckJSON); a node of an unknown kind, or
-// with an unknown operator or a literal of an unknown type, as a consumer
-// fails loudly on an unknown enum value (§6.4); a node at a place that its
+// anywhere, as the published format never does (§6.2) (value.CheckJSON); a
+// node of an unknown kind, or with an unknown operator or a literal of an
+// unknown type, as a consumer fails loudly on an unknown enum value (§6.4);
+// a node at a place that its
 // kind cannot be at, as Encode refuses it; a field that is missing or of
 // another type than its kind's; a literal's value that is not of its type,
 // as an int that is not integral or is beyond ±(2^53 − 1), though one
@@ -63,28 +62,25 @@ var (
 // identifiers joined by a dot, or a ref that is not an ID of its kind in its
 // canonical spelling; a call of more than MaxArguments arguments; and a
 // script of more than MaxStatements statements. Beyond the schema, which
-// cannot say how a number is written nor how large an AST is, it fails on a
-// number written with an exponent beyond ±value.MaxExponent, as 0e1000,
-// which is 0, but which no file holds, a literal's or one of a key that it
-// ignores, as value.CheckJSON refuses it, and on an AST of more than
-// MaxNodes nodes, or deeper than MaxDepth, its
-// root 1 deep, which no AST that Check accepts is, so that Decode never
-// recurses deeper than that. It fails on a ctx that is neither context with
-// an error that wraps ErrContext.
+// cannot say how a number or a string is written nor how large an AST is, it
+// fails, as value.CheckJSON refuses them wherever they are, a literal's or
+// one of a key that it ignores, on a number written with an exponent beyond
+// ±value.MaxExponent, as 0e1000, which is 0, and on a string that escapes a
+// lone surrogate, as "\ud800", which is no character, and which a decoder
+// reads as another, as encoding/json reads it as U+FFFD, neither of which a
+// file holds; and on an AST of more than MaxNodes nodes, or deeper than
+// MaxDepth, its root 1 deep, which no AST that Check accepts is, so that
+// Decode never recurses deeper than that. It fails on a ctx that is neither
+// context with an error that wraps ErrContext.
 func Decode(data []byte, ctx Context) (Node, error) {
 	if ctx != ContextCondition && ctx != ContextScript {
 		return nil, fmt.Errorf("%w: %q", ErrContext, ctx)
 	}
-	if problem := value.CheckJSON(data); problem != "" {
-		return nil, fmt.Errorf("%w: it %s", ErrDecode, problem)
-	}
 	// One pass reads data whole, numbers as they are written, which the
 	// decoder walks, so that no node's JSON is read again for each node
 	// above it.
-	var tree any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&tree); err != nil {
+	tree, err := value.ReadJSON(data)
+	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDecode, err)
 	}
 	d := &decoder{}

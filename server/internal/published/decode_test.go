@@ -976,3 +976,82 @@ func TestFoldKey(t *testing.T) {
 		t.Errorf("Decode(%s) = %v, its kind %q, want narration", data, err, e.Kind)
 	}
 }
+
+// TestDecodeReplaces checks that Decode reads a file into a value that holds
+// another, as a save state that a game read before, as it reads one into a
+// zero value, checking only what the file holds, rather than refuse a valid
+// file for a cursor or a variable that only the value held; that it leaves
+// the value as it was where it fails; and that it fails, as json.Unmarshal
+// does, on a v that is no pointer, or nil.
+func TestDecodeReplaces(t *testing.T) {
+	data := edited(t, saveStateExamples[0], func(doc map[string]any) {
+		delete(doc, "cursor")
+		doc["variables"] = map[string]any{}
+	})
+	st := SaveState{Cursor: &Cursor{Phase: PhaseEnded},
+		Variables: map[string]value.Value{"var_01HQ8Z5BRT9C4F2M7XKDPV6NHA": {}}}
+	if err := Decode(data, &st); err != nil || st.Cursor != nil || len(st.Variables) != 0 {
+		t.Errorf("Decode into a state that held a cursor and a variable = %v, its cursor %v and its variables %v",
+			err, st.Cursor, st.Variables)
+	}
+	if err := Decode([]byte(saveStateExamples[0]), &st); err != nil {
+		t.Fatal(err)
+	}
+	if err := Decode([]byte(`{"stateVersion":2}`), &st); err == nil {
+		t.Error("Decode of a state of another stateVersion succeeded")
+	}
+	if out := mustMarshal(t, st); !sameJSON(t, out, []byte(saveStateExamples[0])) {
+		t.Errorf("a state that Decode failed to read into is written as %s", out)
+	}
+	for _, v := range []any{nil, SaveState{}, (*SaveState)(nil)} {
+		var invalid *json.InvalidUnmarshalError
+		if err := Decode(data, v); !errors.As(err, &invalid) {
+			t.Errorf("Decode into %#v = %v, want a *json.InvalidUnmarshalError", v, err)
+		}
+	}
+}
+
+// TestDecodeErrorPaths checks what Decode's error says of a file that it
+// refuses: a key that is missing as missing, rather than as the zero value
+// that it is read as; of a map that holds more than one value that is wrong,
+// the first by its key, each time; and of a segment that the segment's
+// schema refuses, as richtext refuses it.
+func TestDecodeErrorPaths(t *testing.T) {
+	at := -1
+	board := edited(t, boardExamples[0], func(doc map[string]any) {
+		for i := range doc["nodes"].([]any) {
+			if n := item(t, doc, "nodes", i); n["type"] == NodeElement {
+				delete(n, "kind")
+				at = i
+				return
+			}
+		}
+	})
+	state := edited(t, saveStateExamples[0], func(doc map[string]any) {
+		doc["variables"] = map[string]any{"d": []any{4}, "b": map[string]any{}, "a": []any{1}, "c": []any{}}
+	})
+	const mention = `"ref": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF", "value": "Elara"`
+	i := slices.IndexFunc(boardExamples, func(ex string) bool { return strings.Contains(ex, mention) })
+	if i < 0 {
+		t.Fatalf("no board's example has a mention of %s", mention)
+	}
+	lowercase := strings.Replace(boardExamples[i], mention, strings.Replace(mention, "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF",
+		"cmp_01hq8z7kd3m9p2w5xrtvnq4bcf", 1), 1)
+	for _, tt := range []struct {
+		v    any
+		data []byte
+		want string
+	}{
+		{new(Settings), []byte(`{"signals":[]}`), "$.schemaVersion is missing"},
+		{new(Board), board, fmt.Sprintf("$.nodes[%d].kind is missing", at)},
+		{new(SaveState), state, `$.variables["a"] is neither`},
+		{new(Board), []byte(lowercase), "ref is not the ID of a component in its canonical spelling"},
+	} {
+		for range 20 {
+			if err := Decode(tt.data, tt.v); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Decode(%s) = %v, want an error that says %s", tt.data, err, tt.want)
+				break
+			}
+		}
+	}
+}

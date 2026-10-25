@@ -62,6 +62,13 @@ type Node interface {
 // Nodes are a board's nodes, of any type.
 type Nodes []Node
 
+// nodeVariants make a node of each type, which Nodes.UnmarshalJSON reads.
+var nodeVariants = map[string]func() Node{
+	NodeElement: func() Node { return &Element{} },
+	NodeBranch:  func() Node { return &Branch{} },
+	NodeJumper:  func() Node { return &Jumper{} },
+}
+
 // UnmarshalJSON reads a board's nodes, each by its type.
 func (ns *Nodes) UnmarshalJSON(data []byte) error {
 	var raws []json.RawMessage
@@ -70,11 +77,7 @@ func (ns *Nodes) UnmarshalJSON(data []byte) error {
 	}
 	*ns = make(Nodes, len(raws))
 	for i, raw := range raws {
-		n, err := unmarshalVariant(raw, "type", map[string]func() Node{
-			NodeElement: func() Node { return &Element{} },
-			NodeBranch:  func() Node { return &Branch{} },
-			NodeJumper:  func() Node { return &Jumper{} },
-		})
+		n, err := unmarshalVariant(raw, "type", nodeVariants)
 		if err != nil {
 			return fmt.Errorf("node %d: %w", i, err)
 		}

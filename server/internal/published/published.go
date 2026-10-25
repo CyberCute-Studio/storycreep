@@ -103,14 +103,18 @@ const MaxInt = value.MaxInt
 var ErrDecode = errors.New("published: not JSON of the published format")
 
 // Decode reads data, one JSON value, a published file or a save state, into
-// v, a pointer to one of the package's types. It fails, with an error that
-// wraps ErrDecode, on what this list names and on nothing else: on data that
-// is not one JSON
-// value, that is not UTF-8, that holds null anywhere (§6.2), that escapes a
-// lone surrogate in a string, or that writes a number with an exponent beyond
+// v, a pointer to one of the package's types, replacing what v held, which
+// it leaves as it was where it fails. It fails, as json.Unmarshal does, with
+// a *json.InvalidUnmarshalError, on a v that is not a pointer, or that is
+// nil, and otherwise, with an error that wraps ErrDecode, on what this list
+// names of data and on nothing else: on data that is not one JSON value,
+// that is not UTF-8, that holds null anywhere (§6.2), that escapes a lone
+// surrogate in a string, or that writes a number with an exponent beyond
 // ±value.MaxExponent, as 0e1000, which the schemas cannot tell from 0, but
-// which no file holds (value.CheckJSON); on a key that its object's schema
-// requires that is missing; on a value of a field of an enum, as a type, a
+// which no file holds (value.CheckJSON); on a value of a JSON type that its
+// schema does not take, as a string where a number is, as json.Unmarshal
+// refuses it; on a key that its object's schema requires that is missing;
+// on a value of a field of an enum, as a type, a
 // kind, or an op, that the format does not have, as a consumer fails loudly on
 // one (§6.4); on a published file's schemaVersion or a save state's
 // stateVersion that is not the types', though not on a save state's
@@ -125,44 +129,55 @@ var ErrDecode = errors.New("published: not JSON of the published format")
 // snapshotVersion, or with an empty one; on a value that is not of its
 // declaration's type, as a variable's default that is no int where its type
 // is int, or a value whose declaration is in another file that is neither a
-// boolean, a number, nor a string; and on an empty text or label, which a
-// file leaves out. Otherwise it reads data into v as json.Unmarshal does, but
-// for a key, which it reads as it is written (readTree): of a key
-// that an object has twice, the last, where json.Unmarshal would merge what
-// the two hold; a key that the types do not know it ignores (§6.4), as KIND
-// in an object that they read as a struct, which differs from kind only by
-// its case, and which json.Unmarshal would read as kind; and a map's keys, as
-// a manifest's files' paths, it reads as they are written, whatever their
-// case. A file that it reads may still be one that the schemas refuse: it
-// does not check what else they hold a file to, as a pattern or a bound,
+// boolean, a number, nor a string; on an empty text or label, which a file
+// leaves out; on an AST that expr.Decode refuses, as one that the AST's
+// schema refuses, whose names are not resolved, or deeper than expr.MaxDepth
+// or of more than expr.MaxNodes nodes; and on a segment of a text or a label
+// that the segment's schema refuses, as one whose ref is not an ID in its
+// canonical spelling, as richtext.Segment's UnmarshalJSON refuses it.
+// Otherwise it reads data into v as json.Unmarshal reads it into a zero
+// value, but for a key, which it reads as it is written (readTree): of a
+// key that an object has twice, the last, where json.Unmarshal would merge
+// what the two hold; a key that the types do not know it ignores (§6.4), as
+// KIND in an object that they read as a struct, which differs from kind only
+// by its case, and which json.Unmarshal would read as kind; and a map's
+// keys, as a manifest's files' paths, it reads as they are written, whatever
+// their case. A file that it reads may still be one that the schemas refuse:
+// it does not check what else they hold a file to, as a pattern or a bound,
 // which a validator of the schemas checks (plan items 78 and 84), but for an
-// Int's,
-// which is an integer of at most MaxInt in magnitude, and a value's of its
-// declaration's type, an int's within ±MaxInt and a float's within
+// Int's, which is an integer of at most MaxInt in magnitude, a value's of
+// its declaration's type, an int's within ±MaxInt and a float's within
 // ±1.7976931348623157e+308 as it is written (value.FloatBeyondSchema), as
-// value.Schema bounds them.
+// value.Schema bounds them, and an AST's and a segment's, which expr.Decode
+// and richtext read as their schemas take them.
 func Decode(data []byte, v any) error {
+	if rv := reflect.ValueOf(v); rv.Kind() != reflect.Pointer || rv.IsNil() {
+		return &json.InvalidUnmarshalError{Type: reflect.TypeOf(v)}
+	}
 	if err := decode(data, v); err != nil {
 		return fmt.Errorf("%w: %w", ErrDecode, err)
 	}
 	return nil
 }
 
-// decode is Decode, its error without ErrDecode.
+// decode is Decode, its error without ErrDecode, of v, a pointer that is not
+// nil. It reads data into a zero value of the type that v points to, which
+// it checks (checkTags), so that it checks only what data holds, and sets
+// what v points to to that value only once it has read and checked it.
 func decode(data []byte, v any) error {
-	if problem := value.CheckJSON(data); problem != "" {
-		return fmt.Errorf("it %s", problem)
-	}
-	tree, data, err := readTree(data, reflect.TypeOf(v))
+	rv := reflect.ValueOf(v)
+	tree, data, err := readTree(data, rv.Type())
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(data, v); err != nil {
+	read := reflect.New(rv.Type().Elem())
+	if err := json.Unmarshal(data, read.Interface()); err != nil {
 		return err
 	}
-	if err := checkTags(reflect.ValueOf(v), tree); err != nil {
+	if err := checkTags(read, tree); err != nil {
 		return err
 	}
+	rv.Elem().Set(read.Elem())
 	return nil
 }
 
@@ -238,30 +253,28 @@ func foldKey(k string) string {
 	return b.String()
 }
 
-// readTree returns data, one JSON value that value.CheckJSON took of a value
-// of the type t, as a tree of maps, slices, json.Numbers, strings, and
-// booleans, which checkTags reads what is there of, and the tree as JSON
-// again, which Decode reads into the types, so that both read the same keys,
-// each as a consumer reads it: of a key that an object has twice, the last,
-// as the tree holds it, where encoding/json, reading data itself, would read
-// both into one field or map, keeping what the first holds and the last does
-// not, as a connection's condition; and without each key of an object that
+// readTree returns data, one JSON value of a value of the type t, as a tree
+// of maps, slices, json.Numbers, strings, and booleans (value.ReadJSON),
+// which checkTags reads what is there of, and the tree as JSON again, which
+// Decode reads into the types, so that both read the same keys, each as a
+// consumer reads it: of a key that an object has twice, the last, as the
+// tree holds it, where encoding/json, reading data itself, would read both
+// into one field or map, keeping what the first holds and the last does not,
+// as a connection's condition; and without each key of an object that
 // encoding/json reads as a struct of this package's types that is none of the
 // known keys (knownKeys) but differs from one of them only by its case, as
 // KIND from kind, which encoding/json would read as the field that the known
 // key names, where a consumer ignores it, as a key that it does not know
 // (§6.4) (strip). No two known keys differ only by their case
 // (TestKnownKeys), so that every key that it keeps is read as a consumer
-// reads it.
+// reads it. It fails on data that value.CheckJSON refuses.
 func readTree(data []byte, t reflect.Type) (any, []byte, error) {
-	var tree any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&tree); err != nil {
+	tree, err := value.ReadJSON(data)
+	if err != nil {
 		return nil, nil, err
 	}
 	strip(t, tree, knownKeys())
-	data, err := schemagen.Marshal(tree)
+	data, err = schemagen.Marshal(tree)
 	return tree, data, err
 }
 
@@ -389,11 +402,14 @@ func checkTags(v reflect.Value, tree any) *tagError {
 		if !composite(v.Type().Elem()) {
 			return nil
 		}
+		// By its keys in their order, so that of a map that holds more than
+		// one value that is wrong, the same one is reported each time.
 		obj, _ := tree.(map[string]any)
-		iter := v.MapRange()
-		for iter.Next() {
-			if err := checkTags(iter.Value(), obj[iter.Key().String()]); err != nil {
-				return err.at(fmt.Sprintf("[%q]", iter.Key().String()))
+		keys := v.MapKeys()
+		slices.SortFunc(keys, func(a, b reflect.Value) int { return strings.Compare(a.String(), b.String()) })
+		for _, k := range keys {
+			if err := checkTags(v.MapIndex(k), obj[k.String()]); err != nil {
+				return err.at(fmt.Sprintf("[%q]", k.String()))
 			}
 		}
 	case reflect.Struct:
@@ -438,14 +454,20 @@ func checkStruct(v reflect.Value, tree any) *tagError {
 			}
 		}
 	}
-	// The enums and the consts first, which tell the variant whose fields the
-	// rest are checked by.
+	// The keys that every variant requires and that are missing, and the
+	// enums and the consts, first, which tell the variant whose fields the
+	// rest are checked by, so that a key that is missing is reported as
+	// missing, rather than as the zero value that it is read as.
 	for i := range info.fields {
 		f := &info.fields[i]
-		if _, there := obj[f.name]; there || !f.optional {
+		_, there := obj[f.name]
+		switch {
+		case there:
 			if err := f.checkValue(info.value(v, f)); err != nil {
 				return err.at("." + f.name)
 			}
+		case f.when == "" && f.named && (!f.optional || f.required):
+			return problemf("is missing, which its object's schema requires").at("." + f.name)
 		}
 	}
 	for i := range info.fields {

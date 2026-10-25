@@ -18,6 +18,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 	"github.com/CyberCute-Studio/storycreep/server/internal/semantics"
 )
 
@@ -461,12 +462,9 @@ func decodeString(raw json.RawMessage) (string, string) {
 // and &, as the API writes its other texts (PRD §6.2), which json.Marshal
 // would escape.
 func stringValue(s string) Value {
-	var out bytes.Buffer
-	enc := json.NewEncoder(&out)
-	enc.SetEscapeHTML(false)
 	// A Go string always encodes, a byte that is not UTF-8 as U+FFFD.
-	_ = enc.Encode(s)
-	return Value{raw: bytes.TrimSuffix(out.Bytes(), []byte("\n"))}
+	raw, _ := schemagen.Marshal(s)
+	return Value{raw: raw}
 }
 
 // EscapesLoneSurrogate reports whether raw, a JSON text, escapes a UTF-16
@@ -526,6 +524,26 @@ func CheckJSON(data []byte) string {
 		return problem
 	}
 	return ""
+}
+
+// ReadJSON returns data, one JSON value that CheckJSON takes, as a tree: an
+// object as a map[string]any, of a key that it has twice the last, as a
+// consumer reads it, an array as an []any, a number as the json.Number that
+// it is written as, a string as a string, and a boolean as a bool; or fails,
+// with "it" and what CheckJSON says of data, on data that CheckJSON refuses.
+// Package published reads a file so, and package expr an AST, by what they
+// hold as it is written.
+func ReadJSON(data []byte) (any, error) {
+	if problem := CheckJSON(data); problem != "" {
+		return nil, fmt.Errorf("it %s", problem)
+	}
+	var tree any
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&tree); err != nil {
+		return nil, err
+	}
+	return tree, nil
 }
 
 // scanTokens says what of data, one JSON value, a file does not hold outside
