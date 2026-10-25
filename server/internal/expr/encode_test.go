@@ -96,7 +96,7 @@ func TestEncodeCanonical(t *testing.T) {
 		{ContextCondition, []string{"elara.trust", "elara . trust", "(elara.trust)"}},
 		{ContextCondition, []string{`visited(node("nd_01HQ8ZB1T4V7K2MC9XRPW5NDYF"))`,
 			`visited (node ("ND_01hq8zb1t4v7k2mc9xrpw5ndyf"))`}},
-		{ContextCondition, []string{`s == "é"`, `s == "é"`, `s == "é"`}},
+		{ContextCondition, []string{`s == "é"`, `s == "\u00e9"`, `s == "\u00E9"`}},
 		{ContextScript, []string{"x += 1", "x+=1;", "\n x += 1 // why\n", "x += 01", ";;x += (1);"}},
 	} {
 		var first string
@@ -121,7 +121,8 @@ func TestEncodeCanonical(t *testing.T) {
 
 // TestEncodeRefuses checks that Encode refuses a node that is not one of an
 // AST, rather than write what no AST is: of what is no value, operator, or
-// string of the language, or of a kind that its place cannot be of.
+// string of the language, without the name, the node reference, or the
+// function that it needs, or of a kind that its place cannot be of.
 func TestEncodeRefuses(t *testing.T) {
 	t.Parallel()
 	lit := &Lit{Type: value.Int, Int: 1}
@@ -138,8 +139,15 @@ func TestEncodeRefuses(t *testing.T) {
 		&Lit{Type: value.Float, Float: math.Inf(1)},
 		&Lit{Type: value.Float, Float: math.NaN()},
 		&Lit{Type: value.String, Str: "\xff"},
+		&Lit{Type: value.String, Str: "a\x00b"},
 		&Lit{Type: value.Enum},
 		&Var{Name: "x\xff"},
+		&Var{Name: "x\x00"},
+		&Var{},
+		&Attr{},
+		&NodeRef{},
+		&Call{},
+		&Attr{Name: "a.b", Ref: "cmp_\x00"},
 		&Var{Name: "x", Ref: "var_\xff"},
 		&Attr{Name: "a.b", Attribute: "atr_\xff"},
 		&NodeRef{Ref: "nd_\xff"},
@@ -165,14 +173,13 @@ func TestEncodeRefuses(t *testing.T) {
 
 // TestEncodeDeep checks that Encode writes an AST far deeper than the stack
 // that it is given would hold were it to recurse once per level, as a sum of
-// 100,001 ones is, which Parse reads, so that no AST that Parse returns can
-// exhaust the stack. It does not run in parallel, since the stack's limit is
-// the program's.
+// 100,001 ones is, so that no AST that a program builds can exhaust the stack.
+// It does not run in parallel, since the stack's limit is the program's.
 func TestEncodeDeep(t *testing.T) {
 	defer debug.SetMaxStack(debug.SetMaxStack(1 << 20))
-	n, err := Parse("1"+strings.Repeat("+1", 100_000), ContextCondition)
-	if err != nil {
-		t.Fatal(err)
+	var n Node = &Lit{Type: value.Int, Int: 1}
+	for range 100_000 {
+		n = &Binary{Op: OpAdd, Left: n, Right: &Lit{Type: value.Int, Int: 1}}
 	}
 	b, err := Encode(n)
 	one := `{"kind":"lit","type":"int","value":1}`

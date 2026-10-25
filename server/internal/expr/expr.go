@@ -12,7 +12,8 @@
 // and leaves which entity that is to name resolution (§5.8.3), which adds the
 // entity's ID. It does not check types, nor purity beyond an assignment in a
 // condition, nor the sandbox's limits (§5.8.6) beyond the lengths of
-// identifiers and string literals and how deeply parentheses nest.
+// identifiers and string literals, how deeply parentheses nest, and how many
+// nodes an AST has.
 //
 // schema/expr-corpus/syntax.json holds the parser's cases, which
 // TestSyntaxCorpus runs, and which the TypeScript parser runs too, so that the
@@ -21,6 +22,7 @@
 package expr
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
@@ -48,26 +50,34 @@ const (
 	// value of a string literal, as of any string value.
 	MaxStringLength = value.MaxStringLength
 	// MaxDepth is the AST depth of §5.8.6, which bounds how deeply
-	// parentheses nest too, whether a group's or a call's, so that reading a
-	// source never recurses deeper than its AST may be.
+	// parentheses nest too, whether a group's, a call's, or a node
+	// reference's, so that reading a source never recurses deeper than its
+	// AST may be.
 	MaxDepth = 64
+	// MaxNodes is the AST node count of §5.8.6, which Parse counts as it
+	// reads the tokens that make the nodes, so that a source of any length
+	// costs no more than an AST of MaxNodes nodes.
+	MaxNodes = 512
 )
 
+// ErrContext is Parse's error for a context that is neither ContextCondition
+// nor ContextScript, which is its caller's mistake rather than the source's.
+var ErrContext = errors.New("expr: no context of a source")
+
 // Parse reads source as the source of a condition or a script, as ctx says,
-// and returns its AST: a condition's expression, or a *Script. Its error is
-// always an *Error: the first problem that it meets reading the source from
-// left to right. It panics if ctx is neither ContextCondition nor
-// ContextScript.
+// and returns its AST: a condition's expression, or a *Script. Its error is an
+// *Error, the first problem that it meets reading the source from left to
+// right, or, if ctx is neither ContextCondition nor ContextScript, one that
+// wraps ErrContext.
 //
-// Parse never recurses deeper than parentheses nest, but its AST may be deeper
-// than MaxDepth, as a long chain of binary operators, which nest without
-// parentheses, makes it, until the AST depth of §5.8.6 is checked of it (plan
-// item 40). Encode writes an AST of any depth; any other walk of an AST that
-// has not been checked so must not recurse once per level either, since a
-// stack that it exhausts is a fatal error, which nothing recovers from.
+// Parse never recurses deeper than parentheses nest, and its AST has at most
+// MaxNodes nodes, so that a walk of it that recurses once per level recurses
+// at most that deep, though the AST may be deeper than MaxDepth, as a chain of
+// binary operators, which nest without parentheses, makes it, until the AST
+// depth of §5.8.6 is checked of it (plan item 40).
 func Parse(source string, ctx Context) (Node, error) {
 	if ctx != ContextCondition && ctx != ContextScript {
-		panic(fmt.Sprintf("expr: %q is no context of a source", ctx))
+		return nil, fmt.Errorf("%w: %q", ErrContext, ctx)
 	}
 	p := &parser{ctx: ctx, lex: &lexer{src: source, ctx: ctx}}
 	return p.parse()

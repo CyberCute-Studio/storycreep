@@ -16,6 +16,7 @@ type parser struct {
 	ahead    token
 	hasAhead bool
 	depth    int // how many parentheses are open
+	nodes    int // how many nodes the AST has so far (count)
 }
 
 // bailout carries the parser's error up from where it fails to parse, which
@@ -89,6 +90,9 @@ func (p *parser) unexpected() {
 // ends it (lexer.next), or the end of the source, with as many ; and line
 // breaks as a writer likes before, between, and after them.
 func (p *parser) script() *Script {
+	// The script's own node, which no token makes, counts before its first
+	// token.
+	p.nodes = 1
 	s := &Script{Statements: []Node{}}
 	for {
 		for p.tok.kind == tSemicolon || p.tok.kind == tNewline {
@@ -119,6 +123,7 @@ var assignOps = [tokenKinds]AssignOp{
 func (p *parser) statement() Node {
 	e, written := p.expression()
 	if op := assignOps[p.tok.kind]; op != "" {
+		p.count()
 		switch e.(type) {
 		case *Var, *Attr:
 			// A name in parentheses is written over more than its range.
@@ -137,6 +142,21 @@ func (p *parser) statement() Node {
 	}
 	p.fail(InvalidStatement, written)
 	return nil
+}
+
+// count counts the node that the current token makes, which the parser has
+// reached and not yet stepped past: a literal, the identifier or the
+// qualifier that a name, a call, or a node reference starts with, a unary or
+// a binary operator, or a statement's assignment operator. It fails with
+// ASTTooLarge at the token if the AST has MaxNodes nodes already, before
+// anything else is decided at it, so that a source of any length costs no
+// more than an AST of MaxNodes nodes, and no AST that Parse returns is deeper
+// than that.
+func (p *parser) count() {
+	if p.nodes == MaxNodes {
+		p.fail(ASTTooLarge, p.tok.Range)
+	}
+	p.nodes++
 }
 
 // end fails unless the current token ends a statement: a ;, a line break that
@@ -177,6 +197,7 @@ func (p *parser) binary(level int) (Node, Range) {
 		if op == "" {
 			return left, written
 		}
+		p.count()
 		p.next()
 		right, rest := p.binary(level + 1)
 		written = Range{written.Start, rest.End}
@@ -198,6 +219,7 @@ func (p *parser) unary() (Node, Range) {
 		return p.primary()
 	}
 	start := p.tok.Start
+	p.count()
 	p.next()
 	operand, written := p.primary()
 	n := &Unary{Op: op, Operand: operand, Src: Range{start, written.End}}
@@ -233,13 +255,17 @@ func (p *parser) primary() (Node, Range) {
 	default:
 		p.unexpected()
 	}
+	// A literal.
+	p.count()
 	p.next()
 	return n, n.Range()
 }
 
-// open steps past the opening parenthesis that is the current token, of a
-// group or of a call's arguments, which is ASTTooDeep if MaxDepth of them are
-// open already.
+// open steps past the opening parenthesis that is the current token, a
+// group's, a call's, or a node reference's, which is ASTTooDeep if MaxDepth of
+// them are open already. A node reference's is one of them, since any
+// argument but one string literal is read as a call's, so that node(node(…
+// would otherwise recurse without bound.
 func (p *parser) open() {
 	if p.depth == MaxDepth {
 		p.fail(ASTTooDeep, p.tok.Range)
@@ -265,6 +291,7 @@ func (p *parser) close() int {
 // attribute, as <component>.<attribute> or cmp.<component>.<attribute>.
 func (p *parser) nameOrCall() (Node, Range) {
 	first := p.tok
+	p.count()
 	p.next()
 	if p.tok.kind == tLParen {
 		if first.text == "node" {
@@ -295,6 +322,7 @@ func (p *parser) nameOrCall() (Node, Range) {
 // more than one part after it, InvalidName.
 func (p *parser) scoped() (Node, Range) {
 	q := p.tok
+	p.count()
 	p.next()
 	if p.tok.kind != tDot {
 		p.fail(ReservedWord, q.Range)
@@ -361,9 +389,10 @@ func (p *parser) arguments() []Node {
 }
 
 // nodeRef reads a node reference, node("nd_…"), from its opening parenthesis:
-// one string literal that holds a node's ID, in any case, or else
-// InvalidNodeRef, over the string, or over the whole node(…) when it holds
-// anything else, once the parser has read it to its closing parenthesis.
+// one string literal that holds a node's ID, in any case, which is part of the
+// reference's node, or else InvalidNodeRef, over the string, or over the whole
+// node(…) when it holds anything else, once the parser has read it to its
+// closing parenthesis, as a call's arguments, each node of which counts.
 func (p *parser) nodeRef(name token) (Node, Range) {
 	p.open()
 	if p.tok.kind == tString && p.peek() == tRParen {

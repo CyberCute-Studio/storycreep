@@ -40,7 +40,7 @@ const (
 	UnexpectedEnd Code = "unexpected_end"
 	// ReservedWord is a reserved word where a name is read: null, if, else,
 	// or elseif anywhere that an operand may be, global or board without a
-	// dot and a key after it, or any reserved word after a dot.
+	// dot after it, or any reserved word after a dot.
 	ReservedWord Code = "reserved_word"
 	// InvalidName is a qualified name of more than two parts, but for
 	// cmp.<component>.<attribute>, or global or board with more than one part
@@ -58,9 +58,15 @@ const (
 	// ConditionMustBePure is an assignment operator in a condition, wherever
 	// the parser stops at it (FR-EXPR-02 AC3).
 	ConditionMustBePure Code = "condition_must_be_pure"
-	// ASTTooDeep is a parenthesis, of a group or of a call's arguments, that
-	// opens one more than MaxDepth of them.
+	// ASTTooDeep is an opening parenthesis, a group's, a call's, or a node
+	// reference's, that opens one more than MaxDepth of them.
 	ASTTooDeep Code = "ast_too_deep"
+	// ASTTooLarge is the token that makes an AST's node beyond MaxNodes: a
+	// literal, the identifier or the qualifier that a name, a call, or a node
+	// reference starts with, a unary or a binary operator, or a statement's
+	// assignment operator, each counted as the parser reaches it, after a
+	// script's own node, which counts before its first token.
+	ASTTooLarge Code = "ast_too_large"
 )
 
 // problems say what each error is, in English, for programs and logs. A client
@@ -83,6 +89,7 @@ var problems = map[Code]string{
 	InvalidAssignmentTarget: "an assignment to something other than a variable or an attribute",
 	ConditionMustBePure:     "an assignment operator in a condition",
 	ASTTooDeep:              fmt.Sprintf("parentheses nested more than %d deep", MaxDepth),
+	ASTTooLarge:             fmt.Sprintf("an AST of more than %d nodes", MaxNodes),
 }
 
 // Error is an error of a source: its code, and the characters that it covers,

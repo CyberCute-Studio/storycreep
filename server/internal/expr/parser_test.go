@@ -1,6 +1,7 @@
 package expr
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -191,9 +192,8 @@ func TestStringLength(t *testing.T) {
 }
 
 // TestDeepSource checks that a source nested past MaxDepth stops at the
-// parenthesis that opens the first level too many, however deep it goes, and
-// that a long run of binary operators, which nest without parentheses, is read
-// without recursing per operator.
+// parenthesis that opens the first level too many, however deep it goes, a
+// node reference's among them.
 func TestDeepSource(t *testing.T) {
 	t.Parallel()
 	_, err := Parse(strings.Repeat("(", 1_000_000), ContextCondition)
@@ -201,10 +201,49 @@ func TestDeepSource(t *testing.T) {
 	if fmt.Sprint(err) != fmt.Sprint(want) {
 		t.Errorf("a million parentheses = %v; want %v", err, want)
 	}
-	source := "1" + strings.Repeat(" + 1", 100_000)
-	n, err := Parse(source, ContextCondition)
-	if err != nil || n.Kind() != KindBinary || n.Range() != (Range{0, len(source)}) {
-		t.Errorf("a sum of 100,001 ones = %v, %v; want a binary over the whole source", n, err)
+	_, err = Parse(strings.Repeat("node(", 1_000), ContextCondition)
+	want = &Error{Code: ASTTooDeep, Range: Range{5*MaxDepth + 4, 5*MaxDepth + 5}}
+	if fmt.Sprint(err) != fmt.Sprint(want) {
+		t.Errorf("a thousand node( = %v; want %v", err, want)
+	}
+}
+
+// TestNodeCount checks that an AST of MaxNodes nodes is read, and that the
+// token that makes one more is ASTTooLarge, at it, whichever node it makes, a
+// script's own node counted, however long the source goes on after it.
+func TestNodeCount(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		ctx    Context
+		source string
+		want   *Error
+	}{
+		// 256 ones and 255 +, and a not: 512 nodes.
+		{ContextCondition, "not (1" + strings.Repeat("+1", 255) + ")", nil},
+		// The 257th one, at 512, is the 513th node.
+		{ContextCondition, "1" + strings.Repeat("+1", 100_000), &Error{Code: ASTTooLarge, Range: Range{512, 513}}},
+		// A call and its 511 arguments: 512 nodes.
+		{ContextCondition, "f(" + strings.Repeat("1,", 510) + "1)", nil},
+		// The call's 512th argument, at 1024, is the 513th node.
+		{ContextCondition, "f(" + strings.Repeat("1,", 511) + "1)", &Error{Code: ASTTooLarge, Range: Range{1024, 1025}}},
+		// The script, and 170 statements of three nodes each: 511 nodes.
+		{ContextScript, strings.Repeat("x = 1\n", 170), nil},
+		// The = of the 171st statement, at 1022, is the 513th node.
+		{ContextScript, strings.Repeat("x = 1\n", 1_000), &Error{Code: ASTTooLarge, Range: Range{1022, 1023}}},
+		// The script, a call, and 510 ones are 512 nodes, so that the - after
+		// them, at 1022, is the 513th.
+		{ContextScript, "f(" + strings.Repeat("1,", 510) + "-1)", &Error{Code: ASTTooLarge, Range: Range{1022, 1023}}},
+	} {
+		n, err := Parse(c.source, c.ctx)
+		if c.want == nil {
+			if err != nil {
+				t.Errorf("Parse(%.20q…, %s): %v", c.source, c.ctx, err)
+			}
+			continue
+		}
+		if fmt.Sprint(err) != fmt.Sprint(c.want) {
+			t.Errorf("Parse(%.20q…, %s) = %v, %v; want %v", c.source, c.ctx, encoded(n), err, c.want)
+		}
 	}
 }
 
@@ -219,6 +258,7 @@ func TestEarlyError(t *testing.T) {
 	}{
 		{") " + strings.Repeat("a ", 1<<20), &Error{Code: UnexpectedToken, Range: Range{0, 1}}},
 		{strings.Repeat("(", 2<<20), &Error{Code: ASTTooDeep, Range: Range{MaxDepth, MaxDepth + 1}}},
+		{"1" + strings.Repeat("+1", 1<<20), &Error{Code: ASTTooLarge, Range: Range{512, 513}}},
 	} {
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
@@ -234,15 +274,32 @@ func TestEarlyError(t *testing.T) {
 	}
 }
 
-// TestUnknownContext checks that Parse panics on a context that is none.
+// TestLineBreakEnds checks that a line break that ends a statement ends it
+// before the lexer reads the token after it, however long that token is.
+func TestLineBreakEnds(t *testing.T) {
+	t.Parallel()
+	l := &lexer{src: "x // a\n\n  \"" + strings.Repeat("a", 1<<20), ctx: ContextScript}
+	if k := l.next().kind; k != tIdent {
+		t.Fatalf("the first token is of the kind %d; want an identifier", k)
+	}
+	if t2 := l.next(); t2.kind != tNewline || t2.Range != (Range{6, 7}) || l.i != 10 {
+		t.Errorf("the second token is of the kind %d at %v, with the lexer at byte %d; want a line break at 6 to 7, "+
+			"with the lexer at byte 10, before the string", t2.kind, t2.Range, l.i)
+	}
+	if k := l.next().kind; k != tError {
+		t.Errorf("the third token is of the kind %d; want the unterminated string", k)
+	}
+}
+
+// TestUnknownContext checks that Parse refuses a context that is none with
+// ErrContext, which is no error of the source.
 func TestUnknownContext(t *testing.T) {
 	t.Parallel()
-	defer func() {
-		if recover() == nil {
-			t.Error("Parse of the context text did not panic")
-		}
-	}()
-	_, _ = Parse("x", "text")
+	n, err := Parse("x", "text")
+	var e *Error
+	if n != nil || !errors.Is(err, ErrContext) || errors.As(err, &e) {
+		t.Errorf("Parse of the context text = %v, %v; want ErrContext alone", n, err)
+	}
 }
 
 // TestConditionMustBePure checks that every assignment operator in a condition

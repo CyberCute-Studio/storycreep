@@ -107,7 +107,9 @@ The parser reads a source from left to right, and stops with the first error tha
 - A line break that ends a statement ends it before anything after the line break is read. So `x` and, on the next line, a comment that holds a NUL is `invalid_statement`, while the same comment on the line of `x`, before the line break, is `invalid_character`.
 - In a condition, an assignment's operator is `condition_must_be_pure` wherever the parser stops at it, as in `a and (x = 1)`.
 - A qualified name is read to its last part before its parts are counted, so that a reserved word among them, as in `a.b.c.null`, is `reserved_word` rather than `invalid_name`.
-- `node(` is read to its closing parenthesis, and its argument's error comes first. One string literal that holds no node's ID is `invalid_node_ref` over the string; any other argument, or none, over the whole `node(…)`.
+- `node(` is read to its closing parenthesis, and its argument's error comes first. One string literal that holds no node's ID is `invalid_node_ref` over the string; any other argument, or none, over the whole `node(…)`, whose arguments are read as a call's.
+- Every opening parenthesis, a group's, a call's, or a node reference's, counts toward the 64 that may nest, and the one that opens the 65th level is `ast_too_deep` once the parser reaches it.
+- The parser counts an AST's nodes as it reads the tokens that make them, each as soon as it reaches it, before anything else is decided at it: a literal, but for the one string literal of a `node("…")`, which is part of its node; the identifier or the qualifier that a name, a call, or a node reference starts with; a unary or a binary operator; and a statement's assignment operator. A script's own node counts before its first token. The token that makes the 513th node is `ast_too_large`, so that the parser reads no further, however long the source goes on.
 
 ### Syntax errors
 
@@ -129,4 +131,5 @@ The parser reads a source from left to right, and stops with the first error tha
 | `invalid_statement` | A statement of a script that is neither an assignment nor a call, as `x == 1`, or one in parentheses, once a `;`, a line break, or the end of the source ends it. | The statement. |
 | `invalid_assignment_target` | An assignment to something other than a variable or an attribute, as `1 = x` or `f(x) = 1`, or to one in parentheses. | The target. |
 | `condition_must_be_pure` | An assignment's operator in a condition (FR-EXPR-02 AC3). | The operator. |
-| `ast_too_deep` | A parenthesis, of a group or of a call's arguments, that opens one more than 64 of them (PRD §5.8.6). | The parenthesis. |
+| `ast_too_deep` | An opening parenthesis, a group's, a call's, or a node reference's, that opens one more than 64 of them (PRD §5.8.6). | The parenthesis. |
+| `ast_too_large` | A token that makes an AST's node beyond 512 (PRD §5.8.6), the nodes counted as the parser reads the tokens that make them (above): each literal, name, call, node reference, and operator, and a script's own node. | The token. |

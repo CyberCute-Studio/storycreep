@@ -21,7 +21,7 @@ var corpusPath = filepath.Join("..", "..", "..", "schema", "expr-corpus", "synta
 var codes = []Code{
 	InvalidCharacter, UnterminatedString, InvalidEscape, StringTooLong, InvalidNumber, IntegerOutOfRange,
 	FloatOutOfRange, IdentifierTooLong, UnexpectedToken, UnexpectedEnd, ReservedWord, InvalidName,
-	InvalidNodeRef, InvalidStatement, InvalidAssignmentTarget, ConditionMustBePure, ASTTooDeep,
+	InvalidNodeRef, InvalidStatement, InvalidAssignmentTarget, ConditionMustBePure, ASTTooDeep, ASTTooLarge,
 }
 
 // TestProblems checks that every code has the English description that an

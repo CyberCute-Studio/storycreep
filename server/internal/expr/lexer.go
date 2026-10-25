@@ -87,8 +87,8 @@ type lexer struct {
 	// the first.
 	prev  tokenKind
 	depth int // how many parentheses are open
-	// pending is the token that next read after a line break that ends a
-	// statement, which it returns after the line break's tNewline.
+	// pending is the error of a comment after a line break that ends a
+	// statement, which next returns after the line break's tNewline.
 	pending    token
 	hasPending bool
 	// done is set once next has returned a tError or the tEOF, after which
@@ -105,9 +105,12 @@ type lexer struct {
 // literal, or a ), the tokens that an expression ends with, ends the
 // statement before it, and next returns it as a tNewline: one for each run of
 // line breaks, comments, and white space, before the token after the run, or
-// the error of a comment in the run. Every other line break, and every line
-// break of a condition, is white space, so that an expression can go on on
-// the next line after an operator, a comma, or an opening parenthesis.
+// the error of a comment in the run. next reads the token after the run only
+// once it is asked for the token after the tNewline, so that nothing after the
+// run is read before the statement ends. Every other
+// line break, and every line break of a condition, is white space, so that an
+// expression can go on on the next line after an operator, a comma, or an
+// opening parenthesis.
 func (l *lexer) next() token {
 	switch {
 	case l.hasPending:
@@ -117,16 +120,21 @@ func (l *lexer) next() token {
 		return token{kind: tEOF, Range: Range{l.eof, l.eof}}
 	}
 	brk, t, bad := l.space()
+	if brk >= 0 && l.ctx == ContextScript && l.depth == 0 && endsExpression(l.prev) {
+		// The next call finds no white space to step past, and reads the
+		// token after the run, unless a comment in the run holds an error,
+		// which space has read already, and which the next call returns.
+		if bad {
+			l.pending, l.hasPending = t, true
+		}
+		return l.emit(token{kind: tNewline, Range: Range{brk, brk + 1}})
+	}
 	switch {
 	case bad:
 	case l.i == len(l.src):
 		t = token{kind: tEOF, Range: Range{l.at, l.at}}
 	default:
 		t = l.token()
-	}
-	if brk >= 0 && l.ctx == ContextScript && l.depth == 0 && endsExpression(l.prev) {
-		l.pending, l.hasPending = t, true
-		return l.emit(token{kind: tNewline, Range: Range{brk, brk + 1}})
 	}
 	return l.emit(t)
 }

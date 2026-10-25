@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/semantics"
@@ -26,17 +27,18 @@ import (
 // is not resolved, is left out.
 //
 // Encode fails on a node that is not one of an AST: a nil one, an int beyond
-// ±(2^53 − 1), a float that is not finite, a string that is not UTF-8, a
-// literal's or a name's, an operator or a literal's type that the language
-// does not have, or a node of a kind that its place in the AST cannot be of:
-// an AST is an expression or a script, a script's statements are assignments
-// and calls, an assignment's target is a variable or an attribute, and every
-// other child of a node is an expression, neither an assignment nor a script.
+// ±(2^53 − 1), a float that is not finite, a string, a literal's or any
+// other, that is not UTF-8 or that holds a NUL, which no text holds (§5.8.1),
+// a name, a node reference, or a function that is empty, an operator or a
+// literal's type that the language does not have, or a node of a kind that
+// its place in the AST cannot be of: an AST is an expression or a script, a
+// script's statements are assignments and calls, an assignment's target is a
+// variable or an attribute, and every other child of a node is an expression,
+// neither an assignment nor a script.
 //
-// Encode writes an AST of any depth without recursing, as deep as a long
-// chain of binary operators makes one, which Parse reads though the AST depth
-// of §5.8.6 refuses it, so that no AST that Parse returns can exhaust the
-// stack, which no program recovers from.
+// Encode writes an AST of any depth without recursing, so that no AST that a
+// program builds, however deep, can exhaust the stack, which no program
+// recovers from.
 func Encode(n Node) ([]byte, error) {
 	e := &encoder{}
 	e.enc = json.NewEncoder(&e.encoded)
@@ -188,7 +190,7 @@ func (e *encoder) node(n Node, at place) error {
 	case *Lit:
 		return e.literal(n)
 	case *Var:
-		name, err := e.quoted(n.Name)
+		name, err := e.required(n.Name)
 		if err != nil {
 			return err
 		}
@@ -206,7 +208,7 @@ func (e *encoder) node(n Node, at place) error {
 			}
 			e.b.WriteString(`"attribute":` + attribute + ",")
 		}
-		name, err := e.quoted(n.Name)
+		name, err := e.required(n.Name)
 		if err != nil {
 			return err
 		}
@@ -216,7 +218,7 @@ func (e *encoder) node(n Node, at place) error {
 		}
 		e.b.WriteByte('}')
 	case *NodeRef:
-		ref, err := e.quoted(n.Ref)
+		ref, err := e.required(n.Ref)
 		if err != nil {
 			return err
 		}
@@ -235,7 +237,7 @@ func (e *encoder) node(n Node, at place) error {
 		e.push(part{node: n.Left, place: atOperand}, text(`,"op":"`+string(n.Op)+`","right":`),
 			part{node: n.Right, place: atOperand}, text("}"))
 	case *Call:
-		function, err := e.quoted(n.Function)
+		function, err := e.required(n.Function)
 		if err != nil {
 			return err
 		}
@@ -292,8 +294,8 @@ func (e *encoder) literal(n *Lit) error {
 		}
 		v = f
 	case value.String:
-		if !utf8.ValidString(n.Str) {
-			return errNotUTF8
+		if err := checkText(n.Str); err != nil {
+			return err
 		}
 		v = n.Str
 	default:
@@ -307,16 +309,43 @@ func (e *encoder) literal(n *Lit) error {
 	return nil
 }
 
-// errNotUTF8 is a string that is not UTF-8, which encoding/json would write
-// with U+FFFD in place of each byte that is not.
-var errNotUTF8 = errors.New("expr: a string is not UTF-8")
+// The strings that no AST holds: one that is not UTF-8, which encoding/json
+// would write with U+FFFD in place of each byte that is not, one that holds a
+// NUL, which PostgreSQL's text and jsonb cannot hold, and an empty one where a
+// node needs one.
+var (
+	errNotUTF8 = errors.New("expr: a string is not UTF-8")
+	errNUL     = errors.New("expr: a string holds a NUL")
+	errEmpty   = errors.New("expr: a name, a node reference, or a function is empty")
+)
 
-// quoted returns the JSON of the string s, or errNotUTF8.
+// checkText returns errNotUTF8 or errNUL for a string that is not UTF-8 or
+// that holds a NUL, and otherwise nil.
+func checkText(s string) error {
+	switch {
+	case !utf8.ValidString(s):
+		return errNotUTF8
+	case strings.IndexByte(s, 0) >= 0:
+		return errNUL
+	}
+	return nil
+}
+
+// quoted returns the JSON of the string s, or the error of checkText.
 func (e *encoder) quoted(s string) (string, error) {
-	if !utf8.ValidString(s) {
-		return "", errNotUTF8
+	if err := checkText(s); err != nil {
+		return "", err
 	}
 	return e.jsonOf(s)
+}
+
+// required returns the JSON of the string s, a field that a node needs, or
+// errEmpty if s is "", or the error of checkText.
+func (e *encoder) required(s string) (string, error) {
+	if s == "" {
+		return "", errEmpty
+	}
+	return e.quoted(s)
 }
 
 // jsonOf returns the JSON of v, a bool, an int64, a float64, or a string, as
