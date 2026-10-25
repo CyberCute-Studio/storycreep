@@ -8,6 +8,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -327,6 +329,26 @@ func TestLoadOrder(t *testing.T) {
 			t.Fatalf("Load = %v; want the error of %s", err, published.SettingsPath)
 		}
 	}
+	// Of two nodes whose IDs are not in their canonical spelling, it is the
+	// error of the first in its board's file, whatever order a map of the
+	// nodes would give.
+	var first string
+	lower := func(b map[string]any) {
+		nodes := b["nodes"].([]any)
+		for _, n := range []any{nodes[0], nodes[len(nodes)-1]} {
+			n := n.(map[string]any)
+			n["id"] = strings.ToLower(n["id"].(string))
+		}
+		first = nodes[0].(map[string]any)["id"].(string)
+	}
+	for range 20 {
+		_, err := Load(snapshotFS(t, choicesSuite(), map[string]func(map[string]any){
+			published.BoardPath("main"): lower,
+		}))
+		if err == nil || !strings.Contains(err.Error(), strconv.Quote(first)) {
+			t.Fatalf("Load = %v; want the error of %s", err, first)
+		}
+	}
 }
 
 // loaded returns the snapshot of the suite s.
@@ -379,9 +401,12 @@ func TestLoadStateRefuses(t *testing.T) {
 		"of a string of more than 4,096 characters": func(st *published.SaveState) {
 			st.Variables[vr("NAME")] = raw(strings.Repeat("a", 4097))
 		},
-		"of a string with a NUL":       func(st *published.SaveState) { st.Variables[vr("NAME")] = raw("a\x00b") },
-		"of a visit of no node":        func(st *published.SaveState) { st.Visits[nd("NADA")] = 1 },
-		"of a visit count below 1":     func(st *published.SaveState) { st.Visits[nd("CHAT")] = 0 },
+		"of a string with a NUL":   func(st *published.SaveState) { st.Variables[vr("NAME")] = raw("a\x00b") },
+		"of a visit of no node":    func(st *published.SaveState) { st.Visits[nd("NADA")] = 1 },
+		"of a visit count below 1": func(st *published.SaveState) { st.Visits[nd("CHAT")] = 0 },
+		"of a visit count beyond 2^53 − 1": func(st *published.SaveState) {
+			st.Visits[nd("CHAT")] = published.MaxInt + 1
+		},
 		"of a cursor of no node":       func(st *published.SaveState) { st.Cursor.NodeID = nd("NADA") },
 		"of a cursor of another board": func(st *published.SaveState) { st.Cursor.BoardID = bd("NADA") },
 		"of a cursor of no phase":      func(st *published.SaveState) { st.Cursor.Phase = "" },
@@ -479,6 +504,26 @@ func TestSetValues(t *testing.T) {
 	}
 	if err := c.SetAttribute(cm("KEEPER"), at("TAG"), expr.StringValue("x")); err == nil {
 		t.Error("SetAttribute of an attribute that is not runtime is not refused")
+	}
+	// An enum's option is set as LoadState reads it back, by the enum's
+	// declaration, so that one that a string's check would refuse, with a
+	// NUL, which Load and LoadState take of an enum, is set, saved, and
+	// loaded too.
+	option := "a\x00b"
+	snap, err := Load(snapshotFS(t, choicesSuite(), map[string]func(map[string]any){
+		published.ComponentTypesPath: func(f map[string]any) {
+			attributeOf(f, 1)["options"] = []any{"calm", "wary", "angry", option}
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c = New(snap, false, nil)
+	if err := c.SetAttribute(cm("KEEPER"), at("MD"), expr.StringValue(option)); err != nil {
+		t.Fatalf("SetAttribute of an enum's option with a NUL: %v", err)
+	}
+	if err := c.LoadState(c.SaveState()); err != nil || c.Attribute(cm("KEEPER"), at("MD")).Str != option {
+		t.Errorf("LoadState of the state of an enum's option with a NUL: %v", err)
 	}
 }
 
@@ -647,27 +692,86 @@ func TestListenerSaves(t *testing.T) {
 
 // TestListenerMovesFlow checks that a listener that calls a method that
 // moves the flow, within a call that moves it, panics, and leaves the
-// runtime usable once the call has returned.
+// runtime usable once the call has returned: where the panic stopped the
+// call between two nodes, at an enter, the flow is of no phase, and
+// SaveState panics, until Start moves the flow to rest; and in strict mode, a
+// call that reported a runtime error before a panic stopped it halts the
+// flow.
 func TestListenerMovesFlow(t *testing.T) {
 	t.Parallel()
-	var r *Runtime
-	moved := false
-	r = New(loaded(t, choicesSuite()), false, func(e Event) {
-		if e.Kind == EventReady && !moved {
-			moved = true
-			r.Goto(bd("PAGE"), nd("CHAT"))
-		}
-	})
-	func() {
+	panics := func(name string, f func()) {
+		t.Helper()
 		defer func() {
 			if recover() == nil {
-				t.Error("a listener's Goto within Start did not panic")
+				t.Errorf("%s did not panic", name)
 			}
 		}()
+		f()
+	}
+	for _, kind := range []string{EventReady, EventEnter} {
+		var r *Runtime
+		moved := false
+		r = New(loaded(t, choicesSuite()), false, func(e Event) {
+			if e.Kind == kind && !moved {
+				moved = true
+				r.Goto(bd("PAGE"), nd("CHAT"))
+			}
+		})
+		panics("a listener's Goto within Start at the "+kind, func() { r.Start("", "") })
+		if kind == EventEnter {
+			if node, phase := r.Current(); node != nd("START") || phase != "" || r.CanAdvance() {
+				t.Errorf("after the panic at the enter, the flow is at %s, %q; want START, of no phase", node,
+					phase)
+			}
+			panics("a save after the panic at the enter", func() { r.SaveState() })
+		}
 		r.Start("", "")
-	}()
+		if node, phase := r.Current(); node != nd("START") || phase != awaitingChoice {
+			t.Errorf("Start after the panic at the %s is at %s, %q", kind, node, phase)
+		}
+		r.SaveState()
+	}
+	var r *Runtime
+	r = New(loaded(t, choicesSuite()), true, func(e Event) {
+		if e.Kind == EventError {
+			panic("the listener's")
+		}
+	})
+	panics("a listener's panic at an invalid_choice", func() { r.Choose(cn("NADA")) })
+	if !r.Halted() {
+		t.Error("strict mode did not halt the flow of a call that reported a runtime error before a panic stopped it")
+	}
+}
+
+// TestListenerReadsPhase checks what a listener reads of the flow at each
+// exit and at the end: of no phase and without choices, at a node that the
+// flow leaves by a choice, by a goto, and at one that it ends at, alike, and
+// ended at the end, after the node's on-exit, as a cursor is (PRD §8.5).
+func TestListenerReadsPhase(t *testing.T) {
+	t.Parallel()
+	type seen struct {
+		kind, node, phase    string
+		choices              int
+		canAdvance, finished bool
+	}
+	var r *Runtime
+	var got []seen
+	r = New(loaded(t, choicesSuite()), false, func(e Event) {
+		if e.Kind == EventExit || e.Kind == EventEnd {
+			node, phase := r.Current()
+			got = append(got, seen{e.Kind, node, phase, len(r.Choices()), r.CanAdvance(), r.IsFinished()})
+		}
+	})
 	r.Start("", "")
-	if node, _ := r.Current(); node != nd("START") {
-		t.Errorf("Start after the panic is at %s", node)
+	r.Choose(cn("ASK"))
+	r.Goto(bd("PAGE"), nd("BYE"))
+	want := []seen{
+		{kind: EventExit, node: nd("START")},
+		{kind: EventExit, node: nd("CHAT")},
+		{kind: EventExit, node: nd("BYE")},
+		{kind: EventEnd, node: nd("BYE"), phase: endedPhase, finished: true},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the listener read %+v; want %+v", got, want)
 	}
 }

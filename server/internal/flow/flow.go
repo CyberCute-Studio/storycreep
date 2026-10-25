@@ -13,12 +13,14 @@
 package flow
 
 import (
+	"bytes"
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"reflect"
@@ -190,11 +192,11 @@ func (l *loader) load(fsys fs.FS) error {
 		}
 		files[b.ID] = &f
 	}
-	// The files that it does not read, as the assets, are hashed too, so
-	// that every file that the manifest lists is its bytes'.
+	// The files that it does not read, as the assets, are hashed too, as
+	// they stream, so that every file that the manifest lists is its bytes'.
 	for _, path := range slices.Sorted(maps.Keys(m.Files)) {
 		if !l.read[path] {
-			if _, err := contents(fsys, m.Files, path); err != nil {
+			if err := hashed(fsys, m.Files, path); err != nil {
 				return err
 			}
 		}
@@ -210,7 +212,13 @@ func (l *loader) load(fsys fs.FS) error {
 			return fmt.Errorf("%s: %w", b.File, err)
 		}
 	}
-	p, err := s.project(types, components)
+	// What the snapshot's expressions can name, against which its ASTs are
+	// checked, of the nodes in the order of the index and of their files.
+	var nodes []published.Node
+	for _, b := range m.Boards {
+		nodes = append(nodes, files[b.ID].Nodes...)
+	}
+	p, err := published.ExprProject(variables.Variables, types.ComponentTypes, components.Components, nodes)
 	if err != nil {
 		return err
 	}
@@ -276,19 +284,43 @@ func isFilePath(path string) bool {
 // contents returns the bytes of the file of the path in fsys, once it has
 // checked that the manifest's files list it, with the hash of its bytes.
 func contents(fsys fs.FS, files map[string]published.Hash, path string) ([]byte, error) {
-	want, ok := files[path]
-	if !ok {
+	if _, ok := files[path]; !ok {
 		return nil, fmt.Errorf("%s is not among the manifest's files", path)
 	}
 	data, err := fs.ReadFile(fsys, path)
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(data)
-	if got := published.Hash("sha256:" + hex.EncodeToString(sum[:])); got != want {
-		return nil, fmt.Errorf("%s: its hash is %s, not the manifest's %q", path, got, want)
+	return data, checkHash(files, path, bytes.NewReader(data))
+}
+
+// hashed checks that the manifest's files list the file of the path in fsys
+// with the hash of its bytes, as contents does, but reads them as they
+// stream, without holding them, as an asset's, which the loader does not
+// decode, may be large.
+func hashed(fsys fs.FS, files map[string]published.Hash, path string) error {
+	if _, ok := files[path]; !ok {
+		return fmt.Errorf("%s is not among the manifest's files", path)
 	}
-	return data, nil
+	f, err := fsys.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return checkHash(files, path, f)
+}
+
+// checkHash checks that the bytes that r reads, of the file of the path, have
+// the hash that the manifest's files list of it.
+func checkHash(files map[string]published.Hash, path string, r io.Reader) error {
+	h := sha256.New()
+	if _, err := io.Copy(h, r); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if got := published.Hash("sha256:" + hex.EncodeToString(h.Sum(nil))); got != files[path] {
+		return fmt.Errorf("%s: its hash is %s, not the manifest's %q", path, got, files[path])
+	}
+	return nil
 }
 
 // readFile reads the file of the path in fsys into v, with published.Decode,
@@ -521,34 +553,6 @@ func (l *loader) addNodes(b string, f *published.Board) error {
 		l.s.nodes[id] = &node{board: b, node: n, ports: ports}
 	}
 	return nil
-}
-
-// project returns what the snapshot's expressions can name, against which
-// its ASTs are checked.
-func (s *Snapshot) project(types published.ComponentTypes, components published.Components) (*expr.Project,
-	error) {
-	var variables []expr.Variable
-	for _, id := range s.variables {
-		v := s.declared[id]
-		variables = append(variables, expr.Variable{ID: v.ID, Key: v.Key, Type: v.Type, Board: v.BoardID})
-	}
-	definitions := make(map[string][]expr.Attribute)
-	for _, t := range types.ComponentTypes {
-		for _, d := range t.Attributes {
-			definitions[t.ID] = append(definitions[t.ID], expr.Attribute{ID: d.ID, Key: d.Key, Type: d.Type,
-				Runtime: d.Runtime, Options: d.Options})
-		}
-	}
-	var cmps []expr.Component
-	for _, c := range components.Components {
-		cmps = append(cmps, expr.Component{ID: c.ID, Key: c.Key, Attributes: definitions[c.ComponentTypeID]})
-	}
-	var nodes []expr.BoardNode
-	for id, n := range s.nodes {
-		_, jumper := n.node.(*published.Jumper)
-		nodes = append(nodes, expr.BoardNode{ID: id, Jumper: jumper})
-	}
-	return expr.NewProject(variables, cmps, nodes)
 }
 
 // addConnections adds the connections of the board b's file f to their

@@ -25,35 +25,23 @@ func decodeAll[T any](t *testing.T, examples []string) []T {
 // variables, the components and their attributes, and the boards' nodes.
 func exampleProject(t *testing.T) *expr.Project {
 	t.Helper()
-	var variables []expr.Variable
+	var variables []Variable
 	for _, f := range decodeAll[Variables](t, variablesExamples) {
-		for _, v := range f.Variables {
-			variables = append(variables, expr.Variable{ID: v.ID, Key: v.Key, Type: v.Type, Board: v.BoardID})
-		}
+		variables = append(variables, f.Variables...)
 	}
-	types := map[string][]expr.Attribute{}
+	var types []ComponentType
 	for _, f := range decodeAll[ComponentTypes](t, componentTypesExamples) {
-		for _, ct := range f.ComponentTypes {
-			for _, a := range ct.Attributes {
-				types[ct.ID] = append(types[ct.ID], expr.Attribute{ID: a.ID, Key: a.Key, Type: a.Type,
-					Runtime: a.Runtime, Options: a.Options})
-			}
-		}
+		types = append(types, f.ComponentTypes...)
 	}
-	var components []expr.Component
+	var components []Component
 	for _, f := range decodeAll[Components](t, componentsExamples) {
-		for _, c := range f.Components {
-			components = append(components, expr.Component{ID: c.ID, Key: c.Key, Attributes: types[c.ComponentTypeID]})
-		}
+		components = append(components, f.Components...)
 	}
-	var nodes []expr.BoardNode
+	var nodes []Node
 	for _, b := range decodeAll[Board](t, boardExamples) {
-		for _, n := range b.Nodes {
-			_, jumper := n.(*Jumper)
-			nodes = append(nodes, expr.BoardNode{ID: n.NodeID(), Jumper: jumper})
-		}
+		nodes = append(nodes, b.Nodes...)
 	}
-	p, err := expr.NewProject(variables, components, nodes)
+	p, err := ExprProject(variables, types, components, nodes)
 	if err != nil {
 		t.Fatal(err)
 	}

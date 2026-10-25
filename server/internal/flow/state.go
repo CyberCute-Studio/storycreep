@@ -20,12 +20,12 @@ var ErrState = errors.New("flow: a state that this runtime does not load")
 // started, the value of every variable and of every component's runtime
 // attribute, and the visit count of every node that the flow has entered.
 // Neither a halt nor the current choices are part of it: LoadState builds the
-// choices again. It panics when the listener calls it within a call that
-// moves the flow while the flow is not at rest (Runtime), as at an enter,
-// when the node's on-enter has not run, which no cursor's phase says.
+// choices again. It panics where the flow is not at rest (Runtime), as when
+// the listener calls it at an enter, whose on-enter has not run, which no
+// cursor's phase says, or after a panic of the listener stopped a call there.
 func (r *Runtime) SaveState() published.SaveState {
-	if r.moving && !r.rest {
-		panic("flow: the listener saved the state within a call that moves the flow, where the flow is not at rest")
+	if !r.atRest() {
+		panic("flow: the state was saved where the flow is not at rest, between two nodes")
 	}
 	m := &r.s.manifest
 	st := published.SaveState{
@@ -73,7 +73,9 @@ func (r *Runtime) SaveState() published.SaveState {
 // of a component without any, which SaveState never writes, or a value that
 // its declaration's type does not read (§5.8.9, valueOf), a visit count of a
 // node that the snapshot does not have, or of a jumper, which the flow never
-// enters, or below 1, or whose cursor is not of a node of its board, which is
+// enters, or below 1, or beyond published.MaxInt, at which the flow's counts
+// stop, as a save state's schema bounds them, which a state built in Go need
+// not be, or whose cursor is not of a node of its board, which is
 // no jumper, in a phase that is neither awaiting_choice nor ended, which
 // published.Decode refuses too, and awaits a choice only at an element that
 // is no ending and that a connection leaves, as no flow awaits one
@@ -88,16 +90,17 @@ func (r *Runtime) LoadState(st published.SaveState) error {
 		return fmt.Errorf("%w: %w", ErrState, err)
 	}
 	r.call(true, func() {
-		// The choices' conditions may report a runtime error, at which the
-		// flow is not at rest.
-		r.rest = false
 		r.vars, r.attrs, r.visits = vars, attrs, visits
 		r.current, r.phase, r.choices = "", "", nil
 		if c := st.Cursor; c != nil {
-			r.current, r.phase = c.NodeID, c.Phase
+			// The flow comes to rest, of the cursor's phase, once its
+			// choices are built, whose conditions may report a runtime error,
+			// at which it is not at rest.
+			r.current = c.NodeID
 			if c.Phase == published.PhaseAwaitingChoice {
 				r.choices = r.hold(r.s.nodes[c.NodeID].ports[out])
 			}
+			r.phase = c.Phase
 		}
 	})
 	return nil
@@ -157,9 +160,9 @@ func (s *Snapshot) state(st published.SaveState) (map[string]expr.Value, map[att
 	visits := make(map[string]int64)
 	for _, nid := range slices.Sorted(maps.Keys(st.Visits)) {
 		count, n := st.Visits[nid], s.nodes[nid]
-		if n == nil || count < 1 {
-			return nil, nil, nil, fmt.Errorf("its visit count of %s is not of a node of the snapshot, or below 1",
-				nid)
+		if n == nil || count < 1 || count > published.MaxInt {
+			return nil, nil, nil, fmt.Errorf("its visit count of %s is not of a node of the snapshot, or below 1, or "+
+				"beyond %d", nid, int64(published.MaxInt))
 		}
 		if _, jumper := n.node.(*published.Jumper); jumper {
 			return nil, nil, nil, fmt.Errorf("it has a visit count of the jumper %s, which the flow never enters", nid)
