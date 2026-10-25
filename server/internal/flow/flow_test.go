@@ -265,8 +265,10 @@ func TestLoad(t *testing.T) {
 			t.Errorf("%s: %v; want an error of ErrASTUnsupported only of a newer astVersion", c.name, err)
 		}
 	}
-	// The checks of what the files agree on, which an edit of one file alone
-	// fails first.
+	// The checks that an edit of one file alone fails before: of what the
+	// files agree on, and of a component's value of an option that its type
+	// has, but which no string of the language is, which a script could copy
+	// into a string variable that no runtime then loads.
 	entry := func(f map[string]any) { f["entry"].(map[string]any)["nodeId"] = nd("NADA") }
 	boardEntry := func(f map[string]any) {
 		for _, b := range f["boards"].([]any) {
@@ -283,6 +285,13 @@ func TestLoad(t *testing.T) {
 		{"a board's entry node of no node", map[string]func(map[string]any){published.ManifestPath: boardEntry,
 			main: func(b map[string]any) { b["board"].(map[string]any)["entryNodeId"] = nd("NADA") }},
 			"is not one of its nodes"},
+		{"a component's value of an enum's option with a NUL", map[string]func(map[string]any){
+			published.ComponentTypesPath: func(f map[string]any) {
+				attributeOf(f, 1)["options"] = []any{"calm", "wary", "angry", "a\x00b"}
+			},
+			published.ComponentsPath: func(f map[string]any) {
+				f["components"].([]any)[0].(map[string]any)["attributes"].(map[string]any)[at("MD")] = "a\x00b"
+			}}, "or with a NUL"},
 	} {
 		_, err := Load(snapshotFS(t, choicesSuite(), c.edits))
 		if !errors.Is(err, ErrLoad) || !strings.Contains(err.Error(), c.want) {
@@ -472,8 +481,10 @@ func TestSameState(t *testing.T) {
 }
 
 // TestSetValues checks that SetVariable and SetAttribute widen an int for a
-// float and refuse a value of another type, an enum's other option, and an ID
-// that the snapshot does not have, changing nothing.
+// float and refuse a value of another type, one that is no value of the
+// language, an int beyond ±(2^53 − 1) for a float among them, an enum's
+// other option, or one with a NUL, and an ID that the snapshot does not
+// have, changing nothing.
 func TestSetValues(t *testing.T) {
 	t.Parallel()
 	r := New(loaded(t, valuesSuite()), false)
@@ -481,13 +492,16 @@ func TestSetValues(t *testing.T) {
 		t.Errorf("SetVariable of an int for a float: %v, %v", err, r.Variable(vr("F1")))
 	}
 	for name, err := range map[string]error{
-		"a string for an int":        r.SetVariable(vr("N1"), expr.StringValue("1")),
-		"a float for an int":         r.SetVariable(vr("N1"), expr.FloatValue(1)),
-		"a variable of no ID":        r.SetVariable(vr("NADA"), expr.IntValue(1)),
-		"none for a bool":            r.SetVariable(vr("B1"), expr.Value{}),
-		"a value of no ID's":         r.SetAttribute(cm("NADA"), at("NADA"), expr.IntValue(1)),
-		"an int beyond 2^53 − 1":     r.SetVariable(vr("N1"), expr.IntValue(1<<53)),
-		"an int beyond −(2^53 − 1)":  r.SetVariable(vr("N1"), expr.IntValue(-1<<53)),
+		"a string for an int":       r.SetVariable(vr("N1"), expr.StringValue("1")),
+		"a float for an int":        r.SetVariable(vr("N1"), expr.FloatValue(1)),
+		"a variable of no ID":       r.SetVariable(vr("NADA"), expr.IntValue(1)),
+		"none for a bool":           r.SetVariable(vr("B1"), expr.Value{}),
+		"a value of no ID's":        r.SetAttribute(cm("NADA"), at("NADA"), expr.IntValue(1)),
+		"an int beyond 2^53 − 1":    r.SetVariable(vr("N1"), expr.IntValue(1<<53)),
+		"an int beyond −(2^53 − 1)": r.SetVariable(vr("N1"), expr.IntValue(-1<<53)),
+		"an int beyond 2^53 − 1 for a float, which it would round": r.SetVariable(vr("F1"),
+			expr.IntValue(1<<53+1)),
+		"an int beyond −(2^53 − 1) for a float": r.SetVariable(vr("F1"), expr.IntValue(-1<<53)),
 		"an infinity":                r.SetVariable(vr("F1"), expr.FloatValue(math.Inf(1))),
 		"a NaN":                      r.SetVariable(vr("F1"), expr.FloatValue(math.NaN())),
 		"a string that is not UTF-8": r.SetVariable(vr("S1"), expr.StringValue("\xff")),
@@ -518,6 +532,10 @@ func TestSetValues(t *testing.T) {
 	if err := r.SetVariable(vr("N1"), expr.IntValue(-(1<<53 - 1))); err != nil {
 		t.Errorf("SetVariable of −(2^53 − 1): %v", err)
 	}
+	if err := r.SetVariable(vr("F1"), expr.IntValue(1<<53-1)); err != nil ||
+		r.Variable(vr("F1")) != expr.FloatValue(1<<53-1) {
+		t.Errorf("SetVariable of 2^53 − 1 for a float: %v, %v", err, r.Variable(vr("F1")))
+	}
 	c := New(loaded(t, choicesSuite()), false)
 	if err := c.SetAttribute(cm("KEEPER"), at("MD"), expr.StringValue("sad")); err == nil {
 		t.Error("SetAttribute of an enum's other option is not refused")
@@ -529,10 +547,10 @@ func TestSetValues(t *testing.T) {
 	if err := c.SetAttribute(cm("KEEPER"), at("TAG"), expr.StringValue("x")); err == nil {
 		t.Error("SetAttribute of an attribute that is not runtime is not refused")
 	}
-	// An enum's option is set as LoadState reads it back, by the enum's
-	// declaration, so that one that a string's check would refuse, with a
-	// NUL, which Load and LoadState take of an enum, is set, saved, and
-	// loaded too.
+	// An enum's value is a string of the language, which a script may copy
+	// into a string variable, so that an option with a NUL, which the schemas
+	// take, and Load takes of an enum's options, is no value that SetAttribute
+	// sets, and never one that a runtime then saves and cannot load.
 	option := "a\x00b"
 	snap, err := Load(snapshotFS(t, choicesSuite(), map[string]func(map[string]any){
 		published.ComponentTypesPath: func(f map[string]any) {
@@ -543,11 +561,16 @@ func TestSetValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	c = New(snap, false)
-	if err := c.SetAttribute(cm("KEEPER"), at("MD"), expr.StringValue(option)); err != nil {
-		t.Fatalf("SetAttribute of an enum's option with a NUL: %v", err)
+	if err := c.SetAttribute(cm("KEEPER"), at("MD"), expr.StringValue(option)); err == nil {
+		t.Error("SetAttribute of an enum's option with a NUL is not refused")
 	}
-	if _, err := c.LoadState(c.SaveState()); err != nil || c.Attribute(cm("KEEPER"), at("MD")).Str != option {
-		t.Errorf("LoadState of the state of an enum's option with a NUL: %v", err)
+	if err := c.SetAttribute(cm("KEEPER"), at("MD"), expr.StringValue("angry")); err != nil {
+		t.Errorf("SetAttribute of an enum's option: %v", err)
+	}
+	st := c.SaveState()
+	st.Attributes[cm("KEEPER")][at("MD")] = raw(option)
+	if _, err := c.LoadState(st); !errors.Is(err, ErrState) {
+		t.Errorf("LoadState of an enum's option with a NUL: %v; want an error of ErrState", err)
 	}
 }
 

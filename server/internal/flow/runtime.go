@@ -664,9 +664,6 @@ func (r *Runtime) SetAttribute(component, attribute string, v expr.Value) error 
 	if err != nil {
 		return err
 	}
-	if o := r.s.options[k]; o != nil && !slices.Contains(o, v.Str) {
-		return fmt.Errorf("flow: %q is none of the options of %s of %s", v.Str, attribute, component)
-	}
 	// As LoadState reads what SaveState writes: an enum's by its declaration,
 	// as one of its options, which a check of a string's would not be.
 	if v, err = asSaved(v, r.s.declaredTypes[k], r.s.options[k]); err != nil {
@@ -677,12 +674,17 @@ func (r *Runtime) SetAttribute(component, attribute string, v expr.Value) error 
 }
 
 // typed returns v as a value of the type typ, an int widened for a float, or
-// an error when it is of another type.
+// an error when it is of another type, or an int beyond ±(2^53 − 1) for a
+// float, which is no value of the language, and which the float would hold
+// rounded, as another value (asSaved).
 func typed(v expr.Value, typ string) (expr.Value, error) {
 	switch {
 	case v.Type == typ:
 		return v, nil
 	case typ == value.Float && v.Type == value.Int:
+		if _, err := asSaved(v, value.Int, nil); err != nil {
+			return expr.Value{}, err
+		}
 		return expr.FloatValue(float64(v.Int)), nil
 	}
 	return expr.Value{}, fmt.Errorf("flow: a %s is no value of the type %s", v.Type, typ)
@@ -696,15 +698,15 @@ func typed(v expr.Value, typ string) (expr.Value, error) {
 // finite, or a string that is not UTF-8, which SaveState would otherwise
 // write as another value or as none, or a string of more than
 // semantics.MaxStringLength characters, or with a NUL, which no expression
-// builds (§5.8.1, §5.8.9), and which LoadState refuses. It is that round
-// trip, so that what it takes is what a save and a load keep, whatever they
-// check.
+// builds (§5.8.1, §5.8.9), and which LoadState refuses, or, of an enum, a
+// string that is none of its options. It is that round trip, so that what it
+// takes is what a save and a load keep, whatever they check.
 func asSaved(v expr.Value, typ string, options []string) (expr.Value, error) {
 	read, err := valueOf(jsonOf(v, v.Type), typ, options)
 	if err != nil || read != v {
 		return expr.Value{}, fmt.Errorf("flow: the %s is no value of the language, as an int beyond ±(2^53 − 1), a "+
 			"float that is not finite, a string that is not UTF-8, or one of more than %d characters, or with a NUL, "+
-			"is not", v.Type, semantics.MaxStringLength)
+			"is not, or, of an enum, none of its options", v.Type, semantics.MaxStringLength)
 	}
 	return read, nil
 }

@@ -108,7 +108,8 @@ const out = "out"
 // (expr.VersionOf), as every runtime trusts it to be (FR-EXPR-04); that a
 // text's or a label's value is of a variable that an expression of its board
 // reads (FR-TEXT-02, §5.8.3), or of a runtime attribute; and that every value
-// is of its declaration's type, a string of at most semantics.MaxStringLength
+// is of its declaration's type, a string, an enum's among them, which an
+// expression reads as a string, of at most semantics.MaxStringLength
 // characters without a NUL, as the language's are (valueOf). It is no
 // validator of the schemas, whose patterns and bounds published.Decode does
 // not check. Its error wraps ErrLoad, and that of the file that it reads,
@@ -363,7 +364,11 @@ func (l *loader) entity(id string) error {
 // of the language, of at most semantics.MaxStringLength characters, and a
 // text one of at most value.MaxTextLength, neither with a NUL, as the
 // format's schemas take them (value.Schema), and as no expression builds
-// another (§5.8.1, §5.8.3).
+// another (§5.8.1, §5.8.3). An enum's value is a string of the language too,
+// which an expression reads as a string and may assign to a string variable
+// (§5.8.3), so that it is bounded as a string is, though the schemas bound an
+// enum's option only by its length: a runtime that held an option with a NUL
+// would save a string variable that no runtime loads.
 func valueOf(v value.Value, typ string, options []string) (expr.Value, error) {
 	if v.JSON() == nil {
 		return expr.Value{}, errors.New("is missing")
@@ -391,16 +396,13 @@ func valueOf(v value.Value, typ string, options []string) (expr.Value, error) {
 	if err := json.Unmarshal(read.JSON(), &str); err != nil {
 		return expr.Value{}, err
 	}
-	bound := 0
-	switch typ {
-	case value.String:
-		bound = semantics.MaxStringLength
-	case value.Text:
+	bound := semantics.MaxStringLength
+	if typ == value.Text {
 		bound = value.MaxTextLength
 	}
-	if bound > 0 && (utf8.RuneCountInString(str) > bound || strings.ContainsRune(str, 0)) {
-		return expr.Value{}, fmt.Errorf("is a %s of more than %d characters, or with a NUL, which no value is", typ,
-			bound)
+	if utf8.RuneCountInString(str) > bound || strings.ContainsRune(str, 0) {
+		return expr.Value{}, fmt.Errorf("is a value of the type %s of more than %d characters, or with a NUL, which "+
+			"no value is", typ, bound)
 	}
 	return expr.StringValue(str), nil
 }

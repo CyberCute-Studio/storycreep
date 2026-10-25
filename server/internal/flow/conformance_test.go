@@ -607,21 +607,35 @@ func suiteFiles(t *testing.T) map[string][]byte {
 	return all
 }
 
+// readme is schema/conformance's README, the one file there that no suite
+// writes.
+const readme = "README.md"
+
 // TestConformanceFiles checks that schema/conformance holds the files that
-// the suites write, and no other JSON file; run go test ./internal/flow -run
-// TestConformanceFiles -update to rewrite them.
+// the suites write, and no other file but its README, nor a directory
+// without a file; run go test ./internal/flow -run TestConformanceFiles
+// -update to rewrite them, which removes every other file, and the
+// directories that it leaves without one, as those of a suite that was
+// renamed, which TestConformance would otherwise read as a suite.
 func TestConformanceFiles(t *testing.T) {
 	files := suiteFiles(t)
-	var stray []string
+	var stray, dirs []string
 	err := filepath.WalkDir(conformanceDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".json") {
+		if err != nil {
 			return err
 		}
 		rel, err := filepath.Rel(conformanceDir, path)
 		if err != nil {
 			return err
 		}
-		if _, ok := files[filepath.ToSlash(rel)]; !ok {
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			if rel != "." {
+				dirs = append(dirs, path)
+			}
+			return nil
+		}
+		if _, ok := files[rel]; !ok && rel != readme {
 			stray = append(stray, path)
 		}
 		return nil
@@ -637,6 +651,23 @@ func TestConformanceFiles(t *testing.T) {
 			continue
 		}
 		t.Errorf("%s is not a file of the suites; run go test ./internal/flow -run TestConformanceFiles -update", path)
+	}
+	// The directories, the deepest first, as WalkDir lists a directory before
+	// what it holds, of which one that holds nothing now is no suite's.
+	for _, dir := range slices.Backward(dirs) {
+		entries, err := os.ReadDir(dir)
+		switch {
+		case err != nil:
+			t.Fatal(err)
+		case len(entries) > 0:
+		case *update:
+			if err := os.Remove(dir); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			t.Errorf("%s holds no file of the suites; run go test ./internal/flow -run TestConformanceFiles -update",
+				dir)
+		}
 	}
 	for _, path := range slices.Sorted(maps.Keys(files)) {
 		full := filepath.Join(conformanceDir, filepath.FromSlash(path))

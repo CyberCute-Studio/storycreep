@@ -2,6 +2,7 @@ package published
 
 import (
 	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
 
@@ -46,6 +47,24 @@ func exampleProject(t *testing.T) *expr.Project {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// TestExprProjectUnknownType checks that ExprProject refuses a component of a
+// type that the component types do not have, rather than give it no
+// attributes, of which every expression would then say that it does not
+// have the one that it names.
+func TestExprProjectUnknownType(t *testing.T) {
+	t.Parallel()
+	var components []Component
+	for _, f := range decodeAll[Components](t, componentsExamples) {
+		components = append(components, f.Components...)
+	}
+	if len(components) == 0 {
+		t.Fatal("the examples have no component")
+	}
+	if _, err := ExprProject(nil, nil, components, nil); !errors.Is(err, expr.ErrProject) {
+		t.Errorf("ExprProject of a component of no type: %v; want an error of expr.ErrProject", err)
+	}
 }
 
 // expression is an expression of a board's example, at the board.

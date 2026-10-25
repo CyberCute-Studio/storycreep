@@ -218,13 +218,16 @@ func chain(n int) Node {
 // script exceeds the budget in has no effect, nor have those after it.
 func TestStepBudget(t *testing.T) {
 	t.Parallel()
-	// MaxSteps steps exactly: the comparison, and the sum and its other one.
-	sum := chain((MaxSteps - 1) / 2)
+	// MaxSteps steps exactly: the comparison, the sum of MaxSteps - 3 nodes,
+	// and the negation and its operand; and one step more: the comparison,
+	// the sum of MaxSteps - 1 nodes, and its other operand.
+	exact := &Binary{Op: OpGte, Left: chain(MaxSteps/2 - 1),
+		Right: &Unary{Op: OpNeg, Operand: &Lit{Type: value.Int}}}
 	env := envOf()
-	if !Condition(&Binary{Op: OpGte, Left: sum, Right: &Lit{Type: value.Int}}, env) || len(env.errors) > 0 {
+	if !Condition(exact, env) || len(env.errors) > 0 {
 		t.Errorf("a condition of MaxSteps steps is false, or errs: %v", env.errors)
 	}
-	over := &Binary{Op: OpGte, Left: chain(MaxSteps/2 + 1), Right: &Lit{Type: value.Int}}
+	over := &Binary{Op: OpGte, Left: chain(MaxSteps / 2), Right: &Lit{Type: value.Int}}
 	env = envOf()
 	if Condition(over, env) || !slices.Equal(env.errors, []semantics.RuntimeError{StepBudgetExceeded}) {
 		t.Errorf("a condition beyond MaxSteps steps is true, or reports %v", env.errors)
