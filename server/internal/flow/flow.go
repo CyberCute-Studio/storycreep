@@ -88,46 +88,22 @@ type node struct {
 const out = "out"
 
 // Load reads the snapshot that fsys holds, as a game's res://storycreep/
-// holds one (PRD §6.3), from its manifest, storycreep.json, and checks what
-// schema/published/README.md says a runtime's loader checks beyond the
-// schemas, and what the runtime relies on beside it: that each path of the
-// manifest's files is one of the forms of the pull's path rules (§7.5), a
-// board's of a slug that is no name that Windows reserves for a device, and
-// each file that it lists, an asset's among them, has its hash; that the
-// snapshot's astVersion is at most expr.ASTVersion, which a newer one is
-// refused for as the runtime's ast_unsupported, and at least the highest
-// version of the constructs that its ASTs use (expr.VersionOf), as every
-// runtime trusts it to be (FR-EXPR-04); that each file is one that
-// published.Decode reads, every index's board's among them; that every
-// reference resolves: the entry's and the boards' entry nodes are nodes of
-// their boards, a connection leaves an element by out or a branch by one of
-// its outputs, for a node of its board, a jumper's target, when it has one,
-// is a node of its board that is no jumper, a speaker and a mention are of a
-// component of the snapshot, a text's or a label's value of a variable that
-// an expression of its board reads, or of a runtime attribute of a component
-// (FR-TEXT-02), a variable's board is one of the index's, a component's type
-// is one of the snapshot's, and every AST type-checks at its board against
-// the snapshot's declarations, its names read by their refs
-// (expr.CheckResolved); that a component's values are one of each of its
-// type's definitions, of the definition's type, as each definition's default
-// and each variable's are, an enum's one of its options, which are each there
-// once, and that a text's definition is never runtime; that the files agree:
-// each board of the index has its file's ID, name, slug, and entry node, or
-// none, and its file is boards/ and its slug and .json, the settings' entry
-// is the manifest's, or neither has one, and the manifest's counts are how
-// many boards, components, connections, nodes, and variables the files hold;
-// that a segment's marks are each there once, in alphabetical order, the link
-// among them exactly when it has an href; and that no two entities have one
-// ID, no two component types, no two definitions of a type, no two
-// components, and no two variables of a scope have one key, no two tags of a
-// node are the same but for their case (input.FoldCase), no signal is there
-// twice, a branch's outputs are one if, then any elseifs, then an else, if it
-// has one (FR-EDIT-04), or none, and its outputs' and a port's connections'
-// orders are 0, 1, 2, and so on. It is no validator of the schemas, whose
-// patterns and bounds published.Decode does not check, but for a value's,
-// which is of its declaration's type, and a string of at most
-// semantics.MaxStringLength characters without a NUL, as the language's are
-// (valueOf). Its error wraps ErrLoad, and that of the file that it reads,
+// holds one (PRD §6.3), from its manifest, storycreep.json, each file into
+// the types with published.Decode, and checks every item of what
+// schema/published/README.md says a consumer checks beyond the schemas,
+// which that list alone enumerates, an asset's hash among the files', and a
+// node's tags compared as input.FoldCase folds them. Beyond that list, it
+// checks what the runtime relies on: that the snapshot's astVersion is at
+// most expr.ASTVersion, which a newer one is refused for as the runtime's
+// ast_unsupported, and at least the highest version of the constructs that
+// its ASTs use (expr.VersionOf), as every runtime trusts it to be
+// (FR-EXPR-04); that a text's or a label's value is of a variable that an
+// expression of its board reads (FR-TEXT-02, §5.8.3), or of a runtime
+// attribute; and that every value is of its declaration's type, a string of
+// at most semantics.MaxStringLength characters without a NUL, as the
+// language's are (valueOf). It is no validator of the schemas, whose
+// patterns and bounds published.Decode does not check. Its error wraps
+// ErrLoad, and that of the file that it reads,
 // and of a snapshot that is wrong in several ways it is always the same one,
 // as it reads the files and checks them in one order. It reads every board's
 // file, where the Godot runtime reads one only once the flow enters its
