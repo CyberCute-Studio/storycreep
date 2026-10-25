@@ -36,7 +36,7 @@ func (Board) JSONSchemaDoc() string {
 
 // BoardInfo is a board, as its file holds it.
 type BoardInfo struct {
-	EntryNodeID string `json:"entryNodeId,omitempty" id:"node" doc:"The board's entry node. Without it, the board has none, which only a draft may lack."`
+	EntryNodeID string `json:"entryNodeId,omitempty" id:"node" doc:"The board's entry node. Without it, the board has none."`
 	ID          string `json:"id" id:"board"`
 	Name        string `json:"name"`
 	Slug        string `json:"slug" pattern:"^[a-z0-9]+(?:-[a-z0-9]+)*$" maxLength:"64"`

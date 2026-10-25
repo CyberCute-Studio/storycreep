@@ -8,7 +8,7 @@ A save state is the narrative state that a runtime's `save_state()` returns and 
 | --- | --- |
 | `stateVersion` | 1. A runtime refuses a state of a newer version than its own with `runtime_error(state_version_unsupported)`, and applies nothing. |
 | `projectId` | The project's ID. A runtime refuses a state of another project unless `allow_cross_project` is set. |
-| `snapshotId`, `snapshotVersion` | The snapshot that the state was saved against, which a state saved against a draft has neither of (§7.8). |
+| `snapshotId`, `snapshotVersion` | The snapshot that the state was saved against, a release, and its version: a state saved against a release has both, and one saved against a draft neither (§7.8), so the schema takes neither without the other. |
 | `schemaVersion` | The published format's version of that snapshot. |
 | `cursor` | Where the flow is: its current node, `nodeId`, of `boardId`, and its `phase`, `awaiting_choice` when the node's choices are built and the game chooses one, or advances by its one unconditional connection, or `ended` when the flow ended at the node, after its on-exit ran (§5.8.5). A state saved before the flow started has none, and a jumper, which is never the current node, is never a cursor's. |
 | `variables` | Each variable's value, global and of each board, by its ID. |

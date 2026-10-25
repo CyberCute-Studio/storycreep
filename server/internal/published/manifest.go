@@ -10,7 +10,7 @@ type Manifest struct {
 	ASTVersion Int             `json:"astVersion" minimum:"1" maximum:"9007199254740991" doc:"The highest ast_version among the constructs that the snapshot's expressions use, 1 for none (FR-EXPR-04). A runtime that supports a lower one refuses the snapshot (PRD §6.4)."`
 	Boards     []ManifestBoard `json:"boards" doc:"Every board, sorted by ID, by which a runtime finds a board's file without reading any other board's (PRD §6.5)."`
 	Counts     Counts          `json:"counts"`
-	Entry      *Entry          `json:"entry,omitempty" doc:"Where the flow starts: the project's entry node, of its entry board. Without it, the project has none, which only a draft may lack."`
+	Entry      *Entry          `json:"entry,omitempty" doc:"Where the flow starts: the project's entry node, of its entry board. Without it, the project has none."`
 	Files      map[string]Hash `json:"files" keyPattern:"^(?:project/(?:settings|variables|component_types|components)\\.json|boards/[a-z0-9]+(?:-[a-z0-9]+)*\\.json|assets/[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}\\.(?:png|jpg|webp|gif|svg))$" doc:"The hash of each of the snapshot's files but the manifest, by its path, which uses forward slashes."`
 	Generator  GeneratorInfo   `json:"generator"`
 	Project    ProjectInfo     `json:"project"`
@@ -57,7 +57,7 @@ func (m *Manifest) UnmarshalJSON(data []byte) error {
 
 // ManifestBoard is a board of the manifest's index.
 type ManifestBoard struct {
-	EntryNodeID string `json:"entryNodeId,omitempty" id:"node" doc:"The board's entry node, where the flow enters the board when it starts there. Without it, the board has none, which only a draft may lack."`
+	EntryNodeID string `json:"entryNodeId,omitempty" id:"node" doc:"The board's entry node, where the flow enters the board when it starts there. Without it, the board has none."`
 	File        string `json:"file" pattern:"^boards/[a-z0-9]+(?:-[a-z0-9]+)*\\.json$" doc:"The path of the board's file, boards/ and its slug and .json, which the manifest's files list too."`
 	ID          string `json:"id" id:"board"`
 	Name        string `json:"name"`

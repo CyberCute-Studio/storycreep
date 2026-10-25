@@ -9,7 +9,7 @@ import (
 // Settings is a snapshot's project/settings.json: the project's entry and the
 // signals that its scripts emit (§6.3).
 type Settings struct {
-	Entry *Entry `json:"entry,omitempty" doc:"Where the flow starts, as the manifest's entry. Without it, the project has none, which only a draft may lack."`
+	Entry *Entry `json:"entry,omitempty" doc:"Where the flow starts, as the manifest's entry. Without it, the project has none."`
 	// SchemaVersion is SchemaVersion.
 	SchemaVersion Int      `json:"schemaVersion" const:"1" doc:"The version of the published format, 1."`
 	Signals       []string `json:"signals" minLength:"1" doc:"The names of the signals that the project's scripts emit with signal(), each once, sorted by their code points, [] for none (FR-EXPR-04)."`

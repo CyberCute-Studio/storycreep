@@ -275,6 +275,27 @@ func Integer(raw []byte) (int64, string) {
 	return n, ""
 }
 
+// Integral is an integer of a file, as a published file's count or a
+// segment's decimals, or of a save state, as a visit count, which a consumer
+// reads as an integer by its declaration, whatever its JSON form, and which
+// a game may have read back as a float, as Godot's JSON parser reads every
+// number (PRD §5.8.9): an integral JSON number however it is written, as 2,
+// 2.0, or 2e0, from -MaxInt to MaxInt, as a JSON Schema's integer takes it,
+// but for one written with an exponent beyond ±MaxExponent, as 0e1000,
+// which no file holds (Integer).
+type Integral int64
+
+// UnmarshalJSON reads an integral JSON number, however it is written, as an
+// Integral (Integer).
+func (n *Integral) UnmarshalJSON(data []byte) error {
+	i, problem := Integer(data)
+	if problem != "" {
+		return fmt.Errorf("value: %.40s is no integer of at most %d in magnitude: it %s", data, MaxInt, problem)
+	}
+	*n = Integral(i)
+	return nil
+}
+
 // kindOf returns the kind of the JSON value raw: boolean, number, or string,
 // or "" for any other, as null, an object, or an array.
 func kindOf(raw string) string {

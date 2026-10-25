@@ -58,7 +58,10 @@ type Schema struct {
 	// published format, or false for one that takes no other property.
 	AdditionalProperties *Schema
 	PropertyNames        *Schema
-	OneOf                []*Schema
+	// DependentRequired requires, of each property that it names that the
+	// object has, the properties that it lists.
+	DependentRequired map[string][]string
+	OneOf             []*Schema
 }
 
 // False is the schema that no value matches.
@@ -74,7 +77,7 @@ func (s *Schema) keywords() map[string]any {
 		"pattern": &s.Pattern, "minLength": &s.MinLength, "maxLength": &s.MaxLength, "minimum": &s.Minimum,
 		"maximum": &s.Maximum, "minItems": &s.MinItems, "maxItems": &s.MaxItems, "items": &s.Items,
 		"properties": &s.Properties, "required": &s.Required, "additionalProperties": &s.AdditionalProperties,
-		"propertyNames": &s.PropertyNames, "oneOf": &s.OneOf,
+		"propertyNames": &s.PropertyNames, "dependentRequired": &s.DependentRequired, "oneOf": &s.OneOf,
 	}
 }
 
@@ -126,6 +129,10 @@ func reflectValue(p any) any {
 		}
 	case *map[string]*Schema:
 		if *p != nil {
+			return *p
+		}
+	case *map[string][]string:
+		if len(*p) > 0 {
 			return *p
 		}
 	case *[]*Schema:

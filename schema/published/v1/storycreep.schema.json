@@ -174,7 +174,7 @@
         },
         "entry": {
           "$ref": "#/$defs/Entry",
-          "description": "Where the flow starts: the project's entry node, of its entry board. Without it, the project has none, which only a draft may lack."
+          "description": "Where the flow starts: the project's entry node, of its entry board. Without it, the project has none."
         },
         "files": {
           "additionalProperties": {
@@ -221,7 +221,7 @@
       "properties": {
         "entryNodeId": {
           "$ref": "#/$defs/NodeId",
-          "description": "The board's entry node, where the flow enters the board when it starts there. Without it, the board has none, which only a draft may lack."
+          "description": "The board's entry node, where the flow enters the board when it starts there. Without it, the board has none."
         },
         "file": {
           "description": "The path of the board's file, boards/ and its slug and .json, which the manifest's files list too.",

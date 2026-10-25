@@ -474,7 +474,7 @@
       "properties": {
         "entryNodeId": {
           "$ref": "#/$defs/NodeId",
-          "description": "The board's entry node. Without it, the board has none, which only a draft may lack."
+          "description": "The board's entry node. Without it, the board has none."
         },
         "id": {
           "$ref": "#/$defs/BoardId"

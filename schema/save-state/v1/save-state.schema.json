@@ -94,6 +94,14 @@
       "additionalProperties": {
         "$ref": "#/$defs/AnyValue"
       },
+      "dependentRequired": {
+        "snapshotId": [
+          "snapshotVersion"
+        ],
+        "snapshotVersion": [
+          "snapshotId"
+        ]
+      },
       "description": "The narrative state that a runtime saves and loads (PRD §8.5, FR-GODOT-07): where the flow is, and the values of the variables and the runtime attributes, and the nodes' visit counts, by ID, never by key.",
       "properties": {
         "attributes": {
@@ -121,10 +129,10 @@
         },
         "snapshotId": {
           "$ref": "#/$defs/SnapshotId",
-          "description": "The snapshot that the state was saved against. Without it, the state was saved against a draft (PRD §7.8)."
+          "description": "The snapshot that the state was saved against, a release, which is there exactly when snapshotVersion is. Without them, the state was saved against a draft (PRD §7.8)."
         },
         "snapshotVersion": {
-          "description": "The snapshot's version. Without it, the state was saved against a draft.",
+          "description": "The release's version, which is there exactly when snapshotId is. Without them, the state was saved against a draft.",
           "minLength": 1,
           "type": "string"
         },

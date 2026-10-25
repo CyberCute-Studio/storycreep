@@ -208,7 +208,7 @@ export type BoardId = string;
 
 /** The board: its ID, name, slug, and entry node, as the manifest's index has them. */
 export interface BoardInfo {
-  /** The board's entry node. Without it, the board has none, which only a draft may lack. */
+  /** The board's entry node. Without it, the board has none. */
   entryNodeId?: NodeId;
   id: BoardId;
   name: string;
@@ -445,7 +445,7 @@ export interface Manifest {
   /** Every board, sorted by ID, by which a runtime finds a board's file without reading any other board's (PRD §6.5). */
   boards: Array<ManifestBoard>;
   counts: Counts;
-  /** Where the flow starts: the project's entry node, of its entry board. Without it, the project has none, which only a draft may lack. */
+  /** Where the flow starts: the project's entry node, of its entry board. Without it, the project has none. */
   entry?: Entry;
   /** The hash of each of the snapshot's files but the manifest, by its path, which uses forward slashes. */
   files: { [key: string]: Hash };
@@ -458,7 +458,7 @@ export interface Manifest {
 
 /** A board of the manifest's index: its ID, slug, name, entry node, and file. */
 export interface ManifestBoard {
-  /** The board's entry node, where the flow enters the board when it starts there. Without it, the board has none, which only a draft may lack. */
+  /** The board's entry node, where the flow enters the board when it starts there. Without it, the board has none. */
   entryNodeId?: NodeId;
   /** The path of the board's file, boards/ and its slug and .json, which the manifest's files list too. */
   file: string;
@@ -600,7 +600,7 @@ export interface SegmentVariable {
 
 /** A snapshot's project/settings.json: the project's entry and the signals that its scripts emit (PRD §6.3). */
 export interface Settings {
-  /** Where the flow starts, as the manifest's entry. Without it, the project has none, which only a draft may lack. */
+  /** Where the flow starts, as the manifest's entry. Without it, the project has none. */
   entry?: Entry;
   /** The version of the published format, 1. */
   schemaVersion: 1;

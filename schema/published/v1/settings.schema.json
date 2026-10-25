@@ -64,7 +64,7 @@
       "properties": {
         "entry": {
           "$ref": "#/$defs/Entry",
-          "description": "Where the flow starts, as the manifest's entry. Without it, the project has none, which only a draft may lack."
+          "description": "Where the flow starts, as the manifest's entry. Without it, the project has none."
         },
         "schemaVersion": {
           "const": 1,

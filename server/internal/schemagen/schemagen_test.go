@@ -186,6 +186,66 @@ func TestVariants(t *testing.T) {
 	}
 }
 
+// paired has two fields that are each there exactly when the other is.
+type paired struct {
+	A string `json:"a,omitempty" with:"b" id:"node"`
+	B string `json:"b,omitempty" with:"a"`
+	C string `json:"c"`
+}
+
+// TestWith checks that two fields tagged with each other are each required
+// where the other is (dependentRequired), and nothing else is.
+func TestWith(t *testing.T) {
+	g := New(false)
+	g.Ref(reflect.TypeFor[paired]())
+	p := g.Def("paired")
+	if want := map[string][]string{"a": {"b"}, "b": {"a"}}; !reflect.DeepEqual(p.DependentRequired, want) {
+		t.Errorf("dependentRequired = %v, want %v", p.DependentRequired, want)
+	}
+	if want := []string{"c"}; !reflect.DeepEqual(p.Required, want) {
+		t.Errorf("required = %v, want %v", p.Required, want)
+	}
+	if got := asJSON(t, p); !strings.Contains(got, `"dependentRequired":{"a":["b"],"b":["a"]}`) {
+		t.Errorf("paired = %s", got)
+	}
+	if g.Def("NodeId") == nil {
+		t.Error("a's ID is not defined")
+	}
+	d := generator(false)
+	d.Ref(reflect.TypeFor[drawing]())
+	if got := asJSON(t, d.Def("drawing")); strings.Contains(got, "dependentRequired") {
+		t.Errorf("drawing, which has no with tag, = %s", got)
+	}
+}
+
+// TestFields checks the fields that Fields returns: as the Generator reads
+// them, each with its index, an embedded struct's through the struct, its
+// tags, and its when tag's property and values.
+func TestFields(t *testing.T) {
+	byName := map[string]Field{}
+	for _, f := range Fields(reflect.TypeFor[drawing]()) {
+		byName[f.Name] = f
+	}
+	if len(byName) != 8 {
+		t.Errorf("drawing's fields are %v", byName)
+	}
+	note := byName["note"]
+	if !reflect.DeepEqual(note.Index, []int{7, 0}) || !note.Optional || note.Type != reflect.TypeFor[string]() {
+		t.Errorf("note = %+v", note)
+	}
+	if v := byName["version"]; !reflect.DeepEqual(v.Index, []int{6}) || v.Optional || v.Tags["const"] != "2" {
+		t.Errorf("version = %+v", v)
+	}
+	for _, f := range Fields(reflect.TypeFor[setting]()) {
+		switch {
+		case f.Name == "options" && (f.When != "type" || !reflect.DeepEqual(f.WhenValues, []string{"text"})):
+			t.Errorf("options = %+v", f)
+		case f.Name != "options" && f.When != "":
+			t.Errorf("%s = %+v", f.Name, f)
+		}
+	}
+}
+
 type badTag struct {
 	A string `json:"a" minLenght:"1"`
 }
@@ -252,6 +312,23 @@ type anyField struct {
 	A any `json:"a"`
 }
 
+// lonelyWith is there with a field that is not there with it.
+type lonelyWith struct {
+	A string `json:"a,omitempty" with:"b"`
+	B string `json:"b,omitempty"`
+}
+
+// requiredWith is there with a field, but is required.
+type requiredWith struct {
+	A string `json:"a" with:"b"`
+	B string `json:"b,omitempty" with:"a"`
+}
+
+// withNone is there with a field that it does not have.
+type withNone struct {
+	A string `json:"a,omitempty" with:"b"`
+}
+
 // TestPanics checks that the generator panics on a type that it cannot read
 // as its tags say, rather than write a schema that is wrong.
 func TestPanics(t *testing.T) {
@@ -268,6 +345,9 @@ func TestPanics(t *testing.T) {
 		"a required tag of false":          func(g *Generator) { g.Ref(reflect.TypeFor[falseRequired]()) },
 		"an ID with a pattern":             func(g *Generator) { g.Ref(reflect.TypeFor[idAndPattern]()) },
 		"an interface that is no union":    func(g *Generator) { g.Ref(reflect.TypeFor[anyField]()) },
+		"with a field not with it":         func(g *Generator) { g.Ref(reflect.TypeFor[lonelyWith]()) },
+		"with of a required field":         func(g *Generator) { g.Ref(reflect.TypeFor[requiredWith]()) },
+		"with of no field":                 func(g *Generator) { g.Ref(reflect.TypeFor[withNone]()) },
 		"a union of a non-interface":       func(g *Generator) { g.Union(reflect.TypeFor[circle](), "kind", "") },
 		"a union declared twice": func(g *Generator) {
 			g.Union(reflect.TypeFor[shape](), "kind", "")

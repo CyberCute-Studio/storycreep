@@ -244,6 +244,8 @@ type tagged struct {
 	Extra   string      `json:"extra,omitempty" when:"kind=one" required:"true" minLength:"1"`
 	Marks   []string    `json:"marks,omitempty" enum:"x,y"`
 	Op      string      `json:"op" const:"\"set\""`
+	PairA   string      `json:"pairA,omitzero" with:"pairB"`
+	PairB   Int         `json:"pairB,omitempty" with:"pairA" maximum:"9007199254740991"`
 	Type    string      `json:"type" enum:"int,float,string,enum"`
 	Zero    string      `json:"zero,omitzero" enum:"a,b"`
 }
@@ -283,8 +285,10 @@ func schemaOf(t *testing.T, root reflect.Type) *jsonschema.Schema {
 // so is each string of a slice that the enum tags; a const field is its
 // value; a field that a property of an embedded struct tells is there exactly
 // for the property's values that it names, and is not empty there, where it
-// is required; a value is of the type that its property says, an enum's a
-// string; and a key that the schema requires is there.
+// is required; two fields tagged with each other are each there exactly
+// when the other is, whatever their values; a value is of the type that its
+// property says, an enum's a string; and a key that the schema requires is
+// there.
 func TestTagsAgreeWithSchema(t *testing.T) {
 	s := schemaOf(t, reflect.TypeFor[tagged]())
 	const base = `"default":1,"op":"set","type":"int"`
@@ -319,6 +323,11 @@ func TestTagsAgreeWithSchema(t *testing.T) {
 		`{"kind":"two","default":-1.7976931348623157e308,"op":"set","type":"float"}`,
 		`{"kind":"two","default":-1.7976931348623158e308,"op":"set","type":"float"}`,
 		`{"kind":"two","default":1e309,"op":"set","type":"float"}`,
+		`{"kind":"two",` + base + `,"pairA":"a","pairB":1}`,
+		`{"kind":"two",` + base + `,"pairA":"","pairB":0}`,
+		`{"kind":"two",` + base + `,"pairA":"a"}`,
+		`{"kind":"two",` + base + `,"pairB":1}`,
+		`{"kind":"two",` + base + `,"pairA":""}`,
 		`{}`,
 	}
 	for _, data := range inputs {
@@ -601,16 +610,22 @@ func TestVariantFields(t *testing.T) {
 		"a branch of a kind": {"board", boardExamples[0], func(doc map[string]any) {
 			board(doc)["kind"] = "dialogue"
 		}},
+		"a state with a snapshot's ID without its version": {"../../save-state/v1/save-state", saveStateExamples[0],
+			func(doc map[string]any) { delete(doc, "snapshotVersion") }},
+		"a state with a snapshot's version without its ID": {"../../save-state/v1/save-state", saveStateExamples[0],
+			func(doc map[string]any) { delete(doc, "snapshotId") }},
+		"a draft's state with a snapshot's version": {"../../save-state/v1/save-state", saveStateExamples[1],
+			func(doc map[string]any) { doc["snapshotVersion"] = "1.4.0" }},
 	} {
 		t.Run(name, func(t *testing.T) {
 			data := edited(t, tt.ex, tt.edit)
-			path := PublishedDir + "/" + tt.path + ".schema.json"
-			if err := open.validate(t, path, "", data); err == nil {
-				t.Errorf("%s validates", path)
+			file := path.Clean(PublishedDir + "/" + tt.path + ".schema.json")
+			if err := open.validate(t, file, "", data); err == nil {
+				t.Errorf("%s validates", file)
 			}
 			var d schemagen.Document
 			for _, doc := range Documents() {
-				if doc.Path == path {
+				if doc.Path == file {
 					d = doc
 				}
 			}
@@ -745,7 +760,8 @@ func TestMissingKeys(t *testing.T) {
 // refuses, or what a file leaves out, rather than write a file that every
 // schema refuses: a value of an enum that the format does not have, another
 // schemaVersion, a field that its variant does not have or that it requires,
-// an empty text or label, an AST that is not resolved, which expr.Decode
+// a save state's snapshotId without its snapshotVersion, which it is there
+// with, an empty text or label, an AST that is not resolved, which expr.Decode
 // does not read back, and a value that is not of its declaration's type, or
 // that no value is.
 func TestMarshalRefuses(t *testing.T) {
@@ -824,6 +840,14 @@ func TestMarshalRefuses(t *testing.T) {
 	}
 	if data, err := json.Marshal(AST{Node: unresolved}); err == nil {
 		t.Errorf("an AST that is not resolved is written as %s", data)
+	}
+	var st SaveState
+	if err := Decode([]byte(saveStateExamples[0]), &st); err != nil {
+		t.Fatal(err)
+	}
+	st.SnapshotVersion = ""
+	if data, err := json.Marshal(st); err == nil {
+		t.Errorf("a state with a snapshot's ID without its version is written as %s", data)
 	}
 	// A value that is not of its declaration's type, or that no value is.
 	for _, raw := range []string{`"1"`, `2.5`, `{"a":1}`, `[1]`, `0e1000`} {

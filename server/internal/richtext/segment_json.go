@@ -3,6 +3,7 @@ package richtext
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"slices"
@@ -140,7 +141,7 @@ var segmentFields = map[string][2][]string{
 // does not have, as one of another kind, as a consumer ignores a key that it
 // does not know (§6.4). Beyond the schema, which cannot tell how a number is
 // written, it refuses an integer written with an exponent beyond
-// ±value.MaxExponent, as 0e1000, which no file holds (integer).
+// ±value.MaxExponent, as 0e1000, which no file holds (value.Integral).
 func (s *Segment) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -173,15 +174,15 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 		return true, nil
 	}
 	var (
-		marks                        []string
-		href, value, name, ref, attr string
-		list                         string
-		decimals, depth, number      integer
+		marks                       []string
+		href, text, name, ref, attr string
+		list                        string
+		decimals, depth, number     value.Integral
 	)
 	read := []struct {
 		f string
 		v any
-	}{{"marks", &marks}, {"href", &href}, {"value", &value}, {"name", &name}, {"ref", &ref},
+	}{{"marks", &marks}, {"href", &href}, {"value", &text}, {"name", &name}, {"ref", &ref},
 		{"attribute", &attr}, {"list", &list}, {"decimals", &decimals}, {"depth", &depth}, {"number", &number}}
 	present := map[string]bool{}
 	for _, r := range read {
@@ -210,10 +211,10 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 		}
 		s.Href = href
 	}
-	if kind == SegmentText && value == "" {
+	if kind == SegmentText && text == "" {
 		return fmt.Errorf("richtext: a text segment's value is empty")
 	}
-	s.Value, s.Name = value, name
+	s.Value, s.Name = text, name
 	if present["ref"] {
 		k := ids.Component
 		if kind == SegmentValue && !present["attribute"] {
@@ -247,32 +248,16 @@ func (s *Segment) UnmarshalJSON(data []byte) error {
 	if kind == SegmentItem {
 		switch {
 		case list == ListBullet && !present["number"]:
-		case list == ListOrdered && present["number"] && number >= 0:
+		case list == ListOrdered && present["number"] && number >= 0 && number <= math.MaxInt:
+			// Within what an int holds, which a 32-bit platform's int may not
+			// hold of every number that the schema takes.
 			s.Number = int(number)
 		default:
 			return fmt.Errorf("richtext: an item segment's list is %q, which is no kind of list, or it has a "+
-				"number exactly when its list is not ordered, or a negative one", list)
+				"number exactly when its list is not ordered, or a negative one, or one that an int does not hold",
+				list)
 		}
 		s.List = list
 	}
-	return nil
-}
-
-// integer is an integer of a segment, as its decimals, which a consumer
-// reads as an integer by its declaration, whatever its JSON form, as 2.0 is
-// 2 (PRD §5.8.9), and which a JSON Schema's integer takes so.
-type integer int64
-
-// UnmarshalJSON reads an integral JSON number, however it is written, of at
-// most semantics.MaxInt in magnitude, as an integer, as package value reads
-// an int: by its decimal, exactly, so that 1.0000000000000000001, which a
-// double rounds to 1, is not one, but for a number written with an exponent
-// beyond ±value.MaxExponent, which no file's number is, and which it refuses.
-func (n *integer) UnmarshalJSON(data []byte) error {
-	i, problem := value.Integer(data)
-	if problem != "" {
-		return fmt.Errorf("richtext: %s is not an integer of at most %d in magnitude", data, semantics.MaxInt)
-	}
-	*n = integer(i)
 	return nil
 }

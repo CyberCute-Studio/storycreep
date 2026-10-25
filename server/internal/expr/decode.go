@@ -29,6 +29,18 @@ var (
 // of a script when ctx is ContextScript, a script. Encode writes the AST that
 // it returns as data's canonical form.
 //
+// The AST's names are resolved as the JSON holds them: a variable is its key
+// and its ref, without the scope that its source qualified it with, as
+// global.x, and an attribute its keys and its refs, without the cmp. that
+// its source may have named it with, neither of which the JSON holds. So
+// Check, which resolves the names of an AST that Parse returns by what its
+// source wrote, is not for it: it would resolve a variable anew by its key,
+// as a bare name, which may name another variable, of the current board,
+// rather than the global one that the ref names, and refuse an attribute
+// that cmp. named whose component's key a variable's shadows. What reads a
+// decoded AST against a project's declarations reads its names by their
+// refs.
+//
 // It reads what the schema of ExpressionSchema or ScriptSchema takes, and
 // nothing else, and ignores a key that an object of the AST does not define,
 // as a consumer does (§6.4), so that it fails, with an error that wraps

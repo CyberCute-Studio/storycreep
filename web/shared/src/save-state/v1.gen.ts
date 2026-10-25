@@ -41,9 +41,9 @@ export interface SaveState {
   projectId: ProjectId;
   /** The version of the published format of the snapshot that the state was saved against. */
   schemaVersion: number;
-  /** The snapshot that the state was saved against. Without it, the state was saved against a draft (PRD §7.8). */
+  /** The snapshot that the state was saved against, a release, which is there exactly when snapshotVersion is. Without them, the state was saved against a draft (PRD §7.8). */
   snapshotId?: SnapshotId;
-  /** The snapshot's version. Without it, the state was saved against a draft. */
+  /** The release's version, which is there exactly when snapshotId is. Without them, the state was saved against a draft. */
   snapshotVersion?: string;
   /** The version of the save-state format, 1, which a runtime of an older one refuses (PRD §8.5). */
   stateVersion: 1;

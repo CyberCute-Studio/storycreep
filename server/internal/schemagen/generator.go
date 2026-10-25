@@ -47,6 +47,13 @@ import (
 //     is not.
 //   - required: "true", of a field tagged omitempty or omitzero, makes it
 //     required where it is there, as a when field.
+//   - with: the field is there exactly when the field whose key the tag
+//     names is, which is tagged with this one's: both are tagged omitempty
+//     or omitzero, and the object's dependentRequired requires each where
+//     the other is, as a save state's snapshotId and snapshotVersion.
+//
+// Fields returns a struct's fields as the Generator reads them, with their
+// tags, so that what else reads the tags reads the same fields.
 type Generator struct {
 	closed bool
 	// defs are the definitions, by their names; one that is being built is
@@ -312,10 +319,62 @@ type field struct {
 	typ      reflect.Type
 	tags     map[string]string
 	optional bool
+	// index is its index, as reflect.Value.FieldByIndex takes it.
+	index []int
+}
+
+// Field is a struct's field as encoding/json reads it, with its tags, as the
+// Generator reads them (Fields).
+type Field struct {
+	// Name is the key that it is read by: its json tag's name, or its own.
+	Name string
+	// Index is its index, as reflect.Value.FieldByIndex takes it, an
+	// embedded struct's field's through the struct.
+	Index []int
+	Type  reflect.Type
+	// Tags are its tags, json among them, by their keys.
+	Tags map[string]string
+	// Optional is whether it is tagged omitempty or omitzero.
+	Optional bool
+	// When is the property that its when tag names, and WhenValues the
+	// values that it is there for, if it has one.
+	When       string
+	WhenValues []string
+}
+
+// Fields returns the fields of the struct t as encoding/json reads them, an
+// embedded struct's as t's own, with their tags, as the Generator reads them:
+// it panics where the Generator does, on a tag that it does not read or
+// cannot read, as a when tag that is not property=value|value, or on two
+// fields of one name.
+func Fields(t reflect.Type) []Field {
+	fs := fields(t)
+	out := make([]Field, len(fs))
+	for i, f := range fs {
+		out[i] = Field{Name: f.name, Index: f.index, Type: f.typ, Tags: f.tags, Optional: f.optional}
+		if c := parseWhen(t, f); c != nil {
+			out[i].When, out[i].WhenValues = c.property, c.values
+		}
+	}
+	return out
 }
 
 // fields returns the fields of the struct t as encoding/json reads them.
 func fields(t reflect.Type) []field {
+	out := fieldsAt(t, nil)
+	seen := map[string]bool{}
+	for _, f := range out {
+		if seen[f.name] {
+			panic(fmt.Sprintf("schemagen: %s has two fields named %s", t, f.name))
+		}
+		seen[f.name] = true
+	}
+	return out
+}
+
+// fieldsAt returns the fields of the struct t, whose index in the struct
+// that embeds it is index, or nil for that struct itself.
+func fieldsAt(t reflect.Type, index []int) []field {
 	var out []field
 	for i := range t.NumField() {
 		f := t.Field(i)
@@ -324,8 +383,9 @@ func fields(t reflect.Type) []field {
 			continue
 		}
 		name, opts, _ := strings.Cut(tag, ",")
+		at := append(slices.Clone(index), i)
 		if f.Anonymous && name == "" && deref(f.Type).Kind() == reflect.Struct {
-			out = append(out, fields(deref(f.Type))...)
+			out = append(out, fieldsAt(deref(f.Type), at)...)
 			continue
 		}
 		if !f.IsExported() {
@@ -338,14 +398,7 @@ func fields(t reflect.Type) []field {
 		for o := range strings.SplitSeq(opts, ",") {
 			optional = optional || o == "omitempty" || o == "omitzero"
 		}
-		out = append(out, field{name: name, typ: f.Type, tags: parseTags(t, f), optional: optional})
-	}
-	seen := map[string]bool{}
-	for _, f := range out {
-		if seen[f.name] {
-			panic(fmt.Sprintf("schemagen: %s has two fields named %s", t, f.name))
-		}
-		seen[f.name] = true
+		out = append(out, field{name: name, typ: f.Type, tags: parseTags(t, f), optional: optional, index: at})
 	}
 	return out
 }
@@ -353,7 +406,7 @@ func fields(t reflect.Type) []field {
 // tagKeys are the tags that a field may have.
 var tagKeys = []string{
 	"json", "doc", "enum", "const", "pattern", "minLength", "maxLength", "minimum", "maximum", "minItems",
-	"maxItems", "id", "keyId", "keyPattern", "typeFrom", "when", "required",
+	"maxItems", "id", "keyId", "keyPattern", "typeFrom", "when", "required", "with",
 }
 
 // parseTags returns the tags of the field f of the struct t, as
@@ -526,7 +579,41 @@ func (g *Generator) objectOf(t reflect.Type, fs []field, combo map[string]string
 			required = append(required, f.name)
 		}
 	}
-	return g.Object(props, required...)
+	s := g.Object(props, required...)
+	s.DependentRequired = dependentRequired(t, fs, props)
+	return s
+}
+
+// dependentRequired returns what the with tags of the struct t's fields fs
+// require, of the properties props of one of its variants: each field's
+// key's, the key of the field that it is there with, or nil for none. It
+// panics on a with tag that names no field of t, or one that is not tagged
+// with the field's key, or that either field is not optional.
+func dependentRequired(t reflect.Type, fs []field, props map[string]*Schema) map[string][]string {
+	byName := map[string]field{}
+	for _, f := range fs {
+		byName[f.name] = f
+	}
+	var deps map[string][]string
+	for _, f := range fs {
+		with, ok := f.tags["with"]
+		if !ok {
+			continue
+		}
+		other, ok := byName[with]
+		if !ok || other.tags["with"] != f.name || !f.optional || !other.optional {
+			panic(fmt.Sprintf("schemagen: %s.%s is there with %s, which is no field of the struct that is "+
+				"there with it, or one of them is not tagged omitempty or omitzero", t, f.name, with))
+		}
+		if props[f.name].False || props[with].False {
+			continue
+		}
+		if deps == nil {
+			deps = map[string][]string{}
+		}
+		deps[f.name] = []string{with}
+	}
+	return deps
 }
 
 // The tags that constrain a string, a number, an array, and a map.
@@ -538,11 +625,11 @@ var (
 )
 
 // allowTags panics on a tag of the field f of the struct t that constrains
-// it, other than json, doc, required, and when, that none of sets holds, as
-// one that its type cannot have.
+// it, other than json, doc, required, when, and with, that none of sets
+// holds, as one that its type cannot have.
 func allowTags(t reflect.Type, f field, sets ...[]string) {
 	for k := range f.tags {
-		if k == "json" || k == "doc" || k == "required" || k == "when" {
+		if k == "json" || k == "doc" || k == "required" || k == "when" || k == "with" {
 			continue
 		}
 		if !slices.ContainsFunc(sets, func(set []string) bool { return slices.Contains(set, k) }) {
@@ -593,7 +680,7 @@ func (g *Generator) value(t reflect.Type, f field) *Schema {
 	case reflect.String:
 		allowed(stringTags)
 		if k, ok := f.tags["id"]; ok {
-			if len(f.tags) > 1+countOf(f.tags, "json", "doc", "required", "when") {
+			if len(f.tags) > 1+countOf(f.tags, "json", "doc", "required", "when", "with") {
 				panic(fmt.Sprintf("schemagen: %s.%s is an ID, and has other tags that constrain it", t, f.name))
 			}
 			return g.ID(kindNamed(t, f, k))

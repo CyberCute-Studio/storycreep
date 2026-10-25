@@ -22,8 +22,8 @@ type SaveState struct {
 	Cursor          *Cursor                    `json:"cursor,omitempty" doc:"Where the flow is. Without it, the flow has not started."`
 	ProjectID       string                     `json:"projectId" id:"project"`
 	SchemaVersion   Int                        `json:"schemaVersion" minimum:"1" maximum:"9007199254740991" doc:"The version of the published format of the snapshot that the state was saved against."`
-	SnapshotID      string                     `json:"snapshotId,omitempty" id:"snapshot" doc:"The snapshot that the state was saved against. Without it, the state was saved against a draft (PRD §7.8)."`
-	SnapshotVersion string                     `json:"snapshotVersion,omitempty" minLength:"1" doc:"The snapshot's version. Without it, the state was saved against a draft."`
+	SnapshotID      string                     `json:"snapshotId,omitempty" id:"snapshot" with:"snapshotVersion" doc:"The snapshot that the state was saved against, a release, which is there exactly when snapshotVersion is. Without them, the state was saved against a draft (PRD §7.8)."`
+	SnapshotVersion string                     `json:"snapshotVersion,omitempty" minLength:"1" with:"snapshotId" doc:"The release's version, which is there exactly when snapshotId is. Without them, the state was saved against a draft."`
 	// StateVersion is StateVersion.
 	StateVersion Int                    `json:"stateVersion" const:"1" doc:"The version of the save-state format, 1, which a runtime of an older one refuses (PRD §8.5)."`
 	Variables    map[string]value.Value `json:"variables" keyId:"variable" doc:"The values of the variables, global and of each board, by their IDs, each of its variable's type."`

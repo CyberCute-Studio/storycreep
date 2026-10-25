@@ -47,8 +47,9 @@ func readFile(data []byte) (*file, error) {
 //
 // An object's type has its properties, an optional one with ?, and one that
 // it may not have (False) as never, and nothing of the properties that it
-// does not define, which TypeScript's structural types take anyway; a map is
-// an index signature; and a value of a oneOf is a union. It fails, rather
+// does not define, which TypeScript's structural types take anyway, nor of
+// its dependentRequired, whose properties are each optional; a map is an
+// index signature; and a value of a oneOf is a union. It fails, rather
 // than write a type that is wrong, on a definition whose name is no
 // identifier of TypeScript or is one of its reserved words, and on a schema
 // that is neither of a type, a reference, a const, an enum, nor a oneOf.
