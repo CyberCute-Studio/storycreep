@@ -1,0 +1,2194 @@
+{
+  "board": {
+    "entryNodeId": "nd_0000000000000000000000CAST",
+    "id": "bd_0000000000000000000000MATH",
+    "name": "Calc",
+    "slug": "calc"
+  },
+  "connections": [
+    {
+      "from": "nd_000000000000000000000STRCT",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000NXT",
+      "order": 0,
+      "to": "nd_000000000000000000000AFTER"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "nd_00000000000000000000000DVZ",
+      "isEnding": true,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "i",
+                "ref": "var_000000000000000000000000N1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "binary",
+                  "left": {
+                    "kind": "lit",
+                    "type": "int",
+                    "value": 7
+                  },
+                  "op": "div",
+                  "right": {
+                    "kind": "lit",
+                    "type": "int",
+                    "value": 0
+                  }
+                },
+                "op": "add",
+                "right": {
+                  "kind": "lit",
+                  "type": "int",
+                  "value": 5
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "f",
+                "ref": "var_000000000000000000000000F1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "binary",
+                  "left": {
+                    "kind": "lit",
+                    "type": "float",
+                    "value": 1
+                  },
+                  "op": "div",
+                  "right": {
+                    "kind": "lit",
+                    "type": "float",
+                    "value": 0
+                  }
+                },
+                "op": "add",
+                "right": {
+                  "kind": "lit",
+                  "type": "float",
+                  "value": 0.5
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "r",
+                "ref": "var_000000000000000000000000R1"
+              },
+              "value": {
+                "args": [
+                  {
+                    "kind": "binary",
+                    "left": {
+                      "kind": "var",
+                      "name": "i",
+                      "ref": "var_000000000000000000000000N1"
+                    },
+                    "op": "mod",
+                    "right": {
+                      "kind": "lit",
+                      "type": "int",
+                      "value": 0
+                    }
+                  }
+                ],
+                "function": "to_float",
+                "kind": "call"
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "ok",
+                "ref": "var_000000000000000000000000B1"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "bool",
+                "value": true
+              }
+            }
+          ]
+        },
+        "source": "i = 7 / 0 + 5\nf = 1.0 / 0.0 + 0.5\nr = to_float(i % 0)\nok = true"
+      },
+      "position": {
+        "x": 200,
+        "y": 0
+      },
+      "text": {
+        "preview": "i={i} f={f} r={r} ok={ok}",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "i="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "i",
+            "ref": "var_000000000000000000000000N1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " f="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "f",
+            "ref": "var_000000000000000000000000F1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " r="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "r",
+            "ref": "var_000000000000000000000000R1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " ok="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "ok",
+            "ref": "var_000000000000000000000000B1"
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_00000000000000000000000FMT",
+      "isEnding": true,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "f",
+                "ref": "var_000000000000000000000000F1"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "float",
+                "value": 1.005
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "r",
+                "ref": "var_000000000000000000000000R1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "lit",
+                  "type": "float",
+                  "value": 0.1
+                },
+                "op": "add",
+                "right": {
+                  "kind": "lit",
+                  "type": "float",
+                  "value": 0.2
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "i",
+                "ref": "var_000000000000000000000000N1"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 5
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "g",
+                "ref": "var_000000000000000000000000G1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "lit",
+                  "type": "float",
+                  "value": 1000000000
+                },
+                "op": "mul",
+                "right": {
+                  "kind": "lit",
+                  "type": "float",
+                  "value": 1000000000000
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "h",
+                "ref": "var_000000000000000000000000H1"
+              },
+              "value": {
+                "kind": "unary",
+                "op": "neg",
+                "operand": {
+                  "kind": "lit",
+                  "type": "float",
+                  "value": 0.001
+                }
+              }
+            }
+          ]
+        },
+        "source": "f = 1.005\nr = 0.1 + 0.2\ni = 5\ng = 1000000000.0 * 1000000000000.0\nh = -0.001"
+      },
+      "position": {
+        "x": 1200,
+        "y": 0
+      },
+      "text": {
+        "preview": "{f} {r} {i} {f} {g} {g} {h} {h}",
+        "segments": [
+          {
+            "decimals": 2,
+            "kind": "value",
+            "marks": [],
+            "name": "f",
+            "ref": "var_000000000000000000000000F1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "r",
+            "ref": "var_000000000000000000000000R1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " "
+          },
+          {
+            "decimals": 2,
+            "kind": "value",
+            "marks": [],
+            "name": "i",
+            "ref": "var_000000000000000000000000N1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " "
+          },
+          {
+            "decimals": 0,
+            "kind": "value",
+            "marks": [],
+            "name": "f",
+            "ref": "var_000000000000000000000000F1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "g",
+            "ref": "var_000000000000000000000000G1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " "
+          },
+          {
+            "decimals": 1,
+            "kind": "value",
+            "marks": [],
+            "name": "g",
+            "ref": "var_000000000000000000000000G1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " "
+          },
+          {
+            "decimals": 2,
+            "kind": "value",
+            "marks": [],
+            "name": "h",
+            "ref": "var_000000000000000000000000H1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "h",
+            "ref": "var_000000000000000000000000H1"
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_00000000000000000000000FNS",
+      "isEnding": true,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "f",
+                "ref": "var_000000000000000000000000F1"
+              },
+              "value": {
+                "args": [
+                  {
+                    "kind": "lit",
+                    "type": "int",
+                    "value": 1
+                  },
+                  {
+                    "kind": "lit",
+                    "type": "float",
+                    "value": 2.5
+                  }
+                ],
+                "function": "min",
+                "kind": "call"
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "i",
+                "ref": "var_000000000000000000000000N1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "binary",
+                  "left": {
+                    "args": [
+                      {
+                        "kind": "lit",
+                        "type": "int",
+                        "value": 5
+                      },
+                      {
+                        "kind": "lit",
+                        "type": "int",
+                        "value": 10
+                      },
+                      {
+                        "kind": "lit",
+                        "type": "int",
+                        "value": 0
+                      }
+                    ],
+                    "function": "clamp",
+                    "kind": "call"
+                  },
+                  "op": "add",
+                  "right": {
+                    "args": [
+                      {
+                        "kind": "unary",
+                        "op": "neg",
+                        "operand": {
+                          "kind": "lit",
+                          "type": "int",
+                          "value": 2
+                        }
+                      },
+                      {
+                        "kind": "unary",
+                        "op": "neg",
+                        "operand": {
+                          "kind": "lit",
+                          "type": "int",
+                          "value": 3
+                        }
+                      }
+                    ],
+                    "function": "max",
+                    "kind": "call"
+                  }
+                },
+                "op": "add",
+                "right": {
+                  "args": [
+                    {
+                      "kind": "unary",
+                      "op": "neg",
+                      "operand": {
+                        "kind": "lit",
+                        "type": "int",
+                        "value": 7
+                      }
+                    }
+                  ],
+                  "function": "abs",
+                  "kind": "call"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "ok",
+                "ref": "var_000000000000000000000000B1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "binary",
+                  "left": {
+                    "args": [
+                      {
+                        "kind": "lit",
+                        "type": "string",
+                        "value": "harbour"
+                      },
+                      {
+                        "kind": "lit",
+                        "type": "string",
+                        "value": "bou"
+                      }
+                    ],
+                    "function": "contains",
+                    "kind": "call"
+                  },
+                  "op": "and",
+                  "right": {
+                    "args": [
+                      {
+                        "kind": "lit",
+                        "type": "string",
+                        "value": "harbour"
+                      },
+                      {
+                        "kind": "lit",
+                        "type": "string",
+                        "value": "har"
+                      }
+                    ],
+                    "function": "starts_with",
+                    "kind": "call"
+                  }
+                },
+                "op": "and",
+                "right": {
+                  "args": [
+                    {
+                      "kind": "lit",
+                      "type": "string",
+                      "value": "harbour"
+                    },
+                    {
+                      "kind": "lit",
+                      "type": "string",
+                      "value": "our"
+                    }
+                  ],
+                  "function": "ends_with",
+                  "kind": "call"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "binary",
+                  "left": {
+                    "args": [
+                      {
+                        "args": [
+                          {
+                            "kind": "lit",
+                            "type": "float",
+                            "value": 2.5
+                          }
+                        ],
+                        "function": "floor",
+                        "kind": "call"
+                      }
+                    ],
+                    "function": "to_string",
+                    "kind": "call"
+                  },
+                  "op": "add",
+                  "right": {
+                    "args": [
+                      {
+                        "args": [
+                          {
+                            "kind": "lit",
+                            "type": "float",
+                            "value": 2.5
+                          }
+                        ],
+                        "function": "ceil",
+                        "kind": "call"
+                      }
+                    ],
+                    "function": "to_string",
+                    "kind": "call"
+                  }
+                },
+                "op": "add",
+                "right": {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "kind": "unary",
+                          "op": "neg",
+                          "operand": {
+                            "kind": "lit",
+                            "type": "float",
+                            "value": 1.5
+                          }
+                        }
+                      ],
+                      "function": "abs",
+                      "kind": "call"
+                    }
+                  ],
+                  "function": "to_string",
+                  "kind": "call"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "r",
+                "ref": "var_000000000000000000000000R1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "args": [
+                    {
+                      "kind": "lit",
+                      "type": "float",
+                      "value": 0.5
+                    },
+                    {
+                      "kind": "lit",
+                      "type": "int",
+                      "value": 0
+                    },
+                    {
+                      "kind": "lit",
+                      "type": "int",
+                      "value": 1
+                    }
+                  ],
+                  "function": "clamp",
+                  "kind": "call"
+                },
+                "op": "add",
+                "right": {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "kind": "lit",
+                          "type": "string",
+                          "value": "abc"
+                        }
+                      ],
+                      "function": "len",
+                      "kind": "call"
+                    }
+                  ],
+                  "function": "to_float",
+                  "kind": "call"
+                }
+              }
+            }
+          ]
+        },
+        "source": "f = min(1, 2.5)\ni = clamp(5, 10, 0) + max(-2, -3) + abs(-7)\nok = contains(\"harbour\", \"bou\") and starts_with(\"harbour\", \"har\") and ends_with(\"harbour\", \"our\")\ns = to_string(floor(2.5)) + to_string(ceil(2.5)) + to_string(abs(-1.5))\nr = clamp(0.5, 0, 1) + to_float(len(\"abc\"))"
+      },
+      "position": {
+        "x": 1600,
+        "y": 0
+      },
+      "text": {
+        "preview": "f={f} i={i} ok={ok} s={s} r={r}",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "f="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "f",
+            "ref": "var_000000000000000000000000F1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " i="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "i",
+            "ref": "var_000000000000000000000000N1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " ok="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "ok",
+            "ref": "var_000000000000000000000000B1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " s="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "s",
+            "ref": "var_000000000000000000000000S1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " r="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "r",
+            "ref": "var_000000000000000000000000R1"
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_00000000000000000000000JNR",
+      "isEnding": true,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "string",
+                "value": "abcdefghijklmnop"
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "i",
+                "ref": "var_000000000000000000000000N1"
+              },
+              "value": {
+                "args": [
+                  {
+                    "kind": "var",
+                    "name": "s",
+                    "ref": "var_000000000000000000000000S1"
+                  }
+                ],
+                "function": "len",
+                "kind": "call"
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "!"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "ok",
+                "ref": "var_000000000000000000000000B1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "s",
+                  "ref": "var_000000000000000000000000S1"
+                },
+                "op": "eq",
+                "right": {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": ""
+                }
+              }
+            }
+          ]
+        },
+        "source": "s = \"abcdefghijklmnop\"\ns = s + s\ns = s + s\ns = s + s\ns = s + s\ns = s + s\ns = s + s\ns = s + s\ns = s + s\ni = len(s)\ns = s + \"!\"\nok = s == \"\""
+      },
+      "position": {
+        "x": 1000,
+        "y": 0
+      },
+      "text": {
+        "preview": "i={i} ok={ok} s=[{s}]",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "i="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "i",
+            "ref": "var_000000000000000000000000N1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " ok="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "ok",
+            "ref": "var_000000000000000000000000B1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " s=["
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "s",
+            "ref": "var_000000000000000000000000S1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "]"
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_0000000000000000000000CAST",
+      "isEnding": true,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "f",
+                "ref": "var_000000000000000000000000F1"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 1
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "+=",
+              "target": {
+                "kind": "var",
+                "name": "f",
+                "ref": "var_000000000000000000000000F1"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 2
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "i",
+                "ref": "var_000000000000000000000000N1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "args": [
+                    {
+                      "kind": "var",
+                      "name": "f",
+                      "ref": "var_000000000000000000000000F1"
+                    }
+                  ],
+                  "function": "to_int",
+                  "kind": "call"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "lit",
+                  "type": "int",
+                  "value": 1
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "binary",
+                  "left": {
+                    "args": [
+                      {
+                        "kind": "var",
+                        "name": "f",
+                        "ref": "var_000000000000000000000000F1"
+                      }
+                    ],
+                    "function": "to_string",
+                    "kind": "call"
+                  },
+                  "op": "add",
+                  "right": {
+                    "kind": "lit",
+                    "type": "string",
+                    "value": "/"
+                  }
+                },
+                "op": "add",
+                "right": {
+                  "args": [
+                    {
+                      "kind": "var",
+                      "name": "i",
+                      "ref": "var_000000000000000000000000N1"
+                    }
+                  ],
+                  "function": "to_string",
+                  "kind": "call"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "ok",
+                "ref": "var_000000000000000000000000B1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "binary",
+                  "left": {
+                    "kind": "var",
+                    "name": "i",
+                    "ref": "var_000000000000000000000000N1"
+                  },
+                  "op": "eq",
+                  "right": {
+                    "kind": "lit",
+                    "type": "int",
+                    "value": 4
+                  }
+                },
+                "op": "and",
+                "right": {
+                  "kind": "binary",
+                  "left": {
+                    "kind": "var",
+                    "name": "f",
+                    "ref": "var_000000000000000000000000F1"
+                  },
+                  "op": "eq",
+                  "right": {
+                    "kind": "lit",
+                    "type": "int",
+                    "value": 3
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "source": "f = 1\nf += 2\ni = to_int(f) + 1\ns = to_string(f) + \"/\" + to_string(i)\nok = i == 4 and f == 3"
+      },
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "text": {
+        "preview": "f={f} i={i} s={s} ok={ok}",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "f="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "f",
+            "ref": "var_000000000000000000000000F1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " i="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "i",
+            "ref": "var_000000000000000000000000N1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " s="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "s",
+            "ref": "var_000000000000000000000000S1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " ok="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "ok",
+            "ref": "var_000000000000000000000000B1"
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_0000000000000000000000TEXT",
+      "isEnding": true,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "i",
+                "ref": "var_000000000000000000000000N1"
+              },
+              "value": {
+                "args": [
+                  {
+                    "kind": "lit",
+                    "type": "string",
+                    "value": "😀é"
+                  }
+                ],
+                "function": "len",
+                "kind": "call"
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "binary",
+                  "left": {
+                    "args": [
+                      {
+                        "kind": "lit",
+                        "type": "string",
+                        "value": "ßa"
+                      }
+                    ],
+                    "function": "upper",
+                    "kind": "call"
+                  },
+                  "op": "add",
+                  "right": {
+                    "args": [
+                      {
+                        "kind": "lit",
+                        "type": "string",
+                        "value": "İ"
+                      }
+                    ],
+                    "function": "lower",
+                    "kind": "call"
+                  }
+                },
+                "op": "add",
+                "right": {
+                  "args": [
+                    {
+                      "kind": "lit",
+                      "type": "string",
+                      "value": " x\t"
+                    }
+                  ],
+                  "function": "trim",
+                  "kind": "call"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "ok",
+                "ref": "var_000000000000000000000000B1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "binary",
+                  "left": {
+                    "kind": "binary",
+                    "left": {
+                      "kind": "lit",
+                      "type": "string",
+                      "value": "￿"
+                    },
+                    "op": "lt",
+                    "right": {
+                      "kind": "lit",
+                      "type": "string",
+                      "value": "😀"
+                    }
+                  },
+                  "op": "and",
+                  "right": {
+                    "kind": "binary",
+                    "left": {
+                      "kind": "lit",
+                      "type": "string",
+                      "value": "a"
+                    },
+                    "op": "ne",
+                    "right": {
+                      "kind": "lit",
+                      "type": "string",
+                      "value": "A"
+                    }
+                  }
+                },
+                "op": "and",
+                "right": {
+                  "args": [
+                    {
+                      "kind": "lit",
+                      "type": "string",
+                      "value": "😀é"
+                    },
+                    {
+                      "kind": "lit",
+                      "type": "string",
+                      "value": "é"
+                    }
+                  ],
+                  "function": "contains",
+                  "kind": "call"
+                }
+              }
+            }
+          ]
+        },
+        "source": "i = len(\"😀é\")\ns = upper(\"ßa\") + lower(\"İ\") + trim(\"\\u00A0x\\t\")\nok = \"\\uFFFF\" < \"😀\" and \"a\" != \"A\" and contains(\"😀é\", \"é\")"
+      },
+      "position": {
+        "x": 800,
+        "y": 0
+      },
+      "text": {
+        "preview": "i={i} s={s} ok={ok}",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "i="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "i",
+            "ref": "var_000000000000000000000000N1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " s="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "s",
+            "ref": "var_000000000000000000000000S1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " ok="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "ok",
+            "ref": "var_000000000000000000000000B1"
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_0000000000000000000000TRNC",
+      "isEnding": true,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "i",
+                "ref": "var_000000000000000000000000N1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "unary",
+                  "op": "neg",
+                  "operand": {
+                    "kind": "lit",
+                    "type": "int",
+                    "value": 7
+                  }
+                },
+                "op": "div",
+                "right": {
+                  "kind": "lit",
+                  "type": "int",
+                  "value": 2
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "args": [
+                  {
+                    "kind": "binary",
+                    "left": {
+                      "kind": "unary",
+                      "op": "neg",
+                      "operand": {
+                        "kind": "lit",
+                        "type": "int",
+                        "value": 7
+                      }
+                    },
+                    "op": "mod",
+                    "right": {
+                      "kind": "lit",
+                      "type": "int",
+                      "value": 2
+                    }
+                  }
+                ],
+                "function": "to_string",
+                "kind": "call"
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "f",
+                "ref": "var_000000000000000000000000F1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "unary",
+                  "op": "neg",
+                  "operand": {
+                    "kind": "lit",
+                    "type": "int",
+                    "value": 7
+                  }
+                },
+                "op": "div",
+                "right": {
+                  "kind": "lit",
+                  "type": "float",
+                  "value": 2
+                }
+              }
+            }
+          ]
+        },
+        "source": "i = -7 / 2\ns = to_string(-7 % 2)\nf = -7 / 2.0"
+      },
+      "position": {
+        "x": 1400,
+        "y": 0
+      },
+      "text": {
+        "preview": "i={i} s={s} f={f}",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "i="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "i",
+            "ref": "var_000000000000000000000000N1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " s="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "s",
+            "ref": "var_000000000000000000000000S1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " f="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "f",
+            "ref": "var_000000000000000000000000F1"
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_000000000000000000000AFTER",
+      "isEnding": true,
+      "kind": "narration",
+      "position": {
+        "x": 2000,
+        "y": 0
+      },
+      "text": {
+        "preview": "After.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "After."
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_000000000000000000000BEYND",
+      "isEnding": true,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "i",
+                "ref": "var_000000000000000000000000N1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "big",
+                  "ref": "var_00000000000000000000000MAX"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "lit",
+                  "type": "int",
+                  "value": 1
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "args": [
+                  {
+                    "kind": "binary",
+                    "left": {
+                      "kind": "lit",
+                      "type": "int",
+                      "value": 4294967297
+                    },
+                    "op": "mul",
+                    "right": {
+                      "kind": "lit",
+                      "type": "int",
+                      "value": 4294967296
+                    }
+                  }
+                ],
+                "function": "to_string",
+                "kind": "call"
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "ok",
+                "ref": "var_000000000000000000000000B1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "args": [
+                    {
+                      "kind": "lit",
+                      "type": "float",
+                      "value": 1e+300
+                    }
+                  ],
+                  "function": "to_int",
+                  "kind": "call"
+                },
+                "op": "eq",
+                "right": {
+                  "kind": "lit",
+                  "type": "int",
+                  "value": 0
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "i",
+                "ref": "var_000000000000000000000000N1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "binary",
+                  "left": {
+                    "kind": "unary",
+                    "op": "neg",
+                    "operand": {
+                      "kind": "var",
+                      "name": "big",
+                      "ref": "var_00000000000000000000000MAX"
+                    }
+                  },
+                  "op": "sub",
+                  "right": {
+                    "kind": "lit",
+                    "type": "int",
+                    "value": 1
+                  }
+                },
+                "op": "add",
+                "right": {
+                  "kind": "lit",
+                  "type": "int",
+                  "value": 5
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "f",
+                "ref": "var_000000000000000000000000F1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "args": [
+                    {
+                      "kind": "var",
+                      "name": "big",
+                      "ref": "var_00000000000000000000000MAX"
+                    }
+                  ],
+                  "function": "to_float",
+                  "kind": "call"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "lit",
+                  "type": "float",
+                  "value": 1
+                }
+              }
+            }
+          ]
+        },
+        "source": "i = big + 1\ns = to_string(4294967297 * 4294967296)\nok = to_int(1.0e300) == 0\ni = -big - 1 + 5\nf = to_float(big) + 1.0"
+      },
+      "position": {
+        "x": 400,
+        "y": 0
+      },
+      "text": {
+        "preview": "i={i} s={s} ok={ok} f={f}",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "i="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "i",
+            "ref": "var_000000000000000000000000N1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " s="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "s",
+            "ref": "var_000000000000000000000000S1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " ok="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "ok",
+            "ref": "var_000000000000000000000000B1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " f="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "f",
+            "ref": "var_000000000000000000000000F1"
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_000000000000000000000PARSE",
+      "isEnding": true,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "i",
+                "ref": "var_000000000000000000000000N1"
+              },
+              "value": {
+                "args": [
+                  {
+                    "kind": "lit",
+                    "type": "string",
+                    "value": "3abc"
+                  }
+                ],
+                "function": "to_int",
+                "kind": "call"
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "f",
+                "ref": "var_000000000000000000000000F1"
+              },
+              "value": {
+                "args": [
+                  {
+                    "kind": "lit",
+                    "type": "string",
+                    "value": " 3"
+                  }
+                ],
+                "function": "to_float",
+                "kind": "call"
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "ok",
+                "ref": "var_000000000000000000000000B1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "args": [
+                    {
+                      "kind": "lit",
+                      "type": "string",
+                      "value": "1e400"
+                    }
+                  ],
+                  "function": "to_float",
+                  "kind": "call"
+                },
+                "op": "eq",
+                "right": {
+                  "kind": "lit",
+                  "type": "float",
+                  "value": 0
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "s",
+                "ref": "var_000000000000000000000000S1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "binary",
+                  "left": {
+                    "kind": "binary",
+                    "left": {
+                      "kind": "binary",
+                      "left": {
+                        "args": [
+                          {
+                            "args": [
+                              {
+                                "kind": "unary",
+                                "op": "neg",
+                                "operand": {
+                                  "kind": "lit",
+                                  "type": "float",
+                                  "value": 2.5
+                                }
+                              }
+                            ],
+                            "function": "round",
+                            "kind": "call"
+                          }
+                        ],
+                        "function": "to_string",
+                        "kind": "call"
+                      },
+                      "op": "add",
+                      "right": {
+                        "kind": "lit",
+                        "type": "string",
+                        "value": " "
+                      }
+                    },
+                    "op": "add",
+                    "right": {
+                      "args": [
+                        {
+                          "args": [
+                            {
+                              "kind": "unary",
+                              "op": "neg",
+                              "operand": {
+                                "kind": "lit",
+                                "type": "float",
+                                "value": 2.7
+                              }
+                            }
+                          ],
+                          "function": "to_int",
+                          "kind": "call"
+                        }
+                      ],
+                      "function": "to_string",
+                      "kind": "call"
+                    }
+                  },
+                  "op": "add",
+                  "right": {
+                    "kind": "lit",
+                    "type": "string",
+                    "value": " "
+                  }
+                },
+                "op": "add",
+                "right": {
+                  "args": [
+                    {
+                      "args": [
+                        {
+                          "kind": "lit",
+                          "type": "string",
+                          "value": "9007199254740993"
+                        }
+                      ],
+                      "function": "to_float",
+                      "kind": "call"
+                    }
+                  ],
+                  "function": "to_string",
+                  "kind": "call"
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "r",
+                "ref": "var_000000000000000000000000R1"
+              },
+              "value": {
+                "args": [
+                  {
+                    "kind": "lit",
+                    "type": "string",
+                    "value": "2.2250738585072011e-308"
+                  }
+                ],
+                "function": "to_float",
+                "kind": "call"
+              }
+            }
+          ]
+        },
+        "source": "i = to_int(\"3abc\")\nf = to_float(\" 3\")\nok = to_float(\"1e400\") == 0.0\ns = to_string(round(-2.5)) + \" \" + to_string(to_int(-2.7)) + \" \" + to_string(to_float(\"9007199254740993\"))\nr = to_float(\"2.2250738585072011e-308\")"
+      },
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "text": {
+        "preview": "i={i} f={f} ok={ok} s={s} r={r}",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "i="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "i",
+            "ref": "var_000000000000000000000000N1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " f="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "f",
+            "ref": "var_000000000000000000000000F1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " ok="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "ok",
+            "ref": "var_000000000000000000000000B1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " s="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "s",
+            "ref": "var_000000000000000000000000S1"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " r="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "r",
+            "ref": "var_000000000000000000000000R1"
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_000000000000000000000STRCT",
+      "isEnding": false,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "i",
+                "ref": "var_000000000000000000000000N1"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "lit",
+                  "type": "int",
+                  "value": 1
+                },
+                "op": "div",
+                "right": {
+                  "kind": "lit",
+                  "type": "int",
+                  "value": 0
+                }
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "ok",
+                "ref": "var_000000000000000000000000B1"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "bool",
+                "value": true
+              }
+            }
+          ]
+        },
+        "source": "i = 1 / 0\nok = true"
+      },
+      "position": {
+        "x": 1800,
+        "y": 0
+      },
+      "text": {
+        "preview": "ok={ok}",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "ok="
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "ok",
+            "ref": "var_000000000000000000000000B1"
+          }
+        ]
+      },
+      "type": "element"
+    }
+  ],
+  "schemaVersion": 1
+}

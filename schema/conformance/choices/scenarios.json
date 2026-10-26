@@ -1,0 +1,1553 @@
+{
+  "scenarios": [
+    {
+      "note": "PRD §5.8.5: start() with neither a board nor a node starts at the project's entry: the node's visit count, then its on-enter, then its choices, of which one whose condition is false is hidden",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "state": {
+            "attributes": {
+              "cmp_00000000000000000000KEEPER": {
+                "atr_000000000000000000000000MD": "wary",
+                "atr_0000000000000000000000TRST": 1
+              }
+            },
+            "cursor": {
+              "boardId": "bd_0000000000000000000000PAGE",
+              "nodeId": "nd_000000000000000000000START",
+              "phase": "awaiting_choice"
+            },
+            "projectId": "prj_000000000000000000000000C1",
+            "schemaVersion": 1,
+            "snapshotId": "snp_000000000000000000000000C1",
+            "snapshotVersion": "1.0.0",
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000MET": false,
+              "var_0000000000000000000000CASH": 1,
+              "var_0000000000000000000000NAME": "Ann"
+            },
+            "visits": {
+              "nd_000000000000000000000START": 1
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.5: a choice runs the current node's on-exit, then the connection's on-traverse, then the target's visit count and on-enter, then its choices",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "left_start",
+              "value": {
+                "type": "int",
+                "value": 1
+              }
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "signal",
+              "name": "asking",
+              "value": {
+                "type": "bool",
+                "value": true
+              }
+            },
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000CHAT"
+            },
+            {
+              "event": "signal",
+              "name": "chat_enter",
+              "value": {
+                "type": "int",
+                "value": 2
+              }
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000CHAT"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000ASK"
+          },
+          "state": {
+            "attributes": {
+              "cmp_00000000000000000000KEEPER": {
+                "atr_000000000000000000000000MD": "calm",
+                "atr_0000000000000000000000TRST": 2
+              }
+            },
+            "cursor": {
+              "boardId": "bd_0000000000000000000000PAGE",
+              "nodeId": "nd_0000000000000000000000CHAT",
+              "phase": "awaiting_choice"
+            },
+            "projectId": "prj_000000000000000000000000C1",
+            "schemaVersion": 1,
+            "snapshotId": "snp_000000000000000000000000C1",
+            "snapshotVersion": "1.0.0",
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000MET": true,
+              "var_0000000000000000000000CASH": 1,
+              "var_0000000000000000000000NAME": "Ann"
+            },
+            "visits": {
+              "nd_0000000000000000000000CHAT": 1,
+              "nd_000000000000000000000START": 1
+            }
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_0000000000000000000000BACK",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_0000000000000000000000CHAT",
+            "phase": "awaiting_choice",
+            "text": "Elara is calm. Trust: 2."
+          }
+        }
+      ]
+    },
+    {
+      "note": "advance() takes the one connection that leaves the node, which has no condition, and the next node's choices are built from the state as it is when the flow arrives there",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "left_start",
+              "value": {
+                "type": "int",
+                "value": 1
+              }
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "signal",
+              "name": "asking",
+              "value": {
+                "type": "bool",
+                "value": true
+              }
+            },
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000CHAT"
+            },
+            {
+              "event": "signal",
+              "name": "chat_enter",
+              "value": {
+                "type": "int",
+                "value": 2
+              }
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000CHAT"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000ASK"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_0000000000000000000000BACK",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_0000000000000000000000CHAT",
+            "phase": "awaiting_choice",
+            "text": "Elara is calm. Trust: 2."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000CHAT"
+            },
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "advance"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000PAY",
+                "text": "Buy a rope"
+              },
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              },
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 2 gold."
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.5: at a node that no connection leaves, the flow ends, a dead end: the node's ready, then its on-exit, then the end, and the node stays the current one",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "left_start",
+              "value": {
+                "type": "int",
+                "value": 1
+              }
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "signal",
+              "name": "asking",
+              "value": {
+                "type": "bool",
+                "value": true
+              }
+            },
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000CHAT"
+            },
+            {
+              "event": "signal",
+              "name": "chat_enter",
+              "value": {
+                "type": "int",
+                "value": 2
+              }
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000CHAT"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000ASK"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_0000000000000000000000BACK",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_0000000000000000000000CHAT",
+            "phase": "awaiting_choice",
+            "text": "Elara is calm. Trust: 2."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000CHAT"
+            },
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "advance"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000PAY",
+                "text": "Buy a rope"
+              },
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              },
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 2 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "left_start",
+              "value": {
+                "type": "int",
+                "value": 2
+              }
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000MARKET"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000MARKET"
+            },
+            {
+              "event": "signal",
+              "name": "market_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000MARKET"
+            },
+            {
+              "event": "end",
+              "reason": "dead_end"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000PAY"
+          },
+          "state": {
+            "attributes": {
+              "cmp_00000000000000000000KEEPER": {
+                "atr_000000000000000000000000MD": "calm",
+                "atr_0000000000000000000000TRST": 2
+              }
+            },
+            "cursor": {
+              "boardId": "bd_0000000000000000000000PAGE",
+              "nodeId": "nd_00000000000000000000MARKET",
+              "phase": "ended"
+            },
+            "projectId": "prj_000000000000000000000000C1",
+            "schemaVersion": 1,
+            "snapshotId": "snp_000000000000000000000000C1",
+            "snapshotVersion": "1.0.0",
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000MET": true,
+              "var_0000000000000000000000CASH": 0,
+              "var_0000000000000000000000NAME": "Ann"
+            },
+            "visits": {
+              "nd_0000000000000000000000CHAT": 1,
+              "nd_000000000000000000000START": 2,
+              "nd_00000000000000000000MARKET": 1
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000MARKET",
+            "phase": "ended",
+            "text": "You buy a rope."
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.5: at an ending, the flow ends after the node's on-exit, though a connection leaves it",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "left_start",
+              "value": {
+                "type": "int",
+                "value": 1
+              }
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "signal",
+              "name": "asking",
+              "value": {
+                "type": "bool",
+                "value": true
+              }
+            },
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000CHAT"
+            },
+            {
+              "event": "signal",
+              "name": "chat_enter",
+              "value": {
+                "type": "int",
+                "value": 2
+              }
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000CHAT"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000ASK"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_0000000000000000000000BACK",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_0000000000000000000000CHAT",
+            "phase": "awaiting_choice",
+            "text": "Elara is calm. Trust: 2."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000CHAT"
+            },
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "advance"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000PAY",
+                "text": "Buy a rope"
+              },
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              },
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 2 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "left_start",
+              "value": {
+                "type": "int",
+                "value": 2
+              }
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000BYE"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000BYE"
+            },
+            {
+              "event": "signal",
+              "name": "bye_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000BYE"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000DEPART"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000BYE",
+            "phase": "ended",
+            "text": "Goodbye, Ann."
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.5: at a node whose connections' conditions are all false, the flow ends with no_choices, after its on-exit; goto() runs the current node's on-exit, but no connection's on-traverse",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "left_start",
+              "value": {
+                "type": "int",
+                "value": 1
+              }
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000GATED"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000GATED"
+            },
+            {
+              "event": "signal",
+              "name": "gated_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000GATED"
+            },
+            {
+              "event": "end",
+              "reason": "no_choices"
+            }
+          ],
+          "input": {
+            "board": "bd_0000000000000000000000PAGE",
+            "call": "goto",
+            "node": "nd_000000000000000000000GATED"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_000000000000000000000GATED",
+            "phase": "ended",
+            "text": "A locked door."
+          }
+        }
+      ]
+    },
+    {
+      "note": "a choice that is not one of the current node's is invalid_choice, and advance() at a node that several connections leave is cannot_advance, and neither changes anything",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "code": "invalid_choice",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000PAY"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "code": "cannot_advance",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "call": "advance"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        }
+      ]
+    },
+    {
+      "note": "once the flow ended, a choice is invalid_choice and an advance cannot_advance, and goto() does not run the on-exit of the node that it ended at again",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "left_start",
+              "value": {
+                "type": "int",
+                "value": 1
+              }
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000BYE"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000BYE"
+            },
+            {
+              "event": "signal",
+              "name": "bye_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000BYE"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "board": "bd_0000000000000000000000PAGE",
+            "call": "goto",
+            "node": "nd_00000000000000000000000BYE"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000BYE",
+            "phase": "ended",
+            "text": "Goodbye, Ann."
+          }
+        },
+        {
+          "events": [
+            {
+              "code": "invalid_choice",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000REPEAT"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000BYE",
+            "phase": "ended",
+            "text": "Goodbye, Ann."
+          }
+        },
+        {
+          "events": [
+            {
+              "code": "cannot_advance",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "call": "advance"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000BYE",
+            "phase": "ended",
+            "text": "Goodbye, Ann."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "board": "bd_0000000000000000000000PAGE",
+            "call": "goto",
+            "node": "nd_000000000000000000000START"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000PAY",
+                "text": "Buy a rope"
+              },
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 2 gold."
+          }
+        }
+      ]
+    },
+    {
+      "note": "FR-PLAY-02 AC1: a value set while the flow awaits a choice shows in the text at once, and the choices stay those that were built when the flow arrived at the node",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [],
+          "input": {
+            "call": "set_variable",
+            "value": 5,
+            "variable": "var_0000000000000000000000CASH"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 5 gold."
+          }
+        },
+        {
+          "events": [],
+          "input": {
+            "call": "set_variable",
+            "value": "Bo",
+            "variable": "var_0000000000000000000000NAME"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Bo. You have 5 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "left_start",
+              "value": {
+                "type": "int",
+                "value": 5
+              }
+            },
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "signal",
+              "name": "asking",
+              "value": {
+                "type": "bool",
+                "value": true
+              }
+            },
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000CHAT"
+            },
+            {
+              "event": "signal",
+              "name": "chat_enter",
+              "value": {
+                "type": "int",
+                "value": 2
+              }
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000CHAT"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000ASK"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_0000000000000000000000BACK",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_0000000000000000000000CHAT",
+            "phase": "awaiting_choice",
+            "text": "Elara is calm. Trust: 2."
+          }
+        },
+        {
+          "events": [],
+          "input": {
+            "attribute": "atr_0000000000000000000000TRST",
+            "call": "set_attribute",
+            "component": "cmp_00000000000000000000KEEPER",
+            "value": 7
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_0000000000000000000000BACK",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_0000000000000000000000CHAT",
+            "phase": "awaiting_choice",
+            "text": "Elara is calm. Trust: 7."
+          }
+        },
+        {
+          "events": [],
+          "input": {
+            "attribute": "atr_000000000000000000000000MD",
+            "call": "set_attribute",
+            "component": "cmp_00000000000000000000KEEPER",
+            "value": "angry"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_0000000000000000000000BACK",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_0000000000000000000000CHAT",
+            "phase": "awaiting_choice",
+            "text": "Elara is angry. Trust: 7."
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.5: start() at a node, or at a board's entry node, does not run the current node's on-exit, wherever the flow is",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000CHAT"
+            },
+            {
+              "event": "signal",
+              "name": "chat_enter",
+              "value": {
+                "type": "int",
+                "value": 2
+              }
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000CHAT"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_0000000000000000000000CHAT"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_0000000000000000000000BACK",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_0000000000000000000000CHAT",
+            "phase": "awaiting_choice",
+            "text": "Elara is calm. Trust: 2."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "board": "bd_0000000000000000000000PAGE",
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        }
+      ]
+    },
+    {
+      "note": "a start or a goto of a board or a node that the snapshot does not have, or of a node of another board than the one that it names, is unknown_node, and moves the flow nowhere",
+      "steps": [
+        {
+          "events": [
+            {
+              "code": "unknown_node",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_0000000000000000000000NADA"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "text": ""
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "code": "unknown_node",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "board": "bd_0000000000000000000000NADA",
+            "call": "goto"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "code": "unknown_node",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "call": "goto",
+            "node": "nd_0000000000000000000000NADA"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "code": "unknown_node",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "board": "bd_0000000000000000000000NADA",
+            "call": "goto",
+            "node": "nd_000000000000000000000START"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        }
+      ]
+    },
+    {
+      "note": "FR-GODOT-08 AC2: in strict mode, a call that reports a runtime error runs as it runs in non-strict mode, and then halts the flow: a choice, an advance, and a goto report flow_halted and change nothing, until start() clears the halt",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "code": "invalid_choice",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000PAY"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": true,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "code": "flow_halted",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000ASK"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": true,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "code": "flow_halted",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "call": "advance"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": true,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "code": "flow_halted",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "board": "bd_0000000000000000000000PAGE",
+            "call": "goto",
+            "node": "nd_00000000000000000000000BYE"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": true,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 1 gold."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000START"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000START"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000PAY",
+                "text": "Buy a rope"
+              },
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Talk to Elara"
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000START",
+            "phase": "awaiting_choice",
+            "text": "Hello, Ann. You have 2 gold."
+          }
+        }
+      ],
+      "strict": true
+    }
+  ]
+}

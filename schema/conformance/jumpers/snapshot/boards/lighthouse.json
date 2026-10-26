@@ -1,0 +1,130 @@
+{
+  "board": {
+    "entryNodeId": "nd_00000000000000000000BENTRY",
+    "id": "bd_000000000000000000000BEACN",
+    "name": "Lighthouse",
+    "slug": "lighthouse"
+  },
+  "connections": [
+    {
+      "from": "nd_00000000000000000000BENTRY",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000THM",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Home"
+          }
+        ]
+      },
+      "order": 0,
+      "to": "nd_00000000000000000000000JHM"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "nd_00000000000000000000000JHM",
+      "position": {
+        "x": 200,
+        "y": 0
+      },
+      "target": {
+        "boardId": "bd_00000000000000000000000HRB",
+        "nodeId": "nd_00000000000000000000HENTRY"
+      },
+      "type": "jumper"
+    },
+    {
+      "id": "nd_00000000000000000000BENTRY",
+      "isEnding": false,
+      "kind": "narration",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "+=",
+              "target": {
+                "kind": "var",
+                "name": "temp",
+                "ref": "var_0000000000000000000000BTMP"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 1
+              }
+            },
+            {
+              "kind": "assign",
+              "op": "+=",
+              "target": {
+                "kind": "var",
+                "name": "keep",
+                "ref": "var_000000000000000000000BKEEP"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 1
+              }
+            }
+          ]
+        },
+        "source": "temp += 1\nkeep += 1"
+      },
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "text": {
+        "preview": "Lighthouse: temp {temp}, keep {keep}, trips {trips}.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Lighthouse: temp "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "temp",
+            "ref": "var_0000000000000000000000BTMP"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": ", keep "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "keep",
+            "ref": "var_000000000000000000000BKEEP"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": ", trips "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "trips",
+            "ref": "var_0000000000000000000000TRPS"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "."
+          }
+        ]
+      },
+      "type": "element"
+    }
+  ],
+  "schemaVersion": 1
+}

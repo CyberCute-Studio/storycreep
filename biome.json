@@ -11,7 +11,8 @@
       "**",
       "!**/*.gen.ts",
       "!schema/api/v1/openapi.json",
-      "!schema/**/*.schema.json"
+      "!schema/**/*.schema.json",
+      "!schema/conformance/**/*.json"
     ]
   },
   "formatter": {

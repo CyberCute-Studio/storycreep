@@ -1,0 +1,2124 @@
+{
+  "scenarios": [
+    {
+      "note": "PRD §5.8.5, FR-EDIT-05 AC3, FR-VAR-02 AC3 and AC4: a jumper to another board is replaced by its target: the node's on-exit, the connection's on-traverse, then the board entry, which resets the board's resetOnEnter variables and no other, then the target's visit count and on-enter; the jumper is never entered",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "harbour_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000BENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000BENTRY"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000TBC"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000THM",
+                "text": "Home"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000BENTRY",
+            "phase": "awaiting_choice",
+            "text": "Lighthouse: temp 1, keep 1, trips 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000BENTRY"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000THM"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 2."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "harbour_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000BENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000BENTRY"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000TBC"
+          },
+          "state": {
+            "attributes": {},
+            "cursor": {
+              "boardId": "bd_000000000000000000000BEACN",
+              "nodeId": "nd_00000000000000000000BENTRY",
+              "phase": "awaiting_choice"
+            },
+            "projectId": "prj_000000000000000000000000C3",
+            "schemaVersion": 1,
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000CNT": 0,
+              "var_0000000000000000000000BTMP": 1,
+              "var_0000000000000000000000HTMP": 1,
+              "var_0000000000000000000000TRPS": 2,
+              "var_000000000000000000000BKEEP": 2,
+              "var_000000000000000000000HKEEP": 2
+            },
+            "visits": {
+              "nd_00000000000000000000BENTRY": 2,
+              "nd_00000000000000000000HENTRY": 2
+            }
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000THM",
+                "text": "Home"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000BENTRY",
+            "phase": "awaiting_choice",
+            "text": "Lighthouse: temp 1, keep 2, trips 2."
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.5: a jumper to a node of its own board is no board entry, so that the board's resetOnEnter variables keep their values",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "harbour_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000HSD"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000HSD"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000TSD"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000SDB",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000000HSD",
+            "phase": "awaiting_choice",
+            "text": "Side: temp 11."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000HSD"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "advance"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 12, keep 2."
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.5: start() at a jumper starts the flow at its target, as a board entry",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000BENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000BENTRY"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_00000000000000000000000JBC"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000THM",
+                "text": "Home"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000BENTRY",
+            "phase": "awaiting_choice",
+            "text": "Lighthouse: temp 1, keep 1, trips 0."
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.5: goto() of a jumper runs the current node's on-exit, then enters the jumper's target as a board entry, though the target is of the current board",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "harbour_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "goto",
+            "node": "nd_00000000000000000000000JHM"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 2."
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.5: start() of the current board is a board entry too, and runs no on-exit",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "harbour_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000HSD"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000HSD"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000TSD"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000SDB",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000000HSD",
+            "phase": "awaiting_choice",
+            "text": "Side: temp 11."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "board": "bd_00000000000000000000000HRB",
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 2."
+          }
+        }
+      ]
+    },
+    {
+      "note": "a choice of a jumper without a target, which only a draft has, is jumper_broken: the connection's on-traverse does not run, and the flow ends at the node, a dead end, after its on-exit",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "at": "nd_0000000000000000000000JBRK",
+              "code": "jumper_broken",
+              "event": "error"
+            },
+            {
+              "event": "signal",
+              "name": "harbour_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "end",
+              "reason": "dead_end"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_0000000000000000000000TBRK"
+          },
+          "state": {
+            "attributes": {},
+            "cursor": {
+              "boardId": "bd_00000000000000000000000HRB",
+              "nodeId": "nd_00000000000000000000HENTRY",
+              "phase": "ended"
+            },
+            "projectId": "prj_000000000000000000000000C3",
+            "schemaVersion": 1,
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000CNT": 0,
+              "var_0000000000000000000000BTMP": 0,
+              "var_0000000000000000000000HTMP": 1,
+              "var_0000000000000000000000TRPS": 0,
+              "var_000000000000000000000BKEEP": 0,
+              "var_000000000000000000000HKEEP": 1
+            },
+            "visits": {
+              "nd_00000000000000000000HENTRY": 1
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "ended",
+            "text": "Harbour: temp 1, keep 1."
+          }
+        }
+      ]
+    },
+    {
+      "note": "a branch whose connection leads to a jumper without a target is jumper_broken once its on-enter has run and it has picked the connection: the connection's on-traverse does not run, and the flow ends at the branch, a dead end: its ready, then its on-exit, then the end",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "harbour_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000FRK"
+            },
+            {
+              "event": "signal",
+              "name": "fork_enter"
+            },
+            {
+              "at": "nd_0000000000000000000000JBRK",
+              "code": "jumper_broken",
+              "event": "error"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000FRK"
+            },
+            {
+              "event": "signal",
+              "name": "fork_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000FRK"
+            },
+            {
+              "event": "end",
+              "reason": "dead_end"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_0000000000000000000000TFRK"
+          },
+          "state": {
+            "attributes": {},
+            "cursor": {
+              "boardId": "bd_00000000000000000000000HRB",
+              "nodeId": "nd_00000000000000000000000FRK",
+              "phase": "ended"
+            },
+            "projectId": "prj_000000000000000000000000C3",
+            "schemaVersion": 1,
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000CNT": 0,
+              "var_0000000000000000000000BTMP": 0,
+              "var_0000000000000000000000HTMP": 1,
+              "var_0000000000000000000000TRPS": 0,
+              "var_000000000000000000000BKEEP": 0,
+              "var_000000000000000000000HKEEP": 1
+            },
+            "visits": {
+              "nd_00000000000000000000000FRK": 1,
+              "nd_00000000000000000000HENTRY": 1
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000FRK",
+            "phase": "ended",
+            "text": ""
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.5: a branch that the flow would leave once it has passed through 100 branches in the call, but whose connection leads to a jumper without a target, is jumper_broken alone, not flow_loop: the destination is resolved first, and the flow does not leave the branch",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "at": "nd_0000000000000000000000JBRK",
+              "code": "jumper_broken",
+              "event": "error"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000RND"
+            },
+            {
+              "event": "end",
+              "reason": "dead_end"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_00000000000000000000000RND"
+          },
+          "state": {
+            "attributes": {},
+            "cursor": {
+              "boardId": "bd_00000000000000000000000HRB",
+              "nodeId": "nd_00000000000000000000000RND",
+              "phase": "ended"
+            },
+            "projectId": "prj_000000000000000000000000C3",
+            "schemaVersion": 1,
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000CNT": 101,
+              "var_0000000000000000000000BTMP": 0,
+              "var_0000000000000000000000HTMP": 0,
+              "var_0000000000000000000000TRPS": 0,
+              "var_000000000000000000000BKEEP": 0,
+              "var_000000000000000000000HKEEP": 0
+            },
+            "visits": {
+              "nd_00000000000000000000000RND": 101
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000000RND",
+            "phase": "ended",
+            "text": ""
+          }
+        }
+      ]
+    },
+    {
+      "note": "start() or goto() of a jumper without a target is jumper_broken, and moves the flow nowhere, without the current node's on-exit",
+      "steps": [
+        {
+          "events": [
+            {
+              "at": "nd_0000000000000000000000JBRK",
+              "code": "jumper_broken",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_0000000000000000000000JBRK"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "text": ""
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "at": "nd_0000000000000000000000JBRK",
+              "code": "jumper_broken",
+              "event": "error"
+            }
+          ],
+          "input": {
+            "call": "goto",
+            "node": "nd_0000000000000000000000JBRK"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 1."
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.5: reset() sets every value to the snapshot's and clears every visit count, then starts the flow at the project's entry, without the current node's on-exit",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "signal",
+              "name": "harbour_exit"
+            },
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000BENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000BENTRY"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000TBC"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000THM",
+                "text": "Home"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000BENTRY",
+            "phase": "awaiting_choice",
+            "text": "Lighthouse: temp 1, keep 1, trips 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "reset"
+          },
+          "state": {
+            "attributes": {},
+            "cursor": {
+              "boardId": "bd_00000000000000000000000HRB",
+              "nodeId": "nd_00000000000000000000HENTRY",
+              "phase": "awaiting_choice"
+            },
+            "projectId": "prj_000000000000000000000000C3",
+            "schemaVersion": 1,
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000CNT": 0,
+              "var_0000000000000000000000BTMP": 0,
+              "var_0000000000000000000000HTMP": 1,
+              "var_0000000000000000000000TRPS": 0,
+              "var_000000000000000000000BKEEP": 0,
+              "var_000000000000000000000HKEEP": 1
+            },
+            "visits": {
+              "nd_00000000000000000000HENTRY": 1
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 1."
+          }
+        }
+      ]
+    },
+    {
+      "note": "PRD §5.8.5: load_state() is no board entry: it sets the values and the cursor without the current node's on-exit, or the cursor node's visit count or on-enter, and builds the cursor node's choices again",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 1."
+          }
+        },
+        {
+          "events": [],
+          "input": {
+            "call": "load_state",
+            "state": {
+              "attributes": {},
+              "cursor": {
+                "boardId": "bd_000000000000000000000BEACN",
+                "nodeId": "nd_00000000000000000000BENTRY",
+                "phase": "awaiting_choice"
+              },
+              "projectId": "prj_000000000000000000000000C3",
+              "schemaVersion": 1,
+              "stateVersion": 1,
+              "variables": {
+                "var_00000000000000000000000CNT": 0,
+                "var_0000000000000000000000BTMP": 4,
+                "var_0000000000000000000000HTMP": 5,
+                "var_0000000000000000000000TRPS": 7,
+                "var_000000000000000000000BKEEP": 2,
+                "var_000000000000000000000HKEEP": 3
+              },
+              "visits": {
+                "nd_00000000000000000000BENTRY": 2,
+                "nd_00000000000000000000HENTRY": 3
+              }
+            }
+          },
+          "state": {
+            "attributes": {},
+            "cursor": {
+              "boardId": "bd_000000000000000000000BEACN",
+              "nodeId": "nd_00000000000000000000BENTRY",
+              "phase": "awaiting_choice"
+            },
+            "projectId": "prj_000000000000000000000000C3",
+            "schemaVersion": 1,
+            "stateVersion": 1,
+            "variables": {
+              "var_00000000000000000000000CNT": 0,
+              "var_0000000000000000000000BTMP": 4,
+              "var_0000000000000000000000HTMP": 5,
+              "var_0000000000000000000000TRPS": 7,
+              "var_000000000000000000000BKEEP": 2,
+              "var_000000000000000000000HKEEP": 3
+            },
+            "visits": {
+              "nd_00000000000000000000BENTRY": 2,
+              "nd_00000000000000000000HENTRY": 3
+            }
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000THM",
+                "text": "Home"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000BENTRY",
+            "phase": "awaiting_choice",
+            "text": "Lighthouse: temp 4, keep 2, trips 7."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000BENTRY"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000HENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000HENTRY"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000THM"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000TSD",
+                "text": "Side"
+              },
+              {
+                "id": "cn_00000000000000000000000TBC",
+                "text": "Beacon"
+              },
+              {
+                "id": "cn_0000000000000000000000TBRK",
+                "text": "Broken"
+              },
+              {
+                "id": "cn_0000000000000000000000TFRK",
+                "text": "Fork"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "awaiting_choice",
+            "text": "Harbour: temp 1, keep 4."
+          }
+        }
+      ]
+    },
+    {
+      "note": "load_state() of a state whose flow ended leaves it ended, and a goto() after it does not run the on-exit of the node that it ended at",
+      "steps": [
+        {
+          "events": [],
+          "input": {
+            "call": "load_state",
+            "state": {
+              "attributes": {},
+              "cursor": {
+                "boardId": "bd_00000000000000000000000HRB",
+                "nodeId": "nd_00000000000000000000HENTRY",
+                "phase": "ended"
+              },
+              "projectId": "prj_000000000000000000000000C3",
+              "schemaVersion": 1,
+              "stateVersion": 1,
+              "variables": {
+                "var_00000000000000000000000CNT": 0,
+                "var_0000000000000000000000BTMP": 0,
+                "var_0000000000000000000000HTMP": 2,
+                "var_0000000000000000000000TRPS": 0,
+                "var_000000000000000000000BKEEP": 0,
+                "var_000000000000000000000HKEEP": 2
+              },
+              "visits": {
+                "nd_00000000000000000000HENTRY": 2
+              }
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_00000000000000000000HENTRY",
+            "phase": "ended",
+            "text": "Harbour: temp 2, keep 2."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000BENTRY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000BENTRY"
+            }
+          ],
+          "input": {
+            "board": "bd_000000000000000000000BEACN",
+            "call": "goto"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000THM",
+                "text": "Home"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000BENTRY",
+            "phase": "awaiting_choice",
+            "text": "Lighthouse: temp 1, keep 1, trips 0."
+          }
+        }
+      ]
+    }
+  ]
+}

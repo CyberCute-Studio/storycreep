@@ -1,6 +1,9 @@
 package published
 
 import (
+	"fmt"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 	"github.com/CyberCute-Studio/storycreep/server/internal/value"
@@ -193,4 +196,42 @@ func (a AttributeValues) MarshalJSON() ([]byte, error) {
 func (AttributeValues) JSONSchema(g *schemagen.Generator) *schemagen.Schema {
 	return schemagen.Describe(schemagen.Map(g.Ref(valueType), g.ID(ids.AttributeDef)),
 		"Values of attributes, by their attribute definitions' IDs, each of its definition's type.")
+}
+
+// ExprProject returns what the expressions of a snapshot of the variables,
+// the component types, the components, and the boards' nodes can name, as
+// expr.NewProject returns it, or its error, which wraps expr.ErrProject: each
+// component with its type's attribute definitions, of a type that types
+// has, and each node a jumper or not. It reads them in their order, so that
+// of a snapshot that is wrong in several ways its error is always the same
+// one.
+func ExprProject(variables []Variable, types []ComponentType, components []Component, nodes []Node) (
+	*expr.Project, error) {
+	var vars []expr.Variable
+	for _, v := range variables {
+		vars = append(vars, expr.Variable{ID: v.ID, Key: v.Key, Type: v.Type, Board: v.BoardID})
+	}
+	definitions := make(map[string][]expr.Attribute)
+	for _, t := range types {
+		definitions[t.ID] = []expr.Attribute{}
+		for _, d := range t.Attributes {
+			definitions[t.ID] = append(definitions[t.ID], expr.Attribute{ID: d.ID, Key: d.Key, Type: d.Type,
+				Runtime: d.Runtime, Options: d.Options})
+		}
+	}
+	var cmps []expr.Component
+	for _, c := range components {
+		defs, ok := definitions[c.ComponentTypeID]
+		if !ok {
+			return nil, fmt.Errorf("%w: the component %s is of %s, which is no component type of the snapshot",
+				expr.ErrProject, c.ID, c.ComponentTypeID)
+		}
+		cmps = append(cmps, expr.Component{ID: c.ID, Key: c.Key, Attributes: defs})
+	}
+	var ns []expr.BoardNode
+	for _, n := range nodes {
+		_, jumper := n.(*Jumper)
+		ns = append(ns, expr.BoardNode{ID: n.NodeID(), Jumper: jumper})
+	}
+	return expr.NewProject(vars, cmps, ns)
 }

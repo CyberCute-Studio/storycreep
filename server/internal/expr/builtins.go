@@ -1,6 +1,9 @@
 package expr
 
 import (
+	"maps"
+	"slices"
+
 	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
@@ -110,6 +113,14 @@ type builtin struct {
 	version int
 }
 
+// takes reports whether a call of b may have n arguments: as many as its
+// params, or fewer by at most its optional ones, which Check refuses any
+// other number of as WrongArgumentCount, and of which the evaluator evaluates
+// no call of any other.
+func (b builtin) takes(n int) bool {
+	return n >= len(b.params)-b.optional && n <= len(b.params)
+}
+
 // builtins are the built-in functions, by their names (§5.8.4). A signal's
 // first parameter, its name, is a string literal of a character or more,
 // which Check reads rather than its type.
@@ -134,6 +145,11 @@ var builtins = map[string]builtin{
 	"visited":     {params: []typeSet{tyNode}, result: tyBool, version: 1},
 	"visits":      {params: []typeSet{tyNode}, result: tyInt, version: 1},
 	"signal":      {params: []typeSet{tyString, tyValue}, optional: 1, effect: true, version: 1},
+}
+
+// Builtins returns the names of the built-in functions (§5.8.4), sorted.
+func Builtins() []string {
+	return slices.Sorted(maps.Keys(builtins))
 }
 
 // ASTVersion is the ast_version of this package's language (FR-EXPR-04): the

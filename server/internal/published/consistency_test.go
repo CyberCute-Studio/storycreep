@@ -2,6 +2,7 @@ package published
 
 import (
 	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
 
@@ -25,51 +26,45 @@ func decodeAll[T any](t *testing.T, examples []string) []T {
 // variables, the components and their attributes, and the boards' nodes.
 func exampleProject(t *testing.T) *expr.Project {
 	t.Helper()
-	var variables []expr.Variable
+	var variables []Variable
 	for _, f := range decodeAll[Variables](t, variablesExamples) {
-		for _, v := range f.Variables {
-			variables = append(variables, expr.Variable{ID: v.ID, Key: v.Key, Type: v.Type, Board: v.BoardID})
-		}
+		variables = append(variables, f.Variables...)
 	}
-	types := map[string][]expr.Attribute{}
+	var types []ComponentType
 	for _, f := range decodeAll[ComponentTypes](t, componentTypesExamples) {
-		for _, ct := range f.ComponentTypes {
-			for _, a := range ct.Attributes {
-				types[ct.ID] = append(types[ct.ID], expr.Attribute{ID: a.ID, Key: a.Key, Type: a.Type,
-					Runtime: a.Runtime, Options: a.Options})
-			}
-		}
+		types = append(types, f.ComponentTypes...)
 	}
-	var components []expr.Component
+	var components []Component
 	for _, f := range decodeAll[Components](t, componentsExamples) {
-		for _, c := range f.Components {
-			components = append(components, expr.Component{ID: c.ID, Key: c.Key, Attributes: types[c.ComponentTypeID]})
-		}
+		components = append(components, f.Components...)
 	}
-	var nodes []expr.BoardNode
+	var nodes []Node
 	for _, b := range decodeAll[Board](t, boardExamples) {
-		for _, n := range b.Nodes {
-			_, jumper := n.(*Jumper)
-			nodes = append(nodes, expr.BoardNode{ID: nodeID(n), Jumper: jumper})
-		}
+		nodes = append(nodes, b.Nodes...)
 	}
-	p, err := expr.NewProject(variables, components, nodes)
+	p, err := ExprProject(variables, types, components, nodes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return p
 }
 
-func nodeID(n Node) string {
-	switch n := n.(type) {
-	case *Element:
-		return n.ID
-	case *Branch:
-		return n.ID
-	case *Jumper:
-		return n.ID
+// TestExprProjectUnknownType checks that ExprProject refuses a component of a
+// type that the component types do not have, rather than give it no
+// attributes, of which every expression would then say that it does not
+// have the one that it names.
+func TestExprProjectUnknownType(t *testing.T) {
+	t.Parallel()
+	var components []Component
+	for _, f := range decodeAll[Components](t, componentsExamples) {
+		components = append(components, f.Components...)
 	}
-	return ""
+	if len(components) == 0 {
+		t.Fatal("the examples have no component")
+	}
+	if _, err := ExprProject(nil, nil, components, nil); !errors.Is(err, expr.ErrProject) {
+		t.Errorf("ExprProject of a component of no type: %v; want an error of expr.ErrProject", err)
+	}
 }
 
 // expression is an expression of a board's example, at the board.

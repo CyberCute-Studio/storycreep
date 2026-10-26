@@ -9,6 +9,9 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 // FieldError is a field of an input that is not valid.
@@ -84,6 +87,18 @@ func CheckTrimmedText(text string, maxChars int) string {
 		return "has white space around it"
 	}
 	return CheckText(text, maxChars)
+}
+
+// FoldCase returns the key by which two names, as two tags of a node, are the
+// same but for their case: the name in Unicode's normalization form C, with
+// its case folded, so that Quest, QUEST, and quest are one (PRD FR-EDIT-06,
+// plan note N43), and an accented letter written as one character or as a
+// letter and a mark is one letter. The folded name is put in form C again,
+// since folding may leave a letter in another form: ΐ folds to ι with two
+// marks, and Ϊ́, a capital and a mark, to ϊ with one, which form C writes
+// alike, as ΐ.
+func FoldCase(name string) string {
+	return norm.NFC.String(cases.Fold().String(norm.NFC.String(name)))
 }
 
 // LineFeeds returns text with each line break that is written as CR LF, as

@@ -1,0 +1,506 @@
+{
+  "scenarios": [
+    {
+      "note": "PRD §5.8.4: visited() and visits() read the visit counts, which the flow's entry of a node increments before its on-enter, though a connection of the node to itself is how it enters it",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000HVB"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Ask"
+              },
+              {
+                "id": "cn_0000000000000000000000STAY",
+                "text": "Wait"
+              },
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000000HVB",
+            "phase": "awaiting_choice",
+            "text": "Visit 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000HVB"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_0000000000000000000000STAY"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Ask"
+              },
+              {
+                "id": "cn_0000000000000000000000STAY",
+                "text": "Wait"
+              },
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000000HVB",
+            "phase": "awaiting_choice",
+            "text": "Visit 2."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000HVB"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_0000000000000000000000STAY"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Ask"
+              },
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000000HVB",
+            "phase": "awaiting_choice",
+            "text": "Visit 3."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000ASKED"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000ASKED"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000ASK"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000RET",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000ASKED",
+            "phase": "awaiting_choice",
+            "text": "She tells you of the light."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000ASKED"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000HVB"
+            }
+          ],
+          "input": {
+            "call": "advance"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000000HVB",
+            "phase": "awaiting_choice",
+            "text": "Visit 4."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "enter",
+              "node": "nd_0000000000000000000000AWAY"
+            },
+            {
+              "event": "ready",
+              "node": "nd_0000000000000000000000AWAY"
+            },
+            {
+              "event": "exit",
+              "node": "nd_0000000000000000000000AWAY"
+            },
+            {
+              "event": "end",
+              "reason": "ending"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000DEPART"
+          },
+          "state": {
+            "attributes": {},
+            "cursor": {
+              "boardId": "bd_0000000000000000000000MEET",
+              "nodeId": "nd_0000000000000000000000AWAY",
+              "phase": "ended"
+            },
+            "projectId": "prj_000000000000000000000000C5",
+            "schemaVersion": 1,
+            "snapshotId": "snp_000000000000000000000000C5",
+            "snapshotVersion": "1.0.0",
+            "stateVersion": 1,
+            "variables": {
+              "var_0000000000000000000000000V": 4
+            },
+            "visits": {
+              "nd_00000000000000000000000HVB": 4,
+              "nd_0000000000000000000000AWAY": 1,
+              "nd_000000000000000000000ASKED": 1
+            }
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [],
+            "halted": false,
+            "node": "nd_0000000000000000000000AWAY",
+            "phase": "ended",
+            "text": "You leave after 4 visits."
+          }
+        }
+      ]
+    },
+    {
+      "note": "start() and goto() count a visit of the node that they enter",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000HVB"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Ask"
+              },
+              {
+                "id": "cn_0000000000000000000000STAY",
+                "text": "Wait"
+              },
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000000HVB",
+            "phase": "awaiting_choice",
+            "text": "Visit 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000HVB"
+            }
+          ],
+          "input": {
+            "call": "goto",
+            "node": "nd_00000000000000000000000HVB"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Ask"
+              },
+              {
+                "id": "cn_0000000000000000000000STAY",
+                "text": "Wait"
+              },
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000000HVB",
+            "phase": "awaiting_choice",
+            "text": "Visit 2."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000HVB"
+            }
+          ],
+          "input": {
+            "call": "start",
+            "node": "nd_00000000000000000000000HVB"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Ask"
+              },
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000000HVB",
+            "phase": "awaiting_choice",
+            "text": "Visit 3."
+          }
+        }
+      ]
+    },
+    {
+      "note": "reset() clears the visit counts that visited() and visits() read",
+      "steps": [
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000HVB"
+            }
+          ],
+          "input": {
+            "call": "start"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Ask"
+              },
+              {
+                "id": "cn_0000000000000000000000STAY",
+                "text": "Wait"
+              },
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000000HVB",
+            "phase": "awaiting_choice",
+            "text": "Visit 1."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "enter",
+              "node": "nd_000000000000000000000ASKED"
+            },
+            {
+              "event": "ready",
+              "node": "nd_000000000000000000000ASKED"
+            }
+          ],
+          "input": {
+            "call": "choose",
+            "choice": "cn_00000000000000000000000ASK"
+          },
+          "view": {
+            "canAdvance": true,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000RET",
+                "text": ""
+              }
+            ],
+            "halted": false,
+            "node": "nd_000000000000000000000ASKED",
+            "phase": "awaiting_choice",
+            "text": "She tells you of the light."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "exit",
+              "node": "nd_000000000000000000000ASKED"
+            },
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000HVB"
+            }
+          ],
+          "input": {
+            "call": "advance"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_0000000000000000000000STAY",
+                "text": "Wait"
+              },
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000000HVB",
+            "phase": "awaiting_choice",
+            "text": "Visit 2."
+          }
+        },
+        {
+          "events": [
+            {
+              "event": "enter",
+              "node": "nd_00000000000000000000000HVB"
+            },
+            {
+              "event": "ready",
+              "node": "nd_00000000000000000000000HVB"
+            }
+          ],
+          "input": {
+            "call": "reset"
+          },
+          "view": {
+            "canAdvance": false,
+            "choices": [
+              {
+                "id": "cn_00000000000000000000000ASK",
+                "text": "Ask"
+              },
+              {
+                "id": "cn_0000000000000000000000STAY",
+                "text": "Wait"
+              },
+              {
+                "id": "cn_00000000000000000000DEPART",
+                "text": "Leave"
+              }
+            ],
+            "halted": false,
+            "node": "nd_00000000000000000000000HVB",
+            "phase": "awaiting_choice",
+            "text": "Visit 1."
+          }
+        }
+      ]
+    }
+  ]
+}

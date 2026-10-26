@@ -220,8 +220,30 @@ func apply(op string, args []value, decimals *int) (value, RuntimeError, bool) {
 		return unary(op, args[0])
 	case 2:
 		return binary(op, args[0], args[1])
+	case 3:
+		return clamp(op, args[0], args[1], args[2])
 	}
 	return value{}, "", false
+}
+
+// clamp applies clamp, the one operation of three arguments, to x, lo, and
+// hi: min(max(x, lo), hi), of the widened type of all three, so that it is
+// hi when lo is greater than hi.
+func clamp(op string, x, lo, hi value) (value, RuntimeError, bool) {
+	numeric := func(v value) bool { return v.typ == "int" || v.typ == "float" }
+	if op != "clamp" || !numeric(x) || !numeric(lo) || !numeric(hi) {
+		return value{}, "", false
+	}
+	if x.typ == "int" && lo.typ == "int" && hi.typ == "int" {
+		return value{typ: "int", i: min(max(x.i, lo.i), hi.i)}, "", true
+	}
+	asFloat := func(v value) float64 {
+		if v.typ == "int" {
+			return float64(v.i)
+		}
+		return v.f
+	}
+	return value{typ: "float", f: min(max(asFloat(x), asFloat(lo)), asFloat(hi))}, "", true
 }
 
 // interpolate returns v as a text value reference shows it, with decimals
@@ -261,6 +283,10 @@ func unary(op string, a value) (value, RuntimeError, bool) {
 		return ints(NegInt(a.i))
 	case op == "-" && a.typ == "float":
 		return floats(NegFloat(a.f))
+	case op == "abs" && a.typ == "int":
+		return ints(max(a.i, -a.i), "")
+	case op == "abs" && a.typ == "float":
+		return floats(math.Abs(a.f), "")
 	case op == "to_int" && a.typ == "float":
 		return ints(Trunc(a.f))
 	case op == "to_int" && a.typ == "string":
@@ -314,6 +340,10 @@ func binary(op string, a, b value) (value, RuntimeError, bool) {
 			n, e = DivInt(a.i, b.i)
 		case "%":
 			n, e = ModInt(a.i, b.i)
+		case "min":
+			n = min(a.i, b.i)
+		case "max":
+			n = max(a.i, b.i)
 		default:
 			return compare(op, cmp.Compare(a.i, b.i))
 		}
@@ -334,6 +364,10 @@ func binary(op string, a, b value) (value, RuntimeError, bool) {
 		case "%":
 			// % takes ints only.
 			return value{}, "", false
+		case "min":
+			f = min(x, y)
+		case "max":
+			f = max(x, y)
 		default:
 			return compare(op, cmp.Compare(x, y))
 		}
@@ -341,7 +375,8 @@ func binary(op string, a, b value) (value, RuntimeError, bool) {
 	case a.typ == "string" && b.typ == "string":
 		switch op {
 		case "+":
-			return value{typ: "string", s: a.s + b.s}, "", true
+			s, e := Concat(a.s, b.s)
+			return value{typ: "string", s: s}, e, true
 		case "contains":
 			return boolean(Contains(a.s, b.s))
 		case "starts_with":

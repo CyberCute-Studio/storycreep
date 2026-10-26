@@ -1,0 +1,949 @@
+{
+  "board": {
+    "entryNodeId": "nd_000000000000000000000START",
+    "id": "bd_0000000000000000000000RANK",
+    "name": "Roll",
+    "slug": "roll"
+  },
+  "connections": [
+    {
+      "condition": {
+        "ast": {
+          "kind": "binary",
+          "left": {
+            "kind": "var",
+            "name": "score",
+            "ref": "var_00000000000000000000000PTS"
+          },
+          "op": "gt",
+          "right": {
+            "kind": "lit",
+            "type": "int",
+            "value": 0
+          }
+        },
+        "source": "score > 0"
+      },
+      "from": "nd_00000000000000000000000AFB",
+      "fromPort": "bo_00000000000000000000000AFE",
+      "id": "cn_00000000000000000000000AF1",
+      "order": 0,
+      "to": "nd_0000000000000000000000BEST"
+    },
+    {
+      "condition": {
+        "ast": {
+          "kind": "binary",
+          "left": {
+            "kind": "var",
+            "name": "score",
+            "ref": "var_00000000000000000000000PTS"
+          },
+          "op": "lt",
+          "right": {
+            "kind": "lit",
+            "type": "int",
+            "value": 0
+          }
+        },
+        "source": "score < 0"
+      },
+      "from": "nd_00000000000000000000000AFB",
+      "fromPort": "bo_00000000000000000000000AFE",
+      "id": "cn_00000000000000000000000AF2",
+      "order": 1,
+      "to": "nd_00000000000000000000000BAD"
+    },
+    {
+      "from": "nd_000000000000000000000START",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000AFC",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "All false"
+          }
+        ]
+      },
+      "order": 5,
+      "to": "nd_00000000000000000000000AFB"
+    },
+    {
+      "from": "nd_00000000000000000000000CHA",
+      "fromPort": "bo_00000000000000000000000CAT",
+      "id": "cn_00000000000000000000000CAB",
+      "order": 0,
+      "to": "nd_00000000000000000000000CHB"
+    },
+    {
+      "from": "nd_00000000000000000000000CHB",
+      "fromPort": "bo_00000000000000000000000CBT",
+      "id": "cn_00000000000000000000000CBB",
+      "order": 0,
+      "to": "nd_0000000000000000000000BEST"
+    },
+    {
+      "from": "nd_000000000000000000000START",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000CHN",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Chain"
+          }
+        ]
+      },
+      "order": 8,
+      "to": "nd_00000000000000000000000CHA"
+    },
+    {
+      "from": "nd_00000000000000000000000CYC",
+      "fromPort": "bo_00000000000000000000000CYA",
+      "id": "cn_00000000000000000000000CYB",
+      "order": 0,
+      "to": "nd_00000000000000000000000CYC"
+    },
+    {
+      "from": "nd_00000000000000000000000CYC",
+      "fromPort": "bo_00000000000000000000000CYE",
+      "id": "cn_00000000000000000000000CYD",
+      "order": 0,
+      "to": "nd_00000000000000000000000END"
+    },
+    {
+      "from": "nd_000000000000000000000START",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000FVR",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Forever"
+          }
+        ]
+      },
+      "order": 7,
+      "to": "nd_00000000000000000000000SPN"
+    },
+    {
+      "from": "nd_0000000000000000000000GATE",
+      "fromPort": "bo_000000000000000000000000GE",
+      "id": "cn_00000000000000000000000GEC",
+      "order": 0,
+      "to": "nd_00000000000000000000000BAD"
+    },
+    {
+      "from": "nd_0000000000000000000000GATE",
+      "fromPort": "bo_000000000000000000000000GM",
+      "id": "cn_00000000000000000000000GMC",
+      "order": 0,
+      "to": "nd_0000000000000000000000EVEN"
+    },
+    {
+      "from": "nd_000000000000000000000START",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000HGH",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "High"
+          }
+        ]
+      },
+      "onTraverse": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "score",
+                "ref": "var_00000000000000000000000PTS"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 10
+              }
+            }
+          ]
+        },
+        "source": "score = 10"
+      },
+      "order": 0,
+      "to": "nd_0000000000000000000000GATE"
+    },
+    {
+      "from": "nd_000000000000000000000START",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000MDD",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Mid"
+          }
+        ]
+      },
+      "onTraverse": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "score",
+                "ref": "var_00000000000000000000000PTS"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 5
+              }
+            }
+          ]
+        },
+        "source": "score = 5"
+      },
+      "order": 1,
+      "to": "nd_0000000000000000000000GATE"
+    },
+    {
+      "from": "nd_000000000000000000000START",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000NCC",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Unconnected"
+          }
+        ]
+      },
+      "order": 4,
+      "to": "nd_00000000000000000000000NCB"
+    },
+    {
+      "from": "nd_000000000000000000000START",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000NEC",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "No else"
+          }
+        ]
+      },
+      "order": 3,
+      "to": "nd_00000000000000000000000NEB"
+    },
+    {
+      "from": "nd_00000000000000000000000NEB",
+      "fromPort": "bo_00000000000000000000000NEA",
+      "id": "cn_00000000000000000000000NEX",
+      "order": 0,
+      "to": "nd_0000000000000000000000BEST"
+    },
+    {
+      "condition": {
+        "ast": {
+          "kind": "binary",
+          "left": {
+            "kind": "binary",
+            "left": {
+              "kind": "var",
+              "name": "score",
+              "ref": "var_00000000000000000000000PTS"
+            },
+            "op": "div",
+            "right": {
+              "kind": "lit",
+              "type": "int",
+              "value": 0
+            }
+          },
+          "op": "gt",
+          "right": {
+            "kind": "lit",
+            "type": "int",
+            "value": 0
+          }
+        },
+        "source": "score / 0 > 0"
+      },
+      "from": "nd_0000000000000000000000GATE",
+      "fromPort": "bo_000000000000000000000000GH",
+      "id": "cn_00000000000000000000000NVR",
+      "order": 2,
+      "to": "nd_00000000000000000000000BAD"
+    },
+    {
+      "from": "nd_000000000000000000000START",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000RPT",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Loop"
+          }
+        ]
+      },
+      "order": 6,
+      "to": "nd_00000000000000000000000CYC"
+    },
+    {
+      "condition": {
+        "ast": {
+          "kind": "binary",
+          "left": {
+            "kind": "var",
+            "name": "score",
+            "ref": "var_00000000000000000000000PTS"
+          },
+          "op": "gt",
+          "right": {
+            "kind": "lit",
+            "type": "int",
+            "value": 100
+          }
+        },
+        "source": "score > 100"
+      },
+      "from": "nd_0000000000000000000000GATE",
+      "fromPort": "bo_000000000000000000000000GH",
+      "id": "cn_00000000000000000000000SKP",
+      "onTraverse": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "skipped"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"skipped\")"
+      },
+      "order": 0,
+      "to": "nd_00000000000000000000000BAD"
+    },
+    {
+      "from": "nd_000000000000000000000START",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000SMA",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Low"
+          }
+        ]
+      },
+      "onTraverse": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "score",
+                "ref": "var_00000000000000000000000PTS"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 1
+              }
+            }
+          ]
+        },
+        "source": "score = 1"
+      },
+      "order": 2,
+      "to": "nd_0000000000000000000000GATE"
+    },
+    {
+      "from": "nd_00000000000000000000000SPN",
+      "fromPort": "bo_00000000000000000000000SPT",
+      "id": "cn_00000000000000000000000SPB",
+      "order": 0,
+      "to": "nd_00000000000000000000000SPN"
+    },
+    {
+      "from": "nd_0000000000000000000000GATE",
+      "fromPort": "bo_000000000000000000000000GH",
+      "id": "cn_00000000000000000000000TKN",
+      "onTraverse": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "taken"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"taken\")"
+      },
+      "order": 1,
+      "to": "nd_0000000000000000000000BEST"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "nd_00000000000000000000000AFB",
+      "onExit": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "afb_exit"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"afb_exit\")"
+      },
+      "outputs": [
+        {
+          "condition": {
+            "ast": {
+              "kind": "binary",
+              "left": {
+                "kind": "var",
+                "name": "score",
+                "ref": "var_00000000000000000000000PTS"
+              },
+              "op": "gt",
+              "right": {
+                "kind": "lit",
+                "type": "int",
+                "value": 100
+              }
+            },
+            "source": "score > 100"
+          },
+          "id": "bo_00000000000000000000000AFF",
+          "kind": "if",
+          "order": 0
+        },
+        {
+          "id": "bo_00000000000000000000000AFE",
+          "kind": "else",
+          "order": 1
+        }
+      ],
+      "position": {
+        "x": 1400,
+        "y": 0
+      },
+      "type": "branch"
+    },
+    {
+      "id": "nd_00000000000000000000000BAD",
+      "isEnding": true,
+      "kind": "narration",
+      "position": {
+        "x": 800,
+        "y": 0
+      },
+      "text": {
+        "preview": "You lose.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "You lose."
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_00000000000000000000000CHA",
+      "outputs": [
+        {
+          "condition": {
+            "ast": {
+              "kind": "lit",
+              "type": "bool",
+              "value": true
+            },
+            "source": "true"
+          },
+          "id": "bo_00000000000000000000000CAT",
+          "kind": "if",
+          "order": 0
+        }
+      ],
+      "position": {
+        "x": 2200,
+        "y": 0
+      },
+      "type": "branch"
+    },
+    {
+      "id": "nd_00000000000000000000000CHB",
+      "outputs": [
+        {
+          "condition": {
+            "ast": {
+              "kind": "lit",
+              "type": "bool",
+              "value": true
+            },
+            "source": "true"
+          },
+          "id": "bo_00000000000000000000000CBT",
+          "kind": "if",
+          "order": 0
+        }
+      ],
+      "position": {
+        "x": 2400,
+        "y": 0
+      },
+      "type": "branch"
+    },
+    {
+      "id": "nd_00000000000000000000000CYC",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "+=",
+              "target": {
+                "kind": "var",
+                "name": "score",
+                "ref": "var_00000000000000000000000PTS"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 1
+              }
+            }
+          ]
+        },
+        "source": "score += 1"
+      },
+      "outputs": [
+        {
+          "condition": {
+            "ast": {
+              "kind": "binary",
+              "left": {
+                "kind": "var",
+                "name": "score",
+                "ref": "var_00000000000000000000000PTS"
+              },
+              "op": "lt",
+              "right": {
+                "kind": "lit",
+                "type": "int",
+                "value": 3
+              }
+            },
+            "source": "score < 3"
+          },
+          "id": "bo_00000000000000000000000CYA",
+          "kind": "if",
+          "order": 0
+        },
+        {
+          "id": "bo_00000000000000000000000CYE",
+          "kind": "else",
+          "order": 1
+        }
+      ],
+      "position": {
+        "x": 1600,
+        "y": 0
+      },
+      "type": "branch"
+    },
+    {
+      "id": "nd_00000000000000000000000END",
+      "isEnding": true,
+      "kind": "narration",
+      "position": {
+        "x": 1800,
+        "y": 0
+      },
+      "text": {
+        "preview": "Looped {score} times.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Looped "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "score",
+            "ref": "var_00000000000000000000000PTS"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " times."
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_00000000000000000000000NCB",
+      "onExit": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "ncb_exit"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"ncb_exit\")"
+      },
+      "outputs": [
+        {
+          "condition": {
+            "ast": {
+              "kind": "lit",
+              "type": "bool",
+              "value": true
+            },
+            "source": "true"
+          },
+          "id": "bo_00000000000000000000000NCA",
+          "kind": "if",
+          "order": 0
+        }
+      ],
+      "position": {
+        "x": 1200,
+        "y": 0
+      },
+      "type": "branch"
+    },
+    {
+      "id": "nd_00000000000000000000000NEB",
+      "onExit": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "neb_exit"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"neb_exit\")"
+      },
+      "outputs": [
+        {
+          "condition": {
+            "ast": {
+              "kind": "binary",
+              "left": {
+                "kind": "var",
+                "name": "score",
+                "ref": "var_00000000000000000000000PTS"
+              },
+              "op": "gt",
+              "right": {
+                "kind": "lit",
+                "type": "int",
+                "value": 0
+              }
+            },
+            "source": "score > 0"
+          },
+          "id": "bo_00000000000000000000000NEA",
+          "kind": "if",
+          "order": 0
+        }
+      ],
+      "position": {
+        "x": 1000,
+        "y": 0
+      },
+      "type": "branch"
+    },
+    {
+      "id": "nd_00000000000000000000000SPN",
+      "onExit": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "spn_exit"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"spn_exit\")"
+      },
+      "outputs": [
+        {
+          "condition": {
+            "ast": {
+              "kind": "lit",
+              "type": "bool",
+              "value": true
+            },
+            "source": "true"
+          },
+          "id": "bo_00000000000000000000000SPT",
+          "kind": "if",
+          "order": 0
+        }
+      ],
+      "position": {
+        "x": 2000,
+        "y": 0
+      },
+      "type": "branch"
+    },
+    {
+      "id": "nd_0000000000000000000000BEST",
+      "isEnding": true,
+      "kind": "narration",
+      "position": {
+        "x": 400,
+        "y": 0
+      },
+      "text": {
+        "preview": "You win with {score}.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "You win with "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "score",
+            "ref": "var_00000000000000000000000PTS"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "."
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_0000000000000000000000EVEN",
+      "isEnding": true,
+      "kind": "narration",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "text": {
+        "preview": "A draw.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "A draw."
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_0000000000000000000000GATE",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "gate_enter"
+                },
+                {
+                  "kind": "var",
+                  "name": "score",
+                  "ref": "var_00000000000000000000000PTS"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"gate_enter\", score)"
+      },
+      "onExit": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "gate_exit"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"gate_exit\")"
+      },
+      "outputs": [
+        {
+          "condition": {
+            "ast": {
+              "kind": "binary",
+              "left": {
+                "kind": "var",
+                "name": "score",
+                "ref": "var_00000000000000000000000PTS"
+              },
+              "op": "gte",
+              "right": {
+                "kind": "lit",
+                "type": "int",
+                "value": 10
+              }
+            },
+            "source": "score >= 10"
+          },
+          "id": "bo_000000000000000000000000GH",
+          "kind": "if",
+          "order": 0
+        },
+        {
+          "condition": {
+            "ast": {
+              "kind": "binary",
+              "left": {
+                "kind": "var",
+                "name": "score",
+                "ref": "var_00000000000000000000000PTS"
+              },
+              "op": "gte",
+              "right": {
+                "kind": "lit",
+                "type": "int",
+                "value": 5
+              }
+            },
+            "source": "score >= 5"
+          },
+          "id": "bo_000000000000000000000000GM",
+          "kind": "elseif",
+          "order": 1
+        },
+        {
+          "id": "bo_000000000000000000000000GE",
+          "kind": "else",
+          "order": 2
+        }
+      ],
+      "position": {
+        "x": 200,
+        "y": 0
+      },
+      "type": "branch"
+    },
+    {
+      "id": "nd_000000000000000000000START",
+      "isEnding": false,
+      "kind": "narration",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "text": {
+        "preview": "Roll the dice.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Roll the dice."
+          }
+        ]
+      },
+      "type": "element"
+    }
+  ],
+  "schemaVersion": 1
+}
