@@ -137,7 +137,7 @@ type entityRevisionBody struct {
 // the project's trash, which the batch could not reconnect.
 type unreconnectedBody struct {
 	ID         string   `json:"id" doc:"The entity's ID, as a connection's, cn_…, the one kind of entity so far that a restoration leaves"`
-	WaitingFor []string `json:"waiting_for" nullable:"false" doc:"The IDs of the entities in the project's trash that it refers to, as a connection's node, nd_…, which bring it back once they are restored too"`
+	WaitingFor []string `json:"waiting_for" nullable:"false" doc:"The IDs of the entities in the project's trash that it refers to, which bring it back once they are restored too: of a connection, those of the node that it leaves, nd_…, the branch output that it leaves, bo_…, and the node that it enters, nd_…, that are in the trash, in that order"`
 }
 
 // undoCommandBody is a command of a batch's undo, as a client sends it back

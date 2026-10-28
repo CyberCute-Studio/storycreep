@@ -39,6 +39,10 @@ type Type string
 // typeForm is the form of a Type.
 var typeForm = regexp.MustCompile(`^[a-z]+(_[a-z]+)*\.[a-z]+(_[a-z]+)*$`)
 
+// derivationForm is the form of a derivation's name (Derivation.Name), which
+// no Type has, since it has no dot.
+var derivationForm = regexp.MustCompile(`^[a-z]+(_[a-z]+)*$`)
+
 // batchType is the type of an operation of several commands, which no
 // command's Type is, because it has no dot.
 const batchType = "batch"
@@ -258,8 +262,11 @@ type Unreconnected struct {
 // the condition that reads it compiles the condition against it. What it
 // changes is part of the batch, and commits exactly when the batch does.
 type Derivation struct {
-	// Name names the derivation, which a command that leaves work for it
-	// checks that the registry has (Tx.Derives).
+	// Name names the derivation, as a command that leaves work for it does
+	// (Tx.Leave): lowercase words joined by underscores, without the dot of
+	// a command's type, so that a Change, whose By holds the names of the
+	// derivations among the types of the commands, never holds a name that
+	// is a command's type too.
 	Name string
 	// Touches are the kinds of entity whose revisions Derive may change, as
 	// a command's are (Spec.Touches).
@@ -275,7 +282,8 @@ type Derivation struct {
 	// those before it changed, as changes of the types that are their names.
 	// The types let it pass over a change that cannot change what it derives,
 	// as package expression passes over a board's rename, which no expression
-	// names, rather than derive again all that the board holds.
+	// names, rather than derive again all that the board holds, and Tx.Left
+	// says whether a command left it work of its own.
 	Derive func(ctx context.Context, tx *Tx, changed []Change) error
 }
 
@@ -397,9 +405,10 @@ type derivation struct {
 }
 
 // RegisterDerivation registers the derivation d. It panics if d lacks a name
-// or Derive, if it touches no kind, a kind that is not registered
-// (RegisterEntity), or one twice, or if a derivation of its name is
-// registered already.
+// or Derive, if its name is not of its form (Derivation.Name), as one of a
+// command's type is not, whether the type is registered yet or not, if it
+// touches no kind, a kind that is not registered (RegisterEntity), or one
+// twice, or if a derivation of its name is registered already.
 func RegisterDerivation(r *Registry, d Derivation) {
 	fail := func(format string, args ...any) {
 		panic(fmt.Sprintf("commands: the derivation %q: ", d.Name) + fmt.Sprintf(format, args...))
@@ -407,6 +416,8 @@ func RegisterDerivation(r *Registry, d Derivation) {
 	switch {
 	case d.Name == "":
 		fail("a derivation needs a name")
+	case !derivationForm.MatchString(d.Name):
+		fail("a derivation's name is lowercase words joined by underscores, without the dot of a command's type")
 	case d.Derive == nil:
 		fail("a derivation needs Derive")
 	case len(d.Touches) == 0:

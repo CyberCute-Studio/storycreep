@@ -278,20 +278,18 @@ func registerOutputs(r *commands.Registry) {
 			if err != nil {
 				return nil, err
 			}
-			back := outputUpdatePayload{ID: p.ID}
 			if p.Condition != nil {
 				if err := conditional(o, "condition"); err != nil {
 					return nil, err
 				}
-				sources, err := expression.Sources(ctx, queries.New(tx), o.WorkspaceID, o.ProjectID, ids.BranchOutput,
-					o.ID)
-				if err != nil {
-					return nil, err
-				}
-				condition := sources[expression.Condition]
-				back.Condition = &condition
 			}
-			return []commands.Step{{Type: UpdateOutput, Payload: back}}, nil
+			condition, err := expression.Back(ctx, queries.New(tx), o.WorkspaceID, o.ProjectID, ids.BranchOutput,
+				o.ID, map[expression.Field]*string{expression.Condition: p.Condition})
+			if err != nil {
+				return nil, err
+			}
+			return []commands.Step{{Type: UpdateOutput, Payload: outputUpdatePayload{ID: p.ID,
+				Condition: condition[expression.Condition]}}}, nil
 		},
 		Apply: func(ctx context.Context, tx *commands.Tx, p outputUpdatePayload) error {
 			o, err := liveOutputOf(ctx, tx, p.ID)

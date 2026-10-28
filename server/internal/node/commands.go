@@ -229,20 +229,12 @@ func Register(r *commands.Registry) {
 			if err != nil {
 				return nil, err
 			}
-			if p.OnEnter != nil || p.OnExit != nil {
-				sources, err := expression.Sources(ctx, queries.New(tx), n.WorkspaceID, n.ProjectID, ids.Node, n.ID)
-				if err != nil {
-					return nil, err
-				}
-				if p.OnEnter != nil {
-					s := sources[expression.OnEnter]
-					back.OnEnter = &s
-				}
-				if p.OnExit != nil {
-					s := sources[expression.OnExit]
-					back.OnExit = &s
-				}
+			scripts, err := expression.Back(ctx, queries.New(tx), n.WorkspaceID, n.ProjectID, ids.Node, n.ID,
+				map[expression.Field]*string{expression.OnEnter: p.OnEnter, expression.OnExit: p.OnExit})
+			if err != nil {
+				return nil, err
 			}
+			back.OnEnter, back.OnExit = scripts[expression.OnEnter], scripts[expression.OnExit]
 			return []commands.Step{{Type: Update, Payload: back}}, nil
 		},
 		Apply: func(ctx context.Context, tx *commands.Tx, p updatePayload) error {

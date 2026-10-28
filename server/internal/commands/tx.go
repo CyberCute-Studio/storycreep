@@ -100,6 +100,9 @@ type Tx struct {
 	// keeps each once however many the batch restores.
 	restored map[ids.Kind][]ids.UUID
 	reported map[Ref]struct{}
+	// left are the names of the derivations that the batch's commands left
+	// work for (Leave).
+	left map[string]bool
 }
 
 // usageCount is what the command spec adds to the workspace's usage of key
@@ -262,15 +265,31 @@ func (t *Tx) Restored(kind ids.Kind, id ids.UUID) error {
 	return nil
 }
 
-// Derives reports whether the registry has the derivation of the name
+// Leave reports that the command leaves work for the derivation of the name
 // (RegisterDerivation), which the pipeline runs once every command of the
-// batch has applied. A command that leaves work for a derivation, as one that
-// writes an expression's source leaves package expression's to compile it,
-// checks it first, and refuses to apply without it, so that a registry that
-// lacks it fails the batch rather than commit what only the derivation would
-// have made whole.
-func (t *Tx) Derives(name string) bool {
-	return slices.ContainsFunc(t.pipeline.registry.derivations, func(d derivation) bool { return d.Name == name })
+// batch has applied, as one that writes an expression's source leaves
+// package expression's to compile it, so that the derivation knows that the
+// batch left it work (Left), and passes over one that left it none, as one
+// that only moves nodes. It returns an error, which the command returns to
+// refuse the batch, unless the registry has the derivation, so that a
+// registry that lacks it fails the batch rather than commit what only the
+// derivation would have made whole.
+func (t *Tx) Leave(name string) error {
+	if !slices.ContainsFunc(t.pipeline.registry.derivations, func(d derivation) bool { return d.Name == name }) {
+		return fmt.Errorf("commands: the registry has no derivation %q, which a command leaves work for: register "+
+			"it (RegisterDerivation)", name)
+	}
+	if t.left == nil {
+		t.left = map[string]bool{}
+	}
+	t.left[name] = true
+	return nil
+}
+
+// Left reports whether a command of the batch left work for the derivation
+// of the name (Leave).
+func (t *Tx) Left(name string) bool {
+	return t.left[name]
 }
 
 // derive runs the registry's derivations, in the order of their

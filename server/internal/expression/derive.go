@@ -92,22 +92,22 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	byKind := map[ids.Kind][]pgtype.UUID{}
 	done := map[commands.Ref]bool{}
-	writes := false
 	for _, c := range changed {
 		done[c.Ref] = true
-		writes = writes || slices.Contains(ownerKinds, c.Kind)
 		if slices.ContainsFunc(c.By, func(t commands.Type) bool { return !slices.Contains(neutral, t) }) {
 			byKind[c.Kind] = append(byKind[c.Kind], nullUUID(c.ID))
 		}
 	}
 	names := slices.ContainsFunc(nameKinds, func(k ids.Kind) bool { return len(byKind[k]) > 0 })
-	// Only a command that changes an owner writes a source, so a batch that
-	// changes no owner, and nothing that expressions can name, leaves nothing
-	// to compile.
-	if !writes && !names {
+	refs, keys := append([]pgtype.UUID{}, byKind[ids.Node]...), []string{}
+	// A batch that wrote no source (leave), changed no node but as the
+	// commands of neutral types do, which a node reference reads nothing of,
+	// and changed nothing else that expressions can name leaves nothing to
+	// compile, as one that only moves nodes, or reorders connections: it
+	// reads nothing.
+	if !tx.Left(Name) && len(refs) == 0 && !names {
 		return nil
 	}
-	refs, keys := append([]pgtype.UUID{}, byKind[ids.Node]...), []string{}
 	if names {
 		rows, err := q.ChangedNames(ctx, queries.ChangedNamesParams{WorkspaceID: ws, ProjectID: project,
 			VariableIds: list(byKind[ids.Variable]), BoardIds: list(byKind[ids.Board]),
@@ -133,13 +133,20 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 	}
 	parsed := make([]parse, len(rows))
 	var nodes []pgtype.UUID
+	checks := false
 	for i, row := range rows {
 		parsed[i] = parseSource(row.Source, expr.Context(row.Context))
 		nodes = append(nodes, parsed[i].nodes...)
+		checks = checks || parsed[i].err == nil
 	}
-	p, err := loadProject(ctx, q, ws, project, nodes)
-	if err != nil {
-		return err
+	// Only a source that parses is checked against what the project's
+	// expressions can name, so a batch whose sources all fail to parse, as a
+	// half-typed script saved as it is typed, reads none of it.
+	var p *expr.Project
+	if checks {
+		if p, err = loadProject(ctx, q, ws, project, nodes); err != nil {
+			return err
+		}
 	}
 	compiled := make([]compiledRow, len(rows))
 	for i, row := range rows {

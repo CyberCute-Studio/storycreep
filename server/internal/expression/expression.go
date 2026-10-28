@@ -191,17 +191,22 @@ type fieldSource struct {
 // field's expression if its source is nil, and reports whether that changed
 // any of them, as Set does, reading o's expressions once.
 func write(ctx context.Context, tx *commands.Tx, o Owner, sources []fieldSource) (bool, error) {
+	compiles := false
 	for _, s := range sources {
-		switch {
-		case !slices.Contains(fields[o.Kind], s.field):
+		if !slices.Contains(fields[o.Kind], s.field) {
 			return false, fmt.Errorf("expression: a %s has no field %s", o.Kind, s.field)
-		case s.source != nil && !tx.Derives(Name):
-			return false, errors.New("expression: the registry does not compile expressions: register them " +
-				"(Register)")
 		}
+		compiles = compiles || s.source != nil
 	}
 	if len(sources) == 0 {
 		return false, nil
+	}
+	// A source that the command writes leaves the derivation work, unlike the
+	// removal of one.
+	if compiles {
+		if err := leave(tx); err != nil {
+			return false, err
+		}
 	}
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
@@ -258,24 +263,54 @@ func CopyNode(ctx context.Context, tx *commands.Tx, source, target pgtype.UUID) 
 	switch {
 	case err != nil:
 		return fmt.Errorf("expression: copy the node's expressions: %w", err)
-	case n > 0 && !tx.Derives(Name):
-		return errors.New("expression: the registry does not compile expressions: register them (Register)")
+	case n > 0:
+		return leave(tx)
 	}
 	return nil
 }
 
-// Sources returns the sources of the expressions of the owner of the kind
-// whose UUID is id, of the project, by their fields, which a command's
-// inverse sets back. A field without one is not in it.
-func Sources(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, kind ids.Kind, id pgtype.UUID) (
-	map[Field]string, error) {
-	rows, err := ownerExpressions(ctx, q, ws, project, kind, []pgtype.UUID{id})
-	if err != nil {
-		return nil, err
+// leave reports that the command leaves sources for the derivation to
+// compile (commands.Tx.Leave), so that it compiles them once every command of
+// the batch has applied, and returns an error if the registry lacks the
+// derivation (Register), which would leave them uncompiled.
+func leave(tx *commands.Tx) error {
+	if err := tx.Leave(Name); err != nil {
+		return fmt.Errorf("expression: the registry does not compile expressions: register them (Register): %w", err)
 	}
-	out := make(map[Field]string, len(rows))
-	for _, row := range rows {
-		out[Field(row.Field)] = row.Source
+	return nil
+}
+
+// Back returns what the inverse of a command that sets the expressions of the
+// owner of the kind whose UUID is id, of the project, as set holds them
+// (SetFields, Set), sets them back to, by their fields: at each field that
+// set holds a source of, the source that the field has, or the empty string
+// for none, which removes the expression that the command adds; and nil at
+// each that set leaves out, or holds as nil, which the command leaves as it
+// is, and so does its inverse. It reads the owner's expressions only if set
+// holds a source, and returns an error for a field that is not one of the
+// kind's.
+func Back(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, kind ids.Kind, id pgtype.UUID,
+	set map[Field]*string) (map[Field]*string, error) {
+	out := make(map[Field]*string, len(set))
+	var sources map[Field]string
+	for f, source := range set {
+		switch {
+		case !slices.Contains(fields[kind], f):
+			return nil, fmt.Errorf("expression: a %s has no field %s", kind, f)
+		case source == nil:
+			continue
+		case sources == nil:
+			rows, err := ownerExpressions(ctx, q, ws, project, kind, []pgtype.UUID{id})
+			if err != nil {
+				return nil, err
+			}
+			sources = make(map[Field]string, len(rows))
+			for _, row := range rows {
+				sources[Field(row.Field)] = row.Source
+			}
+		}
+		back := sources[f]
+		out[f] = &back
 	}
 	return out, nil
 }

@@ -172,10 +172,12 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[updatePayload]{
-		Type: Update, Capability: op, Scope: sc, Touches: connection,
 		// The inverse holds the label that the update replaces, which may be
-		// as large as a document is.
-		UndoField: "label",
+		// as large as a document is, and the condition and the on-traverse
+		// script, each as long as a source may be, so that no one field is
+		// where an undo too large is refused: it is refused at the payload, as
+		// a node's update is.
+		Type: Update, Capability: op, Scope: sc, Touches: connection,
 		Check: func(p updatePayload) input.FieldErrors {
 			errs := entityID(ids.Connection, "id", p.ID)
 			if p.Condition != nil {
@@ -197,21 +199,12 @@ func Register(r *commands.Registry) {
 					return nil, fmt.Errorf("connection: the label of the connection %s: %w", p.ID, err)
 				}
 			}
-			if p.Condition != nil || p.OnTraverse != nil {
-				sources, err := expression.Sources(ctx, queries.New(tx), c.WorkspaceID, c.ProjectID, ids.Connection,
-					c.ID)
-				if err != nil {
-					return nil, err
-				}
-				if p.Condition != nil {
-					s := sources[expression.Condition]
-					back.Condition = &s
-				}
-				if p.OnTraverse != nil {
-					s := sources[expression.OnTraverse]
-					back.OnTraverse = &s
-				}
+			exprs, err := expression.Back(ctx, queries.New(tx), c.WorkspaceID, c.ProjectID, ids.Connection, c.ID,
+				map[expression.Field]*string{expression.Condition: p.Condition, expression.OnTraverse: p.OnTraverse})
+			if err != nil {
+				return nil, err
 			}
+			back.Condition, back.OnTraverse = exprs[expression.Condition], exprs[expression.OnTraverse]
 			return []commands.Step{{Type: Update, Payload: back}}, nil
 		},
 		Apply: func(ctx context.Context, tx *commands.Tx, p updatePayload) error {

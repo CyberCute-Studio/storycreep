@@ -233,9 +233,11 @@ func timeOf(t pgtype.Timestamptz) *time.Time {
 	return &t.Time
 }
 
-// DB runs a transaction of the application login, as *database.DB does.
+// DB runs a transaction of the application login, as *database.DB does, and
+// one that reads as of one moment (InSnapshot), which the reads run in.
 type DB interface {
 	InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
+	InSnapshot(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
 }
 
 // Options configure a Service.
@@ -266,12 +268,28 @@ func New(db DB, opts Options) *Service {
 // project.Service.Get, as project.ErrNotFound for a project that does not
 // exist, is in the trash, on which the actor's role is none, or that the
 // actor's API token does not cover. The token's scopes are the route's to
-// check.
+// check. The transaction reads as of one moment, that of its start
+// (database.DB.InSnapshot), and locks nothing: a node is read in several
+// statements, its row, its scripts, and a branch's outputs with their
+// conditions, and a batch that commits between two of them, as one that
+// changes a node's scripts, is then read whole or not at all, never a row as
+// it was with scripts that the batch changed, at a revision that does not
+// hold them.
 func (s *Service) read(ctx context.Context, actor commands.Actor, projectID ids.UUID,
 	fn func(q *queries.Queries, workspaceID pgtype.UUID) error) error {
-	return s.projects.ReadContent(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
+	return s.projects.ReadContent(ctx, snapshot{s.db}, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		return fn(queries.New(tx), nullUUID(workspaceID))
 	})
+}
+
+// snapshot is the DB whose transactions read as of one moment
+// (database.DB.InSnapshot).
+type snapshot struct {
+	db DB
+}
+
+func (d snapshot) InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
+	return d.db.InSnapshot(ctx, scope, fn)
 }
 
 // liveBoard returns board.ErrNotFound unless the project has the board

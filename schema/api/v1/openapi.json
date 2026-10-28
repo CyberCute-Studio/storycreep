@@ -7629,7 +7629,7 @@
             "type": "string"
           },
           "waiting_for": {
-            "description": "The IDs of the entities in the project's trash that it refers to, as a connection's node, nd_…, which bring it back once they are restored too",
+            "description": "The IDs of the entities in the project's trash that it refers to, which bring it back once they are restored too: of a connection, those of the node that it leaves, nd_…, the branch output that it leaves, bo_…, and the node that it enters, nd_…, that are in the trash, in that order",
             "items": {
               "type": "string"
             },

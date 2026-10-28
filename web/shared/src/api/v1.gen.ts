@@ -2431,7 +2431,7 @@ export interface UndoCommandBody {
 export interface UnreconnectedBody {
   /** The entity's ID, as a connection's, cn_…, the one kind of entity so far that a restoration leaves */
   id: string;
-  /** The IDs of the entities in the project's trash that it refers to, as a connection's node, nd_…, which bring it back once they are restored too */
+  /** The IDs of the entities in the project's trash that it refers to, which bring it back once they are restored too: of a connection, those of the node that it leaves, nd_…, the branch output that it leaves, bo_…, and the node that it enters, nd_…, that are in the trash, in that order */
   waiting_for: Array<string>;
 }
 

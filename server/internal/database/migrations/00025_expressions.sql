@@ -150,7 +150,10 @@ CREATE TABLE expression (
 	updated_at timestamptz NOT NULL DEFAULT now(),
 	UNIQUE (workspace_id, id),
 	UNIQUE (workspace_id, project_id, id),
-	-- An owner has one expression at each of its fields.
+	-- An owner has one expression at each of its fields. These keys are the
+	-- indexes by which its reads find its expressions, and so does the
+	-- cascade of its purge, whose foreign key names its board too, which the
+	-- scan of the index filters by.
 	UNIQUE (workspace_id, project_id, node_id, field),
 	UNIQUE (workspace_id, project_id, connection_id, field),
 	UNIQUE (workspace_id, project_id, branch_output_id, field),
@@ -186,13 +189,6 @@ CREATE INDEX expression_keys ON expression USING gin (keys);
 CREATE INDEX expression_pending ON expression (workspace_id, project_id) WHERE ast IS NULL AND error IS NULL;
 CREATE INDEX expression_invalid ON expression (workspace_id, project_id)
 	WHERE NOT is_valid AND (cardinality(refs) > 0 OR cardinality(keys) > 0);
--- An owner's expressions, which its reads read, and the cascade of its purge
--- finds.
-CREATE INDEX expression_node ON expression (workspace_id, project_id, board_id, node_id) WHERE node_id IS NOT NULL;
-CREATE INDEX expression_connection ON expression (workspace_id, project_id, board_id, connection_id)
-	WHERE connection_id IS NOT NULL;
-CREATE INDEX expression_branch_output ON expression (workspace_id, project_id, board_id, branch_output_id)
-	WHERE branch_output_id IS NOT NULL;
 
 ALTER TABLE expression ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 CREATE POLICY workspace_isolation ON expression TO storycreep_app
