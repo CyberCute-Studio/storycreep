@@ -9,12 +9,27 @@
 // an element, a line of dialogue or of narration, as its kind says, with a
 // rich-text document (package richtext), a speaker, a component of the
 // project, a cover, an asset of the project, and whether the flow ends there;
-// a branch, whose outputs plan item 43 adds; or a jumper, which continues the
-// flow at its target, a node of the project on any of its boards. Every node
-// has a title, which may be empty, a colour of the palette that boards have,
-// tags, which are the same tag whatever their case, a position on its
-// board's canvas, kept to 2 decimal places (FR-EDIT-02 AC4), and a size, or
-// none, which the canvas then lays it out by itself for.
+// a branch, which picks the first of its outputs whose condition holds, or
+// its else (FR-EDIT-04); or a jumper, which continues the flow at its target,
+// a node of the project on any of its boards. Every node has a title, which
+// may be empty, a colour of the palette that boards have, tags, which are the
+// same tag whatever their case, a position on its board's canvas, kept to 2
+// decimal places (FR-EDIT-02 AC4), and a size, or none, which the canvas then
+// lays it out by itself for. An element and a branch have an on-enter and an
+// on-exit script, each an expression (package expression), and a jumper
+// none, since the flow never stops at it (§5.8.5).
+//
+// A branch's outputs are entities of their own, whose commands Register
+// registers too: each a conditional output, with its condition, or the
+// branch's else, which comes after them. The conditional outputs are ordered
+// by a key, as a folder's children are, and the first of them is the
+// branch's if, the others its elseifs, so that reordering them never leaves
+// a branch whose first output is no if; a branch has at most one else, and
+// one only while it has a conditional output (plan note N51). The
+// connections that leave a branch leave its outputs (package connection),
+// and are in the trash with the output that they leave, so that deleting an
+// output, which needs to be confirmed while connections leave it, deletes
+// them in its command (FR-EDIT-04 AC3), and restoring it brings them back.
 //
 // A reference to another entity, a speaker, a jumper's target, or a board's
 // entry node (board.set_entry_node), takes an entity in the trash, so that
@@ -63,6 +78,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
@@ -122,7 +138,12 @@ type Node struct {
 	Size               *NodeSize     `json:"size,omitempty" doc:"The node's width and height, if it has a size of its own; without one, the canvas lays the node out by itself"`
 	IsEnding           bool          `json:"is_ending" doc:"Whether the flow ends at the element, which only an element may (PRD §5.8.5)"`
 	Target             *NodeTarget   `json:"target,omitempty" doc:"A jumper's target, if it has one: the node that it continues the flow at, which may since have been deleted, or purged, which the validation reports (PRD FR-EDIT-05 AC1)"`
-	Rev                int64         `json:"rev" doc:"The node's revision, which every change of it increments, and which a change expects with expected_rev"`
+	// OnEnter and OnExit are an element's or a branch's, and Outputs a
+	// branch's alone.
+	OnEnter *expression.Expression `json:"on_enter,omitempty" doc:"An element's or a branch's on-enter script, which runs when the flow enters the node (PRD §5.8.5), if it has one. A jumper has none."`
+	OnExit  *expression.Expression `json:"on_exit,omitempty" doc:"An element's or a branch's on-exit script, which runs when the flow leaves the node, by a connection or by ending there (PRD §5.8.5), if it has one. A jumper has none."`
+	Outputs []BranchOutput         `json:"outputs,omitempty" doc:"A branch's outputs that are not in the project's trash, in their order (PRD FR-EDIT-04): its conditional outputs, the first its if and the others its elseifs, and its else after them, if it has one. Without them, the branch has none, which the validation reports. Another type has none."`
+	Rev     int64                  `json:"rev" doc:"The node's revision, which every change of it increments, a change of its scripts' compilation among them, and which a change expects with expected_rev"`
 	// DeletedAt is set while the node is in the project's trash, which only
 	// an answer of revision_conflict shows.
 	DeletedAt *time.Time `json:"deleted_at,omitempty" doc:"When the node went to the project's trash, if it is there: when it was deleted, or, if it was not, but its board is in the trash, with which it is in the trash too, when the board was deleted"`
@@ -162,14 +183,35 @@ func nodeOf(n queries.Node) (Node, error) {
 	return out, nil
 }
 
-// nodesOf returns the nodes rows as the API shows them, in their order.
-func nodesOf(rows []queries.Node) ([]Node, error) {
+// nodesOf returns the nodes rows of the project as the API shows them, in
+// their order, with their scripts, and a branch with its outputs that are
+// not in the trash.
+func nodesOf(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, rows []queries.Node) ([]Node,
+	error) {
 	out := make([]Node, len(rows))
+	all := make([]pgtype.UUID, len(rows))
+	var branches []pgtype.UUID
 	for i, n := range rows {
 		var err error
 		if out[i], err = nodeOf(n); err != nil {
 			return nil, err
 		}
+		all[i] = n.ID
+		if n.Type == TypeBranch {
+			branches = append(branches, n.ID)
+		}
+	}
+	scripts, err := expression.Of(ctx, q, ws, project, ids.Node, all)
+	if err != nil {
+		return nil, err
+	}
+	outputs, err := nodeOutputs(ctx, q, ws, project, branches)
+	if err != nil {
+		return nil, err
+	}
+	for i, n := range rows {
+		out[i].OnEnter, out[i].OnExit = scripts[n.ID.Bytes][expression.OnEnter], scripts[n.ID.Bytes][expression.OnExit]
+		out[i].Outputs = outputs[n.ID.Bytes]
 	}
 	return out, nil
 }
@@ -263,7 +305,8 @@ func (s *Service) BoardNodes(ctx context.Context, actor commands.Actor, projectI
 		if err != nil {
 			return fmt.Errorf("node: list the board's nodes: %w", err)
 		}
-		out, err = nodesOf(liveNodes(rows, func(r queries.BoardNodesRow) queries.LiveNode { return r.LiveNode }))
+		out, err = nodesOf(ctx, q, workspaceID, project, liveNodes(rows,
+			func(r queries.BoardNodesRow) queries.LiveNode { return r.LiveNode }))
 		return err
 	})
 	return out, err
@@ -279,8 +322,12 @@ func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID, node
 		if err != nil {
 			return err
 		}
-		out, err = nodeOf(n)
-		return err
+		nodes, err := nodesOf(ctx, q, workspaceID, nullUUID(projectID), []queries.Node{n})
+		if err != nil {
+			return err
+		}
+		out = nodes[0]
+		return nil
 	})
 	return out, err
 }
@@ -318,7 +365,8 @@ func (s *Service) ReferencedBy(ctx context.Context, actor commands.Actor, projec
 		if err != nil {
 			return fmt.Errorf("node: list the jumpers that target the node: %w", err)
 		}
-		out, err = nodesOf(liveNodes(rows, func(r queries.NodeReferrersRow) queries.LiveNode { return r.LiveNode }))
+		out, err = nodesOf(ctx, q, workspaceID, project, liveNodes(rows,
+			func(r queries.NodeReferrersRow) queries.LiveNode { return r.LiveNode }))
 		return err
 	})
 	return out, err
@@ -344,7 +392,8 @@ func (s *Service) BoardReferencedBy(ctx context.Context, actor commands.Actor, p
 		if err != nil {
 			return fmt.Errorf("node: list the jumpers that target the board's nodes: %w", err)
 		}
-		out, err = nodesOf(liveNodes(rows, func(r queries.BoardReferrersRow) queries.LiveNode { return r.LiveNode }))
+		out, err = nodesOf(ctx, q, workspaceID, project, liveNodes(rows,
+			func(r queries.BoardReferrersRow) queries.LiveNode { return r.LiveNode }))
 		return err
 	})
 	return out, err

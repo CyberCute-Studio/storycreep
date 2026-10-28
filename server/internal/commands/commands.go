@@ -911,6 +911,12 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 		// refused for the steps of a command that changed nothing, which its
 		// undo leaves out, wherever the command is in the batch.
 	}
+	// What the batch's commands leave to derive is derived once all of them
+	// have applied (RegisterDerivation), so that it reads the project as the
+	// whole batch leaves it.
+	if err := t.derive(ctx); err != nil {
+		return Result{}, err
+	}
 	if err := t.addCounts(ctx); err != nil {
 		return Result{}, err
 	}

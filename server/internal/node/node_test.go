@@ -20,10 +20,12 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/component"
+	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
@@ -70,6 +72,8 @@ func newFixture(t *testing.T) *fixture {
 	board.Register(reg)
 	component.Register(reg)
 	node.Register(reg)
+	connection.Register(reg)
+	expression.Register(reg)
 	ent := entitlements.New(entitlements.Options{Meter: usage.Meter{}})
 	f.pipeline = commands.New(f.db, commands.Options{Registry: reg, Entitlements: ent})
 	f.projects = project.New(f.db, project.Options{Entitlements: ent, Pipeline: f.pipeline, Seed: component.Seed})

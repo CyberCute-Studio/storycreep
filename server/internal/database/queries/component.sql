@@ -149,6 +149,15 @@ SELECT sqlc.embed(live_attribute_def) FROM live_attribute_def
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND component_type_id = ANY(@type_ids::uuid[])
 ORDER BY component_type_id, "order", id;
 
+-- name: TypeDeletedAttributeDefs :many
+-- TypeDeletedAttributeDefs returns the attribute definitions of the project's
+-- type component_type_id that are deleted, in the trash until the purge
+-- deletes them, in their order: by their orders, then by their IDs.
+SELECT sqlc.embed(attribute_def) FROM attribute_def
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND component_type_id = @component_type_id
+    AND deleted_at IS NOT NULL
+ORDER BY "order", id;
+
 -- name: AttributeDefWithKey :one
 -- AttributeDefWithKey returns the ID of the attribute definition of the
 -- type component_type_id that is not deleted whose key is key, and no row if

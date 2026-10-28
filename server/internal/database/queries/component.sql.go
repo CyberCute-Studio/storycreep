@@ -1765,6 +1765,64 @@ func (q *Queries) TypeAttributeDefs(ctx context.Context, arg TypeAttributeDefsPa
 	return items, nil
 }
 
+const typeDeletedAttributeDefs = `-- name: TypeDeletedAttributeDefs :many
+SELECT attribute_def.id, attribute_def.workspace_id, attribute_def.project_id, attribute_def.component_type_id, attribute_def."order", attribute_def.key, attribute_def.name, attribute_def.type, attribute_def.enum_options, attribute_def.default_value, attribute_def.is_runtime, attribute_def.rev, attribute_def.deleted_at, attribute_def.created_by, attribute_def.updated_by, attribute_def.created_at, attribute_def.updated_at FROM attribute_def
+WHERE workspace_id = $1 AND project_id = $2 AND component_type_id = $3
+    AND deleted_at IS NOT NULL
+ORDER BY "order", id
+`
+
+type TypeDeletedAttributeDefsParams struct {
+	WorkspaceID     pgtype.UUID
+	ProjectID       pgtype.UUID
+	ComponentTypeID pgtype.UUID
+}
+
+type TypeDeletedAttributeDefsRow struct {
+	AttributeDef AttributeDef
+}
+
+// TypeDeletedAttributeDefs returns the attribute definitions of the project's
+// type component_type_id that are deleted, in the trash until the purge
+// deletes them, in their order: by their orders, then by their IDs.
+func (q *Queries) TypeDeletedAttributeDefs(ctx context.Context, arg TypeDeletedAttributeDefsParams) ([]TypeDeletedAttributeDefsRow, error) {
+	rows, err := q.db.Query(ctx, typeDeletedAttributeDefs, arg.WorkspaceID, arg.ProjectID, arg.ComponentTypeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TypeDeletedAttributeDefsRow
+	for rows.Next() {
+		var i TypeDeletedAttributeDefsRow
+		if err := rows.Scan(
+			&i.AttributeDef.ID,
+			&i.AttributeDef.WorkspaceID,
+			&i.AttributeDef.ProjectID,
+			&i.AttributeDef.ComponentTypeID,
+			&i.AttributeDef.Order,
+			&i.AttributeDef.Key,
+			&i.AttributeDef.Name,
+			&i.AttributeDef.Type,
+			&i.AttributeDef.EnumOptions,
+			&i.AttributeDef.DefaultValue,
+			&i.AttributeDef.IsRuntime,
+			&i.AttributeDef.Rev,
+			&i.AttributeDef.DeletedAt,
+			&i.AttributeDef.CreatedBy,
+			&i.AttributeDef.UpdatedBy,
+			&i.AttributeDef.CreatedAt,
+			&i.AttributeDef.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateAttributeDefKey = `-- name: UpdateAttributeDefKey :one
 UPDATE attribute_def SET key = $1, rev = rev + 1, updated_at = now(), updated_by = $2
 WHERE workspace_id = $3 AND project_id = $4 AND id = $5 AND key <> $1

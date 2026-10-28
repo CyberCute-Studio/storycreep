@@ -249,15 +249,45 @@ type Unreconnected struct {
 	WaitingFor []Ref
 }
 
+// Derivation registers what the pipeline derives of a project's content once
+// every command of a batch has applied, in the batch's transaction, from what
+// the batch's commands changed, as package expression compiles the sources
+// that the commands wrote, and those that a change of what they name may
+// compile otherwise (plan note N51): what depends on the batch as a whole,
+// rather than on each command, so that a batch that creates a variable after
+// the condition that reads it compiles the condition against it. What it
+// changes is part of the batch, and commits exactly when the batch does.
+type Derivation struct {
+	// Name names the derivation, which a command that leaves work for it
+	// checks that the registry has (Tx.Derives).
+	Name string
+	// Touches are the kinds of entity whose revisions Derive may change, as
+	// a command's are (Spec.Touches).
+	Touches []ids.Kind
+	// Derive derives what the batch's commands' changes, changed, the
+	// entities that they changed with their latest revisions, in the order of
+	// their first change, leave to derive, and reports each entity that it
+	// changes with its new revision (Tx.Changed), which the batch's Result
+	// lists, as it lists a command's changes, but which the batch's undo does
+	// not expect, since the undo's own commands derive it again. It runs
+	// once every command has applied, in the order of the registrations,
+	// each derivation seeing what those before it changed.
+	Derive func(ctx context.Context, tx *Tx, changed []Revision) error
+}
+
 // Registry holds the types of command, and the kinds of entity that they
 // change (PRD §10.4): the one write path of a project's content. Register
-// the kinds of entity, the types, and the reconnections before New.
+// the kinds of entity, the types, the reconnections, and the derivations
+// before New.
 type Registry struct {
 	specs    map[Type]*spec
 	entities map[ids.Kind]Entity
 	// reconnections are the reconnections of the kinds of entity that refer
 	// to others, in the order of their registration.
 	reconnections []Reconnection
+	// derivations are the derivations, in the order of their registration,
+	// each as a spec of no type of command, whose touches are its.
+	derivations []derivation
 	// schemas are the payloads' schemas, as the API's OpenAPI document writes
 	// them, which validate the payloads.
 	schemas huma.Registry
@@ -344,6 +374,43 @@ func RegisterReconnection(r *Registry, rc Reconnection) {
 		panic(fmt.Sprintf("commands: the reconnection of %s to %s is registered already", rc.Kind, rc.Restored))
 	}
 	r.reconnections = append(r.reconnections, rc)
+}
+
+// derivation is a registered Derivation, and the spec that Tx.Changed reads
+// while it derives, of its name and its touches.
+type derivation struct {
+	Derivation
+	spec *spec
+}
+
+// RegisterDerivation registers the derivation d. It panics if d lacks a name
+// or Derive, if it touches no kind, a kind that is not registered
+// (RegisterEntity), or one twice, or if a derivation of its name is
+// registered already.
+func RegisterDerivation(r *Registry, d Derivation) {
+	fail := func(format string, args ...any) {
+		panic(fmt.Sprintf("commands: the derivation %q: ", d.Name) + fmt.Sprintf(format, args...))
+	}
+	switch {
+	case d.Name == "":
+		fail("a derivation needs a name")
+	case d.Derive == nil:
+		fail("a derivation needs Derive")
+	case len(d.Touches) == 0:
+		fail("a derivation touches a kind of entity at least")
+	case slices.ContainsFunc(r.derivations, func(o derivation) bool { return o.Name == d.Name }):
+		fail("a derivation of the name is registered already")
+	}
+	for i, k := range d.Touches {
+		if _, ok := r.entities[k]; !ok {
+			fail("the entity %s is not registered", k)
+		}
+		if slices.Contains(d.Touches[:i], k) {
+			fail("it touches %s twice", k)
+		}
+	}
+	r.derivations = append(r.derivations, derivation{Derivation: d,
+		spec: &spec{typ: Type(d.Name), touches: slices.Clone(d.Touches)}})
 }
 
 // spec is a registered type of command, whose payload's Go type the

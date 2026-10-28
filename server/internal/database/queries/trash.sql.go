@@ -42,6 +42,8 @@ WHERE p.workspace_id = $1 AND (
         AND b.deleted_at <= now() - $2::interval)
     OR EXISTS (SELECT 1 FROM node n WHERE n.workspace_id = p.workspace_id AND n.project_id = p.id
         AND n.deleted_at <= now() - $2::interval)
+    OR EXISTS (SELECT 1 FROM branch_output o WHERE o.workspace_id = p.workspace_id AND o.project_id = p.id
+        AND o.deleted_at <= now() - $2::interval)
     OR EXISTS (SELECT 1 FROM connection c WHERE c.workspace_id = p.workspace_id AND c.project_id = p.id
         AND c.deleted_at <= now() - $2::interval)
     OR EXISTS (SELECT 1 FROM variable v WHERE v.workspace_id = p.workspace_id AND v.project_id = p.id
@@ -146,6 +148,44 @@ type PurgeBoardsParams struct {
 // first, and returns how many it deleted.
 func (q *Queries) PurgeBoards(ctx context.Context, arg PurgeBoardsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, purgeBoards,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Retention,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeBranchOutputs = `-- name: PurgeBranchOutputs :execrows
+DELETE FROM branch_output d
+WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
+    SELECT o.id FROM branch_output o
+    WHERE o.workspace_id = $1 AND o.project_id = $2
+        AND o.deleted_at <= now() - $3::interval
+    ORDER BY o.deleted_at, o.id
+    LIMIT $4
+)
+`
+
+type PurgeBranchOutputsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Retention   pgtype.Interval
+	MaxRows     int32
+}
+
+// PurgeBranchOutputs deletes at most max_rows of the project's branch
+// outputs that have been in its trash for retention, those that have been
+// there longest first, and returns how many it deleted, and with each, by
+// the cascade of their foreign keys, its condition and the connections that
+// leave it. An output of a node in the trash, which is in the trash with it,
+// is purged with its node, by the cascade of its foreign key; one deleted on
+// its own, before its node, once its own time has passed.
+func (q *Queries) PurgeBranchOutputs(ctx context.Context, arg PurgeBranchOutputsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeBranchOutputs,
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.Retention,
@@ -441,15 +481,16 @@ type TrashItemsRow struct {
 // with deleted_at, which the live views leave out (migration 00019). The
 // tables whose rows the trash lists are its boards', its nodes', its
 // variables', and its components'; its folders', its component types', its
-// attribute definitions', and its connections' rows go to the trash too, but
-// are not listed. Each such table has a branch here, in the list and in the
-// purge, which package trash's tests hold it to. A row that belongs to a
-// board, as a board's node or variable, is in the trash with its board too,
-// which lists the board alone, and is purged with it, by the cascade of its
-// foreign key to the board, even one deleted on its own, before its board,
-// which the list holds, and whose own time in the trash ends first. A
-// connection is in the trash with either of its nodes alike, and is purged
-// with it.
+// attribute definitions', its branch outputs', and its connections' rows go
+// to the trash too, but are not listed. Each such table has a branch here,
+// in the list and in the purge, which package trash's tests hold it to. A
+// row that belongs to a board, as a board's node or variable, is in the trash
+// with its board too, which lists the board alone, and is purged with it, by
+// the cascade of its foreign key to the board, even one deleted on its own,
+// before its board, which the list holds, and whose own time in the trash
+// ends first. A branch output is in the trash with its node alike, and a
+// connection with either of its nodes, and with the output that it leaves,
+// and each is purged with it.
 // TrashItems returns the entities in the project's trash that it lists, the
 // most recently deleted first, then by their kinds and their IDs, after the
 // entity whose deletion, kind, and ID are after_deleted_at, after_kind, and

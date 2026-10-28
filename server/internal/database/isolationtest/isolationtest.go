@@ -186,6 +186,44 @@ var Tables = []Table{
 			`'{"type": "doc", "content": [{"type": "paragraph"}]}')`,
 			[]any{id, w.ID, w.Rows["project"], w.Rows["board"], w.Rows["node"]}}, nil
 	}},
+	{Name: "branch_output", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// An output of the workspace's node, as many as the harness adds,
+		// which is in the trash with the node while the node is, so the
+		// trash's tests delete it before they delete the node. The commands
+		// hold an output to a branch, which the database does not.
+		id := ids.New()
+		return Statement{id, "INSERT INTO branch_output (id, workspace_id, project_id, board_id, node_id, kind, " +
+			`"order") VALUES ($1, $2, $3, $4, $5, 'elseif', 'V')`,
+			[]any{id, w.ID, w.Rows["project"], w.Rows["board"], w.Rows["node"]}}, nil
+	}},
+	{Name: "expression", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// An owner has one expression at each of its fields, so each is at a
+		// field of the workspace's node, connection, or output that has none
+		// yet, rather than of an owner of its own, which the trash's tests of
+		// the owners' views would find, as a compiled source that names a
+		// variable that the project does not have.
+		var owner, field string
+		if err := admin.QueryRow(ctx, `SELECT f.owner, f.field FROM (VALUES
+				(1, 'node_id', 'on_enter', $1::uuid), (2, 'node_id', 'on_exit', $1),
+				(3, 'connection_id', 'condition', $2), (4, 'connection_id', 'on_traverse', $2),
+				(5, 'branch_output_id', 'condition', $3)) f (n, owner, field, id)
+			WHERE NOT EXISTS (SELECT 1 FROM expression e WHERE e.field = f.field
+				AND f.id IN (e.node_id, e.connection_id, e.branch_output_id))
+			ORDER BY f.n LIMIT 1`, w.Rows["node"], w.Rows["connection"], w.Rows["branch_output"]).Scan(&owner,
+			&field); err != nil {
+			return Statement{}, err
+		}
+		reads := "script"
+		if field == "condition" {
+			reads = "condition"
+		}
+		id := ids.New()
+		return Statement{id, "INSERT INTO expression (id, workspace_id, project_id, board_id, " + owner + ", " +
+			"field, context, source, error) VALUES ($1, $2, $3, $4, $5, $6, $7, 'x', " +
+			`'{"code": "unknown_identifier", "start": 0, "end": 1}')`,
+			[]any{id, w.ID, w.Rows["project"], w.Rows["board"], w.Rows[map[string]string{"node_id": "node",
+				"connection_id": "connection", "branch_output_id": "branch_output"}[owner]], field, reads}}, nil
+	}},
 	{Name: "variable", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A global variable's key is unique within its project, which its ID
 		// makes. It belongs to no board, so that the trash's tests delete it

@@ -24,6 +24,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
@@ -68,6 +69,7 @@ func newFixture(t *testing.T) *fixture {
 	component.Register(reg)
 	node.Register(reg)
 	connection.Register(reg)
+	expression.Register(reg)
 	ent := entitlements.New(entitlements.Options{Meter: usage.Meter{}})
 	f.pipeline = commands.New(f.db, commands.Options{Registry: reg, Entitlements: ent})
 	projects := project.New(f.db, project.Options{Entitlements: ent, Pipeline: f.pipeline, Seed: component.Seed})
@@ -373,7 +375,7 @@ func TestCreate(t *testing.T) {
 		field string
 	}{
 		{"out of a jumper", create(newID(), jumper, keeper, nil), "from_node_id"},
-		{"out of a branch", create(newID(), branch, keeper, nil), "from_node_id"},
+		{"out of a branch by out", create(newID(), branch, keeper, nil), "from_port"},
 		{"into a node of another board", create(newID(), keeper, gull, nil), "to_node_id"},
 		{"out of a node that the project does not have", create(newID(), ids.Encode(ids.Node, ids.New()), keeper,
 			nil), "from_node_id"},

@@ -164,7 +164,8 @@ func (t *Tx) UndoRoom() int {
 // commands of the batch change is named once, with its latest revision. It
 // returns an error, which the command returns to refuse the batch, unless it
 // is called from the command's Apply, which alone changes anything (not from
-// an Inverse, nor from an Entity's functions), the command touches the kind
+// an Inverse, nor from an Entity's functions), or from a derivation's Derive
+// (RegisterDerivation), the command, or the derivation, touches the kind
 // (Spec.Touches), and rev is above every revision of the entity that the
 // batch has seen, as it is when the command incremented it; and it returns
 // ErrUndoTooLarge, which the pipeline refuses the command for as one whose
@@ -251,6 +252,36 @@ func (t *Tx) Restored(kind ids.Kind, id ids.UUID) error {
 	}
 	t.reported[ref] = struct{}{}
 	t.restored[kind] = append(t.restored[kind], id)
+	return nil
+}
+
+// Derives reports whether the registry has the derivation of the name
+// (RegisterDerivation), which the pipeline runs once every command of the
+// batch has applied. A command that leaves work for a derivation, as one that
+// writes an expression's source leaves package expression's to compile it,
+// checks it first, and refuses to apply without it, so that a registry that
+// lacks it fails the batch rather than commit what only the derivation would
+// have made whole.
+func (t *Tx) Derives(name string) bool {
+	return slices.ContainsFunc(t.pipeline.registry.derivations, func(d derivation) bool { return d.Name == name })
+}
+
+// derive runs the registry's derivations, in the order of their
+// registration, once every command of the batch has applied, each with what
+// the batch has changed so far, its commands and the derivations before it.
+// A derivation reports its changes as a command does (Changed), as one that
+// touches its kinds, but no step of the batch's undo expects them.
+func (t *Tx) derive(ctx context.Context) error {
+	for _, d := range t.pipeline.registry.derivations {
+		t.current, t.steps = d.spec, nil
+		clear(t.expecting)
+		clear(t.expected)
+		err := d.Derive(ctx, t, slices.Clone(t.changed))
+		t.current = nil
+		if err != nil {
+			return fmt.Errorf("commands: the derivation %s: %w", d.Name, err)
+		}
+	}
 	return nil
 }
 

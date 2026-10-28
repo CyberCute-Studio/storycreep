@@ -6,28 +6,30 @@
 // as it does any entity's (§5.7, ADR-006), with its commands, the one way
 // that connections change; Service reads them.
 //
-// A connection leaves an element by its port, out, and enters a node of the
-// element's board, of any type, the element itself among them, by as many
-// connections as the author draws, which the validation reports (FR-DEP-03).
-// A jumper has no connections out: the flow continues at its target (§5.8.5).
-// A branch's connections leave its outputs, which plan item 43 adds, so until
-// then no connection leaves a branch. The connections that leave a node are
-// the choices that it offers, in their order, a key of package orderkey, by
-// which they are ordered, then by their IDs, so that moving one changes it
-// alone (FR-EDIT-03 AC2). A connection's label, a rich-text document (package
-// richtext), is the choice that the player is offered, an empty paragraph for
-// none.
+// A connection leaves an element by its port, out, or a branch by one of the
+// branch's outputs (package node), and enters a node of the board, of any
+// type, the node that it leaves among them, by as many connections as the
+// author draws, which the validation reports (FR-DEP-03). A jumper has no
+// connections out: the flow continues at its target (§5.8.5). The connections
+// that leave a port are the choices that it offers, in their order, a key of
+// package orderkey, by which they are ordered, then by their IDs, so that
+// moving one changes it alone (FR-EDIT-03 AC2). A connection's label, a
+// rich-text document (package richtext), is the choice that the player is
+// offered, an empty paragraph for none; its condition, an expression (package
+// expression), makes it a choice while it holds, and its on-traverse script
+// runs when the flow traverses it (§5.8.5).
 //
 // A connection deleted on its own goes to the project's trash, unlisted, from
 // which restoring it, as its undo does, brings it back. A node's connections
-// are in the trash with it while it is there, and with its board, and
-// nothing changes them meanwhile: one comes back once neither of its nodes is
-// in the trash, so that restoring a node, or its board, with the nodes that
-// are in the trash with it, reconnects each of their connections whose node
-// at the other end is not, and the batch's answer lists the others, each
-// once, with the node that it waits for, which brings it back once it is
-// restored too (FR-PROJ-06 AC1). The trash's purge of a node deletes its
-// connections, by the cascade of their foreign keys. The reads of what is not
+// are in the trash with it while it is there, and with its board, and so are
+// an output's, and nothing changes them meanwhile: one comes back once
+// neither of its nodes, nor the output that it leaves, is in the trash, so
+// that restoring a node, an output, or a board, with the nodes that are in
+// the trash with it, reconnects each of their connections whose node at the
+// other end, and whose output, is not, and the batch's answer lists the
+// others, each once, with what it waits for, which brings it back once it is
+// restored too (FR-PROJ-06 AC1). The trash's purge of a node, or of an
+// output, deletes its connections, by the cascade of their foreign keys. The reads of what is not
 // in the trash read the live view, live_connection.
 //
 // Every command needs project:write of an API token (FR-AUTH-04), and the
@@ -49,34 +51,37 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 )
 
-// PortOut is the port of a node that every connection leaves until a
-// branch's outputs come (plan item 43): an element's one port.
+// PortOut is an element's one port, which its connections leave; a branch's
+// leave its outputs, which name them by their IDs.
 const PortOut = "out"
 
 var (
 	// ErrNotFound is returned for a connection that the project does not
-	// have, or that is in its trash, itself or with one of its nodes or its
-	// board.
+	// have, or that is in its trash, itself or with one of its nodes, the
+	// output that it leaves, or its board.
 	ErrNotFound = errors.New("connection: no such connection")
 )
 
 // Connection is a connection as the API shows it, and as an answer of
 // revision_conflict shows it (commands.Entity.States).
 type Connection struct {
-	ID         string       `json:"id" doc:"The connection's ID"`
-	ProjectID  string       `json:"project_id" doc:"The ID of the connection's project"`
-	BoardID    string       `json:"board_id" doc:"The ID of the connection's board, the board of both of its nodes, which is fixed once the connection is created"`
-	FromNodeID string       `json:"from_node_id" doc:"The ID of the node that the connection leaves, a node of its board"`
-	FromPort   string       `json:"from_port" doc:"The port of the node that the connection leaves: out, an element's one port, which every connection leaves for now. A branch's ports are its outputs (PRD FR-EDIT-04), which a branch output's ID will name."`
-	ToNodeID   string       `json:"to_node_id" doc:"The ID of the node that the connection enters, a node of its board, which may be the node that it leaves"`
-	Order      string       `json:"order" doc:"The connection's place among the connections that leave its port, the choices that its node offers, in their order (PRD FR-EDIT-03 AC1): a key of base-62 digits, 0-9, A-Z, and a-z, which orders them by its bytes, and those with the same key by their IDs without the prefix, cn_, compared by their bytes too"`
-	Label      richtext.Doc `json:"label" doc:"The connection's label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered, or an empty paragraph for none"`
-	Rev        int64        `json:"rev" doc:"The connection's revision, which every change of it increments, and which a change expects with expected_rev"`
+	ID         string                 `json:"id" doc:"The connection's ID"`
+	ProjectID  string                 `json:"project_id" doc:"The ID of the connection's project"`
+	BoardID    string                 `json:"board_id" doc:"The ID of the connection's board, the board of both of its nodes, which is fixed once the connection is created"`
+	FromNodeID string                 `json:"from_node_id" doc:"The ID of the node that the connection leaves, a node of its board"`
+	FromPort   string                 `json:"from_port" doc:"The port of the node that the connection leaves: out, an element's one port, or the ID of an output of a branch (PRD FR-EDIT-04)"`
+	ToNodeID   string                 `json:"to_node_id" doc:"The ID of the node that the connection enters, a node of its board, which may be the node that it leaves"`
+	Order      string                 `json:"order" doc:"The connection's place among the connections that leave its port, the choices that its node offers, in their order (PRD FR-EDIT-03 AC1): a key of base-62 digits, 0-9, A-Z, and a-z, which orders them by its bytes, and those with the same key by their IDs without the prefix, cn_, compared by their bytes too"`
+	Label      richtext.Doc           `json:"label" doc:"The connection's label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered, or an empty paragraph for none"`
+	Condition  *expression.Expression `json:"condition,omitempty" doc:"The connection's condition, which makes it a choice while it holds (PRD §5.8.5), if it has one; without one, it always is"`
+	OnTraverse *expression.Expression `json:"on_traverse,omitempty" doc:"The connection's on-traverse script, which runs when the flow traverses it (PRD §5.8.5), if it has one"`
+	Rev        int64                  `json:"rev" doc:"The connection's revision, which every change of it increments, a change of its expressions' compilation among them, and which a change expects with expected_rev"`
 	// DeletedAt is set while the connection is in the project's trash, which
 	// only an answer of revision_conflict shows.
 	DeletedAt *time.Time `json:"deleted_at,omitempty" doc:"When the connection went to the project's trash, if it is there: when it was deleted, or, if it was not, but one of its nodes, or its board, is in the trash, with which it is in the trash too, when the first of them went there"`
@@ -89,8 +94,8 @@ type Connection struct {
 func connectionOf(c queries.Connection) (Connection, error) {
 	out := Connection{ID: ids.Encode(ids.Connection, c.ID.Bytes), ProjectID: ids.Encode(ids.Project, c.ProjectID.Bytes),
 		BoardID: ids.Encode(ids.Board, c.BoardID.Bytes), FromNodeID: ids.Encode(ids.Node, c.FromNodeID.Bytes),
-		FromPort: PortOut, ToNodeID: ids.Encode(ids.Node, c.ToNodeID.Bytes), Order: c.Order, Rev: c.Rev,
-		DeletedAt: timeOf(c.DeletedAt), CreatedAt: c.CreatedAt.Time, UpdatedAt: c.UpdatedAt.Time}
+		FromPort: portOf(c.FromOutputID), ToNodeID: ids.Encode(ids.Node, c.ToNodeID.Bytes), Order: c.Order,
+		Rev: c.Rev, DeletedAt: timeOf(c.DeletedAt), CreatedAt: c.CreatedAt.Time, UpdatedAt: c.UpdatedAt.Time}
 	doc, err := richtext.Parse(c.Label)
 	if err != nil {
 		return Connection{}, fmt.Errorf("connection: the label of the connection %s: %w", out.ID, err)
@@ -99,17 +104,37 @@ func connectionOf(c queries.Connection) (Connection, error) {
 	return out, nil
 }
 
-// connectionsOf returns the connections rows as the API shows them, in their
-// order.
-func connectionsOf(rows []queries.Connection) ([]Connection, error) {
+// connectionsOf returns the connections rows of the project as the API shows
+// them, in their order, with their expressions.
+func connectionsOf(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, rows []queries.Connection) (
+	[]Connection, error) {
 	out := make([]Connection, len(rows))
+	list := make([]pgtype.UUID, len(rows))
 	for i, c := range rows {
 		var err error
 		if out[i], err = connectionOf(c); err != nil {
 			return nil, err
 		}
+		list[i] = c.ID
+	}
+	exprs, err := expression.Of(ctx, q, ws, project, ids.Connection, list)
+	if err != nil {
+		return nil, err
+	}
+	for i, c := range rows {
+		out[i].Condition = exprs[c.ID.Bytes][expression.Condition]
+		out[i].OnTraverse = exprs[c.ID.Bytes][expression.OnTraverse]
 	}
 	return out, nil
+}
+
+// portOf returns the port of a connection whose column of the output that it
+// leaves is output: out if it is null, or else the output's ID.
+func portOf(output pgtype.UUID) string {
+	if !output.Valid {
+		return PortOut
+	}
+	return ids.Encode(ids.BranchOutput, output.Bytes)
 }
 
 // timeOf returns the time of the column t, or nil if it is null.
@@ -188,7 +213,7 @@ func (s *Service) BoardConnections(ctx context.Context, actor commands.Actor, pr
 		for i, r := range rows {
 			live[i] = queries.Connection(r.LiveConnection)
 		}
-		out, err = connectionsOf(live)
+		out, err = connectionsOf(ctx, q, workspaceID, project, live)
 		return err
 	})
 	return out, err
@@ -196,8 +221,8 @@ func (s *Service) BoardConnections(ctx context.Context, actor commands.Actor, pr
 
 // Get returns the connection connectionID of the project projectID, or
 // ErrNotFound if the project has no such connection, or it is in the trash,
-// itself or with one of its nodes or its board. It returns the errors of
-// project.Service.Get first.
+// itself or with one of its nodes, the output that it leaves, or its board.
+// It returns the errors of project.Service.Get first.
 func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID, connectionID ids.UUID) (Connection,
 	error) {
 	var out Connection
@@ -210,8 +235,13 @@ func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID, conn
 		case err != nil:
 			return fmt.Errorf("connection: read the connection: %w", err)
 		}
-		out, err = connectionOf(queries.Connection(row.LiveConnection))
-		return err
+		list, err := connectionsOf(ctx, q, workspaceID, nullUUID(projectID),
+			[]queries.Connection{queries.Connection(row.LiveConnection)})
+		if err != nil {
+			return err
+		}
+		out = list[0]
+		return nil
 	})
 	return out, err
 }

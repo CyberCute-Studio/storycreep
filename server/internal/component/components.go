@@ -486,6 +486,22 @@ func createValues(ctx context.Context, q *queries.Queries, t queries.ComponentTy
 		return nil, commands.Refuse(byID[left[0]].at, "is not an attribute definition of the component's type, or "+
 			"is one in the project's trash", nil)
 	}
+	// A component holds a value of every definition of its type, those in
+	// the trash too (PRD §5.3), which their defaults are, as a definition's
+	// restoration would give it, so that the undo of the component's creation
+	// and its redo, a restoration, leave its values as its creation did.
+	deleted, err := q.TypeDeletedAttributeDefs(ctx, queries.TypeDeletedAttributeDefsParams{
+		WorkspaceID: t.WorkspaceID, ProjectID: t.ProjectID, ComponentTypeID: t.ID})
+	if err != nil {
+		return nil, fmt.Errorf("component: read the type's deleted attribute definitions: %w", err)
+	}
+	for _, row := range deleted {
+		v, err := storedDefault(row.AttributeDef)
+		if err != nil {
+			return nil, err
+		}
+		vals[ids.UUID(row.AttributeDef.ID.Bytes).String()] = v.JSON()
+	}
 	return json.Marshal(vals)
 }
 

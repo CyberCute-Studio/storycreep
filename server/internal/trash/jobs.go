@@ -20,12 +20,13 @@ import (
 // within this long once its time in the trash has passed.
 const purgeInterval = time.Hour
 
-// purgeRows is how many boards, nodes, connections, variables, components,
-// attribute definitions, component types, and folders the purge deletes in a
-// transaction at most, so that a transaction, which holds its project's lock,
+// purgeRows is how many boards, nodes, branch outputs, connections,
+// variables, components, attribute definitions, component types, and folders
+// the purge deletes in a transaction at most, so that a transaction, which holds its project's lock,
 // keeps the project's batches waiting for about as long however much of its
 // trash expires at once. The rows that refer to one of them, as a board's
-// nodes and variables, a node's connections, a component's values, or a
+// nodes and variables, a node's outputs, connections, and expressions, an
+// output's connections and condition, a component's values, or a
 // definition's values, one for each component of its type, go with it by the
 // cascade of their foreign keys, uncounted, so that it is purged whole, in one
 // transaction, and a restoration between two of the purge's transactions
@@ -122,10 +123,11 @@ func purgeWorkspace(ctx context.Context, db sweep.DB, more func() bool, workspac
 }
 
 // purgeProject deletes, in a transaction of the workspace, at most purgeRows
-// of the boards, the nodes, the connections, the variables, the components,
-// the attribute definitions, the folders, and the component types of the
-// project that have been in its trash for retention, the boards, the nodes,
-// the connections, the variables, and the components first, which may leave
+// of the boards, the nodes, the branch outputs, the connections, the
+// variables, the components, the attribute definitions, the folders, and the
+// component types of the project that have been in its trash for retention,
+// the boards, the nodes, the outputs, the connections, the variables, and the
+// components first, which may leave
 // a folder or a type empty for the purge of the folders and of the types that
 // follows, and returns how many it deleted, or none if a transaction holds the
 // project's lock.
@@ -153,6 +155,12 @@ func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, projec
 			return fmt.Errorf("purge the nodes: %w", err)
 		}
 		n += nodes
+		outputs, err := q.PurgeBranchOutputs(ctx, queries.PurgeBranchOutputsParams{WorkspaceID: ws,
+			ProjectID: project, Retention: retention, MaxRows: int32(purgeRows - n)})
+		if err != nil {
+			return fmt.Errorf("purge the branch outputs: %w", err)
+		}
+		n += outputs
 		connections, err := q.PurgeConnections(ctx, queries.PurgeConnectionsParams{WorkspaceID: ws,
 			ProjectID: project, Retention: retention, MaxRows: int32(purgeRows - n)})
 		if err != nil {

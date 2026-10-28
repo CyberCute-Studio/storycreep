@@ -55,6 +55,7 @@ const (
 	CodeKeyTaken              Code = "key_taken"
 	CodeComponentTypeInUse    Code = "component_type_in_use"
 	CodeBoardReferenced       Code = "board_referenced"
+	CodeOutputConnected       Code = "branch_output_connected"
 	CodeLastOwner             Code = "last_owner"
 	CodeAlreadyMember         Code = "already_member"
 	CodeInviteExists          Code = "invite_exists"
@@ -266,6 +267,14 @@ var codes = []codeSpec{
 			"lists in full. Warn of them, and send the command again with `confirm` to delete the board all the " +
 			"same: the jumpers then keep their targets, which the validation reports. `details.errors` names the " +
 			"field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeOutputConnected, http.StatusConflict, i18n.K("error.branch_output_connected"),
+		"A `branch_output.delete` command names an output of a branch that connections, which are not in the " +
+			"project's trash, leave, and does not confirm the deletion, which would delete them with it, so nothing " +
+			"of its batch is applied (PRD FR-EDIT-04 AC3). `details.connections` lists the first 100 of them, in " +
+			"the order of their IDs, each with its `id` and its `to_node_id`, and `details.connection_count` says " +
+			"how many there are. Warn of them, and send the command again with `confirm` to delete the output all " +
+			"the same: its connections then go to the trash with it, and come back with it. `details.errors` names " +
+			"the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeLastOwner, http.StatusConflict, i18n.K("error.last_owner"),
 		"The change would leave the workspace without an owner whose account is active, and a workspace keeps one " +
 			"(PRD FR-TEN-02 AC2): its last owner cannot be removed or demoted. An owner whose account's deletion is " +
