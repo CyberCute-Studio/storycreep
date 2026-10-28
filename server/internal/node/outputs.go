@@ -301,12 +301,11 @@ func registerOutputs(r *commands.Registry) {
 			}
 			owner := expression.Owner{Kind: ids.BranchOutput, ID: o.ID, Board: o.BoardID}
 			set, err := expression.Set(ctx, tx, owner, expression.Condition, p.Condition)
-			if err != nil {
+			if err != nil || !set {
 				return err
 			}
 			// The condition is all that the command changes of the output.
-			return changedKind(tx, ids.BranchOutput, o.ID)(expression.OwnerRevision(ctx, tx, owner, set, 0,
-				pgx.ErrNoRows))
+			return changedKind(tx, ids.BranchOutput, o.ID)(expression.Touch(ctx, tx, owner))
 		},
 	})
 

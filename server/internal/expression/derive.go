@@ -217,10 +217,14 @@ func touch(ctx context.Context, tx *commands.Tx, touched map[ids.Kind][]pgtype.U
 	return nil
 }
 
-// touchOwner increments the revision of the owner o of the batch's project,
-// which is not in the trash, whose expressions a command changed, and
-// returns its new revision (OwnerRevision).
-func touchOwner(ctx context.Context, tx *commands.Tx, o Owner) (int64, error) {
+// Touch increments the revision of the owner o of the batch's project, which
+// is not in the trash, whose expressions a command changed (Set, SetFields),
+// and returns its new revision, which the command reports as its change of o:
+// a command whose only change of o is of its expressions, as a branch
+// output's update of its condition, calls it once Set reports a change, and
+// one that may change o's other fields too reports o's change with
+// OwnerRevision, which calls it if they are as they were.
+func Touch(ctx context.Context, tx *commands.Tx, o Owner) (int64, error) {
 	revs, err := touchOwners(ctx, tx, o.Kind, []pgtype.UUID{o.ID})
 	switch {
 	case err != nil:

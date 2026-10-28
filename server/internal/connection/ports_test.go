@@ -1,9 +1,13 @@
 package connection_test
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
@@ -120,5 +124,49 @@ func TestPorts(t *testing.T) {
 		!strings.Contains(r.Message, "comes back with its nodes") {
 		t.Errorf("the deletion of a connection of an output of a branch in the trash is refused at %s: %s",
 			r.Field, r.Message)
+	}
+}
+
+// TestPortRevision checks that a command that sets the port that a
+// connection leaves refers to the output that is the port, as it does to the
+// nodes, so that it may expect the output's revision, and is answered with
+// revision_conflict, naming the output, for a stale one.
+func TestPortRevision(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	b := f.newBoard(t, "Harbour")
+	branch, keeper := f.newNode(t, b, node.TypeBranch), f.newNode(t, b, node.TypeElement)
+	yes, no := f.newOutput(t, branch, nil), f.newOutput(t, branch, nil)
+	revOf := func(output string) int64 {
+		return f.count(t, "SELECT rev FROM branch_output WHERE id = $1", decode(t, ids.BranchOutput, output))
+	}
+	// expecting applies the command of the type typ and the payload p, which
+	// expects the revision rev of the output.
+	expecting := func(typ commands.Type, p payload, output string, rev int64) error {
+		raw, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.pipeline.Apply(context.Background(), f.actor(), f.project, []commands.Command{{ID: ids.New(),
+			Type: typ, Payload: raw, ExpectedRev: map[commands.Ref]int64{{Kind: ids.BranchOutput,
+				ID: decode(t, ids.BranchOutput, output)}: rev}}})
+		return err
+	}
+	id := newID()
+	if err := expecting(connection.Create, payload{"id": id, "from_node_id": branch, "from_port": yes,
+		"to_node_id": keeper}, yes, revOf(yes)); err != nil {
+		t.Fatalf("a connection that expects the revision of the output that it leaves: %v", err)
+	}
+	if err := expecting(connection.Reconnect, payload{"id": id, "from_port": no}, no, revOf(no)); err != nil {
+		t.Fatalf("a reconnect that expects the revision of the output that it leaves once reconnected: %v", err)
+	}
+	var conflict *commands.RevisionConflictError
+	err := expecting(connection.Reconnect, payload{"id": id, "from_port": yes}, yes, revOf(yes)+1)
+	if !errors.As(err, &conflict) || len(conflict.Conflicts) != 1 ||
+		conflict.Conflicts[0].Ref.Kind != ids.BranchOutput {
+		t.Errorf("a reconnect that expects a stale revision of an output is answered with %v", err)
+	}
+	if c := f.get(t, id); c.FromPort != no {
+		t.Errorf("the refused reconnect left the connection leaving %s, want %s", c.FromPort, no)
 	}
 }

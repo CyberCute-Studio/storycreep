@@ -150,9 +150,11 @@ func Register(r *commands.Registry) {
 	})
 
 	connection := []ids.Kind{ids.Connection}
-	// A command that sets a connection's nodes refers to them, so that a
-	// client may expect their revisions too.
-	ends := []ids.Kind{ids.Connection, ids.Node}
+	// A command that sets a connection's nodes, and the port that it leaves,
+	// refers to them, and to the output that is the port of a branch, so that
+	// a client may expect their revisions too, as a command that creates an
+	// output refers to its branch (package node).
+	ends := []ids.Kind{ids.Connection, ids.Node, ids.BranchOutput}
 	op, sc := authz.EditContent, scope.ProjectWrite
 
 	commands.Register(r, commands.Spec[createPayload]{

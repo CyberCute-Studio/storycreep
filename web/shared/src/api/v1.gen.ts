@@ -1065,7 +1065,7 @@ export interface Connection {
   condition?: Expression;
   /** When the connection was created */
   created_at: string;
-  /** When the connection went to the project's trash, if it is there: when it was deleted, or, if it was not, but one of its nodes, or its board, is in the trash, with which it is in the trash too, when the first of them went there */
+  /** When the connection went to the project's trash, if it is there: when it was deleted, or, if it was not, but one of its nodes, the branch output that it leaves, or its board, is in the trash, with which it is in the trash too, when the first of them went there */
   deleted_at?: string;
   /** The ID of the node that the connection leaves, a node of its board */
   from_node_id: string;
@@ -1584,13 +1584,13 @@ export interface Node {
   on_enter?: Expression;
   /** An element's or a branch's on-exit script, which runs when the flow leaves the node, by a connection or by ending there (PRD §5.8.5), if it has one. A jumper has none. */
   on_exit?: Expression;
-  /** A branch's outputs that are not in the project's trash, in their order (PRD FR-EDIT-04): its conditional outputs, the first its if and the others its elseifs, and its else after them, if it has one. Without them, the branch has none, which the validation reports. Another type has none. An answer of revision_conflict for a branch in the trash shows those that are there with it alone, which come back with it. */
+  /** A branch's outputs that are not in the project's trash, in their order (PRD FR-EDIT-04): its conditional outputs, the first its if and the others its elseifs, and its else after them, if it has one. Without them, the branch has none, which the validation reports. Another type has none. Each is an entity of its own, at a revision of its own, which a change of it increments, and not the branch's. An answer of revision_conflict for a branch in the trash shows those that are there with it alone, which come back with it. */
   outputs?: Array<BranchOutput> | null;
   /** Where the node is on its board's canvas */
   position: NodePosition;
   /** The ID of the node's project */
   project_id: string;
-  /** The node's revision, which every change of it increments, a change of its scripts' compilation among them, and which a change expects with expected_rev */
+  /** The node's revision, which every change of it increments, a change of its scripts' compilation among them, and which a change expects with expected_rev. A change of one of a branch's outputs changes the output's revision, not the node's. */
   rev: number;
   /** The node's width and height, if it has a size of its own; without one, the canvas lays the node out by itself */
   size?: NodeSize;

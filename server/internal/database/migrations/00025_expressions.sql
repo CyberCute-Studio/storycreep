@@ -87,8 +87,10 @@ ALTER TABLE connection ADD COLUMN from_output_id uuid;
 ALTER TABLE connection ADD CONSTRAINT connection_from_output FOREIGN KEY (workspace_id, project_id, from_node_id,
 	from_output_id) REFERENCES branch_output (workspace_id, project_id, node_id, id) ON DELETE CASCADE;
 -- The key by which an expression is the condition or the script of a
--- connection of its board.
+-- connection of its board. Its index reads a board's connections in the
+-- order of their IDs, as the index that it replaces did.
 ALTER TABLE connection ADD CONSTRAINT connection_board_connection UNIQUE (workspace_id, project_id, board_id, id);
+DROP INDEX connection_board;
 -- The connections that leave a node, by its ports, each port's in their
 -- order, which a new one is placed after, and the cascade of an output's
 -- purge, or of a node's, finds them by.

@@ -128,10 +128,13 @@ func CheckSource(source string) string {
 // source is nil, and reports whether that changed it, as a command's Apply
 // does it before it reports its owner's change, so that the pipeline compiles
 // the source once every command of the batch has applied, and which a command
-// whose update of its owner finds nothing else to change reports the owner's
-// change for with OwnerRevision. It returns an error if f is not a field of
-// o's kind, or if it would write a source while the registry lacks the
-// derivation that compiles it (Register).
+// reports the owner's change for with Touch, or, if its update of the owner's
+// other fields finds nothing to change, with OwnerRevision. The empty string
+// is a source, which does not compile, as a branch output's condition is
+// until it is written, unlike SetFields's, for which it is none: a field that
+// may have no expression is written with SetFields. It returns an error if f
+// is not a field of o's kind, or if it would write a source while the
+// registry lacks the derivation that compiles it (Register).
 func Set(ctx context.Context, tx *commands.Tx, o Owner, f Field, source *string) (bool, error) {
 	return write(ctx, tx, o, []fieldSource{{f, source}})
 }
@@ -175,7 +178,7 @@ func SetFields(ctx context.Context, tx *commands.Tx, o Owner, sources map[Field]
 // returned as it is, pgx.ErrNoRows, which the command reports as no change.
 func OwnerRevision(ctx context.Context, tx *commands.Tx, o Owner, set bool, rev int64, err error) (int64, error) {
 	if set && errors.Is(err, pgx.ErrNoRows) {
-		return touchOwner(ctx, tx, o)
+		return Touch(ctx, tx, o)
 	}
 	return rev, err
 }

@@ -555,7 +555,7 @@ type Target struct {
 func (s *Service) Unconvertible(ctx context.Context, actor commands.Actor, projectID, typeID, attributeID ids.UUID,
 	to Target, after ids.UUID, limit int) ([]Unconvertible, error) {
 	var out []Unconvertible
-	err := s.projects.ReadContent(ctx, snapshot{s.db}, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
+	err := s.projects.ReadSnapshot(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		if errs := checkTarget(to); len(errs) > 0 {
 			return errs
 		}
@@ -565,16 +565,6 @@ func (s *Service) Unconvertible(ctx context.Context, actor commands.Actor, proje
 		return err
 	})
 	return out, err
-}
-
-// snapshot is the DB whose transactions read as of one moment
-// (database.DB.InSnapshot).
-type snapshot struct {
-	db DB
-}
-
-func (d snapshot) InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
-	return d.db.InSnapshot(ctx, scope, fn)
 }
 
 // unconvertible is Unconvertible's read, in q's transaction, of the

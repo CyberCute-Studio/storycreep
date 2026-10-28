@@ -84,7 +84,7 @@ type Connection struct {
 	Rev        int64                  `json:"rev" doc:"The connection's revision, which every change of it increments, a change of its expressions' compilation among them, and which a change expects with expected_rev"`
 	// DeletedAt is set while the connection is in the project's trash, which
 	// only an answer of revision_conflict shows.
-	DeletedAt *time.Time `json:"deleted_at,omitempty" doc:"When the connection went to the project's trash, if it is there: when it was deleted, or, if it was not, but one of its nodes, or its board, is in the trash, with which it is in the trash too, when the first of them went there"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty" doc:"When the connection went to the project's trash, if it is there: when it was deleted, or, if it was not, but one of its nodes, the branch output that it leaves, or its board, is in the trash, with which it is in the trash too, when the first of them went there"`
 	CreatedAt time.Time  `json:"created_at" doc:"When the connection was created"`
 	UpdatedAt time.Time  `json:"updated_at" doc:"When the connection last changed"`
 }
@@ -176,7 +176,7 @@ func New(db DB, opts Options) *Service {
 
 // read runs fn in a transaction of the workspace of the project projectID,
 // once it has checked that the actor may read the project's content
-// (project.Service.ReadContent): it returns the errors of
+// (project.Service.ReadSnapshot): it returns the errors of
 // project.Service.Get, as project.ErrNotFound for a project that does not
 // exist, is in the trash, on which the actor's role is none, or that the
 // actor's API token does not cover. The token's scopes are the route's to
@@ -188,19 +188,9 @@ func New(db DB, opts Options) *Service {
 // at a revision that does not hold it.
 func (s *Service) read(ctx context.Context, actor commands.Actor, projectID ids.UUID,
 	fn func(q *queries.Queries, workspaceID pgtype.UUID) error) error {
-	return s.projects.ReadContent(ctx, snapshot{s.db}, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
+	return s.projects.ReadSnapshot(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		return fn(queries.New(tx), nullUUID(workspaceID))
 	})
-}
-
-// snapshot is the DB whose transactions read as of one moment
-// (database.DB.InSnapshot).
-type snapshot struct {
-	db DB
-}
-
-func (d snapshot) InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
-	return d.db.InSnapshot(ctx, scope, fn)
 }
 
 // BoardConnections returns at most limit of the connections of the board
