@@ -142,7 +142,7 @@ type Node struct {
 	// branch's alone.
 	OnEnter *expression.Expression `json:"on_enter,omitempty" doc:"An element's or a branch's on-enter script, which runs when the flow enters the node (PRD §5.8.5), if it has one. A jumper has none."`
 	OnExit  *expression.Expression `json:"on_exit,omitempty" doc:"An element's or a branch's on-exit script, which runs when the flow leaves the node, by a connection or by ending there (PRD §5.8.5), if it has one. A jumper has none."`
-	Outputs []BranchOutput         `json:"outputs,omitempty" doc:"A branch's outputs that are not in the project's trash, in their order (PRD FR-EDIT-04): its conditional outputs, the first its if and the others its elseifs, and its else after them, if it has one. Without them, the branch has none, which the validation reports. Another type has none."`
+	Outputs []BranchOutput         `json:"outputs,omitempty" doc:"A branch's outputs that are not in the project's trash, in their order (PRD FR-EDIT-04): its conditional outputs, the first its if and the others its elseifs, and its else after them, if it has one. Without them, the branch has none, which the validation reports. Another type has none. An answer of revision_conflict for a branch in the trash shows those that are there with it alone, which come back with it."`
 	Rev     int64                  `json:"rev" doc:"The node's revision, which every change of it increments, a change of its scripts' compilation among them, and which a change expects with expected_rev"`
 	// DeletedAt is set while the node is in the project's trash, which only
 	// an answer of revision_conflict shows.

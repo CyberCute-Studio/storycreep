@@ -189,6 +189,7 @@ const connectionAny = `-- name: ConnectionAny :one
 SELECT connection.id, connection.workspace_id, connection.project_id, connection.board_id, connection.from_node_id, connection.to_node_id, connection."order", connection.label, connection.rev, connection.deleted_at, connection.created_by, connection.updated_by, connection.created_at, connection.updated_at, connection.from_output_id,
     (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL OR o.deleted_at IS NOT NULL
         OR b.deleted_at IS NOT NULL)::boolean AS ends_deleted,
+    (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL)::boolean AS nodes_deleted,
     (o.deleted_at IS NOT NULL)::boolean AS output_deleted,
     (b.deleted_at IS NOT NULL)::boolean AS board_deleted
 FROM connection
@@ -212,15 +213,17 @@ type ConnectionAnyParams struct {
 type ConnectionAnyRow struct {
 	Connection    Connection
 	EndsDeleted   bool
+	NodesDeleted  bool
 	OutputDeleted bool
 	BoardDeleted  bool
 }
 
 // ConnectionAny returns a connection of the project, whether or not it is in
 // the trash, and whether it is in the trash with one of its nodes, the
-// output that it leaves, or its board, which ends_deleted says, with the
-// output, which output_deleted says, and with its board, which board_deleted
-// says, and no row if the project has no such connection.
+// output that it leaves, or its board, which ends_deleted says, with one of
+// its nodes, deleted on their own, which nodes_deleted says, with the output,
+// which output_deleted says, and with its board, which board_deleted says,
+// and no row if the project has no such connection.
 func (q *Queries) ConnectionAny(ctx context.Context, arg ConnectionAnyParams) (ConnectionAnyRow, error) {
 	row := q.db.QueryRow(ctx, connectionAny, arg.WorkspaceID, arg.ProjectID, arg.ID)
 	var i ConnectionAnyRow
@@ -241,6 +244,7 @@ func (q *Queries) ConnectionAny(ctx context.Context, arg ConnectionAnyParams) (C
 		&i.Connection.UpdatedAt,
 		&i.Connection.FromOutputID,
 		&i.EndsDeleted,
+		&i.NodesDeleted,
 		&i.OutputDeleted,
 		&i.BoardDeleted,
 	)

@@ -490,6 +490,18 @@ func TestKnownKeys(t *testing.T) {
 	}
 }
 
+// TestOutputKinds checks that the kinds of a branch's output are the ones
+// that package node stores, so that what the database holds is what a release
+// writes.
+func TestOutputKinds(t *testing.T) {
+	for _, k := range [][2]string{{OutputIf, node.OutputIf}, {OutputElseIf, node.OutputElseIf},
+		{OutputElse, node.OutputElse}} {
+		if k[0] != k[1] {
+			t.Errorf("the published format's output kind %q is package node's %q", k[0], k[1])
+		}
+	}
+}
+
 // TestTags checks that the patterns and the bounds that the fields' tags hold
 // a key, a slug, a path, a port, an integer, a title, tags, an enum's
 // options, and a position to are the ones that their packages define: an

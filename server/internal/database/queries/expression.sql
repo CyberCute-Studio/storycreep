@@ -51,8 +51,9 @@ WHERE s.workspace_id = @workspace_id AND s.project_id = @project_id AND s.node_i
 -- yet to compile, those whose refs or keys are among refs or keys, and, if
 -- names is true, every one that does not compile but names something, which
 -- a change of what the project's expressions can name may let compile, in
--- the order of their IDs.
-SELECT id, board_id, context, source, ast, ast_version, is_valid, error, refs, keys FROM expression
+-- the order of their IDs, each with what it is compiled from alone: its
+-- source, read in its context, at its board.
+SELECT id, board_id, context, source FROM expression
 WHERE workspace_id = @workspace_id AND project_id = @project_id
     AND (ast IS NULL AND error IS NULL OR refs && @refs::uuid[] OR keys && @keys::text[]
         OR @names::boolean AND NOT is_valid AND (cardinality(refs) > 0 OR cardinality(keys) > 0))
@@ -139,31 +140,30 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@id
 
 -- name: TouchNodes :many
 -- TouchNodes increments the revisions of the project's nodes whose IDs are
--- among ids, whose expressions changed, but for those in the trash, which
--- nothing changes meanwhile, so that the undo of their deletion, which
--- expects the revision that it left, still applies, and returns them.
+-- among ids, whose expressions changed, but for those deleted to the trash
+-- themselves, which nothing changes meanwhile, so that the undo of their
+-- deletion, which expects the revision that it left, still applies, and
+-- which their restoration gives a new revision; one that is in the trash
+-- only with its board is changed, as no deletion of its own expects its
+-- revision, and its board's restoration gives it none. It returns those
+-- that it changed.
 UPDATE node SET rev = rev + 1, updated_at = now(), updated_by = @updated_by
-WHERE node.workspace_id = @workspace_id AND node.project_id = @project_id AND node.id = ANY(@ids::uuid[])
-    AND EXISTS (SELECT 1 FROM live_node l WHERE l.workspace_id = node.workspace_id
-        AND l.project_id = node.project_id AND l.id = node.id)
-RETURNING node.id, node.rev;
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[]) AND deleted_at IS NULL
+RETURNING id, rev;
 
 -- name: TouchConnections :many
 -- TouchConnections increments the revisions of the project's connections
--- whose IDs are among ids, whose expressions changed, but for those in the
--- trash, as TouchNodes does, and returns them.
+-- whose IDs are among ids, whose expressions changed, but for those deleted
+-- to the trash themselves, as TouchNodes does, and returns those it changed.
 UPDATE connection SET rev = rev + 1, updated_at = now(), updated_by = @updated_by
-WHERE connection.workspace_id = @workspace_id AND connection.project_id = @project_id AND connection.id = ANY(@ids::uuid[])
-    AND EXISTS (SELECT 1 FROM live_connection l WHERE l.workspace_id = connection.workspace_id
-        AND l.project_id = connection.project_id AND l.id = connection.id)
-RETURNING connection.id, connection.rev;
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[]) AND deleted_at IS NULL
+RETURNING id, rev;
 
 -- name: TouchBranchOutputs :many
 -- TouchBranchOutputs increments the revisions of the project's branch
 -- outputs whose IDs are among ids, whose expressions changed, but for those
--- in the trash, as TouchNodes does, and returns them.
+-- deleted to the trash themselves, as TouchNodes does, and returns those it
+-- changed.
 UPDATE branch_output SET rev = rev + 1, updated_at = now(), updated_by = @updated_by
-WHERE branch_output.workspace_id = @workspace_id AND branch_output.project_id = @project_id AND branch_output.id = ANY(@ids::uuid[])
-    AND EXISTS (SELECT 1 FROM live_branch_output l WHERE l.workspace_id = branch_output.workspace_id
-        AND l.project_id = branch_output.project_id AND l.id = branch_output.id)
-RETURNING branch_output.id, branch_output.rev;
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[]) AND deleted_at IS NULL
+RETURNING id, rev;

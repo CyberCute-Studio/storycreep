@@ -209,22 +209,6 @@ type LiveBoard struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
-type LiveBranchOutput struct {
-	ID          pgtype.UUID
-	WorkspaceID pgtype.UUID
-	ProjectID   pgtype.UUID
-	BoardID     pgtype.UUID
-	NodeID      pgtype.UUID
-	Kind        string
-	Order       pgtype.Text
-	Rev         int64
-	DeletedAt   pgtype.Timestamptz
-	CreatedBy   pgtype.UUID
-	UpdatedBy   pgtype.UUID
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
-}
-
 type LiveComponent struct {
 	ID              pgtype.UUID
 	WorkspaceID     pgtype.UUID

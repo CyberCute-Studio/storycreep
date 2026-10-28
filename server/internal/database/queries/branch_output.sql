@@ -52,12 +52,16 @@ SELECT id, rev FROM branch_output
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[]);
 
 -- name: NodeOutputs :many
--- NodeOutputs returns the outputs that are not in the trash of the project's
--- nodes whose IDs are among node_ids, by their nodes, each node's in their
--- order: its conditional outputs by their orders and then their IDs, and its
--- else after them.
-SELECT * FROM live_branch_output
+-- NodeOutputs returns the outputs that are not deleted on their own of the
+-- project's nodes whose IDs are among node_ids, by their nodes, each node's
+-- in their order: its conditional outputs by their orders and then their
+-- IDs, and its else after them. Those of a node that is not in the trash are
+-- those that are not in the trash, and those of a node in the trash, or of
+-- one of a board in the trash, are those that are there only with it, and
+-- come back with it.
+SELECT * FROM branch_output
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND node_id = ANY(@node_ids::uuid[])
+    AND deleted_at IS NULL
 ORDER BY node_id, kind = 'else', "order", id;
 
 -- name: NodeOutputCounts :one

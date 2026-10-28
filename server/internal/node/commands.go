@@ -175,6 +175,14 @@ func Register(r *commands.Registry) {
 				if n.DeletedAt == nil && row.BoardDeletedAt.Valid {
 					n.DeletedAt = timeOf(row.BoardDeletedAt)
 				}
+				// A branch in the trash shows the outputs that are there with
+				// it alone, which come back with it, each with the branch's
+				// deleted_at.
+				for j := range n.Outputs {
+					if n.Outputs[j].DeletedAt == nil {
+						n.Outputs[j].DeletedAt = n.DeletedAt
+					}
+				}
 				out[row.Node.ID.Bytes] = n
 			}
 			return out, nil
@@ -251,10 +259,7 @@ func Register(r *commands.Registry) {
 			rev, err := queries.New(tx).UpdateNode(ctx, next)
 			// A change of the node's scripts alone is a change of the node,
 			// whose revision it increments.
-			if errors.Is(err, pgx.ErrNoRows) && scripts {
-				rev, err = expression.Touch(ctx, tx, owner)
-			}
-			return changed(tx, n.ID)(rev, err)
+			return changed(tx, n.ID)(expression.OwnerRevision(ctx, tx, owner, scripts, rev, err))
 		},
 	})
 
@@ -671,28 +676,12 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 
 // setScripts sets the on-enter and on-exit scripts of the node owner, each to
 // its source, or removes it for the empty string, but for one that is nil,
-// which stays as it is, and reports whether that changed either.
+// which stays as it is, and reports whether that changed either
+// (expression.SetFields).
 func setScripts(ctx context.Context, tx *commands.Tx, owner expression.Owner, onEnter, onExit *string) (bool,
 	error) {
-	changed := false
-	for _, s := range []struct {
-		field  expression.Field
-		source *string
-	}{{expression.OnEnter, onEnter}, {expression.OnExit, onExit}} {
-		if s.source == nil {
-			continue
-		}
-		source := s.source
-		if *source == "" {
-			source = nil
-		}
-		set, err := expression.Set(ctx, tx, owner, s.field, source)
-		if err != nil {
-			return false, err
-		}
-		changed = changed || set
-	}
-	return changed, nil
+	return expression.SetFields(ctx, tx, owner, map[expression.Field]*string{expression.OnEnter: onEnter,
+		expression.OnExit: onExit})
 }
 
 // applyDuplicate is Duplicate's Apply.

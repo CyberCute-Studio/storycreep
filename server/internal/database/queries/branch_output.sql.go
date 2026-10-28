@@ -280,8 +280,9 @@ func (q *Queries) NodeOutputCounts(ctx context.Context, arg NodeOutputCountsPara
 }
 
 const nodeOutputs = `-- name: NodeOutputs :many
-SELECT id, workspace_id, project_id, board_id, node_id, kind, "order", rev, deleted_at, created_by, updated_by, created_at, updated_at FROM live_branch_output
+SELECT id, workspace_id, project_id, board_id, node_id, kind, "order", rev, deleted_at, created_by, updated_by, created_at, updated_at FROM branch_output
 WHERE workspace_id = $1 AND project_id = $2 AND node_id = ANY($3::uuid[])
+    AND deleted_at IS NULL
 ORDER BY node_id, kind = 'else', "order", id
 `
 
@@ -291,19 +292,22 @@ type NodeOutputsParams struct {
 	NodeIds     []pgtype.UUID
 }
 
-// NodeOutputs returns the outputs that are not in the trash of the project's
-// nodes whose IDs are among node_ids, by their nodes, each node's in their
-// order: its conditional outputs by their orders and then their IDs, and its
-// else after them.
-func (q *Queries) NodeOutputs(ctx context.Context, arg NodeOutputsParams) ([]LiveBranchOutput, error) {
+// NodeOutputs returns the outputs that are not deleted on their own of the
+// project's nodes whose IDs are among node_ids, by their nodes, each node's
+// in their order: its conditional outputs by their orders and then their
+// IDs, and its else after them. Those of a node that is not in the trash are
+// those that are not in the trash, and those of a node in the trash, or of
+// one of a board in the trash, are those that are there only with it, and
+// come back with it.
+func (q *Queries) NodeOutputs(ctx context.Context, arg NodeOutputsParams) ([]BranchOutput, error) {
 	rows, err := q.db.Query(ctx, nodeOutputs, arg.WorkspaceID, arg.ProjectID, arg.NodeIds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LiveBranchOutput
+	var items []BranchOutput
 	for rows.Next() {
-		var i LiveBranchOutput
+		var i BranchOutput
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkspaceID,

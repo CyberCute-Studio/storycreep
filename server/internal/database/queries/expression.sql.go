@@ -368,7 +368,7 @@ func (q *Queries) ExpressionVariables(ctx context.Context, arg ExpressionVariabl
 }
 
 const expressionsToCompile = `-- name: ExpressionsToCompile :many
-SELECT id, board_id, context, source, ast, ast_version, is_valid, error, refs, keys FROM expression
+SELECT id, board_id, context, source FROM expression
 WHERE workspace_id = $1 AND project_id = $2
     AND (ast IS NULL AND error IS NULL OR refs && $3::uuid[] OR keys && $4::text[]
         OR $5::boolean AND NOT is_valid AND (cardinality(refs) > 0 OR cardinality(keys) > 0))
@@ -384,23 +384,18 @@ type ExpressionsToCompileParams struct {
 }
 
 type ExpressionsToCompileRow struct {
-	ID         pgtype.UUID
-	BoardID    pgtype.UUID
-	Context    string
-	Source     string
-	Ast        []byte
-	AstVersion pgtype.Int4
-	IsValid    bool
-	Error      []byte
-	Refs       []pgtype.UUID
-	Keys       []string
+	ID      pgtype.UUID
+	BoardID pgtype.UUID
+	Context string
+	Source  string
 }
 
 // ExpressionsToCompile returns the project's expressions that the batch has
 // yet to compile, those whose refs or keys are among refs or keys, and, if
 // names is true, every one that does not compile but names something, which
 // a change of what the project's expressions can name may let compile, in
-// the order of their IDs.
+// the order of their IDs, each with what it is compiled from alone: its
+// source, read in its context, at its board.
 func (q *Queries) ExpressionsToCompile(ctx context.Context, arg ExpressionsToCompileParams) ([]ExpressionsToCompileRow, error) {
 	rows, err := q.db.Query(ctx, expressionsToCompile,
 		arg.WorkspaceID,
@@ -421,12 +416,6 @@ func (q *Queries) ExpressionsToCompile(ctx context.Context, arg ExpressionsToCom
 			&i.BoardID,
 			&i.Context,
 			&i.Source,
-			&i.Ast,
-			&i.AstVersion,
-			&i.IsValid,
-			&i.Error,
-			&i.Refs,
-			&i.Keys,
 		); err != nil {
 			return nil, err
 		}
@@ -577,10 +566,8 @@ func (q *Queries) SetExpressionSource(ctx context.Context, arg SetExpressionSour
 
 const touchBranchOutputs = `-- name: TouchBranchOutputs :many
 UPDATE branch_output SET rev = rev + 1, updated_at = now(), updated_by = $1
-WHERE branch_output.workspace_id = $2 AND branch_output.project_id = $3 AND branch_output.id = ANY($4::uuid[])
-    AND EXISTS (SELECT 1 FROM live_branch_output l WHERE l.workspace_id = branch_output.workspace_id
-        AND l.project_id = branch_output.project_id AND l.id = branch_output.id)
-RETURNING branch_output.id, branch_output.rev
+WHERE workspace_id = $2 AND project_id = $3 AND id = ANY($4::uuid[]) AND deleted_at IS NULL
+RETURNING id, rev
 `
 
 type TouchBranchOutputsParams struct {
@@ -597,7 +584,8 @@ type TouchBranchOutputsRow struct {
 
 // TouchBranchOutputs increments the revisions of the project's branch
 // outputs whose IDs are among ids, whose expressions changed, but for those
-// in the trash, as TouchNodes does, and returns them.
+// deleted to the trash themselves, as TouchNodes does, and returns those it
+// changed.
 func (q *Queries) TouchBranchOutputs(ctx context.Context, arg TouchBranchOutputsParams) ([]TouchBranchOutputsRow, error) {
 	rows, err := q.db.Query(ctx, touchBranchOutputs,
 		arg.UpdatedBy,
@@ -625,10 +613,8 @@ func (q *Queries) TouchBranchOutputs(ctx context.Context, arg TouchBranchOutputs
 
 const touchConnections = `-- name: TouchConnections :many
 UPDATE connection SET rev = rev + 1, updated_at = now(), updated_by = $1
-WHERE connection.workspace_id = $2 AND connection.project_id = $3 AND connection.id = ANY($4::uuid[])
-    AND EXISTS (SELECT 1 FROM live_connection l WHERE l.workspace_id = connection.workspace_id
-        AND l.project_id = connection.project_id AND l.id = connection.id)
-RETURNING connection.id, connection.rev
+WHERE workspace_id = $2 AND project_id = $3 AND id = ANY($4::uuid[]) AND deleted_at IS NULL
+RETURNING id, rev
 `
 
 type TouchConnectionsParams struct {
@@ -644,8 +630,8 @@ type TouchConnectionsRow struct {
 }
 
 // TouchConnections increments the revisions of the project's connections
-// whose IDs are among ids, whose expressions changed, but for those in the
-// trash, as TouchNodes does, and returns them.
+// whose IDs are among ids, whose expressions changed, but for those deleted
+// to the trash themselves, as TouchNodes does, and returns those it changed.
 func (q *Queries) TouchConnections(ctx context.Context, arg TouchConnectionsParams) ([]TouchConnectionsRow, error) {
 	rows, err := q.db.Query(ctx, touchConnections,
 		arg.UpdatedBy,
@@ -673,10 +659,8 @@ func (q *Queries) TouchConnections(ctx context.Context, arg TouchConnectionsPara
 
 const touchNodes = `-- name: TouchNodes :many
 UPDATE node SET rev = rev + 1, updated_at = now(), updated_by = $1
-WHERE node.workspace_id = $2 AND node.project_id = $3 AND node.id = ANY($4::uuid[])
-    AND EXISTS (SELECT 1 FROM live_node l WHERE l.workspace_id = node.workspace_id
-        AND l.project_id = node.project_id AND l.id = node.id)
-RETURNING node.id, node.rev
+WHERE workspace_id = $2 AND project_id = $3 AND id = ANY($4::uuid[]) AND deleted_at IS NULL
+RETURNING id, rev
 `
 
 type TouchNodesParams struct {
@@ -692,9 +676,13 @@ type TouchNodesRow struct {
 }
 
 // TouchNodes increments the revisions of the project's nodes whose IDs are
-// among ids, whose expressions changed, but for those in the trash, which
-// nothing changes meanwhile, so that the undo of their deletion, which
-// expects the revision that it left, still applies, and returns them.
+// among ids, whose expressions changed, but for those deleted to the trash
+// themselves, which nothing changes meanwhile, so that the undo of their
+// deletion, which expects the revision that it left, still applies, and
+// which their restoration gives a new revision; one that is in the trash
+// only with its board is changed, as no deletion of its own expects its
+// revision, and its board's restoration gives it none. It returns those
+// that it changed.
 func (q *Queries) TouchNodes(ctx context.Context, arg TouchNodesParams) ([]TouchNodesRow, error) {
 	rows, err := q.db.Query(ctx, touchNodes,
 		arg.UpdatedBy,

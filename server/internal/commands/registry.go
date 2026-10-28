@@ -266,13 +266,26 @@ type Derivation struct {
 	Touches []ids.Kind
 	// Derive derives what the batch's commands' changes, changed, the
 	// entities that they changed with their latest revisions, in the order of
-	// their first change, leave to derive, and reports each entity that it
-	// changes with its new revision (Tx.Changed), which the batch's Result
-	// lists, as it lists a command's changes, but which the batch's undo does
-	// not expect, since the undo's own commands derive it again. It runs
-	// once every command has applied, in the order of the registrations,
-	// each derivation seeing what those before it changed.
-	Derive func(ctx context.Context, tx *Tx, changed []Revision) error
+	// their first change, each with the types of the commands that changed it,
+	// leave to derive, and reports each entity that it changes with its new
+	// revision (Tx.Changed), which the batch's Result lists, as it lists a
+	// command's changes, but which the batch's undo does not expect, since the
+	// undo's own commands derive it again. It runs once every command has
+	// applied, in the order of the registrations, each derivation seeing what
+	// those before it changed, as changes of the types that are their names.
+	// The types let it pass over a change that cannot change what it derives,
+	// as package expression passes over a board's rename, which no expression
+	// names, rather than derive again all that the board holds.
+	Derive func(ctx context.Context, tx *Tx, changed []Change) error
+}
+
+// Change is an entity that a batch changed, with its latest revision, as a
+// derivation reads it (Derivation.Derive): By are the types of the commands
+// that changed it, and the names of the derivations that did, each once, in
+// the order of their first change of it.
+type Change struct {
+	Revision
+	By []Type
 }
 
 // Registry holds the types of command, and the kinds of entity that they

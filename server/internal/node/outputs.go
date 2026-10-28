@@ -24,7 +24,10 @@ import (
 
 // The kinds of a branch's output (FR-EDIT-04): the first conditional output
 // of a branch is its if, the others its elseifs, and an else has no
-// condition.
+// condition. They are the kinds that the published format names, which
+// package published defines again, since its tests import this package, and
+// checks to be these (TestOutputKinds), so that what the database stores is
+// what a release writes.
 const (
 	OutputIf     = "if"
 	OutputElseIf = "elseif"
@@ -99,24 +102,24 @@ func withConditions(ctx context.Context, q *queries.Queries, ws, project pgtype.
 	return nil
 }
 
-// nodeOutputs returns the outputs that are not in the trash of the project's
-// branches, by their UUIDs, each branch's in their order, with their
-// conditions.
+// nodeOutputs returns the outputs of the project's branches that are not
+// deleted on their own, by the branches' UUIDs, each branch's in their order,
+// with their conditions: those that are not in the trash, of a branch that is
+// not, and those that are there with it alone, which come back with it, of a
+// branch in the trash, as an answer of revision_conflict shows it.
 func nodeOutputs(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, branches []pgtype.UUID) (
 	map[ids.UUID][]BranchOutput, error) {
 	out := map[ids.UUID][]BranchOutput{}
 	if len(branches) == 0 {
 		return out, nil
 	}
-	live, err := q.NodeOutputs(ctx, queries.NodeOutputsParams{WorkspaceID: ws, ProjectID: project, NodeIds: branches})
+	rows, err := q.NodeOutputs(ctx, queries.NodeOutputsParams{WorkspaceID: ws, ProjectID: project, NodeIds: branches})
 	if err != nil {
 		return nil, fmt.Errorf("node: read the branches' outputs: %w", err)
 	}
-	rows := make([]queries.BranchOutput, len(live))
-	outputs := make([]BranchOutput, len(live))
-	for i, o := range live {
-		rows[i] = queries.BranchOutput(o)
-		outputs[i] = outputOf(rows[i])
+	outputs := make([]BranchOutput, len(rows))
+	for i, o := range rows {
+		outputs[i] = outputOf(o)
 	}
 	if err := withConditions(ctx, q, ws, project, rows, outputs); err != nil {
 		return nil, err
@@ -300,14 +303,12 @@ func registerOutputs(r *commands.Registry) {
 			}
 			owner := expression.Owner{Kind: ids.BranchOutput, ID: o.ID, Board: o.BoardID}
 			set, err := expression.Set(ctx, tx, owner, expression.Condition, p.Condition)
-			if err != nil || !set {
-				return err
-			}
-			rev, err := expression.Touch(ctx, tx, owner)
 			if err != nil {
 				return err
 			}
-			return tx.Changed(ids.BranchOutput, o.ID.Bytes, rev)
+			// The condition is all that the command changes of the output.
+			return changedKind(tx, ids.BranchOutput, o.ID)(expression.OwnerRevision(ctx, tx, owner, set, 0,
+				pgx.ErrNoRows))
 		},
 	})
 
@@ -583,10 +584,11 @@ func sortedRevs(rows []queries.RekindBranchOutputsRow) []queries.RekindBranchOut
 	return out
 }
 
-// firstConditional returns the first conditional output of the branch node
-// that is not in the trash, or nil if it has none.
+// firstConditional returns the first conditional output of the branch node,
+// which is not in the trash, that is not in the trash either, or nil if it
+// has none.
 func firstConditional(ctx context.Context, q *queries.Queries, ws, project, node pgtype.UUID) (
-	*queries.LiveBranchOutput, error) {
+	*queries.BranchOutput, error) {
 	rows, err := q.NodeOutputs(ctx, queries.NodeOutputsParams{WorkspaceID: ws, ProjectID: project,
 		NodeIds: []pgtype.UUID{node}})
 	if err != nil {

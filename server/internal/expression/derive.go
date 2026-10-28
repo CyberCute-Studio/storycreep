@@ -30,7 +30,7 @@ const Name = "expression"
 // connection.Register).
 func Register(r *commands.Registry) {
 	commands.RegisterDerivation(r, commands.Derivation{Name: Name,
-		Touches: []ids.Kind{ids.Node, ids.Connection, ids.BranchOutput}, Derive: derive})
+		Touches: ownerKinds, Derive: derive})
 }
 
 // nameKinds are the kinds of entity whose changes may change what the
@@ -40,6 +40,42 @@ func Register(r *commands.Registry) {
 // nodes, which are in the trash with it.
 var nameKinds = []ids.Kind{ids.Variable, ids.Component, ids.AttributeDef, ids.ComponentType, ids.Board}
 
+// ownerKinds are the kinds of the owners of expressions, whose commands alone
+// write sources.
+var ownerKinds = []ids.Kind{ids.Node, ids.Connection, ids.BranchOutput}
+
+// neutral are the types of command that change an entity of one of
+// nameKinds, or a node, but neither what the project's expressions can name
+// nor what a name of theirs resolves to: a board's creation, which holds
+// neither variables nor nodes yet, and its name, description, colour, slug,
+// place, and entry node; a node's update and its move, which leave as they
+// are its type, which no command changes, and whether it is in the trash,
+// all that a node reference reads; a variable's description, default,
+// reset_on_enter, and place; a component's name, description, image, values,
+// and place; an attribute definition's name, default, and place, which no
+// near match depends on, as they come nearest first and then by their bytes;
+// and a component type's creation, which holds neither definitions nor
+// components yet, and its name, its key, which no expression names, and its
+// icon. derive passes over a change that commands of these types alone made,
+// so that a board's rename, or a variable's description, does not compile
+// again every expression that names what it holds, or names it, nor every one
+// that does not compile; it still compiles the sources that such a command
+// wrote, as a node's update does its scripts. A type that is not here is
+// taken to change what expressions can name, so that a new type of command
+// compiles too much, never too little, until it is added here. The types are
+// spelt out, rather than named by the constants of their packages, which
+// import this one, or will, as package variable's rename will rewrite the
+// sources that name the variable (plan item 47); TestNeutral checks that
+// each is a registered type.
+var neutral = []commands.Type{
+	"board.create", "board.rename", "board.describe", "board.set_color", "board.set_slug", "board.move",
+	"board.set_entry_node", "node.update", "node.move",
+	"variable.describe", "variable.set_default", "variable.set_reset_on_enter", "variable.move",
+	"component.rename", "component.describe", "component.set_image", "component.set_attribute", "component.move",
+	"attribute.rename", "attribute.set_default", "attribute.move",
+	"component_type.create", "component_type.rename", "component_type.set_key", "component_type.set_icon",
+}
+
 // derive compiles the expressions of the batch's project that changed leaves
 // to compile: those whose sources its commands wrote, which have neither an
 // AST nor an error yet; those whose sources name, by their IDs or by their
@@ -47,19 +83,30 @@ var nameKinds = []ids.Kind{ids.Variable, ids.Component, ids.AttributeDef, ids.Co
 // definition, or a node of a type or a board that it changed; and, if it
 // changed a variable, a component, a definition, a type, or a board, every
 // one that does not compile but names something, whose error, or the near
-// matches that it suggests, may change with any of them. So an expression is
-// always what compiling its source against the project as it is gives,
-// whatever batches led there.
-func derive(ctx context.Context, tx *commands.Tx, changed []commands.Revision) error {
+// matches that it suggests, may change with any of them; but for a change
+// that the commands of neutral types alone made, which changes none of
+// them. So an expression is always what compiling its source against the
+// project as it is gives, whatever batches led there.
+func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	byKind := map[ids.Kind][]pgtype.UUID{}
 	done := map[commands.Ref]bool{}
+	writes := false
 	for _, c := range changed {
-		byKind[c.Kind] = append(byKind[c.Kind], nullUUID(c.ID))
 		done[c.Ref] = true
+		writes = writes || slices.Contains(ownerKinds, c.Kind)
+		if slices.ContainsFunc(c.By, func(t commands.Type) bool { return !slices.Contains(neutral, t) }) {
+			byKind[c.Kind] = append(byKind[c.Kind], nullUUID(c.ID))
+		}
 	}
 	names := slices.ContainsFunc(nameKinds, func(k ids.Kind) bool { return len(byKind[k]) > 0 })
+	// Only a command that changes an owner writes a source, so a batch that
+	// changes no owner, and nothing that expressions can name, leaves nothing
+	// to compile.
+	if !writes && !names {
+		return nil
+	}
 	refs, keys := append([]pgtype.UUID{}, byKind[ids.Node]...), []string{}
 	if names {
 		rows, err := q.ChangedNames(ctx, queries.ChangedNamesParams{WorkspaceID: ws, ProjectID: project,
@@ -115,10 +162,12 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Revision) e
 	// An expression is part of its owner, so a change of it that the API
 	// shows is a change of the owner, unless a command of the batch changed
 	// the owner already, whose revision the batch's answer gives then, or the
-	// owner is in the trash, which nothing changes meanwhile, so that the
-	// undo of its deletion, which expects the revision that the deletion
-	// left, still applies: its expressions are compiled as the others are,
-	// and are current when it comes back.
+	// owner is deleted to the trash itself, which nothing changes meanwhile,
+	// so that the undo of its deletion, which expects the revision that the
+	// deletion left, still applies: its expressions are compiled as the
+	// others are, and are current when its restoration brings it back at a
+	// new revision. An owner that is in the trash only with its board, its
+	// node, or its output is changed as one that is not (touchOwners).
 	touched := map[ids.Kind][]pgtype.UUID{}
 	for _, o := range owners {
 		if !o.Shown {
@@ -141,54 +190,19 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Revision) e
 }
 
 // touch increments the revisions of the owners touched, by their kinds, but
-// of those in the trash, as the batch's actor's change, and reports each.
+// of those deleted to the trash themselves (touchOwners), as the batch's
+// actor's change, and reports each.
 func touch(ctx context.Context, tx *commands.Tx, touched map[ids.Kind][]pgtype.UUID) error {
-	q := queries.New(tx)
-	ws, project, by := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID()), nullUUID(tx.Actor().UserID)
-	type revision struct {
-		id  pgtype.UUID
-		rev int64
-	}
-	for _, kind := range []ids.Kind{ids.Node, ids.Connection, ids.BranchOutput} {
-		owners := touched[kind]
-		if len(owners) == 0 {
+	for _, kind := range ownerKinds {
+		if len(touched[kind]) == 0 {
 			continue
 		}
-		var revs []revision
-		switch kind {
-		case ids.Node:
-			rows, err := q.TouchNodes(ctx, queries.TouchNodesParams{UpdatedBy: by, WorkspaceID: ws, ProjectID: project,
-				Ids: owners})
-			if err != nil {
-				return fmt.Errorf("expression: change the nodes' revisions: %w", err)
-			}
-			for _, r := range rows {
-				revs = append(revs, revision{r.ID, r.Rev})
-			}
-		case ids.Connection:
-			rows, err := q.TouchConnections(ctx, queries.TouchConnectionsParams{UpdatedBy: by, WorkspaceID: ws,
-				ProjectID: project, Ids: owners})
-			if err != nil {
-				return fmt.Errorf("expression: change the connections' revisions: %w", err)
-			}
-			for _, r := range rows {
-				revs = append(revs, revision{r.ID, r.Rev})
-			}
-		default:
-			rows, err := q.TouchBranchOutputs(ctx, queries.TouchBranchOutputsParams{UpdatedBy: by, WorkspaceID: ws,
-				ProjectID: project, Ids: owners})
-			if err != nil {
-				return fmt.Errorf("expression: change the outputs' revisions: %w", err)
-			}
-			for _, r := range rows {
-				revs = append(revs, revision{r.ID, r.Rev})
-			}
+		revs, err := touchOwners(ctx, tx, kind, touched[kind])
+		if err != nil {
+			return err
 		}
-		// The rows come back in no order, and the batch's answer lists its
-		// changes in the order that they are reported.
-		slices.SortFunc(revs, func(a, b revision) int { return bytes.Compare(a.id.Bytes[:], b.id.Bytes[:]) })
 		for _, r := range revs {
-			if err := tx.Changed(kind, r.id.Bytes, r.rev); err != nil {
+			if err := tx.Changed(kind, r.ID, r.Rev); err != nil {
 				return err
 			}
 		}
@@ -196,50 +210,71 @@ func touch(ctx context.Context, tx *commands.Tx, touched map[ids.Kind][]pgtype.U
 	return nil
 }
 
-// Touch increments the revision of the owner o of the batch's project, whose
-// expression the command changed alone, of its fields, and returns its new
-// revision, as a command's Apply does once Set reports a change and nothing
-// else of the owner changes.
-func Touch(ctx context.Context, tx *commands.Tx, o Owner) (int64, error) {
+// touchOwner increments the revision of the owner o of the batch's project,
+// which is not in the trash, whose expressions a command changed, and
+// returns its new revision (OwnerRevision).
+func touchOwner(ctx context.Context, tx *commands.Tx, o Owner) (int64, error) {
+	revs, err := touchOwners(ctx, tx, o.Kind, []pgtype.UUID{o.ID})
+	switch {
+	case err != nil:
+		return 0, err
+	case len(revs) != 1:
+		return 0, fmt.Errorf("expression: changing the revision of the %s changed %d rows", o.Kind, len(revs))
+	}
+	return revs[0].Rev, nil
+}
+
+// touchOwners increments the revisions of the owners of the kind whose UUIDs
+// are owners, of the batch's project, as the batch's actor's change, but of
+// those deleted to the trash themselves, which nothing changes meanwhile, and
+// returns the new revisions of those that it changed, in the order of their
+// UUIDs, in which the batch's answer lists them. One that is in the trash
+// only with its board, its node, or its output is changed, as one that is not
+// in the trash is: no deletion of its own expects its revision, and the
+// restoration of what it is in the trash with gives it none, so that it
+// would come back changed at the revision that a client holds it at.
+func touchOwners(ctx context.Context, tx *commands.Tx, kind ids.Kind, owners []pgtype.UUID) (
+	[]commands.Revision, error) {
 	q := queries.New(tx)
 	ws, project, by := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID()), nullUUID(tx.Actor().UserID)
-	ownerIDs := []pgtype.UUID{o.ID}
-	var revs []int64
-	switch o.Kind {
+	var revs []commands.Revision
+	add := func(id pgtype.UUID, rev int64) {
+		revs = append(revs, commands.Revision{Ref: commands.Ref{Kind: kind, ID: id.Bytes}, Rev: rev})
+	}
+	switch kind {
 	case ids.Node:
 		rows, err := q.TouchNodes(ctx, queries.TouchNodesParams{UpdatedBy: by, WorkspaceID: ws, ProjectID: project,
-			Ids: ownerIDs})
-		for _, r := range rows {
-			revs = append(revs, r.Rev)
-		}
+			Ids: owners})
 		if err != nil {
-			return 0, fmt.Errorf("expression: change the node's revision: %w", err)
+			return nil, fmt.Errorf("expression: change the nodes' revisions: %w", err)
+		}
+		for _, r := range rows {
+			add(r.ID, r.Rev)
 		}
 	case ids.Connection:
 		rows, err := q.TouchConnections(ctx, queries.TouchConnectionsParams{UpdatedBy: by, WorkspaceID: ws,
-			ProjectID: project, Ids: ownerIDs})
-		for _, r := range rows {
-			revs = append(revs, r.Rev)
-		}
+			ProjectID: project, Ids: owners})
 		if err != nil {
-			return 0, fmt.Errorf("expression: change the connection's revision: %w", err)
+			return nil, fmt.Errorf("expression: change the connections' revisions: %w", err)
+		}
+		for _, r := range rows {
+			add(r.ID, r.Rev)
 		}
 	case ids.BranchOutput:
 		rows, err := q.TouchBranchOutputs(ctx, queries.TouchBranchOutputsParams{UpdatedBy: by, WorkspaceID: ws,
-			ProjectID: project, Ids: ownerIDs})
-		for _, r := range rows {
-			revs = append(revs, r.Rev)
-		}
+			ProjectID: project, Ids: owners})
 		if err != nil {
-			return 0, fmt.Errorf("expression: change the output's revision: %w", err)
+			return nil, fmt.Errorf("expression: change the outputs' revisions: %w", err)
+		}
+		for _, r := range rows {
+			add(r.ID, r.Rev)
 		}
 	default:
-		return 0, fmt.Errorf("expression: a %s has no expressions", o.Kind)
+		return nil, fmt.Errorf("expression: a %s has no expressions", kind)
 	}
-	if len(revs) != 1 {
-		return 0, fmt.Errorf("expression: changing the revision of the %s changed %d rows", o.Kind, len(revs))
-	}
-	return revs[0], nil
+	// The rows come back in no order.
+	slices.SortFunc(revs, func(a, b commands.Revision) int { return bytes.Compare(a.ID[:], b.ID[:]) })
+	return revs, nil
 }
 
 // loadProject returns what the project's expressions can name (§5.8.3): its

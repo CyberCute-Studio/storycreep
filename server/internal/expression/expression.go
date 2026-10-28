@@ -27,8 +27,9 @@
 // item 47), a source that names a renamed key no longer compiles.
 //
 // An expression is part of its owner, whose revision every change of it
-// increments, the compiler's too, but while the owner is in the trash, which
-// nothing changes meanwhile, and with which it is in the trash, and purged.
+// increments, the compiler's too, but while the owner is deleted to the trash
+// itself, which nothing changes meanwhile, and whose restoration gives it a
+// new revision; it is in the trash with its owner, and purged with it.
 package expression
 
 import (
@@ -36,8 +37,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
@@ -124,15 +127,81 @@ func CheckSource(source string) string {
 // the batch's project, to *source, or removes the field's expression if
 // source is nil, and reports whether that changed it, as a command's Apply
 // does it before it reports its owner's change, so that the pipeline compiles
-// the source once every command of the batch has applied. It returns an error
-// if f is not a field of o's kind, or if it would write a source while the
-// registry lacks the derivation that compiles it (Register).
+// the source once every command of the batch has applied, and which a command
+// whose update of its owner finds nothing else to change reports the owner's
+// change for with OwnerRevision. It returns an error if f is not a field of
+// o's kind, or if it would write a source while the registry lacks the
+// derivation that compiles it (Register).
 func Set(ctx context.Context, tx *commands.Tx, o Owner, f Field, source *string) (bool, error) {
-	if source != nil && !tx.Derives(Name) {
-		return false, errors.New("expression: the registry does not compile expressions: register them (Register)")
+	return write(ctx, tx, o, []fieldSource{{f, source}})
+}
+
+// SetFields sets the expression of each field of the owner o, of the batch's
+// project, that sources holds a source of, to that source, or removes the
+// field's expression for the empty string, as a node's scripts, and a
+// connection's condition and on-traverse script, are written; a field that
+// sources leaves out, or holds as nil, stays as it is. It reports whether
+// that changed any of them, and returns an error as Set does. A branch
+// output's condition, which may be empty, is written with Set.
+func SetFields(ctx context.Context, tx *commands.Tx, o Owner, sources map[Field]*string) (bool, error) {
+	var list []fieldSource
+	for f, source := range sources {
+		if !slices.Contains(fields[o.Kind], f) {
+			return false, fmt.Errorf("expression: a %s has no field %s", o.Kind, f)
+		}
+		if source != nil {
+			list = append(list, fieldSource{f, source})
+		}
 	}
-	if !hasField(o.Kind, f) {
-		return false, fmt.Errorf("expression: a %s has no field %s", o.Kind, f)
+	// The fields are written in their order, whatever the map's.
+	slices.SortFunc(list, func(a, b fieldSource) int {
+		return slices.Index(fields[o.Kind], a.field) - slices.Index(fields[o.Kind], b.field)
+	})
+	for i := range list {
+		if *list[i].source == "" {
+			list[i].source = nil
+		}
+	}
+	return write(ctx, tx, o, list)
+}
+
+// OwnerRevision returns the revision of the owner o that a command's update
+// of o's other fields returned, rev, with err, as the command reports it,
+// unless the update found nothing of them to change, which it returns as
+// pgx.ErrNoRows, while the command changed o's expressions, as set says
+// (Set, SetFields): a change of an owner's expressions is a change of the
+// owner, so it then increments o's revision, and returns the new one. An
+// update that changed nothing, of expressions that are as they were, is
+// returned as it is, pgx.ErrNoRows, which the command reports as no change.
+func OwnerRevision(ctx context.Context, tx *commands.Tx, o Owner, set bool, rev int64, err error) (int64, error) {
+	if set && errors.Is(err, pgx.ErrNoRows) {
+		return touchOwner(ctx, tx, o)
+	}
+	return rev, err
+}
+
+// fieldSource is the source that write writes at a field, or nil for none.
+type fieldSource struct {
+	field  Field
+	source *string
+}
+
+// write sets the source of the expression of each field of the owner o, of
+// the batch's project, that sources lists, to its source, or removes the
+// field's expression if its source is nil, and reports whether that changed
+// any of them, as Set does, reading o's expressions once.
+func write(ctx context.Context, tx *commands.Tx, o Owner, sources []fieldSource) (bool, error) {
+	for _, s := range sources {
+		switch {
+		case !slices.Contains(fields[o.Kind], s.field):
+			return false, fmt.Errorf("expression: a %s has no field %s", o.Kind, s.field)
+		case s.source != nil && !tx.Derives(Name):
+			return false, errors.New("expression: the registry does not compile expressions: register them " +
+				"(Register)")
+		}
+	}
+	if len(sources) == 0 {
+		return false, nil
 	}
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
@@ -140,44 +209,43 @@ func Set(ctx context.Context, tx *commands.Tx, o Owner, f Field, source *string)
 	if err != nil {
 		return false, err
 	}
-	var current *queries.Expression
-	for i := range stored {
-		if Field(stored[i].Field) == f {
-			current = &stored[i]
-		}
-	}
-	switch {
-	case current == nil && source == nil:
-		return false, nil
-	case current == nil:
-		params := queries.InsertExpressionParams{WorkspaceID: ws, ProjectID: project, BoardID: o.Board,
-			Field: string(f), Context: string(f.Context()), Source: *source}
-		switch o.Kind {
-		case ids.Node:
-			params.NodeID = o.ID
-		case ids.Connection:
-			params.ConnectionID = o.ID
+	changed := false
+	for _, s := range sources {
+		f, source := s.field, s.source
+		i := slices.IndexFunc(stored, func(e queries.Expression) bool { return Field(e.Field) == f })
+		var n int64
+		switch {
+		case i < 0 && source == nil:
+			continue
+		case i < 0:
+			params := queries.InsertExpressionParams{WorkspaceID: ws, ProjectID: project, BoardID: o.Board,
+				Field: string(f), Context: string(f.Context()), Source: *source}
+			switch o.Kind {
+			case ids.Node:
+				params.NodeID = o.ID
+			case ids.Connection:
+				params.ConnectionID = o.ID
+			default:
+				params.BranchOutputID = o.ID
+			}
+			if err := q.InsertExpression(ctx, params); err != nil {
+				return false, fmt.Errorf("expression: add the %s of the %s: %w", f, o.Kind, err)
+			}
+			n = 1
+		case source == nil:
+			if n, err = q.DeleteExpression(ctx, queries.DeleteExpressionParams{WorkspaceID: ws, ProjectID: project,
+				ID: stored[i].ID}); err != nil {
+				return false, fmt.Errorf("expression: delete the %s of the %s: %w", f, o.Kind, err)
+			}
 		default:
-			params.BranchOutputID = o.ID
+			if n, err = q.SetExpressionSource(ctx, queries.SetExpressionSourceParams{Source: *source,
+				WorkspaceID: ws, ProjectID: project, ID: stored[i].ID}); err != nil {
+				return false, fmt.Errorf("expression: set the %s of the %s: %w", f, o.Kind, err)
+			}
 		}
-		if err := q.InsertExpression(ctx, params); err != nil {
-			return false, fmt.Errorf("expression: add the %s of the %s: %w", f, o.Kind, err)
-		}
-		return true, nil
-	case source == nil:
-		n, err := q.DeleteExpression(ctx, queries.DeleteExpressionParams{WorkspaceID: ws, ProjectID: project,
-			ID: current.ID})
-		if err != nil {
-			return false, fmt.Errorf("expression: delete the %s of the %s: %w", f, o.Kind, err)
-		}
-		return n > 0, nil
+		changed = changed || n > 0
 	}
-	n, err := q.SetExpressionSource(ctx, queries.SetExpressionSourceParams{Source: *source, WorkspaceID: ws,
-		ProjectID: project, ID: current.ID})
-	if err != nil {
-		return false, fmt.Errorf("expression: set the %s of the %s: %w", f, o.Kind, err)
-	}
-	return n > 0, nil
+	return changed, nil
 }
 
 // CopyNode gives the node target, a copy of the node source of the batch's
@@ -285,16 +353,6 @@ func ownerExpressions(ctx context.Context, q *queries.Queries, ws, project pgtyp
 		return nil, fmt.Errorf("expression: read the expressions of the %ss: %w", kind, err)
 	}
 	return rows, nil
-}
-
-// hasField reports whether an owner of the kind has the field f.
-func hasField(kind ids.Kind, f Field) bool {
-	for _, g := range fields[kind] {
-		if g == f {
-			return true
-		}
-	}
-	return false
 }
 
 // ownerOf returns the UUID of the expression row's owner.

@@ -19,12 +19,14 @@ VALUES (@id, @workspace_id, @project_id, @board_id, @from_node_id, sqlc.narg(fro
 -- name: ConnectionAny :one
 -- ConnectionAny returns a connection of the project, whether or not it is in
 -- the trash, and whether it is in the trash with one of its nodes, the
--- output that it leaves, or its board, which ends_deleted says, with the
--- output, which output_deleted says, and with its board, which board_deleted
--- says, and no row if the project has no such connection.
+-- output that it leaves, or its board, which ends_deleted says, with one of
+-- its nodes, deleted on their own, which nodes_deleted says, with the output,
+-- which output_deleted says, and with its board, which board_deleted says,
+-- and no row if the project has no such connection.
 SELECT sqlc.embed(connection),
     (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL OR o.deleted_at IS NOT NULL
         OR b.deleted_at IS NOT NULL)::boolean AS ends_deleted,
+    (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL)::boolean AS nodes_deleted,
     (o.deleted_at IS NOT NULL)::boolean AS output_deleted,
     (b.deleted_at IS NOT NULL)::boolean AS board_deleted
 FROM connection

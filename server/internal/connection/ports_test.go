@@ -1,6 +1,7 @@
 package connection_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
@@ -26,7 +27,9 @@ func (f *fixture) newOutput(t *testing.T, branch string, extra payload) string {
 // trash, or none is refused at from_port, that the connections that leave a
 // port are ordered among themselves, after the port's last, that reconnecting
 // a connection to another port, or to another node, places it after that
-// port's last, and that the undo sets its port back.
+// port's last, that the undo sets its port back, and that a connection of an
+// output in the trash, of a branch in the trash too, is refused with the
+// branch named first, whose restoration the output's waits for.
 func TestPorts(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -100,8 +103,22 @@ func TestPorts(t *testing.T) {
 	if r := f.refused(t, cmd{connection.Update, payload{"id": second, "condition": "true"}}); r.Field != "id" {
 		t.Errorf("a change of a connection of an output in the trash is refused at %s: %s", r.Field, r.Message)
 	}
-	if r := f.refused(t, cmd{connection.Restore, payload{"id": second}}); r.Field != "id" {
+	if r := f.refused(t, cmd{connection.Restore, payload{"id": second}}); r.Field != "id" ||
+		!strings.Contains(r.Message, "restore it first") {
 		t.Errorf("the restoration of a connection of an output in the trash is refused at %s: %s", r.Field,
 			r.Message)
+	}
+	// Once the branch is in the trash too, whose output's restoration is
+	// refused until it comes back, the refusal names the branch first.
+	f.must(t, cmd{node.Delete, payload{"id": branch}})
+	if r := f.refused(t, cmd{connection.Restore, payload{"id": second}}); r.Field != "id" ||
+		!strings.Contains(r.Message, "only once its nodes do") {
+		t.Errorf("the restoration of a connection of an output of a branch in the trash is refused at %s: %s",
+			r.Field, r.Message)
+	}
+	if r := f.refused(t, cmd{connection.Delete, payload{"id": second}}); r.Field != "id" ||
+		!strings.Contains(r.Message, "comes back with its nodes") {
+		t.Errorf("the deletion of a connection of an output of a branch in the trash is refused at %s: %s",
+			r.Field, r.Message)
 	}
 }

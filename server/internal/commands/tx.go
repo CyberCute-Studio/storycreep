@@ -39,8 +39,11 @@ type Tx struct {
 	// changed are the entities that the batch's commands changed, with their
 	// latest revisions, in the order of their first change, and at their
 	// indexes. revs are the revisions that the batch has seen of each entity,
-	// read by the pipeline or reported by a command.
+	// read by the pipeline or reported by a command. by are the types of the
+	// commands, and the names of the derivations, that changed each entity of
+	// changed, at its index, each once, which a derivation reads (Change).
 	changed []Revision
+	by      [][]Type
 	at      map[Ref]int
 	revs    map[Ref]int64
 	// steps are the steps of the inverse of the command that applies, none
@@ -220,10 +223,14 @@ func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 	}
 	if i, ok := t.at[ref]; ok {
 		t.changed[i].Rev = rev
+		if !slices.Contains(t.by[i], t.current.typ) {
+			t.by[i] = append(t.by[i], t.current.typ)
+		}
 		return nil
 	}
 	t.at[ref] = len(t.changed)
 	t.changed = append(t.changed, Revision{Ref: ref, Rev: rev})
+	t.by = append(t.by, []Type{t.current.typ})
 	return nil
 }
 
@@ -268,15 +275,20 @@ func (t *Tx) Derives(name string) bool {
 
 // derive runs the registry's derivations, in the order of their
 // registration, once every command of the batch has applied, each with what
-// the batch has changed so far, its commands and the derivations before it.
-// A derivation reports its changes as a command does (Changed), as one that
-// touches its kinds, but no step of the batch's undo expects them.
+// the batch has changed so far, its commands and the derivations before it,
+// and the types of those that changed each entity. A derivation reports its
+// changes as a command does (Changed), as one that touches its kinds, but no
+// step of the batch's undo expects them.
 func (t *Tx) derive(ctx context.Context) error {
 	for _, d := range t.pipeline.registry.derivations {
 		t.current, t.steps = d.spec, nil
 		clear(t.expecting)
 		clear(t.expected)
-		err := d.Derive(ctx, t, slices.Clone(t.changed))
+		changed := make([]Change, len(t.changed))
+		for i, c := range t.changed {
+			changed[i] = Change{Revision: c, By: slices.Clone(t.by[i])}
+		}
+		err := d.Derive(ctx, t, changed)
 		t.current = nil
 		if err != nil {
 			return fmt.Errorf("commands: the derivation %s: %w", d.Name, err)

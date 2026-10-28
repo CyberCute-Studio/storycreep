@@ -367,8 +367,8 @@ func TestConditions(t *testing.T) {
 // compiles it against the variable, and that a change of what a source names,
 // a variable's deletion, restoration, retype, or rename, a node's deletion or
 // creation, compiles it again, and changes the revision of its owner, which
-// the batch's answer lists, and that the undo of each gives back what the
-// batch found.
+// the batch's answer lists, but for an owner deleted to the trash itself, and
+// that the undo of each gives back what the batch found.
 func TestRecompile(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -438,12 +438,79 @@ func TestRecompile(t *testing.T) {
 	invalid(t, "the script of a node restored once its variable is deleted", f.node(t, scripted).OnEnter,
 		"trust = 1", "unknown_identifier")
 
+	// One that is in the trash only with its board is changed, as no
+	// deletion of its own expects its revision, and its board's restoration
+	// gives it none: it comes back current, at the revision that the batch
+	// that compiled it again listed.
+	pier := f.newBoard(t, "Moorings")
+	moored := f.newNode(t, pier, "element", payload{"on_enter": "trust = 1"})
+	mooredID := decode(t, ids.Node, moored)
+	rev = f.node(t, moored).Rev
+	boardDeletion := f.must(t, cmd{board.Delete, payload{"id": pier}})
+	res = f.must(t, cmd{variable.Restore, payload{"id": trust}})
+	if !slices.Contains(res.Revisions, commands.Revision{Ref: commands.Ref{Kind: ids.Node, ID: mooredID},
+		Rev: rev + 1}) {
+		t.Errorf("the restoration of a variable listed %v, want the node of a board in the trash at %d",
+			res.Revisions, rev+1)
+	}
+	f.undo(t, boardDeletion.Seq)
+	n := f.node(t, moored)
+	valid(t, "the script of a node of a restored board", n.OnEnter, "trust = 1")
+	if n.Rev != rev+1 {
+		t.Errorf("the node of a restored board is at %d, want %d", n.Rev, rev+1)
+	}
+
 	// A batch that changes nothing that a source names compiles nothing,
 	// and leaves its owner as it is.
 	rev = f.connection(t, id).Rev
 	if res := f.must(t, cmd{node.Update, payload{"id": keeper, "title": "Keeper"}}); changed(res, ids.Connection,
 		conn) || f.connection(t, id).Rev != rev {
 		t.Errorf("a node's retitle changed the connection: %v", res.Revisions)
+	}
+}
+
+// TestNeutral checks that each type of command that the derivation passes
+// over is a registered type, and that a batch of such commands alone compiles
+// nothing again, while one that changes what expressions can name compiles
+// again every expression that does not compile but names something, whose
+// near matches may change with it.
+func TestNeutral(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	reg := commands.NewRegistry()
+	project.Register(reg)
+	board.Register(reg)
+	variable.Register(reg)
+	component.Register(reg)
+	node.Register(reg)
+	connection.Register(reg)
+	expression.Register(reg)
+	for _, typ := range expression.Neutral {
+		if !slices.Contains(reg.Types(), typ) {
+			t.Errorf("the derivation passes over %s, which is not a registered type of command", typ)
+		}
+	}
+
+	depth := f.newVariable(t, "depth", "int")
+	keeper := f.newNode(t, f.harbour, "element", payload{"on_enter": "tide = 1"})
+	invalid(t, "a script of a variable that the project lacks", f.node(t, keeper).OnEnter, "tide = 1",
+		"unknown_identifier")
+	// What compiling it gave is changed behind the pipeline's back, so that
+	// whether a batch compiles it again shows.
+	f.exec(t, `UPDATE expression SET error = jsonb_set(error, '{code}', '"stale"') WHERE node_id = $1`,
+		decode(t, ids.Node, keeper))
+	f.must(t, cmd{board.Rename, payload{"id": f.harbour, "name": "Old harbour"}},
+		cmd{variable.Describe, payload{"id": depth, "description": "How deep the water is"}},
+		cmd{node.Update, payload{"id": keeper, "title": "Keeper"}},
+		cmd{node.Move, payload{"nodes": []payload{{"id": keeper, "position": payload{"x": 4, "y": 4}}}}})
+	if e := f.node(t, keeper).OnEnter; e.Error == nil || e.Error.Code != "stale" {
+		t.Errorf("a batch of commands that change no name compiled the script again: %+v", e.Error)
+	}
+	f.must(t, createVariable(ids.Encode(ids.Variable, ids.New()), "tides", "int", ""))
+	e := f.node(t, keeper).OnEnter
+	invalid(t, "the script once a near variable is created", e, "tide = 1", "unknown_identifier")
+	if !slices.Equal(e.Error.Suggestions, []string{"tides"}) {
+		t.Errorf("the script's error suggests %v, want the new variable", e.Error.Suggestions)
 	}
 }
 

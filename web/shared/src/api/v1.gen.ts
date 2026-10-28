@@ -1584,7 +1584,7 @@ export interface Node {
   on_enter?: Expression;
   /** An element's or a branch's on-exit script, which runs when the flow leaves the node, by a connection or by ending there (PRD §5.8.5), if it has one. A jumper has none. */
   on_exit?: Expression;
-  /** A branch's outputs that are not in the project's trash, in their order (PRD FR-EDIT-04): its conditional outputs, the first its if and the others its elseifs, and its else after them, if it has one. Without them, the branch has none, which the validation reports. Another type has none. */
+  /** A branch's outputs that are not in the project's trash, in their order (PRD FR-EDIT-04): its conditional outputs, the first its if and the others its elseifs, and its else after them, if it has one. Without them, the branch has none, which the validation reports. Another type has none. An answer of revision_conflict for a branch in the trash shows those that are there with it alone, which come back with it. */
   outputs?: Array<BranchOutput> | null;
   /** Where the node is on its board's canvas */
   position: NodePosition;

@@ -235,10 +235,7 @@ func Register(r *commands.Registry) {
 			}
 			// A change of the connection's expressions alone is a change of
 			// the connection, whose revision it increments.
-			if set && errors.Is(err, pgx.ErrNoRows) {
-				rev, err = expression.Touch(ctx, tx, owner)
-			}
-			return changed(tx, c.ID)(rev, err)
+			return changed(tx, c.ID)(expression.OwnerRevision(ctx, tx, owner, set, rev, err))
 		},
 	})
 
@@ -363,15 +360,18 @@ func Register(r *commands.Registry) {
 			switch {
 			case err != nil:
 				return err
+			// What the connection is in the trash with is named from the
+			// outside in, its board, its nodes, and then its output, whose own
+			// restoration is refused until its node comes back.
 			case row.BoardDeleted:
 				return commands.Refuse("id", "is a connection of a board in the project's trash, which comes back "+
 					"only with its board: restore the board first", nil)
+			case row.NodesDeleted:
+				return commands.Refuse("id", "is a connection of a node in the project's trash, which comes back "+
+					"only once its nodes do: restore them first", nil)
 			case row.OutputDeleted:
 				return commands.Refuse("id", "is a connection of a branch output in the project's trash, which "+
 					"comes back only once its output does: restore it first", nil)
-			case row.EndsDeleted:
-				return commands.Refuse("id", "is a connection of a node in the project's trash, which comes back "+
-					"only once its nodes do: restore them first", nil)
 			case !row.Connection.DeletedAt.Valid:
 				return nil
 			}
@@ -455,28 +455,11 @@ func unreconnected(id, from, output, to pgtype.UUID) commands.Unreconnected {
 // setExpressions sets the condition and the on-traverse script of the
 // connection owner, each to its source, or removes it for the empty string,
 // but for one that is nil, which stays as it is, and reports whether that
-// changed either.
+// changed either (expression.SetFields).
 func setExpressions(ctx context.Context, tx *commands.Tx, owner expression.Owner, condition, onTraverse *string) (
 	bool, error) {
-	changed := false
-	for _, e := range []struct {
-		field  expression.Field
-		source *string
-	}{{expression.Condition, condition}, {expression.OnTraverse, onTraverse}} {
-		if e.source == nil {
-			continue
-		}
-		source := e.source
-		if *source == "" {
-			source = nil
-		}
-		set, err := expression.Set(ctx, tx, owner, e.field, source)
-		if err != nil {
-			return false, err
-		}
-		changed = changed || set
-	}
-	return changed, nil
+	return expression.SetFields(ctx, tx, owner, map[expression.Field]*string{expression.Condition: condition,
+		expression.OnTraverse: onTraverse})
 }
 
 // applyCreate is Create's Apply.
@@ -780,12 +763,12 @@ func refuseEndsInTrash(row queries.ConnectionAnyRow) error {
 	case row.BoardDeleted:
 		return commands.Refuse("id", "is a connection of a board in the project's trash, which comes back with "+
 			"its board", nil)
-	case row.OutputDeleted:
-		return commands.Refuse("id", "is a connection of a branch output in the project's trash, which comes back "+
-			"with its output", nil)
+	case row.NodesDeleted:
+		return commands.Refuse("id", "is a connection of a node in the project's trash, which comes back with its "+
+			"nodes", nil)
 	}
-	return commands.Refuse("id", "is a connection of a node in the project's trash, which comes back with its "+
-		"nodes", nil)
+	return commands.Refuse("id", "is a connection of a branch output in the project's trash, which comes back "+
+		"with its output", nil)
 }
 
 // sameUUID reports whether the columns a and b are the same: both null, or
