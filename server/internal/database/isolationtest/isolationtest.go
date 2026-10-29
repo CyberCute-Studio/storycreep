@@ -224,6 +224,17 @@ var Tables = []Table{
 			[]any{id, w.ID, w.Rows["project"], w.Rows["board"], w.Rows[map[string]string{"node_id": "node",
 				"connection_id": "connection", "branch_output_id": "branch_output"}[owner]], field, reads}}, nil
 	}},
+	{Name: "expression_name", ID: "ref", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement,
+		error) {
+		// A name of the workspace's expression, of a UUID of its own, as many
+		// as the harness adds. The expression's refs do not hold it, as
+		// compiling the expression would keep them, but the harness reads the
+		// names alone.
+		ref := ids.New()
+		return Statement{ref, "INSERT INTO expression_name (workspace_id, project_id, expression_id, board_id, " +
+			"ref) VALUES ($1, $2, $3, $4, $5)", []any{w.ID, w.Rows["project"], w.Rows["expression"], w.Rows["board"],
+			ref}}, nil
+	}},
 	{Name: "variable", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A global variable's key is unique within its project, which its ID
 		// makes. It belongs to no board, so that the trash's tests delete it

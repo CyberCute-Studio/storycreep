@@ -186,6 +186,21 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 	if err != nil {
 		return fmt.Errorf("expression: store what the expressions compile to: %w", err)
 	}
+	// The names of the expressions whose refs or keys changed, or that had
+	// yet to compile, are written as their refs and keys now are, by which
+	// a later batch finds those that name what it changes.
+	var renamed []pgtype.UUID
+	for _, o := range owners {
+		if o.Renamed {
+			renamed = append(renamed, o.ID)
+		}
+	}
+	if len(renamed) > 0 {
+		if err := q.IndexExpressionNames(ctx, queries.IndexExpressionNamesParams{WorkspaceID: ws,
+			ProjectID: project, Ids: renamed}); err != nil {
+			return fmt.Errorf("expression: write the names of the expressions: %w", err)
+		}
+	}
 	// An expression is part of its owner, so a change of it that the API
 	// shows is a change of the owner, unless a command of the batch changed
 	// the owner already, whose revision the batch's answer gives then, or the
@@ -349,14 +364,19 @@ func boardExpressions(ctx context.Context, q *queries.Queries, ws, project pgtyp
 	if err != nil {
 		return nil, fmt.Errorf("expression: read the expressions that name what the boards hold: %w", err)
 	}
-	changed := []pgtype.UUID{}
+	// Each row is a name of an expression: a node's UUID, or the key of a
+	// variable, which the query reads of the expressions that do not compile
+	// alone.
+	changed, seen := []pgtype.UUID{}, map[pgtype.UUID]bool{}
 	for _, r := range rows {
 		other := func(b pgtype.UUID) bool { return b != r.BoardID }
-		if slices.ContainsFunc(r.Refs, func(n pgtype.UUID) bool { b, ok := nodeBoard[n]; return ok && other(b) }) ||
-			!r.IsValid && slices.ContainsFunc(r.Keys, func(k string) bool {
-				return slices.ContainsFunc(keyBoards[k], other)
-			}) {
-			changed = append(changed, r.ID)
+		if seen[r.ExpressionID] {
+			continue
+		}
+		if b, ok := nodeBoard[r.Ref]; r.Ref.Valid && ok && other(b) ||
+			r.Key.Valid && slices.ContainsFunc(keyBoards[r.Key.String], other) {
+			seen[r.ExpressionID] = true
+			changed = append(changed, r.ExpressionID)
 		}
 	}
 	return changed, nil

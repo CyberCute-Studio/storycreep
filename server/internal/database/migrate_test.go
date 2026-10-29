@@ -19,6 +19,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/slug"
 )
 
@@ -687,23 +688,9 @@ func TestUpgradeMatchesFreshInstall(t *testing.T) {
 func TestProjectSlugBackfill(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	before := fstest.MapFS{}
-	names, err := fs.Glob(database.Migrations(), "*.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range names {
-		if name >= "00018" {
-			continue
-		}
-		data, err := fs.ReadFile(database.Migrations(), name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		before[name] = &fstest.MapFile{Data: data}
-	}
 	d := dbtest.Empty(t)
-	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: before}); err != nil {
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL,
+		database.MigrateOptions{Migrations: migrationsBefore(t, "00018")}); err != nil {
 		t.Fatal(err)
 	}
 	admin := d.Admin(t)
@@ -739,6 +726,74 @@ func TestProjectSlugBackfill(t *testing.T) {
 		if want := slug.Derive(name, "project"); got != want {
 			t.Errorf("the project %q has the slug %q, want %q", name, got, want)
 		}
+	}
+}
+
+// TestExpressionNamesBackfill upgrades a database whose expressions have no
+// names yet (expression_name), as the migrations before the names' left
+// them, and checks that the names' migration gives each expression a name of
+// each UUID of its refs and of each key of its keys, with its board, as
+// compiling it gives them, whether it compiles or not, and none to one that
+// names nothing.
+func TestExpressionNamesBackfill(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL,
+		database.MigrateOptions{Migrations: migrationsBefore(t, "00026")}); err != nil {
+		t.Fatal(err)
+	}
+	admin := d.Admin(t)
+	ws, project, folder, board, keeper, lookout := ids.New(), ids.New(), ids.New(), ids.New(), ids.New(), ids.New()
+	seen, buoy := ids.New(), ids.New()
+	for _, c := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Harbour', 'harbour', 'unlimited')`,
+			[]any{ws}},
+		{`INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')`, []any{project, ws}},
+		{`INSERT INTO folder (id, workspace_id, project_id, kind, name, "order")
+			VALUES ($1, $2, $3, 'board', 'Act 1', 'V')`, []any{folder, ws, project}},
+		{`INSERT INTO board (id, workspace_id, project_id, folder_id, "order", name, slug)
+			VALUES ($1, $2, $3, $4, 'V', 'Harbour', 'harbour')`, []any{board, ws, project, folder}},
+		{`INSERT INTO node (id, workspace_id, project_id, board_id, type, kind, text, x, y)
+			VALUES ($1, $2, $3, $4, 'element', 'dialogue', $5, 0, 0), ($6, $2, $3, $4, 'element', 'dialogue', $5, 0, 0)`,
+			[]any{keeper, ws, project, board, `{"type": "doc", "content": [{"type": "paragraph"}]}`, lookout}},
+		// A script that compiles, of a variable and a node, one that does not,
+		// of the node and a key that the project lacks, and one that names
+		// nothing, as compiling them left them.
+		{`INSERT INTO expression (workspace_id, project_id, board_id, node_id, field, context, source, ast,
+				ast_version, is_valid, error, refs, keys)
+			VALUES ($1, $2, $3, $4, 'on_enter', 'script', 'seen = 1', '{"kind": "script"}', 1, true, NULL,
+					ARRAY[$6::uuid, $7::uuid], ARRAY['seen']),
+				($1, $2, $3, $4, 'on_exit', 'script', 'nope = 1', NULL, NULL, false,
+					'{"code": "unknown_identifier", "start": 0, "end": 4}', ARRAY[$7::uuid], ARRAY['nope']),
+				($1, $2, $3, $5, 'on_enter', 'script', '', '{"kind": "script"}', 1, true, NULL, '{}', '{}')`,
+			[]any{ws, project, board, keeper, lookout, seen, buoy}},
+	} {
+		if _, err := admin.Exec(ctx, c.sql, c.args...); err != nil {
+			t.Fatalf("%s: %v", c.sql, err)
+		}
+	}
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := admin.Query(ctx, `SELECT e.field || ' ' || coalesce(n.ref::text, n.key) || ' ' ||
+			(n.board_id = e.board_id AND n.project_id = e.project_id)::text
+		FROM expression_name n JOIN expression e ON e.id = n.expression_id ORDER BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"on_enter " + seen.String() + " true", "on_enter " + buoy.String() + " true",
+		"on_enter seen true", "on_exit " + buoy.String() + " true", "on_exit nope true"}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("the names are %q, want %q", got, want)
 	}
 }
 

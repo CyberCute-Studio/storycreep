@@ -31,9 +31,16 @@
 // as it would be once the board is restored, against the board's own
 // variables and nodes that are in the trash with it too, so that a board's
 // deletion and its restoration change none of the expressions that it holds,
-// which they do not compile again. Until a rename rewrites the sources that
-// name what it renames (FR-VAR-03, plan item 47), a source that names a
-// renamed key no longer compiles.
+// which they do not compile again. The derivation finds the expressions
+// that name what a batch changed by their names (expression_name): a row of
+// each UUID and each key that compiling an expression's source gave, with
+// its board, which it writes as it compiles the expression
+// (IndexExpressionNames), and the expression's deletion deletes, read by an
+// index of each, so that finding them takes as long as what it finds,
+// however many things the batch changed, as a board's deletion changes 2,000
+// nodes. Until a rename rewrites the sources that name what it renames
+// (FR-VAR-03, plan item 47), a source that names a renamed key no longer
+// compiles.
 //
 // An expression is part of its owner, whose revision every change of it
 // increments, the compiler's too, but while the owner is deleted to the trash

@@ -116,14 +116,50 @@ func (f *fixture) apply(t *testing.T, cmds ...cmd) (commands.Result, error) {
 }
 
 // must applies the commands as apply does, and fails the test unless they
-// apply.
+// apply and leave the names of the project's expressions as their refs and
+// keys are (wantNamed).
 func (f *fixture) must(t *testing.T, cmds ...cmd) commands.Result {
 	t.Helper()
 	res, err := f.apply(t, cmds...)
 	if err != nil {
 		t.Fatalf("%v: %v", cmds, err)
 	}
+	f.wantNamed(t)
 	return res
+}
+
+// namesDrift lists, for the project $1, each name (expression_name) that an
+// expression lacks of its refs and its keys, with its board, and each that it
+// has beyond them.
+const namesDrift = `WITH want AS (
+		SELECT e.id AS expression_id, e.board_id, r.ref, NULL::text AS key
+		FROM expression e, unnest(e.refs) AS r (ref) WHERE e.project_id = $1
+		UNION ALL
+		SELECT e.id, e.board_id, NULL, k.key FROM expression e, unnest(e.keys) AS k (key) WHERE e.project_id = $1
+	), have AS (
+		SELECT expression_id, board_id, ref, key::text FROM expression_name WHERE project_id = $1
+	)
+	SELECT 'lacks ' || w::text FROM (SELECT * FROM want EXCEPT ALL SELECT * FROM have) w
+	UNION ALL
+	SELECT 'has ' || h::text FROM (SELECT * FROM have EXCEPT ALL SELECT * FROM want) h`
+
+// wantNamed fails the test unless the names of the fixture's project's
+// expressions are their refs and their keys, each with its expression's
+// board, as every batch leaves them, by which a later batch finds the
+// expressions that name what it changes.
+func (f *fixture) wantNamed(t *testing.T) {
+	t.Helper()
+	rows, err := f.admin.Query(context.Background(), namesDrift, f.project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drift, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drift) > 0 {
+		t.Errorf("the names of the project's expressions are not their refs and keys: %v", drift)
+	}
 }
 
 // undo applies the inverse of the fixture's project's batch whose seq is seq,
@@ -147,6 +183,7 @@ func (f *fixture) undo(t *testing.T, seq int64) {
 	if _, err := f.pipeline.Apply(context.Background(), commands.Actor{UserID: f.owner}, f.project, batch); err != nil {
 		t.Fatalf("the undo of %d: %v", seq, err)
 	}
+	f.wantNamed(t)
 }
 
 // newBoard returns the ID of a new board of the fixture's project.
@@ -705,6 +742,76 @@ func TestTrashedBoardNames(t *testing.T) {
 	suggests("a near match of the variable of its restored board")
 	invalid(t, "a script of another board's variable", f.node(t, keeper).OnEnter, "tide = 1",
 		"board_variable_out_of_scope")
+}
+
+// TestNames checks that the names of an expression (expression_name) are the
+// UUIDs and the keys that compiling its source gives, with its board, whether
+// it compiles or not, and are replaced by those of its new source whenever a
+// batch compiles it again, that a source that does not parse names nothing,
+// and that the expression's deletion, and the purge of its project, delete
+// its names. The fixture checks after every batch that every expression's
+// names are its refs and its keys (wantNamed); this test checks what they
+// are.
+func TestNames(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	seen, tide := f.newVariable(t, "seen", "int"), f.newVariable(t, "tide", "int")
+	buoy := f.newNode(t, f.harbour, "element", nil)
+	visits := `seen = visits(node("` + buoy + `"))`
+	keeper := f.newNode(t, f.harbour, "element", payload{"on_enter": visits})
+	var id ids.UUID
+	if err := f.admin.QueryRow(ctx, `SELECT id FROM expression WHERE node_id = $1 AND field = 'on_enter'`,
+		decode(t, ids.Node, keeper)).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	harbour := decode(t, ids.Board, f.harbour)
+	names := func(what string, want ...string) {
+		t.Helper()
+		rows, err := f.admin.Query(ctx, `SELECT coalesce(ref::text, key) FROM expression_name
+			WHERE expression_id = $1 AND board_id = $2 ORDER BY 1`, id, harbour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("%s names %q, want %q", what, got, want)
+		}
+	}
+	uuid := func(kind ids.Kind, id string) string { return decode(t, kind, id).String() }
+	names("a script of a variable and a node", uuid(ids.Variable, seen), uuid(ids.Node, buoy), "seen")
+	for _, c := range []struct {
+		what, source string
+		want         []string
+	}{
+		{"a script of another variable", "tide = 1", []string{uuid(ids.Variable, tide), "tide"}},
+		{"a script of a variable that the project lacks", "nope = 1", []string{"nope"}},
+		{"a script of a node and a variable that the project lacks", `nope = visits(node("` + buoy + `"))`,
+			[]string{uuid(ids.Node, buoy), "nope"}},
+		{"a source that does not parse", "nope = (", nil},
+		{"the script again", visits, []string{uuid(ids.Variable, seen), uuid(ids.Node, buoy), "seen"}},
+	} {
+		f.must(t, cmd{node.Update, payload{"id": keeper, "on_enter": c.source}})
+		names(c.what, c.want...)
+	}
+	f.must(t, cmd{node.Update, payload{"id": keeper, "on_enter": ""}})
+	names("a deleted script")
+
+	f.must(t, cmd{node.Update, payload{"id": keeper, "on_exit": visits}})
+	f.exec(t, `UPDATE project SET deleted_at = now() - interval '31 days', hard_delete_after = now() - interval '1 day'
+		WHERE id = $1`, f.project)
+	if purged, err := project.Purge(ctx, f.db); err != nil || purged != 1 {
+		t.Fatalf("the purge deleted %d projects, %v; want 1", purged, err)
+	}
+	var left int
+	if err := f.admin.QueryRow(ctx, `SELECT count(*) FROM expression_name WHERE project_id = $1`,
+		f.project).Scan(&left); err != nil || left != 0 {
+		t.Errorf("the purge of the project left %d names of its expressions: %v", left, err)
+	}
 }
 
 // stored returns the on-enter script of the node id, as the expression table
