@@ -637,18 +637,45 @@ func TestProjectWith(t *testing.T) {
 			t.Errorf("%s: With = %v; want an error that wraps ErrProject", c.name, err)
 		}
 	}
+	// An error of the board's expression suggests the board's own variables,
+	// and a name that compiled reads the variable by its ID.
+	_, err = Compile("tidee += 1", ContextScript, elara, boardElara)
+	if e := (*Error)(nil); !errors.As(err, &e) || e.Code != UnknownIdentifier || !slices.Equal(e.Suggestions,
+		[]string{"tide"}) {
+		t.Errorf("Compile of a near match of the board's own variable = %v; want an unknown_identifier that "+
+			"suggests tide", err)
+	}
+	n, err := Compile("tide += 1", ContextScript, elara, boardElara)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := Encode(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err = Decode(data, ContextScript); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name  string
+		p     *Project
+		board string
+		want  Code
+	}{{"at its board", elara, boardElara, ""}, {"at another board", elara, boardHarbour, BoardVariableOutOfScope},
+		{"in the Project that it added to", p, boardElara, UnknownIdentifier}} {
+		if err := CheckResolved(n, ContextScript, c.p, c.board); code(err) != c.want || (c.want == "") != (err == nil) {
+			t.Errorf("CheckResolved of the board's own variable %s = %v; want %q", c.name, err, c.want)
+		}
+	}
 	// Two Projects that add to one a board's variable of a key that three of
-	// its boards have, whose slice of them has room for a fourth, each append
-	// to a slice of their own.
+	// its boards have each have their own board's variable alone, beside
+	// those of the three, and the Project that they add to neither.
 	board := func(n byte) Variable {
 		return Variable{ID: testID(ids.Variable, n), Key: "depth", Type: value.Int, Board: testID(ids.Board, n)}
 	}
 	shared, err := NewProject([]Variable{board(30), board(31), board(32)}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if s := shared.boardsOf["depth"]; cap(s) == len(s) {
-		t.Fatalf("the key's boards %v have no room for another, so that no append would share them", s)
 	}
 	first, err := shared.With(testID(ids.Board, 33), []Variable{board(33)}, nil)
 	if err != nil {
@@ -664,12 +691,16 @@ func TestProjectWith(t *testing.T) {
 		boards []byte
 	}{{"the Project added to", shared, []byte{30, 31, 32}}, {"the first", first, []byte{30, 31, 32, 33}},
 		{"the second", second, []byte{30, 31, 32, 34}}} {
-		var want []string
-		for _, n := range c.boards {
-			want = append(want, testID(ids.Board, n))
-		}
-		if got := c.p.boardsOf["depth"]; !slices.Equal(got, want) {
-			t.Errorf("%s has the boards %v of the key, want %v", c.name, got, want)
+		for n := byte(30); n <= 34; n++ {
+			b := testID(ids.Board, n)
+			if has := c.p.ofBoard(b, "depth") != nil; has != slices.Contains(c.boards, n) {
+				t.Errorf("%s: whether the board %s has the key is %v", c.name, b, has)
+			}
+			// Another board has the key unless the boards that have it are
+			// this one alone.
+			if got, want := c.p.elsewhere(b, "depth"), len(c.boards) > 1 || !slices.Contains(c.boards, n); got != want {
+				t.Errorf("%s: whether a board other than %s has the key is %v, want %v", c.name, b, got, want)
+			}
 		}
 	}
 	// The zero Project names nothing, and takes a board's names.

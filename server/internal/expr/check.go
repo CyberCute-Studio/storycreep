@@ -505,7 +505,7 @@ func (c *checker) resolve(n Node, name, ref, attribute string) {
 // global one, or else a component, which is no value.
 func (c *checker) variable(n *Var) (*Variable, error) {
 	if c.refs {
-		v := c.p.variables[n.Ref]
+		v := c.p.variable(n.Ref)
 		switch {
 		case v == nil:
 			return nil, &Error{Code: UnknownIdentifier, Range: n.Src}
@@ -538,9 +538,7 @@ func (c *checker) variable(n *Var) (*Variable, error) {
 	}
 	var candidates []string
 	if n.Scope != ScopeGlobal {
-		for key := range c.p.boards[c.board] {
-			candidates = append(candidates, key)
-		}
+		candidates = append(candidates, c.p.boardKeys(c.board)...)
 	}
 	if n.Scope != ScopeBoard {
 		for key := range c.p.globals {

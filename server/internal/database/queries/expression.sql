@@ -181,16 +181,18 @@ ORDER BY id;
 -- name: ExpressionNodes :many
 -- ExpressionNodes returns those of the project's nodes whose IDs are among
 -- ids that are not in its trash, which a node reference can name, and those
--- that are there with their boards alone, not deleted themselves, which an
--- expression of their own board alone can name, each with its type, its
--- board, and whether the board is in the trash.
+-- of its boards board_ids, which are in its trash, that are there with their
+-- boards alone, not deleted themselves, which an expression of their own
+-- board alone can name, each with its type, its board, and whether its board
+-- is in the trash. It reads the nodes of board_ids only when there are any,
+-- as there are only when the batch compiles an expression of a board in the
+-- trash.
 SELECT l.id, l.type, l.board_id, false AS board_deleted FROM live_node l
 WHERE l.workspace_id = @workspace_id AND l.project_id = @project_id AND l.id = ANY(@ids::uuid[])
 UNION ALL
 SELECT n.id, n.type, n.board_id, true FROM node n
-JOIN board b ON b.workspace_id = n.workspace_id AND b.project_id = n.project_id AND b.id = n.board_id
-WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.id = ANY(@ids::uuid[])
-    AND n.deleted_at IS NULL AND b.deleted_at IS NOT NULL;
+WHERE cardinality(@board_ids::uuid[]) > 0 AND n.workspace_id = @workspace_id AND n.project_id = @project_id
+    AND n.id = ANY(@ids::uuid[]) AND n.board_id = ANY(@board_ids::uuid[]) AND n.deleted_at IS NULL;
 
 -- name: TouchNodes :many
 -- TouchNodes increments the revisions of the project's nodes whose IDs are

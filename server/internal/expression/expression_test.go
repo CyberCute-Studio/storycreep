@@ -649,6 +649,64 @@ func TestTrashedBoards(t *testing.T) {
 	valid(t, "a script of a node of a restored board", f.node(t, lookout).OnEnter, visits(buoy))
 }
 
+// TestTrashedBoardNames checks that a batch that deletes a board to the trash
+// and changes what expressions can name, and its undo, compile the board's
+// expressions that do not compile against the board's own variables too,
+// whose near matches they suggest, as they compile the other boards'
+// expressions that name the keys of its variables against what those see.
+func TestTrashedBoardNames(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	pier := f.newBoard(t, "Pier")
+	f.must(t, createVariable(ids.Encode(ids.Variable, ids.New()), "tide", "int", pier))
+	sounding := f.newNode(t, pier, "element", payload{"on_enter": "depth = tide"})
+	typo := f.newNode(t, pier, "element", payload{"on_enter": "tidee = 1"})
+	keeper := f.newNode(t, f.harbour, "element", payload{"on_enter": "tide = 1"})
+	invalid(t, "a script of a variable that the project lacks", f.node(t, sounding).OnEnter, "depth = tide",
+		"unknown_identifier")
+	invalid(t, "a script of another board's variable", f.node(t, keeper).OnEnter, "tide = 1",
+		"board_variable_out_of_scope")
+	// What compiling the near match gave is changed behind the pipeline's
+	// back before each batch, so that whether the batch compiles it again
+	// shows, as it then suggests its board's variable again.
+	mark := func() {
+		t.Helper()
+		f.exec(t, `UPDATE expression SET error = jsonb_set(error, '{suggestions}', '["stale"]') WHERE node_id = $1`,
+			decode(t, ids.Node, typo))
+	}
+	suggests := func(what string) {
+		t.Helper()
+		e := f.stored(t, typo)
+		invalid(t, what, e, "tidee = 1", "unknown_identifier")
+		if !slices.Equal(e.Error.Suggestions, []string{"tide"}) {
+			t.Errorf("%s suggests %v, want [tide]", what, e.Error.Suggestions)
+		}
+	}
+	suggests("a near match of its board's variable")
+
+	mark()
+	deletion := f.must(t, cmd{board.Delete, payload{"id": pier}},
+		createVariable(ids.Encode(ids.Variable, ids.New()), "depth", "int", ""))
+	valid(t, "a script of a board in the trash of its own variable and a new global one", f.stored(t, sounding),
+		"depth = tide")
+	suggests("a near match of the variable of its board in the trash")
+	invalid(t, "a script of a variable of a board in the trash", f.node(t, keeper).OnEnter, "tide = 1",
+		"unknown_identifier")
+	for _, n := range []string{sounding, keeper} {
+		if !changed(deletion, ids.Node, decode(t, ids.Node, n)) {
+			t.Errorf("the deletion did not list %s among %v", n, deletion.Revisions)
+		}
+	}
+
+	mark()
+	f.undo(t, deletion.Seq)
+	invalid(t, "a script of a variable that the project lacks", f.node(t, sounding).OnEnter, "depth = tide",
+		"unknown_identifier")
+	suggests("a near match of the variable of its restored board")
+	invalid(t, "a script of another board's variable", f.node(t, keeper).OnEnter, "tide = 1",
+		"board_variable_out_of_scope")
+}
+
 // stored returns the on-enter script of the node id, as the expression table
 // keeps it, whether the node is in the trash or not.
 func (f *fixture) stored(t *testing.T, id string) *expression.Expression {

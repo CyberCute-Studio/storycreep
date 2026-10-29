@@ -133,10 +133,14 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 			refs, keys = append(refs, row.ID), append(keys, row.Key)
 		}
 	}
-	rows, err := toCompile(ctx, q, ws, project, queries.ExpressionsToCompileParams{WorkspaceID: ws,
-		ProjectID: project, Refs: refs, Keys: keys, Names: names}, boards)
+	toCompile, err := boardExpressions(ctx, q, ws, project, boards)
 	if err != nil {
 		return err
+	}
+	rows, err := q.ExpressionsToCompile(ctx, queries.ExpressionsToCompileParams{WorkspaceID: ws, ProjectID: project,
+		Refs: refs, Keys: keys, Ids: toCompile, Names: names})
+	if err != nil {
+		return fmt.Errorf("expression: read the expressions to compile: %w", err)
 	}
 	if len(rows) == 0 {
 		return nil
@@ -304,37 +308,20 @@ func touchOwners(ctx context.Context, tx *commands.Tx, kind ids.Kind, owners []p
 	return revs, nil
 }
 
-// toCompile returns the expressions to compile of the project: those that
-// ExpressionsToCompile returns of p, and those that name what the boards
-// hold whose deletions to the trash or restorations change what they can
-// name of it (boardExpressions), each once, in the order of their IDs.
-func toCompile(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID,
-	p queries.ExpressionsToCompileParams, boards []pgtype.UUID) ([]queries.ExpressionsToCompileRow, error) {
-	p.Ids = []pgtype.UUID{}
-	if len(boards) > 0 {
-		var err error
-		if p.Ids, err = boardExpressions(ctx, q, ws, project, boards); err != nil {
-			return nil, err
-		}
-	}
-	rows, err := q.ExpressionsToCompile(ctx, p)
-	if err != nil {
-		return nil, fmt.Errorf("expression: read the expressions to compile: %w", err)
-	}
-	return rows, nil
-}
-
 // boardExpressions returns the UUIDs of the project's expressions that the
 // deletions to the trash, or the restorations, of the boards change: those
 // that name a node of a board other than their own among them, or that do
 // not compile and name the key of a variable of one, which its deletion takes
-// out of what they can name, and its restoration brings back. One that
-// compiles names its own board's variables and the global ones alone, and
-// one of a board among them sees what the board holds as it did, an
-// expression of a board in the trash seeing what is there with it alone
-// (projects).
+// out of what they can name, and its restoration brings back; none for no
+// boards. One that compiles names its own board's variables and the global
+// ones alone, and one of a board among them sees what the board holds as it
+// did, an expression of a board in the trash seeing what is there with it
+// alone (projects).
 func boardExpressions(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, boards []pgtype.UUID) (
 	[]pgtype.UUID, error) {
+	if len(boards) == 0 {
+		return []pgtype.UUID{}, nil
+	}
 	names, err := q.BoardNames(ctx, queries.BoardNamesParams{WorkspaceID: ws, ProjectID: project, BoardIds: boards})
 	if err != nil {
 		return nil, fmt.Errorf("expression: read what the boards hold that expressions name: %w", err)
@@ -362,17 +349,17 @@ func boardExpressions(ctx context.Context, q *queries.Queries, ws, project pgtyp
 	if err != nil {
 		return nil, fmt.Errorf("expression: read the expressions that name what the boards hold: %w", err)
 	}
-	ids := []pgtype.UUID{}
+	changed := []pgtype.UUID{}
 	for _, r := range rows {
 		other := func(b pgtype.UUID) bool { return b != r.BoardID }
 		if slices.ContainsFunc(r.Refs, func(n pgtype.UUID) bool { b, ok := nodeBoard[n]; return ok && other(b) }) ||
 			!r.IsValid && slices.ContainsFunc(r.Keys, func(k string) bool {
 				return slices.ContainsFunc(keyBoards[k], other)
 			}) {
-			ids = append(ids, r.ID)
+			changed = append(changed, r.ID)
 		}
 	}
-	return ids, nil
+	return changed, nil
 }
 
 // projects are what the project's expressions can name (§5.8.3), as the
@@ -439,12 +426,13 @@ func loadProjects(ctx context.Context, q *queries.Queries, ws, project pgtype.UU
 			Attributes: ofType[c.ComponentTypeID.Bytes]}
 	}
 	// The nodes that the expressions name, those of the boards that are not
-	// in the trash, and those of each board that is, there with it alone.
+	// in the trash, and those of each board in the trash trashed, there with
+	// it alone.
 	var ns []expr.BoardNode
 	trashedNodes := map[pgtype.UUID][]expr.BoardNode{}
 	if len(nodes) > 0 {
 		rows, err := q.ExpressionNodes(ctx, queries.ExpressionNodesParams{WorkspaceID: ws, ProjectID: project,
-			Ids: nodes})
+			Ids: nodes, BoardIds: list(trashed)})
 		if err != nil {
 			return projects{}, fmt.Errorf("expression: read the nodes that expressions name: %w", err)
 		}

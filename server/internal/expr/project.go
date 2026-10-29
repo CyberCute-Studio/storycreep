@@ -3,7 +3,6 @@ package expr
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
@@ -80,6 +79,13 @@ type Project struct {
 	componentIDs map[string]*component
 	// nodes say of each node, by its ID, whether it is a jumper.
 	nodes map[string]bool
+	// base is the Project that With added this one's names to, or nil for
+	// one that NewProject returns. A Project that With returns shares base's
+	// globals and components, and its other maps hold what With added alone,
+	// so that a read of a board's variables, of a key's boards, of a variable
+	// by its ID, or of a node goes on to base's (ofBoard, boardKeys,
+	// elsewhere, variable, node).
+	base *Project
 }
 
 // component is a Component and its attributes by their keys, and by their
@@ -186,30 +192,20 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 // With returns the Project of p's names and the variables of the board whose
 // ID is board, each of which is of that board, and the nodes, as NewProject
 // returns of them all, or an error that wraps ErrProject; p stays as it is.
-// It copies the maps that the additions change, of p's variables and nodes
-// by their IDs, its boards' scopes, and the boards of each key, but neither
-// the scopes of the other boards nor the components and their attributes,
-// which NewProject builds, so that a Project of each of many boards, each
-// with names of its own, as the expressions of a board in the trash see the
-// board's own variables and nodes (package expression), costs a copy of
-// those maps a board rather than a Project's construction.
+// The Project holds what it adds alone, and reads the rest in p (base), so
+// that a Project of each of many boards, each with names of its own, as the
+// expressions of a board in the trash see the board's own variables and
+// nodes (package expression), costs what each board adds rather than a copy
+// of p, and two Projects that add to one share nothing that either adds.
 func (p *Project) With(board string, variables []Variable, nodes []BoardNode) (*Project, error) {
 	if !ids.IsCanonical(ids.Board, board) {
 		return nil, fmt.Errorf("%w: %q is not the ID of a board in its canonical spelling", ErrProject, board)
 	}
+	// q shares p's globals, which it adds none to, as every variable that it
+	// adds is of the board, and p's components, which With adds none to.
 	q := &Project{globals: p.globals, components: p.components, componentIDs: p.componentIDs,
-		boards: cloned(p.boards), boardsOf: make(map[string][]string, len(p.boardsOf)),
-		variables: cloned(p.variables), nodes: cloned(p.nodes)}
-	// The board's own variables are added to a copy of its scope, and none
-	// to another's, which q shares with p, and q appends a board to a slice of
-	// its own of a key's boards, never into the array that p's slice holds, as
-	// two Projects that add to p would append into one.
-	if scope := p.boards[board]; scope != nil {
-		q.boards[board] = maps.Clone(scope)
-	}
-	for key, boards := range p.boardsOf {
-		q.boardsOf[key] = slices.Clip(boards)
-	}
+		boards: make(map[string]map[string]*Variable), boardsOf: make(map[string][]string),
+		variables: make(map[string]*Variable), nodes: make(map[string]bool), base: p}
 	for _, v := range variables {
 		if v.Board != board {
 			return nil, fmt.Errorf("%w: the variable %s is not of the board %s", ErrProject, v.ID, board)
@@ -226,14 +222,6 @@ func (p *Project) With(board string, variables []Variable, nodes []BoardNode) (*
 	return q, nil
 }
 
-// cloned returns a copy of m, which a Project that With returns adds to, of
-// a map even for a nil m, as the zero Project's are.
-func cloned[M ~map[K]V, K comparable, V any](m M) M {
-	c := make(M, len(m))
-	maps.Copy(c, m)
-	return c
-}
-
 // id returns an error that wraps ErrProject unless s is the ID of an entity
 // of the kind k, in its canonical spelling, that is not the ID of a variable,
 // a component, or a node of p.
@@ -241,17 +229,16 @@ func (p *Project) id(k ids.Kind, s string) error {
 	if !ids.IsCanonical(k, s) {
 		return fmt.Errorf("%w: %q is not the ID of a %s in its canonical spelling", ErrProject, s, k)
 	}
-	_, node := p.nodes[s]
-	if p.variables[s] != nil || p.componentIDs[s] != nil || node {
+	_, node := p.node(s)
+	if p.variable(s) != nil || p.componentIDs[s] != nil || node {
 		return fmt.Errorf("%w: %s is the ID of two entities", ErrProject, s)
 	}
 	return nil
 }
 
-// addVariable adds the variable v to p, or returns an error that wraps
-// ErrProject. It changes p's maps, the scope of v's board in p.boards, and
-// the slice of v's key's boards in p.boardsOf, which it appends v's board
-// to, so a Project that With returns has copies of its own of those.
+// addVariable adds the variable v to p's own maps, or returns an error that
+// wraps ErrProject: to p.globals if it is global, which only NewProject adds,
+// as a Project that With returns shares its base's.
 func (p *Project) addVariable(v Variable) error {
 	if err := p.id(ids.Variable, v.ID); err != nil {
 		return err
@@ -262,23 +249,21 @@ func (p *Project) addVariable(v Variable) error {
 	if !slices.Contains(variableTypes, v.Type) {
 		return fmt.Errorf("%w: %q is no type of a variable", ErrProject, v.Type)
 	}
-	scope := p.globals
-	if v.Board != "" {
-		if !ids.IsCanonical(ids.Board, v.Board) {
-			return fmt.Errorf("%w: %q is not the ID of a board in its canonical spelling", ErrProject, v.Board)
-		}
+	if v.Board != "" && !ids.IsCanonical(ids.Board, v.Board) {
+		return fmt.Errorf("%w: %q is not the ID of a board in its canonical spelling", ErrProject, v.Board)
+	}
+	if v.Board == "" && p.global(v.Key) != nil || v.Board != "" && p.ofBoard(v.Board, v.Key) != nil {
+		return fmt.Errorf("%w: two variables of one scope have the key %s", ErrProject, v.Key)
+	}
+	if v.Board == "" {
+		p.globals[v.Key] = &v
+	} else {
 		if p.boards[v.Board] == nil {
 			p.boards[v.Board] = make(map[string]*Variable)
 		}
-		scope = p.boards[v.Board]
-	}
-	if scope[v.Key] != nil {
-		return fmt.Errorf("%w: two variables of one scope have the key %s", ErrProject, v.Key)
-	}
-	if v.Board != "" {
+		p.boards[v.Board][v.Key] = &v
 		p.boardsOf[v.Key] = append(p.boardsOf[v.Key], v.Board)
 	}
-	scope[v.Key] = &v
 	p.variables[v.ID] = &v
 	return nil
 }
@@ -312,13 +297,45 @@ func (p *Project) global(key string) *Variable {
 // ofBoard returns the variable of the key of the board whose ID is board, or
 // nil, as for the board "", which has none.
 func (p *Project) ofBoard(board, key string) *Variable {
-	return p.boards[board][key]
+	for ; p != nil; p = p.base {
+		if v := p.boards[board][key]; v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
+// boardKeys returns the keys of the variables of the board whose ID is board,
+// in no order.
+func (p *Project) boardKeys(board string) []string {
+	var keys []string
+	for ; p != nil; p = p.base {
+		for key := range p.boards[board] {
+			keys = append(keys, key)
+		}
+	}
+	return keys
 }
 
 // elsewhere reports whether a board other than the one whose ID is board has
 // a variable of the key.
 func (p *Project) elsewhere(board, key string) bool {
-	return slices.ContainsFunc(p.boardsOf[key], func(b string) bool { return b != board })
+	for ; p != nil; p = p.base {
+		if slices.ContainsFunc(p.boardsOf[key], func(b string) bool { return b != board }) {
+			return true
+		}
+	}
+	return false
+}
+
+// variable returns the variable whose ID is id, or nil.
+func (p *Project) variable(id string) *Variable {
+	for ; p != nil; p = p.base {
+		if v := p.variables[id]; v != nil {
+			return v
+		}
+	}
+	return nil
 }
 
 // component returns the component of the key, or nil.
@@ -329,6 +346,10 @@ func (p *Project) component(key string) *component {
 // node returns whether the project has the node whose ID is id, and whether
 // it is a jumper.
 func (p *Project) node(id string) (jumper, ok bool) {
-	jumper, ok = p.nodes[id]
-	return jumper, ok
+	for ; p != nil; p = p.base {
+		if jumper, ok = p.nodes[id]; ok {
+			return jumper, ok
+		}
+	}
+	return false, false
 }
