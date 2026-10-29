@@ -267,7 +267,8 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 	appPassword := app.Password()
 
 	// The lock is held by this connection's session, so it is released when
-	// the connection closes, however Migrate ends.
+	// the connection closes, however Migrate ends, and before then once it is
+	// taken (below).
 	conn, err := pgx.ConnectConfig(ctx, connConfig)
 	if err != nil {
 		return MigrateResult{}, nil, fmt.Errorf("connect to %s: %w", admin, err)
@@ -328,6 +329,18 @@ func migrate(ctx context.Context, admin, app config.DatabaseURL, opts MigrateOpt
 			return MigrateResult{}, nil, fmt.Errorf("take the migration lock: %w", err)
 		}
 	}
+	// The lock is released before Migrate returns, not by the connection's
+	// close alone: PostgreSQL releases a session's locks only once its
+	// backend has exited, a moment after the client has gone, so that a
+	// Migrate that starts as soon as this one returns, as an instance that
+	// starts once `storycreep migrate` has run, could find the lock held still
+	// and wait, saying that it waits for another instance that is not there.
+	// An unlock that fails, as on a connection that failed, leaves the close
+	// to release the lock. This runs before the close, which was deferred
+	// first.
+	defer func() {
+		_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", migrationLock)
+	}()
 
 	applied, err := appliedVersions(ctx, conn)
 	if err != nil {
