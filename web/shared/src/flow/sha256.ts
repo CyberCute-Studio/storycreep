@@ -24,18 +24,61 @@ const k = new Uint32Array([
  * "SHA-256" returns them. It copies no more of bytes than its last block.
  */
 export function sha256(bytes: Uint8Array): Uint8Array {
-  // The first 32 bits of the fractional parts of the square roots of the
-  // first 8 primes.
-  const h = new Uint32Array([
+  const h = initial();
+  const w = new Uint32Array(64);
+  for (let at = 0; at < bytes.length - (bytes.length % 64); at += 64) {
+    compress(h, w, bytes, at);
+  }
+  return finish(h, w, bytes);
+}
+
+/**
+ * The bytes that sha256Yielding hashes between two tasks of the event loop,
+ * a whole number of blocks: 1 MiB, of which the hashing takes about a frame
+ * on a tablet.
+ */
+export const YIELD_EVERY = 1 << 20;
+
+/**
+ * Returns the SHA-256 of bytes, as sha256 does, but hashes YIELD_EVERY bytes
+ * of them at a time, and lets the event loop run a task between two, so
+ * that a page that hashes a large file, as an asset of a snapshot, goes on
+ * responding meanwhile. It hashes the bytes as they are when it is called,
+ * whatever becomes of them meanwhile, as WebCrypto does, so it copies those
+ * of more than YIELD_EVERY bytes first.
+ */
+export async function sha256Yielding(bytes: Uint8Array): Promise<Uint8Array> {
+  if (bytes.length <= YIELD_EVERY) {
+    return sha256(bytes);
+  }
+  const data = bytes.slice();
+  const h = initial();
+  const w = new Uint32Array(64);
+  const whole = data.length - (data.length % 64);
+  for (let at = 0; at < whole; at += 64) {
+    if (at > 0 && at % YIELD_EVERY === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    compress(h, w, data, at);
+  }
+  return finish(h, w, data);
+}
+
+// initial returns the hash before the first block: the first 32 bits of the
+// fractional parts of the square roots of the first 8 primes.
+function initial(): Uint32Array {
+  return new Uint32Array([
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
     0x1f83d9ab, 0x5be0cd19,
   ]);
-  const w = new Uint32Array(64);
+}
+
+// finish folds the rest of bytes, after its whole blocks, which the hash h
+// holds, into h, with w for its message schedule, and returns the hash's 32
+// bytes.
+function finish(h: Uint32Array, w: Uint32Array, bytes: Uint8Array): Uint8Array {
   const n = bytes.length;
   const whole = n - (n % 64);
-  for (let at = 0; at < whole; at += 64) {
-    compress(h, w, bytes, at);
-  }
   // The rest of the message, a 1 bit, the zeros that fill its last block
   // but 8 bytes, and its length in bits in those 8, big-endian.
   const tail = new Uint8Array(n % 64 < 56 ? 64 : 128);

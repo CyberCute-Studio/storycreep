@@ -82,7 +82,6 @@ export {
   type AttributeType,
   type BoardNode,
   type Component,
-  newProject,
   Project,
   type Variable,
 } from "./project";

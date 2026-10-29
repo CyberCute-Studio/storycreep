@@ -106,11 +106,151 @@ func folds() map[rune]string {
 	m := make(map[rune]string)
 	for r := rune(0); r <= utf8.MaxRune; r++ {
 		// A surrogate, which no string of UTF-8 holds, is skipped.
-		if s := string(r); utf8.ValidRune(r) && fold.String(s) != s {
-			m[r] = fold.String(s)
+		if !utf8.ValidRune(r) {
+			continue
+		}
+		s := string(r)
+		if f := fold.String(s); f != s {
+			m[r] = f
 		}
 	}
 	return m
+}
+
+// The Hangul syllables and their jamo, which Unicode decomposes and composes
+// by an algorithm (§3.12) rather than by the tables of fold.json: a syllable
+// is a leading consonant (L), a vowel (V), and, but for the first of every
+// tCount syllables, a trailing consonant (T).
+const (
+	sBase  = 0xac00
+	lBase  = 0x1100
+	vBase  = 0x1161
+	tBase  = 0x11a7
+	lCount = 19
+	vCount = 21
+	tCount = 28
+	nCount = vCount * tCount
+	sCount = lCount * nCount
+)
+
+// nfcTables are what fold.json holds of x/text's form C, by which the
+// TypeScript runtime puts a run of code points in it rather than by the
+// platform's form C, which is of another version of Unicode, older, as on a
+// tablet whose system has not been updated, or newer: the canonical combining
+// class of each code point whose class is not 0 (ccc), the canonical
+// decomposition, form D, of each code point that form D changes but the
+// Hangul syllables (decompositions), and the code point that form C joins
+// each pair of two into but the Hangul syllables (composites).
+type nfcTables struct {
+	ccc            map[rune]uint8
+	decompositions map[rune][]rune
+	composites     map[[2]rune]rune
+}
+
+// newNFCTables returns x/text's nfcTables. It takes the pair that form C
+// joins into a code point to be what form C makes of all but the last code
+// point of its decomposition and that last one, as form C joins the code
+// points of a decomposition from its first, and checks that form C joins the
+// two into it, of every code point that form C leaves as it is and form D
+// does not.
+func newNFCTables(t *testing.T) nfcTables {
+	t.Helper()
+	n := nfcTables{ccc: map[rune]uint8{}, decompositions: map[rune][]rune{}, composites: map[[2]rune]rune{}}
+	for r := rune(0); r <= utf8.MaxRune; r++ {
+		if !utf8.ValidRune(r) {
+			continue
+		}
+		s := string(r)
+		if c := norm.NFC.PropertiesString(s).CCC(); c != 0 {
+			n.ccc[r] = c
+		}
+		if r >= sBase && r < sBase+sCount {
+			continue
+		}
+		d := []rune(norm.NFD.String(s))
+		if string(d) == s {
+			continue
+		}
+		n.decompositions[r] = d
+		if len(d) < 2 || norm.NFC.String(s) != s {
+			continue
+		}
+		first := []rune(norm.NFC.String(string(d[:len(d)-1])))
+		if len(first) != 1 || norm.NFC.String(string(first)+string(d[len(d)-1])) != s {
+			t.Fatalf("form C does not join %U from the form C of all but the last code point of its decomposition, "+
+				"%U, and that last one", r, d)
+		}
+		n.composites[[2]rune{first[0], d[len(d)-1]}] = r
+	}
+	return n
+}
+
+// compose returns the code point that form C joins first and second into, if
+// it joins them, by the algorithm of the Hangul syllables or by composites.
+func (n nfcTables) compose(first, second rune) (rune, bool) {
+	if first >= lBase && first < lBase+lCount && second >= vBase && second < vBase+vCount {
+		return sBase + ((first-lBase)*vCount+second-vBase)*tCount, true
+	}
+	if first >= sBase && first < sBase+sCount && (first-sBase)%tCount == 0 && second > tBase && second < tBase+tCount {
+		return first + second - tBase, true
+	}
+	c, ok := n.composites[[2]rune{first, second}]
+	return c, ok
+}
+
+// nfc returns s in Unicode's normalization form C by the tables, as the
+// TypeScript runtime puts a run of code points between two CGJs in it
+// (UAX #15): each code point decomposed, the non-starters of each row of them
+// then in the order of their combining classes, kept where two are of one
+// class, and each code point then joined, from the first, with the last
+// starter before it, as long as nothing between the two that is left is a
+// starter or of its class or a greater one, which a starter joins only with
+// the starter just before it.
+func (n nfcTables) nfc(s string) string {
+	var d []rune
+	for _, r := range s {
+		if h := r - sBase; h >= 0 && h < sCount {
+			d = append(d, lBase+h/nCount, vBase+h%nCount/tCount)
+			if h%tCount != 0 {
+				d = append(d, tBase+h%tCount)
+			}
+		} else if to, ok := n.decompositions[r]; ok {
+			d = append(d, to...)
+		} else {
+			d = append(d, r)
+		}
+	}
+	for i := 1; i < len(d); i++ {
+		c := n.ccc[d[i]]
+		for j := i; c != 0 && j > 0 && n.ccc[d[j-1]] > c; j-- {
+			d[j-1], d[j] = d[j], d[j-1]
+		}
+	}
+	var out []rune
+	// starter is where in out the last starter is, and last the class of the
+	// last code point that out holds after it, 0 when it holds none, and 256
+	// when out starts with no starter, so that nothing joins with its first.
+	starter, last := 0, 0
+	for i, r := range d {
+		c := int(n.ccc[r])
+		if i == 0 {
+			if c != 0 {
+				last = 256
+			}
+			out = append(out, r)
+			continue
+		}
+		if j, ok := n.compose(out[starter], r); ok && (last == 0 || last < c) {
+			out[starter] = j
+			continue
+		}
+		if c == 0 {
+			starter = len(out)
+		}
+		last = c
+		out = append(out, r)
+	}
+	return string(out)
 }
 
 // check is an input of fold.json's checks: its name, the string, and its
@@ -172,9 +312,15 @@ func checks(fs map[rune]string) []check {
 // the order of the code points; the ranges of the code points that are not
 // inert, each on a line of its own, in their order; the ranges of the code
 // points of each counts, ns, other than none at either end, each with its
-// counts, on a line of its own, in their order; and the SHA-256 of FoldCase of
-// each of the checks, cs, in their order. fs is what folds returns.
-func foldTable(fs map[rune]string, ns map[rune]counts, cs []check) []byte {
+// counts, on a line of its own, in their order; the ranges of the code points
+// of each canonical combining class other than 0, each with the class, on a
+// line of its own, in their order; each code point that form D changes but
+// the Hangul syllables, with its decomposition, on a line of its own, in the
+// order of the code points; each code point that form C joins two into but
+// the Hangul syllables, with the two, on a line of its own, in the order of
+// the code points; and the SHA-256 of FoldCase of each of the checks, cs, in
+// their order. fs is what folds returns, and n what newNFCTables returns.
+func foldTable(fs map[rune]string, ns map[rune]counts, n nfcTables, cs []check) []byte {
 	var b bytes.Buffer
 	b.WriteString("{\n")
 	fmt.Fprintf(&b, "  \"unicodeVersion\": %q,\n", cases.UnicodeVersion)
@@ -234,6 +380,61 @@ func foldTable(fs map[rune]string, ns map[rune]counts, cs []check) []byte {
 		r = last
 	}
 	b.WriteString("\n  ],\n")
+	b.WriteString("  \"ccc\": [\n")
+	first = true
+	for r := rune(0); r <= utf8.MaxRune; r++ {
+		c, ok := n.ccc[r]
+		if !ok {
+			continue
+		}
+		last := r
+		for last < utf8.MaxRune && n.ccc[last+1] == c {
+			last++
+		}
+		if !first {
+			b.WriteString(",\n")
+		}
+		first = false
+		fmt.Fprintf(&b, "    [%d, %d, %d]", r, last, c)
+		r = last
+	}
+	b.WriteString("\n  ],\n")
+	b.WriteString("  \"decompositions\": [\n")
+	first = true
+	for r := rune(0); r <= utf8.MaxRune; r++ {
+		d, ok := n.decompositions[r]
+		if !ok {
+			continue
+		}
+		if !first {
+			b.WriteString(",\n")
+		}
+		first = false
+		fmt.Fprintf(&b, "    [%d", r)
+		for _, c := range d {
+			fmt.Fprintf(&b, ", %d", c)
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("\n  ],\n")
+	b.WriteString("  \"compositions\": [\n")
+	pairs := make(map[rune][2]rune, len(n.composites))
+	for pair, c := range n.composites {
+		pairs[c] = pair
+	}
+	first = true
+	for r := rune(0); r <= utf8.MaxRune; r++ {
+		pair, ok := pairs[r]
+		if !ok {
+			continue
+		}
+		if !first {
+			b.WriteString(",\n")
+		}
+		first = false
+		fmt.Fprintf(&b, "    [%d, %d, %d]", r, pair[0], pair[1])
+	}
+	b.WriteString("\n  ],\n")
 	b.WriteString("  \"checks\": {\n")
 	for i, c := range cs {
 		sum := sha256.Sum256([]byte(c.folded))
@@ -251,37 +452,41 @@ func foldTable(fs map[rune]string, ns map[rune]counts, cs []check) []byte {
 // the tables of fold.json: a CGJ before each code point that would make more
 // than maxNonStarters non-starters in a row, by the counts of ns, as x/text
 // inserts one; each run of the code points that are not inert between them
-// then in form C, as the platform's form C, which inserts no CGJ, puts it,
-// which x/text's gives of a run that no CGJ is inserted in, which it checks;
-// and each other code point as it is.
-func formC(t *testing.T, s string, ns map[rune]counts) string {
+// then in form C by the tables, n, which insert no CGJ, which it checks give
+// what x/text's form C gives of the run; and each other code point as it is.
+func formC(t *testing.T, s string, ns map[rune]counts, n nfcTables) string {
 	t.Helper()
 	var b, run strings.Builder
 	flush := func() {
-		c := norm.NFC.String(run.String())
-		if strings.ContainsRune(c, cgj) {
-			t.Fatalf("form C inserts a CGJ in %+.40q, where fold.json's counts insert none", run.String())
+		if run.Len() == 0 {
+			return
+		}
+		c := n.nfc(run.String())
+		if want := norm.NFC.String(run.String()); c != want {
+			t.Fatalf("form C of %+.40q is %+.40q, and by fold.json's tables, which insert no CGJ, %+.40q",
+				run.String(), want, c)
 		}
 		b.WriteString(c)
 		run.Reset()
 	}
-	n := 0
+	// How many non-starters in a row run ends with.
+	row := 0
 	for _, r := range s {
 		if inert(r) {
 			flush()
 			b.WriteRune(r)
-			n = 0
+			row = 0
 			continue
 		}
 		switch c := ns[r]; {
 		case c.lead == 0:
-			n = c.trail
-		case n+c.lead > maxNonStarters:
+			row = c.trail
+		case row+c.lead > maxNonStarters:
 			flush()
 			b.WriteRune(cgj)
-			n = c.lead
+			row = c.lead
 		default:
-			n += c.lead
+			row += c.lead
 		}
 		run.WriteRune(r)
 	}
@@ -292,15 +497,17 @@ func formC(t *testing.T, s string, ns map[rune]counts) string {
 // TestFoldTable fails when schema/unicode/fold.json, by which the TypeScript
 // runtime compares a node's tags as FoldCase does, is not the case folding
 // that FoldCase does, the code points that its form C does not leave alone,
-// how many non-starters it counts each as, or the SHA-256 of FoldCase of its
-// checks, as when a newer golang.org/x/text, or a newer Go, with which x/text
-// builds the tables of another version of Unicode, changes them: run go test
-// ./internal/input -run TestFoldTable -update, in server/, to rewrite it. It
-// also checks that FoldCase is what the TypeScript runtime computes of the
-// table: the name in form C (formC), each of its code points then folded
-// alone, and the result in form C again, which holds as long as the folding
-// reads no code point's neighbours, as x/text's does not, of the checks and
-// of names whose tags a node may have. With -short, it checks only the
+// how many non-starters it counts each as, its tables of form C, or the
+// SHA-256 of FoldCase of its checks, as when a newer golang.org/x/text, or a
+// newer Go, with which x/text builds the tables of another version of
+// Unicode, changes them: run go test ./internal/input -run TestFoldTable
+// -update, in server/, to rewrite it. It also checks that FoldCase is what
+// the TypeScript runtime computes of the table: the name in form C (formC),
+// each of its code points then folded alone, and the result in form C again,
+// which holds as long as the folding reads no code point's neighbours, as
+// x/text's does not, of the checks and of names whose tags a node may have;
+// and that the tables of form C give x/text's form C of every code point that
+// is not inert, and of each pair that they join. With -short, it checks only the
 // version of Unicode that fold.json states, since it measures form C of every
 // code point that is not inert, and folds every code point, which go test
 // ./... does, as the continuous integration's database job runs it.
@@ -330,8 +537,9 @@ func TestFoldTable(t *testing.T) {
 	}
 	fs := folds()
 	ns := nonStarters(t)
+	n := newNFCTables(t)
 	cs := checks(fs)
-	want := foldTable(fs, ns, cs)
+	want := foldTable(fs, ns, n, cs)
 	if *update {
 		if err := os.WriteFile(foldFile, want, 0o644); err != nil {
 			t.Fatal(err)
@@ -345,16 +553,26 @@ func TestFoldTable(t *testing.T) {
 		t.Errorf("%s is not the case folding of FoldCase; run go test ./internal/input -run TestFoldTable -update",
 			foldFile)
 	}
+	for r := rune(0); r <= utf8.MaxRune; r++ {
+		if s := string(r); utf8.ValidRune(r) && !inert(r) && n.nfc(s) != norm.NFC.String(s) {
+			t.Errorf("form C of %U by fold.json's tables is %+q, and x/text's %+q", r, n.nfc(s), norm.NFC.String(s))
+		}
+	}
+	for pair, c := range n.composites {
+		if got := n.nfc(string(pair[:])); got != string(c) {
+			t.Errorf("form C of %U by fold.json's tables is %+q, not %U", pair, got, c)
+		}
+	}
 	tsFold := func(name string) string {
 		var b strings.Builder
-		for _, r := range formC(t, name, ns) {
+		for _, r := range formC(t, name, ns, n) {
 			if f, ok := fs[r]; ok {
 				b.WriteString(f)
 			} else {
 				b.WriteRune(r)
 			}
 		}
-		return formC(t, b.String(), ns)
+		return formC(t, b.String(), ns, n)
 	}
 	for _, c := range cs {
 		if got := tsFold(c.s); got != c.folded {

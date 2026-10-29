@@ -24,9 +24,6 @@ import manifestSchema from "../../../../schema/published/v1/storycreep.schema.js
 import variablesSchema from "../../../../schema/published/v1/variables.schema.json" with {
   type: "json",
 };
-import foldTable from "../../../../schema/unicode/fold.json" with {
-  type: "json",
-};
 import {
   AST_VERSION,
   type Context,
@@ -61,8 +58,9 @@ import type {
   Variable,
   Variables,
 } from "../published";
+import { foldCase } from "./fold";
 import { type Schema, validate } from "./schema";
-import { sha256 } from "./sha256";
+import { sha256Yielding } from "./sha256";
 
 /** The paths of a snapshot's files but its boards' and its assets'. */
 export const MANIFEST_PATH = "storycreep.json";
@@ -242,7 +240,8 @@ export class Snapshot {
  * ASTs decoded as it reads the board's file. It is asynchronous since it
  * hashes the files with the platform's SHA-256, one after another, so that
  * it holds copies of one file at most, or, in a page that is no secure
- * context, which has none, with its own.
+ * context, which has none, with its own, which lets the page run between
+ * two parts of a large file (sha256Yielding).
  */
 export async function load(
   files: ReadonlyMap<string, Uint8Array>,
@@ -253,17 +252,20 @@ export async function load(
 // digest returns the hash of bytes as the manifest lists a file's: sha256:
 // and the lowercase hexadecimal SHA-256 of the bytes, by WebCrypto's, which
 // copies them, or, where the page is no secure context and has none
-// (crypto.subtle), by sha256's, which copies none.
+// (crypto.subtle), by sha256Yielding's, which copies those of a large file
+// too.
 async function digest(bytes: Uint8Array): Promise<string> {
   const subtle: SubtleCrypto | undefined = globalThis.crypto?.subtle;
+  const buffer = bytes.buffer;
   const sum =
     subtle === undefined
-      ? sha256(bytes)
+      ? await sha256Yielding(bytes)
       : new Uint8Array(
           await subtle.digest(
             "SHA-256",
-            // WebCrypto reads no view of a SharedArrayBuffer.
-            bytes.buffer instanceof ArrayBuffer
+            // WebCrypto reads no view of a SharedArrayBuffer, nor of a
+            // resizable ArrayBuffer (WebIDL's BufferSource).
+            buffer instanceof ArrayBuffer && !buffer.resizable
               ? (bytes as Uint8Array<ArrayBuffer>)
               : bytes.slice(),
           ),
@@ -331,9 +333,10 @@ class Loader {
   private readonly components = new Set<string>();
   private readonly read = new Set<string>();
   // origins are the raw JSON of each object and array of the files that it
-  // has read, whose numbers are as they are written, by the copy that
-  // JSON.parse would read, typed by its schema (plain), which the loader
-  // reads the rest of.
+  // has read but the boards', whose numbers are as they are written, by the
+  // copy that JSON.parse would read, typed by its schema (plain), which the
+  // loader reads the rest of. Those of a board's file are readBoard's, which
+  // it lets go of once it has decoded the board's expressions.
   private readonly origins = new Map<object, JsonValue>();
   // decoded are the ASTs of the boards' expressions, by the typed copy of
   // each expression's object.
@@ -368,11 +371,12 @@ class Loader {
   // parse checks raw, the JSON of the file of the path, or the problem of
   // its bytes, against the schema, and returns it as JSON.parse would have
   // read it, typed by the schema, whose objects and arrays are recorded with
-  // their raw JSON (origins).
+  // their raw JSON in origins.
   private parse<T>(
     path: string,
     raw: JsonValue | JsonError,
     schema: Schema,
+    origins: Map<object, JsonValue>,
   ): T {
     if (raw instanceof JsonError) {
       throw fail(`${path}: it ${raw.message}`);
@@ -383,7 +387,7 @@ class Loader {
         `${path}: ${problem ?? "is not an object"}, which its schema does not take`,
       );
     }
-    return plain(raw, this.origins) as T;
+    return plain(raw, origins) as T;
   }
 
   // raw returns the raw JSON, whose numbers are as they are written, of x,
@@ -403,6 +407,7 @@ class Loader {
       MANIFEST_PATH,
       json(bytes),
       schemas.manifest,
+      this.origins,
     );
     if (m.astVersion > AST_VERSION) {
       throw new ASTUnsupportedError(
@@ -424,6 +429,9 @@ class Loader {
   // hashes the bytes, and has read read them, as they are when it is
   // called, before it awaits the hash, so that what it returns is of the
   // bytes that it hashed, whatever the map or the bytes become meanwhile.
+  // It awaits the hash whatever read does, and refuses a file of another
+  // hash before it throws what read threw, as Go's Load checks a file's hash
+  // before it reads it.
   private async contents<R>(
     path: string,
     read: (bytes: Uint8Array) => R,
@@ -437,21 +445,34 @@ class Loader {
       throw fail(`there is no ${path}`);
     }
     const sum = digest(bytes);
-    const r = read(bytes);
+    let r: { value: R } | { thrown: unknown };
+    try {
+      r = { value: read(bytes) };
+    } catch (e) {
+      r = { thrown: e };
+    }
     const got = await sum;
     if (got !== want) {
       throw fail(
         `${path}: its hash is ${got}, not the manifest's ${JSON.stringify(want)}`,
       );
     }
-    return r;
+    if ("thrown" in r) {
+      throw r.thrown;
+    }
+    return r.value;
   }
 
-  // readFile reads the file of the path, once it has checked its hash.
-  private async readFile<T>(path: string, schema: Schema): Promise<T> {
+  // readFile reads the file of the path, once it has checked its hash, and
+  // records the raw JSON of its objects and arrays in origins.
+  private async readFile<T>(
+    path: string,
+    schema: Schema,
+    origins = this.origins,
+  ): Promise<T> {
     const raw = await this.contents(path, json);
     this.read.add(path);
-    return this.parse<T>(path, raw, schema);
+    return this.parse<T>(path, raw, schema, origins);
   }
 
   // readBoard reads the board file of the path, and decodes its
@@ -466,7 +487,11 @@ class Loader {
   // branch's outputs' conditions, so that it refuses the first that it
   // cannot decode.
   private async readBoard(path: string): Promise<BoardFile> {
-    const f = await this.readFile<BoardFile>(path, schemas.board);
+    // The raw JSON of the file, of which it reads the expressions' alone,
+    // which it lets go of once it has decoded them, so that it holds that of
+    // one board's file at a time.
+    const origins = new Map<object, JsonValue>();
+    const f = await this.readFile<BoardFile>(path, schemas.board, origins);
     // expression decodes the AST of e, the expression of the key of the
     // object whose ID is id, if it has one, in the context ctx.
     const expression = (
@@ -478,7 +503,7 @@ class Loader {
       if (e !== undefined) {
         this.decoded.set(
           e,
-          this.ast(`${path}: the ${key} of ${id}`, this.raw(e), ctx),
+          this.ast(`${path}: the ${key} of ${id}`, origins.get(e), ctx),
         );
       }
     };
@@ -1131,117 +1156,4 @@ class Loader {
       }
     }
   }
-}
-
-// folds are the code points that the Go runtime's case folding of a tag
-// changes, by schema/unicode/fold.json, and what it folds each to.
-const folds = new Map<number, string>(
-  foldTable.fold.map(([c, ...to]) => [c, String.fromCodePoint(...to)]),
-);
-
-// composing are the ranges of the code points, each as its first and its
-// last, in their order, that the Go runtime's normalization form C, of
-// golang.org/x/text, may change, reorder, or join with the code points
-// beside them, by schema/unicode/fold.json; it leaves every other code point
-// as it is, and joins it with none, as it does each that its version of
-// Unicode does not assign.
-const composing: readonly (readonly number[])[] = foldTable.nfc;
-
-// nonStarters are the ranges of the code points that the Go runtime's form C
-// counts as non-starters, at their start or at their end, each as its first
-// and its last code point, then how many it counts each of them as at its
-// start and at its end, in their order, by schema/unicode/fold.json; it
-// counts every other code point as none, and each of these is composing.
-const nonStarters: readonly (readonly number[])[] = foldTable.nonStarters;
-
-// MAX_NON_STARTERS is how many non-starters in a row the Go runtime's form C
-// takes: before a code point that would make more, it inserts CGJ, U+034F
-// COMBINING GRAPHEME JOINER, as Unicode's Stream-Safe Text Format does (UAX
-// #15), and the platform's form C does not.
-const MAX_NON_STARTERS = 30;
-const CGJ = String.fromCodePoint(0x34f);
-
-// rangeOf returns the range of ranges, each of which is its first and its
-// last code point, and what else it holds, in their order, that holds the
-// code point c, or undefined of none.
-function rangeOf(
-  ranges: readonly (readonly number[])[],
-  c: number,
-): readonly number[] | undefined {
-  let lo = 0;
-  let hi = ranges.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (ranges[mid][1] < c) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  return lo < ranges.length && ranges[lo][0] <= c ? ranges[lo] : undefined;
-}
-
-// formC returns s in Unicode's normalization form C as the Go runtime puts
-// it in it. It inserts a CGJ before each code point that would make more
-// than MAX_NON_STARTERS non-starters in a row, counted as nonStarters counts
-// them, where a starter, or a code point that is not composing, ends a row,
-// as Go's does. It puts each run of composing code points between them in
-// the platform's form C, which gives Go's form C of them, since Unicode
-// never changes the form C of the code points that a version assigns, and
-// they are of the version of Go's tables, as long as the platform's tables
-// are of that version or a later one; and it leaves each other code point
-// as it is, as Go leaves it, though the platform's form C of a later version
-// may join one that Unicode assigned since with its neighbours, as Unicode
-// 16.0's joins U+16D67 KIRAT RAI VOWEL SIGN E twice into U+16D68.
-function formC(s: string): string {
-  let out = "";
-  let run = "";
-  // How many non-starters in a row run ends with.
-  let row = 0;
-  for (const c of s) {
-    const cp = c.codePointAt(0) as number;
-    if (!rangeOf(composing, cp)) {
-      out += run.normalize("NFC") + c;
-      run = "";
-      row = 0;
-      continue;
-    }
-    const counts = rangeOf(nonStarters, cp);
-    const lead = counts === undefined ? 0 : counts[2];
-    if (lead === 0) {
-      row = counts === undefined ? 0 : counts[3];
-    } else if (row + lead > MAX_NON_STARTERS) {
-      out += run.normalize("NFC") + CGJ;
-      run = "";
-      row = lead;
-    } else {
-      row += lead;
-    }
-    run += c;
-  }
-  return out + run.normalize("NFC");
-}
-
-/**
- * Returns the key by which two tags of a node are the same but for their
- * case, as the Go runtime's, input.FoldCase, is: the tag in Unicode's
- * normalization form C, each of its code points case folded as
- * schema/unicode/fold.json folds it, which is the Go runtime's folding, of
- * golang.org/x/text, rather than JavaScript's toUpperCase and toLowerCase,
- * which follow other rules and other versions of Unicode, and the result in
- * form C again; so that Quest, QUEST, and quest are one, and so are ẞ, ß,
- * and ss, though kır and kir are two, as ı folds to itself. Its forms C are
- * Go's too (formC), by the platform's form C of the code points that the
- * table says Go's may change, and of no other, so that a code point that
- * Unicode assigned after the version of the table is left as it is, as Go
- * leaves it, rather than put in the form of the platform's later tables,
- * with a CGJ inserted after 30 non-starters in a row, where the table says
- * that Go's inserts one, and the platform's inserts none.
- */
-export function foldCase(tag: string): string {
-  let folded = "";
-  for (const c of formC(tag)) {
-    folded += folds.get(c.codePointAt(0) as number) ?? c;
-  }
-  return formC(folded);
 }

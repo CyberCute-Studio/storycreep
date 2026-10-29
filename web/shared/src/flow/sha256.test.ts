@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, test } from "vitest";
-import { sha256 } from "./sha256";
+import { sha256, sha256Yielding, YIELD_EVERY } from "./sha256";
 
 const hex = (b: Uint8Array) =>
   Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
@@ -41,4 +41,40 @@ test("sha256 is what node:crypto gives of a message of any length", () => {
   expect(hex(sha256(part))).toBe(
     createHash("sha256").update(part).digest("hex"),
   );
+});
+
+// A message of more bytes than sha256Yielding hashes at a time, of fewer, and
+// of a whole number of times as many, with a part of a block left or none.
+test("sha256Yielding is what sha256 gives", async () => {
+  for (const n of [
+    0,
+    100,
+    YIELD_EVERY - 1,
+    YIELD_EVERY,
+    YIELD_EVERY + 1,
+    2 * YIELD_EVERY + 63,
+    3 * YIELD_EVERY,
+  ]) {
+    const b = bytes(n);
+    expect(hex(await sha256Yielding(b)), String(n)).toBe(hex(sha256(b)));
+  }
+});
+
+// A page goes on running tasks while it hashes a large file, which it hashes
+// as it was when it was given, whatever becomes of it meanwhile.
+test("sha256Yielding lets the page run, and hashes the bytes as they were", async () => {
+  const b = bytes(4 * YIELD_EVERY + 5);
+  const want = hex(sha256(b));
+  let ran = 0;
+  const tick = () => {
+    ran++;
+    if (ran < 3) {
+      setTimeout(tick, 0);
+    }
+  };
+  setTimeout(tick, 0);
+  const sum = sha256Yielding(b);
+  b.fill(0);
+  expect(hex(await sum)).toBe(want);
+  expect(ran).toBeGreaterThan(0);
 });

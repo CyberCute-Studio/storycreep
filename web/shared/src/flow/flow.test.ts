@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import ast from "../../../../schema/published/v1/ast.schema.json" with {
   type: "json",
@@ -40,31 +39,11 @@ import {
   type Value,
 } from "../expr";
 import type { SaveState } from "../save-state";
-import { ASTUnsupportedError, foldCase, LoadError, load } from "./load";
+import { foldCase, nfc } from "./fold";
+import { ASTUnsupportedError, LoadError, load } from "./load";
 import { Runtime, StateError, ValueError } from "./runtime";
 import { type Schema, validate } from "./schema";
-
-const conformance = fileURLToPath(
-  new URL("../../../../schema/conformance/", import.meta.url),
-);
-
-// readTree returns the files of the directory dir, by their paths under it,
-// with forward slashes.
-function readTree(dir: string): Map<string, Uint8Array> {
-  const files = new Map<string, Uint8Array>();
-  const walk = (sub: string) => {
-    for (const name of readdirSync(join(dir, sub))) {
-      const path = sub === "" ? name : `${sub}/${name}`;
-      if (statSync(join(dir, path)).isDirectory()) {
-        walk(path);
-      } else {
-        files.set(path, new Uint8Array(readFileSync(join(dir, path))));
-      }
-    }
-  };
-  walk("");
-  return files;
-}
+import { conformance, readTree } from "./testing";
 
 // The IDs of the suites' entities, by their mnemonics, as the Go suites name
 // them: the body is the mnemonic after zeros.
@@ -170,6 +149,31 @@ describe("load", () => {
       });
     };
 
+    // A browser's WebCrypto reads no view of a resizable ArrayBuffer, as
+    // WebIDL's BufferSource takes none, which a page may give the loader.
+    test("hashes a file over a resizable buffer", async () => {
+      const subtle = globalThis.crypto.subtle;
+      vi.stubGlobal("crypto", {
+        subtle: {
+          digest: async (algorithm: string, data: Uint8Array) => {
+            if (data.buffer instanceof ArrayBuffer && data.buffer.resizable) {
+              throw new TypeError("a view of a resizable ArrayBuffer");
+            }
+            return subtle.digest(algorithm, data.slice());
+          },
+        },
+      });
+      const files = new Map<string, Uint8Array>();
+      for (const [path, bytes] of suite("choices")) {
+        const view = new Uint8Array(
+          new ArrayBuffer(bytes.length, { maxByteLength: bytes.length + 1 }),
+        );
+        view.set(bytes);
+        files.set(path, view);
+      }
+      await expect(load(files)).resolves.toBeDefined();
+    });
+
     test("hashes no file after the first that it refuses", async () => {
       let hashed = 0;
       stubDigest(() => {
@@ -231,6 +235,51 @@ describe("load", () => {
           }),
         ),
       ).resolves.toBeDefined();
+    }
+  });
+
+  // A platform whose Unicode is older than the Go runtime's, as a browser's
+  // on a system that has not been updated, of Unicode 14.0, takes U+1E4EF
+  // NAG MUNDARI SIGN SUTUH, a mark of Unicode 15.0, for an unassigned
+  // starter, which its form C neither orders nor joins across; the Go
+  // runtime's form C puts U+0323 COMBINING DOT BELOW before it, which joins
+  // a into ạ, and U+0345 COMBINING GREEK YPOGEGRAMMENI after it, which folds
+  // to ι.
+  test("compares tags as the Go runtime does where the platform's Unicode is older", async () => {
+    const normalize = String.prototype.normalize;
+    const mark = String.fromCodePoint(0x1e4ef);
+    vi.spyOn(String.prototype, "normalize").mockImplementation(function (
+      this: string,
+      form?: string,
+    ) {
+      return this.split(mark)
+        .map((part) => normalize.call(part, form))
+        .join(mark);
+    });
+    try {
+      await expect(
+        load(
+          suite("choices", {
+            [main]: (b) => {
+              nodeOf(b, nd("START")).tags = [
+                `a\u0345${mark}`,
+                `a\u03b9${mark}`,
+              ];
+            },
+          }),
+        ),
+      ).resolves.toBeDefined();
+      await expect(
+        load(
+          suite("choices", {
+            [main]: (b) => {
+              nodeOf(b, nd("START")).tags = [`\u1ea1${mark}`, `a${mark}\u0323`];
+            },
+          }),
+        ),
+      ).rejects.toThrow(/the same but for their case/);
+    } finally {
+      vi.restoreAllMocks();
     }
   });
 
@@ -1108,6 +1157,116 @@ test("foldCase folds a tag's case as the Go runtime does", () => {
   ]) {
     expect(foldCase(String.fromCodePoint(...tag)), tag.join(" ")).toBe(
       String.fromCodePoint(...folded),
+    );
+  }
+});
+
+// Each tag and what the Go runtime's input.FoldCase returns of it, whatever
+// the platform's form C gives, which foldCase never calls: U+1E4EF NAG
+// MUNDARI SIGN SUTUH is a mark of Unicode 15.0, of class 230, which a
+// platform of Unicode 14.0 takes for an unassigned starter.
+test("foldCase folds a tag as the Go runtime does without the platform's form C", () => {
+  const spy = vi.spyOn(String.prototype, "normalize").mockImplementation(() => {
+    throw new Error("foldCase calls the platform's form C");
+  });
+  try {
+    for (const [tag, folded] of [
+      [
+        [0x1ea1, 0x1e4ef],
+        [0x1ea1, 0x1e4ef],
+      ],
+      [
+        [0x61, 0x1e4ef, 0x323],
+        [0x1ea1, 0x1e4ef],
+      ],
+      [
+        [0x61, 0x345, 0x1e4ef],
+        [0x61, 0x1e4ef, 0x3b9],
+      ],
+      [
+        [0x61, 0x3b9, 0x1e4ef],
+        [0x61, 0x3b9, 0x1e4ef],
+      ],
+      [[0x1e9e], [0x73, 0x73]],
+      [[0x3aa, 0x301], [0x390]],
+      [[0x1100, 0x1161, 0x11a8], [0xac01]],
+      [
+        [0xac00, 0x11a7],
+        [0xac00, 0x11a7],
+      ],
+      [
+        [0x16d67, 0x16d67],
+        [0x16d67, 0x16d67],
+      ],
+    ]) {
+      expect(foldCase(String.fromCodePoint(...tag)), tag.join(" ")).toBe(
+        String.fromCodePoint(...folded),
+      );
+    }
+    expect(spy).not.toHaveBeenCalled();
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
+
+// fold.json's tables of form C give the platform's form C of strings of the
+// code points that their version of Unicode assigns, as long as the
+// platform's version is that one or a later one, since Unicode never changes
+// the form C of those: each pair that they join, and it beside marks that
+// may block it; each code point that they decompose, alone and beside marks;
+// each mark beside marks of lower and higher classes and of its own; and the
+// Hangul jamo and syllables: each leading consonant, and the code point
+// after the last, beside each vowel, and the code points before the first
+// and after the last; each syllable of no trailing consonant beside each
+// trailing one, the two code points before the first, and the one after the
+// last; and each other syllable alone, and beside a trailing consonant and a
+// mark.
+test("nfc gives the platform's form C of the code points of fold.json's version", () => {
+  expect(
+    Number.parseFloat(process.versions.unicode ?? "0"),
+  ).toBeGreaterThanOrEqual(Number.parseFloat(foldTable.unicodeVersion));
+  const s = (...cps: number[]) => String.fromCodePoint(...cps);
+  const inputs: string[] = [];
+  for (const [c, first, second] of foldTable.compositions) {
+    expect(nfc(s(first, second)), `${first} ${second}`).toBe(s(c));
+    inputs.push(
+      s(first, second),
+      s(first, 0x334, second),
+      s(first, 0x323, second),
+      s(first, 0x301, second),
+      s(first, 0x345, second),
+      s(first, 0x61, second),
+    );
+  }
+  for (const [c] of foldTable.decompositions) {
+    inputs.push(s(c), s(c, 0x301), s(0x61, c, 0x334), s(c, 0x323, 0x345));
+  }
+  for (const [first, last] of foldTable.ccc) {
+    for (let c = first; c <= last; c++) {
+      inputs.push(
+        s(0x61, c, 0x323, 0x301, c, 0x334, 0x345),
+        s(c, 0x61, c),
+        s(0x61, 0x345, c, c, 0x334),
+      );
+    }
+  }
+  for (let l = 0x1100; l <= 0x1113; l++) {
+    for (let v = 0x1160; v <= 0x1176; v++) {
+      inputs.push(s(l, v), s(l, v, 0x11a8), s(l, 0x301, v));
+    }
+  }
+  for (let syllable = 0xac00; syllable <= 0xd7a3; syllable++) {
+    if ((syllable - 0xac00) % 28 === 0) {
+      for (let t = 0x11a6; t <= 0x11c3; t++) {
+        inputs.push(s(syllable, t));
+      }
+    } else {
+      inputs.push(s(syllable), s(syllable, 0x11a8), s(syllable, 0x301));
+    }
+  }
+  for (const input of inputs) {
+    expect(nfc(input), [...input].map((c) => c.codePointAt(0)).join(" ")).toBe(
+      input.normalize("NFC"),
     );
   }
 });

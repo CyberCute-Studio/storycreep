@@ -619,16 +619,26 @@ export function endsWith(s: string, suffix: string): boolean {
   return s.endsWith(suffix);
 }
 
-// The simple case mappings of the tables, by code point, and the ranges of
-// White_Space, in their order.
-const upperTable: ReadonlyMap<number, number> = new Map(
-  tables.upper.map(([from, to]) => [from, to]),
-);
-const lowerTable: ReadonlyMap<number, number> = new Map(
-  tables.lower.map(([from, to]) => [from, to]),
-);
-const whiteSpace: readonly (readonly [number, number])[] =
-  tables.whiteSpace.map(([first, last]) => [first, last] as const);
+// caseTables are the simple case mappings of the tables, by code point,
+// which caseMappings builds the first time that upper or lower is called, so
+// that a page that parses and checks expressions, and calls neither, builds
+// none of them.
+let caseTables:
+  | { upper: ReadonlyMap<number, number>; lower: ReadonlyMap<number, number> }
+  | undefined;
+
+// caseMappings returns the simple mappings of the tables to the case, upper
+// or lower, by code point.
+function caseMappings(c: "upper" | "lower"): ReadonlyMap<number, number> {
+  caseTables ??= {
+    upper: new Map(tables.upper.map(([from, to]) => [from, to])),
+    lower: new Map(tables.lower.map(([from, to]) => [from, to])),
+  };
+  return caseTables[c];
+}
+
+// The ranges of White_Space, in their order, as the tables hold them.
+const whiteSpace: readonly (readonly number[])[] = tables.whiteSpace;
 
 /**
  * Returns s with each code point mapped to its simple uppercase mapping, as
@@ -639,7 +649,7 @@ const whiteSpace: readonly (readonly [number, number])[] =
  * It maps no code point by locale: upper("i") is "I", in Turkish too.
  */
 export function upper(s: string): string {
-  return mapCase(s, upperTable);
+  return mapCase(s, caseMappings("upper"));
 }
 
 /**
@@ -648,7 +658,7 @@ export function upper(s: string): string {
  * lower("Σ") is "σ", wherever it is in a word.
  */
 export function lower(s: string): string {
-  return mapCase(s, lowerTable);
+  return mapCase(s, caseMappings("lower"));
 }
 
 // mapCase returns s with each code point that table maps mapped. A lone

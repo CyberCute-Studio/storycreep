@@ -1,6 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { beforeAll, describe, expect, test } from "vitest";
 import {
@@ -17,30 +16,7 @@ import {
 import type { SaveState } from "../save-state";
 import { attributeKey, load, type Snapshot } from "./load";
 import { type Event, interpolate, Runtime } from "./runtime";
-
-// schema/conformance, whose README describes its suites and scenarios, which
-// the Go reference runtime runs too (TestConformance).
-const conformance = fileURLToPath(
-  new URL("../../../../schema/conformance/", import.meta.url),
-);
-
-// readTree returns the files of the directory dir, by their paths under it,
-// with forward slashes.
-function readTree(dir: string): Map<string, Uint8Array> {
-  const files = new Map<string, Uint8Array>();
-  const walk = (sub: string) => {
-    for (const name of readdirSync(join(dir, sub))) {
-      const path = sub === "" ? name : `${sub}/${name}`;
-      if (statSync(join(dir, path)).isDirectory()) {
-        walk(path);
-      } else {
-        files.set(path, new Uint8Array(readFileSync(join(dir, path))));
-      }
-    }
-  };
-  walk("");
-  return files;
-}
+import { conformance, readTree } from "./testing";
 
 type Raw = { [key: string]: JsonValue };
 

@@ -94,7 +94,7 @@ function projectError(message: string): UsageError {
 /**
  * What a project's expressions can name: its variables, global and of each
  * board, its components and their attributes, and its nodes, those that are
- * not in the trash, by their keys and IDs. newProject returns one, and with
+ * not in the trash, by their keys and IDs. Project.of returns one, and with
  * one of another's names and a board's, which check reads and never changes,
  * so that one Project serves every expression of the project.
  */
@@ -112,7 +112,7 @@ export class Project {
   // nodes say of each node, by its ID, whether it is a jumper.
   private readonly nodes = new Map<string, boolean>();
   // base is the Project that with added this one's names to, or undefined
-  // for one that newProject returns. A Project that with returns shares
+  // for one that Project.of returns. A Project that with returns shares
   // base's globals and components, and its other maps hold what with added
   // alone, so that a read of a board's variables, of a key's boards, of a
   // variable by its ID, or of a node goes on to base's.
@@ -410,15 +410,6 @@ export class Project {
     }
     return undefined;
   }
-}
-
-/** Returns the Project of the variables, the components, and the nodes (Project.of). */
-export function newProject(
-  variables: readonly Variable[],
-  components: readonly Component[],
-  nodes: readonly BoardNode[],
-): Project {
-  return Project.of(variables, components, nodes);
 }
 
 // key throws unless s is an identifier that is not a reserved word, as a key

@@ -7,6 +7,7 @@
 // evaluates the snapshot's ASTs with the expression engine, and never
 // parses a source (PRD §6.1).
 
+export { foldCase } from "./fold";
 export {
   ASTUnsupportedError,
   attributeKey,
@@ -14,7 +15,6 @@ export {
   COMPONENT_TYPES_PATH,
   COMPONENTS_PATH,
   type Connection,
-  foldCase,
   LoadError,
   load,
   MANIFEST_PATH,
