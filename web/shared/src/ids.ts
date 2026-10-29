@@ -161,17 +161,26 @@ export function decodeId(kind: IdKind, id: string): Uint8Array {
   return decoded.uuid;
 }
 
+// The pattern of each entity type's identifiers in their canonical spelling,
+// as the Go package's CanonicalPattern writes it: the lowercase prefix, an
+// underscore, and the uppercase body, whose first character keeps the value
+// within 128 bits.
+const CANONICAL_PATTERNS = Object.fromEntries(
+  (Object.keys(ID_PREFIXES) as IdKind[]).map((kind) => [
+    kind,
+    new RegExp(
+      `^${ID_PREFIXES[kind]}_[${ALPHABET.slice(0, 8)}][${ALPHABET}]{${BODY_LENGTH - 1}}$`,
+    ),
+  ]),
+) as Record<IdKind, RegExp>;
+
 /**
  * Reports whether id is the identifier of an entity of the given type in its
  * canonical spelling, as encodeId writes it: the published format holds
  * identifiers so, so that a consumer compares them as strings.
  */
 export function isCanonicalId(kind: IdKind, id: string): boolean {
-  try {
-    return encodeId(kind, decodeId(kind, id)) === id;
-  } catch {
-    return false;
-  }
+  return isIdKind(kind) && CANONICAL_PATTERNS[kind].test(id);
 }
 
 /**

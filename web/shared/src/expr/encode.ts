@@ -210,6 +210,8 @@ export function textProblem(s: string): string | undefined {
   if (s.includes("\0")) {
     return "a string holds a NUL";
   }
+  // As !s.isWellFormed() does, which Safari has only since 16.4, so that it
+  // runs on iPadOS 16, which PRD §9.9 supports.
   if (/\p{Surrogate}/u.test(s)) {
     return "a string holds a lone surrogate, which is not UTF-8";
   }

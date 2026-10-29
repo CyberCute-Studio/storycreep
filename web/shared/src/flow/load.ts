@@ -321,15 +321,6 @@ function json(bytes: Uint8Array): JsonValue | JsonError {
   }
 }
 
-// expressionFields are the keys of the expressions of a board's file, of a
-// connection, a node, or a branch's output, with the contexts of their ASTs.
-const expressionFields: Readonly<Record<string, Context>> = {
-  condition: "condition",
-  onEnter: "script",
-  onExit: "script",
-  onTraverse: "script",
-};
-
 // Loader is what load keeps while it reads a snapshot's files: the IDs of the
 // entities that it has read, of which no two are one, the components' IDs,
 // the paths of the files that it has read, the raw JSON of what it has read
@@ -367,10 +358,10 @@ class Loader {
     string,
     { info: ManifestBoard; reset: string[] }
   >();
-  private readonly nodes = new Map<
-    string,
-    SnapshotNode & { ports: Map<string, Connection[]> }
-  >();
+  private readonly nodes = new Map<string, SnapshotNode>();
+  // ports are the ports of each node, by its ID, which its node holds too,
+  // to which addConnections adds the connections that leave them.
+  private readonly ports = new Map<string, Map<string, Connection[]>>();
 
   constructor(private readonly files: ReadonlyMap<string, Uint8Array>) {}
 
@@ -464,38 +455,46 @@ class Loader {
   }
 
   // readBoard reads the board file of the path, and decodes its
-  // expressions' ASTs, as the Go runtime's reader of a file,
-  // published.Decode, decodes them as it reads it: in the order that the
-  // file writes them, which a file of the published format, whose keys are
-  // sorted (§6.2), writes the connections' before the nodes', so that it
-  // refuses the first that it cannot decode.
+  // expressions' ASTs as the Go runtime's reader of a file,
+  // published.Decode, decodes them as it reads it. It decodes those of the
+  // keys that each object's type defines, and ignores the same keys of a
+  // type that does not define them, as an element's condition, as it
+  // ignores any key that it does not know (§6.4). It decodes them in the
+  // order of their keys sorted, in which Go reads them whatever order the
+  // file writes them in: the connections', each's condition, then its
+  // onTraverse, then the nodes', each's onEnter, then its onExit, then a
+  // branch's outputs' conditions, so that it refuses the first that it
+  // cannot decode.
   private async readBoard(path: string): Promise<BoardFile> {
     const f = await this.readFile<BoardFile>(path, schemas.board);
-    // expressions decodes the expressions of o, a connection, a node, or a
-    // branch's output, whose ID is id, and of a branch's outputs, in the
-    // order of o's keys.
-    const expressions = (o: object, id: string) => {
-      for (const [key, v] of Object.entries(o)) {
-        if (Object.hasOwn(expressionFields, key)) {
-          this.decoded.set(
-            v,
-            this.ast(
-              `${path}: the ${key} of ${id}`,
-              this.raw(v),
-              expressionFields[key],
-            ),
-          );
-        } else if (key === "outputs") {
-          for (const output of v as { id: string }[]) {
-            expressions(output, output.id);
-          }
-        }
+    // expression decodes the AST of e, the expression of the key of the
+    // object whose ID is id, if it has one, in the context ctx.
+    const expression = (
+      id: string,
+      key: string,
+      e: object | undefined,
+      ctx: Context,
+    ) => {
+      if (e !== undefined) {
+        this.decoded.set(
+          e,
+          this.ast(`${path}: the ${key} of ${id}`, this.raw(e), ctx),
+        );
       }
     };
-    for (const key of Object.keys(f)) {
-      if (key === "connections" || key === "nodes") {
-        for (const o of f[key]) {
-          expressions(o, o.id);
+    for (const c of f.connections) {
+      expression(c.id, "condition", c.condition, "condition");
+      expression(c.id, "onTraverse", c.onTraverse, "script");
+    }
+    for (const n of f.nodes) {
+      if (n.type === "jumper") {
+        continue;
+      }
+      expression(n.id, "onEnter", n.onEnter, "script");
+      expression(n.id, "onExit", n.onExit, "script");
+      if (n.type === "branch") {
+        for (const o of n.outputs) {
+          expression(o.id, "condition", o.condition, "condition");
         }
       }
     }
@@ -760,6 +759,7 @@ class Loader {
     for (const n of f.nodes) {
       this.entity(n.id, path);
       const ports = new Map<string, Connection[]>();
+      this.ports.set(n.id, ports);
       if (n.type === "element") {
         ports.set(OUT, []);
         this.nodes.set(n.id, {
@@ -939,7 +939,7 @@ class Loader {
           `${path}: the connection ${c.id} does not join two nodes of the board`,
         );
       }
-      const port = (from.ports as Map<string, Connection[]>).get(c.fromPort);
+      const port = this.ports.get(c.from)?.get(c.fromPort);
       if (port === undefined) {
         throw fail(
           `${path}: the connection ${c.id} leaves ${c.from} by ${c.fromPort}, which is no port of it`,
@@ -982,9 +982,7 @@ class Loader {
       this.checkNode(path, b, n, p);
     }
     for (const n of f.nodes) {
-      const ports = (
-        this.nodes.get(n.id) as NodeBase & { ports: Map<string, Connection[]> }
-      ).ports;
+      const ports = this.ports.get(n.id) as Map<string, Connection[]>;
       for (const port of [...ports.keys()].sort()) {
         const cs = ports.get(port) as Connection[];
         cs.sort((x, y) => x.order - y.order);
@@ -1007,17 +1005,16 @@ class Loader {
     n: BoardFile["nodes"][number],
     p: Project,
   ): void {
-    const node = this.nodes.get(n.id) as SnapshotNode;
-    const scripts = () => {
-      if (node.type !== "jumper") {
+    // scripts checks the node's scripts, as readBoard decoded them.
+    const scripts = (onEnter?: object, onExit?: object) => {
+      for (const e of [onEnter, onExit]) {
         this.check(
           `${path}: a script of ${n.id}`,
-          node.onEnter,
+          this.decodedOf(e),
           "script",
           p,
           b,
         );
-        this.check(`${path}: a script of ${n.id}`, node.onExit, "script", p, b);
       }
     };
     if (n.type === "element") {
@@ -1039,20 +1036,20 @@ class Loader {
       if (n.text !== undefined) {
         this.checkSegments(`${path}: the text of ${n.id}`, b, n.text.segments);
       }
-      scripts();
+      scripts(n.onEnter, n.onExit);
       return;
     }
-    if (n.type === "branch" && node.type === "branch") {
-      for (const o of node.outputs) {
+    if (n.type === "branch") {
+      for (const o of n.outputs) {
         this.check(
           `${path}: the condition of ${o.id}`,
-          o.condition,
+          this.decodedOf(o.condition),
           "condition",
           p,
           b,
         );
       }
-      scripts();
+      scripts(n.onEnter, n.onExit);
       return;
     }
     if (n.type === "jumper") {
@@ -1150,40 +1147,77 @@ const folds = new Map<number, string>(
 // Unicode does not assign.
 const composing: readonly (readonly number[])[] = foldTable.nfc;
 
-// isComposing reports whether the code point c is in a range of composing.
-function isComposing(c: number): boolean {
+// nonStarters are the ranges of the code points that the Go runtime's form C
+// counts as non-starters, at their start or at their end, each as its first
+// and its last code point, then how many it counts each of them as at its
+// start and at its end, in their order, by schema/unicode/fold.json; it
+// counts every other code point as none, and each of these is composing.
+const nonStarters: readonly (readonly number[])[] = foldTable.nonStarters;
+
+// MAX_NON_STARTERS is how many non-starters in a row the Go runtime's form C
+// takes: before a code point that would make more, it inserts CGJ, U+034F
+// COMBINING GRAPHEME JOINER, as Unicode's Stream-Safe Text Format does (UAX
+// #15), and the platform's form C does not.
+const MAX_NON_STARTERS = 30;
+const CGJ = String.fromCodePoint(0x34f);
+
+// rangeOf returns the range of ranges, each of which is its first and its
+// last code point, and what else it holds, in their order, that holds the
+// code point c, or undefined of none.
+function rangeOf(
+  ranges: readonly (readonly number[])[],
+  c: number,
+): readonly number[] | undefined {
   let lo = 0;
-  let hi = composing.length;
+  let hi = ranges.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (composing[mid][1] < c) {
+    if (ranges[mid][1] < c) {
       lo = mid + 1;
     } else {
       hi = mid;
     }
   }
-  return lo < composing.length && composing[lo][0] <= c;
+  return lo < ranges.length && ranges[lo][0] <= c ? ranges[lo] : undefined;
 }
 
 // formC returns s in Unicode's normalization form C as the Go runtime puts
-// it in it: each run of its composing code points put in the platform's
-// form C, which gives Go's form C of them, since Unicode never changes the
-// form C of the code points that a version assigns, and they are of the
-// version of Go's tables, as long as the platform's tables are of that
-// version or a later one; and each other code point left as it is, as Go
-// leaves it, though the platform's form C of a later version may join one
-// that Unicode assigned since with its neighbours, as Unicode 16.0's joins
-// U+16D67 KIRAT RAI VOWEL SIGN E twice into U+16D68.
+// it in it. It inserts a CGJ before each code point that would make more
+// than MAX_NON_STARTERS non-starters in a row, counted as nonStarters counts
+// them, where a starter, or a code point that is not composing, ends a row,
+// as Go's does. It puts each run of composing code points between them in
+// the platform's form C, which gives Go's form C of them, since Unicode
+// never changes the form C of the code points that a version assigns, and
+// they are of the version of Go's tables, as long as the platform's tables
+// are of that version or a later one; and it leaves each other code point
+// as it is, as Go leaves it, though the platform's form C of a later version
+// may join one that Unicode assigned since with its neighbours, as Unicode
+// 16.0's joins U+16D67 KIRAT RAI VOWEL SIGN E twice into U+16D68.
 function formC(s: string): string {
   let out = "";
   let run = "";
+  // How many non-starters in a row run ends with.
+  let row = 0;
   for (const c of s) {
-    if (isComposing(c.codePointAt(0) as number)) {
-      run += c;
+    const cp = c.codePointAt(0) as number;
+    if (!rangeOf(composing, cp)) {
+      out += run.normalize("NFC") + c;
+      run = "";
+      row = 0;
       continue;
     }
-    out += run.normalize("NFC") + c;
-    run = "";
+    const counts = rangeOf(nonStarters, cp);
+    const lead = counts === undefined ? 0 : counts[2];
+    if (lead === 0) {
+      row = counts === undefined ? 0 : counts[3];
+    } else if (row + lead > MAX_NON_STARTERS) {
+      out += run.normalize("NFC") + CGJ;
+      run = "";
+      row = lead;
+    } else {
+      row += lead;
+    }
+    run += c;
   }
   return out + run.normalize("NFC");
 }
@@ -1200,7 +1234,9 @@ function formC(s: string): string {
  * Go's too (formC), by the platform's form C of the code points that the
  * table says Go's may change, and of no other, so that a code point that
  * Unicode assigned after the version of the table is left as it is, as Go
- * leaves it, rather than put in the form of the platform's later tables.
+ * leaves it, rather than put in the form of the platform's later tables,
+ * with a CGJ inserted after 30 non-starters in a row, where the table says
+ * that Go's inserts one, and the platform's inserts none.
  */
 export function foldCase(tag: string): string {
   let folded = "";

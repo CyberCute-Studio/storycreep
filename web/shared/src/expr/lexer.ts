@@ -146,6 +146,8 @@ export class Lexer {
   private eof = 0;
 
   constructor(src: string, ctx: Context) {
+    // As String.prototype.toWellFormed does, which Safari has only since
+    // 16.4, so that it runs on iPadOS 16, which PRD §9.9 supports.
     this.src = src.replace(/\p{Surrogate}/gu, "\uFFFD");
     this.ctx = ctx;
   }

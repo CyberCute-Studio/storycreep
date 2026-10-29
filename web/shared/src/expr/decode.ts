@@ -6,6 +6,7 @@ import {
   type AssignOp,
   type BinaryOp,
   type Context,
+  isIdentifier,
   type Kind,
   MAX_ARGUMENTS,
   MAX_DEPTH,
@@ -48,7 +49,6 @@ const kinds = new Set<Kind>([
   "script",
 ]);
 
-const identifierName = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const attributeName =
   /^[A-Za-z_][A-Za-z0-9_]{0,63}\.[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 
@@ -177,7 +177,7 @@ class Decoder {
       case "var": {
         const ref = id(v, kind, "ref", "variable");
         const name = text(v, kind, "name");
-        if (name.length > MAX_IDENTIFIER_LENGTH || !identifierName.test(name)) {
+        if (!isIdentifier(name)) {
           throw new DecodeError(
             `the name of a var node is not an identifier of at most ${MAX_IDENTIFIER_LENGTH} characters`,
           );
@@ -226,7 +226,7 @@ class Decoder {
       }
       case "call": {
         const fn = text(v, kind, "function");
-        if (fn.length > MAX_IDENTIFIER_LENGTH || !identifierName.test(fn)) {
+        if (!isIdentifier(fn)) {
           throw new DecodeError(
             `the function of a call node is not an identifier of at most ${MAX_IDENTIFIER_LENGTH} characters`,
           );

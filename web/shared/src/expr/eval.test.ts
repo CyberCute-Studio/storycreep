@@ -14,7 +14,7 @@ import {
   MAX_STEPS,
   run,
 } from "./eval";
-import { isJsonObject, type JsonValue, readJSON } from "./json";
+import { isJsonObject, type JsonValue, plain, readJSON } from "./json";
 import { Project } from "./project";
 import {
   type DeclaredType,
@@ -391,9 +391,34 @@ describe("decode", () => {
       encode(decode('{"kind":"lit","type":"int","value":2.0}', "condition")),
     ).toBe('{"kind":"lit","type":"int","value":2}');
   });
+
+  // Every decoded node's range is NO_RANGE, which is frozen, so that no
+  // consumer changes the range of every decoded node by changing one's.
+  test("gives each node the range of no source, which nothing changes", () => {
+    const n = decode(
+      '{"kind":"unary","op":"neg","operand":{"kind":"lit","type":"int","value":2}}',
+      "condition",
+    );
+    expect(n.src).toBe(NO_RANGE);
+    expect(() => {
+      (n.src as { start: number }).start = 1;
+    }).toThrow(TypeError);
+    expect(NO_RANGE).toStrictEqual({ start: 0, end: 0 });
+  });
 });
 
 describe("readJSON", () => {
+  // plain gives what readJSON read as JSON.parse reads the text: each key in
+  // its order, and __proto__ as a key of the object's own, not its prototype.
+  test("is read by plain as JSON.parse reads it", () => {
+    const text = '{"b":1,"__proto__":{"x":[2,{"y":3.5}]},"a":"z"}';
+    const got = plain(readJSON(text)) as Record<string, unknown>;
+    expect(got).toStrictEqual(JSON.parse(text));
+    expect(Object.keys(got)).toStrictEqual(["b", "__proto__", "a"]);
+    expect(Object.getPrototypeOf(got)).toBe(Object.prototype);
+    expect(Object.hasOwn(got, "__proto__")).toBe(true);
+  });
+
   // As encoding/json, which counts each array and object that it opens,
   // empty or not, against its depth of 10,000.
   test("reads arrays and objects nested 10,000 deep, and no deeper", () => {

@@ -27,6 +27,9 @@ import variables from "../../../../schema/published/v1/variables.schema.json" wi
 import saveState from "../../../../schema/save-state/v1/save-state.schema.json" with {
   type: "json",
 };
+import foldTable from "../../../../schema/unicode/fold.json" with {
+  type: "json",
+};
 import {
   boolValue,
   compareNumbers,
@@ -205,14 +208,19 @@ describe("load", () => {
   });
 
   // ı folds to itself, as the Go runtime folds it, rather than to i, as
-  // JavaScript's toUpperCase and toLowerCase map it; and the Go runtime's
-  // form C, of Unicode 15.0, leaves U+16D67 KIRAT RAI VOWEL SIGN E twice as
-  // it is, though a platform's form C of Unicode 16.0 or later joins the two
-  // into U+16D68.
+  // JavaScript's toUpperCase and toLowerCase map it; the Go runtime's form
+  // C, of Unicode 15.0, leaves U+16D67 KIRAT RAI VOWEL SIGN E twice as it
+  // is, though a platform's form C of Unicode 16.0 or later joins the two
+  // into U+16D68; and it inserts a CGJ after 30 non-starters in a row, so
+  // that it does not put marks after the 30th before those up to it, though
+  // a platform's form C does.
   test("takes two tags that the Go runtime's case folding tells apart", async () => {
+    const below = String.fromCodePoint(0x323).repeat(16);
+    const acute = String.fromCodePoint(0x301).repeat(16);
     for (const tags of [
       ["kır", "KIR"],
       [String.fromCodePoint(0x16d68), String.fromCodePoint(0x16d67, 0x16d67)],
+      [`a${below}${acute}`, `a${acute}${below}`],
     ]) {
       await expect(
         load(
@@ -226,15 +234,23 @@ describe("load", () => {
     }
   });
 
+  // An AST that is one level deeper than an AST may be, which no schema
+  // refuses, but decode does.
+  let deep: Obj = { kind: "lit", type: "bool", value: true };
+  for (let i = 0; i < 64; i++) {
+    deep = { kind: "unary", op: "not", operand: deep };
+  }
+  // A script that is deeper still.
+  const deepScript = {
+    kind: "script",
+    statements: [{ kind: "call", function: "signal", args: [deep] }],
+  };
+
   // As the Go runtime's reader of a file, published.Decode, decodes a
   // board's ASTs as it reads the file, one that it cannot decode is refused
   // before what the loader checks once it has read every file, as a signal
   // that is there twice.
   test("refuses an AST that it cannot decode as it reads its board's file", async () => {
-    let deep: Obj = { kind: "lit", type: "bool", value: true };
-    for (let i = 0; i < 64; i++) {
-      deep = { kind: "unary", op: "not", operand: deep };
-    }
     const files = suite("choices", {
       "project/settings.json": (f) => {
         f.signals = ["asking", "asking"];
@@ -252,6 +268,82 @@ describe("load", () => {
     await expect(load(files)).rejects.toThrow(
       /boards\/main\.json: the condition of .*deeper than 64/,
     );
+  });
+
+  // Go's published.Decode reads a file's keys sorted, whatever order the
+  // file writes them in, so that it decodes the connections' ASTs before the
+  // nodes', and a node's onEnter before its onExit.
+  test("decodes a board's ASTs in the order of their keys sorted", async () => {
+    const files = (edit: (b: Obj) => void) =>
+      suite("branches", {
+        [roll]: (b) => {
+          edit(b);
+          // The nodes, then the connections, which the file writes last.
+          const connections = b.connections;
+          delete b.connections;
+          b.connections = connections;
+        },
+      });
+    await expect(
+      load(
+        files((b) => {
+          nodeOf(b, nd("GATE")).onExit.ast = deepScript;
+          connectionOf(b, cn("AF1")).condition.ast = deep;
+        }),
+      ),
+    ).rejects.toThrow(/the condition of cn_0+AF1/);
+    await expect(
+      load(
+        files((b) => {
+          const gate = nodeOf(b, nd("GATE"));
+          const onEnter = gate.onEnter;
+          delete gate.onEnter;
+          gate.onEnter = onEnter;
+          gate.onEnter.ast = deepScript;
+          gate.onExit.ast = deepScript;
+        }),
+      ),
+    ).rejects.toThrow(/the onEnter of nd_0+GATE/);
+  });
+
+  // A key that the format defines as an expression of one type is no
+  // expression of another type that does not define it, and the Go
+  // runtime's reader of a file ignores it there, whatever it holds, as it
+  // ignores any key that it does not know (§6.4).
+  test("ignores the key of an expression where its type does not define it", async () => {
+    const strange = (o: Obj, ...keys: string[]) => {
+      for (const key of keys) {
+        o[key] = key === "outputs" ? { a: 1 } : { ast: deep, of: "none" };
+      }
+    };
+    await expect(
+      load(
+        suite("branches", {
+          [roll]: (b) => {
+            for (const c of b.connections) {
+              strange(c, "onEnter", "onExit", "outputs");
+            }
+            for (const n of b.nodes) {
+              strange(n, "condition", "onTraverse");
+              for (const o of n.outputs ?? []) {
+                strange(o, "onEnter", "onExit", "onTraverse", "outputs");
+              }
+            }
+          },
+        }),
+      ),
+    ).resolves.toBeDefined();
+    await expect(
+      load(
+        suite("jumpers", {
+          [harbour]: (b) => {
+            for (const n of b.nodes) {
+              strange(n, "condition", "onTraverse");
+            }
+          },
+        }),
+      ),
+    ).resolves.toBeDefined();
   });
 
   test("ignores a key that the format does not define", async () => {
@@ -1017,6 +1109,57 @@ test("foldCase folds a tag's case as the Go runtime does", () => {
     expect(foldCase(String.fromCodePoint(...tag)), tag.join(" ")).toBe(
       String.fromCodePoint(...folded),
     );
+  }
+});
+
+// fold.json's checks are the SHA-256 of what the Go runtime's
+// input.FoldCase returns of strings that a runtime builds from the table, as
+// schema/unicode/README.md says: every code point; each that the folding
+// changes or that is not inert in form C beside letters and marks; and each
+// that is not inert after and before rows of acutes, where Go's form C
+// inserts a CGJ.
+test("foldCase folds every code point as the Go runtime does", {
+  timeout: 30_000,
+}, () => {
+  const folding = new Set(foldTable.fold.map(([c]) => c));
+  const composing = new Set(
+    foldTable.nfc.flatMap(([first, last]) =>
+      Array.from({ length: last - first + 1 }, (_, k) => first + k),
+    ),
+  );
+  const neighbours = [0x61, 0x307, 0x345, 0x3a3, 0x3c2, 0x130, 0xac00, 0x11a8]
+    .map((c) => String.fromCodePoint(c))
+    .concat("");
+  const acutes = (n: number) => String.fromCodePoint(0x301).repeat(n);
+  const every: string[] = [];
+  const beside: string[] = [];
+  const streams: string[] = [];
+  for (const c of composing) {
+    const s = String.fromCodePoint(c);
+    streams.push(`a${acutes(30)}${s}${acutes(30)}`);
+    streams.push(`a${acutes(29)}${s}`, `a${acutes(28)}${s}`);
+  }
+  for (let c = 0; c <= 0x10ffff; c++) {
+    if (c >= 0xd800 && c <= 0xdfff) {
+      continue;
+    }
+    const s = String.fromCodePoint(c);
+    every.push(s);
+    if (folding.has(c) || composing.has(c)) {
+      for (const n of neighbours) {
+        beside.push(s, n);
+      }
+    }
+  }
+  for (const [name, input] of [
+    ["every", every],
+    ["beside", beside],
+    ["streams", streams],
+  ] as const) {
+    const sum = createHash("sha256")
+      .update(foldCase(input.join("")), "utf8")
+      .digest("hex");
+    expect(`sha256:${sum}`, name).toBe(foldTable.checks[name]);
   }
 });
 

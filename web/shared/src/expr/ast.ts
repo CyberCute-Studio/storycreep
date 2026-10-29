@@ -183,7 +183,7 @@ export type Node =
   | Script;
 
 /** The range of a node that has no source. */
-export const NO_RANGE: Range = { start: 0, end: 0 };
+export const NO_RANGE: Range = Object.freeze({ start: 0, end: 0 });
 
 /**
  * The limits of an AST (§5.8.1, §5.8.6), which parse checks of a source and

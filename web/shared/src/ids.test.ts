@@ -101,6 +101,7 @@ describe("the shared vectors", () => {
   it.each(vectors.decode_errors)(
     "reject $id as $kind: $error ($note)",
     ({ kind, id, error, got }) => {
+      expect(isCanonicalId(kind, id)).toBe(false);
       const err = catchDecodeError(() => decodeId(kind, id));
       expect({
         reason: err.reason,

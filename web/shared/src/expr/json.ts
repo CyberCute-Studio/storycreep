@@ -113,18 +113,13 @@ export function plain(v: JsonValue, origins?: Map<object, JsonValue>): unknown {
       const out: Record<string, unknown> = {};
       origins?.set(out, from);
       put(out);
-      // Each key is defined in its order, and set once its value is read.
+      // Each key is set in its order, and set again once its value is read.
       for (const key of Object.keys(from)) {
-        Object.defineProperty(out, key, {
-          value: undefined,
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        });
+        own(out, key, undefined);
         stack.push([
           from[key],
           (x) => {
-            Object.defineProperty(out, key, { value: x });
+            own(out, key, x);
           },
         ]);
       }
@@ -133,6 +128,22 @@ export function plain(v: JsonValue, origins?: Map<object, JsonValue>): unknown {
     }
   }
   return root.value;
+}
+
+// own sets the key of o to x, as an assignment does, but for __proto__, which
+// an assignment would take as o's prototype, and which it defines as an own
+// key, as JSON.parse does.
+function own(o: Record<string, unknown>, key: string, x: unknown): void {
+  if (key === "__proto__") {
+    Object.defineProperty(o, key, {
+      value: x,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  } else {
+    o[key] = x;
+  }
 }
 
 /** Reports whether v is an object of readJSON's, neither an array nor a scalar. */
