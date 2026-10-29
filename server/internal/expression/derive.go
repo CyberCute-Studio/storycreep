@@ -34,11 +34,13 @@ func Register(r *commands.Registry) {
 }
 
 // nameKinds are the kinds of entity whose changes may change what the
-// project's expressions can name, but for the nodes, which an expression
-// names only by their IDs (node references): their keys, their types, their
-// scopes, whether they are in the trash, and, of a board, its variables and
-// nodes, which are in the trash with it.
-var nameKinds = []ids.Kind{ids.Variable, ids.Component, ids.AttributeDef, ids.ComponentType, ids.Board}
+// project's expressions can name, and the near matches that an error
+// suggests: their keys, their types, their scopes, and whether they are in
+// the trash. The nodes, which an expression names only by their IDs (node
+// references), and the boards, whose deletions and restorations change what
+// expressions can name of the variables and the nodes that they hold, are
+// read apart (derive).
+var nameKinds = []ids.Kind{ids.Variable, ids.Component, ids.AttributeDef, ids.ComponentType}
 
 // ownerKinds are the kinds of the owners of expressions, whose commands alone
 // write sources.
@@ -80,13 +82,21 @@ var neutral = []commands.Type{
 // to compile: those whose sources its commands wrote, which have neither an
 // AST nor an error yet; those whose sources name, by their IDs or by their
 // keys, an entity that it changed, or a variable, a component, an attribute
-// definition, or a node of a type or a board that it changed; and, if it
-// changed a variable, a component, a definition, a type, or a board, every
-// one that does not compile but names something, whose error, or the near
-// matches that it suggests, may change with any of them; but for a change
-// that the commands of neutral types alone made, which changes none of
-// them. So an expression is always what compiling its source against the
-// project as it is gives, whatever batches led there.
+// definition, or a node of a type that it changed; those of the other boards
+// of a board that it deleted to the trash or restored whose sources name the
+// keys of the board's variables or its nodes, whose deletion takes them out
+// of what those expressions can name, and whose restoration brings them back
+// (BoardExpressionsToCompile); and, if it changed a variable, a component, a
+// definition, or a type, every one that does not compile but names
+// something, whose error, or the near matches that it suggests, may change
+// with any of them; but for a change that the commands of neutral types alone
+// made, which changes none of them. An expression of a board in the trash is
+// compiled as it would be once the board is restored (projects), so that a
+// board's deletion and its restoration change none of the board's own
+// expressions, which they do not compile, nor the near matches of another
+// board's, which name its own board's variables and the global ones alone.
+// So an expression is always what compiling its source against the project
+// as it is gives, whatever batches led there.
 func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
@@ -99,58 +109,60 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 		}
 	}
 	names := slices.ContainsFunc(nameKinds, func(k ids.Kind) bool { return len(byKind[k]) > 0 })
-	refs, keys := append([]pgtype.UUID{}, byKind[ids.Node]...), []string{}
+	refs, keys, boards := append([]pgtype.UUID{}, byKind[ids.Node]...), []string{}, byKind[ids.Board]
 	// A batch that wrote no source (leave), changed no node but as the
 	// commands of neutral types do, which a node reference reads nothing of,
 	// and changed nothing else that expressions can name leaves nothing to
 	// compile, as one that only moves nodes, or reorders connections: it
 	// reads nothing.
-	if !tx.Left(Name) && len(refs) == 0 && !names {
+	if !tx.Left(Name) && len(refs) == 0 && !names && len(boards) == 0 {
 		return nil
 	}
 	if names {
 		rows, err := q.ChangedNames(ctx, queries.ChangedNamesParams{WorkspaceID: ws, ProjectID: project,
-			VariableIds: list(byKind[ids.Variable]), BoardIds: list(byKind[ids.Board]),
-			ComponentIds: list(byKind[ids.Component]), TypeIds: list(byKind[ids.ComponentType]),
-			AttributeIds: list(byKind[ids.AttributeDef])})
+			VariableIds: list(byKind[ids.Variable]), ComponentIds: list(byKind[ids.Component]),
+			TypeIds: list(byKind[ids.ComponentType]), AttributeIds: list(byKind[ids.AttributeDef])})
 		if err != nil {
 			return fmt.Errorf("expression: read what the batch changed of what expressions name: %w", err)
 		}
 		for _, row := range rows {
-			refs = append(refs, row.ID)
-			if row.Key.Valid {
-				keys = append(keys, row.Key.String)
-			}
+			refs, keys = append(refs, row.ID), append(keys, row.Key)
 		}
 	}
-	rows, err := q.ExpressionsToCompile(ctx, queries.ExpressionsToCompileParams{WorkspaceID: ws, ProjectID: project,
-		Refs: refs, Keys: keys, Names: names})
+	rows, err := toCompile(ctx, q, ws, project, queries.ExpressionsToCompileParams{WorkspaceID: ws,
+		ProjectID: project, Refs: refs, Keys: keys, Names: names}, boards)
 	if err != nil {
-		return fmt.Errorf("expression: read the expressions to compile: %w", err)
+		return err
 	}
 	if len(rows) == 0 {
 		return nil
 	}
 	parsed := make([]parse, len(rows))
-	var nodes []pgtype.UUID
-	checks := false
+	var nodes, trashed []pgtype.UUID
+	seen := map[pgtype.UUID]bool{}
 	for i, row := range rows {
 		parsed[i] = parseSource(row.Source, expr.Context(row.Context))
+		if parsed[i].err != nil {
+			continue
+		}
 		nodes = append(nodes, parsed[i].nodes...)
-		checks = checks || parsed[i].err == nil
+		if row.BoardDeleted && !seen[row.BoardID] {
+			seen[row.BoardID] = true
+			trashed = append(trashed, row.BoardID)
+		}
 	}
 	// Only a source that parses is checked against what the project's
 	// expressions can name, so a batch whose sources all fail to parse, as a
 	// half-typed script saved as it is typed, reads none of it.
-	var p *expr.Project
-	if checks {
-		if p, err = loadProject(ctx, q, ws, project, nodes); err != nil {
+	var ps projects
+	if slices.ContainsFunc(parsed, func(s parse) bool { return s.err == nil }) {
+		if ps, err = loadProjects(ctx, q, ws, project, nodes, trashed); err != nil {
 			return err
 		}
 	}
 	compiled := make([]compiledRow, len(rows))
 	for i, row := range rows {
-		c, err := parsed[i].compile(p, ids.Encode(ids.Board, row.BoardID.Bytes))
+		c, err := parsed[i].compile(ps.of(row.BoardID), ids.Encode(ids.Board, row.BoardID.Bytes))
 		if err != nil {
 			return fmt.Errorf("expression: compile the expression %s: %w", ids.UUID(row.ID.Bytes), err)
 		}
@@ -288,15 +300,85 @@ func touchOwners(ctx context.Context, tx *commands.Tx, kind ids.Kind, owners []p
 	return revs, nil
 }
 
-// loadProject returns what the project's expressions can name (§5.8.3): its
-// variables, its components with their attributes, and those of nodes that
-// are not in its trash, which the expressions that it compiles name.
-func loadProject(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, nodes []pgtype.UUID) (
-	*expr.Project, error) {
+// toCompile returns the expressions to compile of the project: those that
+// ExpressionsToCompile returns of p, and those of the other boards of each of
+// the boards whose deletions to the trash or restorations change what those
+// expressions can name of them (BoardExpressionsToCompile), each once, in the
+// order of their IDs.
+func toCompile(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID,
+	p queries.ExpressionsToCompileParams, boards []pgtype.UUID) ([]queries.ExpressionsToCompileRow, error) {
+	rows, err := q.ExpressionsToCompile(ctx, p)
+	if err != nil {
+		return nil, fmt.Errorf("expression: read the expressions to compile: %w", err)
+	}
+	if len(boards) == 0 {
+		return rows, nil
+	}
+	for _, b := range boards {
+		names, err := q.BoardNames(ctx, queries.BoardNamesParams{WorkspaceID: ws, ProjectID: project, BoardID: b})
+		if err != nil {
+			return nil, fmt.Errorf("expression: read what a board holds that expressions name: %w", err)
+		}
+		refs, keys := []pgtype.UUID{}, []string{}
+		for _, n := range names {
+			if n.Key.Valid {
+				keys = append(keys, n.Key.String)
+			} else {
+				refs = append(refs, n.ID)
+			}
+		}
+		if len(refs) == 0 && len(keys) == 0 {
+			continue
+		}
+		more, err := q.BoardExpressionsToCompile(ctx, queries.BoardExpressionsToCompileParams{WorkspaceID: ws,
+			ProjectID: project, BoardID: b, Refs: refs, Keys: keys})
+		if err != nil {
+			return nil, fmt.Errorf("expression: read the expressions that name what a board holds: %w", err)
+		}
+		for _, m := range more {
+			rows = append(rows, queries.ExpressionsToCompileRow(m))
+		}
+	}
+	slices.SortFunc(rows, func(a, b queries.ExpressionsToCompileRow) int {
+		return bytes.Compare(a.ID.Bytes[:], b.ID.Bytes[:])
+	})
+	return slices.CompactFunc(rows, func(a, b queries.ExpressionsToCompileRow) bool { return a.ID == b.ID }), nil
+}
+
+// projects are what the project's expressions can name (§5.8.3), as the
+// expressions of each board see it. An expression of a board that is not in
+// the trash sees live: the project's variables, its components with their
+// attributes, and its nodes that the expressions to compile name, of those
+// that are not in its trash. One of a board in the trash sees what it would
+// once the board is restored: live, and the board's own variables and nodes
+// that are in the trash with it alone, in trashed, by the board's UUID, so
+// that the board's deletion and its restoration change nothing that its own
+// expressions compile to, while the other boards' expressions see nothing
+// that it holds, as an expression that names a node of the board finds no
+// node, and one that names the key of a variable of the board finds no
+// variable of another board of the key.
+type projects struct {
+	live    *expr.Project
+	trashed map[pgtype.UUID]*expr.Project
+}
+
+// of returns what an expression of the board sees.
+func (ps projects) of(board pgtype.UUID) *expr.Project {
+	if p, ok := ps.trashed[board]; ok {
+		return p
+	}
+	return ps.live
+}
+
+// loadProjects returns the projects of the project, whose expressions to
+// compile name the nodes, and are of the boards in the trash trashed, each
+// of which has its own.
+func loadProjects(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, nodes, trashed []pgtype.UUID) (
+	projects, error) {
 	variables, err := q.ExpressionVariables(ctx, queries.ExpressionVariablesParams{WorkspaceID: ws,
 		ProjectID: project})
 	if err != nil {
-		return nil, fmt.Errorf("expression: read the project's variables: %w", err)
+		return projects{}, fmt.Errorf("expression: read the project's variables: %w", err)
 	}
 	vs := make([]expr.Variable, len(variables))
 	for i, v := range variables {
@@ -308,7 +390,7 @@ func loadProject(ctx context.Context, q *queries.Queries, ws, project pgtype.UUI
 	attributes, err := q.ExpressionAttributes(ctx, queries.ExpressionAttributesParams{WorkspaceID: ws,
 		ProjectID: project})
 	if err != nil {
-		return nil, fmt.Errorf("expression: read the project's attribute definitions: %w", err)
+		return projects{}, fmt.Errorf("expression: read the project's attribute definitions: %w", err)
 	}
 	ofType := map[ids.UUID][]expr.Attribute{}
 	for _, a := range attributes {
@@ -319,30 +401,59 @@ func loadProject(ctx context.Context, q *queries.Queries, ws, project pgtype.UUI
 	components, err := q.ExpressionComponents(ctx, queries.ExpressionComponentsParams{WorkspaceID: ws,
 		ProjectID: project})
 	if err != nil {
-		return nil, fmt.Errorf("expression: read the project's components: %w", err)
+		return projects{}, fmt.Errorf("expression: read the project's components: %w", err)
 	}
 	cs := make([]expr.Component, len(components))
 	for i, c := range components {
 		cs[i] = expr.Component{ID: ids.Encode(ids.Component, c.ID.Bytes), Key: c.Key,
 			Attributes: ofType[c.ComponentTypeID.Bytes]}
 	}
+	// The nodes that the expressions name, those of the boards that are not
+	// in the trash, and those of each board that is, there with it alone.
 	var ns []expr.BoardNode
+	trashedNodes := map[pgtype.UUID][]expr.BoardNode{}
 	if len(nodes) > 0 {
 		rows, err := q.ExpressionNodes(ctx, queries.ExpressionNodesParams{WorkspaceID: ws, ProjectID: project,
 			Ids: nodes})
 		if err != nil {
-			return nil, fmt.Errorf("expression: read the nodes that expressions name: %w", err)
+			return projects{}, fmt.Errorf("expression: read the nodes that expressions name: %w", err)
 		}
-		ns = make([]expr.BoardNode, len(rows))
-		for i, n := range rows {
-			ns[i] = expr.BoardNode{ID: ids.Encode(ids.Node, n.ID.Bytes), Jumper: n.Type == "jumper"}
+		for _, n := range rows {
+			bn := expr.BoardNode{ID: ids.Encode(ids.Node, n.ID.Bytes), Jumper: n.Type == "jumper"}
+			if n.BoardDeleted {
+				trashedNodes[n.BoardID] = append(trashedNodes[n.BoardID], bn)
+			} else {
+				ns = append(ns, bn)
+			}
 		}
 	}
-	p, err := expr.NewProject(vs, cs, ns)
+	ps := projects{trashed: make(map[pgtype.UUID]*expr.Project, len(trashed))}
+	if ps.live, err = expr.NewProject(vs, cs, ns); err != nil {
+		return projects{}, fmt.Errorf("expression: what the project's expressions can name: %w", err)
+	}
+	if len(trashed) == 0 {
+		return ps, nil
+	}
+	rows, err := q.TrashedBoardVariables(ctx, queries.TrashedBoardVariablesParams{WorkspaceID: ws,
+		ProjectID: project, BoardIds: trashed})
 	if err != nil {
-		return nil, fmt.Errorf("expression: what the project's expressions can name: %w", err)
+		return projects{}, fmt.Errorf("expression: read the variables of the boards in the trash: %w", err)
 	}
-	return p, nil
+	trashedVariables := map[pgtype.UUID][]expr.Variable{}
+	for _, v := range rows {
+		trashedVariables[v.BoardID] = append(trashedVariables[v.BoardID], expr.Variable{
+			ID: ids.Encode(ids.Variable, v.ID.Bytes), Key: v.Key, Type: v.Type,
+			Board: ids.Encode(ids.Board, v.BoardID.Bytes)})
+	}
+	for _, b := range trashed {
+		p, err := ps.live.With(ids.Encode(ids.Board, b.Bytes), trashedVariables[b], trashedNodes[b])
+		if err != nil {
+			return projects{}, fmt.Errorf("expression: what the expressions of the board %s in the trash can name: %w",
+				ids.UUID(b.Bytes), err)
+		}
+		ps.trashed[b] = p
+	}
+	return ps, nil
 }
 
 // parse is a source as it parses: its AST, or the error of its parse, with

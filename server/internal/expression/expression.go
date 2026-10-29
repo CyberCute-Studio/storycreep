@@ -22,7 +22,11 @@
 // when the batch changed what the project's expressions can name, every one
 // that does not compile but names something: an expression is always what
 // compiling its source against the project as it is gives, so that the undo
-// of a batch gives back what the batch found (FR-EDIT-08 AC2). Until a
+// of a batch gives back what the batch found (FR-EDIT-08 AC2). One of a board
+// in the trash is compiled as it would be once the board is restored, against
+// the board's own variables and nodes that are in the trash with it too, so
+// that a board's deletion and its restoration change none of the expressions
+// that it holds, which they do not compile again. Until a
 // rename rewrites the sources that name what it renames (FR-VAR-03, plan
 // item 47), a source that names a renamed key no longer compiles.
 //
