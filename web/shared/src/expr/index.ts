@@ -93,6 +93,7 @@ export {
   asFloat,
   boolValue,
   type DeclaredType,
+  equalValue,
   floatValue,
   intValue,
   jsonOf,

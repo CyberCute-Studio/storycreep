@@ -11,6 +11,7 @@ import {
   type DeclaredType,
   type Env,
   type EvaluationError,
+  equalValue,
   floatValue,
   isJsonObject,
   JsonError,
@@ -891,24 +892,12 @@ function asSaved(
     typ,
     options,
   );
-  if (problem !== undefined || !equal(read, v)) {
+  if (problem !== undefined || !equalValue(read, v)) {
     throw new ValueError(
       `the ${v.type || "value"} is no value of the language, as an int beyond ±(2^53 − 1), a float that is not finite, or a string of more than 4096 characters, or with a NUL, is not, or, of an enum, none of its options`,
     );
   }
   return read;
-}
-
-// equal reports whether a and b are one value as the Go runtime compares
-// two, of which a float's 0 and -0 are one, and a NaN none.
-function equal(a: Value, b: Value): boolean {
-  return (
-    a.type === b.type &&
-    a.bool === b.bool &&
-    a.int === b.int &&
-    a.float === b.float &&
-    a.str === b.str
-  );
 }
 
 // stateOf reads given, a state of the snapshot s or its JSON, as loadState

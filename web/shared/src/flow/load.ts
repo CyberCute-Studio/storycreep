@@ -1,7 +1,10 @@
 // The loader of a published snapshot (PRD §6.3, §8.6): the TypeScript twin
-// of the Go package server/internal/flow's Load, which refuses what it
-// refuses, and loads what it loads, as play mode's runtime and the Godot
-// addon's do.
+// of the Go package server/internal/flow's Load, which loads what it loads
+// of every snapshot that the server writes, and refuses what it refuses, as
+// play mode's runtime and the Godot addon's do; beyond it, it checks each
+// file against its JSON Schema, which Go's Load does not, so that it refuses
+// a file that breaks a pattern or a bound that the Go types do not check as
+// they read a file, which no server writes, though Go's Load may load it.
 
 import boardSchema from "../../../../schema/published/v1/board.schema.json" with {
   type: "json",
@@ -32,6 +35,7 @@ import {
   decode,
   ExprError,
   isJsonObject,
+  JsonError,
   type JsonValue,
   type Node,
   Project,
@@ -216,9 +220,8 @@ export class Snapshot {
 /**
  * Reads the snapshot that files holds, by their paths, as a game's
  * res://storycreep/ holds one (PRD §6.3), from its manifest,
- * storycreep.json, and checks it as the Go runtime's Load does: each file
- * that it reads against its JSON Schema, of schema/published/v1, and every
- * item of what schema/published/README.md says a consumer checks beyond the
+ * storycreep.json, and checks it as the Go runtime's Load does: every item
+ * of what schema/published/README.md says a consumer checks beyond the
  * schemas, each file's hash among them, and a node's tags compared as their
  * case folds; and beyond that list, what the runtime relies on: that the
  * snapshot's astVersion is at most AST_VERSION, which a newer one is refused
@@ -227,26 +230,24 @@ export class Snapshot {
  * that a text's or a label's value is of a variable that an expression of
  * its board reads (FR-TEXT-02, §5.8.3), or of a runtime attribute; and that
  * every value is of its declaration's type, a string, an enum's among them,
- * of at most 4,096 characters without a NUL, as the language's are. It
- * rejects with a LoadError, and of a snapshot that is wrong in several ways
- * always the same one, as it reads the files and checks them in one order.
- * It is asynchronous since it hashes the files with the platform's SHA-256,
- * one after another, so that it holds a copy of one file at most, or, in a
- * page that is no secure context, which has none, with its own.
+ * of at most 4,096 characters without a NUL, as the language's are. Beyond
+ * what Go's Load checks, it checks each file that it reads against its JSON
+ * Schema, of schema/published/v1, before it reads anything of it, so that
+ * it refuses a file that breaks a pattern or a bound of its schema, which
+ * the server never writes, though Go's Load, which is no validator of the
+ * schemas, may load it. It rejects with a LoadError, and of a snapshot that
+ * is wrong in several ways always the same one, as it reads the files and
+ * checks them in the order of Go's Load, each file hashed as it reads it,
+ * the files that it does not read, as the assets, last, and each board's
+ * ASTs decoded as it reads the board's file. It is asynchronous since it
+ * hashes the files with the platform's SHA-256, one after another, so that
+ * it holds copies of one file at most, or, in a page that is no secure
+ * context, which has none, with its own.
  */
 export async function load(
   files: ReadonlyMap<string, Uint8Array>,
 ): Promise<Snapshot> {
-  const l = new Loader(files);
-  const manifest = l.manifest();
-  const digests = new Map<string, string>();
-  for (const path of Object.keys(manifest.typed.files).sort()) {
-    const bytes = files.get(path);
-    if (bytes !== undefined) {
-      digests.set(path, await digest(bytes));
-    }
-  }
-  return l.load(manifest, digests);
+  return new Loader(files).load();
 }
 
 // digest returns the hash of bytes as the manifest lists a file's: sha256:
@@ -292,13 +293,6 @@ function isFilePath(path: string): boolean {
   return slug.length <= 64 && !devices.has(slug);
 }
 
-// What a file is read as: its raw JSON, whose numbers are as they are
-// written, and the same as JSON.parse reads it, typed by its schema.
-interface Read<T> {
-  raw: { [key: string]: JsonValue };
-  typed: T;
-}
-
 // The schemas of the files.
 const schemas = {
   manifest: manifestSchema as Schema,
@@ -314,16 +308,46 @@ function fail(problem: string): LoadError {
   return new LoadError(problem);
 }
 
+// json returns the JSON of a file's bytes (readJSONBytes), or the JsonError
+// of bytes that are not one JSON value.
+function json(bytes: Uint8Array): JsonValue | JsonError {
+  try {
+    return readJSONBytes(bytes);
+  } catch (e) {
+    if (e instanceof JsonError) {
+      return e;
+    }
+    throw e;
+  }
+}
+
+// expressionFields are the keys of the expressions of a board's file, of a
+// connection, a node, or a branch's output, with the contexts of their ASTs.
+const expressionFields: Readonly<Record<string, Context>> = {
+  condition: "condition",
+  onEnter: "script",
+  onExit: "script",
+  onTraverse: "script",
+};
+
 // Loader is what load keeps while it reads a snapshot's files: the IDs of the
 // entities that it has read, of which no two are one, the components' IDs,
-// the paths of the files that it has read, and the ASTs, whose constructs'
-// versions the manifest's astVersion covers.
+// the paths of the files that it has read, the raw JSON of what it has read
+// of them, the ASTs of the boards' expressions, and the ASTs that it has
+// checked, whose constructs' versions the manifest's astVersion covers.
 class Loader {
   private readonly entities = new Set<string>();
   private readonly components = new Set<string>();
   private readonly read = new Set<string>();
+  // origins are the raw JSON of each object and array of the files that it
+  // has read, whose numbers are as they are written, by the copy that
+  // JSON.parse would read, typed by its schema (plain), which the loader
+  // reads the rest of.
+  private readonly origins = new Map<object, JsonValue>();
+  // decoded are the ASTs of the boards' expressions, by the typed copy of
+  // each expression's object.
+  private readonly decoded = new Map<object, Node>();
   private readonly asts: Node[] = [];
-  private digests = new Map<string, string>();
   private manifestFiles: Record<string, string> = {};
   // release is set for a release's snapshot, every jumper of which has a
   // target.
@@ -350,14 +374,17 @@ class Loader {
 
   constructor(private readonly files: ReadonlyMap<string, Uint8Array>) {}
 
-  // parse reads the bytes of the file of the path as JSON, and checks them
-  // against the schema.
-  private parse<T>(path: string, bytes: Uint8Array, schema: Schema): Read<T> {
-    let raw: JsonValue;
-    try {
-      raw = readJSONBytes(bytes);
-    } catch (e) {
-      throw fail(`${path}: it ${(e as Error).message}`);
+  // parse checks raw, the JSON of the file of the path, or the problem of
+  // its bytes, against the schema, and returns it as JSON.parse would have
+  // read it, typed by the schema, whose objects and arrays are recorded with
+  // their raw JSON (origins).
+  private parse<T>(
+    path: string,
+    raw: JsonValue | JsonError,
+    schema: Schema,
+  ): T {
+    if (raw instanceof JsonError) {
+      throw fail(`${path}: it ${raw.message}`);
     }
     const problem = validate(schema, raw);
     if (problem !== undefined || !isJsonObject(raw)) {
@@ -365,23 +392,33 @@ class Loader {
         `${path}: ${problem ?? "is not an object"}, which its schema does not take`,
       );
     }
-    return { raw, typed: plain(raw) as T };
+    return plain(raw, this.origins) as T;
+  }
+
+  // raw returns the raw JSON, whose numbers are as they are written, of x,
+  // an object of a file that the loader has read, as parse returned it.
+  private raw(x: object): { [key: string]: JsonValue } {
+    return this.origins.get(x) as { [key: string]: JsonValue };
   }
 
   // manifest reads the manifest, and checks its astVersion and its files'
   // paths.
-  manifest(): Read<Manifest> {
+  private manifest(): Manifest {
     const bytes = this.files.get(MANIFEST_PATH);
     if (bytes === undefined) {
       throw fail(`there is no ${MANIFEST_PATH}`);
     }
-    const m = this.parse<Manifest>(MANIFEST_PATH, bytes, schemas.manifest);
-    if (m.typed.astVersion > AST_VERSION) {
+    const m = this.parse<Manifest>(
+      MANIFEST_PATH,
+      json(bytes),
+      schemas.manifest,
+    );
+    if (m.astVersion > AST_VERSION) {
       throw new ASTUnsupportedError(
-        `the snapshot's astVersion is ${m.typed.astVersion}, and this runtime supports ${AST_VERSION}`,
+        `the snapshot's astVersion is ${m.astVersion}, and this runtime supports ${AST_VERSION}`,
       );
     }
-    for (const path of Object.keys(m.typed.files).sort()) {
+    for (const path of Object.keys(m.files).sort()) {
       if (!isFilePath(path)) {
         throw fail(
           `the manifest lists ${JSON.stringify(path)}, which is none of the paths of a snapshot's files (PRD §7.5)`,
@@ -391,31 +428,78 @@ class Loader {
     return m;
   }
 
-  // contents returns the bytes of the file of the path, once it has checked
-  // that the manifest's files list it with the hash of its bytes.
-  private contents(path: string): Uint8Array {
-    const want = this.manifestFiles[path];
+  // contents checks that the manifest's files list the file of the path
+  // with the hash of its bytes, and returns what read returns of them. It
+  // hashes the bytes, and has read read them, as they are when it is
+  // called, before it awaits the hash, so that what it returns is of the
+  // bytes that it hashed, whatever the map or the bytes become meanwhile.
+  private async contents<R>(
+    path: string,
+    read: (bytes: Uint8Array) => R,
+  ): Promise<R> {
     if (!Object.hasOwn(this.manifestFiles, path)) {
       throw fail(`${path} is not among the manifest's files`);
     }
+    const want = this.manifestFiles[path];
     const bytes = this.files.get(path);
     if (bytes === undefined) {
       throw fail(`there is no ${path}`);
     }
-    const got = this.digests.get(path);
+    const sum = digest(bytes);
+    const r = read(bytes);
+    const got = await sum;
     if (got !== want) {
       throw fail(
         `${path}: its hash is ${got}, not the manifest's ${JSON.stringify(want)}`,
       );
     }
-    return bytes;
+    return r;
   }
 
   // readFile reads the file of the path, once it has checked its hash.
-  private readFile<T>(path: string, schema: Schema): Read<T> {
-    const bytes = this.contents(path);
+  private async readFile<T>(path: string, schema: Schema): Promise<T> {
+    const raw = await this.contents(path, json);
     this.read.add(path);
-    return this.parse<T>(path, bytes, schema);
+    return this.parse<T>(path, raw, schema);
+  }
+
+  // readBoard reads the board file of the path, and decodes its
+  // expressions' ASTs, as the Go runtime's reader of a file,
+  // published.Decode, decodes them as it reads it: in the order that the
+  // file writes them, which a file of the published format, whose keys are
+  // sorted (§6.2), writes the connections' before the nodes', so that it
+  // refuses the first that it cannot decode.
+  private async readBoard(path: string): Promise<BoardFile> {
+    const f = await this.readFile<BoardFile>(path, schemas.board);
+    // expressions decodes the expressions of o, a connection, a node, or a
+    // branch's output, whose ID is id, and of a branch's outputs, in the
+    // order of o's keys.
+    const expressions = (o: object, id: string) => {
+      for (const [key, v] of Object.entries(o)) {
+        if (Object.hasOwn(expressionFields, key)) {
+          this.decoded.set(
+            v,
+            this.ast(
+              `${path}: the ${key} of ${id}`,
+              this.raw(v),
+              expressionFields[key],
+            ),
+          );
+        } else if (key === "outputs") {
+          for (const output of v as { id: string }[]) {
+            expressions(output, output.id);
+          }
+        }
+      }
+    };
+    for (const key of Object.keys(f)) {
+      if (key === "connections" || key === "nodes") {
+        for (const o of f[key]) {
+          expressions(o, o.id);
+        }
+      }
+    }
+    return f;
   }
 
   // entity throws when id is the ID of an entity that the loader has read
@@ -427,25 +511,27 @@ class Loader {
     this.entities.add(id);
   }
 
-  load(manifest: Read<Manifest>, digests: Map<string, string>): Snapshot {
-    this.digests = digests;
-    this.manifestFiles = manifest.typed.files;
-    const m = manifest.typed;
+  async load(): Promise<Snapshot> {
+    const m = this.manifest();
+    this.manifestFiles = m.files;
     this.release = m.snapshot.channel === "release";
-    const settings = this.readFile<Settings>(SETTINGS_PATH, schemas.settings);
-    const variables = this.readFile<Variables>(
+    const settings = await this.readFile<Settings>(
+      SETTINGS_PATH,
+      schemas.settings,
+    );
+    const variables = await this.readFile<Variables>(
       VARIABLES_PATH,
       schemas.variables,
     );
-    const types = this.readFile<ComponentTypes>(
+    const types = await this.readFile<ComponentTypes>(
       COMPONENT_TYPES_PATH,
       schemas.componentTypes,
     );
-    const components = this.readFile<Components>(
+    const components = await this.readFile<Components>(
       COMPONENTS_PATH,
       schemas.components,
     );
-    const boardFiles = new Map<string, Read<BoardFile>>();
+    const boardFiles = new Map<string, BoardFile>();
     for (const b of m.boards) {
       this.entity(b.id, "the index");
       this.boards.set(b.id, { info: b, reset: [] });
@@ -454,8 +540,8 @@ class Loader {
           `the index's board ${b.id}'s file is ${b.file}, not boards/ and its slug and .json`,
         );
       }
-      const f = this.readFile<BoardFile>(b.file, schemas.board);
-      const info = f.typed.board;
+      const f = await this.readBoard(b.file);
+      const info = f.board;
       if (
         info.id !== b.id ||
         info.name !== b.name ||
@@ -468,37 +554,31 @@ class Loader {
       }
       boardFiles.set(b.id, f);
     }
-    // The files that it does not read, as the assets, are hashed too, so
-    // that every file that the manifest lists is its bytes'.
+    // The files that it does not read, as the assets, are hashed too, last,
+    // so that every file that the manifest lists is its bytes'.
     for (const path of Object.keys(m.files).sort()) {
       if (!this.read.has(path)) {
-        this.contents(path);
+        await this.contents(path, () => undefined);
       }
     }
-    const signals = settings.typed.signals;
+    const signals = settings.signals;
     if (new Set(signals).size !== signals.length) {
       throw fail(`${SETTINGS_PATH}: a signal is there twice`);
     }
     this.declare(variables, types, components);
     for (const b of m.boards) {
-      const f = boardFiles.get(b.id) as Read<BoardFile>;
+      const f = boardFiles.get(b.id) as BoardFile;
       this.addNodes(b.id, b.file, f);
     }
     // What the snapshot's expressions can name, against which its ASTs are
     // checked, of the nodes in the order of the index and of their files.
-    const p = this.project(
-      variables.typed,
-      types.typed,
-      components.typed,
-      boardFiles,
-      m.boards,
-    );
+    const p = this.project(variables, types, components, boardFiles, m.boards);
     for (const b of m.boards) {
-      const f = boardFiles.get(b.id) as Read<BoardFile>;
+      const f = boardFiles.get(b.id) as BoardFile;
       this.addConnections(b.id, b.file, f, p);
     }
     const entry = m.entry;
-    const settingsEntry = settings.typed.entry;
+    const settingsEntry = settings.entry;
     if (
       (entry === undefined) !== (settingsEntry === undefined) ||
       (entry !== undefined &&
@@ -526,14 +606,14 @@ class Loader {
     }
     const counts = {
       boards: m.boards.length,
-      components: components.typed.components.length,
+      components: components.components.length,
       connections: 0,
       nodes: 0,
-      variables: variables.typed.variables.length,
+      variables: variables.variables.length,
     };
     for (const f of boardFiles.values()) {
-      counts.nodes += f.typed.nodes.length;
-      counts.connections += f.typed.connections.length;
+      counts.nodes += f.nodes.length;
+      counts.connections += f.connections.length;
     }
     if (
       m.counts.boards !== counts.boards ||
@@ -570,14 +650,11 @@ class Loader {
   // declare reads the variables, the component types' definitions, and the
   // components' runtime attributes, with their values in the snapshot.
   private declare(
-    variables: Read<Variables>,
-    types: Read<ComponentTypes>,
-    components: Read<Components>,
+    variables: Variables,
+    types: ComponentTypes,
+    components: Components,
   ): void {
-    const rawVariables = variables.raw.variables as {
-      [key: string]: JsonValue;
-    }[];
-    variables.typed.variables.forEach((v, i) => {
+    for (const v of variables.variables) {
       this.entity(v.id, VARIABLES_PATH);
       if (v.scope === "board") {
         const b = this.boards.get(v.boardId);
@@ -590,30 +667,26 @@ class Loader {
           b.reset.push(v.id);
         }
       }
-      const [d, problem] = readValue(rawVariables[i].default, v.type);
+      const [d, problem] = readValue(this.raw(v).default, v.type);
       if (problem !== undefined) {
         throw fail(`the default of the variable ${v.id} ${problem}`);
       }
       this.variableIds.push(v.id);
       this.declared.set(v.id, v);
       this.defaults.set(v.id, d);
-    });
+    }
     const definitions = new Map<string, ComponentType["attributes"]>();
     const typeKeys = new Set<string>();
-    const rawTypes = types.raw.componentTypes as { [key: string]: JsonValue }[];
-    types.typed.componentTypes.forEach((t, i) => {
+    for (const t of types.componentTypes) {
       this.entity(t.id, COMPONENT_TYPES_PATH);
       if (typeKeys.has(t.key)) {
         throw fail(`two component types have the key ${t.key}`);
       }
       typeKeys.add(t.key);
-      this.define(t, rawTypes[i].attributes as { [key: string]: JsonValue }[]);
+      this.define(t);
       definitions.set(t.id, t.attributes);
-    });
-    const rawComponents = components.raw.components as {
-      [key: string]: JsonValue;
-    }[];
-    components.typed.components.forEach((c, i) => {
+    }
+    for (const c of components.components) {
       this.entity(c.id, COMPONENTS_PATH);
       this.components.add(c.id);
       const defs = definitions.get(c.componentTypeId);
@@ -622,9 +695,7 @@ class Loader {
           `the component ${c.id} is of ${c.componentTypeId}, which is no component type of the snapshot`,
         );
       }
-      const values = rawComponents[i].attributes as {
-        [key: string]: JsonValue;
-      };
+      const values = this.raw(c.attributes);
       if (Object.keys(values).length !== defs.length) {
         throw fail(
           `the component ${c.id} has ${Object.keys(values).length} values, not one of each of its type's ${defs.length} definitions`,
@@ -652,16 +723,16 @@ class Loader {
           }
         }
       }
-    });
+    }
   }
 
   // define checks the attribute definitions of the component type t: each
   // its own entity, of a key of its own among the type's, a text never
   // runtime, an enum's options each there once, and its default of its type,
   // an enum's one of its options.
-  private define(t: ComponentType, raw: { [key: string]: JsonValue }[]): void {
+  private define(t: ComponentType): void {
     const keys = new Set<string>();
-    t.attributes.forEach((d, i) => {
+    for (const d of t.attributes) {
       this.entity(d.id, COMPONENT_TYPES_PATH);
       if (keys.has(d.key)) {
         throw fail(
@@ -676,20 +747,17 @@ class Loader {
         throw fail(`the definition ${d.id} has an option twice`);
       }
       keys.add(d.key);
-      const [, problem] = readValue(raw[i].default, d.type, options);
+      const [, problem] = readValue(this.raw(d).default, d.type, options);
       if (problem !== undefined) {
         throw fail(`the default of the definition ${d.id} ${problem}`);
       }
-    });
+    }
   }
 
-  // addNodes adds the nodes of the board b's file f, and their ports, their
-  // scripts decoded.
-  private addNodes(b: string, path: string, f: Read<BoardFile>): void {
-    const rawNodes = f.raw.nodes as { [key: string]: JsonValue }[];
-    f.typed.nodes.forEach((n, i) => {
-      const raw = rawNodes[i];
-      const where = `${path}: ${n.id}`;
+  // addNodes adds the nodes of the board b's file f, and their ports, with
+  // their scripts' ASTs, as readBoard decoded them.
+  private addNodes(b: string, path: string, f: BoardFile): void {
+    for (const n of f.nodes) {
       this.entity(n.id, path);
       const ports = new Map<string, Connection[]>();
       if (n.type === "element") {
@@ -701,11 +769,10 @@ class Loader {
           type: "element",
           isEnding: n.isEnding,
           text: n.text?.segments,
-          onEnter: this.script(where, raw.onEnter),
-          onExit: this.script(where, raw.onExit),
+          onEnter: this.decodedOf(n.onEnter) as Script | undefined,
+          onExit: this.decodedOf(n.onExit) as Script | undefined,
         });
       } else if (n.type === "branch") {
-        const rawOutputs = raw.outputs as { [key: string]: JsonValue }[];
         const last = n.outputs.length - 1;
         const outputs: Output[] = n.outputs.map((o, k) => {
           this.entity(o.id, path);
@@ -728,10 +795,7 @@ class Loader {
           return {
             id: o.id,
             kind: o.kind,
-            condition: this.condition(
-              `${path}: ${o.id}`,
-              rawOutputs[k].condition,
-            ),
+            condition: this.decodedOf(o.condition),
           };
         });
         this.nodes.set(n.id, {
@@ -740,8 +804,8 @@ class Loader {
           ports,
           type: "branch",
           outputs,
-          onEnter: this.script(where, raw.onEnter),
-          onExit: this.script(where, raw.onExit),
+          onEnter: this.decodedOf(n.onEnter) as Script | undefined,
+          onExit: this.decodedOf(n.onExit) as Script | undefined,
         });
       } else {
         this.nodes.set(n.id, {
@@ -752,19 +816,12 @@ class Loader {
           target: n.target,
         });
       }
-    });
+    }
   }
 
-  // ast decodes the AST of an expression, its field's object raw, or
-  // returns undefined of none.
-  private ast(
-    where: string,
-    raw: JsonValue | undefined,
-    ctx: Context,
-  ): Node | undefined {
-    if (raw === undefined) {
-      return undefined;
-    }
+  // ast decodes the AST of an expression, of its field's object raw, in the
+  // context ctx.
+  private ast(where: string, raw: JsonValue | undefined, ctx: Context): Node {
     if (!isJsonObject(raw)) {
       throw fail(`${where}: an expression is not an object`);
     }
@@ -778,18 +835,10 @@ class Loader {
     }
   }
 
-  private script(
-    where: string,
-    raw: JsonValue | undefined,
-  ): Script | undefined {
-    return this.ast(where, raw, "script") as Script | undefined;
-  }
-
-  private condition(
-    where: string,
-    raw: JsonValue | undefined,
-  ): Node | undefined {
-    return this.ast(where, raw, "condition");
+  // decodedOf returns the AST of the expression e, an object of a board's
+  // file, as readBoard decoded it, or undefined of no expression.
+  private decodedOf(e: object | undefined): Node | undefined {
+    return e === undefined ? undefined : this.decoded.get(e);
   }
 
   // project returns what the snapshot's expressions can name, or throws.
@@ -797,7 +846,7 @@ class Loader {
     variables: Variables,
     types: ComponentTypes,
     components: Components,
-    boardFiles: Map<string, Read<BoardFile>>,
+    boardFiles: Map<string, BoardFile>,
     boards: readonly ManifestBoard[],
   ): Project {
     const definitions = new Map<string, ComponentType["attributes"]>();
@@ -830,7 +879,7 @@ class Loader {
           };
         }),
         boards.flatMap((b) =>
-          (boardFiles.get(b.id) as Read<BoardFile>).typed.nodes.map((n) => ({
+          (boardFiles.get(b.id) as BoardFile).nodes.map((n) => ({
             id: n.id,
             jumper: n.type === "jumper",
           })),
@@ -873,12 +922,10 @@ class Loader {
   private addConnections(
     b: string,
     path: string,
-    f: Read<BoardFile>,
+    f: BoardFile,
     p: Project,
   ): void {
-    const rawConnections = f.raw.connections as { [key: string]: JsonValue }[];
-    f.typed.connections.forEach((c, i) => {
-      const raw = rawConnections[i];
+    for (const c of f.connections) {
       const from = this.nodes.get(c.from);
       const to = this.nodes.get(c.to);
       this.entity(c.id, path);
@@ -905,14 +952,8 @@ class Loader {
         to: c.to,
         order: c.order,
         label: c.label?.segments,
-        condition: this.condition(
-          `${path}: the condition of ${c.id}`,
-          raw.condition,
-        ),
-        onTraverse: this.script(
-          `${path}: the script of ${c.id}`,
-          raw.onTraverse,
-        ),
+        condition: this.decodedOf(c.condition),
+        onTraverse: this.decodedOf(c.onTraverse) as Script | undefined,
       };
       port.push(connection);
       this.check(
@@ -936,11 +977,11 @@ class Loader {
           c.label.segments,
         );
       }
-    });
-    for (const n of f.typed.nodes) {
+    }
+    for (const n of f.nodes) {
       this.checkNode(path, b, n, p);
     }
-    for (const n of f.typed.nodes) {
+    for (const n of f.nodes) {
       const ports = (
         this.nodes.get(n.id) as NodeBase & { ports: Map<string, Connection[]> }
       ).ports;
@@ -1101,6 +1142,52 @@ const folds = new Map<number, string>(
   foldTable.fold.map(([c, ...to]) => [c, String.fromCodePoint(...to)]),
 );
 
+// composing are the ranges of the code points, each as its first and its
+// last, in their order, that the Go runtime's normalization form C, of
+// golang.org/x/text, may change, reorder, or join with the code points
+// beside them, by schema/unicode/fold.json; it leaves every other code point
+// as it is, and joins it with none, as it does each that its version of
+// Unicode does not assign.
+const composing: readonly (readonly number[])[] = foldTable.nfc;
+
+// isComposing reports whether the code point c is in a range of composing.
+function isComposing(c: number): boolean {
+  let lo = 0;
+  let hi = composing.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (composing[mid][1] < c) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo < composing.length && composing[lo][0] <= c;
+}
+
+// formC returns s in Unicode's normalization form C as the Go runtime puts
+// it in it: each run of its composing code points put in the platform's
+// form C, which gives Go's form C of them, since Unicode never changes the
+// form C of the code points that a version assigns, and they are of the
+// version of Go's tables, as long as the platform's tables are of that
+// version or a later one; and each other code point left as it is, as Go
+// leaves it, though the platform's form C of a later version may join one
+// that Unicode assigned since with its neighbours, as Unicode 16.0's joins
+// U+16D67 KIRAT RAI VOWEL SIGN E twice into U+16D68.
+function formC(s: string): string {
+  let out = "";
+  let run = "";
+  for (const c of s) {
+    if (isComposing(c.codePointAt(0) as number)) {
+      run += c;
+      continue;
+    }
+    out += run.normalize("NFC") + c;
+    run = "";
+  }
+  return out + run.normalize("NFC");
+}
+
 /**
  * Returns the key by which two tags of a node are the same but for their
  * case, as the Go runtime's, input.FoldCase, is: the tag in Unicode's
@@ -1109,14 +1196,16 @@ const folds = new Map<number, string>(
  * golang.org/x/text, rather than JavaScript's toUpperCase and toLowerCase,
  * which follow other rules and other versions of Unicode, and the result in
  * form C again; so that Quest, QUEST, and quest are one, and so are ẞ, ß,
- * and ss, though kır and kir are two, as ı folds to itself. The forms C are
- * the platform's, which for a code point that Unicode assigned after the
- * version of the table may differ from Go's.
+ * and ss, though kır and kir are two, as ı folds to itself. Its forms C are
+ * Go's too (formC), by the platform's form C of the code points that the
+ * table says Go's may change, and of no other, so that a code point that
+ * Unicode assigned after the version of the table is left as it is, as Go
+ * leaves it, rather than put in the form of the platform's later tables.
  */
 export function foldCase(tag: string): string {
   let folded = "";
-  for (const c of tag.normalize("NFC")) {
+  for (const c of formC(tag)) {
     folded += folds.get(c.codePointAt(0) as number) ?? c;
   }
-  return folded.normalize("NFC");
+  return formC(folded);
 }

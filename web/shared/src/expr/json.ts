@@ -77,9 +77,13 @@ export function readJSONBytes(bytes: Uint8Array): JsonValue {
 
 /**
  * Returns v as JSON.parse would have read it, each number the double nearest
- * it, and each object a plain one, without recursing.
+ * it, and each object a plain one, without recursing. Each object and array
+ * that it returns is set in origins, if it is given, to the object or the
+ * array of v that it is read from, whose numbers are as they are written, so
+ * that what reads the rest of a file as JSON.parse reads it finds a number
+ * that it needs exactly by the object that holds it.
  */
-export function plain(v: JsonValue): unknown {
+export function plain(v: JsonValue, origins?: Map<object, JsonValue>): unknown {
   const root: { value?: unknown } = {};
   const stack: [JsonValue, (x: unknown) => void][] = [
     [
@@ -95,6 +99,7 @@ export function plain(v: JsonValue): unknown {
       put(from.value);
     } else if (Array.isArray(from)) {
       const out: unknown[] = new Array(from.length);
+      origins?.set(out, from);
       put(out);
       from.forEach((item, i) => {
         stack.push([
@@ -106,6 +111,7 @@ export function plain(v: JsonValue): unknown {
       });
     } else if (typeof from === "object") {
       const out: Record<string, unknown> = {};
+      origins?.set(out, from);
       put(out);
       // Each key is defined in its order, and set once its value is read.
       for (const key of Object.keys(from)) {
@@ -282,6 +288,13 @@ class Reader {
       let v: JsonValue;
       const c = this.text[this.i];
       if (c === "{" || c === "[") {
+        // An array or an object that it opens is nested one deeper than
+        // those that are open, empty or not, as encoding/json counts it.
+        if (stack.length >= MAX_JSON_DEPTH) {
+          throw this.fail(
+            `nests arrays and objects more than ${MAX_JSON_DEPTH} deep`,
+          );
+        }
         this.i++;
         this.space();
         const object = c === "{";
@@ -289,11 +302,6 @@ class Reader {
           this.i++;
           v = object ? Object.create(null) : [];
         } else {
-          if (stack.length >= MAX_JSON_DEPTH) {
-            throw this.fail(
-              `nests arrays and objects more than ${MAX_JSON_DEPTH} deep`,
-            );
-          }
           stack.push(
             object
               ? { object: Object.create(null), key: this.key() }

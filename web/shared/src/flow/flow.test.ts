@@ -145,18 +145,113 @@ describe("load", () => {
     });
   });
 
-  // ı folds to itself, as the Go runtime folds it, rather than to i, as
-  // JavaScript's toUpperCase and toLowerCase map it.
-  test("takes two tags that the Go runtime's case folding tells apart", async () => {
-    await expect(
-      load(
-        suite("choices", {
-          [main]: (b) => {
-            nodeOf(b, nd("START")).tags = ["kır", "KIR"];
+  // As the Go runtime's Load does, it hashes each file as it reads it, in
+  // the order in which it reads them, the files that it does not read last.
+  describe("as it hashes the files", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    // stubDigest has WebCrypto's digest call then with each view that it
+    // hashes, once it has hashed it.
+    const stubDigest = (then: (data: Uint8Array) => void) => {
+      const subtle = globalThis.crypto.subtle;
+      vi.stubGlobal("crypto", {
+        subtle: {
+          digest: async (algorithm: string, data: Uint8Array) => {
+            const sum = await subtle.digest(algorithm, data.slice());
+            then(data);
+            return sum;
           },
-        }),
-      ),
-    ).resolves.toBeDefined();
+        },
+      });
+    };
+
+    test("hashes no file after the first that it refuses", async () => {
+      let hashed = 0;
+      stubDigest(() => {
+        hashed++;
+      });
+      const files = suite("choices", {
+        "project/settings.json": (f) => {
+          f.signals = "asking";
+        },
+      });
+      await expect(load(files)).rejects.toThrow(/project\/settings\.json/);
+      expect(hashed).toBe(1);
+    });
+
+    test("reads the bytes that it hashed, whatever becomes of them meanwhile", async () => {
+      // The bytes are blanked once they are hashed.
+      stubDigest((data) => {
+        data.fill(0x20);
+      });
+      await expect(load(suite("choices"))).resolves.toBeDefined();
+      vi.unstubAllGlobals();
+      // The map gives other bytes of a path once it has given its own.
+      const given = new Set<string>();
+      const files = new (class extends Map<string, Uint8Array> {
+        override get(path: string): Uint8Array | undefined {
+          const bytes = super.get(path);
+          if (bytes !== undefined && given.has(path)) {
+            return new TextEncoder().encode("{}");
+          }
+          given.add(path);
+          return bytes;
+        }
+      })(suite("choices"));
+      await expect(load(files)).resolves.toBeDefined();
+    });
+  });
+
+  // ı folds to itself, as the Go runtime folds it, rather than to i, as
+  // JavaScript's toUpperCase and toLowerCase map it; and the Go runtime's
+  // form C, of Unicode 15.0, leaves U+16D67 KIRAT RAI VOWEL SIGN E twice as
+  // it is, though a platform's form C of Unicode 16.0 or later joins the two
+  // into U+16D68.
+  test("takes two tags that the Go runtime's case folding tells apart", async () => {
+    for (const tags of [
+      ["kır", "KIR"],
+      [String.fromCodePoint(0x16d68), String.fromCodePoint(0x16d67, 0x16d67)],
+    ]) {
+      await expect(
+        load(
+          suite("choices", {
+            [main]: (b) => {
+              nodeOf(b, nd("START")).tags = tags;
+            },
+          }),
+        ),
+      ).resolves.toBeDefined();
+    }
+  });
+
+  // As the Go runtime's reader of a file, published.Decode, decodes a
+  // board's ASTs as it reads the file, one that it cannot decode is refused
+  // before what the loader checks once it has read every file, as a signal
+  // that is there twice.
+  test("refuses an AST that it cannot decode as it reads its board's file", async () => {
+    let deep: Obj = { kind: "lit", type: "bool", value: true };
+    for (let i = 0; i < 64; i++) {
+      deep = { kind: "unary", op: "not", operand: deep };
+    }
+    const files = suite("choices", {
+      "project/settings.json": (f) => {
+        f.signals = ["asking", "asking"];
+      },
+      [main]: (b) => {
+        for (const c of b.connections) {
+          if (c.condition !== undefined) {
+            c.condition.ast = deep;
+            return;
+          }
+        }
+        throw new Error("no condition");
+      },
+    });
+    await expect(load(files)).rejects.toThrow(
+      /boards\/main\.json: the condition of .*deeper than 64/,
+    );
   });
 
   test("ignores a key that the format does not define", async () => {
@@ -901,6 +996,27 @@ test("foldCase folds a tag's case as the Go runtime does", () => {
     ["e\u0301", "é"],
   ]) {
     expect(foldCase(tag), tag).toBe(folded);
+  }
+  // Go's form C joins the code points that its version of Unicode assigns,
+  // a Hangul syllable and a final jamo too, and leaves those that it does
+  // not assign as they are, as the platform's form C of a later version
+  // does not.
+  for (const [tag, folded] of [
+    [[0xac00, 0x11a8], [0xac01]],
+    [[0x41, 0x30a, 0x301], [0x1fb]],
+    [[0x16d68], [0x16d68]],
+    [
+      [0x16d67, 0x16d67],
+      [0x16d67, 0x16d67],
+    ],
+    [
+      [0x61, 0x16d67, 0x301],
+      [0x61, 0x16d67, 0x301],
+    ],
+  ]) {
+    expect(foldCase(String.fromCodePoint(...tag)), tag.join(" ")).toBe(
+      String.fromCodePoint(...folded),
+    );
   }
 });
 

@@ -190,6 +190,10 @@ function limits(n: Node, ctx: Context): void {
     if (depth > MAX_DEPTH) {
       throw new ExprError("ast_too_deep", rangeOf(node));
     }
+    const fields = fieldsProblem(node);
+    if (fields !== undefined) {
+      throw astError(fields);
+    }
     switch (node.kind) {
       case "lit": {
         const lit = literalProblem(node);
@@ -258,6 +262,31 @@ function limits(n: Node, ctx: Context): void {
     const children = stack.splice(from).reverse();
     stack.push(...children);
   }
+}
+
+// textFields are the fields of a node of each kind that are strings, which
+// the checker reads as they are, as the Go types hold them.
+const textFields: Partial<Record<Node["kind"], readonly string[]>> = {
+  var: ["name", "key", "ref"],
+  attr: ["name", "componentKey", "attributeKey", "ref", "attribute"],
+  node_ref: ["ref"],
+  call: ["function"],
+};
+
+// fieldsProblem says why a field of n that is a string, or an attr's
+// explicit, which is a boolean, is of another type, which no node of an AST
+// that parse or decode returns has, or returns undefined.
+function fieldsProblem(n: Node): string | undefined {
+  const fields = n as unknown as Record<string, unknown>;
+  for (const key of textFields[n.kind] ?? []) {
+    if (typeof fields[key] !== "string") {
+      return `the ${key} of a ${n.kind} node is not a string`;
+    }
+  }
+  if (n.kind === "attr" && typeof fields.explicit !== "boolean") {
+    return "the explicit of an attr node is not a boolean";
+  }
+  return undefined;
 }
 
 // beyond throws the error code over n, the statement or the argument beyond

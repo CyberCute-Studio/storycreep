@@ -2,9 +2,15 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { type Context, NO_RANGE, type Node } from "./ast";
 import { versionOf } from "./builtins";
-import { compile } from "./check";
+import { check, compile } from "./check";
 import { encode } from "./encode";
-import { COMPILE_CODES, type Code, ExprError, SYNTAX_CODES } from "./error";
+import {
+  COMPILE_CODES,
+  type Code,
+  ExprError,
+  SYNTAX_CODES,
+  UsageError,
+} from "./error";
 import {
   type BoardNode,
   type Component,
@@ -134,4 +140,34 @@ test("versionOf reads any number of ASTs", () => {
   const asts = Array.from({ length: 500_000 }, (): Node => ({ ...lit }));
   expect(versionOf(asts)).toBe(1);
   expect(versionOf([])).toBe(1);
+});
+
+// A field that the checker reads as a string, or an attr's explicit, of
+// another type, which no AST that parse or decode returns holds, is refused
+// as one, with a UsageError, before the checker reads it.
+test("check refuses an AST of a field of another type as a UsageError", () => {
+  for (const n of [
+    { kind: "call", function: 5, args: [], src: NO_RANGE },
+    { kind: "var", name: "x", scope: "", key: 5, ref: "", src: NO_RANGE },
+    {
+      kind: "attr",
+      name: "a.b",
+      explicit: "no",
+      componentKey: "a",
+      attributeKey: "b",
+      ref: "",
+      attribute: "",
+      src: NO_RANGE,
+    },
+    { kind: "node_ref", ref: null, src: NO_RANGE },
+  ]) {
+    let err: unknown;
+    try {
+      check(n as unknown as Node, "condition", undefined, "");
+    } catch (e) {
+      err = e;
+    }
+    expect(err, JSON.stringify(n)).toBeInstanceOf(UsageError);
+    expect((err as UsageError).message).toMatch(/is not a (string|boolean)/);
+  }
 });

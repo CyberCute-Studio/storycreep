@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
-import { type BinaryOp, NO_RANGE, type Node } from "./ast";
+import { type BinaryOp, type Context, NO_RANGE, type Node } from "./ast";
 import { BUILTINS, builtins } from "./builtins";
 import { compile } from "./check";
-import { decode } from "./decode";
+import { DecodeError, decode } from "./decode";
 import { encode } from "./encode";
 import {
   condition,
@@ -18,10 +18,14 @@ import { isJsonObject, type JsonValue, readJSON } from "./json";
 import { Project } from "./project";
 import {
   type DeclaredType,
+  equalValue,
   floatValue,
   intValue,
+  jsonOf,
   NONE,
   readValue,
+  sameValue,
+  stringValue,
   type Value,
 } from "./value";
 
@@ -275,44 +279,93 @@ describe("decode", () => {
     expect(n).toBeGreaterThan(0);
   });
 
-  test.each([
-    ['{"kind":"lit","type":"int","value":2.5}', "condition"],
-    ['{"kind":"lit","type":"int","value":4503599627370495.5}', "condition"],
-    ['{"kind":"lit","type":"int","value":9007199254740992}', "condition"],
+  test.each<[string, Context, RegExp]>([
+    [
+      '{"kind":"lit","type":"int","value":2.5}',
+      "condition",
+      /is not an integer/,
+    ],
+    [
+      '{"kind":"lit","type":"int","value":4503599627370495.5}',
+      "condition",
+      /is not an integer/,
+    ],
+    [
+      '{"kind":"lit","type":"int","value":9007199254740992}',
+      "condition",
+      /from -9007199254740991 to 9007199254740991/,
+    ],
     [
       '{"kind":"lit","type":"float","value":1.7976931348623158e308}',
       "condition",
+      /beyond ±1\.7976931348623157e\+308/,
     ],
-    ['{"kind":"lit","type":"float","value":0e1000}', "condition"],
-    ['{"kind":"lit","type":"string","value":"\\ud800"}', "condition"],
-    ['{"kind":"lit","type":"string","value":"\\u0000"}', "condition"],
-    ['{"kind":"lit","type":"bool","value":null}', "condition"],
-    ['{"kind":"lit","type":"bool","value":true}', "script"],
-    ['{"kind":"script","statements":[]}', "condition"],
+    [
+      '{"kind":"lit","type":"float","value":0e1000}',
+      "condition",
+      /exponent beyond ±999/,
+    ],
+    [
+      '{"kind":"lit","type":"string","value":"\\ud800"}',
+      "condition",
+      /lone surrogate/,
+    ],
+    [
+      '{"kind":"lit","type":"string","value":"\\u0000"}',
+      "condition",
+      /with a NUL/,
+    ],
+    ['{"kind":"lit","type":"bool","value":null}', "condition", /holds null/],
+    [
+      '{"kind":"lit","type":"bool","value":true}',
+      "script",
+      /a script's AST is a script exactly when/,
+    ],
+    [
+      '{"kind":"script","statements":[]}',
+      "condition",
+      /a condition's AST is a script exactly when/,
+    ],
     [
       '{"kind":"script","statements":[{"kind":"lit","type":"bool","value":true}]}',
       "script",
+      /the kind lit cannot be/,
     ],
     [
       '{"kind":"var","name":"x","ref":"var_01hq8zv01k7mwvnd2cqj4rt9xb"}',
       "condition",
+      /canonical spelling/,
     ],
     [
       '{"kind":"var","name":"1x","ref":"var_01HQ8ZV01K7MWVND2CQJ4RT9XB"}',
       "condition",
+      /not an identifier/,
     ],
     [
       '{"kind":"attr","name":"a","ref":"cmp_01HQ8ZC01K7MWVND2CQJ4RT9XB","attribute":"atr_01HQ8ZR01K7MWVND2CQJ4RT9XB"}',
       "condition",
+      /two keys joined by a dot/,
     ],
     [
       '{"kind":"unary","op":"inc","operand":{"kind":"lit","type":"int","value":1}}',
       "condition",
+      /no unary operator/,
     ],
-    ['{"kind":"call","function":"f","args":[1,2,3,4,5,6,7,8,9]}', "condition"],
-    ['{"kind":"what"}', "condition"],
-  ])("refuses %s as a %s", (text, ctx) => {
-    expect(() => decode(text, ctx as "condition" | "script")).toThrow();
+    [
+      '{"kind":"call","function":"f","args":[{"kind":"lit","type":"int","value":1},{"kind":"lit","type":"int","value":1},{"kind":"lit","type":"int","value":1},{"kind":"lit","type":"int","value":1},{"kind":"lit","type":"int","value":1},{"kind":"lit","type":"int","value":1},{"kind":"lit","type":"int","value":1},{"kind":"lit","type":"int","value":1},{"kind":"lit","type":"int","value":1}]}',
+      "condition",
+      /more than 8 args/,
+    ],
+    ['{"kind":"what"}', "condition", /"what" is no kind of node/],
+  ])("refuses %s as a %s, as a DecodeError", (text, ctx, problem) => {
+    let err: unknown;
+    try {
+      decode(text, ctx);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DecodeError);
+    expect((err as DecodeError).message).toMatch(problem);
   });
 
   test("refuses an AST deeper than 64 without recursing deeper", () => {
@@ -338,4 +391,58 @@ describe("decode", () => {
       encode(decode('{"kind":"lit","type":"int","value":2.0}', "condition")),
     ).toBe('{"kind":"lit","type":"int","value":2}');
   });
+});
+
+describe("readJSON", () => {
+  // As encoding/json, which counts each array and object that it opens,
+  // empty or not, against its depth of 10,000.
+  test("reads arrays and objects nested 10,000 deep, and no deeper", () => {
+    const nested = (n: number) => "[".repeat(n) + "]".repeat(n);
+    expect(() => readJSON(nested(10_000))).not.toThrow();
+    expect(() => readJSON(`{"a":${nested(9_999)}}`)).not.toThrow();
+    expect(() => readJSON(nested(10_001))).toThrow(/more than 10000 deep/);
+    expect(() => readJSON(`{"a":${nested(10_000)}}`)).toThrow(
+      /more than 10000 deep/,
+    );
+    expect(() =>
+      readJSON(`${"[".repeat(10_000)}{}${"]".repeat(10_000)}`),
+    ).toThrow(/more than 10000 deep/);
+  });
+});
+
+describe("readValue", () => {
+  // No JSON writes a NaN or an infinity, so neither is a value of any type,
+  // which jsonOf would otherwise write as an int.
+  test("refuses a number that is not finite", () => {
+    for (const n of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      for (const typ of ["int", "float"] as const) {
+        const [v, problem] = readValue(n, typ);
+        expect(v, `${n} as ${typ}`).toEqual(NONE);
+        expect(problem, `${n} as ${typ}`).toMatch(
+          /not a number that JSON writes/,
+        );
+      }
+      expect(jsonOf(intValue(n), "int")).toBeUndefined();
+      expect(jsonOf(floatValue(n), "float")).toBeUndefined();
+    }
+  });
+});
+
+// sameValue compares floats by Object.is, and equalValue as the Go runtime
+// compares two values, with ==.
+test("sameValue and equalValue compare a float's -0 and a NaN apart", () => {
+  const negativeZero = { ...floatValue(1), float: -0 };
+  const nan = floatValue(Number.NaN);
+  expect(sameValue(negativeZero, floatValue(0))).toBe(false);
+  expect(equalValue(negativeZero, floatValue(0))).toBe(true);
+  expect(sameValue(nan, nan)).toBe(true);
+  expect(equalValue(nan, nan)).toBe(false);
+  for (const same of [sameValue, equalValue]) {
+    expect(same(intValue(1), floatValue(1))).toBe(false);
+    expect(same(stringValue("a"), stringValue("a"))).toBe(true);
+  }
 });

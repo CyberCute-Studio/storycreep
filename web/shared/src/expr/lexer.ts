@@ -110,16 +110,21 @@ function endsExpression(k: TokenKind): boolean {
 }
 
 // forbidden reports whether c, a code point that peek returned, is one that
-// no text holds wherever it is: a NUL, or a lone surrogate, which is no
-// character, and which UTF-8, as the Go lexer reads a source, cannot write.
+// no text holds wherever it is: a NUL.
 function forbidden(c: number): boolean {
-  return c === 0 || (c >= 0xd800 && c <= 0xdfff);
+  return c === 0;
 }
 
 /**
  * Reads a source's tokens, one at a time, as the parser asks for them
  * (next), so that a source that the parser stops in early costs no more than
- * what it read of it. It counts the source's characters in code points.
+ * what it read of it. It counts the source's characters in code points. It
+ * reads a lone surrogate, which is no character, as U+FFFD REPLACEMENT
+ * CHARACTER, a character of its own, as the server reads the escape of one
+ * that JSON.stringify writes of it in a command's payload (encoding/json),
+ * so that a source that the editor sends gives the server's result, though
+ * the Go lexer refuses a byte that is not UTF-8, which no JSON that the
+ * server reads holds, as invalid_character.
  */
 export class Lexer {
   private readonly src: string;
@@ -141,7 +146,7 @@ export class Lexer {
   private eof = 0;
 
   constructor(src: string, ctx: Context) {
-    this.src = src;
+    this.src = src.replace(/\p{Surrogate}/gu, "\uFFFD");
     this.ctx = ctx;
   }
 
@@ -218,7 +223,7 @@ export class Lexer {
   }
 
   // peek returns the next code point and its length in code units, or -1
-  // and 0 at the end of the source. A lone surrogate is itself, of one.
+  // and 0 at the end of the source.
   private peek(): [number, number] {
     if (this.i === this.src.length) {
       return [-1, 0];

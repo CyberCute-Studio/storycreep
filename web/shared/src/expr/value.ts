@@ -59,13 +59,37 @@ export function stringValue(s: string): Value {
   return { ...NONE, type: "string", str: s };
 }
 
-/** Reports whether a and b are one value, of one type. */
+/**
+ * Reports whether a and b are one value, of one type, a float's compared by
+ * Object.is, so that a NaN is one with itself, and -0 is not one with 0,
+ * which no value of the language is (equalValue compares them as Go does).
+ */
 export function sameValue(a: Value, b: Value): boolean {
+  return fieldsEqual(a, b, Object.is);
+}
+
+/**
+ * Reports whether a and b are one value as the Go runtime compares two, with
+ * ==: of one type and fields, a float's compared as numbers are, so that its
+ * -0 and 0 are one, and a NaN is none, not even with itself (sameValue
+ * compares them by Object.is).
+ */
+export function equalValue(a: Value, b: Value): boolean {
+  return fieldsEqual(a, b, (x, y) => x === y);
+}
+
+// fieldsEqual reports whether a and b are of one type and of the same
+// fields, their floats compared by floats.
+function fieldsEqual(
+  a: Value,
+  b: Value,
+  floats: (x: number, y: number) => boolean,
+): boolean {
   return (
     a.type === b.type &&
     a.bool === b.bool &&
     a.int === b.int &&
-    Object.is(a.float, b.float) &&
+    floats(a.float, b.float) &&
     a.str === b.str
   );
 }
@@ -111,7 +135,8 @@ export type DeclaredType = ValueType | "text" | "enum";
  * at most 4,096 code points, or 100,000 for a text, without a NUL or a lone
  * surrogate, an enum's one of its options. A number is written with an
  * exponent within ±999, if with one. A JavaScript number is read as String
- * writes it, which every finite number's is.
+ * writes it, which every finite number's is, and a NaN or an infinity, which
+ * no JSON writes, is none.
  */
 export function readValue(
   json: JsonValue | number | undefined,
@@ -120,6 +145,9 @@ export function readValue(
 ): [Value, string | undefined] {
   if (json === undefined) {
     return [NONE, "is missing"];
+  }
+  if (typeof json === "number" && !Number.isFinite(json)) {
+    return [NONE, `is ${String(json)}, which is not a number that JSON writes`];
   }
   const v = typeof json === "number" ? new JsonNumber(String(json)) : json;
   const kind =
