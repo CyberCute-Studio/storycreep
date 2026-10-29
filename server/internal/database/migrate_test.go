@@ -177,6 +177,23 @@ func waitForLockWaiters(t *testing.T, conn *pgx.Conn, n int) {
 	}
 }
 
+// assertLockFree fails the test unless conn's session takes the migration
+// lock at its first try, and then releases it.
+func assertLockFree(t *testing.T, conn *pgx.Conn) {
+	t.Helper()
+	var free bool
+	if err := conn.QueryRow(context.Background(), "SELECT pg_try_advisory_lock($1)", database.MigrationLock).
+		Scan(&free); err != nil {
+		t.Fatal(err)
+	}
+	if !free {
+		t.Fatal("the migration lock is held still once Migrate has returned")
+	}
+	if _, err := conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", database.MigrationLock); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestMigrateWaitsForTheLock holds the migration lock and checks that
 // Migrate waits for it, saying so first, and that a cancelled wait gives up.
 func TestMigrateWaitsForTheLock(t *testing.T) {
@@ -231,34 +248,18 @@ func TestMigrateWaitsForTheLock(t *testing.T) {
 		t.Errorf("Migrate said %d times that it waits for the lock, want once", n)
 	}
 
-	// The Migrate that finished released the lock by closing its connection,
-	// whose session the server ends a moment later, so a Migrate right after
-	// it may find the lock held still, as CI's runners have. The lock is free
-	// once another session can take it.
-	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		var free bool
-		if err := holder.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", database.MigrationLock).
-			Scan(&free); err != nil {
-			t.Fatal(err)
-		}
-		if free {
-			if _, err := holder.Exec(ctx, "SELECT pg_advisory_unlock($1)", database.MigrationLock); err != nil {
-				t.Fatal(err)
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the migration lock is still held after Migrate finished")
-		}
-	}
-
-	// With the lock free, Migrate takes it without saying that it waits.
+	// The Migrate that finished released the lock before it returned, rather
+	// than by closing its connection alone, whose session the server ends a
+	// moment later, so another session takes it at once, as a Migrate right
+	// after it does without saying that it waits.
+	assertLockFree(t, holder)
 	_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{
 		Waiting: func() { t.Errorf("Migrate said that it waits for a lock that no one holds") },
 	})
 	if err != nil {
 		t.Errorf("Migrate with the lock free: %v", err)
 	}
+	assertLockFree(t, holder)
 }
 
 // TestMigrateLockIgnoresSessionTimeouts checks that timeouts set for the
