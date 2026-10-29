@@ -296,6 +296,7 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 	original := readUndoState(t, conn, project)
 	workspace := decode(t, ids.Workspace, ws)
 	wantUsageCounted(t, conn, workspace, "once the project's content is made")
+	wantNamed(t, conn, project, "once the project's content is made")
 	var schedule []string
 	for range 3 {
 		round := slices.Sorted(maps.Keys(undoGenerators))
@@ -327,6 +328,7 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 	}
 	forward := readUndoState(t, conn, project)
 	wantUsageCounted(t, conn, workspace, "once the batches have applied")
+	wantNamed(t, conn, project, "once the batches have applied")
 
 	var redo []*undoEntry
 	for i := len(stack) - 1; i >= 0; i-- {
@@ -334,6 +336,7 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 	}
 	undone := readUndoState(t, conn, project)
 	wantUsageCounted(t, conn, workspace, "once every batch is undone")
+	wantNamed(t, conn, project, "once every batch is undone")
 	for _, key := range slices.Sorted(maps.Keys(original)) {
 		if row, ok := undone[key]; !ok || !reflect.DeepEqual(row.content, original[key].content) {
 			t.Errorf("once every batch is undone, %s is %v, want %v", key, row.content, original[key].content)
@@ -351,6 +354,7 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 	}
 	redone := readUndoState(t, conn, project)
 	wantUsageCounted(t, conn, workspace, "once every batch is redone")
+	wantNamed(t, conn, project, "once every batch is redone")
 	for _, key := range slices.Sorted(maps.Keys(forward)) {
 		if row, ok := redone[key]; !ok || !reflect.DeepEqual(row.content, forward[key].content) {
 			t.Errorf("once every batch is redone, %s is %v, want %v", key, row.content, forward[key].content)
@@ -384,6 +388,36 @@ func wantUsageCounted(t *testing.T, conn *pgx.Conn, ws ids.UUID, when string) {
 		if drift != 0 {
 			t.Errorf("%s, a recount finds %d %s more than the workspace's usage", when, drift, key.name)
 		}
+	}
+}
+
+// wantNamed fails the test unless the names of the project's expressions
+// (expression_name) are their refs and their keys, each with its
+// expression's board, as every batch, its undo, and its redo are to leave
+// them, by which a later batch finds the expressions that name what it
+// changes; when says at what point of the test.
+func wantNamed(t *testing.T, conn *pgx.Conn, project ids.UUID, when string) {
+	t.Helper()
+	rows, err := conn.Query(context.Background(), `WITH want AS (
+			SELECT e.id AS expression_id, e.board_id, r.ref, NULL::text AS key
+			FROM expression e, unnest(e.refs) AS r (ref) WHERE e.project_id = $1
+			UNION ALL
+			SELECT e.id, e.board_id, NULL, k.key FROM expression e, unnest(e.keys) AS k (key) WHERE e.project_id = $1
+		), have AS (
+			SELECT expression_id, board_id, ref, key::text FROM expression_name WHERE project_id = $1
+		)
+		SELECT 'lacks ' || w::text FROM (SELECT * FROM want EXCEPT ALL SELECT * FROM have) w
+		UNION ALL
+		SELECT 'has ' || h::text FROM (SELECT * FROM have EXCEPT ALL SELECT * FROM want) h`, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drift, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drift) > 0 {
+		t.Errorf("%s, the names of the project's expressions are not their refs and keys: %v", when, drift)
 	}
 }
 

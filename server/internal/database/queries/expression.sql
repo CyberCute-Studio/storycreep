@@ -27,7 +27,9 @@ VALUES (@workspace_id, @project_id, @board_id, sqlc.narg(node_id)::uuid, sqlc.na
 -- name: SetExpressionSource :execrows
 -- SetExpressionSource sets the source of the expression id, which the batch
 -- has yet to compile, unless it has the source already, and returns how many
--- it changed: 1, or 0 if it has.
+-- it changed: 1, or 0 if it has. Its names (expression_name) stay as they
+-- are until the batch compiles it (CompileExpressions,
+-- IndexExpressionNames).
 UPDATE expression SET source = @source, ast = NULL, ast_version = NULL, is_valid = false, error = NULL, refs = '{}',
     keys = '{}', updated_at = now()
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND source <> @source;
@@ -48,21 +50,38 @@ WHERE s.workspace_id = @workspace_id AND s.project_id = @project_id AND s.node_i
 
 -- name: ExpressionsToCompile :many
 -- ExpressionsToCompile returns the project's expressions that the batch has
--- yet to compile, those whose refs or keys are among refs or keys, those
--- whose IDs are among ids (BoardExpressionsToCompile), and, if names is
--- true, every one that does not compile but names something, which a change
--- of what the project's expressions can name may let compile, each once, in
--- the order of their IDs, each with what it is compiled from alone: its
--- source, read in its context, at its board, and whether the board is in the
--- trash, whose expressions see what it holds that is there with it alone
--- (TrashedBoardVariables, ExpressionNodes).
+-- yet to compile, those that name a UUID among refs or a key among keys
+-- (expression_name), those whose IDs are among ids
+-- (BoardExpressionsToCompile), and, if names is true, every one that does not
+-- compile but names something, which a change of what the project's
+-- expressions can name may let compile, each once, in the order of their IDs,
+-- each with what it is compiled from alone: its source, read in its context,
+-- at its board, and whether the board is in the trash, whose expressions see
+-- what it holds that is there with it alone (TrashedBoardVariables,
+-- ExpressionNodes). Each of those is read by an index of its own, and the
+-- expressions by their IDs, so that the read takes as long as what it
+-- returns, rather than as the project's expressions, however many UUIDs and
+-- keys the batch changed, as a board's deletion changes 2,000 nodes.
+WITH found AS (
+    SELECT id FROM expression
+    WHERE workspace_id = @workspace_id AND project_id = @project_id AND ast IS NULL AND error IS NULL
+    UNION
+    SELECT expression_id FROM expression_name
+    WHERE workspace_id = @workspace_id AND project_id = @project_id AND ref = ANY(@refs::uuid[])
+    UNION
+    SELECT expression_id FROM expression_name
+    WHERE workspace_id = @workspace_id AND project_id = @project_id AND key = ANY(@keys::text[])
+    UNION
+    SELECT unnest(@ids::uuid[])
+    UNION
+    SELECT id FROM expression
+    WHERE @names::boolean AND workspace_id = @workspace_id AND project_id = @project_id AND NOT is_valid
+        AND (cardinality(refs) > 0 OR cardinality(keys) > 0)
+)
 SELECT e.id, e.board_id, e.context, e.source, EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = e.workspace_id
         AND b.project_id = e.project_id AND b.id = e.board_id AND b.deleted_at IS NOT NULL)::boolean AS board_deleted
-FROM expression e
-WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
-    AND (e.ast IS NULL AND e.error IS NULL OR e.refs && @refs::uuid[] OR e.keys && @keys::text[]
-        OR e.id = ANY(@ids::uuid[])
-        OR @names::boolean AND NOT e.is_valid AND (cardinality(e.refs) > 0 OR cardinality(e.keys) > 0))
+FROM found f
+JOIN expression e ON e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.id = f.id
 ORDER BY e.id;
 
 -- name: BoardNames :many
@@ -81,32 +100,47 @@ WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.board_
     AND v.deleted_at IS NULL;
 
 -- name: BoardExpressionsToCompile :many
--- BoardExpressionsToCompile returns the project's expressions whose refs are
--- among refs, the nodes of the boards board_ids, and those that do not
--- compile whose keys are among keys, the keys of the boards' variables
--- (BoardNames), as one that compiles names its own board's variables and the
--- global ones alone, which no board's deletion or restoration changes: each
--- with its board, whether it compiles, and its refs and keys, by which
--- package expression keeps those that name what a board other than their own
--- holds. A board's own expressions compile as they did, as one of a board in
--- the trash sees what the board holds that is there with it alone, so those
--- of the boards are returned only when there are several, whose expressions
--- may name what another holds. refs and keys are parameters, rather than read
--- here, so that the planner reads them through the indexes of refs and keys
--- when they are few, as for a board of a few nodes in a project of many
--- expressions.
-SELECT id, board_id, is_valid, refs, keys FROM expression
-WHERE workspace_id = @workspace_id AND project_id = @project_id
-    AND (refs && @refs::uuid[] OR NOT is_valid AND keys && @keys::text[])
-    AND (board_id <> ALL(@board_ids::uuid[]) OR cardinality(@board_ids::uuid[]) > 1);
+-- BoardExpressionsToCompile returns the names of the project's expressions
+-- (expression_name) that are among refs, the nodes of the boards board_ids,
+-- and those of the expressions that do not compile that are among keys, the
+-- keys of the boards' variables (BoardNames), as one that compiles names its
+-- own board's variables and the global ones alone, which no board's deletion
+-- or restoration changes: each with its expression and the expression's
+-- board, by which package expression keeps the expressions that name what a
+-- board other than their own holds. A board's own expressions compile as
+-- they did, as one of a board in the trash sees what the board holds that is
+-- there with it alone, so the names of those of the boards are returned only
+-- when there are several, whose expressions may name what another holds. The
+-- names of the nodes are read by the index of their UUIDs alone, however many
+-- the boards hold, and those of the keys by the expressions that do not
+-- compile (expression_invalid), which name something.
+SELECT n.expression_id, n.board_id, n.ref, n.key FROM expression_name n
+WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.ref = ANY(@refs::uuid[])
+    AND (n.board_id <> ALL(@board_ids::uuid[]) OR cardinality(@board_ids::uuid[]) > 1)
+UNION ALL
+SELECT n.expression_id, n.board_id, n.ref, n.key FROM expression e
+JOIN expression_name n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.expression_id = e.id
+WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND NOT e.is_valid
+    AND (cardinality(e.refs) > 0 OR cardinality(e.keys) > 0) AND n.key = ANY(@keys::text[])
+    AND (n.board_id <> ALL(@board_ids::uuid[]) OR cardinality(@board_ids::uuid[]) > 1);
 
 -- name: CompileExpressions :many
 -- CompileExpressions sets what compiling the source of each of the project's
 -- expressions that rows lists gives, a JSON array of objects of its id, its
 -- ast and ast_version, or error, and its refs and keys, unless the
--- expression has it already, and returns the owner of each that it changed,
--- with whether the change is one that the API shows, of its AST, its
--- version, or its error, as shown.
+-- expression has it already, and returns each that it changed, with its
+-- owner, whether the change is one that the API shows, of its AST, its
+-- version, or its error, as shown, and whether its names (expression_name)
+-- are to be written again, as renamed: those of an expression whose refs or
+-- keys it changes, and of one that had yet to compile, whose source a
+-- command wrote, which emptied its refs and its keys but kept its names. It
+-- deletes those names, every one of each such expression, which
+-- IndexExpressionNames then writes as its refs and keys are, by an index of
+-- their expressions' IDs alone, rather than compare them with what the
+-- expressions name, which would join them with what the batch compiled,
+-- whose size the planner cannot tell. Every such expression is changed: one
+-- that had yet to compile has neither an AST nor an error, which compiling
+-- it gives.
 WITH c AS (
     SELECT (r.value->>'id')::uuid AS id, NULLIF(r.value->'ast', 'null'::jsonb) AS ast,
         (r.value->>'ast_version')::integer AS ast_version, NULLIF(r.value->'error', 'null'::jsonb) AS error,
@@ -115,16 +149,33 @@ WITH c AS (
     FROM jsonb_array_elements(@rows::jsonb) AS r
 ), old AS (
     SELECT e.id, (e.ast IS DISTINCT FROM c.ast OR e.ast_version IS DISTINCT FROM c.ast_version
-        OR e.error IS DISTINCT FROM c.error)::boolean AS shown
+            OR e.error IS DISTINCT FROM c.error)::boolean AS shown,
+        (e.refs <> c.refs OR e.keys <> c.keys OR e.ast IS NULL AND e.error IS NULL)::boolean AS renamed
     FROM expression e JOIN c ON c.id = e.id
     WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
+), gone AS (
+    DELETE FROM expression_name
+    WHERE workspace_id = @workspace_id AND project_id = @project_id
+        AND expression_id = ANY(ARRAY(SELECT id FROM old WHERE renamed))
 )
 UPDATE expression e SET ast = c.ast, ast_version = c.ast_version, is_valid = c.ast IS NOT NULL, error = c.error,
     refs = c.refs, keys = c.keys, updated_at = now()
 FROM c JOIN old ON old.id = c.id
-WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.id = c.id
-    AND (old.shown OR e.refs <> c.refs OR e.keys <> c.keys)
-RETURNING e.node_id, e.connection_id, e.branch_output_id, old.shown;
+WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.id = c.id AND (old.shown OR old.renamed)
+RETURNING e.id, e.node_id, e.connection_id, e.branch_output_id, old.shown, old.renamed;
+
+-- name: IndexExpressionNames :exec
+-- IndexExpressionNames writes the names (expression_name) of the project's
+-- expressions whose IDs are among ids, whose names CompileExpressions has
+-- just deleted, as their refs and keys are: a row of each UUID and of each
+-- key, with the expression's board. So an expression's names are always
+-- those of its refs and its keys once its batch has compiled it.
+INSERT INTO expression_name (workspace_id, project_id, expression_id, board_id, ref, key)
+SELECT e.workspace_id, e.project_id, e.id, e.board_id, r.ref, NULL FROM expression e, unnest(e.refs) AS r (ref)
+WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.id = ANY(@ids::uuid[])
+UNION ALL
+SELECT e.workspace_id, e.project_id, e.id, e.board_id, NULL, k.key FROM expression e, unnest(e.keys) AS k (key)
+WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.id = ANY(@ids::uuid[]);
 
 -- name: ChangedNames :many
 -- ChangedNames returns the UUIDs and the keys of what a change of the
