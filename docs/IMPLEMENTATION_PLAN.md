@@ -498,7 +498,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** the Go suite passes and the scenario format is documented in the repository.
 
 ### 43. Expressions on content: conditions, scripts, branches, runtime attributes
-**Status:** todo · **Depends on:** 37, 42
+**Status:** done ([#49](https://github.com/CyberCute-Studio/storycreep/pull/49)) · **Depends on:** 37, 42
 **PRD:** FR-EXPR-03 (expression entity), FR-EDIT-04 (server: AC3), FR-EDIT-03 (AC4), FR-COMP-03 (data), §5.3 `expression`
 - The `expression` entity, in `server/internal/expression`: source, AST, `ast_version`, `is_valid`, error, and an owner back-reference, a foreign key that deletes it with its owner (N51).
 - Connection conditions and on-traverse scripts. Node on-enter and on-exit scripts. Runtime attributes readable and writable from expressions (N51).
