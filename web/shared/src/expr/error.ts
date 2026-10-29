@@ -10,7 +10,7 @@ import {
   MAX_STATEMENTS,
   type Range,
 } from "./ast";
-import { MAX_STRING_LENGTH } from "./semantics";
+import { MAX_INT, MAX_STRING_LENGTH } from "./semantics";
 
 /**
  * The stable code of an error of a source, which a client tells the error by,
@@ -117,7 +117,7 @@ const problems: Record<Code, string> = {
   string_too_long: `a string literal of more than ${MAX_STRING_LENGTH} characters`,
   invalid_number:
     "a number that is neither an integer literal nor a float literal",
-  integer_out_of_range: "an integer literal beyond 9007199254740991",
+  integer_out_of_range: `an integer literal beyond ${MAX_INT}`,
   float_out_of_range: "a float literal beyond a double's range",
   identifier_too_long: `an identifier of more than ${MAX_IDENTIFIER_LENGTH} characters`,
   unexpected_token: "a token that cannot follow what is before it",

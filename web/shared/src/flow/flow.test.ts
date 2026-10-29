@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import ast from "../../../../schema/published/v1/ast.schema.json" with {
@@ -31,18 +31,25 @@ import foldTable from "../../../../schema/unicode/fold.json" with {
 };
 import {
   boolValue,
+  type Context,
   compareNumbers,
+  DecodeError,
+  decode,
   floatValue,
   intValue,
+  isJsonObject,
+  JsonNumber,
+  type JsonValue,
   readJSON,
   stringValue,
   type Value,
 } from "../expr";
 import type { SaveState } from "../save-state";
 import { foldCase, nfc } from "./fold";
-import { ASTUnsupportedError, LoadError, load } from "./load";
+import { ASTUnsupportedError, BOARD_SCHEMA, LoadError, load } from "./load";
 import { Runtime, StateError, ValueError } from "./runtime";
 import { type Schema, validate } from "./schema";
+import { YIELD_EVERY } from "./sha256";
 import { conformance, readTree } from "./testing";
 
 // The IDs of the suites' entities, by their mnemonics, as the Go suites name
@@ -153,6 +160,44 @@ describe("load", () => {
           }),
         ),
       ).rejects.toThrow(/its hash/);
+    });
+
+    // It copies a large file once, so that it hashes the bytes as they were
+    // given: as it takes a view over a resizable buffer, which it hashes as
+    // its own copy, or as it hashes a view over a fixed-length one.
+    test("copies a large file once", async () => {
+      vi.stubGlobal("crypto", {});
+      const asset = `assets/${"0".repeat(23)}CVR.png`;
+      const big = new Uint8Array(2 * YIELD_EVERY + 1).fill(7);
+      const files = suite("choices", {
+        "storycreep.json": (m) => {
+          m.files[asset] =
+            `sha256:${createHash("sha256").update(big).digest("hex")}`;
+        },
+      });
+      const resizable = new Uint8Array(
+        new ArrayBuffer(big.length, { maxByteLength: big.length + 1 }),
+      );
+      resizable.set(big);
+      const slice = vi.spyOn(
+        Object.getPrototypeOf(Uint8Array.prototype),
+        "slice",
+      );
+      try {
+        for (const given of [big, resizable]) {
+          files.set(asset, given);
+          slice.mockClear();
+          await expect(load(files)).resolves.toBeDefined();
+          const copies = slice.mock.contexts.filter(
+            (c) => (c as Uint8Array).length === big.length,
+          );
+          // Compared by identity, as toEqual reads each of their bytes.
+          expect(copies).toHaveLength(1);
+          expect(copies[0] === given).toBe(true);
+        }
+      } finally {
+        slice.mockRestore();
+      }
     });
   });
 
@@ -875,7 +920,19 @@ describe("load", () => {
           }
         },
       },
-      /boards\/main\.json/,
+      // Which decode refuses, as its schema would, which load leaves an AST
+      // to.
+      /boards\/main\.json: the condition of cn_\w+: .*the value of a lit node of the type int/,
+    ],
+    [
+      "an AST of a node of no kind",
+      "choices",
+      {
+        [main]: (b) => {
+          nodeOf(b, nd("GATED")).onExit.ast.statements[0].kind = "loop";
+        },
+      },
+      /boards\/main\.json: the onExit of nd_\w+: .*"loop" is no kind of node/,
     ],
   ])("refuses %s", async (_, name, edits, problem) => {
     const files = suite(name, edits);
@@ -1087,20 +1144,38 @@ describe("the state", () => {
 });
 
 describe("setVariable and setAttribute", () => {
-  test.each<[string, string, Value]>([
-    ["a value of another type", vr("CASH"), stringValue("1")],
+  // Each refused with a ValueError that says why.
+  test.each<[string, string, Value, RegExp]>([
+    [
+      "a value of another type",
+      vr("CASH"),
+      stringValue("1"),
+      /no value of the type int/,
+    ],
     [
       "a string of more than 4,096 characters",
       vr("NAME"),
       stringValue("a".repeat(4097)),
+      /more than 4096 characters/,
     ],
-    ["a string with a NUL", vr("NAME"), stringValue("a\0b")],
-    ["a string with a lone surrogate", vr("NAME"), stringValue("a\uD800")],
-    ["an int beyond ±(2^53 − 1)", vr("CASH"), intValue(2 ** 53)],
-    ["no variable", vr("NADA"), boolValue(true)],
-  ])("refuse %s", async (_, variable, v) => {
+    ["a string with a NUL", vr("NAME"), stringValue("a\0b"), /with a NUL/],
+    [
+      "a string with a lone surrogate",
+      vr("NAME"),
+      stringValue("a\uD800"),
+      /a string with a lone surrogate/,
+    ],
+    [
+      "an int beyond ±(2^53 − 1)",
+      vr("CASH"),
+      intValue(2 ** 53),
+      /an int beyond ±9007199254740991/,
+    ],
+    ["no variable", vr("NADA"), boolValue(true), /no variable/],
+  ])("refuse %s", async (_, variable, v, why) => {
     const r = new Runtime(await load(suite("choices")), false);
     expect(() => r.setVariable(variable, v)).toThrow(ValueError);
+    expect(() => r.setVariable(variable, v)).toThrow(why);
   });
 
   test("widen an int for a float, and refuse an enum's value of no option", async () => {
@@ -1227,6 +1302,161 @@ describe("the schema validator", () => {
     expect(compareNumbers("9007199254740991.0000001", "9007199254740991")).toBe(
       1,
     );
+  });
+});
+
+// load checks a board's file against its schema but for its expressions'
+// ASTs, which it decodes, so that it reads each AST once.
+describe("a board's ASTs", () => {
+  // reached returns the names of the definitions that the document's root
+  // refers to, at any remove.
+  const reached = (document: Schema): Set<string> => {
+    const defs = (document as { $defs: Record<string, Schema> }).$defs;
+    const names = new Set<string>();
+    const { $defs: _, ...root } = document as Record<string, unknown>;
+    const stack: unknown[] = [root];
+    for (let s = stack.pop(); s !== undefined; s = stack.pop()) {
+      if (Array.isArray(s)) {
+        stack.push(...s);
+      } else if (typeof s === "object" && s !== null) {
+        for (const [k, v] of Object.entries(s)) {
+          if (k === "$ref" && typeof v === "string") {
+            const name = v.slice("#/$defs/".length);
+            if (!names.has(name)) {
+              names.add(name);
+              stack.push(defs[name]);
+            }
+          } else if (!["const", "default", "enum", "examples"].includes(k)) {
+            stack.push(v);
+          }
+        }
+      }
+    }
+    return names;
+  };
+  const isAST = (name: string) => name.startsWith("AST");
+
+  test("load's schema of a board reads none of them", () => {
+    expect([...reached(board as Schema)].filter(isAST)).toContain(
+      "ASTExpression",
+    );
+    expect([...reached(BOARD_SCHEMA)].filter(isAST)).toEqual([]);
+  });
+
+  // As the Go test TestDecodeAgreesWithSchema checks of the Go decoder,
+  // decode reads exactly the JSON that the board's schema of an AST takes,
+  // of mutations of the compile corpus's ASTs, whose names are resolved:
+  // each of their values replaced by one of another kind or of another
+  // value, and a key that no node defines added to each of their objects,
+  // which both ignore; so that load, which leaves an AST to decode, refuses
+  // what the schema refuses.
+  test("decode refuses what their schema refuses", () => {
+    const corpus = readJSON(
+      readFileSync(
+        new URL("../../../../schema/expr-corpus/compile.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    const cases = (
+      isJsonObject(corpus) && Array.isArray(corpus.cases) ? corpus.cases : []
+    )
+      .filter(isJsonObject)
+      .filter((c) => c.ast !== undefined);
+    expect(cases.length).toBeGreaterThanOrEqual(50);
+    const schemaOf = (ctx: Context): Schema => ({
+      $defs: (board as { $defs: unknown }).$defs,
+      $ref: ctx === "script" ? "#/$defs/ASTScript" : "#/$defs/ASTExpression",
+    });
+    // readJSON never reads a null, so neither the loader nor this test
+    // gives one.
+    const replacements: JsonValue[] = [
+      "x",
+      "a\u0000b",
+      new JsonNumber("1.5"),
+      new JsonNumber("9007199254740992"),
+      true,
+      Object.create(null),
+      [],
+      "var_01HQ8ZV01K7MWVND2CQJ4RT9XB",
+      "nd_01hq8zn01k7mwvnd2cqj4rt9xb",
+      "script",
+      "+=",
+      new JsonNumber("1.7976931348623157e308"),
+      new JsonNumber("-1.7976931348623158e308"),
+    ];
+    // The shortest ASTs that together use every kind of node, operator, and
+    // literal's type that the corpus's ASTs use, in each context, which
+    // cover what every AST holds at a fraction of the cost.
+    const sized = cases
+      .map((c) => ({ c, size: JSON.stringify(c.ast).length }))
+      .sort((a, b) => a.size - b.size);
+    const covered = new Set<string>();
+    const failures: string[] = [];
+    let checked = 0;
+    for (const { c } of sized) {
+      const ctx = c.context as Context;
+      let adds = false;
+      const collect = (v: JsonValue) => {
+        if (Array.isArray(v)) {
+          v.forEach(collect);
+        } else if (isJsonObject(v)) {
+          for (const [k, x] of Object.entries(v)) {
+            if (typeof x === "string" && ["kind", "op", "type"].includes(k)) {
+              const token = `${ctx}:${k}=${x}`;
+              adds ||= !covered.has(token);
+              covered.add(token);
+            }
+            collect(x);
+          }
+        }
+      };
+      const tree = c.ast as JsonValue;
+      collect(tree);
+      if (!adds) {
+        continue;
+      }
+      const attempt = (at: string) => {
+        checked++;
+        const problem = validate(schemaOf(ctx), tree);
+        let decoded: unknown;
+        try {
+          decode(tree, ctx);
+        } catch (e) {
+          if (!(e instanceof DecodeError)) {
+            throw e;
+          }
+          decoded = e;
+        }
+        if ((problem === undefined) !== (decoded === undefined)) {
+          failures.push(
+            `${String(c.source)} with ${at}: the schema: ${problem ?? "takes it"}; decode: ${decoded ?? "reads it"}`,
+          );
+        }
+      };
+      const mutate = (v: JsonValue, path: string) => {
+        if (Array.isArray(v)) {
+          v.forEach((x, i) => {
+            mutate(x, `${path}[${i}]`);
+          });
+        } else if (isJsonObject(v)) {
+          const o = v as { [key: string]: JsonValue };
+          o.future = readJSON('{"a":[1]}');
+          attempt(`${path}+future`);
+          delete o.future;
+          for (const [k, x] of Object.entries(o)) {
+            for (const r of replacements) {
+              o[k] = r;
+              attempt(`${path}.${k} = ${JSON.stringify(r)}`);
+            }
+            o[k] = x;
+            mutate(x, `${path}.${k}`);
+          }
+        }
+      };
+      mutate(tree, "$");
+    }
+    expect(failures).toEqual([]);
+    expect(checked).toBeGreaterThanOrEqual(500);
   });
 });
 

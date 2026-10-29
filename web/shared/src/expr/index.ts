@@ -13,52 +13,12 @@
 // types, its purity, and the sandbox's limits; compile does both. encode
 // writes an AST's canonical form, and decode reads a published one, which
 // checkResolved checks by its refs. condition and run evaluate an AST
-// against an Env, which the flow's Runtime is.
+// against an Env, which the flow's Runtime is. What parses and checks a
+// source alone, as the editor's instant feedback, imports what compile.ts
+// exports, @storycreep/shared/expr/compile, which is all of this module but
+// the evaluator and unicode, so that it imports none of their tables.
 
-export type {
-  Assign,
-  AssignOp,
-  Attr,
-  Binary,
-  BinaryOp,
-  Call,
-  Context,
-  Kind,
-  Lit,
-  Node,
-  NodeRef,
-  Range,
-  Scope,
-  Script,
-  Unary,
-  UnaryOp,
-  ValueType,
-  Var,
-} from "./ast";
-export {
-  isIdentifier,
-  isKey,
-  MAX_ARGUMENTS,
-  MAX_DEPTH,
-  MAX_IDENTIFIER_LENGTH,
-  MAX_NODES,
-  MAX_SIGNALS,
-  MAX_STATEMENTS,
-  NO_RANGE,
-  RESERVED_WORDS,
-} from "./ast";
-export { AST_VERSION, builtins, versionOf } from "./builtins";
-export { check, checkResolved, compile } from "./check";
-export { DecodeError, decode } from "./decode";
-export { encode } from "./encode";
-export {
-  COMPILE_CODES,
-  type Code,
-  ExprError,
-  SYNTAX_CODES,
-  type TypeName,
-  UsageError,
-} from "./error";
+export * from "./compile";
 export {
   condition,
   type Env,
@@ -67,43 +27,4 @@ export {
   MAX_STEPS,
   run,
 } from "./eval";
-export {
-  compareNumbers,
-  isIntegral,
-  isJsonObject,
-  JsonError,
-  JsonNumber,
-  type JsonValue,
-  plain,
-  readJSON,
-  readJSONBytes,
-} from "./json";
-export { parse } from "./parser";
-export {
-  type Attribute,
-  type AttributeType,
-  type BoardNode,
-  type Component,
-  Project,
-  type Variable,
-} from "./project";
-export * as semantics from "./semantics";
-export { walk } from "./shape";
-export { MAX_SUGGESTIONS } from "./suggest";
 export * as unicode from "./unicode";
-export {
-  asFloat,
-  boolValue,
-  type DeclaredType,
-  equalValue,
-  floatValue,
-  intValue,
-  jsonOf,
-  MAX_TEXT_LENGTH,
-  NONE,
-  readValue,
-  sameValue,
-  stringValue,
-  type Value,
-  valueString,
-} from "./value";

@@ -894,7 +894,7 @@ function asSaved(
   );
   if (problem !== undefined || !equalValue(read, v)) {
     throw new ValueError(
-      `the ${v.type || "value"} is no value of the language, as an int beyond ±(2^53 − 1), a float that is not finite, or a string of more than 4096 characters, or with a NUL, is not, or, of an enum, none of its options`,
+      `the ${v.type || "value"} is no value of the language, as an int beyond ±${semantics.MAX_INT}, a float that is not finite, a string with a lone surrogate, or one of more than ${semantics.MAX_STRING_LENGTH} characters, or with a NUL, is not, or, of an enum, none of its options`,
     );
   }
   return read;

@@ -45,18 +45,20 @@ export const YIELD_EVERY = 1 << 20;
  * (nextTask), so that a page that hashes a large file, as an asset of a
  * snapshot, goes on responding meanwhile. It hashes the bytes as they are
  * when it is called, whatever becomes of them meanwhile, as WebCrypto does,
- * so it copies those of more than YIELD_EVERY bytes first. Once signal is
- * aborted, it rejects with its reason, as fetch does, before it hashes
- * another YIELD_EVERY bytes.
+ * so it copies those of more than YIELD_EVERY bytes first, unless own is
+ * set: when bytes are the caller's own copy, which nothing else holds, and
+ * so nothing changes meanwhile. Once signal is aborted, it rejects with its
+ * reason, as fetch does, before it hashes another YIELD_EVERY bytes.
  */
 export async function sha256Yielding(
   bytes: Uint8Array,
   signal?: AbortSignal,
+  own = false,
 ): Promise<Uint8Array> {
   if (bytes.length <= YIELD_EVERY) {
     return sha256(bytes);
   }
-  const data = bytes.slice();
+  const data = own ? bytes : bytes.slice();
   const h = initial();
   const w = new Uint32Array(64);
   const whole = data.length - (data.length % 64);

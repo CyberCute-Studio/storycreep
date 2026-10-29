@@ -7,11 +7,13 @@ import {
   type DeclaredType,
   isJsonObject,
   type JsonValue,
+  type Node,
   plain,
   readJSON,
   readValue,
   sameValue,
   type Value,
+  walk,
 } from "../expr";
 import type { SaveState } from "../save-state";
 import { attributeKey, load, type Snapshot } from "./load";
@@ -290,21 +292,39 @@ describe("the conformance suite", () => {
 
   // Every built-in is called by an expression of a snapshot of the suite, so
   // that each has conformance cases (FR-EXPR-04 AC1), beside its cases in
-  // the expression corpus.
+  // the expression corpus: by a call of an AST that load decoded, which a
+  // runtime evaluates, however its file is formatted.
   test("calls every built-in", () => {
     const called = new Set<string>();
-    for (const name of readdirSync(conformance)) {
-      const boards = join(conformance, name, "snapshot", "boards");
-      if (!statSync(join(conformance, name)).isDirectory()) {
-        continue;
+    const calls = (n: Node | undefined) => {
+      if (n !== undefined) {
+        walk(n, (c) => {
+          if (c.kind === "call") {
+            called.add(c.function);
+          }
+        });
       }
-      for (const file of readdirSync(boards)) {
-        const text = readFileSync(join(boards, file), "utf8");
-        for (const m of text.matchAll(/"function": "([a-z_]+)"/g)) {
-          called.add(m[1]);
+    };
+    for (const { snapshot } of suites.values()) {
+      for (const n of snapshot.nodes.values()) {
+        if (n.type !== "jumper") {
+          calls(n.onEnter);
+          calls(n.onExit);
+        }
+        if (n.type === "branch") {
+          for (const o of n.outputs) {
+            calls(o.condition);
+          }
+        }
+        for (const connections of n.ports.values()) {
+          for (const c of connections) {
+            calls(c.condition);
+            calls(c.onTraverse);
+          }
         }
       }
     }
+    expect(suites.size).toBeGreaterThan(0);
     expect(builtins().filter((b) => !called.has(b))).toEqual([]);
   });
 });

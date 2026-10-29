@@ -2,7 +2,7 @@
 
 import type { Lit, Node } from "./ast";
 import { UsageError } from "./error";
-import { len, MAX_STRING_LENGTH } from "./semantics";
+import { len, MAX_INT, MAX_STRING_LENGTH } from "./semantics";
 import {
   ASSIGN_OPS,
   BINARY_OPS,
@@ -182,7 +182,7 @@ export function literalProblem(n: Lit): string | undefined {
     case "int":
       return typeof v === "number" && Number.isSafeInteger(v)
         ? undefined
-        : `the int ${String(v)} is not an integer within ±9007199254740991`;
+        : `the int ${String(v)} is not an integer within ±${MAX_INT}`;
     case "float":
       return typeof v === "number" && Number.isFinite(v)
         ? undefined

@@ -171,14 +171,16 @@ test("versionOf counts an operator that is none of the language's for nothing", 
 });
 
 // What parses and checks an expression, as the editor's instant feedback,
-// imports no JSON, and so none of the tables of Unicode, which upper, lower,
-// and trim alone read (unicode.ts), so that its bundle holds none of them.
-test("parse and check import none of the tables of Unicode", () => {
+// @storycreep/shared/expr/compile, imports no JSON, and so none of the
+// tables of Unicode, which upper, lower, and trim alone read (unicode.ts),
+// so that its bundle holds none of them.
+test("the package's parse and check import none of the tables of Unicode", () => {
+  const pkg = JSON.parse(
+    readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+  );
+  expect(pkg.exports["./expr/compile"]).toBe("./src/expr/compile.ts");
   const seen = new Set<string>();
-  const stack = [
-    new URL("./parser.ts", import.meta.url).href,
-    new URL("./check.ts", import.meta.url).href,
-  ];
+  const stack = [new URL("./compile.ts", import.meta.url).href];
   for (let file = stack.pop(); file !== undefined; file = stack.pop()) {
     if (seen.has(file)) {
       continue;
@@ -195,8 +197,11 @@ test("parse and check import none of the tables of Unicode", () => {
     }
   }
   const names = [...seen].map((f) => f.slice(f.lastIndexOf("/") + 1));
-  expect(names).toContain("semantics.ts");
+  expect(names).toEqual(
+    expect.arrayContaining(["parser.ts", "check.ts", "semantics.ts"]),
+  );
   expect(names).not.toContain("unicode.ts");
+  expect(names).not.toContain("eval.ts");
 });
 
 // A field that the checker reads as a string, or an attr's explicit, of

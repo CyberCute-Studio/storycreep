@@ -59,22 +59,33 @@ export function readJSON(text: string): JsonValue {
 }
 
 /**
+ * Returns bytes if it is a view of a fixed-length ArrayBuffer, the one
+ * buffer of which both WebCrypto and a browser's TextDecoder read a view,
+ * and otherwise a copy of its bytes, made at once, over one: of a view of a
+ * resizable ArrayBuffer or of a SharedArrayBuffer, which they read none of
+ * (WebIDL's BufferSource and AllowSharedBufferSource), or of another realm's
+ * ArrayBuffer, which instanceof does not tell from those. What it returns is
+ * a copy exactly when it is not bytes.
+ */
+export function fixedView(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  const buffer = bytes.buffer;
+  return buffer instanceof ArrayBuffer && !buffer.resizable
+    ? (bytes as Uint8Array<ArrayBuffer>)
+    : bytes.slice();
+}
+
+/**
  * Returns the JSON value of bytes, read as UTF-8, as readJSON reads a text,
  * or throws a JsonError of bytes that are not UTF-8, or that start with a
- * byte order mark, which no JSON text does. It reads bytes over any buffer:
- * a browser's TextDecoder reads no view of a resizable ArrayBuffer, nor of a
- * growable SharedArrayBuffer (WebIDL's AllowSharedBufferSource), so it
- * decodes a copy of the bytes of a view over any buffer but a fixed-length
- * ArrayBuffer.
+ * byte order mark, which no JSON text does. It reads bytes over any buffer,
+ * though a browser's TextDecoder reads a view of a fixed-length ArrayBuffer
+ * alone, since it decodes what fixedView returns of them.
  */
 export function readJSONBytes(bytes: Uint8Array): JsonValue {
-  const buffer = bytes.buffer;
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      buffer instanceof ArrayBuffer && !buffer.resizable
-        ? bytes
-        : bytes.slice(),
+      fixedView(bytes),
     );
   } catch {
     throw new JsonError("is not UTF-8");
@@ -84,13 +95,9 @@ export function readJSONBytes(bytes: Uint8Array): JsonValue {
 
 /**
  * Returns v as JSON.parse would have read it, each number the double nearest
- * it, and each object a plain one, without recursing. Each object and array
- * that it returns is set in origins, if it is given, to the object or the
- * array of v that it is read from, whose numbers are as they are written, so
- * that what reads the rest of a file as JSON.parse reads it finds a number
- * that it needs exactly by the object that holds it.
+ * it, and each object a plain one, without recursing.
  */
-export function plain(v: JsonValue, origins?: Map<object, JsonValue>): unknown {
+export function plain(v: JsonValue): unknown {
   const root: { value?: unknown } = {};
   const stack: [JsonValue, (x: unknown) => void][] = [
     [
@@ -106,7 +113,6 @@ export function plain(v: JsonValue, origins?: Map<object, JsonValue>): unknown {
       put(from.value);
     } else if (Array.isArray(from)) {
       const out: unknown[] = new Array(from.length);
-      origins?.set(out, from);
       put(out);
       from.forEach((item, i) => {
         stack.push([
@@ -118,7 +124,6 @@ export function plain(v: JsonValue, origins?: Map<object, JsonValue>): unknown {
       });
     } else if (typeof from === "object") {
       const out: Record<string, unknown> = {};
-      origins?.set(out, from);
       put(out);
       // Each key is set in its order, and set again once its value is read.
       for (const key of Object.keys(from)) {

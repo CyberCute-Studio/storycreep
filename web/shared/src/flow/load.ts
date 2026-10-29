@@ -31,6 +31,7 @@ import {
   DecodeError,
   decode,
   ExprError,
+  fixedView,
   isJsonObject,
   JsonError,
   type JsonValue,
@@ -60,7 +61,7 @@ import type {
   Variables,
 } from "../published";
 import { foldCase } from "./fold";
-import { type Schema, validate } from "./schema";
+import { ANY_VALUE, type Schema, validate } from "./schema";
 import { sha256Yielding } from "./sha256";
 
 /** The paths of a snapshot's files but its boards' and its assets'. */
@@ -234,8 +235,9 @@ export class Snapshot {
  * Schema, of schema/published/v1, before it reads anything of it, so that
  * it refuses a file that breaks a pattern or a bound of its schema, which
  * the server never writes, though Go's Load, which is no validator of the
- * schemas, may load it. It rejects with a LoadError, and of a snapshot that
- * is wrong in several ways always the same one, as it reads the files and
+ * schemas, may load it; but it leaves a board's ASTs to decode, which
+ * refuses exactly what their definitions refuse, so that it reads each AST
+ * once. It rejects with a LoadError, and of a snapshot that is wrong in several ways always the same one, as it reads the files and
  * checks them in the order of Go's Load, each file hashed as it reads it,
  * the files that it does not read, as the assets, last, and each board's
  * ASTs decoded as it reads the board's file. It is asynchronous since it
@@ -278,20 +280,21 @@ export interface LoadOptions {
   readonly signal?: AbortSignal;
 }
 
-// digest returns the hash of bytes as the manifest lists a file's: sha256:
-// and the lowercase hexadecimal SHA-256 of the bytes, by WebCrypto's, which
-// copies them, or, where the page is no secure context and has none
+// digest returns the hash of a file's bytes as the manifest lists a file's:
+// sha256: and the lowercase hexadecimal SHA-256 of the bytes, by WebCrypto's,
+// which copies them, or, where the page is no secure context and has none
 // (crypto.subtle), by sha256Yielding's, which copies those of a large file
-// too, and stops once signal is aborted.
+// too, unless they are the loader's own copy, and stops once signal is
+// aborted.
 async function digest(
-  bytes: Uint8Array<ArrayBuffer>,
+  file: Opened,
   signal: AbortSignal | undefined,
 ): Promise<string> {
   const subtle: SubtleCrypto | undefined = globalThis.crypto?.subtle;
   const sum =
     subtle === undefined
-      ? await sha256Yielding(bytes, signal)
-      : new Uint8Array(await subtle.digest("SHA-256", bytes));
+      ? await sha256Yielding(file.bytes, signal, file.own)
+      : new Uint8Array(await subtle.digest("SHA-256", file.bytes));
   return `sha256:${Array.from(sum, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
@@ -317,6 +320,24 @@ function isFilePath(path: string): boolean {
   return slug.length <= 64 && !devices.has(slug);
 }
 
+// withoutASTs returns the schema of a board's file with the ast of each
+// expression, a condition's or a script's, taken as any value (AnyValue), so
+// that it reads none of the definitions of an AST: readBoard decodes each
+// AST that the schema would have read, and decode refuses exactly what those
+// definitions refuse, as the Go test TestDecodeAgreesWithSchema and its twin
+// in flow.test.ts check, so that the loader reads each AST once, not twice.
+function withoutASTs(board: Schema): Schema {
+  type Definition = { readonly properties: Record<string, Schema> };
+  const defs = { ...(board as { $defs: Record<string, Definition> }).$defs };
+  for (const name of ["Condition", "Script"]) {
+    defs[name] = {
+      ...defs[name],
+      properties: { ...defs[name].properties, ast: { $ref: ANY_VALUE } },
+    };
+  }
+  return { ...(board as object), $defs: defs };
+}
+
 // The schemas of the files.
 const schemas = {
   manifest: manifestSchema as Schema,
@@ -324,12 +345,49 @@ const schemas = {
   variables: variablesSchema as Schema,
   componentTypes: componentTypesSchema as Schema,
   components: componentsSchema as Schema,
-  board: boardSchema as Schema,
+  board: withoutASTs(boardSchema as Schema),
 };
+
+/** @internal The schema that load checks a board's file against. */
+export const BOARD_SCHEMA = schemas.board;
 
 // fail returns the LoadError of the problem.
 function fail(problem: string): LoadError {
   return new LoadError(problem);
+}
+
+// An object of a file's raw JSON, whose numbers are as they are written.
+type RawObject = { readonly [key: string]: JsonValue };
+
+// member returns the value of the key of o, an object of a file's raw JSON,
+// or undefined when it has none.
+function member(o: JsonValue | undefined, key: string): JsonValue | undefined {
+  return isJsonObject(o) && Object.hasOwn(o, key) ? o[key] : undefined;
+}
+
+// items returns the array of the key of o, an object of a file's raw JSON,
+// which its schema has it hold, or none.
+function items(o: JsonValue | undefined, key: string): readonly JsonValue[] {
+  const v = member(o, key);
+  return Array.isArray(v) ? v : [];
+}
+
+// A file as the loader has opened it: its bytes, a view of a fixed-length
+// ArrayBuffer (fixedView), and whether they are the loader's own copy, which
+// nothing else holds.
+interface Opened {
+  readonly bytes: Uint8Array<ArrayBuffer>;
+  readonly own: boolean;
+}
+
+// A file as the loader has read it: as JSON.parse would have read it, typed
+// by its schema, and its raw JSON, in which the loader finds a number that
+// it reads by its declaration (readValue), or an AST that it decodes, by
+// the same path, since plain maps each array's items and each object's keys
+// to their own.
+interface Read<T> {
+  readonly file: T;
+  readonly raw: RawObject;
 }
 
 // json returns the JSON of a file's bytes (readJSONBytes), or the JsonError
@@ -347,19 +405,13 @@ function json(bytes: Uint8Array): JsonValue | JsonError {
 
 // Loader is what load keeps while it reads a snapshot's files: the IDs of the
 // entities that it has read, of which no two are one, the components' IDs,
-// the paths of the files that it has read, the raw JSON of what it has read
-// of them, the ASTs of the boards' expressions, and the ASTs that it has
-// checked, whose constructs' versions the manifest's astVersion covers.
+// the paths of the files that it has read, the ASTs of the boards'
+// expressions, and the ASTs that it has checked, whose constructs' versions
+// the manifest's astVersion covers.
 class Loader {
   private readonly entities = new Set<string>();
   private readonly components = new Set<string>();
   private readonly read = new Set<string>();
-  // origins are the raw JSON of each object and array of the files that it
-  // has read but the boards', whose numbers are as they are written, by the
-  // copy that JSON.parse would read, typed by its schema (plain), which the
-  // loader reads the rest of. Those of a board's file are readBoard's, which
-  // it lets go of once it has decoded the board's expressions.
-  private readonly origins = new Map<object, JsonValue>();
   // decoded are the ASTs of the boards' expressions, by the typed copy of
   // each expression's object.
   private readonly decoded = new Map<object, Node>();
@@ -406,38 +458,32 @@ class Loader {
       typeof files === "function" ? files : async (path) => files.get(path);
   }
 
-  // bytes returns the bytes of the file of the path, or undefined when there
-  // is none, once it has checked, before it opens the file and once it has,
-  // that the signal is not aborted. It returns a view of a fixed-length
+  // opened returns the file of the path, or undefined when there is none,
+  // once it has checked, before it opens the file and once it has, that the
+  // signal is not aborted. Its bytes are a view of a fixed-length
   // ArrayBuffer, the one buffer that WebCrypto and a browser's TextDecoder
   // both read a view of: of a view over a resizable ArrayBuffer or a
-  // SharedArrayBuffer, a copy, made at once, so that it is of the bytes as
-  // they are when the file is opened.
-  private async bytes(
-    path: string,
-  ): Promise<Uint8Array<ArrayBuffer> | undefined> {
+  // SharedArrayBuffer, the loader's own copy, made at once, so that it is of
+  // the bytes as they are when the file is opened (fixedView).
+  private async opened(path: string): Promise<Opened | undefined> {
     this.signal?.throwIfAborted();
-    const bytes = await this.open(path, this.signal);
+    const given = await this.open(path, this.signal);
     this.signal?.throwIfAborted();
-    if (bytes === undefined) {
+    if (given === undefined) {
       return undefined;
     }
-    const buffer = bytes.buffer;
-    return buffer instanceof ArrayBuffer && !buffer.resizable
-      ? (bytes as Uint8Array<ArrayBuffer>)
-      : bytes.slice();
+    const bytes = fixedView(given);
+    return { bytes, own: bytes !== given };
   }
 
   // parse checks raw, the JSON of the file of the path, or the problem of
   // its bytes, against the schema, and returns it as JSON.parse would have
-  // read it, typed by the schema, whose objects and arrays are recorded with
-  // their raw JSON in origins.
+  // read it, typed by the schema, with raw.
   private parse<T>(
     path: string,
     raw: JsonValue | JsonError,
     schema: Schema,
-    origins: Map<object, JsonValue>,
-  ): T {
+  ): Read<T> {
     if (raw instanceof JsonError) {
       throw fail(`${path}: it ${raw.message}`);
     }
@@ -447,28 +493,21 @@ class Loader {
         `${path}: ${problem ?? "is not an object"}, which its schema does not take`,
       );
     }
-    return plain(raw, origins) as T;
-  }
-
-  // raw returns the raw JSON, whose numbers are as they are written, of x,
-  // an object of a file that the loader has read, as parse returned it.
-  private raw(x: object): { [key: string]: JsonValue } {
-    return this.origins.get(x) as { [key: string]: JsonValue };
+    return { file: plain(raw) as T, raw };
   }
 
   // manifest reads the manifest, and checks its astVersion and its files'
   // paths.
   private async manifest(): Promise<Manifest> {
-    const bytes = await this.bytes(MANIFEST_PATH);
-    if (bytes === undefined) {
+    const opened = await this.opened(MANIFEST_PATH);
+    if (opened === undefined) {
       throw fail(`there is no ${MANIFEST_PATH}`);
     }
     const m = this.parse<Manifest>(
       MANIFEST_PATH,
-      json(bytes),
+      json(opened.bytes),
       schemas.manifest,
-      this.origins,
-    );
+    ).file;
     if (m.astVersion > AST_VERSION) {
       throw new ASTUnsupportedError(
         `the snapshot's astVersion is ${m.astVersion}, and this runtime supports ${AST_VERSION}`,
@@ -500,14 +539,14 @@ class Loader {
       throw fail(`${path} is not among the manifest's files`);
     }
     const want = this.manifestFiles[path];
-    const bytes = await this.bytes(path);
-    if (bytes === undefined) {
+    const opened = await this.opened(path);
+    if (opened === undefined) {
       throw fail(`there is no ${path}`);
     }
-    const sum = digest(bytes, this.signal);
+    const sum = digest(opened, this.signal);
     let r: { value: R } | { thrown: unknown };
     try {
-      r = { value: read(bytes) };
+      r = { value: read(opened.bytes) };
     } catch (e) {
       r = { thrown: e };
     }
@@ -524,16 +563,11 @@ class Loader {
     return r.value;
   }
 
-  // readFile reads the file of the path, once it has checked its hash, and
-  // records the raw JSON of its objects and arrays in origins.
-  private async readFile<T>(
-    path: string,
-    schema: Schema,
-    origins = this.origins,
-  ): Promise<T> {
+  // readFile reads the file of the path, once it has checked its hash.
+  private async readFile<T>(path: string, schema: Schema): Promise<Read<T>> {
     const raw = await this.contents(path, json);
     this.read.add(path);
-    return this.parse<T>(path, raw, schema, origins);
+    return this.parse<T>(path, raw, schema);
   }
 
   // readBoard reads the board file of the path, and decodes its
@@ -546,41 +580,47 @@ class Loader {
   // file writes them in: the connections', each's condition, then its
   // onTraverse, then the nodes', each's onEnter, then its onExit, then a
   // branch's outputs' conditions, so that it refuses the first that it
-  // cannot decode.
+  // cannot decode. It decodes each from the file's raw JSON, which it lets
+  // go of once it has decoded them, so that it holds that of one board's
+  // file at a time.
   private async readBoard(path: string): Promise<BoardFile> {
-    // The raw JSON of the file, of which it reads the expressions' alone,
-    // which it lets go of once it has decoded them, so that it holds that of
-    // one board's file at a time.
-    const origins = new Map<object, JsonValue>();
-    const f = await this.readFile<BoardFile>(path, schemas.board, origins);
+    const { file: f, raw } = await this.readFile<BoardFile>(
+      path,
+      schemas.board,
+    );
     // expression decodes the AST of e, the expression of the key of the
-    // object whose ID is id, if it has one, in the context ctx.
+    // object whose ID is id and whose raw JSON is of, if it has one, in the
+    // context ctx.
     const expression = (
       id: string,
       key: string,
       e: object | undefined,
+      of: JsonValue | undefined,
       ctx: Context,
     ) => {
       if (e !== undefined) {
         this.decoded.set(
           e,
-          this.ast(`${path}: the ${key} of ${id}`, origins.get(e), ctx),
+          this.ast(`${path}: the ${key} of ${id}`, member(of, key), ctx),
         );
       }
     };
-    for (const c of f.connections) {
-      expression(c.id, "condition", c.condition, "condition");
-      expression(c.id, "onTraverse", c.onTraverse, "script");
+    const connections = items(raw, "connections");
+    for (const [i, c] of f.connections.entries()) {
+      expression(c.id, "condition", c.condition, connections[i], "condition");
+      expression(c.id, "onTraverse", c.onTraverse, connections[i], "script");
     }
-    for (const n of f.nodes) {
+    const nodes = items(raw, "nodes");
+    for (const [i, n] of f.nodes.entries()) {
       if (n.type === "jumper") {
         continue;
       }
-      expression(n.id, "onEnter", n.onEnter, "script");
-      expression(n.id, "onExit", n.onExit, "script");
+      expression(n.id, "onEnter", n.onEnter, nodes[i], "script");
+      expression(n.id, "onExit", n.onExit, nodes[i], "script");
       if (n.type === "branch") {
-        for (const o of n.outputs) {
-          expression(o.id, "condition", o.condition, "condition");
+        const outputs = items(nodes[i], "outputs");
+        for (const [k, o] of n.outputs.entries()) {
+          expression(o.id, "condition", o.condition, outputs[k], "condition");
         }
       }
     }
@@ -600,10 +640,9 @@ class Loader {
     const m = await this.manifest();
     this.manifestFiles = m.files;
     this.release = m.snapshot.channel === "release";
-    const settings = await this.readFile<Settings>(
-      SETTINGS_PATH,
-      schemas.settings,
-    );
+    const settings = (
+      await this.readFile<Settings>(SETTINGS_PATH, schemas.settings)
+    ).file;
     const variables = await this.readFile<Variables>(
       VARIABLES_PATH,
       schemas.variables,
@@ -657,7 +696,7 @@ class Loader {
     }
     // What the snapshot's expressions can name, against which its ASTs are
     // checked, of the nodes in the order of the index and of their files.
-    const p = this.project(variables, boardFiles, m.boards);
+    const p = this.project(variables.file, boardFiles, m.boards);
     for (const b of m.boards) {
       const f = boardFiles.get(b.id) as BoardFile;
       this.addConnections(b.id, b.file, f, p);
@@ -691,10 +730,10 @@ class Loader {
     }
     const counts = {
       boards: m.boards.length,
-      components: components.components.length,
+      components: components.file.components.length,
       connections: 0,
       nodes: 0,
-      variables: variables.variables.length,
+      variables: variables.file.variables.length,
     };
     for (const f of boardFiles.values()) {
       counts.nodes += f.nodes.length;
@@ -733,13 +772,15 @@ class Loader {
   }
 
   // declare reads the variables, the component types' definitions, and the
-  // components' runtime attributes, with their values in the snapshot.
+  // components' runtime attributes, with their values in the snapshot, which
+  // it reads from the files' raw JSON.
   private declare(
-    variables: Variables,
-    types: ComponentTypes,
-    components: Components,
+    variables: Read<Variables>,
+    types: Read<ComponentTypes>,
+    components: Read<Components>,
   ): void {
-    for (const v of variables.variables) {
+    const rawVariables = items(variables.raw, "variables");
+    for (const [i, v] of variables.file.variables.entries()) {
       this.entity(v.id, VARIABLES_PATH);
       if (v.scope === "board") {
         const b = this.boards.get(v.boardId);
@@ -752,7 +793,10 @@ class Loader {
           b.reset.push(v.id);
         }
       }
-      const [d, problem] = readValue(this.raw(v).default, v.type);
+      const [d, problem] = readValue(
+        member(rawVariables[i], "default"),
+        v.type,
+      );
       if (problem !== undefined) {
         throw fail(`the default of the variable ${v.id} ${problem}`);
       }
@@ -762,16 +806,18 @@ class Loader {
     }
     const definitions = new Map<string, ComponentType["attributes"]>();
     const typeKeys = new Set<string>();
-    for (const t of types.componentTypes) {
+    const rawTypes = items(types.raw, "componentTypes");
+    for (const [i, t] of types.file.componentTypes.entries()) {
       this.entity(t.id, COMPONENT_TYPES_PATH);
       if (typeKeys.has(t.key)) {
         throw fail(`two component types have the key ${t.key}`);
       }
       typeKeys.add(t.key);
-      this.define(t);
+      this.define(t, items(rawTypes[i], "attributes"));
       definitions.set(t.id, t.attributes);
     }
-    for (const c of components.components) {
+    const rawComponents = items(components.raw, "components");
+    for (const [i, c] of components.file.components.entries()) {
       this.entity(c.id, COMPONENTS_PATH);
       this.components.add(c.id);
       const defs = definitions.get(c.componentTypeId);
@@ -780,7 +826,8 @@ class Loader {
           `the component ${c.id} is of ${c.componentTypeId}, which is no component type of the snapshot`,
         );
       }
-      const values = this.raw(c.attributes);
+      const given = member(rawComponents[i], "attributes");
+      const values: RawObject = isJsonObject(given) ? given : {};
       if (Object.keys(values).length !== defs.length) {
         throw fail(
           `the component ${c.id} has ${Object.keys(values).length} values, not one of each of its type's ${defs.length} definitions`,
@@ -822,13 +869,13 @@ class Loader {
     }
   }
 
-  // define checks the attribute definitions of the component type t: each
-  // its own entity, of a key of its own among the type's, a text never
-  // runtime, an enum's options each there once, and its default of its type,
-  // an enum's one of its options.
-  private define(t: ComponentType): void {
+  // define checks the attribute definitions of the component type t, whose
+  // raw JSON is raw: each its own entity, of a key of its own among the
+  // type's, a text never runtime, an enum's options each there once, and its
+  // default of its type, an enum's one of its options.
+  private define(t: ComponentType, raw: readonly JsonValue[]): void {
     const keys = new Set<string>();
-    for (const d of t.attributes) {
+    for (const [j, d] of t.attributes.entries()) {
       this.entity(d.id, COMPONENT_TYPES_PATH);
       if (keys.has(d.key)) {
         throw fail(
@@ -843,7 +890,7 @@ class Loader {
         throw fail(`the definition ${d.id} has an option twice`);
       }
       keys.add(d.key);
-      const [, problem] = readValue(this.raw(d).default, d.type, options);
+      const [, problem] = readValue(member(raw[j], "default"), d.type, options);
       if (problem !== undefined) {
         throw fail(`the default of the definition ${d.id} ${problem}`);
       }

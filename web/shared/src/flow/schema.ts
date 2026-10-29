@@ -60,7 +60,7 @@ const maxDepth = 256;
  * but null, which readJSON never returns, so that validate takes every value
  * that it is given there without reading it, however deep.
  */
-const anyValue = "#/$defs/AnyValue";
+export const ANY_VALUE = "#/$defs/AnyValue";
 
 /**
  * Returns why instance is not what the document's root schema takes, at the
@@ -216,7 +216,7 @@ class Validator {
     }
     const where = path || "/";
     if (typeof s.$ref === "string") {
-      if (s.$ref === anyValue) {
+      if (s.$ref === ANY_VALUE) {
         return undefined;
       }
       const problem = this.valid(this.resolve(s.$ref), v, path, depth);
