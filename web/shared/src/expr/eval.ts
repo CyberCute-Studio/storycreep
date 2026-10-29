@@ -17,7 +17,6 @@ import {
   endsWith,
   floor,
   len,
-  lower,
   modInt,
   mulFloat,
   mulInt,
@@ -31,10 +30,9 @@ import {
   startsWith,
   subFloat,
   subInt,
-  trim,
   trunc,
-  upper,
 } from "./semantics";
+import { lower, trim, upper } from "./unicode";
 import {
   asFloat,
   boolValue,
@@ -154,14 +152,20 @@ export function run(s: Script, env: Env): void {
   }
 }
 
-// The binary operators of each op=.
-const assignOperators: Partial<Record<Assign["op"], BinaryOp>> = {
-  "+=": "add",
-  "-=": "sub",
-  "*=": "mul",
-  "/=": "div",
-  "%=": "mod",
-};
+// The binary operators of each op=, by it, as the Go evaluator's map holds
+// them, so that an assignment of any other op, as a malformed node's, named
+// after a member of Object.prototype, as constructor, too, assigns its value
+// as = does.
+const assignOperators: ReadonlyMap<string, BinaryOp> = new Map<
+  Assign["op"],
+  BinaryOp
+>([
+  ["+=", "add"],
+  ["-=", "sub"],
+  ["*=", "mul"],
+  ["/=", "div"],
+  ["%=", "mod"],
+]);
 
 // An evaluation of a built-in's call, of the arguments that check accepted
 // of a call of it, their number among them.
@@ -339,7 +343,7 @@ class Evaluator {
       return;
     }
     let v = this.eval(a.value);
-    const op = assignOperators[a.op];
+    const op = assignOperators.get(a.op);
     if (op !== undefined) {
       v = this.arithmetic(op, target, v);
     }

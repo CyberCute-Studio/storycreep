@@ -226,16 +226,27 @@ export function versionOf(asts: readonly Node[]): number {
 // constructVersion returns the ast_version of n's own construct: of its
 // kind, and of its operator or its function, if it has one.
 function constructVersion(n: Node): number {
-  const v = kindVersions[n.kind] ?? 0;
+  const v = versionIn(kindVersions, n.kind);
   switch (n.kind) {
     case "unary":
-      return Math.max(v, unaryVersions[n.op] ?? 0);
+      return Math.max(v, versionIn(unaryVersions, n.op));
     case "binary":
-      return Math.max(v, binaryVersions[n.op] ?? 0);
+      return Math.max(v, versionIn(binaryVersions, n.op));
     case "assign":
-      return Math.max(v, assignVersions[n.op] ?? 0);
+      return Math.max(v, versionIn(assignVersions, n.op));
     case "call":
       return Math.max(v, BUILTINS.get(n.function)?.version ?? 0);
   }
   return v;
+}
+
+// versionIn returns the version that versions gives the construct of the
+// name, or 0 of a name that it does not give one, as the Go function's maps
+// give: of an operator that is none of the language's, as a malformed node's,
+// named after a member of Object.prototype, as constructor, too.
+function versionIn(
+  versions: Readonly<Record<string, number>>,
+  name: string,
+): number {
+  return Object.hasOwn(versions, name) ? versions[name] : 0;
 }

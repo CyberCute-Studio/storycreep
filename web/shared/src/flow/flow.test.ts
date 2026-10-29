@@ -86,6 +86,35 @@ function suite(
   return files;
 }
 
+// refuseResizable throws, as a browser's WebCrypto and TextDecoder do, of a
+// view of a resizable ArrayBuffer.
+function refuseResizable(data: unknown): void {
+  if (
+    ArrayBuffer.isView(data) &&
+    data.buffer instanceof ArrayBuffer &&
+    data.buffer.resizable
+  ) {
+    throw new TypeError("a view of a resizable ArrayBuffer");
+  }
+}
+
+// stubBrowserDecoder has TextDecoder refuse a view of a resizable
+// ArrayBuffer, as a browser's does, until vi.unstubAllGlobals.
+function stubBrowserDecoder(): void {
+  const Decoder = globalThis.TextDecoder;
+  vi.stubGlobal(
+    "TextDecoder",
+    class extends Decoder {
+      override decode(
+        ...args: Parameters<InstanceType<typeof Decoder>["decode"]>
+      ): string {
+        refuseResizable(args[0]);
+        return super.decode(...args);
+      }
+    },
+  );
+}
+
 const nodeOf = (b: Obj, nid: string): Obj =>
   b.nodes.find((n: Obj) => n.id === nid);
 const connectionOf = (b: Obj, cid: string): Obj =>
@@ -149,20 +178,21 @@ describe("load", () => {
       });
     };
 
-    // A browser's WebCrypto reads no view of a resizable ArrayBuffer, as
-    // WebIDL's BufferSource takes none, which a page may give the loader.
-    test("hashes a file over a resizable buffer", async () => {
+    // A browser's WebCrypto reads no view of a resizable ArrayBuffer, nor
+    // does its TextDecoder, as WebIDL's BufferSource and
+    // AllowSharedBufferSource take none, though Node's TextDecoder reads
+    // one; and a page may give the loader one.
+    test("reads and hashes a file over a resizable buffer", async () => {
       const subtle = globalThis.crypto.subtle;
       vi.stubGlobal("crypto", {
         subtle: {
           digest: async (algorithm: string, data: Uint8Array) => {
-            if (data.buffer instanceof ArrayBuffer && data.buffer.resizable) {
-              throw new TypeError("a view of a resizable ArrayBuffer");
-            }
+            refuseResizable(data);
             return subtle.digest(algorithm, data.slice());
           },
         },
       });
+      stubBrowserDecoder();
       const files = new Map<string, Uint8Array>();
       for (const [path, bytes] of suite("choices")) {
         const view = new Uint8Array(
@@ -211,6 +241,93 @@ describe("load", () => {
     });
   });
 
+  // As the Go runtime's Load opens each file of its fs.FS as it comes to
+  // it, load takes each file from a function once, in the order in which
+  // it reads them, an asset, which it hashes but does not read, last, so
+  // that a page may fetch each file only once load asks for it.
+  describe("from a function", () => {
+    // An asset, which the manifest lists, of its bytes.
+    const asset = `assets/${"0".repeat(23)}CVR.png`;
+    const png = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+    // withAsset returns the files of the suite choices and the asset, which
+    // the manifest lists with the hash.
+    const withAsset = (hash: string) => {
+      const files = suite("choices", {
+        "storycreep.json": (m) => {
+          m.files[asset] = hash;
+        },
+      });
+      files.set(asset, png);
+      return files;
+    };
+    const pngHash = `sha256:${createHash("sha256").update(png).digest("hex")}`;
+
+    test("takes each file once, in the order in which it reads them", async () => {
+      const files = withAsset(pngHash);
+      const taken: string[] = [];
+      await expect(
+        load(async (path) => {
+          taken.push(path);
+          return files.get(path);
+        }),
+      ).resolves.toBeDefined();
+      expect(taken).toEqual([
+        "storycreep.json",
+        "project/settings.json",
+        "project/variables.json",
+        "project/component_types.json",
+        "project/components.json",
+        main,
+        asset,
+      ]);
+    });
+
+    test("refuses an asset of another hash, and a file that it does not give", async () => {
+      const files = withAsset(zeros);
+      await expect(load(async (path) => files.get(path))).rejects.toThrow(
+        `${asset}: its hash`,
+      );
+      await expect(
+        load(async (path) =>
+          path === "project/variables.json" ? undefined : files.get(path),
+        ),
+      ).rejects.toThrow("there is no project/variables.json");
+    });
+
+    test("stops once its signal is aborted", async () => {
+      const files = withAsset(pngHash);
+      const c = new AbortController();
+      const taken: string[] = [];
+      await expect(
+        load(
+          async (path, signal) => {
+            expect(signal).toBe(c.signal);
+            taken.push(path);
+            if (taken.length === 2) {
+              c.abort(new Error("stopped"));
+            }
+            return files.get(path);
+          },
+          { signal: c.signal },
+        ),
+      ).rejects.toThrow("stopped");
+      expect(taken).toHaveLength(2);
+      taken.length = 0;
+      await expect(
+        load(
+          async (path) => {
+            taken.push(path);
+            return files.get(path);
+          },
+          { signal: AbortSignal.abort(new Error("stopped before")) },
+        ),
+      ).rejects.toThrow("stopped before");
+      expect(taken).toEqual([]);
+    });
+  });
+
   // ı folds to itself, as the Go runtime folds it, rather than to i, as
   // JavaScript's toUpperCase and toLowerCase map it; the Go runtime's form
   // C, of Unicode 15.0, leaves U+16D67 KIRAT RAI VOWEL SIGN E twice as it
@@ -244,17 +361,12 @@ describe("load", () => {
   // starter, which its form C neither orders nor joins across; the Go
   // runtime's form C puts U+0323 COMBINING DOT BELOW before it, which joins
   // a into ạ, and U+0345 COMBINING GREEK YPOGEGRAMMENI after it, which folds
-  // to ι.
-  test("compares tags as the Go runtime does where the platform's Unicode is older", async () => {
-    const normalize = String.prototype.normalize;
+  // to ι. The loader compares tags by the tables of fold.json alone, and
+  // never calls the platform's form C, of whatever version of Unicode.
+  test("compares tags as the Go runtime does without the platform's form C", async () => {
     const mark = String.fromCodePoint(0x1e4ef);
-    vi.spyOn(String.prototype, "normalize").mockImplementation(function (
-      this: string,
-      form?: string,
-    ) {
-      return this.split(mark)
-        .map((part) => normalize.call(part, form))
-        .join(mark);
+    vi.spyOn(String.prototype, "normalize").mockImplementation(() => {
+      throw new Error("the loader calls the platform's form C");
     });
     try {
       await expect(

@@ -1,10 +1,12 @@
 // The expression language (PRD §5.8): its parser, checker, encoder, decoder,
 // and evaluator, the TypeScript twin of the Go package
 // server/internal/expr, and its numeric and string semantics, of the Go
-// package server/internal/semantics. Both run the cases of
-// schema/expr-corpus, so that they parse, compile, and evaluate every source
-// alike (FR-EXPR-02 AC1, PRD §5.8.9), and the client's instant feedback is
-// what the server, which is the authority, says of a source.
+// package server/internal/semantics: semantics holds those that read no
+// table of Unicode, and unicode upper, lower, and trim, which read
+// schema/unicode/tables.json. Both run the cases of schema/expr-corpus, so
+// that they parse, compile, and evaluate every source alike (FR-EXPR-02
+// AC1, PRD §5.8.9), and the client's instant feedback is what the server,
+// which is the authority, says of a source.
 //
 // parse reads a source into its AST, or throws its first ExprError; check
 // resolves the AST's names against a Project, at a board, and checks its
@@ -88,6 +90,7 @@ export {
 export * as semantics from "./semantics";
 export { walk } from "./shape";
 export { MAX_SUGGESTIONS } from "./suggest";
+export * as unicode from "./unicode";
 export {
   asFloat,
   boolValue,

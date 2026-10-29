@@ -6,7 +6,9 @@
 // by an exact grammar, and to the nearest double; a number is written the
 // same way by every runtime; and a string is a sequence of code points,
 // cased and trimmed by the tables of one version of Unicode, which are those
-// of schema/unicode/tables.json, read here as they are.
+// of schema/unicode/tables.json, as unicode.ts reads them, apart from this
+// module, so that what parses and checks an expression, and reads this
+// module, as the editor's instant feedback, imports none of the tables.
 //
 // This is the TypeScript twin of the Go package server/internal/semantics.
 // Both run the cases of schema/expr-corpus, whose README states the rules. A
@@ -20,9 +22,7 @@
 // zero value of its result's type, 0, 0.0, or "", which evaluation goes on
 // with.
 
-import tables from "../../../../schema/unicode/tables.json" with {
-  type: "json",
-};
+import { decimalOf } from "./json";
 
 /**
  * The greatest int, and -MAX_INT the least: 2^53 − 1, which a double holds
@@ -43,14 +43,6 @@ export const MAX_STRING_LENGTH = 4096;
  * (formatFixed).
  */
 export const MAX_DECIMALS = 6;
-
-/**
- * The version of Unicode whose simple case mappings and White_Space upper,
- * lower, trim, and isWhiteSpace read (PRD §5.8.9), that of
- * schema/unicode/tables.json. A new version of Unicode is a new ast_version,
- * of upper, lower, and trim.
- */
-export const UNICODE_VERSION: string = tables.unicodeVersion;
 
 /** The runtime errors that the operations of this module report (§5.8.7). */
 export type SemanticsError =
@@ -358,61 +350,38 @@ export function parseFloatText(s: string): Result<number> {
   return checkFloat(f);
 }
 
-// hugeExponent stands for an exponent of more than 9 digits, either way,
-// which no digits that a string holds bring back within a double's range.
-const hugeExponent = 1_000_000_000;
-
 // nearest returns s, a string of the grammar that isFloatForm checks, as the
 // double nearest it, 0 for one too small for a double, and whether it is
 // within a double's range, however many digits s has, and however large its
-// exponent. It writes s's digits without the zeros around them as 0.ddd,
-// with the exponent that gives s's value, which Number() reads correctly
-// rounded, once it has told that exponent from one beyond a double's range,
-// either way. It writes at most maxDigits of the digits, and 1 after them for
-// the rest when any of the rest is not 0 (significantDigits), which reads as
-// the same double, so that it costs no more for a string of a million digits
-// than for one of a thousand.
+// exponent. It writes s's significant digits (decimalOf) as 0.ddd, with the
+// exponent that gives s's value, which Number() reads correctly rounded,
+// once it has told that exponent from one beyond a double's range, either
+// way. It writes at most maxDigits of the digits, and 1 after them for the
+// rest, the last of which is not 0, which reads as the same double, so that
+// it costs no more for a string of a million digits than for one of a
+// thousand.
 function nearest(s: string): [number, boolean] {
-  const [body, negative] = cutSign(s);
-  const [mantissa, exponent] = splitExponent(body);
-  const [whole, fraction = ""] = splitPoint(mantissa);
-  // The digits of whole and of fraction, from the first that is not 0, are
-  // lead and then tail.
-  const lead = trimLeadingZeros(whole);
-  const tail = lead === "" ? trimLeadingZeros(fraction) : fraction;
-  const digits = lead.length + tail.length;
-  const significant = significantDigits(lead, tail);
-  if (significant === "") {
+  const d = decimalOf(s);
+  if (d.digits === "") {
     return [0, true];
   }
-  let e = 0;
-  if (exponent !== undefined) {
-    const [sign, negativeExponent] = cutSign(exponent);
-    const magnitude = trimLeadingZeros(sign);
-    if (magnitude.length > 9) {
-      e = hugeExponent;
-    } else if (magnitude !== "") {
-      e = Number(magnitude);
-    }
-    if (negativeExponent) {
-      e = -e;
-    }
-  }
-  // The value is 0.significant times ten to the power of point: at least
-  // 1e310, past a double's range, if point is more than 310, and less than
+  // The value is 0.digits times ten to the power of point: at least 1e310,
+  // past a double's range, if point is more than 310, and less than
   // 1e-400, which rounds to 0, if it is less than -400.
-  const point = digits - fraction.length + e;
+  const point = d.exponent + 1;
   if (point > 310) {
     return [0, false];
   }
   if (point < -400) {
     return [0, true];
   }
-  const f = Number(`0.${significant}e${point}`);
+  const digits =
+    d.digits.length > maxDigits ? `${d.digits.slice(0, maxDigits)}1` : d.digits;
+  const f = Number(`0.${digits}e${point}`);
   if (!Number.isFinite(f)) {
     return [0, false];
   }
-  return [negative ? -f : f, true];
+  return [d.negative ? -f : f, true];
 }
 
 // maxDigits is how many of a number's significant digits nearest writes:
@@ -422,25 +391,6 @@ function nearest(s: string): [number, boolean] {
 // not all 0, are each on the same side of every double and of every point
 // halfway between two, and so have the same nearest double.
 const maxDigits = 800;
-
-// significantDigits returns the digits of lead and then tail, the first of
-// which is not 0, without the zeros after the last that is not, or "" if
-// there is none: at most maxDigits of them, and then 1, standing for the
-// rest, when any of the rest is not 0, which reads as the same double as all
-// of them would (maxDigits).
-function significantDigits(lead: string, tail: string): string {
-  let kept = "";
-  let rest = false;
-  for (const part of [lead, tail]) {
-    const n = Math.min(part.length, maxDigits - kept.length);
-    kept += part.slice(0, n);
-    rest = rest || trimLeadingZeros(part.slice(n)) !== "";
-  }
-  if (rest) {
-    return `${kept}1`;
-  }
-  return kept.replace(/0+$/, "");
-}
 
 /**
  * Returns n as to_string writes an int (§5.8.9): a plain decimal, with a
@@ -617,91 +567,4 @@ export function startsWith(s: string, prefix: string): boolean {
 /** Reports whether s ends with suffix, as contains says. */
 export function endsWith(s: string, suffix: string): boolean {
   return s.endsWith(suffix);
-}
-
-// caseTables are the simple case mappings of the tables, by code point,
-// which caseMappings builds the first time that upper or lower is called, so
-// that a page that parses and checks expressions, and calls neither, builds
-// none of them.
-let caseTables:
-  | { upper: ReadonlyMap<number, number>; lower: ReadonlyMap<number, number> }
-  | undefined;
-
-// caseMappings returns the simple mappings of the tables to the case, upper
-// or lower, by code point.
-function caseMappings(c: "upper" | "lower"): ReadonlyMap<number, number> {
-  caseTables ??= {
-    upper: new Map(tables.upper.map(([from, to]) => [from, to])),
-    lower: new Map(tables.lower.map(([from, to]) => [from, to])),
-  };
-  return caseTables[c];
-}
-
-// The ranges of White_Space, in their order, as the tables hold them.
-const whiteSpace: readonly (readonly number[])[] = tables.whiteSpace;
-
-/**
- * Returns s with each code point mapped to its simple uppercase mapping, as
- * upper does (§5.8.4, §5.8.9), from the tables of UNICODE_VERSION rather than
- * JavaScript's, which are of another version of Unicode and use the full
- * mappings. A simple mapping maps one code point to one, so the result has
- * as many code points as s: upper("ß") is "ß", where toUpperCase gives "SS".
- * It maps no code point by locale: upper("i") is "I", in Turkish too.
- */
-export function upper(s: string): string {
-  return mapCase(s, caseMappings("upper"));
-}
-
-/**
- * Returns s with each code point mapped to its simple lowercase mapping, as
- * lower does, as upper says: lower("İ") is "i", one code point, and
- * lower("Σ") is "σ", wherever it is in a word.
- */
-export function lower(s: string): string {
-  return mapCase(s, caseMappings("lower"));
-}
-
-// mapCase returns s with each code point that table maps mapped. A lone
-// surrogate, which no string of the language holds, is kept as it is.
-function mapCase(s: string, table: ReadonlyMap<number, number>): string {
-  let out = "";
-  for (const c of s) {
-    const to = table.get(c.codePointAt(0) ?? 0);
-    out += to === undefined ? c : String.fromCodePoint(to);
-  }
-  return out;
-}
-
-/**
- * Returns s without the code points of White_Space, of the tables of
- * UNICODE_VERSION, that it starts or ends with, as trim does (§5.8.4,
- * §5.8.9). White_Space holds no U+FEFF ZERO WIDTH NO-BREAK SPACE, which
- * JavaScript's trim removes, no U+200B ZERO WIDTH SPACE, and no U+180E
- * MONGOLIAN VOWEL SEPARATOR. Every code point of White_Space is one code
- * unit, which no surrogate is.
- */
-export function trim(s: string): string {
-  let start = 0;
-  let end = s.length;
-  while (start < end && isWhiteSpace(s.charCodeAt(start))) {
-    start++;
-  }
-  while (end > start && isWhiteSpace(s.charCodeAt(end - 1))) {
-    end--;
-  }
-  return s.slice(start, end);
-}
-
-/**
- * Reports whether c is a code point of White_Space, of the tables of
- * UNICODE_VERSION. The ranges are in their order, so it stops at the first
- * that ends at c or after it.
- */
-export function isWhiteSpace(c: number): boolean {
-  for (const [first, last] of whiteSpace) {
-    if (c <= last) {
-      return first <= c;
-    }
-  }
-  return false;
 }

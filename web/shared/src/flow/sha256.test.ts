@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { sha256, sha256Yielding, YIELD_EVERY } from "./sha256";
 
 const hex = (b: Uint8Array) =>
@@ -77,4 +77,29 @@ test("sha256Yielding lets the page run, and hashes the bytes as they were", asyn
   b.fill(0);
   expect(hex(await sum)).toBe(want);
   expect(ran).toBeGreaterThan(0);
+});
+
+// A browser delays a timer nested five deep by 4 ms, and throttles a hidden
+// tab's timers to once a second, or once a minute, so sha256Yielding lets
+// the page run by a message rather than by a timer, and hashes as soon
+// whatever becomes of the timers.
+describe("without a timer", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("sha256Yielding lets the page run", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "setImmediate"] });
+    const b = bytes(3 * YIELD_EVERY + 5);
+    expect(hex(await sha256Yielding(b))).toBe(hex(sha256(b)));
+  });
+});
+
+// Once its signal is aborted, sha256Yielding rejects with its reason before
+// it hashes another part of the bytes, as load does once its own is.
+test("sha256Yielding stops once its signal is aborted", async () => {
+  const c = new AbortController();
+  const sum = sha256Yielding(bytes(3 * YIELD_EVERY), c.signal);
+  c.abort(new Error("stopped"));
+  await expect(sum).rejects.toThrow("stopped");
 });

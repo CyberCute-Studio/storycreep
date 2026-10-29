@@ -41,13 +41,18 @@ export const YIELD_EVERY = 1 << 20;
 
 /**
  * Returns the SHA-256 of bytes, as sha256 does, but hashes YIELD_EVERY bytes
- * of them at a time, and lets the event loop run a task between two, so
- * that a page that hashes a large file, as an asset of a snapshot, goes on
- * responding meanwhile. It hashes the bytes as they are when it is called,
- * whatever becomes of them meanwhile, as WebCrypto does, so it copies those
- * of more than YIELD_EVERY bytes first.
+ * of them at a time, and lets the event loop run a task between two
+ * (nextTask), so that a page that hashes a large file, as an asset of a
+ * snapshot, goes on responding meanwhile. It hashes the bytes as they are
+ * when it is called, whatever becomes of them meanwhile, as WebCrypto does,
+ * so it copies those of more than YIELD_EVERY bytes first. Once signal is
+ * aborted, it rejects with its reason, as fetch does, before it hashes
+ * another YIELD_EVERY bytes.
  */
-export async function sha256Yielding(bytes: Uint8Array): Promise<Uint8Array> {
+export async function sha256Yielding(
+  bytes: Uint8Array,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
   if (bytes.length <= YIELD_EVERY) {
     return sha256(bytes);
   }
@@ -57,11 +62,32 @@ export async function sha256Yielding(bytes: Uint8Array): Promise<Uint8Array> {
   const whole = data.length - (data.length % 64);
   for (let at = 0; at < whole; at += 64) {
     if (at > 0 && at % YIELD_EVERY === 0) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await nextTask();
+      signal?.throwIfAborted();
     }
     compress(h, w, data, at);
   }
   return finish(h, w, data);
+}
+
+// nextTask resolves in a task of the event loop's own, after those that it
+// has queued, by a message that it posts itself, which a browser neither
+// delays, as it delays a timer nested five deep by 4 ms, nor throttles in a
+// hidden tab, as it does a timer, to once a second, or once a minute, so
+// that a page that is hidden while it hashes a large file hashes it as
+// soon. Where there is no MessageChannel, it resolves after a timer of 0.
+function nextTask(): Promise<void> {
+  if (typeof MessageChannel === "undefined") {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return new Promise((resolve) => {
+    const { port1, port2 } = new MessageChannel();
+    port1.onmessage = () => {
+      port1.close();
+      resolve();
+    };
+    port2.postMessage(undefined);
+  });
 }
 
 // initial returns the hash before the first block: the first 32 bits of the

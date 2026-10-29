@@ -36,6 +36,7 @@ import {
   type JsonValue,
   type Node,
   Project,
+  type Component as ProjectComponent,
   plain,
   readJSONBytes,
   readValue,
@@ -241,35 +242,56 @@ export class Snapshot {
  * hashes the files with the platform's SHA-256, one after another, so that
  * it holds copies of one file at most, or, in a page that is no secure
  * context, which has none, with its own, which lets the page run between
- * two parts of a large file (sha256Yielding).
+ * two parts of a large file (sha256Yielding); and since it takes each file
+ * from a function, if it is given one, only once it needs it
+ * (SnapshotFiles). Once the signal of its options is aborted, it rejects
+ * with its reason, as fetch does, before it takes or hashes any more of the
+ * files.
  */
 export async function load(
-  files: ReadonlyMap<string, Uint8Array>,
+  files: SnapshotFiles,
+  options: LoadOptions = {},
 ): Promise<Snapshot> {
-  return new Loader(files).load();
+  return new Loader(files, options.signal).load();
+}
+
+/**
+ * The files of a snapshot, by their paths, as load takes them: a map of
+ * their bytes, or a function that returns the bytes of the file of a path,
+ * or undefined when there is none, which load calls, with the signal of its
+ * options, once for each file that it reads or hashes, as it comes to it,
+ * in the order of the Go runtime's Load, so that a page may fetch each file
+ * only once load asks for it, and let go of an asset once load has hashed
+ * it, as Go's Load streams each file of its fs.FS, rather than hold every
+ * file of a snapshot at once.
+ */
+export type SnapshotFiles =
+  | ReadonlyMap<string, Uint8Array>
+  | ((
+      path: string,
+      signal: AbortSignal | undefined,
+    ) => Promise<Uint8Array | undefined>);
+
+/** load's options. */
+export interface LoadOptions {
+  /** The signal that stops load once it is aborted. */
+  readonly signal?: AbortSignal;
 }
 
 // digest returns the hash of bytes as the manifest lists a file's: sha256:
 // and the lowercase hexadecimal SHA-256 of the bytes, by WebCrypto's, which
 // copies them, or, where the page is no secure context and has none
 // (crypto.subtle), by sha256Yielding's, which copies those of a large file
-// too.
-async function digest(bytes: Uint8Array): Promise<string> {
+// too, and stops once signal is aborted.
+async function digest(
+  bytes: Uint8Array<ArrayBuffer>,
+  signal: AbortSignal | undefined,
+): Promise<string> {
   const subtle: SubtleCrypto | undefined = globalThis.crypto?.subtle;
-  const buffer = bytes.buffer;
   const sum =
     subtle === undefined
-      ? await sha256Yielding(bytes)
-      : new Uint8Array(
-          await subtle.digest(
-            "SHA-256",
-            // WebCrypto reads no view of a SharedArrayBuffer, nor of a
-            // resizable ArrayBuffer (WebIDL's BufferSource).
-            buffer instanceof ArrayBuffer && !buffer.resizable
-              ? (bytes as Uint8Array<ArrayBuffer>)
-              : bytes.slice(),
-          ),
-        );
+      ? await sha256Yielding(bytes, signal)
+      : new Uint8Array(await subtle.digest("SHA-256", bytes));
   return `sha256:${Array.from(sum, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
@@ -357,6 +379,10 @@ class Loader {
     ComponentType["attributes"][number]["type"]
   >();
   private readonly options = new Map<string, string[]>();
+  // projectComponents are the components, each with its type's attribute
+  // definitions, as what the snapshot's expressions can name holds them
+  // (project), which declare adds in the order of their file.
+  private readonly projectComponents: ProjectComponent[] = [];
   private readonly boards = new Map<
     string,
     { info: ManifestBoard; reset: string[] }
@@ -366,7 +392,41 @@ class Loader {
   // to which addConnections adds the connections that leave them.
   private readonly ports = new Map<string, Map<string, Connection[]>>();
 
-  constructor(private readonly files: ReadonlyMap<string, Uint8Array>) {}
+  // open returns the bytes of the file of a path, or undefined.
+  private readonly open: (
+    path: string,
+    signal: AbortSignal | undefined,
+  ) => Promise<Uint8Array | undefined>;
+
+  constructor(
+    files: SnapshotFiles,
+    private readonly signal: AbortSignal | undefined,
+  ) {
+    this.open =
+      typeof files === "function" ? files : async (path) => files.get(path);
+  }
+
+  // bytes returns the bytes of the file of the path, or undefined when there
+  // is none, once it has checked, before it opens the file and once it has,
+  // that the signal is not aborted. It returns a view of a fixed-length
+  // ArrayBuffer, the one buffer that WebCrypto and a browser's TextDecoder
+  // both read a view of: of a view over a resizable ArrayBuffer or a
+  // SharedArrayBuffer, a copy, made at once, so that it is of the bytes as
+  // they are when the file is opened.
+  private async bytes(
+    path: string,
+  ): Promise<Uint8Array<ArrayBuffer> | undefined> {
+    this.signal?.throwIfAborted();
+    const bytes = await this.open(path, this.signal);
+    this.signal?.throwIfAborted();
+    if (bytes === undefined) {
+      return undefined;
+    }
+    const buffer = bytes.buffer;
+    return buffer instanceof ArrayBuffer && !buffer.resizable
+      ? (bytes as Uint8Array<ArrayBuffer>)
+      : bytes.slice();
+  }
 
   // parse checks raw, the JSON of the file of the path, or the problem of
   // its bytes, against the schema, and returns it as JSON.parse would have
@@ -398,8 +458,8 @@ class Loader {
 
   // manifest reads the manifest, and checks its astVersion and its files'
   // paths.
-  private manifest(): Manifest {
-    const bytes = this.files.get(MANIFEST_PATH);
+  private async manifest(): Promise<Manifest> {
+    const bytes = await this.bytes(MANIFEST_PATH);
     if (bytes === undefined) {
       throw fail(`there is no ${MANIFEST_PATH}`);
     }
@@ -426,9 +486,9 @@ class Loader {
 
   // contents checks that the manifest's files list the file of the path
   // with the hash of its bytes, and returns what read returns of them. It
-  // hashes the bytes, and has read read them, as they are when it is
-  // called, before it awaits the hash, so that what it returns is of the
-  // bytes that it hashed, whatever the map or the bytes become meanwhile.
+  // hashes the bytes, and has read read them, as they are when the file is
+  // opened, before it awaits the hash, so that what it returns is of the
+  // bytes that it hashed, whatever the files or the bytes become meanwhile.
   // It awaits the hash whatever read does, and refuses a file of another
   // hash before it throws what read threw, as Go's Load checks a file's hash
   // before it reads it.
@@ -440,11 +500,11 @@ class Loader {
       throw fail(`${path} is not among the manifest's files`);
     }
     const want = this.manifestFiles[path];
-    const bytes = this.files.get(path);
+    const bytes = await this.bytes(path);
     if (bytes === undefined) {
       throw fail(`there is no ${path}`);
     }
-    const sum = digest(bytes);
+    const sum = digest(bytes, this.signal);
     let r: { value: R } | { thrown: unknown };
     try {
       r = { value: read(bytes) };
@@ -452,6 +512,7 @@ class Loader {
       r = { thrown: e };
     }
     const got = await sum;
+    this.signal?.throwIfAborted();
     if (got !== want) {
       throw fail(
         `${path}: its hash is ${got}, not the manifest's ${JSON.stringify(want)}`,
@@ -536,7 +597,7 @@ class Loader {
   }
 
   async load(): Promise<Snapshot> {
-    const m = this.manifest();
+    const m = await this.manifest();
     this.manifestFiles = m.files;
     this.release = m.snapshot.channel === "release";
     const settings = await this.readFile<Settings>(
@@ -596,7 +657,7 @@ class Loader {
     }
     // What the snapshot's expressions can name, against which its ASTs are
     // checked, of the nodes in the order of the index and of their files.
-    const p = this.project(variables, types, components, boardFiles, m.boards);
+    const p = this.project(variables, boardFiles, m.boards);
     for (const b of m.boards) {
       const f = boardFiles.get(b.id) as BoardFile;
       this.addConnections(b.id, b.file, f, p);
@@ -747,6 +808,17 @@ class Loader {
           }
         }
       }
+      this.projectComponents.push({
+        id: c.id,
+        key: c.key,
+        attributes: defs.map((d) => ({
+          id: d.id,
+          key: d.key,
+          type: d.type,
+          runtime: d.runtime,
+          options: d.type === "enum" ? d.options : [],
+        })),
+      });
     }
   }
 
@@ -866,18 +938,13 @@ class Loader {
     return e === undefined ? undefined : this.decoded.get(e);
   }
 
-  // project returns what the snapshot's expressions can name, or throws.
+  // project returns what the snapshot's expressions can name, of the
+  // components as declare has read them, or throws.
   private project(
     variables: Variables,
-    types: ComponentTypes,
-    components: Components,
     boardFiles: Map<string, BoardFile>,
     boards: readonly ManifestBoard[],
   ): Project {
-    const definitions = new Map<string, ComponentType["attributes"]>();
-    for (const t of types.componentTypes) {
-      definitions.set(t.id, t.attributes);
-    }
     try {
       return Project.of(
         variables.variables.map((v) => ({
@@ -886,23 +953,7 @@ class Loader {
           type: v.type,
           ...(v.scope === "board" ? { board: v.boardId } : {}),
         })),
-        components.components.map((c) => {
-          // declare has refused a component of no type of the snapshot.
-          const defs = definitions.get(
-            c.componentTypeId,
-          ) as ComponentType["attributes"];
-          return {
-            id: c.id,
-            key: c.key,
-            attributes: defs.map((d) => ({
-              id: d.id,
-              key: d.key,
-              type: d.type,
-              runtime: d.runtime,
-              options: d.type === "enum" ? d.options : [],
-            })),
-          };
-        }),
+        this.projectComponents,
         boards.flatMap((b) =>
           (boardFiles.get(b.id) as BoardFile).nodes.map((n) => ({
             id: n.id,

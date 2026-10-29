@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { type BinaryOp, type Context, NO_RANGE, type Node } from "./ast";
 import { BUILTINS, builtins } from "./builtins";
 import { compile } from "./check";
@@ -14,8 +14,17 @@ import {
   MAX_STEPS,
   run,
 } from "./eval";
-import { isJsonObject, type JsonValue, plain, readJSON } from "./json";
+import {
+  decimalOf,
+  isIntegral,
+  isJsonObject,
+  type JsonValue,
+  plain,
+  readJSON,
+  readJSONBytes,
+} from "./json";
 import { Project } from "./project";
+import { parseFloatText } from "./semantics";
 import {
   type DeclaredType,
   equalValue,
@@ -246,6 +255,26 @@ describe("the evaluator", () => {
       ["done", undefined],
     ]);
   });
+
+  // An assignment of an op that is none of the language's, as a malformed
+  // node's, assigns its value as = does, as the Go evaluator's map gives,
+  // whatever the op's name: that of a member of Object.prototype too.
+  test("assigns as = does of an op that is none of the language's", () => {
+    const gold = "var_01HQ8ZV01K7MWVND2CQJ4RT9XB";
+    const p = Project.of([{ id: gold, key: "gold", type: "int" }], [], []);
+    for (const op of ["constructor", "toString", "__proto__", "valueOf"]) {
+      const s = compile("gold = 3", "script", p, "");
+      if (s.kind !== "script") {
+        throw new Error("not a script");
+      }
+      (s.statements[0] as { op: string }).op = op;
+      const env = new TestEnv();
+      env.vars.set(gold, intValue(7));
+      run(s, env);
+      expect(env.vars.get(gold), op).toEqual(intValue(3));
+      expect(env.errors, op).toEqual([]);
+    }
+  });
 });
 
 describe("decode", () => {
@@ -432,6 +461,90 @@ describe("readJSON", () => {
     expect(() =>
       readJSON(`${"[".repeat(10_000)}{}${"]".repeat(10_000)}`),
     ).toThrow(/more than 10000 deep/);
+  });
+});
+
+describe("readJSONBytes", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // A browser's TextDecoder reads no view of a resizable ArrayBuffer, as
+  // WebIDL's AllowSharedBufferSource takes none, though Node's reads one.
+  test("reads bytes over a resizable buffer, as a browser's TextDecoder reads none", () => {
+    const Decoder = globalThis.TextDecoder;
+    vi.stubGlobal(
+      "TextDecoder",
+      class extends Decoder {
+        override decode(
+          ...args: Parameters<InstanceType<typeof Decoder>["decode"]>
+        ): string {
+          const [input] = args;
+          if (
+            ArrayBuffer.isView(input) &&
+            input.buffer instanceof ArrayBuffer &&
+            input.buffer.resizable
+          ) {
+            throw new TypeError("a view of a resizable ArrayBuffer");
+          }
+          return super.decode(...args);
+        }
+      },
+    );
+    const text = new TextEncoder().encode('{"a":[1,"b"]}');
+    const view = new Uint8Array(
+      new ArrayBuffer(text.length, { maxByteLength: text.length * 2 }),
+    );
+    view.set(text);
+    expect(plain(readJSONBytes(view))).toStrictEqual({ a: [1, "b"] });
+    expect(() => readJSONBytes(new Uint8Array([0xff]))).toThrow(/is not UTF-8/);
+  });
+});
+
+describe("decimalOf", () => {
+  // A run of zeros among a number's digits, which a pattern that matches
+  // the zeros at its end, as /0+$/, matches in time quadratic in its
+  // length, from each zero of the run, is counted in time linear in it.
+  test("reads a number of a hundred thousand digits at once", () => {
+    const zeros = "0".repeat(100_000);
+    const start = performance.now();
+    expect(isIntegral(`1${zeros}1`)).toBe(true);
+    expect(isIntegral(`1.${zeros}1`)).toBe(false);
+    expect(decimalOf(`-00${zeros}1${zeros}1${zeros}`)).toStrictEqual({
+      negative: true,
+      digits: `1${zeros}1`,
+      exponent: 200_001,
+    });
+    expect(decimalOf(`+0.0${zeros}`)).toStrictEqual({
+      negative: false,
+      digits: "",
+      exponent: -100_002,
+    });
+    // Linearly, in about a millisecond; quadratically, in some seconds.
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+});
+
+describe("parseFloatText", () => {
+  // Beyond the corpus's cases: an exponent of more digits than a double
+  // holds, either way, and more significant digits than nearest writes,
+  // whose rest, which it writes as 1, is above the point halfway between
+  // two doubles, or is 0, and leaves the number on it.
+  test("reads any exponent, and any number of digits, to the nearest double", () => {
+    const many = (d: string, n: number) => d.repeat(n);
+    for (const [s, f, error] of [
+      ["1e99999999999999999999", 0, "float_not_finite"],
+      [`1e${many("1", 400)}`, 0, "float_not_finite"],
+      ["-1e-99999999999999999999", 0, undefined],
+      [`1e-${many("1", 400)}`, 0, undefined],
+      ["0e99999999999999999999", 0, undefined],
+      ["+1e+0000000000000000000002", 100, undefined],
+      [`0.${many("0", 1000)}1e1001`, 1, undefined],
+      [`9007199254740993${many("0", 900)}e-900`, 9007199254740992, undefined],
+      [`9007199254740993${many("0", 900)}1e-901`, 9007199254740994, undefined],
+    ] as const) {
+      expect(parseFloatText(s), s.slice(0, 40)).toEqual([f, error]);
+    }
   });
 });
 

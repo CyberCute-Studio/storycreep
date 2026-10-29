@@ -142,6 +142,63 @@ test("versionOf reads any number of ASTs", () => {
   expect(versionOf([])).toBe(1);
 });
 
+// An operator that is none of the language's, as a malformed node's, counts
+// for nothing, as the Go function's maps give, whatever its name: that of a
+// member of Object.prototype too.
+test("versionOf counts an operator that is none of the language's for nothing", () => {
+  const lit: Node = { kind: "lit", type: "int", value: 1, src: NO_RANGE };
+  const target = {
+    kind: "var",
+    name: "x",
+    scope: "",
+    key: "x",
+    ref: "",
+    src: NO_RANGE,
+  };
+  for (const op of ["constructor", "toString", "__proto__", "valueOf"]) {
+    for (const n of [
+      { kind: "unary", op, operand: lit, src: NO_RANGE },
+      { kind: "binary", op, left: lit, right: lit, src: NO_RANGE },
+      {
+        kind: "script",
+        statements: [{ kind: "assign", op, target, value: lit, src: NO_RANGE }],
+        src: NO_RANGE,
+      },
+    ]) {
+      expect(versionOf([n as unknown as Node]), `${n.kind} ${op}`).toBe(1);
+    }
+  }
+});
+
+// What parses and checks an expression, as the editor's instant feedback,
+// imports no JSON, and so none of the tables of Unicode, which upper, lower,
+// and trim alone read (unicode.ts), so that its bundle holds none of them.
+test("parse and check import none of the tables of Unicode", () => {
+  const seen = new Set<string>();
+  const stack = [
+    new URL("./parser.ts", import.meta.url).href,
+    new URL("./check.ts", import.meta.url).href,
+  ];
+  for (let file = stack.pop(); file !== undefined; file = stack.pop()) {
+    if (seen.has(file)) {
+      continue;
+    }
+    seen.add(file);
+    const source = readFileSync(new URL(file), "utf8");
+    for (const [, spec] of source.matchAll(
+      /^(?:import|export)\s(?:[^;]*?\sfrom\s+)?"([^"]+)"/gm,
+    )) {
+      expect(spec, file).not.toMatch(/\.json$/);
+      if (spec.startsWith(".")) {
+        stack.push(new URL(`${spec}.ts`, file).href);
+      }
+    }
+  }
+  const names = [...seen].map((f) => f.slice(f.lastIndexOf("/") + 1));
+  expect(names).toContain("semantics.ts");
+  expect(names).not.toContain("unicode.ts");
+});
+
 // A field that the checker reads as a string, or an attr's explicit, of
 // another type, which no AST that parse or decode returns holds, is refused
 // as one, with a UsageError, before the checker reads it.

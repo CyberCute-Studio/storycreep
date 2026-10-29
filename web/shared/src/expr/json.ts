@@ -61,13 +61,20 @@ export function readJSON(text: string): JsonValue {
 /**
  * Returns the JSON value of bytes, read as UTF-8, as readJSON reads a text,
  * or throws a JsonError of bytes that are not UTF-8, or that start with a
- * byte order mark, which no JSON text does.
+ * byte order mark, which no JSON text does. It reads bytes over any buffer:
+ * a browser's TextDecoder reads no view of a resizable ArrayBuffer, nor of a
+ * growable SharedArrayBuffer (WebIDL's AllowSharedBufferSource), so it
+ * decodes a copy of the bytes of a view over any buffer but a fixed-length
+ * ArrayBuffer.
  */
 export function readJSONBytes(bytes: Uint8Array): JsonValue {
+  const buffer = bytes.buffer;
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
+      buffer instanceof ArrayBuffer && !buffer.resizable
+        ? bytes
+        : bytes.slice(),
     );
   } catch {
     throw new JsonError("is not UTF-8");
@@ -184,18 +191,35 @@ export interface Decimal {
   readonly exponent: number;
 }
 
-/** Returns the decimal of raw, a JSON number, exactly, however long it is. */
+/**
+ * Returns the decimal of raw, a JSON number, or a string of the grammar that
+ * to_float reads, which may start with +, exactly, however many digits it
+ * has, in time linear in its length. Of an exponent of more digits than a
+ * double holds exactly, which no JSON number of a file is written with
+ * (MAX_EXPONENT), its exponent is a double near its value, or an infinity,
+ * which is beyond a double's range all the same.
+ */
 export function decimalOf(raw: string): Decimal {
   const negative = raw.startsWith("-");
-  const s = negative ? raw.slice(1) : raw;
+  const s = negative || raw.startsWith("+") ? raw.slice(1) : raw;
   const e = s.search(/[eE]/);
   const mantissa = e < 0 ? s : s.slice(0, e);
   const shift = e < 0 ? 0 : Number(s.slice(e + 1));
   const point = mantissa.indexOf(".");
   const whole = point < 0 ? mantissa : mantissa.slice(0, point);
   const all = whole + (point < 0 ? "" : mantissa.slice(point + 1));
-  const lead = all.length - all.replace(/^0+/, "").length;
-  const digits = all.slice(lead).replace(/0+$/, "");
+  // The zeros around the digits are counted rather than matched, as /0+$/
+  // would match them, in time quadratic in the length of a run of zeros
+  // that is not at the end.
+  let lead = 0;
+  while (lead < all.length && all[lead] === "0") {
+    lead++;
+  }
+  let end = all.length;
+  while (end > lead && all[end - 1] === "0") {
+    end--;
+  }
+  const digits = all.slice(lead, end);
   return {
     negative: negative && digits !== "",
     digits,
