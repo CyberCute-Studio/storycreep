@@ -18,13 +18,22 @@
 // registers, so that a batch that creates a variable and a condition that
 // reads it compiles the condition against the variable, in whichever order
 // the batch has them. The derivation also compiles again every expression
-// whose source names what the batch changed, by its ID or by its key, and,
-// when the batch changed what the project's expressions can name, every one
-// that does not compile but names something: an expression is always what
-// compiling its source against the project as it is gives, so that the undo
-// of a batch gives back what the batch found (FR-EDIT-08 AC2). Until a
-// rename rewrites the sources that name what it renames (FR-VAR-03, plan
-// item 47), a source that names a renamed key no longer compiles.
+// whose compilation what the batch changed may change: every one whose source
+// names what the batch changed, by its ID or by its key; when the batch
+// changed a variable, a component, an attribute definition, or a component
+// type, every one that does not compile but names something, whose error, or
+// the near matches that it suggests, may change with them; and when it
+// deleted a board to the trash or restored one, the other boards'
+// expressions that name the board's nodes, or do not compile and name the
+// keys of its variables. So an expression is always what compiling its source
+// against the project as it is gives, and the undo of a batch gives back what
+// the batch found (FR-EDIT-08 AC2). One of a board in the trash is compiled
+// as it would be once the board is restored, against the board's own
+// variables and nodes that are in the trash with it too, so that a board's
+// deletion and its restoration change none of the expressions that it holds,
+// which they do not compile again. Until a rename rewrites the sources that
+// name what it renames (FR-VAR-03, plan item 47), a source that names a
+// renamed key no longer compiles.
 //
 // An expression is part of its owner, whose revision every change of it
 // increments, the compiler's too, but while the owner is deleted to the trash

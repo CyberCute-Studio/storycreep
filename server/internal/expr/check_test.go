@@ -560,6 +560,160 @@ func TestNewProject(t *testing.T) {
 	}
 }
 
+// TestProjectWith checks that Project.With returns the Project of another's
+// names and a board's variables and nodes, which the board's expressions
+// name, and the other boards' see as they see any board's, that it leaves
+// the Project that it adds to as it is, as it does when two add to one
+// Project, and that it refuses what NewProject refuses of them all, and a
+// variable of another board.
+func TestProjectWith(t *testing.T) {
+	t.Parallel()
+	p := testProject(t)
+	varTide, varDepth := testID(ids.Variable, 20), testID(ids.Variable, 21)
+	nodeBuoy := testID(ids.Node, 20)
+	boardPier := testID(ids.Board, 20)
+	elara, err := p.With(boardElara, []Variable{{ID: varTide, Key: "tide", Type: value.Int, Board: boardElara}},
+		[]BoardNode{{ID: nodeBuoy}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pier, err := p.With(boardPier, []Variable{{ID: varDepth, Key: "tide", Type: value.Bool, Board: boardPier}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := func(err error) Code {
+		var e *Error
+		if errors.As(err, &e) {
+			return e.Code
+		}
+		return ""
+	}
+	for _, c := range []struct {
+		name   string
+		p      *Project
+		source string
+		board  string
+		want   Code // "" for a source that compiles
+	}{
+		{"the board's own variable", elara, "tide += 1", boardElara, ""},
+		{"a variable that the board had", elara, "scratch += 1", boardElara, ""},
+		{"a global variable", elara, "trust += 1", boardElara, ""},
+		{"the board's own node", elara, `trust = visits(node("` + nodeBuoy + `"))`, boardElara, ""},
+		{"the variable of another board", elara, "tide += 1", boardHarbour, BoardVariableOutOfScope},
+		{"the node from another board", elara, `trust = visits(node("` + nodeBuoy + `"))`, boardHarbour, ""},
+		{"what it added, in the Project that it added to", p, "tide += 1", boardElara, UnknownIdentifier},
+		{"the node, in the Project that it added to", p, `trust = visits(node("` + nodeBuoy + `"))`, boardElara,
+			UnknownNode},
+		// Each of two Projects that add to one has its own board's variable
+		// alone, of its own type.
+		{"another With's variable, from its board", elara, "tide = true", boardPier, BoardVariableOutOfScope},
+		{"a variable of its own type, beside another With's", pier, "tide = true", boardPier, ""},
+	} {
+		_, err := Compile(c.source, ContextScript, c.p, c.board)
+		if code(err) != c.want || (c.want == "") != (err == nil) {
+			t.Errorf("%s: Compile(%q) = %v; want %q", c.name, c.source, err, c.want)
+		}
+	}
+	for _, c := range []struct {
+		name      string
+		board     string
+		variables []Variable
+		nodes     []BoardNode
+	}{
+		{"a board that is no board's ID", nodeEntry, nil, nil},
+		{"a variable of another board", boardElara, []Variable{{ID: varTide, Key: "tide", Type: value.Int,
+			Board: boardHarbour}}, nil},
+		{"a global variable", boardElara, []Variable{{ID: varTide, Key: "tide", Type: value.Int}}, nil},
+		{"a key that the board's scope has", boardElara, []Variable{{ID: varTide, Key: "scratch", Type: value.Int,
+			Board: boardElara}}, nil},
+		{"the ID of a variable that the Project has", boardElara, []Variable{{ID: varTrust, Key: "tide",
+			Type: value.Int, Board: boardElara}}, nil},
+		{"the ID of a component for a node", boardElara, nil, []BoardNode{{ID: cmpElara}}},
+		{"the ID of a node that the Project has", boardElara, nil, []BoardNode{{ID: nodeEntry}}},
+		{"a variable of the type text", boardElara, []Variable{{ID: varTide, Key: "tide", Type: value.Text,
+			Board: boardElara}}, nil},
+	} {
+		if _, err := p.With(c.board, c.variables, c.nodes); !errors.Is(err, ErrProject) {
+			t.Errorf("%s: With = %v; want an error that wraps ErrProject", c.name, err)
+		}
+	}
+	// An error of the board's expression suggests the board's own variables,
+	// and a name that compiled reads the variable by its ID.
+	_, err = Compile("tidee += 1", ContextScript, elara, boardElara)
+	if e := (*Error)(nil); !errors.As(err, &e) || e.Code != UnknownIdentifier || !slices.Equal(e.Suggestions,
+		[]string{"tide"}) {
+		t.Errorf("Compile of a near match of the board's own variable = %v; want an unknown_identifier that "+
+			"suggests tide", err)
+	}
+	n, err := Compile("tide += 1", ContextScript, elara, boardElara)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := Encode(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err = Decode(data, ContextScript); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name  string
+		p     *Project
+		board string
+		want  Code
+	}{{"at its board", elara, boardElara, ""}, {"at another board", elara, boardHarbour, BoardVariableOutOfScope},
+		{"in the Project that it added to", p, boardElara, UnknownIdentifier}} {
+		if err := CheckResolved(n, ContextScript, c.p, c.board); code(err) != c.want || (c.want == "") != (err == nil) {
+			t.Errorf("CheckResolved of the board's own variable %s = %v; want %q", c.name, err, c.want)
+		}
+	}
+	// Two Projects that add to one a board's variable of a key that three of
+	// its boards have each have their own board's variable alone, beside
+	// those of the three, and the Project that they add to neither.
+	board := func(n byte) Variable {
+		return Variable{ID: testID(ids.Variable, n), Key: "depth", Type: value.Int, Board: testID(ids.Board, n)}
+	}
+	shared, err := NewProject([]Variable{board(30), board(31), board(32)}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := shared.With(testID(ids.Board, 33), []Variable{board(33)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := shared.With(testID(ids.Board, 34), []Variable{board(34)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name   string
+		p      *Project
+		boards []byte
+	}{{"the Project added to", shared, []byte{30, 31, 32}}, {"the first", first, []byte{30, 31, 32, 33}},
+		{"the second", second, []byte{30, 31, 32, 34}}} {
+		for n := byte(30); n <= 34; n++ {
+			b := testID(ids.Board, n)
+			if has := c.p.ofBoard(b, "depth") != nil; has != slices.Contains(c.boards, n) {
+				t.Errorf("%s: whether the board %s has the key is %v", c.name, b, has)
+			}
+			// Another board has the key unless the boards that have it are
+			// this one alone.
+			if got, want := c.p.elsewhere(b, "depth"), len(c.boards) > 1 || !slices.Contains(c.boards, n); got != want {
+				t.Errorf("%s: whether a board other than %s has the key is %v, want %v", c.name, b, got, want)
+			}
+		}
+	}
+	// The zero Project names nothing, and takes a board's names.
+	zero, err := (&Project{}).With(boardElara, []Variable{{ID: varTide, Key: "tide", Type: value.Int,
+		Board: boardElara}}, []BoardNode{{ID: nodeBuoy}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compile("tide += 1", ContextScript, zero, boardElara); err != nil {
+		t.Errorf("Compile against the zero Project with a board's variable: %v", err)
+	}
+}
+
 // TestBuiltins checks that the built-in table holds each function of PRD
 // §5.8.4, each of an ast_version of the language, and that ASTVersion is the
 // highest of every construct's.

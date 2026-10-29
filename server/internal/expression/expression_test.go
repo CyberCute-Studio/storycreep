@@ -469,11 +469,276 @@ func TestRecompile(t *testing.T) {
 	}
 }
 
+// TestTrashedBoard checks that an expression of a board in the trash is
+// compiled as it would be once the board is restored, against the board's own
+// variables and nodes that are in the trash with it, so that the deletion of
+// a board of many scripts, and its restoration, compile none of them again
+// and change none of their owners, while the expressions of the other boards
+// that name the board's nodes, or do not compile and name the keys of its
+// variables, are compiled again, and see nothing that it holds, whether their
+// own boards are in the trash or not, and those that compile and name such a
+// key, which resolve it to their own board's variable, are not; and that a
+// change of what an expression of a board in the trash names compiles it
+// against what it sees, and changes its owner.
+func TestTrashedBoard(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.newVariable(t, "seen", "int")
+	pier := f.newBoard(t, "Pier")
+	f.must(t, createVariable(ids.Encode(ids.Variable, ids.New()), "tide", "int", pier))
+	buoy := f.newNode(t, pier, "element", nil)
+	visits := `seen = visits(node("` + buoy + `"))`
+	const many = 100
+	scripted, batch := make([]string, many), make([]cmd, many)
+	for i := range batch {
+		scripted[i] = ids.Encode(ids.Node, ids.New())
+		batch[i] = createNode(scripted[i], pier, "element", payload{"on_enter": "tide += 1", "on_exit": visits})
+	}
+	f.must(t, batch...)
+	// A script of another board that compiles, and names a key of a variable
+	// of the pier's, names a variable of its own board, which the pier's
+	// deletion and its restoration change nothing of.
+	f.must(t, createVariable(ids.Encode(ids.Variable, ids.New()), "swell", "int", pier))
+	quay := f.newBoard(t, "Quay")
+	f.must(t, createVariable(ids.Encode(ids.Variable, ids.New()), "swell", "int", quay))
+	bollard := f.newNode(t, quay, "element", payload{"on_enter": "swell = 1"})
+	valid(t, "a script of its own board's variable", f.node(t, bollard).OnEnter, "swell = 1")
+	stale := f.newNode(t, pier, "element", payload{"on_enter": "nope = tide"})
+	invalid(t, "a script of a variable that the project lacks", f.node(t, stale).OnEnter, "nope = tide",
+		"unknown_identifier")
+	// What compiling it gave is changed behind the pipeline's back, so that
+	// whether a batch compiles it again shows.
+	f.exec(t, `UPDATE expression SET error = jsonb_set(error, '{code}', '"stale"') WHERE node_id = $1`,
+		decode(t, ids.Node, stale))
+	keeper := f.newNode(t, f.harbour, "element", payload{"on_enter": "tide = 1"})
+	lookout := f.newNode(t, f.harbour, "element", payload{"on_enter": visits})
+	moorings := f.newBoard(t, "Moorings")
+	mooring := f.newNode(t, moorings, "element", payload{"on_enter": visits})
+	// What compiling the valid scripts gave is changed behind the pipeline's
+	// back too, to an ast_version that no compilation gives, so that whether
+	// a batch compiles them again shows.
+	for _, n := range []string{mooring, bollard} {
+		f.exec(t, `UPDATE expression SET ast_version = 2 WHERE node_id = $1`, decode(t, ids.Node, n))
+	}
+	untouched := func(what, id string) {
+		t.Helper()
+		if e := f.stored(t, id); !e.IsValid || e.ASTVersion != 2 {
+			t.Errorf("%s compiled the script %q again: %+v", what, e.Source, e)
+		}
+	}
+	// A board's deletion compiles none of its own expressions again, the
+	// moorings' among them.
+	f.must(t, cmd{board.Delete, payload{"id": moorings}})
+	untouched("the moorings' deletion", mooring)
+
+	// The pier's deletion compiles again the expressions of the other boards
+	// that name what it holds, the moorings' too, which no longer see its
+	// node, and none of its own, whose owners it does not change.
+	deletion := f.must(t, cmd{board.Delete, payload{"id": pier}})
+	for _, n := range []string{keeper, lookout, mooring} {
+		if !changed(deletion, ids.Node, decode(t, ids.Node, n)) {
+			t.Errorf("the pier's deletion did not list %s among %v", n, deletion.Revisions)
+		}
+	}
+	if len(deletion.Revisions) != 4 {
+		t.Errorf("the pier's deletion listed %v, want the board and the 3 nodes of other boards", deletion.Revisions)
+	}
+	invalid(t, "a script of a variable of a board in the trash", f.node(t, keeper).OnEnter, "tide = 1",
+		"unknown_identifier")
+	invalid(t, "a script of a node of a board in the trash", f.node(t, lookout).OnEnter, visits, "unknown_node")
+	invalid(t, "a script of a board in the trash of a node of another", f.stored(t, mooring), visits,
+		"unknown_node")
+	for _, n := range []string{scripted[0], scripted[many-1]} {
+		valid(t, "the on-enter of a node of a board in the trash", f.stored(t, n), "tide += 1")
+	}
+	var compiled int64
+	if err := f.admin.QueryRow(context.Background(), `SELECT count(*) FROM expression WHERE board_id = $1
+		AND is_valid`, decode(t, ids.Board, pier)).Scan(&compiled); err != nil || compiled != 2*many {
+		t.Errorf("%d of the pier's scripts are valid, want %d: %v", compiled, 2*many, err)
+	}
+	if e := f.stored(t, stale); e.Error == nil || e.Error.Code != "stale" {
+		t.Errorf("the pier's deletion compiled its script again: %+v", e.Error)
+	}
+	untouched("the pier's deletion", bollard)
+
+	// A change of what an expression of a board in the trash names compiles
+	// it against the board's own variables too, and changes its owner.
+	res := f.must(t, createVariable(ids.Encode(ids.Variable, ids.New()), "nope", "int", ""))
+	valid(t, "a script of a board in the trash of its own variable", f.stored(t, stale), "nope = tide")
+	if !changed(res, ids.Node, decode(t, ids.Node, stale)) {
+		t.Errorf("the variable's creation listed %v, want the node of the board in the trash", res.Revisions)
+	}
+
+	// Its restoration brings back what the other boards' expressions name,
+	// and changes none of its own.
+	f.undo(t, deletion.Seq)
+	invalid(t, "a script of another board's variable", f.node(t, keeper).OnEnter, "tide = 1",
+		"board_variable_out_of_scope")
+	valid(t, "a script of a node of a restored board", f.node(t, lookout).OnEnter, visits)
+	valid(t, "a script of a board in the trash of a node of a restored board", f.stored(t, mooring), visits)
+	untouched("the pier's restoration", bollard)
+	if n := f.node(t, scripted[0]); n.Rev != 1 {
+		t.Errorf("a node of the restored board is at the revision %d, want 1", n.Rev)
+	}
+	if n := f.node(t, stale); n.Rev != 2 {
+		t.Errorf("the node whose script compiled once its board was in the trash is at %d, want 2", n.Rev)
+	}
+	var revs int64
+	if err := f.admin.QueryRow(context.Background(), `SELECT sum(rev) FROM node WHERE board_id = $1`,
+		decode(t, ids.Board, pier)).Scan(&revs); err != nil || revs != many+3 {
+		t.Errorf("the pier's nodes' revisions add up to %d, want %d: %v", revs, many+3, err)
+	}
+}
+
+// TestTrashedBoards checks that a batch that deletes two boards to the trash,
+// and its undo, which restores them, compile again the expressions of each
+// that name what the other holds, as they do those of the boards that it
+// leaves as they are, and none that name what their own board holds alone.
+func TestTrashedBoards(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.newVariable(t, "seen", "int")
+	pier, quay := f.newBoard(t, "Pier"), f.newBoard(t, "Quay")
+	f.must(t, createVariable(ids.Encode(ids.Variable, ids.New()), "tide", "int", quay))
+	buoy, bollard := f.newNode(t, pier, "element", nil), f.newNode(t, quay, "element", nil)
+	visits := func(n string) string { return `seen = visits(node("` + n + `"))` }
+	own := f.newNode(t, pier, "element", payload{"on_enter": visits(buoy)})
+	toQuay := f.newNode(t, pier, "element", payload{"on_enter": visits(bollard)})
+	toTide := f.newNode(t, pier, "element", payload{"on_enter": "tide = 1"})
+	toPier := f.newNode(t, quay, "element", payload{"on_enter": visits(buoy)})
+	lookout := f.newNode(t, f.harbour, "element", payload{"on_enter": visits(buoy)})
+	invalid(t, "a script of another board's variable", f.node(t, toTide).OnEnter, "tide = 1",
+		"board_variable_out_of_scope")
+	// What compiling the script that names its own board's node gave is
+	// changed behind the pipeline's back, to an ast_version that no
+	// compilation gives, so that whether a batch compiles it again shows.
+	f.exec(t, `UPDATE expression SET ast_version = 2 WHERE node_id = $1`, decode(t, ids.Node, own))
+	untouched := func(what string) {
+		t.Helper()
+		if e := f.stored(t, own); !e.IsValid || e.ASTVersion != 2 {
+			t.Errorf("%s compiled the script of its own board's node again: %+v", what, e)
+		}
+	}
+
+	deletion := f.must(t, cmd{board.Delete, payload{"id": pier}}, cmd{board.Delete, payload{"id": quay}})
+	untouched("the deletion")
+	invalid(t, "a script of a board in the trash of a node of another", f.stored(t, toQuay), visits(bollard),
+		"unknown_node")
+	invalid(t, "a script of a board in the trash of a variable of another", f.stored(t, toTide), "tide = 1",
+		"unknown_identifier")
+	invalid(t, "a script of a board in the trash of a node of another", f.stored(t, toPier), visits(buoy),
+		"unknown_node")
+	invalid(t, "a script of a node of a board in the trash", f.node(t, lookout).OnEnter, visits(buoy),
+		"unknown_node")
+	for _, n := range []string{toQuay, toTide, toPier, lookout} {
+		if !changed(deletion, ids.Node, decode(t, ids.Node, n)) {
+			t.Errorf("the deletion did not list %s among %v", n, deletion.Revisions)
+		}
+	}
+	if len(deletion.Revisions) != 6 {
+		t.Errorf("the deletion listed %v, want the 2 boards and the 4 nodes whose scripts it changed",
+			deletion.Revisions)
+	}
+
+	f.undo(t, deletion.Seq)
+	untouched("the restoration")
+	valid(t, "a script of a node of another restored board", f.stored(t, toQuay), visits(bollard))
+	invalid(t, "a script of a variable of another restored board", f.stored(t, toTide), "tide = 1",
+		"board_variable_out_of_scope")
+	valid(t, "a script of a node of another restored board", f.stored(t, toPier), visits(buoy))
+	valid(t, "a script of a node of a restored board", f.node(t, lookout).OnEnter, visits(buoy))
+}
+
+// TestTrashedBoardNames checks that a batch that deletes a board to the trash
+// and changes what expressions can name, and its undo, compile the board's
+// expressions that do not compile against the board's own variables too,
+// whose near matches they suggest, as they compile the other boards'
+// expressions that name the keys of its variables against what those see.
+func TestTrashedBoardNames(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	pier := f.newBoard(t, "Pier")
+	f.must(t, createVariable(ids.Encode(ids.Variable, ids.New()), "tide", "int", pier))
+	sounding := f.newNode(t, pier, "element", payload{"on_enter": "depth = tide"})
+	typo := f.newNode(t, pier, "element", payload{"on_enter": "tidee = 1"})
+	keeper := f.newNode(t, f.harbour, "element", payload{"on_enter": "tide = 1"})
+	invalid(t, "a script of a variable that the project lacks", f.node(t, sounding).OnEnter, "depth = tide",
+		"unknown_identifier")
+	invalid(t, "a script of another board's variable", f.node(t, keeper).OnEnter, "tide = 1",
+		"board_variable_out_of_scope")
+	// What compiling the near match gave is changed behind the pipeline's
+	// back before each batch, so that whether the batch compiles it again
+	// shows, as it then suggests its board's variable again.
+	mark := func() {
+		t.Helper()
+		f.exec(t, `UPDATE expression SET error = jsonb_set(error, '{suggestions}', '["stale"]') WHERE node_id = $1`,
+			decode(t, ids.Node, typo))
+	}
+	suggests := func(what string) {
+		t.Helper()
+		e := f.stored(t, typo)
+		invalid(t, what, e, "tidee = 1", "unknown_identifier")
+		if !slices.Equal(e.Error.Suggestions, []string{"tide"}) {
+			t.Errorf("%s suggests %v, want [tide]", what, e.Error.Suggestions)
+		}
+	}
+	suggests("a near match of its board's variable")
+
+	mark()
+	deletion := f.must(t, cmd{board.Delete, payload{"id": pier}},
+		createVariable(ids.Encode(ids.Variable, ids.New()), "depth", "int", ""))
+	valid(t, "a script of a board in the trash of its own variable and a new global one", f.stored(t, sounding),
+		"depth = tide")
+	suggests("a near match of the variable of its board in the trash")
+	invalid(t, "a script of a variable of a board in the trash", f.node(t, keeper).OnEnter, "tide = 1",
+		"unknown_identifier")
+	for _, n := range []string{sounding, keeper} {
+		if !changed(deletion, ids.Node, decode(t, ids.Node, n)) {
+			t.Errorf("the deletion did not list %s among %v", n, deletion.Revisions)
+		}
+	}
+
+	mark()
+	f.undo(t, deletion.Seq)
+	invalid(t, "a script of a variable that the project lacks", f.node(t, sounding).OnEnter, "depth = tide",
+		"unknown_identifier")
+	suggests("a near match of the variable of its restored board")
+	invalid(t, "a script of another board's variable", f.node(t, keeper).OnEnter, "tide = 1",
+		"board_variable_out_of_scope")
+}
+
+// stored returns the on-enter script of the node id, as the expression table
+// keeps it, whether the node is in the trash or not.
+func (f *fixture) stored(t *testing.T, id string) *expression.Expression {
+	t.Helper()
+	var e expression.Expression
+	var ast, compileErr []byte
+	var version *int
+	if err := f.admin.QueryRow(context.Background(), `SELECT source, is_valid, ast, ast_version, error
+		FROM expression WHERE node_id = $1 AND field = 'on_enter'`, decode(t, ids.Node, id)).Scan(&e.Source,
+		&e.IsValid, &ast, &version, &compileErr); err != nil {
+		t.Fatalf("read the on-enter of %s: %v", id, err)
+	}
+	e.AST = ast
+	if version != nil {
+		e.ASTVersion = *version
+	}
+	if compileErr != nil {
+		e.Error = &expression.CompileError{}
+		if err := json.Unmarshal(compileErr, e.Error); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &e
+}
+
 // TestNeutral checks that each type of command that the derivation passes
-// over is a registered type, and that a batch of such commands alone compiles
-// nothing again, while one that changes what expressions can name compiles
-// again every expression that does not compile but names something, whose
-// near matches may change with it.
+// over is a registered type, that each type of a board's command is one of
+// them, or the board's deletion or restoration, which the derivation reads
+// every other change of a board as, and that a batch of such commands alone
+// compiles nothing again, while one that changes what expressions can name
+// compiles again every expression that does not compile but names
+// something, whose near matches may change with it.
 func TestNeutral(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -488,6 +753,15 @@ func TestNeutral(t *testing.T) {
 	for _, typ := range expression.Neutral {
 		if !slices.Contains(reg.Types(), typ) {
 			t.Errorf("the derivation passes over %s, which is not a registered type of command", typ)
+		}
+	}
+	// The derivation reads a change of a board that commands of neutral
+	// types alone did not make as the board's deletion to the trash or its
+	// restoration, so every command of a board is neutral or one of those.
+	for _, typ := range reg.Types() {
+		if strings.HasPrefix(string(typ), "board.") && !slices.Contains(expression.Neutral, typ) &&
+			typ != board.Delete && typ != board.Restore {
+			t.Errorf("the derivation reads %s as a board's deletion or restoration, which it is neither", typ)
 		}
 	}
 

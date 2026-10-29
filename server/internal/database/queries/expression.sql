@@ -48,16 +48,57 @@ WHERE s.workspace_id = @workspace_id AND s.project_id = @project_id AND s.node_i
 
 -- name: ExpressionsToCompile :many
 -- ExpressionsToCompile returns the project's expressions that the batch has
--- yet to compile, those whose refs or keys are among refs or keys, and, if
--- names is true, every one that does not compile but names something, which
--- a change of what the project's expressions can name may let compile, in
+-- yet to compile, those whose refs or keys are among refs or keys, those
+-- whose IDs are among ids (BoardExpressionsToCompile), and, if names is
+-- true, every one that does not compile but names something, which a change
+-- of what the project's expressions can name may let compile, each once, in
 -- the order of their IDs, each with what it is compiled from alone: its
--- source, read in its context, at its board.
-SELECT id, board_id, context, source FROM expression
+-- source, read in its context, at its board, and whether the board is in the
+-- trash, whose expressions see what it holds that is there with it alone
+-- (TrashedBoardVariables, ExpressionNodes).
+SELECT e.id, e.board_id, e.context, e.source, EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = e.workspace_id
+        AND b.project_id = e.project_id AND b.id = e.board_id AND b.deleted_at IS NOT NULL)::boolean AS board_deleted
+FROM expression e
+WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
+    AND (e.ast IS NULL AND e.error IS NULL OR e.refs && @refs::uuid[] OR e.keys && @keys::text[]
+        OR e.id = ANY(@ids::uuid[])
+        OR @names::boolean AND NOT e.is_valid AND (cardinality(e.refs) > 0 OR cardinality(e.keys) > 0))
+ORDER BY e.id;
+
+-- name: BoardNames :many
+-- BoardNames returns what the deletion of the project's boards board_ids to
+-- the trash, or their restoration, changes of what the other boards'
+-- expressions can name, each with its board: the UUIDs of their nodes, which
+-- have no key, and the keys of their variables, which no other board's
+-- expression resolves, that are not deleted to the trash themselves, which a
+-- board's deletion takes out of it, and its restoration brings back.
+SELECT n.board_id, n.id, NULL::text AS key FROM node n
+WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.board_id = ANY(@board_ids::uuid[])
+    AND n.deleted_at IS NULL
+UNION ALL
+SELECT v.board_id, v.id, v.key::text FROM variable v
+WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.board_id = ANY(@board_ids::uuid[])
+    AND v.deleted_at IS NULL;
+
+-- name: BoardExpressionsToCompile :many
+-- BoardExpressionsToCompile returns the project's expressions whose refs are
+-- among refs, the nodes of the boards board_ids, and those that do not
+-- compile whose keys are among keys, the keys of the boards' variables
+-- (BoardNames), as one that compiles names its own board's variables and the
+-- global ones alone, which no board's deletion or restoration changes: each
+-- with its board, whether it compiles, and its refs and keys, by which
+-- package expression keeps those that name what a board other than their own
+-- holds. A board's own expressions compile as they did, as one of a board in
+-- the trash sees what the board holds that is there with it alone, so those
+-- of the boards are returned only when there are several, whose expressions
+-- may name what another holds. refs and keys are parameters, rather than read
+-- here, so that the planner reads them through the indexes of refs and keys
+-- when they are few, as for a board of a few nodes in a project of many
+-- expressions.
+SELECT id, board_id, is_valid, refs, keys FROM expression
 WHERE workspace_id = @workspace_id AND project_id = @project_id
-    AND (ast IS NULL AND error IS NULL OR refs && @refs::uuid[] OR keys && @keys::text[]
-        OR @names::boolean AND NOT is_valid AND (cardinality(refs) > 0 OR cardinality(keys) > 0))
-ORDER BY id;
+    AND (refs && @refs::uuid[] OR NOT is_valid AND keys && @keys::text[])
+    AND (board_id <> ALL(@board_ids::uuid[]) OR cardinality(@board_ids::uuid[]) > 1);
 
 -- name: CompileExpressions :many
 -- CompileExpressions sets what compiling the source of each of the project's
@@ -86,19 +127,15 @@ WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.id = c
 RETURNING e.node_id, e.connection_id, e.branch_output_id, old.shown;
 
 -- name: ChangedNames :many
--- ChangedNames returns the UUIDs, and the keys, of what a change of the
+-- ChangedNames returns the UUIDs and the keys of what a change of the
 -- project's variables variable_ids, components component_ids, attribute
--- definitions attribute_ids, component types type_ids, and boards board_ids
--- may change of what the project's expressions name: each of those
--- variables, components, and definitions, the definitions and the components
--- of those types, and the variables and the nodes, which have no key, of
--- those boards, in the trash or not.
-SELECT n.id, NULL::text AS key FROM node n
-WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.board_id = ANY(@board_ids::uuid[])
-UNION ALL
-SELECT v.id, v.key::text FROM variable v
-WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id
-    AND (v.id = ANY(@variable_ids::uuid[]) OR v.board_id = ANY(@board_ids::uuid[]))
+-- definitions attribute_ids, and component types type_ids may change of what
+-- the project's expressions name: each of those variables, components, and
+-- definitions, and the definitions and the components of those types, in the
+-- trash or not. What a board's deletion or restoration changes of it is
+-- BoardNames'.
+SELECT v.id, v.key::text AS key FROM variable v
+WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.id = ANY(@variable_ids::uuid[])
 UNION ALL
 SELECT c.id, c.key::text FROM component c
 WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id
@@ -131,12 +168,31 @@ SELECT id, component_type_id, key, type, is_runtime, enum_options FROM live_attr
 WHERE workspace_id = @workspace_id AND project_id = @project_id
 ORDER BY component_type_id, "order", id;
 
+-- name: TrashedBoardVariables :many
+-- TrashedBoardVariables returns the variables of the project's boards
+-- board_ids, which are in its trash, that are there with their boards alone,
+-- not deleted themselves, which the expressions of their own boards alone
+-- can name, in the order of their IDs.
+SELECT id, key, type, board_id FROM variable
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND board_id = ANY(@board_ids::uuid[])
+    AND deleted_at IS NULL
+ORDER BY id;
+
 -- name: ExpressionNodes :many
 -- ExpressionNodes returns those of the project's nodes whose IDs are among
--- ids that are not in its trash, which a node reference can name, each with
--- its type.
-SELECT id, type FROM live_node
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[]);
+-- ids that are not in its trash, which a node reference can name, and those
+-- of its boards board_ids, which are in its trash, that are there with their
+-- boards alone, not deleted themselves, which an expression of their own
+-- board alone can name, each with its type, its board, and whether its board
+-- is in the trash. It reads the nodes of board_ids only when there are any,
+-- as there are only when the batch compiles an expression of a board in the
+-- trash.
+SELECT l.id, l.type, l.board_id, false AS board_deleted FROM live_node l
+WHERE l.workspace_id = @workspace_id AND l.project_id = @project_id AND l.id = ANY(@ids::uuid[])
+UNION ALL
+SELECT n.id, n.type, n.board_id, true FROM node n
+WHERE cardinality(@board_ids::uuid[]) > 0 AND n.workspace_id = @workspace_id AND n.project_id = @project_id
+    AND n.id = ANY(@ids::uuid[]) AND n.board_id = ANY(@board_ids::uuid[]) AND n.deleted_at IS NULL;
 
 -- name: TouchNodes :many
 -- TouchNodes increments the revisions of the project's nodes whose IDs are

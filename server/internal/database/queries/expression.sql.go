@@ -11,27 +11,139 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const changedNames = `-- name: ChangedNames :many
-SELECT n.id, NULL::text AS key FROM node n
+const boardExpressionsToCompile = `-- name: BoardExpressionsToCompile :many
+SELECT id, board_id, is_valid, refs, keys FROM expression
+WHERE workspace_id = $1 AND project_id = $2
+    AND (refs && $3::uuid[] OR NOT is_valid AND keys && $4::text[])
+    AND (board_id <> ALL($5::uuid[]) OR cardinality($5::uuid[]) > 1)
+`
+
+type BoardExpressionsToCompileParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Refs        []pgtype.UUID
+	Keys        []string
+	BoardIds    []pgtype.UUID
+}
+
+type BoardExpressionsToCompileRow struct {
+	ID      pgtype.UUID
+	BoardID pgtype.UUID
+	IsValid bool
+	Refs    []pgtype.UUID
+	Keys    []string
+}
+
+// BoardExpressionsToCompile returns the project's expressions whose refs are
+// among refs, the nodes of the boards board_ids, and those that do not
+// compile whose keys are among keys, the keys of the boards' variables
+// (BoardNames), as one that compiles names its own board's variables and the
+// global ones alone, which no board's deletion or restoration changes: each
+// with its board, whether it compiles, and its refs and keys, by which
+// package expression keeps those that name what a board other than their own
+// holds. A board's own expressions compile as they did, as one of a board in
+// the trash sees what the board holds that is there with it alone, so those
+// of the boards are returned only when there are several, whose expressions
+// may name what another holds. refs and keys are parameters, rather than read
+// here, so that the planner reads them through the indexes of refs and keys
+// when they are few, as for a board of a few nodes in a project of many
+// expressions.
+func (q *Queries) BoardExpressionsToCompile(ctx context.Context, arg BoardExpressionsToCompileParams) ([]BoardExpressionsToCompileRow, error) {
+	rows, err := q.db.Query(ctx, boardExpressionsToCompile,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Refs,
+		arg.Keys,
+		arg.BoardIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BoardExpressionsToCompileRow
+	for rows.Next() {
+		var i BoardExpressionsToCompileRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BoardID,
+			&i.IsValid,
+			&i.Refs,
+			&i.Keys,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const boardNames = `-- name: BoardNames :many
+SELECT n.board_id, n.id, NULL::text AS key FROM node n
 WHERE n.workspace_id = $1 AND n.project_id = $2 AND n.board_id = ANY($3::uuid[])
+    AND n.deleted_at IS NULL
 UNION ALL
-SELECT v.id, v.key::text FROM variable v
-WHERE v.workspace_id = $1 AND v.project_id = $2
-    AND (v.id = ANY($4::uuid[]) OR v.board_id = ANY($3::uuid[]))
+SELECT v.board_id, v.id, v.key::text FROM variable v
+WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.board_id = ANY($3::uuid[])
+    AND v.deleted_at IS NULL
+`
+
+type BoardNamesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	BoardIds    []pgtype.UUID
+}
+
+type BoardNamesRow struct {
+	BoardID pgtype.UUID
+	ID      pgtype.UUID
+	Key     pgtype.Text
+}
+
+// BoardNames returns what the deletion of the project's boards board_ids to
+// the trash, or their restoration, changes of what the other boards'
+// expressions can name, each with its board: the UUIDs of their nodes, which
+// have no key, and the keys of their variables, which no other board's
+// expression resolves, that are not deleted to the trash themselves, which a
+// board's deletion takes out of it, and its restoration brings back.
+func (q *Queries) BoardNames(ctx context.Context, arg BoardNamesParams) ([]BoardNamesRow, error) {
+	rows, err := q.db.Query(ctx, boardNames, arg.WorkspaceID, arg.ProjectID, arg.BoardIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BoardNamesRow
+	for rows.Next() {
+		var i BoardNamesRow
+		if err := rows.Scan(&i.BoardID, &i.ID, &i.Key); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const changedNames = `-- name: ChangedNames :many
+SELECT v.id, v.key::text AS key FROM variable v
+WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.id = ANY($3::uuid[])
 UNION ALL
 SELECT c.id, c.key::text FROM component c
 WHERE c.workspace_id = $1 AND c.project_id = $2
-    AND (c.id = ANY($5::uuid[]) OR c.component_type_id = ANY($6::uuid[]))
+    AND (c.id = ANY($4::uuid[]) OR c.component_type_id = ANY($5::uuid[]))
 UNION ALL
 SELECT a.id, a.key::text FROM attribute_def a
 WHERE a.workspace_id = $1 AND a.project_id = $2
-    AND (a.id = ANY($7::uuid[]) OR a.component_type_id = ANY($6::uuid[]))
+    AND (a.id = ANY($6::uuid[]) OR a.component_type_id = ANY($5::uuid[]))
 `
 
 type ChangedNamesParams struct {
 	WorkspaceID  pgtype.UUID
 	ProjectID    pgtype.UUID
-	BoardIds     []pgtype.UUID
 	VariableIds  []pgtype.UUID
 	ComponentIds []pgtype.UUID
 	TypeIds      []pgtype.UUID
@@ -40,21 +152,20 @@ type ChangedNamesParams struct {
 
 type ChangedNamesRow struct {
 	ID  pgtype.UUID
-	Key pgtype.Text
+	Key string
 }
 
-// ChangedNames returns the UUIDs, and the keys, of what a change of the
+// ChangedNames returns the UUIDs and the keys of what a change of the
 // project's variables variable_ids, components component_ids, attribute
-// definitions attribute_ids, component types type_ids, and boards board_ids
-// may change of what the project's expressions name: each of those
-// variables, components, and definitions, the definitions and the components
-// of those types, and the variables and the nodes, which have no key, of
-// those boards, in the trash or not.
+// definitions attribute_ids, and component types type_ids may change of what
+// the project's expressions name: each of those variables, components, and
+// definitions, and the definitions and the components of those types, in the
+// trash or not. What a board's deletion or restoration changes of it is
+// BoardNames'.
 func (q *Queries) ChangedNames(ctx context.Context, arg ChangedNamesParams) ([]ChangedNamesRow, error) {
 	rows, err := q.db.Query(ctx, changedNames,
 		arg.WorkspaceID,
 		arg.ProjectID,
-		arg.BoardIds,
 		arg.VariableIds,
 		arg.ComponentIds,
 		arg.TypeIds,
@@ -284,26 +395,43 @@ func (q *Queries) ExpressionComponents(ctx context.Context, arg ExpressionCompon
 }
 
 const expressionNodes = `-- name: ExpressionNodes :many
-SELECT id, type FROM live_node
-WHERE workspace_id = $1 AND project_id = $2 AND id = ANY($3::uuid[])
+SELECT l.id, l.type, l.board_id, false AS board_deleted FROM live_node l
+WHERE l.workspace_id = $1 AND l.project_id = $2 AND l.id = ANY($3::uuid[])
+UNION ALL
+SELECT n.id, n.type, n.board_id, true FROM node n
+WHERE cardinality($4::uuid[]) > 0 AND n.workspace_id = $1 AND n.project_id = $2
+    AND n.id = ANY($3::uuid[]) AND n.board_id = ANY($4::uuid[]) AND n.deleted_at IS NULL
 `
 
 type ExpressionNodesParams struct {
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
 	Ids         []pgtype.UUID
+	BoardIds    []pgtype.UUID
 }
 
 type ExpressionNodesRow struct {
-	ID   pgtype.UUID
-	Type string
+	ID           pgtype.UUID
+	Type         string
+	BoardID      pgtype.UUID
+	BoardDeleted bool
 }
 
 // ExpressionNodes returns those of the project's nodes whose IDs are among
-// ids that are not in its trash, which a node reference can name, each with
-// its type.
+// ids that are not in its trash, which a node reference can name, and those
+// of its boards board_ids, which are in its trash, that are there with their
+// boards alone, not deleted themselves, which an expression of their own
+// board alone can name, each with its type, its board, and whether its board
+// is in the trash. It reads the nodes of board_ids only when there are any,
+// as there are only when the batch compiles an expression of a board in the
+// trash.
 func (q *Queries) ExpressionNodes(ctx context.Context, arg ExpressionNodesParams) ([]ExpressionNodesRow, error) {
-	rows, err := q.db.Query(ctx, expressionNodes, arg.WorkspaceID, arg.ProjectID, arg.Ids)
+	rows, err := q.db.Query(ctx, expressionNodes,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Ids,
+		arg.BoardIds,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +439,12 @@ func (q *Queries) ExpressionNodes(ctx context.Context, arg ExpressionNodesParams
 	var items []ExpressionNodesRow
 	for rows.Next() {
 		var i ExpressionNodesRow
-		if err := rows.Scan(&i.ID, &i.Type); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.BoardID,
+			&i.BoardDeleted,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -368,11 +501,14 @@ func (q *Queries) ExpressionVariables(ctx context.Context, arg ExpressionVariabl
 }
 
 const expressionsToCompile = `-- name: ExpressionsToCompile :many
-SELECT id, board_id, context, source FROM expression
-WHERE workspace_id = $1 AND project_id = $2
-    AND (ast IS NULL AND error IS NULL OR refs && $3::uuid[] OR keys && $4::text[]
-        OR $5::boolean AND NOT is_valid AND (cardinality(refs) > 0 OR cardinality(keys) > 0))
-ORDER BY id
+SELECT e.id, e.board_id, e.context, e.source, EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = e.workspace_id
+        AND b.project_id = e.project_id AND b.id = e.board_id AND b.deleted_at IS NOT NULL)::boolean AS board_deleted
+FROM expression e
+WHERE e.workspace_id = $1 AND e.project_id = $2
+    AND (e.ast IS NULL AND e.error IS NULL OR e.refs && $3::uuid[] OR e.keys && $4::text[]
+        OR e.id = ANY($5::uuid[])
+        OR $6::boolean AND NOT e.is_valid AND (cardinality(e.refs) > 0 OR cardinality(e.keys) > 0))
+ORDER BY e.id
 `
 
 type ExpressionsToCompileParams struct {
@@ -380,28 +516,34 @@ type ExpressionsToCompileParams struct {
 	ProjectID   pgtype.UUID
 	Refs        []pgtype.UUID
 	Keys        []string
+	Ids         []pgtype.UUID
 	Names       bool
 }
 
 type ExpressionsToCompileRow struct {
-	ID      pgtype.UUID
-	BoardID pgtype.UUID
-	Context string
-	Source  string
+	ID           pgtype.UUID
+	BoardID      pgtype.UUID
+	Context      string
+	Source       string
+	BoardDeleted bool
 }
 
 // ExpressionsToCompile returns the project's expressions that the batch has
-// yet to compile, those whose refs or keys are among refs or keys, and, if
-// names is true, every one that does not compile but names something, which
-// a change of what the project's expressions can name may let compile, in
+// yet to compile, those whose refs or keys are among refs or keys, those
+// whose IDs are among ids (BoardExpressionsToCompile), and, if names is
+// true, every one that does not compile but names something, which a change
+// of what the project's expressions can name may let compile, each once, in
 // the order of their IDs, each with what it is compiled from alone: its
-// source, read in its context, at its board.
+// source, read in its context, at its board, and whether the board is in the
+// trash, whose expressions see what it holds that is there with it alone
+// (TrashedBoardVariables, ExpressionNodes).
 func (q *Queries) ExpressionsToCompile(ctx context.Context, arg ExpressionsToCompileParams) ([]ExpressionsToCompileRow, error) {
 	rows, err := q.db.Query(ctx, expressionsToCompile,
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.Refs,
 		arg.Keys,
+		arg.Ids,
 		arg.Names,
 	)
 	if err != nil {
@@ -416,6 +558,7 @@ func (q *Queries) ExpressionsToCompile(ctx context.Context, arg ExpressionsToCom
 			&i.BoardID,
 			&i.Context,
 			&i.Source,
+			&i.BoardDeleted,
 		); err != nil {
 			return nil, err
 		}
@@ -698,6 +841,55 @@ func (q *Queries) TouchNodes(ctx context.Context, arg TouchNodesParams) ([]Touch
 	for rows.Next() {
 		var i TouchNodesRow
 		if err := rows.Scan(&i.ID, &i.Rev); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const trashedBoardVariables = `-- name: TrashedBoardVariables :many
+SELECT id, key, type, board_id FROM variable
+WHERE workspace_id = $1 AND project_id = $2 AND board_id = ANY($3::uuid[])
+    AND deleted_at IS NULL
+ORDER BY id
+`
+
+type TrashedBoardVariablesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	BoardIds    []pgtype.UUID
+}
+
+type TrashedBoardVariablesRow struct {
+	ID      pgtype.UUID
+	Key     string
+	Type    string
+	BoardID pgtype.UUID
+}
+
+// TrashedBoardVariables returns the variables of the project's boards
+// board_ids, which are in its trash, that are there with their boards alone,
+// not deleted themselves, which the expressions of their own boards alone
+// can name, in the order of their IDs.
+func (q *Queries) TrashedBoardVariables(ctx context.Context, arg TrashedBoardVariablesParams) ([]TrashedBoardVariablesRow, error) {
+	rows, err := q.db.Query(ctx, trashedBoardVariables, arg.WorkspaceID, arg.ProjectID, arg.BoardIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TrashedBoardVariablesRow
+	for rows.Next() {
+		var i TrashedBoardVariablesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Key,
+			&i.Type,
+			&i.BoardID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
