@@ -61,17 +61,29 @@ export function readJSON(text: string): JsonValue {
 /**
  * Returns bytes if it is a view of a fixed-length ArrayBuffer, the one
  * buffer of which both WebCrypto and a browser's TextDecoder read a view,
- * and otherwise a copy of its bytes, made at once, over one: of a view of a
- * resizable ArrayBuffer or of a SharedArrayBuffer, which they read none of
- * (WebIDL's BufferSource and AllowSharedBufferSource), or of another realm's
- * ArrayBuffer, which instanceof does not tell from those. What it returns is
- * a copy exactly when it is not bytes.
+ * and otherwise a copy of its bytes, made at once, over one (copyOf): of a
+ * view of a resizable ArrayBuffer or of a SharedArrayBuffer, which they read
+ * none of (WebIDL's BufferSource and AllowSharedBufferSource), or of another
+ * realm's ArrayBuffer, which instanceof does not tell from those. What it
+ * returns is a copy exactly when it is not bytes.
  */
 export function fixedView(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   const buffer = bytes.buffer;
   return buffer instanceof ArrayBuffer && !buffer.resizable
     ? (bytes as Uint8Array<ArrayBuffer>)
-    : bytes.slice();
+    : copyOf(bytes);
+}
+
+/**
+ * Returns a copy of bytes, a Uint8Array over a fixed-length ArrayBuffer of
+ * its own, whatever the class of bytes: slice would return a view of the
+ * same memory of a Node Buffer, or of a bundler's Buffer, whose slice is
+ * subarray.
+ */
+export function copyOf(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  const copy = new Uint8Array(bytes.length);
+  copy.set(bytes);
+  return copy;
 }
 
 /**
@@ -95,9 +107,12 @@ export function readJSONBytes(bytes: Uint8Array): JsonValue {
 
 /**
  * Returns v as JSON.parse would have read it, each number the double nearest
- * it, and each object a plain one, without recursing.
+ * it, and each object a plain one, without recursing; but for the key omit
+ * of each object, if it is given, which it leaves out, with its value
+ * unread, as the loader leaves out a board's ASTs, which it decodes from v
+ * itself.
  */
-export function plain(v: JsonValue): unknown {
+export function plain(v: JsonValue, omit?: string): unknown {
   const root: { value?: unknown } = {};
   const stack: [JsonValue, (x: unknown) => void][] = [
     [
@@ -127,6 +142,9 @@ export function plain(v: JsonValue): unknown {
       put(out);
       // Each key is set in its order, and set again once its value is read.
       for (const key of Object.keys(from)) {
+        if (key === omit) {
+          continue;
+        }
         own(out, key, undefined);
         stack.push([
           from[key],

@@ -77,6 +77,51 @@ test("sha256Yielding lets the page run, and hashes the bytes as they were", asyn
   b.fill(0);
   expect(hex(await sum)).toBe(want);
   expect(ran).toBeGreaterThan(0);
+  // A Node Buffer's slice, as a bundler's Buffer's, is a view of the same
+  // memory, which sha256Yielding copies all the same.
+  const buffer = Buffer.from(bytes(2 * YIELD_EVERY + 5));
+  const wanted = hex(sha256(buffer));
+  const summed = sha256Yielding(buffer);
+  buffer.fill(0);
+  expect(hex(await summed)).toBe(wanted);
+});
+
+// The calls that share a pace let the page run each time they have hashed
+// YIELD_EVERY bytes since one of them last did, as load's calls of a
+// snapshot's files, of fewer bytes each, do; calls that share none never
+// let it run of fewer each.
+describe("of a pace", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("sha256Yielding lets the page run between small parts", async () => {
+    let yields = 0;
+    const Channel = globalThis.MessageChannel;
+    vi.stubGlobal(
+      "MessageChannel",
+      class extends Channel {
+        constructor() {
+          super();
+          yields++;
+        }
+      },
+    );
+    const part = bytes(YIELD_EVERY / 4);
+    const want = hex(sha256(part));
+    const pace = { hashed: 0 };
+    for (let i = 0; i < 8; i++) {
+      expect(hex(await sha256Yielding(part, undefined, false, pace))).toBe(
+        want,
+      );
+    }
+    expect(yields).toBe(1);
+    yields = 0;
+    for (let i = 0; i < 8; i++) {
+      await sha256Yielding(part);
+    }
+    expect(yields).toBe(0);
+  });
 });
 
 // A browser delays a timer nested five deep by 4 ms, and throttles a hidden

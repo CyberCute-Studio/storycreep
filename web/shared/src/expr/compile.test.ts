@@ -18,6 +18,7 @@ import {
   type Variable,
 } from "./project";
 import { len } from "./semantics";
+import { walk } from "./shape";
 
 // The file is read rather than imported, since its deepest cases nest
 // beyond what the bundler's JSON reader recurses to.
@@ -167,6 +168,24 @@ test("versionOf counts an operator that is none of the language's for nothing", 
     ]) {
       expect(versionOf([n as unknown as Node]), `${n.kind} ${op}`).toBe(1);
     }
+  }
+});
+
+// A malformed node's list that is no list, as a call's arguments that it
+// does not have, holds no children, as the Go functions range over a nil
+// slice, so that versionOf and walk read it without throwing.
+test("versionOf and walk read a node's list that is no list as none", () => {
+  for (const n of [
+    { kind: "call", function: "min", src: NO_RANGE },
+    { kind: "call", function: "min", args: 2, src: NO_RANGE },
+    { kind: "script", src: NO_RANGE },
+    { kind: "script", statements: "x", src: NO_RANGE },
+  ]) {
+    const node = n as unknown as Node;
+    expect(versionOf([node]), JSON.stringify(n)).toBe(1);
+    const seen: Node[] = [];
+    walk(node, (m) => seen.push(m));
+    expect(seen, JSON.stringify(n)).toEqual([node]);
   }
 });
 

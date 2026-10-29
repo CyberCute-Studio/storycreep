@@ -100,7 +100,10 @@ export function checkPlace(n: unknown, at: Place): string | undefined {
  * Calls f with each of n's children, at its place, in the order of the
  * source: a script's statements, a call's arguments, a unary operator's
  * operand, a binary operator's left operand and then its right, and an
- * assignment's target and then its value. A leaf has none.
+ * assignment's target and then its value. A leaf has none, nor has a
+ * malformed node's list that is no list, as a call's arguments that it does
+ * not have, of which it calls f with none, as the Go function ranges over a
+ * nil slice.
  */
 export function eachChild(n: Node, f: (child: Node, at: Place) => void): void {
   switch (n.kind) {
@@ -112,7 +115,7 @@ export function eachChild(n: Node, f: (child: Node, at: Place) => void): void {
       f(n.right, "operand");
       break;
     case "call":
-      for (const a of n.args) {
+      for (const a of listOf(n.args)) {
         f(a, "operand");
       }
       break;
@@ -121,11 +124,17 @@ export function eachChild(n: Node, f: (child: Node, at: Place) => void): void {
       f(n.value, "operand");
       break;
     case "script":
-      for (const s of n.statements) {
+      for (const s of listOf(n.statements)) {
         f(s, "statement");
       }
       break;
   }
+}
+
+// listOf returns the list of a node's children, or none of a list that is
+// no list.
+function listOf(list: readonly Node[]): readonly Node[] {
+  return Array.isArray(list) ? list : [];
 }
 
 /**

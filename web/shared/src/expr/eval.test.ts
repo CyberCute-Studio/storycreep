@@ -16,6 +16,7 @@ import {
 } from "./eval";
 import {
   decimalOf,
+  fixedView,
   isIntegral,
   isJsonObject,
   type JsonValue,
@@ -448,6 +449,16 @@ describe("readJSON", () => {
     expect(Object.hasOwn(got, "__proto__")).toBe(true);
   });
 
+  // The loader leaves a board's ASTs out of its typed copy, which it decodes
+  // from what readJSON read, at whatever depth they are.
+  test("is read by plain without the key that it omits", () => {
+    const text = '{"a":{"ast":{"kind":"lit"},"source":"1"},"b":[{"ast":2}]}';
+    expect(plain(readJSON(text), "ast")).toStrictEqual({
+      a: { source: "1" },
+      b: [{}],
+    });
+  });
+
   // As encoding/json, which counts each array and object that it opens,
   // empty or not, against its depth of 10,000.
   test("reads arrays and objects nested 10,000 deep, and no deeper", () => {
@@ -498,6 +509,22 @@ describe("readJSONBytes", () => {
     view.set(text);
     expect(plain(readJSONBytes(view))).toStrictEqual({ a: [1, "b"] });
     expect(() => readJSONBytes(new Uint8Array([0xff]))).toThrow(/is not UTF-8/);
+  });
+
+  // A Node Buffer's slice, as a bundler's Buffer's, is a view of the same
+  // memory, so that fixedView copies a Buffer over a SharedArrayBuffer by
+  // its own copy, over a fixed-length ArrayBuffer, which nothing else
+  // changes.
+  test("copies a Buffer over a shared buffer, whose slice copies nothing", () => {
+    const text = new TextEncoder().encode('{"a":1}');
+    const shared = Buffer.from(new SharedArrayBuffer(text.length));
+    shared.set(text);
+    expect(shared.slice().buffer).toBe(shared.buffer);
+    const view = fixedView(shared);
+    expect(view.buffer).toBeInstanceOf(ArrayBuffer);
+    expect(view.buffer).not.toBe(shared.buffer);
+    shared.fill(0x20);
+    expect(plain(readJSONBytes(view))).toStrictEqual({ a: 1 });
   });
 });
 

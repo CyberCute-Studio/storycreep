@@ -202,10 +202,11 @@ const assignVersions: Record<AssignOp, number> = {
  * of its expressions' ASTs (FR-EXPR-04, PRD §6.4): the highest of the node
  * kinds, the operators, and the built-ins that they use, or 1, the first, for
  * none. A node that is none of an AST's at its place counts for nothing, nor
- * do its children, and a node that it reaches twice once, so that it never
- * reads without end. It takes the ASTs as an array, as the Go function takes
- * a slice, so that a snapshot's, however many, are never a call's arguments,
- * of which an engine takes some hundred thousand at most.
+ * do its children, a list of a node's that is no list holds none
+ * (eachChild), and a node that it reaches twice counts once, so that it
+ * never reads without end. It takes the ASTs as an array, as the Go
+ * function takes a slice, so that a snapshot's, however many, are never a
+ * call's arguments, of which an engine takes some hundred thousand at most.
  */
 export function versionOf(asts: readonly Node[]): number {
   let v = 1;

@@ -179,25 +179,59 @@ describe("load", () => {
         new ArrayBuffer(big.length, { maxByteLength: big.length + 1 }),
       );
       resizable.set(big);
-      const slice = vi.spyOn(
-        Object.getPrototypeOf(Uint8Array.prototype),
-        "slice",
-      );
+      // A copy is set from the bytes that it copies (copyOf).
+      const set = vi.spyOn(Object.getPrototypeOf(Uint8Array.prototype), "set");
       try {
         for (const given of [big, resizable]) {
           files.set(asset, given);
-          slice.mockClear();
+          set.mockClear();
           await expect(load(files)).resolves.toBeDefined();
-          const copies = slice.mock.contexts.filter(
-            (c) => (c as Uint8Array).length === big.length,
-          );
+          const copies = set.mock.calls
+            .map(([from]) => from as Uint8Array)
+            .filter((from) => from.length === big.length);
           // Compared by identity, as toEqual reads each of their bytes.
           expect(copies).toHaveLength(1);
           expect(copies[0] === given).toBe(true);
         }
       } finally {
-        slice.mockRestore();
+        set.mockRestore();
       }
+    });
+
+    // It lets the page run each time it has hashed YIELD_EVERY bytes of the
+    // files, between files of fewer bytes each too, as of a snapshot of many
+    // small assets, which it is given as a map, whose files it takes in no
+    // task of its own.
+    test("lets the page run between small files", async () => {
+      vi.stubGlobal("crypto", {});
+      let yields = 0;
+      const Channel = globalThis.MessageChannel;
+      vi.stubGlobal(
+        "MessageChannel",
+        class extends Channel {
+          constructor() {
+            super();
+            yields++;
+          }
+        },
+      );
+      const small = new Uint8Array(YIELD_EVERY / 2).fill(7);
+      const hash = `sha256:${createHash("sha256").update(small).digest("hex")}`;
+      const assets = [0, 1, 2, 3].map(
+        (i) => `assets/${"0".repeat(22)}CVR${i}.png`,
+      );
+      const files = suite("choices", {
+        "storycreep.json": (m) => {
+          for (const a of assets) {
+            m.files[a] = hash;
+          }
+        },
+      });
+      for (const a of assets) {
+        files.set(a, small);
+      }
+      await expect(load(files)).resolves.toBeDefined();
+      expect(yields).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -575,6 +609,74 @@ describe("load", () => {
     });
     await expect(load(files)).rejects.toBeInstanceOf(ASTUnsupportedError);
     await expect(load(files)).rejects.toThrow(/ast_unsupported/);
+  });
+
+  // The Go runtime's Load reads a newer astVersion as soon as the Go types
+  // have read the manifest, which check no pattern or bound of its schema
+  // but an integer's, so that it refuses a manifest that breaks only those,
+  // as one of an asset of a type that a later version may take, as
+  // ast_unsupported too; and one that the Go types do not read, as one
+  // without counts, or with a count beyond 2^53 − 1, as any other.
+  test("refuses a newer astVersion as ast_unsupported where the Go runtime does", async () => {
+    const newer = (edit: (m: Obj) => void) =>
+      load(
+        suite("choices", {
+          "storycreep.json": (m) => {
+            m.astVersion = 2;
+            edit(m);
+          },
+        }),
+      );
+    for (const edit of [
+      (m: Obj) => {
+        m.files[`assets/${"0".repeat(23)}CVR.avif`] = zeros;
+      },
+      (m: Obj) => {
+        m.files[main] = "sha256:0";
+      },
+      (m: Obj) => {
+        m.project.slug = "Not A Slug";
+      },
+      (m: Obj) => {
+        m.counts.nodes = -1;
+      },
+      (m: Obj) => {
+        m.generator.name = "";
+      },
+    ]) {
+      await expect(newer(edit), String(edit)).rejects.toBeInstanceOf(
+        ASTUnsupportedError,
+      );
+    }
+    for (const edit of [
+      (m: Obj) => {
+        delete m.counts;
+      },
+      (m: Obj) => {
+        m.counts.nodes = 2 ** 53;
+      },
+      (m: Obj) => {
+        m.snapshot.channel = "beta";
+      },
+      (m: Obj) => {
+        m.schemaVersion = 2;
+      },
+    ]) {
+      const refused = newer(edit);
+      await expect(refused, String(edit)).rejects.toBeInstanceOf(LoadError);
+      await expect(refused, String(edit)).rejects.not.toBeInstanceOf(
+        ASTUnsupportedError,
+      );
+    }
+    await expect(
+      load(
+        suite("choices", {
+          "storycreep.json": (m) => {
+            m.files[`assets/${"0".repeat(23)}CVR.avif`] = zeros;
+          },
+        }),
+      ),
+    ).rejects.not.toBeInstanceOf(ASTUnsupportedError);
   });
 
   test.each<[string, string, Record<string, (f: Obj) => void>, RegExp]>([

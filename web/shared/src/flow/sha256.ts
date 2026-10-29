@@ -3,6 +3,8 @@
 // secure context, as that of a self-hosted instance served over plain HTTP,
 // on which everything but offline use works (PRD FR-OFF-01 AC4).
 
+import { copyOf } from "../expr";
+
 // The round constants: the first 32 bits of the fractional parts of the cube
 // roots of the first 64 primes.
 const k = new Uint32Array([
@@ -34,41 +36,57 @@ export function sha256(bytes: Uint8Array): Uint8Array {
 
 /**
  * The bytes that sha256Yielding hashes between two tasks of the event loop,
- * a whole number of blocks: 1 MiB, of which the hashing takes about a frame
- * on a tablet.
+ * but for the rest of a block: 1 MiB, of which the hashing takes about a
+ * frame on a tablet.
  */
 export const YIELD_EVERY = 1 << 20;
 
 /**
- * Returns the SHA-256 of bytes, as sha256 does, but hashes YIELD_EVERY bytes
- * of them at a time, and lets the event loop run a task between two
- * (nextTask), so that a page that hashes a large file, as an asset of a
- * snapshot, goes on responding meanwhile. It hashes the bytes as they are
- * when it is called, whatever becomes of them meanwhile, as WebCrypto does,
- * so it copies those of more than YIELD_EVERY bytes first, unless own is
- * set: when bytes are the caller's own copy, which nothing else holds, and
- * so nothing changes meanwhile. Once signal is aborted, it rejects with its
- * reason, as fetch does, before it hashes another YIELD_EVERY bytes.
+ * How many bytes the calls of sha256Yielding that share it have hashed since
+ * one of them last let the event loop run a task, as load's calls of the
+ * files of one snapshot share one.
+ */
+export interface Pace {
+  hashed: number;
+}
+
+/**
+ * Returns the SHA-256 of bytes, as sha256 does, but lets the event loop run
+ * a task (nextTask) each time it has hashed YIELD_EVERY bytes since it, or
+ * a call before it that shares pace, last did, so that a page that hashes a
+ * large file, as an asset of a snapshot, or many small ones goes on
+ * responding meanwhile. It hashes the bytes as they are when it is called,
+ * whatever becomes of them meanwhile, as WebCrypto does, so it copies them
+ * first (copyOf) where it lets the page run before it has hashed them all,
+ * unless own is set: when bytes are the caller's own copy, which nothing
+ * else holds, and so nothing changes meanwhile. Once signal is aborted, it
+ * rejects with its reason, as fetch does, before it hashes another
+ * YIELD_EVERY bytes.
  */
 export async function sha256Yielding(
   bytes: Uint8Array,
   signal?: AbortSignal,
   own = false,
+  pace: Pace = { hashed: 0 },
 ): Promise<Uint8Array> {
-  if (bytes.length <= YIELD_EVERY) {
+  if (pace.hashed + bytes.length <= YIELD_EVERY) {
+    pace.hashed += bytes.length;
     return sha256(bytes);
   }
-  const data = own ? bytes : bytes.slice();
+  const data = own ? bytes : copyOf(bytes);
   const h = initial();
   const w = new Uint32Array(64);
   const whole = data.length - (data.length % 64);
   for (let at = 0; at < whole; at += 64) {
-    if (at > 0 && at % YIELD_EVERY === 0) {
+    if (pace.hashed >= YIELD_EVERY) {
+      pace.hashed = 0;
       await nextTask();
       signal?.throwIfAborted();
     }
     compress(h, w, data, at);
+    pace.hashed += 64;
   }
+  pace.hashed += data.length - whole;
   return finish(h, w, data);
 }
 

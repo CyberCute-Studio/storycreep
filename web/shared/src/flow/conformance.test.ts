@@ -6,6 +6,7 @@ import {
   builtins,
   type DeclaredType,
   isJsonObject,
+  JsonNumber,
   type JsonValue,
   type Node,
   plain,
@@ -100,9 +101,28 @@ function call(r: Runtime, s: Snapshot, input: Raw): Event[] {
       return [];
     }
     case "load_state":
-      return r.loadState(plain(input.state as JsonValue) as SaveState);
+      return r.loadState(textOf(input.state as JsonValue));
   }
   throw new Error(`${String(input.call)} is no call`);
+}
+
+// textOf returns the JSON text of v, each number as it is written, which
+// loadState reads by the declarations, as the Go runner reads a state,
+// rather than as the double that plain would round it to.
+function textOf(v: JsonValue): string {
+  if (v instanceof JsonNumber) {
+    return v.raw;
+  }
+  if (Array.isArray(v)) {
+    return `[${v.map(textOf).join(",")}]`;
+  }
+  if (isJsonObject(v)) {
+    const members = Object.keys(v).map(
+      (k) => `${JSON.stringify(k)}:${textOf(v[k])}`,
+    );
+    return `{${members.join(",")}}`;
+  }
+  return JSON.stringify(v);
 }
 
 // eventOf returns e as a scenario writes it, but a signal's value, which it

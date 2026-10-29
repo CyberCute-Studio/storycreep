@@ -53,6 +53,7 @@ export {
 } from "./error";
 export {
   compareNumbers,
+  copyOf,
   fixedView,
   isIntegral,
   isJsonObject,

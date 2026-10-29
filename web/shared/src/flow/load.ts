@@ -28,12 +28,14 @@ import {
   AST_VERSION,
   type Context,
   checkResolved,
+  compareNumbers,
   DecodeError,
   decode,
   ExprError,
   fixedView,
   isJsonObject,
   JsonError,
+  type JsonNumber,
   type JsonValue,
   type Node,
   Project,
@@ -42,6 +44,7 @@ import {
   readJSONBytes,
   readValue,
   type Script,
+  semantics,
   UsageError,
   type Value,
   versionOf,
@@ -62,7 +65,7 @@ import type {
 } from "../published";
 import { foldCase } from "./fold";
 import { ANY_VALUE, type Schema, validate } from "./schema";
-import { sha256Yielding } from "./sha256";
+import { type Pace, sha256Yielding } from "./sha256";
 
 /** The paths of a snapshot's files but its boards' and its assets'. */
 export const MANIFEST_PATH = "storycreep.json";
@@ -237,18 +240,22 @@ export class Snapshot {
  * the server never writes, though Go's Load, which is no validator of the
  * schemas, may load it; but it leaves a board's ASTs to decode, which
  * refuses exactly what their definitions refuse, so that it reads each AST
- * once. It rejects with a LoadError, and of a snapshot that is wrong in several ways always the same one, as it reads the files and
- * checks them in the order of Go's Load, each file hashed as it reads it,
- * the files that it does not read, as the assets, last, and each board's
- * ASTs decoded as it reads the board's file. It is asynchronous since it
- * hashes the files with the platform's SHA-256, one after another, so that
- * it holds copies of one file at most, or, in a page that is no secure
- * context, which has none, with its own, which lets the page run between
- * two parts of a large file (sha256Yielding); and since it takes each file
- * from a function, if it is given one, only once it needs it
- * (SnapshotFiles). Once the signal of its options is aborted, it rejects
- * with its reason, as fetch does, before it takes or hashes any more of the
- * files.
+ * once; and it refuses a newer astVersion as ast_unsupported wherever Go's
+ * Load does, of a manifest that breaks no more of its schema than what the
+ * Go types do not check, as a pattern or a bound (manifest). It rejects
+ * with a LoadError, and of a snapshot that is wrong in several ways always
+ * the same one, as it reads the files and checks them in the order of Go's
+ * Load, each file hashed as it reads it, the files that it does not read,
+ * as the assets, last, and each board's ASTs decoded as it reads the
+ * board's file. It is asynchronous since it hashes the files with the
+ * platform's SHA-256, one after another, so that it holds copies of one
+ * file at most, or, in a page that is no secure context, which has none,
+ * with its own, which lets the page run each time it has hashed
+ * YIELD_EVERY bytes of the files, within a large file or between small
+ * ones (sha256Yielding); and since it takes each file from a function, if
+ * it is given one, only once it needs it (SnapshotFiles). Once the signal
+ * of its options is aborted, it rejects with its reason, as fetch does,
+ * before it takes or hashes any more of the files.
  */
 export async function load(
   files: SnapshotFiles,
@@ -283,17 +290,19 @@ export interface LoadOptions {
 // digest returns the hash of a file's bytes as the manifest lists a file's:
 // sha256: and the lowercase hexadecimal SHA-256 of the bytes, by WebCrypto's,
 // which copies them, or, where the page is no secure context and has none
-// (crypto.subtle), by sha256Yielding's, which copies those of a large file
-// too, unless they are the loader's own copy, and stops once signal is
-// aborted.
+// (crypto.subtle), by sha256Yielding's, which lets the page run at pace, the
+// pace of the files of one snapshot, and copies them too where it lets it
+// run before it has hashed them all, unless they are the loader's own copy,
+// and stops once signal is aborted.
 async function digest(
   file: Opened,
   signal: AbortSignal | undefined,
+  pace: Pace,
 ): Promise<string> {
   const subtle: SubtleCrypto | undefined = globalThis.crypto?.subtle;
   const sum =
     subtle === undefined
-      ? await sha256Yielding(file.bytes, signal, file.own)
+      ? await sha256Yielding(file.bytes, signal, file.own, pace)
       : new Uint8Array(await subtle.digest("SHA-256", file.bytes));
   return `sha256:${Array.from(sum, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
@@ -338,9 +347,69 @@ function withoutASTs(board: Schema): Schema {
   return { ...(board as object), $defs: defs };
 }
 
-// The schemas of the files.
+// The keywords whose values are schemas, which goTypes reads too: one, a
+// list of them, or an object of them; but for propertyNames, which it
+// leaves out.
+const subschemas = {
+  one: new Set(["additionalProperties", "items"]),
+  list: new Set(["oneOf"]),
+  object: new Set(["$defs", "properties"]),
+};
+
+// The keywords of a pattern or a bound, which the Go types do not check.
+const patternsAndBounds = new Set([
+  "maxItems",
+  "maxLength",
+  "maximum",
+  "minItems",
+  "minLength",
+  "minimum",
+  "pattern",
+  "propertyNames",
+]);
+
+// goTypes returns the schema s with only what the Go types check of a file
+// as published.Decode reads it into them: without a pattern, a pattern of an
+// object's keys (propertyNames), or a bound, but for an integer's, which is
+// within ±MAX_INT, as Go's Int reads one whatever its schema's minimum and
+// maximum. Its types, its constants, its enums, its variants, and the keys
+// that it requires are those of s.
+function goTypes(s: Schema): Schema {
+  if (typeof s !== "object") {
+    return s;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(s)) {
+    if (patternsAndBounds.has(k)) {
+      continue;
+    }
+    if (subschemas.one.has(k)) {
+      out[k] = goTypes(v as Schema);
+    } else if (subschemas.list.has(k)) {
+      out[k] = (v as Schema[]).map(goTypes);
+    } else if (subschemas.object.has(k)) {
+      out[k] = Object.fromEntries(
+        Object.entries(v as Record<string, Schema>).map(([name, d]) => [
+          name,
+          goTypes(d),
+        ]),
+      );
+    } else {
+      out[k] = v;
+    }
+  }
+  if (out.type === "integer") {
+    out.minimum = -semantics.MAX_INT;
+    out.maximum = semantics.MAX_INT;
+  }
+  return out;
+}
+
+// The schemas of the files, and of the manifest what the Go types check of
+// it, which Go's Load reads its astVersion of (manifest).
 const schemas = {
   manifest: manifestSchema as Schema,
+  manifestTypes: goTypes(manifestSchema as Schema),
   settings: settingsSchema as Schema,
   variables: variablesSchema as Schema,
   componentTypes: componentTypesSchema as Schema,
@@ -381,23 +450,24 @@ interface Opened {
 }
 
 // A file as the loader has read it: as JSON.parse would have read it, typed
-// by its schema, and its raw JSON, in which the loader finds a number that
-// it reads by its declaration (readValue), or an AST that it decodes, by
-// the same path, since plain maps each array's items and each object's keys
-// to their own.
+// by its schema, but for a board's ASTs, which it leaves out (readBoard),
+// and its raw JSON, in which the loader finds a number that it reads by its
+// declaration (readValue), or an AST that it decodes, by the same path,
+// since plain maps each array's items and each object's keys to their own.
 interface Read<T> {
   readonly file: T;
   readonly raw: RawObject;
 }
 
-// json returns the JSON of a file's bytes (readJSONBytes), or the JsonError
-// of bytes that are not one JSON value.
-function json(bytes: Uint8Array): JsonValue | JsonError {
+// readJSONFile returns the JSON of the bytes of the file of the path
+// (readJSONBytes), or throws the LoadError of bytes that are not one JSON
+// value.
+function readJSONFile(path: string, bytes: Uint8Array): JsonValue {
   try {
     return readJSONBytes(bytes);
   } catch (e) {
     if (e instanceof JsonError) {
-      return e;
+      throw fail(`${path}: it ${e.message}`);
     }
     throw e;
   }
@@ -420,6 +490,9 @@ class Loader {
   // release is set for a release's snapshot, every jumper of which has a
   // target.
   private release = false;
+  // pace is how many bytes of the files sha256Yielding has hashed since it
+  // last let the page run, where the page has no WebCrypto (digest).
+  private readonly pace: Pace = { hashed: 0 };
   // What the snapshot holds, as load builds it.
   private readonly declared = new Map<string, Variable>();
   private readonly defaults = new Map<string, Value>();
@@ -476,43 +549,51 @@ class Loader {
     return { bytes, own: bytes !== given };
   }
 
-  // parse checks raw, the JSON of the file of the path, or the problem of
-  // its bytes, against the schema, and returns it as JSON.parse would have
-  // read it, typed by the schema, with raw.
-  private parse<T>(
+  // typed returns raw, the JSON of the file of the path, as JSON.parse would
+  // have read it, but for the key omit of each object (plain), typed by its
+  // schema, with raw, or throws problem, why its schema does not take raw,
+  // if it has one.
+  private typed<T>(
     path: string,
-    raw: JsonValue | JsonError,
-    schema: Schema,
+    raw: JsonValue,
+    problem: string | undefined,
+    omit?: string,
   ): Read<T> {
-    if (raw instanceof JsonError) {
-      throw fail(`${path}: it ${raw.message}`);
-    }
-    const problem = validate(schema, raw);
     if (problem !== undefined || !isJsonObject(raw)) {
       throw fail(
         `${path}: ${problem ?? "is not an object"}, which its schema does not take`,
       );
     }
-    return { file: plain(raw) as T, raw };
+    return { file: plain(raw, omit) as T, raw };
   }
 
   // manifest reads the manifest, and checks its astVersion and its files'
-  // paths.
+  // paths. Go's Load refuses a newer astVersion as ast_unsupported once the
+  // Go types have read the manifest, which check none of the patterns and
+  // the bounds of its schema but an integer's, before it checks the paths;
+  // so it refuses one as ast_unsupported of a manifest that its schema
+  // takes, or that it would take but for those (goTypes), as the path of an
+  // asset of another type, and as a LoadError of any other.
   private async manifest(): Promise<Manifest> {
     const opened = await this.opened(MANIFEST_PATH);
     if (opened === undefined) {
       throw fail(`there is no ${MANIFEST_PATH}`);
     }
-    const m = this.parse<Manifest>(
-      MANIFEST_PATH,
-      json(opened.bytes),
-      schemas.manifest,
-    ).file;
-    if (m.astVersion > AST_VERSION) {
-      throw new ASTUnsupportedError(
-        `the snapshot's astVersion is ${m.astVersion}, and this runtime supports ${AST_VERSION}`,
-      );
+    const raw = readJSONFile(MANIFEST_PATH, opened.bytes);
+    const problem = validate(schemas.manifest, raw);
+    if (
+      isJsonObject(raw) &&
+      (problem === undefined ||
+        validate(schemas.manifestTypes, raw) === undefined)
+    ) {
+      const v = raw.astVersion as JsonNumber;
+      if (compareNumbers(v.raw, String(AST_VERSION)) > 0) {
+        throw new ASTUnsupportedError(
+          `the snapshot's astVersion is ${v.value}, and this runtime supports ${AST_VERSION}`,
+        );
+      }
     }
+    const m = this.typed<Manifest>(MANIFEST_PATH, raw, problem).file;
     for (const path of Object.keys(m.files).sort()) {
       if (!isFilePath(path)) {
         throw fail(
@@ -543,7 +624,7 @@ class Loader {
     if (opened === undefined) {
       throw fail(`there is no ${path}`);
     }
-    const sum = digest(opened, this.signal);
+    const sum = digest(opened, this.signal, this.pace);
     let r: { value: R } | { thrown: unknown };
     try {
       r = { value: read(opened.bytes) };
@@ -563,11 +644,17 @@ class Loader {
     return r.value;
   }
 
-  // readFile reads the file of the path, once it has checked its hash.
-  private async readFile<T>(path: string, schema: Schema): Promise<Read<T>> {
-    const raw = await this.contents(path, json);
+  // readFile reads the file of the path, once it has checked its hash, and
+  // checks it against the schema, and returns it typed by the schema, but
+  // for the key omit of each object (typed).
+  private async readFile<T>(
+    path: string,
+    schema: Schema,
+    omit?: string,
+  ): Promise<Read<T>> {
+    const raw = await this.contents(path, (bytes) => readJSONFile(path, bytes));
     this.read.add(path);
-    return this.parse<T>(path, raw, schema);
+    return this.typed<T>(path, raw, validate(schema, raw), omit);
   }
 
   // readBoard reads the board file of the path, and decodes its
@@ -582,11 +669,13 @@ class Loader {
   // branch's outputs' conditions, so that it refuses the first that it
   // cannot decode. It decodes each from the file's raw JSON, which it lets
   // go of once it has decoded them, so that it holds that of one board's
-  // file at a time.
+  // file at a time, and the file typed by its schema without the ASTs, which
+  // it would never read (plain).
   private async readBoard(path: string): Promise<BoardFile> {
     const { file: f, raw } = await this.readFile<BoardFile>(
       path,
       schemas.board,
+      "ast",
     );
     // expression decodes the AST of e, the expression of the key of the
     // object whose ID is id and whose raw JSON is of, if it has one, in the
